@@ -1,4 +1,4 @@
-package main
+package dgserver
 
 import (
 	"fmt"
@@ -20,7 +20,7 @@ import (
 
 const (
 	hostEnv = "DGSERVER_TEST_HOST" // the fake host's scenario: finish, crash or hang
-	// H2b (hostjob_windows_test.go): dgserver in its own process. mainEnv runs main() with the
+	// H2b (hostjob_windows_test.go): dgserver in its own process. mainEnv runs Main with the
 	// process's command line (agent mode), localEnv ("<certs>|<log dir>") a main server with one
 	// local host; childHostEnv is the scenario of the hosts that process starts.
 	mainEnv      = "DGSERVER_TEST_MAIN"
@@ -43,7 +43,7 @@ func TestMain(m *testing.M) {
 }
 
 // serverProcess is dgserver in a process of its own, killed by the test (H2b). DGSERVER_TEST_MAIN:
-// main() with this process's arguments (dgserver --agent ...). DGSERVER_TEST_LOCAL: a main server on
+// Main with this process's arguments (dgserver --agent ...). DGSERVER_TEST_LOCAL: a main server on
 // ephemeral loopback ports (start, as main does, minus the redirector's fixed port) that starts one
 // local host, prints "host <pid>" once it is ready and waits. The hosts are this binary again.
 func serverProcess() int {
@@ -53,8 +53,7 @@ func serverProcess() int {
 	os.Setenv(hostEnv, os.Getenv(childHostEnv)) // for the hosts only: TestMain has already looked
 	prepareHosts = func() error { return nil }  // no launcher event: the "Dawngate.exe" is this binary
 	if local == "" {
-		main()
-		return 0
+		return Main(os.Args[1:])
 	}
 	certs, logDir, _ := strings.Cut(local, "|")
 	exe, err := os.Executable()

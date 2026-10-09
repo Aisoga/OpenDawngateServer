@@ -1,6 +1,7 @@
 # ADR-1: Emulator language and repository layout
 
 - **Status:** accepted, 2026-10-07 (start of M3); revised the same day for the user's preference for Go. Revisit only on the triggers under *Consequences*. ADR-2 (2026-10-08) confirms the in-process C++ match host, so the clean-room language question is closed. It replaces decision 3's default transport: the host links RakNet 4.081 built for protocol 5 instead of driving the client's own RakNet.
+- **Amended by [ADR-3](0003-player-setup-in-go.md)** (2026-10-09): the player and operator setup (the patchers, the certificate generation, the archive check, the host install) is ported to Go in `server/internal/setup/`; the Python scripts stay the reference and the research and test tools.
 - **Decision in one sentence:**
   - The emulator's network services are written in **Go** (stdlib only) in a new top-level `server/`, ported from the Python stubs in `re/stubs/`.
   - The match host is **C++** (MSVC x86) in `gms/`, once D1 confirms that the client's own simulation can run in server mode.

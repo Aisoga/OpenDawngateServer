@@ -294,7 +294,7 @@ class LaneTableTest(unittest.TestCase):
             # D1k: a dgserver's lane by its binary (server\bin\lane_<x>\ in any checkout; server\bin\ = lane a)
             cases.update({f"exe {n}": p for n, p in (
                 ("main", "d:\\x\\server\\bin\\dgserver.exe"),
-                ("worktree_b", "d:\\x\\.claude\\worktrees\\w1\\server\\bin\\lane_b\\dgserver.exe"),
+                ("worktree_b", "d:\\x\\worktrees\\w1\\server\\bin\\lane_b\\dgserver.exe"),
                 ("main_d", "d:\\x\\server\\bin\\lane_d\\dgserver.exe"))})
             script = os.path.join(root, "t.ps1")
             with open(script, "w", encoding="ascii") as f:

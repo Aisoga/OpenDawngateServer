@@ -1,0 +1,2276 @@
+# AssetData reflection tables in Dawngate.exe: 190 types, 1819 members, 68 enum/bitfield tables. Written by re/scripts/assetdata_types.py.
+# == <Type> size=0x<n> members=<n> table=0x<member table va> registered=0x<call va> crc=0x<typeCrc> [version=<n>] [upgrade|postload|unload|hook4=0x<function va>]
+#    crc = the table's typeCrc (0x008B4A20), which CatalogEntry.typeCrc must equal; the loader calls postload on each object it fixes up (R11b).
+#    <index> +0x<offset> <name> <type> [x<count>] [elem=<type> esize=0x<n>] [delta=<n>] [enum=0x<table va>]
+# enum 0x<table va> <enum|bitfield> <n>: <value>=<name> | ...
+# Members are in table order = the order the .bin files carry their out-of-line data.
+# Key: 16 bytes {instance, type, group, char*} (delta=-12) or {char*, instance, type, group} (delta=4), registered at the char*.
+# StringHash: {char*, FNV-1} (delta=4) or {FNV-1, char*} (delta=-4), registered at the char*. array: {pointer, u32 count} (delta=4).
+
+== GameServerRegionPingSite size=0x24 members=2 table=0x013db420 registered=0x010b7dcd crc=0xbd32b228
+   0 +0x0 Alias char x32
+   1 +0x20 InitialPing uint32_t
+
+== GameServerRegionPingSites size=0x8 members=1 table=0x013db4e0 registered=0x010b7eed crc=0x5dcb8fbc
+   0 +0x0 PingSite array elem=GameServerRegionPingSite esize=0x24 delta=4
+
+== GameServerRegion size=0x38 members=5 table=0x013db540 registered=0x010b834d crc=0x56399b05
+   0 +0x0 Id StringHash delta=4
+   1 +0x8 DisplayName Key delta=4
+   2 +0x18 ShortDisplayName Key delta=4
+   3 +0x28 PingSites GameServerRegionPingSites
+   4 +0x30 PingSitesAny GameServerRegionPingSites
+
+== GameServerRegionList size=0x8 members=1 table=0x013db720 registered=0x010b846d crc=0x2787b11f
+   0 +0x0 GameServerRegion array elem=GameServerRegion esize=0x38 delta=4
+
+== TipDefinition size=0x2c members=6 table=0x013db820 registered=0x010b898d crc=0xa841b025
+   0 +0xc Text Key delta=-12
+   1 +0x14 Callback StringHash delta=-4
+   2 +0x1c CloseCallback StringHash delta=-4
+   3 +0x20 NextTip asset
+   4 +0x24 PrevTip asset
+   5 +0x28 UIAttract enum enum=0x013db780
+
+== TipStack size=0x24 members=4 table=0x013dba60 registered=0x010b8d2d crc=0xc3d7fe85
+   0 +0xc Title Key delta=-12
+   1 +0x10 InitialTip asset
+   2 +0x18 ShowCallback StringHash delta=-4
+   3 +0x20 HideCallback StringHash delta=-4
+
+== PlayerReportType size=0x104 members=3 table=0x013de530 registered=0x010bb730 crc=0xfc4be1ee
+   0 +0x0 Text char x128
+   1 +0x80 ReportingKey uint32_t
+   2 +0x84 GPSComplaintType char x128
+
+== PlayerReportTypeList size=0x8 members=1 table=0x013de650 registered=0x010bb85d crc=0x96633fc6
+   0 +0x0 PlayerReportType array elem=PlayerReportType esize=0x104 delta=4
+
+== cToolPos size=0x14 members=5 table=0x013e72d0 registered=0x010c2f5d crc=0xb788c027
+   0 +0x0 visible bool
+   1 +0x4 left int
+   2 +0x8 right int
+   3 +0xc top int
+   4 +0x10 bottom int
+
+== cAssetQueryString size=0x4 members=1 table=0x013e74b0 registered=0x010c307d crc=0xb66bb791
+   0 +0x0 query char*
+
+== cLayerPrefs size=0x8 members=3 table=0x013e7510 registered=0x010c333d crc=0xf4ff15b6
+   0 +0x0 layerName char*
+   1 +0x4 locked bool
+   2 +0x5 hidden bool
+
+== EditorPrefs size=0xa0 members=27 table=0x013e7630 registered=0x010c4940 crc=0xd6ad2aa6
+   0 +0x0 cameraMode enum enum=0x011dd90c
+   1 +0x4 lastLevel asset
+   2 +0x8 lastChangelist uint32_t
+   3 +0xc lastLevelLoadedSuccessfully bool
+   4 +0x1c lastActiveMarkersetString char*
+   5 +0x24 assetBrowser cToolPos
+   6 +0x38 propBrowser cToolPos
+   7 +0x4c aiEditor cToolPos
+   8 +0x60 layers cToolPos
+   9 +0x75 showEditorWidgets bool
+   10 +0x74 toolbarVisible bool
+   11 +0xd rotateTool bool
+   12 +0xe translateTool bool
+   13 +0xf scaleTool bool
+   14 +0x20 transformSpace enum enum=0x011dd924
+   15 +0x11 useClipboardCopy bool
+   16 +0x14 checkoutProtection enum enum=0x011dd934
+   17 +0x18 newLayerInNewFile bool
+   18 +0x76 randomRotate bool
+   19 +0x77 randomScale bool
+   20 +0x78 randomScalePercent float
+   21 +0x7c gridUnit float
+   22 +0x80 snapAngle float
+   23 +0x84 recentQueries array elem=cAssetQueryString esize=0x4 delta=4
+   24 +0x8c recentLayerQueries array elem=cAssetQueryString esize=0x4 delta=4
+   25 +0x94 layerPrefs array elem=cLayerPrefs esize=0x8 delta=4
+   26 +0x9c useCurrentPositionAsPlayerStartingPoint bool
+
+== cCinematicView size=0x28 members=5 table=0x013f2f30 registered=0x010c811d crc=0x3558d080
+   0 +0x0 position cSPVector3
+   1 +0xc orientation cSPQuaternion
+   2 +0x1c fov float
+   3 +0x20 targetTime float
+   4 +0x24 delayTime float
+
+== Cinematic size=0x8 members=1 table=0x013f3110 registered=0x010c823d crc=0x3c9a9dca
+   0 +0x0 view array elem=cCinematicView esize=0x28 delta=4
+
+== FeedbackEventReplacementRule size=0x64 members=1 table=0x013f3370 registered=0x010c857d crc=0xb0aca511
+   0 +0x0 namespace char x80
+
+== AudioTriggerDef size=0x20 members=8 table=0x01412620 registered=0x010d7b2d crc=0xdceaa1dc
+   0 +0x0 type enum enum=0x01412610
+   1 +0x10 sound Key delta=-12
+   2 +0x14 is3D bool
+   3 +0x15 retrigger bool
+   4 +0x16 hardStop bool
+   5 +0x17 isVoiceover bool
+   6 +0x18 voiceLifetime float
+   7 +0x1c triggerVolume nullable elem=TriggerVolumeDef esize=0x88
+
+== cCameraComponentData size=0x14 members=5 table=0x01412920 registered=0x010d819d crc=0xf51a8c20
+   0 +0x0 azimuth float
+   1 +0x4 elevation float
+   2 +0x8 distance float
+   3 +0xc transitionRate float
+   4 +0x10 duration float
+
+== cCameraComponent size=0x1c members=5 table=0x01412b00 registered=0x010d881d crc=0xd1ae8404
+   0 +0x8 azimuth float
+   1 +0xc elevation float
+   2 +0x10 distance float
+   3 +0x14 transitionRate float
+   4 +0x18 duration float
+
+== CollectionTag size=0x30 members=5 table=0x01412e60 registered=0x010d8d7d crc=0x9ac862e4
+   0 +0xc name Key delta=-12
+   1 +0x1c pluralName Key delta=-12
+   2 +0x20 isRelatedCollection bool
+   3 +0x24 relatedCollectionPriority int
+   4 +0x28 tag array elem=asset esize=0x4 delta=4
+
+== cCollectionFilter size=0x1c members=3 table=0x01413040 registered=0x010d905d crc=0x0fc76d67
+   0 +0xc name Key delta=-12
+   1 +0x10 tag array elem=asset esize=0x4 delta=4
+   2 +0x18 type enum enum=0x01412d58
+
+== CollectionFilters size=0x8 members=1 table=0x01413160 registered=0x010d917d crc=0x4987dab2
+   0 +0x0 filter array elem=cCollectionFilter esize=0x1c delta=4
+
+== CollectionType size=0x44 members=7 table=0x014131c0 registered=0x010d985d crc=0xb0f077b0
+   0 +0x0 type enum enum=0x01412d00
+   1 +0x4 hideFromSearch bool
+   2 +0x8 searchPriority int
+   3 +0x28 longName Key delta=-12
+   4 +0x18 shortName Key delta=-12
+   5 +0x38 detailString Key delta=-12
+   6 +0x3c tag array elem=asset esize=0x4 delta=4
+
+== CollectionItem size=0x78 members=11 table=0x01413460 registered=0x010da1bd crc=0x181fb6c7 postload=0x009a3f00
+   0 +0x0 type enum enum=0x01412d00
+   1 +0x4 specialStatus enum enum=0x01412d68
+   2 +0x8 catalogID uint32_t
+   3 +0xc parentAsset asset
+   4 +0x1c longName Key delta=-12
+   5 +0x2c shortName Key delta=-12
+   6 +0x3c descriptionString Key delta=-12
+   7 +0x4c unownedDescriptionString Key delta=-12
+   8 +0x5c cardIcon Key delta=-12
+   9 +0x6c thumbnailIcon Key delta=-12
+   10 +0x70 tag array elem=asset esize=0x4 delta=4
+
+== CombatantDef size=0x14 members=2 table=0x01413890 registered=0x010da4bd crc=0x0ad1be39
+   0 +0xc deathEvent Key delta=-12
+   1 +0x10 maxHealth float
+
+== cWaterSimData size=0xc8 members=16 table=0x014139d0 registered=0x010db8e0 crc=0xf85d519a
+   0 +0x0 water_pos cSPVector2
+   1 +0x8 water_pos_vari cSPVector2
+   2 +0x10 water_size cSPVector2
+   3 +0x18 water_size_vari cSPVector2
+   4 +0x20 water_angle float
+   5 +0x24 water_angle_vari float
+   6 +0x28 water_intensity float
+   7 +0x2c water_intensity_vari float
+   8 +0x30 water_freq float
+   9 +0x34 water_freq_vari float
+   10 +0x38 water_wave_speed float
+   11 +0x3c water_dampening float
+   12 +0x40 water_normal_scale float
+   13 +0x44 water_brush char x64
+   14 +0x84 water_mask char x64
+   15 +0xc4 water_blend bool
+
+== cGraphicsData size=0x6b0 members=98 table=0x01413fd0 registered=0x010e2f30 crc=0x065b5f32
+   0 +0x0 camera_far_clip float
+   1 +0x4 shadow_dir cSPVector3
+   2 +0x10 shadow_transparency float
+   3 +0x14 shadow_zbias float
+   4 +0x18 shadow_camera_z_fade float
+   5 +0x1c shadow_view_left float
+   6 +0x20 shadow_view_top float
+   7 +0x24 shadow_view_right float
+   8 +0x28 shadow_view_bottom float
+   9 +0x2c shadow_view_height float
+   10 +0x30 shadow_view_near float
+   11 +0x34 shadow_view_far float
+   12 +0x38 shadow_cull_left float
+   13 +0x3c shadow_cull_top float
+   14 +0x40 shadow_cull_right float
+   15 +0x44 shadow_cull_bottom float
+   16 +0x48 shadow_cull_near float
+   17 +0x4c shadow_cull_far float
+   18 +0x50 ambient_color cSPVector3
+   19 +0x5c ambient_level float
+   20 +0x60 bloom float
+   21 +0x64 brightness float
+   22 +0x68 contrast float
+   23 +0x6c saturation float
+   24 +0x70 hue float
+   25 +0x74 color_adjust_texture char x128
+   26 +0xf4 wind_dir cSPVector2
+   27 +0xfc wind_str float
+   28 +0x1a0 fog_color cSPVector3
+   29 +0x1ac fog_density float
+   30 +0x1b0 fog_amplitude float
+   31 +0x1b4 fog_ground_start float
+   32 +0x1b8 fog_ground_end float
+   33 +0x1bc fog_anim_rate float
+   34 +0x1c0 fog_strip_length int
+   35 +0x1c4 fog_dir cSPVector2
+   36 +0x1cc fog_rate float
+   37 +0x1d0 fog_scale cSPVector2
+   38 +0x1d8 fog_texture char x128
+   39 +0x258 FoW_fog_color cSPVector3
+   40 +0x264 FoW_fog_density float
+   41 +0x268 FoW_fog_tile cSPVector2
+   42 +0x270 FoW_fog_dir cSPVector2
+   43 +0x278 FoW_fog_desat float
+   44 +0x27c FoW_fog_shadow float
+   45 +0x280 FoW_noise float
+   46 +0x284 FoW_fog_start float
+   47 +0x288 FoW_fog_end float
+   48 +0x28c FoW_fog_texture char x128
+   49 +0x30c simple_fog_color cSPVector3
+   50 +0x318 simple_fog_density float
+   51 +0x31c simple_fog_exponent float
+   52 +0x320 simple_fog_start float
+   53 +0x324 simple_fog_end float
+   54 +0x100 cloud_shadow_texture char x128
+   55 +0x180 cloud_shadow_direction cSPVector2
+   56 +0x188 cloud_shadow_tile cSPVector2
+   57 +0x190 cloud_shadow_rate float
+   58 +0x194 cloud_shadow_start float
+   59 +0x198 cloud_shadow_end float
+   60 +0x19c cloud_shadow_alpha float
+   61 +0x328 player_diffuse float
+   62 +0x32c player_specular float
+   63 +0x330 player_desaturate float
+   64 +0x334 player_emissive_level float
+   65 +0x338 creature_diffuse float
+   66 +0x33c creature_specular float
+   67 +0x340 creature_desaturate float
+   68 +0x344 creature_emissive_level float
+   69 +0x348 flora_diffuse float
+   70 +0x34c flora_specular float
+   71 +0x350 flora_desaturate float
+   72 +0x354 flora_emissive_level float
+   73 +0x358 mineral_diffuse float
+   74 +0x35c mineral_specular float
+   75 +0x360 mineral_desaturate float
+   76 +0x364 mineral_emissive_level float
+   77 +0x368 water0 cWaterSimData
+   78 +0x430 water1 cWaterSimData
+   79 +0x4f8 water2 cWaterSimData
+   80 +0x5c0 water3 cWaterSimData
+   81 +0x688 camera_blend bool
+   82 +0x689 color_blend bool
+   83 +0x68a shadow_blend bool
+   84 +0x68b bloom_blend bool
+   85 +0x68c wind_blend bool
+   86 +0x68d cloud_blend bool
+   87 +0x68e fog_blend bool
+   88 +0x68f fow_blend bool
+   89 +0x690 simple_fog_blend bool
+   90 +0x691 levels_blend bool
+   91 +0x692 ambient_blend bool
+   92 +0x694 radius float
+   93 +0x698 inner_radius float
+   94 +0x693 global bool
+   95 +0x69c display_volume bool
+   96 +0x6a0 ssao_color cSPVector3
+   97 +0x6ac ssao_intensity float
+
+== cDecalData size=0x190 members=17 table=0x014164b0 registered=0x010e44d0 crc=0xe5b5e629
+   0 +0x0 size cSPVector3
+   1 +0xc material char x64
+   2 +0x4c layer int
+   3 +0x50 diffuse char x128
+   4 +0xd0 normal char x128
+   5 +0x150 diffuseTint cSPVector3
+   6 +0x15c opacity float
+   7 +0x160 specularTint cSPVector3
+   8 +0x16c opacityNormal float
+   9 +0x170 tile cSPVector2
+   10 +0x178 normalLevel float
+   11 +0x17c glowLevel float
+   12 +0x180 emissiveLevel float
+   13 +0x184 specExponent float
+   14 +0x188 radius float
+   15 +0x18c enable bool
+   16 +0x18d display_volume bool
+
+== EventListenerData size=0x28 members=3 table=0x01416b10 registered=0x010e491d crc=0xc04f1d76
+   0 +0xc event Key delta=-12
+   1 +0x1c callback Key delta=-12
+   2 +0x24 luaCallback char*
+
+== EventListenerDef size=0x8 members=1 table=0x01416c30 registered=0x010e4acd crc=0xfd01e839 postload=0x0087fee0
+   0 +0x0 listener array elem=EventListenerData esize=0x28 delta=4
+
+== cFlowingWaterData size=0x1ec members=24 table=0x01416cb0 registered=0x010e6930 crc=0xafdb7079
+   0 +0x0 size cSPVector2
+   1 +0x8 reflection char x128
+   2 +0x88 flow char x128
+   3 +0x108 normal char x128
+   4 +0x188 diffuseTint cSPVector3
+   5 +0x194 specularTint cSPVector3
+   6 +0x1a0 depthFogColor cSPVector3
+   7 +0x1ac tile cSPVector2
+   8 +0x1b4 normalLevel float
+   9 +0x1b8 specExponent float
+   10 +0x1bc fresnel_bias float
+   11 +0x1c0 fresnel_power float
+   12 +0x1c4 refract_level float
+   13 +0x1c8 reflect_level float
+   14 +0x1cc depth_fog float
+   15 +0x1d0 refract_cue_bias float
+   16 +0x1d4 refract_cue_scale float
+   17 +0x1d8 reflect_cue_bias float
+   18 +0x1dc reflect_cue_scale float
+   19 +0x1e0 normal_cue_bias float
+   20 +0x1e4 normal_cue_scale float
+   21 +0x1e8 soft_edges bool
+   22 +0x1e9 enable bool
+   23 +0x1ea display_volume bool
+
+== cGameObjectGfxStateData size=0xc8 members=7 table=0x01417710 registered=0x010e7360 crc=0xe0a19531
+   0 +0xc name Key delta=-12
+   1 +0x1c model Key delta=-12
+   2 +0x20 modelPath char x128
+   3 +0xc0 prefab asset
+   4 +0xac animation Key delta=-12
+   5 +0xbc audio Key delta=-12
+   6 +0xc4 animationLoops bool
+
+== cGameObjectGfxStates size=0x8 members=1 table=0x014179b0 registered=0x010e751d crc=0x2f8fcd10 postload=0x009a3f00
+   0 +0x0 state array elem=cGameObjectGfxStateData esize=0xc8 delta=4
+
+== GameObjectGfxStateTuning size=0x18 members=3 table=0x01417a10 registered=0x010e792d crc=0x7a01f862
+   0 +0xc name Key delta=-12
+   1 +0x10 animationStartTime float
+   2 +0x14 animationRate float
+
+== cGrassData size=0x2f4 members=26 table=0x01417b50 registered=0x010e98e0 crc=0xc7a0de4d
+   0 +0x0 diffuse char x128
+   1 +0x80 normal char x128
+   2 +0x100 mat char x128
+   3 +0x180 cut char x128
+   4 +0x200 outline char x128
+   5 +0x2b4 cutTopLeft cSPVector2
+   6 +0x2bc cutBottomRight cSPVector2
+   7 +0x280 diffuseTint cSPVector3
+   8 +0x28c specularTint cSPVector3
+   9 +0x298 size cSPVector3
+   10 +0x2a4 offset cSPVector2
+   11 +0x2ac tile cSPVector2
+   12 +0x2c4 normalLevel float
+   13 +0x2c8 flexibility float
+   14 +0x2cc glowLevel float
+   15 +0x2d0 emissiveLevel float
+   16 +0x2d4 density float
+   17 +0x2d8 posVari float
+   18 +0x2dc heightVari float
+   19 +0x2e0 width float
+   20 +0x2e4 bend float
+   21 +0x2e8 bendVari float
+   22 +0x2ec seed int
+   23 +0x2f0 cast_shadows bool
+   24 +0x2f1 enable bool
+   25 +0x2f2 display_volume bool
+
+== cPointLightData size=0xc4 members=14 table=0x01418590 registered=0x010eaaf0 crc=0xf8cccf06
+   0 +0x0 diffuse_color cSPVector3
+   1 +0xc diffuse_lamp_power float
+   2 +0x10 specular_lamp_power float
+   3 +0x14 inner_radius float
+   4 +0x18 radius float
+   5 +0x1c gobo char x128
+   6 +0x9c frames int
+   7 +0xa0 has_spec bool
+   8 +0xa1 enable bool
+   9 +0xa2 show_volume bool
+   10 +0xa4 wind_blown bool
+   11 +0xa8 wind_pivot_pos cSPVector3
+   12 +0xb4 wind_pivot_rot cSPVector3
+   13 +0xc0 wind_flex float
+
+== cSpotLightData size=0xd0 members=19 table=0x01418ad0 registered=0x010ec2a0 crc=0x6982a84b
+   0 +0x0 diffuse_color cSPVector3
+   1 +0xc diffuse_lamp_power float
+   2 +0x10 specular_lamp_power float
+   3 +0x14 inner_radius float
+   4 +0x18 radius float
+   5 +0x1c falloff float
+   6 +0x20 length float
+   7 +0x24 shadow_bias float
+   8 +0x28 gobo char x128
+   9 +0xa8 frames int
+   10 +0xac has_spec bool
+   11 +0xad enable bool
+   12 +0xae shadow_caster bool
+   13 +0xaf show_frustum bool
+   14 +0xb0 show_volume bool
+   15 +0xb2 wind_blown bool
+   16 +0xb4 wind_pivot_pos cSPVector3
+   17 +0xc0 wind_pivot_rot cSPVector3
+   18 +0xcc wind_flex float
+
+== cLineLightData size=0xc4 members=14 table=0x014191f0 registered=0x010ed440 crc=0xa4b3135a
+   0 +0x0 diffuse_color cSPVector3
+   1 +0xc diffuse_lamp_power float
+   2 +0x10 specular_lamp_power float
+   3 +0x14 inner_radius float
+   4 +0x18 radius float
+   5 +0x1c length float
+   6 +0x20 gobo char x128
+   7 +0xac has_spec bool
+   8 +0xa1 enable bool
+   9 +0xa2 show_volume bool
+   10 +0xa4 wind_blown bool
+   11 +0xa8 wind_pivot_pos cSPVector3
+   12 +0xb4 wind_pivot_rot cSPVector3
+   13 +0xc0 wind_flex float
+
+== cParallelLightData size=0x54 members=12 table=0x01419730 registered=0x010ee38d crc=0x45c48e85
+   0 +0x18 diffuse_color cSPVector3
+   1 +0x24 diffuse_lamp_power float
+   2 +0x28 specular_lamp_power float
+   3 +0x2c fill_diffuse cSPVector3
+   4 +0x38 fill_diffuse_power float
+   5 +0x3c fill_specular_power float
+   6 +0x40 has_spec bool
+   7 +0x41 enable bool
+   8 +0x44 type enum enum=0x01418520
+   9 +0x48 radius float
+   10 +0x4c inner_radius float
+   11 +0x50 shadowed enum enum=0x01418560
+
+== Socket size=0xc members=3 table=0x01419e40 registered=0x010ee7cd crc=0xb43436d8 postload=0x00883340
+   0 +0x0 type enum enum=0x01419c04
+   1 +0x8 texture char*
+   2 +0x4 thumbnailTexture char*
+
+== cConvexShapeData size=0x8 members=1 table=0x01419f60 registered=0x010ee90d crc=0xfc470ba6 postload=0x009a3f00
+   0 +0x0 point array elem=cSPVector2 esize=0x8 delta=4
+
+== Shape size=0x18 members=4 table=0x01419fc0 registered=0x010eeccd crc=0xbb5640f1 postload=0x00882cb0
+   0 +0x0 texture char*
+   1 +0x4 maxOwnable uint32_t
+   2 +0x8 convexShape array elem=cConvexShapeData esize=0x8 delta=4
+   3 +0x10 category enum enum=0x01419bb4
+
+== cPerkSocketData size=0xc members=2 table=0x0141a140 registered=0x010eeebd crc=0x316098f9
+   0 +0x0 asset asset
+   1 +0x4 position cSPVector2
+
+== PerkShape size=0x38 members=8 table=0x0141a200 registered=0x010ef57d crc=0xafb052e6 postload=0x00887ca0
+   0 +0x0 collectionItem asset
+   1 +0x10 inventoryIcon Key delta=-12
+   2 +0x14 tags bitfield enum=0x01419c28
+   3 +0x18 shape asset
+   4 +0x1c socketCategory enum enum=0x01419be4
+   5 +0x20 socket array elem=cPerkSocketData esize=0xc delta=4
+   6 +0x28 attribute array elem=cPerkAttributeData esize=0xc delta=4
+   7 +0x30 modifier array elem=cPerkModifierData esize=0x8 delta=4
+
+== Gem size=0x28 members=8 table=0x0141a500 registered=0x010efc4d crc=0xb8994523 postload=0x00882ff0
+   0 +0x0 type enum enum=0x01419c04
+   1 +0x4 collectionItem asset
+   2 +0x14 tags bitfield enum=0x01419c28
+   3 +0x8 texture char*
+   4 +0xc gemIcon char*
+   5 +0x10 maxOwnable uint32_t
+   6 +0x18 attribute array elem=cPerkAttributeData esize=0xc delta=4
+   7 +0x20 modifier array elem=cPerkModifierData esize=0x8 delta=4
+
+== LoadoutPage size=0x8 members=2 table=0x0141a800 registered=0x010efe2d crc=0x7b257609
+   0 +0x0 collectionItem asset
+   1 +0x4 numGridSegments uint32_t
+
+== cPerkAttributeData size=0xc members=3 table=0x0141a8c0 registered=0x010f010d crc=0x9fc1fa7f
+   0 +0x0 id enum enum=0x012464b8
+   1 +0x8 value float
+   2 +0x4 op enum enum=0x01419c70
+
+== cPerkModifierData size=0x8 members=1 table=0x0141a9e0 registered=0x010f022d crc=0x181c9ca6
+   0 +0x4 id StringHash delta=-4
+
+== LocomotionTuning size=0xc members=3 table=0x0141aa60 registered=0x010f067d crc=0x523cf72c
+   0 +0x0 acceleration float
+   1 +0x4 deceleration float
+   2 +0x8 turnRate float
+
+== LootBagDropType size=0xc members=2 table=0x0141abc0 registered=0x010f08ed crc=0xaf56318a
+   0 +0x0 Name StringHash delta=4
+   1 +0x8 Chance float
+
+== LootBagRarity size=0x5c members=3 table=0x0141ac80 registered=0x010f0bcd crc=0x25eb752a
+   0 +0x0 DropType array elem=LootBagDropType esize=0xc delta=4
+   1 +0x8 TelemetryPrefix char x80
+   2 +0x58 RarityScore float
+
+== LootBagRarityContainer size=0x4 members=1 table=0x0141ada0 registered=0x010f0ccd crc=0x4ad03e02
+   0 +0x0 asset asset
+
+== LootBagDrop size=0x14 members=4 table=0x0141ae00 registered=0x010f107d crc=0xbc6be06d postload=0x009a3f00
+   0 +0x0 DropType enum enum=0x0141ab80
+   1 +0x4 Drop array elem=LootBagDrop esize=0x14 delta=4
+   2 +0xc Rarity asset
+   3 +0x10 Chance float
+
+== LootBag size=0xb0 members=7 table=0x0141af80 registered=0x010f1660 crc=0x1b0b0c15
+   0 +0x0 Drop nullable elem=LootBagDrop esize=0x14
+   1 +0x4 RequiredBagScore int
+   2 +0x8 LootBagNoun asset
+   3 +0xc LootBagEffect asset
+   4 +0x1c TierName Key delta=-12
+   5 +0x2c TierIcon Key delta=-12
+   6 +0x30 Name char x128
+
+== LootBagAssetContainer size=0x4 members=1 table=0x0141b220 registered=0x010f176d crc=0x3503d874
+   0 +0x0 asset asset
+
+== LootBagTuning size=0x3c members=12 table=0x0141b280 registered=0x010f20fd crc=0x548eb57e
+   0 +0x0 LootBag array elem=LootBagAssetContainer esize=0x4 delta=4
+   1 +0x8 LootBagRarity array elem=LootBagRarityContainer esize=0x4 delta=4
+   2 +0x10 FTUELoot array elem=uint32_t esize=0x4 delta=4
+   3 +0x18 FTUEBag_Loot asset
+   4 +0x1c FTUEBag_Default asset
+   5 +0x20 Points_MaxBaseRoll int
+   6 +0x24 Points_WonGame int
+   7 +0x28 Points_FirstWinOfTheDay int
+   8 +0x2c CheatPoints_BaseRoll int
+   9 +0x30 CheatPoints_WonGame int
+   10 +0x34 CheatPoints_FirstWinOfTheDay int
+   11 +0x38 CheatPoints_Karma int
+
+== cMapCameraData size=0x54 members=7 table=0x0141b700 registered=0x010f29dd crc=0xfe9b85cd
+   0 +0x0 name char x64
+   1 +0x40 fov float
+   2 +0x44 aspect float
+   3 +0x48 near float
+   4 +0x4c far float
+   5 +0x50 show_bounds bool
+   6 +0x51 show_pip bool
+
+== minimapDefinition size=0xa4 members=11 table=0x0141b9c0 registered=0x010f3460 crc=0xccfa1497 postload=0x008951d0
+   0 +0x0 DrawRange bool
+   1 +0x1 DrawSpinner bool
+   2 +0x4 Scale float
+   3 +0x8 Icon char x128
+   4 +0x88 UseShaperIcon bool
+   5 +0x2 SuppressPings bool
+   6 +0x8c ColorOverride uint32_t
+   7 +0x9c DeadVisibilityTimer float
+   8 +0x90 TitanNodeLockedMinimapData asset
+   9 +0x94 DeadMinimapData asset
+   10 +0x98 ReturnToBaseMinimapData asset
+
+== cOccluderData size=0x2c members=4 table=0x0141bde0 registered=0x010f3a0d crc=0x6eed7cef
+   0 +0x0 name char x32
+   1 +0x20 width int
+   2 +0x24 height int
+   3 +0x28 active bool
+
+== DemoModeLoot size=0x4 members=1 table=0x0141bf60 registered=0x010f3b0d crc=0x41f0b206
+   0 +0x0 collectionItem asset
+
+== SharedComponentData size=0x1c members=7 table=0x0141bfc0 registered=0x010f438d crc=0x44a67751
+   0 +0x0 audioTrigger nullable elem=AudioTriggerDef esize=0x20
+   1 +0x4 teleporter nullable elem=TeleporterDef esize=0xc
+   2 +0x8 eventListenerDef nullable elem=EventListenerDef esize=0x8
+   3 +0x10 spawnPointDef nullable elem=SpawnPointDef esize=0x3c
+   4 +0xc spawnTrigger nullable elem=SpawnTriggerDef esize=0x14
+   5 +0x14 defaultGfxState nullable elem=GameObjectGfxStateTuning esize=0x18
+   6 +0x18 combatant nullable elem=CombatantDef esize=0x14
+
+== cSplineCameraData size=0x84 members=2 table=0x0141c2e0 registered=0x010f4680 crc=0x7aad1613
+   0 +0x0 node cSplineCameraNodeBaseData
+   1 +0x80 duration float
+
+== cSplineCameraNodeBaseData size=0x80 members=8 table=0x0141c3a0 registered=0x010f5100 crc=0xa0cbc24c
+   0 +0x0 name char x32
+   1 +0x20 fov float
+   2 +0x24 near float
+   3 +0x28 far float
+   4 +0x2c knot int
+   5 +0x30 wait float
+   6 +0x34 skipable bool
+   7 +0x35 message char x75
+
+== cSplineCameraNodeData size=0x80 members=1 table=0x0141c6a0 registered=0x010f52a0 crc=0xb6b3ba91
+   0 +0x0 node cSplineCameraNodeBaseData
+
+== cSplinePathNodeData size=0x30 members=5 table=0x0141c720 registered=0x010f58ed crc=0xd5efc44e
+   0 +0x0 name char x32
+   1 +0x20 knot int
+   2 +0x24 lane int
+   3 +0x28 team int
+   4 +0x2c deleteInGame bool
+
+== TeleporterDef size=0xc members=3 table=0x0141c910 registered=0x010f5ced crc=0x4b9d491d
+   0 +0x0 destinationMarkerId uint32_t
+   1 +0x4 triggerVolume nullable elem=TriggerVolumeDef esize=0x88
+   2 +0x8 deferTriggerCreation bool
+
+== AnnouncerPack size=0x54 members=2 table=0x0141ca40 registered=0x010f5fcd crc=0x0aed94af
+   0 +0x0 identifier char x80
+   1 +0x50 collectionItem asset
+
+== AvatarIcon size=0x4 members=1 table=0x0141cb00 registered=0x010f60cd crc=0xc5f25718
+   0 +0x0 collectionItem asset
+
+== LivingLoreVote size=0x8 members=2 table=0x0141cb60 registered=0x010f62bd crc=0xa5b520c1
+   0 +0x0 collectionItem asset
+   1 +0x4 loreVoteOption enum enum=0x0141ca30
+
+== cWaterData size=0x374 members=31 table=0x0141cc40 registered=0x010f8970 crc=0x6db8f382
+   0 +0x370 mWaterType enum enum=0x0123ca7c
+   1 +0x0 size cSPVector2
+   2 +0x8 material char x128
+   3 +0x88 reflection char x128
+   4 +0x108 mask char x128
+   5 +0x188 normal_mask char x128
+   6 +0x208 outline char x128
+   7 +0x288 splash_effect char x64
+   8 +0x2c8 foam_effect char x64
+   9 +0x308 diffuseTint cSPVector3
+   10 +0x314 specularTint cSPVector3
+   11 +0x320 depthFogColor cSPVector3
+   12 +0x32c tile cSPVector2
+   13 +0x334 normalLevel float
+   14 +0x338 specExponent float
+   15 +0x33c fresnel_bias float
+   16 +0x340 fresnel_power float
+   17 +0x344 refract_level float
+   18 +0x348 reflect_level float
+   19 +0x34c depth_fog float
+   20 +0x350 refract_cue_bias float
+   21 +0x354 refract_cue_scale float
+   22 +0x358 reflect_cue_bias float
+   23 +0x35c reflect_cue_scale float
+   24 +0x360 normal_cue_bias float
+   25 +0x364 normal_cue_scale float
+   26 +0x368 simulation int
+   27 +0x36c soft_edges bool
+   28 +0x36d interactive bool
+   29 +0x36e enable bool
+   30 +0x36f display_volume bool
+
+== cNavmeshMarkerData size=0x2 members=2 table=0x0141d980 registered=0x010f8dbd crc=0xddb5dd37
+   0 +0x0 allowPlayersHere bool
+   1 +0x1 allowNPCsHere bool
+
+== NavMeshLayer size=0x18 members=6 table=0x0141da40 registered=0x010f957d crc=0x3d46da68
+   0 +0x0 name char*
+   1 +0x4 voxelTestSize float
+   2 +0x8 agentRadius float
+   3 +0xc agentHeight float
+   4 +0x10 maxStepSize float
+   5 +0x14 maxWalkableSlopeDegrees float
+
+== NavPowerTuning size=0xc members=2 table=0x0141dc80 registered=0x010f984d crc=0x4f190d2a
+   0 +0x0 maxWalkableSlopeDegrees float
+   1 +0x4 navMeshLayers array elem=NavMeshLayer esize=0x18 delta=4
+
+== SpawnPointDef size=0x3c members=13 table=0x0141eda0 registered=0x010fa83d crc=0x9c44dd0c
+   0 +0x0 spawnType enum enum=0x0141ebf0
+   1 +0x4 spawnTeam enum enum=0x0141ec18
+   2 +0x8 campType enum enum=0x0141ec30
+   3 +0xc spawnDelay float
+   4 +0x10 respawnTime float
+   5 +0x14 timeout float
+   6 +0x18 minorCreep asset
+   7 +0x1c mediumCreep asset
+   8 +0x20 majorCreep asset
+   9 +0x24 uberCreep asset
+   10 +0x28 campUpgrade array elem=cSPVector4 esize=0x10 delta=4
+   11 +0x30 upgradeTime array elem=float esize=0x4 delta=4
+   12 +0x38 forceUpgrade bool
+
+== SpawnTriggerDef size=0x14 members=2 table=0x0141f280 registered=0x010fab0d crc=0xe6eed9dd
+   0 +0x0 triggerVolume nullable elem=TriggerVolumeDef esize=0x88
+   1 +0x10 deathEvent Key delta=-12
+
+== cMissionDefinition size=0x10 members=1 table=0x0141f360 registered=0x010fac9d crc=0x6728d7ae
+   0 +0xc condition Key delta=-12
+
+== cBotShaperType size=0xc members=3 table=0x0141f3c0 registered=0x010faf9d crc=0x8e0c0ba7 postload=0x009a3f00
+   0 +0x0 archetype enum enum=0x0124982c
+   1 +0x4 attackStyle enum enum=0x0123eaf4
+   2 +0x8 damageType enum enum=0x0123eb0c
+
+== cBotSlot size=0x8 members=1 table=0x0141f4e0 registered=0x010fb0bd crc=0xdf56ccae
+   0 +0x0 shaperType array elem=cBotShaperType esize=0xc delta=4
+
+== BotPlan size=0x20 members=5 table=0x0141f540 registered=0x010fb51d crc=0x6e6ec4d2
+   0 +0x0 bot array elem=asset esize=0x4 delta=4
+   1 +0x8 mission array elem=cMissionDefinition esize=0x10 delta=4
+   2 +0x18 slot array elem=cBotSlot esize=0x8 delta=4
+   3 +0x10 topLaners int
+   4 +0x14 botLaners int
+
+== cGameObjectCreateData size=0x74 members=9 table=0x0141f8a0 registered=0x010fbd1d crc=0x85ff855c
+   0 +0x0 noun asset
+   1 +0x4 position cSPVector3
+   2 +0x10 rotXDegrees float
+   3 +0x14 rotYDegrees float
+   4 +0x18 rotZDegrees float
+   5 +0x1c scale float
+   6 +0x20 team uint8_t
+   7 +0x24 ownerID tObjID
+   8 +0x28 flags uint8_t
+
+== sporelabsObject size=0x950 members=18 table=0x0141fc00 registered=0x010fcce0 crc=0xd0d38af1
+   0 +0x888 mVisibleToTeam uint8_t
+   1 +0x87c mServerGrassId uint32_t
+   2 +0x880 mServerGrassMapPackedXY uint32_t
+   3 +0x884 mVisionRadius float
+   4 +0x54 mVisible bool
+   5 +0x838 mHideAttachedEffects uint8_t
+   6 +0x8 mScale float
+   7 +0x83c mGraphicsState uint32_t
+   8 +0x840 mGraphicsStateStartTimeMs uint64_t
+   9 +0x58 mbHasCollision bool
+   10 +0x88c mInteractableState uint32_t
+   11 +0x848 mMaterialsToTurnOff uint32_t x4
+   12 +0x4d mTeam uint8_t
+   13 +0x48 mOwnerID tObjID
+   14 +0xc mMarkerScale float
+   15 +0x84 sourceMarkerKey.markerId uint32_t
+   16 +0x56 mbPlayerControlled bool
+   17 +0x4c mPlayerIdx uint8_t
+
+== cAttachedEffectData size=0x38 members=7 table=0x014202c0 registered=0x010fd2dd crc=0x3cea1c66
+   0 +0x10 mEffectAsset asset
+   1 +0x14 mEffectTarget tObjID
+   2 +0x18 mEffectTargetPoint cSPVector3
+   3 +0x24 mEffectFacing cSPVector3
+   4 +0x30 mCasterPlayerIndex uint8_t
+   5 +0x31 mCasterTeam uint8_t
+   6 +0x34 mAttachHandle uint32_t
+
+== cLocomotionData size=0x2d0 members=21 table=0x01420560 registered=0x010fe470 crc=0x7f441c3a
+   0 +0xe2 mClientPathXY uint16_t
+   1 +0xe0 mClientPathBlock uint16_t
+   2 +0xf4 mFacing cSPVector3
+   3 +0x11c mTargetPosition cSPVector3
+   4 +0x8 mTargetObjectId tObjID
+   5 +0xb8 mGoalFlags uint32_t
+   6 +0x15 mInheritPosition bool
+   7 +0x16 mDisableRepulsion bool
+   8 +0xe4 mClientJumpGoal cSPVector3
+   9 +0x14 mMovementType uint8_t
+   10 +0x10 mLockedFacingTargetId tObjID
+   11 +0x18 mFollowerParams.mMine tObjID
+   12 +0x40 mFollowerParams.mStartTimeMs uint64_t
+   13 +0x1c mFollowerParams.mGatherPoint cSPVector3
+   14 +0x28 mFollowerParams.mDropOffPoint cSPVector3
+   15 +0x48 mFollowerParams.mTravelTime float
+   16 +0x4c mFollowerParams.mFullLoopTime float
+   17 +0x58 mOffset cSPVector3
+   18 +0x68 mOrbitCreateTime uint64_t
+   19 +0x70 mOrbitPhaseOffset float
+   20 +0xa8 mFollowSpeed float
+
+== cProjectileData size=0x200 members=29 table=0x01420d40 registered=0x010ffc40 crc=0xa007fb24
+   0 +0x84 mLobParams.mStartPos cSPVector3
+   1 +0x90 mLobParams.mEndPos cSPVector3
+   2 +0xb0 mLobParams.mTime float
+   3 +0xb4 mLobParams.mDuration float
+   4 +0xc4 mLobParams.mPlaneDirLinearParam float
+   5 +0xc8 mLobParams.mUpLinearParam float
+   6 +0xcc mLobParams.mUpQuadraticParam float
+   7 +0x9c mLobParams.mUpDir cSPVector3
+   8 +0xb8 mLobParams.mPlaneDir cSPVector3
+   9 +0x8 mProjectileType uint8_t x4
+   10 +0x80 mTargetObjectId tObjID
+   11 +0x18 mProjectileParams.mSpeed float
+   12 +0x1c mProjectileParams.mAcceleration float
+   13 +0x20 mProjectileParams.mTurnRate float
+   14 +0x24 mProjectileParams.mRange float
+   15 +0x28 mProjectileParams.mSpinRate float
+   16 +0x2c mProjectileParams.mDirection cSPVector3
+   17 +0x38 mProjectileParams.mTargetTypeMask uint32_t
+   18 +0x48 mProjectileParams.mDesiredZ float
+   19 +0x4c mProjectileParams.mProjectileFlags uint8_t
+   20 +0x54 mProjectileParams.mTargetZOffset float
+   21 +0x58 mProjectileParams.mCurrentLinearVelocity cSPVector3
+   22 +0x64 mProjectileParams.mCurrentAngularVelocity cSPVector3
+   23 +0xd0 mLerpParams.mStartPos cSPVector3
+   24 +0xdc mLerpParams.mEndPos cSPVector3
+   25 +0xe8 mLerpParams.mTime float
+   26 +0xec mLerpParams.mDuration float
+   27 +0xf0 mLerpParams.mPolynomialOrder float
+   28 +0xf4 mLerpParams.mLerpFlags uint8_t
+
+== cAnimationData size=0xc0 members=12 table=0x01421820 registered=0x01100650 crc=0xf2ccb3f2
+   0 +0x2c mOverrideAnimations[kAnimationOverride_Idle] uint32_t
+   1 +0x30 mOverrideAnimations[kAnimationOverride_Move] uint32_t
+   2 +0x34 mOverrideAnimations[kAnimationOverride_MoveStop] uint32_t
+   3 +0x38 mOverrideAnimations[kAnimationOverride_CombatIdle] uint32_t
+   4 +0x3c mOverrideAnimations[kAnimationOverride_CombatMove] uint32_t
+   5 +0x40 mOverrideAnimations[kAnimationOverride_CombatMoveStop] uint32_t
+   6 +0x44 mOverrideAnimations[kAnimationOverride_CombatActivation] uint32_t
+   7 +0x8 mLastAnimationState uint32_t
+   8 +0x10 mLastAnimationPlayTimeMs uint64_t
+   9 +0x18 mLastAnimationTimeScale float
+   10 +0x1c mLastAnimationState_Overlay uint32_t
+   11 +0x20 mLastAnimationPlayTimeMs_Overlay uint64_t
+
+== cAttributeData size=0x55c members=69 table=0x01421ca0 registered=0x01103ea0 crc=0x8ff56932
+   0 +0x8 mCachedAttributeValues[kAttribute_Power] float
+   1 +0xc mCachedAttributeValues[kAttribute_Mastery] float
+   2 +0x10 mCachedAttributeValues[kAttribute_MaxHealth] float
+   3 +0x14 mCachedAttributeValues[kAttribute_MaxResourcePoints] float
+   4 +0x18 mCachedAttributeValues[kAttribute_HealthRegen] float
+   5 +0x1c mCachedAttributeValues[kAttribute_ResourcePointRegen] float
+   6 +0x20 mCachedAttributeValues[kAttribute_ResourcePointPercentRegen] float
+   7 +0x28 mCachedAttributeValues[kAttribute_MovementSpeed] float
+   8 +0x2c mCachedAttributeValues[kAttribute_MovementSpeedFlatDecrease] float
+   9 +0x30 mCachedAttributeValues[kAttribute_MovementSpeedCap] float
+   10 +0x34 mCachedAttributeValues[kAttribute_MovementSpeedPercentIncrease] float
+   11 +0x38 mCachedAttributeValues[kAttribute_MovementSpeedPercentDecrease] float
+   12 +0x3c mCachedAttributeValues[kAttribute_SlowEffectivenessReduction] float
+   13 +0x40 mCachedAttributeValues[kAttribute_AttackSpeedDecrease] float
+   14 +0x44 mCachedAttributeValues[kAttribute_AttackSpeedIncrease] float
+   15 +0x48 mCachedAttributeValues[kAttribute_Haste] float
+   16 +0x4c mCachedAttributeValues[kAttribute_SpellCooldownReduction] float
+   17 +0x50 mCachedAttributeValues[kAttribute_AbilityCooldownReduction] float
+   18 +0x54 mCachedAttributeValues[kAttribute_BasicRangeScale] float
+   19 +0x58 mCachedAttributeValues[kAttribute_AbilityRangeScale] float
+   20 +0x5c mCachedAttributeValues[kAttribute_DamageReduction] float
+   21 +0x60 mCachedAttributeValues[kAttribute_BasicReduction] float
+   22 +0x64 mCachedAttributeValues[kAttribute_AbilityReduction] float
+   23 +0x68 mCachedAttributeValues[kAttribute_PhysicalDamageReduction] float
+   24 +0x6c mCachedAttributeValues[kAttribute_MagicalDamageReduction] float
+   25 +0x70 mCachedAttributeValues[kAttribute_ArmorReductionFlatDecrease] float
+   26 +0x74 mCachedAttributeValues[kAttribute_ArmorReductionPercentDecrease] float
+   27 +0x78 mCachedAttributeValues[kAttribute_MagicResistReductionFlatDecrease] float
+   28 +0x7c mCachedAttributeValues[kAttribute_MagicResistReductionPercentDecrease] float
+   29 +0x80 mCachedAttributeValues[kAttribute_DefensePenetration] float
+   30 +0x84 mCachedAttributeValues[kAttribute_PercentDefensePenetration] float
+   31 +0x8c mCachedAttributeValues[kAttribute_PercentDamageDebuff] float
+   32 +0x90 mCachedAttributeValues[kAttribute_PercentCriticalStrikeDamage] float
+   33 +0x94 mCachedAttributeValues[kAttribute_FlatCriticalStrikeDamage] float
+   34 +0x98 mCachedAttributeValues[kAttribute_PercentSpellOverloadDamage] float
+   35 +0x9c mCachedAttributeValues[kAttribute_FlatSpellOverloadDamage] float
+   36 +0xa0 mCachedAttributeValues[kAttribute_MaxHealthIncrease] float
+   37 +0xa4 mCachedAttributeValues[kAttribute_HealingReduction] float
+   38 +0xa8 mCachedAttributeValues[kAttribute_HealIncrease] float
+   39 +0xac mCachedAttributeValues[kAttribute_Silence] float
+   40 +0xb0 mCachedAttributeValues[kAttribute_AutoAttackSilence] float
+   41 +0xb4 mCachedAttributeValues[kAttribute_Immobilized] float
+   42 +0xb8 mCachedAttributeValues[kAttribute_ImmobilizedNoRotate] float
+   43 +0xbc mCachedAttributeValues[kAttribute_UnitPassThrough] float
+   44 +0xc0 mCachedAttributeValues[kAttribute_Immune] float
+   45 +0xc4 mCachedAttributeValues[kAttribute_StealthDetection] float
+   46 +0xc8 mCachedAttributeValues[kAttribute_Untargetable] float
+   47 +0xcc mCachedAttributeValues[kAttribute_Unattackable] float
+   48 +0xd0 mCachedAttributeValues[kAttribute_Suppressed] float
+   49 +0xd4 mCachedAttributeValues[kAttribute_HighMobilityDisabled] float
+   50 +0xdc mCachedAttributeValues[kAttribute_CrowdControlDurationDecrease] float
+   51 +0xe0 mCachedAttributeValues[kAttribute_ImmuneToDebuffs] float
+   52 +0xe4 mCachedAttributeValues[kAttribute_ImmuneToKnockback] float
+   53 +0xe8 mCachedAttributeValues[kAttribute_ImmuneToStunned] float
+   54 +0xec mCachedAttributeValues[kAttribute_ImmuneToFear] float
+   55 +0xf0 mCachedAttributeValues[kAttribute_ImmuneToSilence] float
+   56 +0xf4 mCachedAttributeValues[kAttribute_ImmuneToRooted] float
+   57 +0xf8 mCachedAttributeValues[kAttribute_ImmuneToSlow] float
+   58 +0xfc mCachedAttributeValues[kAttribute_ImmuneToSuppression] float
+   59 +0x100 mCachedAttributeValues[kAttribute_BehindDirectDamageIncrease] float
+   60 +0x104 mCachedAttributeValues[kAttribute_AoeResistance] float
+   61 +0x108 mCachedAttributeValues[kAttribute_LifeDrain] float
+   62 +0x10c mCachedAttributeValues[kAttribute_BuffDuration] float
+   63 +0x110 mCachedAttributeValues[kAttribute_BodyScale] float
+   64 +0x114 mCachedAttributeValues[kAttribute_StructureDamageDeltIncrease] float
+   65 +0x118 mCachedAttributeValues[kAttribute_StructureDamageTakenReduction] float
+   66 +0x11c mCachedAttributeValues[kAttribute_VimPer5] float
+   67 +0x120 mCachedAttributeValues[kAttribute_ExperiencePercentIncrease] float
+   68 +0x124 mCachedAttributeValues[kAttribute_HideHealthBar] float
+
+== cCombatantData size=0x88 members=5 table=0x01423680 registered=0x01104350 crc=0xcb64dcaa
+   0 +0x48 mHitPoints float
+   1 +0x4c mShieldHealth float
+   2 +0x50 mMagicalShieldHealth float
+   3 +0x54 mPhysicalShieldHealth float
+   4 +0x58 mResourcePoints float
+
+== cInteractableData size=0x14 members=1 table=0x01423860 registered=0x0110447d crc=0x549a3907
+   0 +0x8 mNumTimesUsed int
+
+== cAgentBlackboard size=0x1f90 members=6 table=0x014238c0 registered=0x01104990 crc=0x72f3dedd
+   0 +0x1e5c mTarget tObjID
+   1 +0x1e73 mbBattleReady bool
+   2 +0x1e71 mbHasEngaged bool
+   3 +0x1e74 mStealthed bool
+   4 +0x1e75 mbInGrass bool
+   5 +0x1e90 mNPCLevel uint32_t
+
+== cAssetProperty size=0xbc members=4 table=0x01423b00 registered=0x01104d40 crc=0xd270c5de
+   0 +0x4 name char x80
+   1 +0x58 value char x80
+   2 +0x0 key guid
+   3 +0x54 type guid
+
+== cAssetPropertyList size=0x8 members=1 table=0x01423c80 registered=0x01104e8d crc=0xb49e769c postload=0x008b3d00 hook4=0x008b3f10
+   0 +0x0 mpAssetProperties array elem=cAssetProperty esize=0xbc delta=4
+
+== ability size=0x4a8 members=79 table=0x01423ce0 registered=0x01108ec0 crc=0xcce6e16f
+   0 +0x57 requiresAgent bool
+   1 +0x48c requiresAgentOnReactivation bool
+   2 +0xa4 ignoreRequiresAgent bool
+   3 +0x494 castOnTopFlags uint32_t
+   4 +0x58 timetorelease float x8
+   5 +0x78 reactivationTimeToRelease float x8
+   6 +0x98 allowsMovement bool
+   7 +0x99 reactivationAllowsMovement bool
+   8 +0x9a cancelsMovement bool
+   9 +0x9b reactivationCancelsMovement bool
+   10 +0x3c8 maxStackCount int x8
+   11 +0x3e8 stackRanksSeparately bool
+   12 +0x3c4 shouldPursue bool
+   13 +0x408 hasStaticCooldown bool
+   14 +0x409 alwaysUseCursorPos bool
+   15 +0x3ea selfInterruptible bool
+   16 +0x40a faceTargetOnCreate bool
+   17 +0x40b faceTargetOnReactivation bool
+   18 +0x3e9 finishOnDeath bool
+   19 +0x3f0 descriptors uint32_t x2
+   20 +0x3f8 reactivationDescriptors uint32_t x2
+   21 +0x400 debuffDescriptors uint32_t
+   22 +0x404 deathRecapDescriptors uint32_t
+   23 +0x9c modifierPriority int
+   24 +0xa0 useModifierPriority bool
+   25 +0xa1 deactivateOnInterrupt bool
+   26 +0xa2 minimapTargetable bool
+   27 +0xa3 reactivationMinimapTargetable bool
+   28 +0x40c statusIdleAnimation guid
+   29 +0x410 statusMoveAnimation guid
+   30 +0x414 statusMoveStopAnimation guid
+   31 +0x418 statusHeadEffect asset
+   32 +0x41c statusBodyEffect asset
+   33 +0x420 statusFootEffect asset
+   34 +0x424 activationType int
+   35 +0x428 deactivationType int
+   36 +0x42c interfaceType int
+   37 +0x430 reactivationInterfaceType int
+   38 +0x434 cooldownType int
+   39 +0x438 targetType uint32_t
+   40 +0x43c castType int
+   41 +0x444 controlsType int
+   42 +0x448 reactivationControlsType int
+   43 +0x440 reactivationCastType int
+   44 +0x15c customReticle char x128
+   45 +0x1dc radius float x8
+   46 +0x1fc angle float x8
+   47 +0x21c length float x8
+   48 +0x23c width float x8
+   49 +0x25c reactivationRadius float x8
+   50 +0x27c reactivationAngle float x8
+   51 +0x29c reactivationLength float x8
+   52 +0x2bc reactivationWidth float x8
+   53 +0xa5 icon char x128
+   54 +0x128 localizedGroup guid
+   55 +0x12c localizedName guid
+   56 +0x130 localizedDescription guid x8
+   57 +0x150 localizedDescriptionNoObject guid
+   58 +0x2dc cooldown float x8
+   59 +0x2fc hasteCoefficient float
+   60 +0x364 duration float x8
+   61 +0x384 range float x8
+   62 +0x3a4 reactivationRange float x8
+   63 +0x300 resourcePointCost float x8
+   64 +0x340 upkeepResourcePointCost float x8
+   65 +0x360 upkeepResourcePointTickRate float
+   66 +0x320 reactivationResourcePointCost float x8
+   67 +0x154 localizedShortDescription guid
+   68 +0x158 localizedShortShortDescription guid
+   69 +0x44c maxActivationCount uint32_t x8
+   70 +0x46c reactivationCooldown float x8
+   71 +0x490 revealType int
+   72 +0x498 continuesAttack bool
+   73 +0x499 reactivationContinuesAttack bool
+   74 +0x49a canInterrupt bool
+   75 +0x49c basicAttackDelay float
+   76 +0x4a0 basicAttackPursuitDelay float
+   77 +0x4a4 clearsTargetLock bool
+   78 +0x4a5 reactivationClearsTargetLock bool
+
+== AIDefinition size=0x130 members=9 table=0x01425a80 registered=0x01109660 crc=0x8a5eeafe
+   0 +0x0 ainode array elem=cAINode esize=0x1c delta=4
+   1 +0x14 deathAbility Key delta=-12
+   2 +0x24 deathCondition Key delta=-12
+   3 +0x34 passiveAbility Key delta=-12
+   4 +0x38 aggroType enum enum=0x0141f7a0
+   5 +0x3c combatIdle char x80
+   6 +0x8c passiveIdle char x80
+   7 +0xdc targetTooFar char x80
+   8 +0x12c alwaysRunAI bool
+
+== cAINode size=0x1c members=6 table=0x01425de0 registered=0x01109b6d crc=0x6a5112c8
+   0 +0x0 mpPhaseData asset
+   1 +0x4 mpPlanData asset
+   2 +0x8 nodeId int
+   3 +0xc nodeX int
+   4 +0x10 nodeY int
+   5 +0x14 output array elem=cLinkDefinition esize=0x2c delta=4
+
+== Plan size=0x1c members=7 table=0x01426020 registered=0x0110a21d crc=0xa3ff90b5
+   0 +0x0 output array elem=cLinkDefinition esize=0x2c delta=4
+   1 +0x8 phaseDecisionType enum enum=0x0141f7d8
+   2 +0xc planDecisionType enum enum=0x0141f7d8
+   3 +0x10 startNode bool
+   4 +0x11 noRepeats bool
+   5 +0x14 missionType uint32_t
+   6 +0x18 requestMission bool
+
+== Phase size=0x14 members=5 table=0x014262c0 registered=0x0110a6ed crc=0x7129f5cf
+   0 +0x0 gambit array elem=cGambitDefinition esize=0x2c delta=4
+   1 +0x8 phaseType enum enum=0x0141f7d8
+   2 +0xc startNode bool
+   3 +0xd noRepeats bool
+   4 +0x10 defaultBehavior char*
+
+== cConditionParamDefinition size=0xc members=3 table=0x014264a0 registered=0x0110aa4d crc=0x3a2b0038 postload=0x008abc60
+   0 +0x0 name char*
+   1 +0x4 type enum enum=0x0141f808
+   2 +0x8 value char*
+
+== cConditionDefinition size=0x20 members=5 table=0x014265c0 registered=0x0110af2d crc=0x9df6f86b
+   0 +0xc conditionFunc Key delta=-12
+   1 +0x14 negateCondition bool
+   2 +0x10 postfixOperator enum enum=0x0141f7f8
+   3 +0x15 useTargetInfo bool
+   4 +0x18 parameters array elem=cConditionParamDefinition esize=0xc delta=4
+
+== cLinkDefinition size=0x2c members=12 table=0x014267a0 registered=0x0110b90d crc=0x8ffbe5a5
+   0 +0x0 outputNode int
+   1 +0x4 condition array elem=cConditionDefinition esize=0x20 delta=4
+   2 +0xd activateOnce bool
+   3 +0xc startOnCooldown bool
+   4 +0xe checkOnSequenceEnd bool
+   5 +0x10 activateTime float
+   6 +0x14 checkTimeInterval float
+   7 +0x24 nodeX int
+   8 +0x28 nodeY int
+   9 +0x18 weight float
+   10 +0x1c cooldown float
+   11 +0x20 maxCooldown float
+
+== cGambitDefinition size=0x2c members=8 table=0x01426c20 registered=0x0110bfed crc=0x20fb1246
+   0 +0x0 condition array elem=cConditionDefinition esize=0x20 delta=4
+   1 +0x14 ability Key delta=-12
+   2 +0x18 abilitySlot enum enum=0x0141f830
+   3 +0x1c randomizeCooldown bool
+   4 +0x1d waitOnCondition bool
+   5 +0x20 weight float
+   6 +0x24 cooldown float
+   7 +0x28 maxCooldown float
+
+== cAICondition size=0x6c members=3 table=0x01426f20 registered=0x0110c2cd crc=0x691b5d9f
+   0 +0x0 conditionType int
+   1 +0x4 namespace char x80
+   2 +0x54 name char x16
+
+== CatalogEntry size=0x30 members=9 table=0x014272c0 registered=0x0110cbdd crc=0x6e486400
+   0 +0x0 assetNameType char*
+   1 +0x8 compileTime int64_t
+   2 +0x18 dataCrc uint32_t
+   3 +0x14 typeCrc uint32_t
+   4 +0x1c sourceFileNameType char*
+   5 +0x10 version int
+   6 +0x20 location uint8_t
+   7 +0x21 status uint8_t
+   8 +0x24 tags array elem=char* esize=0x4 delta=4
+
+== Catalog size=0x8 members=1 table=0x01427620 registered=0x0110ccfd crc=0x3097febd
+   0 +0x0 entries array elem=CatalogEntry esize=0x30 delta=4
+
+== MoveSpeedThreshold size=0x10 members=4 table=0x01427690 registered=0x0110d17d crc=0x22185c77
+   0 +0x0 lessThan float
+   1 +0x4 greaterThan float
+   2 +0x8 baseSpeed float
+   3 +0xc multiplier float
+
+== AttributeTuning size=0x24 members=8 table=0x01427810 registered=0x0110d85d crc=0xe4ed91e4
+   0 +0x0 basicAttackCooldownMinimum float
+   1 +0x4 hasteMultiplierCap float
+   2 +0x8 moveSpeedFromHasteRating float
+   3 +0xc criticalChanceFromMasteryRating float
+   4 +0x10 spellOverloadFromMasteryRating float
+   5 +0x14 criticalDamageBonusPercent float
+   6 +0x18 slowDiminishingReturnsMultiplier float
+   7 +0x1c MoveSpeedThreshold array elem=MoveSpeedThreshold esize=0x10 delta=4
+
+== BanterTuning size=0x3c members=15 table=0x01427b10 registered=0x0110e57d crc=0x2f135267
+   0 +0x0 updatePeriod float
+   1 +0x4 minimumBanterCooldown float
+   2 +0x8 friendlyBanterStartTime float
+   3 +0xc friendlyBanterEndTime float
+   4 +0x10 friendlyBanterRange float
+   5 +0x14 friendlyBanterCooldown float
+   6 +0x18 enemyBanterStartTime float
+   7 +0x1c enemyBanterEndTime float
+   8 +0x20 enemyBanterRange float
+   9 +0x24 enemyBanterCooldown float
+   10 +0x28 killBanterCooldown float
+   11 +0x2c maxNumberAssistVOPerKill int
+   12 +0x30 minimumEmoteCooldown float
+   13 +0x34 sequentialEmoteCooldown float
+   14 +0x38 numEmoteLines int
+
+== towerAugmentation size=0x8 members=1 table=0x014280e0 registered=0x0110e6bd crc=0xb1e97045
+   0 +0x4 name StringHash delta=-4
+
+== tower size=0x10 members=3 table=0x01428140 registered=0x0110e99d crc=0x428f2dd2
+   0 +0x0 respawnTime float
+   1 +0x4 augmentation array elem=towerAugmentation esize=0x8 delta=4
+   2 +0xc laneAgentRespawnCounterAdjustment int
+
+== BattlegroundsGameplayTuning size=0x88 members=28 table=0x01428260 registered=0x011100f0 crc=0x8078497d
+   0 +0x0 level asset
+   1 +0x8 multiKillTimeoutMs int64_t
+   2 +0x10 killStreakStart uint32_t
+   3 +0x18 callForHelpTime uint64_t
+   4 +0x20 autoAttackDelayTime int64_t
+   5 +0x28 autoAttackPlayerDamageTimeInterval int64_t
+   6 +0x4 followerSlotActivationCost uint16_t
+   7 +0x30 minionSpawnRule enum enum=0x014280b0
+   8 +0x34 grassRevealDuration float
+   9 +0x38 grassRevealAllyRadius float
+   10 +0x3c battleReadyEngageRange float
+   11 +0x40 battleReadyDisengageRange float
+   12 +0x44 playerFoWVisibleRadius float
+   13 +0x48 playerFoWVisibleHyst float
+   14 +0x4c minimapTargetingAccuracyDistance float
+   15 +0x50 goThroughWallsTolerance float
+   16 +0x54 respecSpellCost float
+   17 +0x58 defaultBotPlan asset
+   18 +0x5c skillAdjustmentForGroupSize array elem=float esize=0x4 delta=4
+   19 +0x64 WaitingForPlayersTimeout float
+   20 +0x68 MinimumAcceptDeclineDialogTime float
+   21 +0x6c WaitForGameAbortAckTimeout float
+   22 +0x70 LoadGameTimeout float
+   23 +0x74 MaxTimeBeforeVotingStarts float
+   24 +0x78 KarmaVotingDuration float
+   25 +0x7c KarmaVotingGracePeriod float
+   26 +0x80 LootComfirmationDuration float
+   27 +0x84 GameShutdownPadding float
+
+== LevelGameplayTuning size=0xf8 members=44 table=0x01428ce0 registered=0x011125e0 crc=0x03929af5 postload=0x008db920
+   0 +0x0 deathTimeBase float
+   1 +0x4 deathTimePerLevel float
+   2 +0x8 deathTimePerMinute float
+   3 +0xc minionSpawnDelay1 float
+   4 +0x10 minionSpawnDelay2 float
+   5 +0x14 minionSpawnInterval1 float
+   6 +0x18 minionSpawnInterval2 float
+   7 +0x1c minionFirstUpgrade float
+   8 +0x20 minionSecondUpgrade float
+   9 +0x24 creepUpgradeStart float
+   10 +0x28 creepUpgradeTime float
+   11 +0x2c numMinionWavesBeforeLaneAgentSpawns int
+   12 +0x30 numMinionWavesBetweenLaneAgentSpawns int
+   13 +0x38 surrenderEnableOn_MatchTimeInMinutes int64_t
+   14 +0x40 surrenderEnableOn_Economy float
+   15 +0x44 surrenderEnableOn_Kills int32_t
+   16 +0x48 surrenderEnableOn_DisconnectionTimeInSeconds int64_t
+   17 +0x50 surrenderVoteDurationInSeconds int64_t
+   18 +0x58 surrenderVoteCooldownInSeconds int64_t
+   19 +0x60 surrenderVoteSuccessThreshold float
+   20 +0x64 goldMineCaptureDurationInSeconds array elem=float esize=0x4 delta=4
+   21 +0x6c goldMineCaptureHitPlayerSpeedMultiplier float
+   22 +0x70 goldMineCaptureHitPlayerDurationInMS int64_t
+   23 +0x78 goldMineCaptureAwardGoldPerPlayer float
+   24 +0x7c goldMineLockedDurationFirstInSeconds float
+   25 +0x80 goldMineLockedDurationInSeconds float
+   26 +0x84 goldMineCaptureRatePerSecond float
+   27 +0x88 goldMineCaptureDecayRatePerSecond float
+   28 +0x8c goldMineFollowerSlotNoun asset
+   29 +0x90 goldMineFollowerCountOnSpawn uint16_t
+   30 +0x94 goldMineFollowerAutoFillPeriod float
+   31 +0x98 goldMineFollowerAutoFillCount uint16_t
+   32 +0x9c goldMineFollowerAutoFillMode enum enum=0x014280c8
+   33 +0xa0 goldMineStartCapacity float
+   34 +0xa4 goldMinedPerMinute float
+   35 +0xa8 goldMinedPerMinutePerFollower float
+   36 +0xac goldMineBountyPercentage float
+   37 +0xcc tower array elem=tower esize=0x10 delta=4
+   38 +0xd4 towerRespawnedFeedbackEventLeadTime float
+   39 +0xd8 towerRespawnEnabled bool
+   40 +0xdc nubRespawnTime float
+   41 +0xe0 striderMortal array elem=asset esize=0x4 delta=4
+   42 +0xe8 striderSpirit array elem=asset esize=0x4 delta=4
+   43 +0xf0 striderSpawnEnabled bool
+
+== ShaperSelectTuning size=0x20 members=8 table=0x01429d60 registered=0x01112cdd crc=0xa045f518
+   0 +0x0 ShaperSelectionTime float
+   1 +0x4 RolePerkSelectTime float
+   2 +0x8 SkinSelectTime float
+   3 +0xc RevealTime float
+   4 +0x10 ShaperSelectionTime_Practice float
+   5 +0x14 RolePerkSelectTime_Practice float
+   6 +0x18 SkinSelectTime_Practice float
+   7 +0x1c RevealTime_Practice float
+
+== UITuning size=0xc members=3 table=0x0142a190 registered=0x0111306d crc=0x22704a04
+   0 +0x0 metersToDisplayDistanceUnit float
+   1 +0x4 deathRecapShortCombatTime float
+   2 +0x8 deathRecapLongCombatTime float
+
+== cBattlegroundsUINodeData size=0x114 members=21 table=0x0142a2b0 registered=0x01114140 crc=0xe251e719
+   0 +0x0 mTeamControl uint8_t
+   1 +0x1 mFollowerCount uint8_t
+   2 +0x28 mFlags uint8_t
+   3 +0x4 mGoldPerMinute float
+   4 +0x8 mGoldMineAvailableResource float
+   5 +0xc mGoldMineBounty float
+   6 +0x10 mCaptureScore float
+   7 +0x14 mCaptureScoreSpeed float
+   8 +0x18 mLockedTimer float
+   9 +0x1c mLockedTimerDuration float
+   10 +0x20 mClaimedTimer float
+   11 +0x24 mCaptureDuration float
+   12 +0x48 mGoldMineCapacity float
+   13 +0x2c mServerObjId tObjID
+   14 +0x30 mWorldPos cSPVector3
+   15 +0x3c mFollowerCapacity uint8_t
+   16 +0x3d mHUDMineStatusDisplayIndex uint8_t
+   17 +0x40 mPositionX float
+   18 +0x44 mPositionY float
+   19 +0x4c mPreBlueNodeIds tObjID x4
+   20 +0x5c mPreRedNodeIds tObjID x4
+
+== cBattlegroundsUICampData size=0x18 members=2 table=0x0142aa90 registered=0x0111433d crc=0xfa77e0e8
+   0 +0x0 mCampVisibleToTeam uint8_t
+   1 +0x4 mSpawnMarkerId uint32_t
+
+== cBattlegroundsUIData size=0x370 members=63 table=0x0142ab50 registered=0x01117710 crc=0x137f2d82
+   0 +0x0 mGameTime int32_t
+   1 +0x4 mRedGpm uint16_t
+   2 +0x6 mBlueGpm uint16_t
+   3 +0x8 mSurrenderAvailablity uint8_t
+   4 +0x10 mTowerRespawnTime[0][0][0] uint64_t
+   5 +0x18 mTowerRespawnTime[0][0][1] uint64_t
+   6 +0x20 mTowerRespawnTime[0][0][2] uint64_t
+   7 +0x28 mTowerRespawnTime[0][0][3] uint64_t
+   8 +0x30 mTowerRespawnTime[0][1][0] uint64_t
+   9 +0x38 mTowerRespawnTime[0][1][1] uint64_t
+   10 +0x40 mTowerRespawnTime[0][1][2] uint64_t
+   11 +0x48 mTowerRespawnTime[0][1][3] uint64_t
+   12 +0x50 mTowerRespawnTime[1][0][0] uint64_t
+   13 +0x58 mTowerRespawnTime[1][0][1] uint64_t
+   14 +0x60 mTowerRespawnTime[1][0][2] uint64_t
+   15 +0x68 mTowerRespawnTime[1][0][3] uint64_t
+   16 +0x70 mTowerRespawnTime[1][1][0] uint64_t
+   17 +0x78 mTowerRespawnTime[1][1][1] uint64_t
+   18 +0x80 mTowerRespawnTime[1][1][2] uint64_t
+   19 +0x88 mTowerRespawnTime[1][1][3] uint64_t
+   20 +0x90 mTowers[0][0][0] tObjID
+   21 +0x94 mTowers[0][0][1] tObjID
+   22 +0x98 mTowers[0][0][2] tObjID
+   23 +0x9c mTowers[0][0][3] tObjID
+   24 +0xa0 mTowers[0][1][0] tObjID
+   25 +0xa4 mTowers[0][1][1] tObjID
+   26 +0xa8 mTowers[0][1][2] tObjID
+   27 +0xac mTowers[0][1][3] tObjID
+   28 +0xb0 mTowers[1][0][0] tObjID
+   29 +0xb4 mTowers[1][0][1] tObjID
+   30 +0xb8 mTowers[1][0][2] tObjID
+   31 +0xbc mTowers[1][0][3] tObjID
+   32 +0xc0 mTowers[1][1][0] tObjID
+   33 +0xc4 mTowers[1][1][1] tObjID
+   34 +0xc8 mTowers[1][1][2] tObjID
+   35 +0xcc mTowers[1][1][3] tObjID
+   36 +0xd0 mNumTowersPerLane uint32_t
+   37 +0xd8 mNubRespawnTime[0] uint64_t
+   38 +0xe0 mNubRespawnTime[1] uint64_t
+   39 +0xe8 mNubRespawnTime[2] uint64_t
+   40 +0xf0 mNubRespawnTime[3] uint64_t
+   41 +0xf8 mNubRespawnTime[4] uint64_t
+   42 +0x100 mNubRespawnTime[5] uint64_t
+   43 +0x108 mNubRespawnTime[6] uint64_t
+   44 +0x110 mNubRespawnTime[7] uint64_t
+   45 +0x118 mNubRespawnTime[8] uint64_t
+   46 +0x120 mNubRespawnTime[9] uint64_t
+   47 +0x128 mNubRespawnTime[10] uint64_t
+   48 +0x130 mNubRespawnTime[11] uint64_t
+   49 +0x138 mNubTeams[0] int32_t
+   50 +0x13c mNubTeams[1] int32_t
+   51 +0x140 mNubTeams[2] int32_t
+   52 +0x144 mNubTeams[3] int32_t
+   53 +0x148 mNubTeams[4] int32_t
+   54 +0x14c mNubTeams[5] int32_t
+   55 +0x150 mNubTeams[6] int32_t
+   56 +0x154 mNubTeams[7] int32_t
+   57 +0x158 mNubTeams[8] int32_t
+   58 +0x15c mNubTeams[9] int32_t
+   59 +0x160 mNubTeams[10] int32_t
+   60 +0x164 mNubTeams[11] int32_t
+   61 +0x364 mNodeCapacity int32_t
+   62 +0x36c mCampCapacity int32_t
+
+== EnergyLineTuning size=0x544 members=19 table=0x0142c2f0 registered=0x011186b0 crc=0x4e2f3a1e
+   0 +0x0 lineModelPath char x128
+   1 +0x80 lineModelName char x64
+   2 +0xc0 baseModelPath char x128
+   3 +0x140 baseModelName char x64
+   4 +0x180 nubLineModelPath char x128
+   5 +0x200 nubLineModelName char x64
+   6 +0x240 lineMaterialName char x64
+   7 +0x280 lineMeshName char x64
+   8 +0x2c0 innerRingMaterialName char x64
+   9 +0x300 innerRingMeshName char x64
+   10 +0x340 outerRingMaterialName char x64
+   11 +0x380 outerRingMeshName char x64
+   12 +0x3c0 baseRuneMaterialName char x64
+   13 +0x400 baseRuneMeshName char x64
+   14 +0x440 laneRuneMaterialName char x64
+   15 +0x480 laneRuneMeshName char x64
+   16 +0x4c0 nubLineMaterialName char x64
+   17 +0x500 nubLineMeshName char x64
+   18 +0x540 numNubLines uint32_t
+
+== cCharacterStyle size=0x8 members=2 table=0x0142cbf0 registered=0x011188dd crc=0xa520b924
+   0 +0x0 tag enum enum=0x01249930
+   1 +0x4 rating uint32_t
+
+== CharacterAffiliation size=0x70 members=3 table=0x0142ccb0 registered=0x01118bcd crc=0x8f2b3e7b
+   0 +0x0 name char x80
+   1 +0x5c textLocaleKey Key delta=-12
+   2 +0x6c icon Key delta=-12
+
+== PlayerClass size=0x1ac members=36 table=0x0142cdd0 registered=0x0111aac0 crc=0xdd54f524
+   0 +0x0 testingOnly bool
+   1 +0x4 clientFeedbackTokenName char*
+   2 +0x14 nameLocaleKey Key delta=-12
+   3 +0x50 localeTableID Key delta=-12
+   4 +0x30 voice StringHash delta=-4
+   5 +0x38 footstep StringHash delta=-4
+   6 +0x40 footstepSplash StringHash delta=-4
+   7 +0x28 basicAbility Key delta=-12
+   8 +0x60 specialAbility1 Key delta=-12
+   9 +0x70 specialAbility2 Key delta=-12
+   10 +0x80 specialAbility3 Key delta=-12
+   11 +0x90 specialAbility4 Key delta=-12
+   12 +0xa0 alternateBasic Key delta=-12
+   13 +0xb0 alternateAbility1 Key delta=-12
+   14 +0xc0 alternateAbility2 Key delta=-12
+   15 +0xd0 alternateAbility3 Key delta=-12
+   16 +0xe0 alternateAbility4 Key delta=-12
+   17 +0xf0 passiveAbility Key delta=-12
+   18 +0x100 wardAbility Key delta=-12
+   19 +0x110 emoteAbility Key delta=-12
+   20 +0x114 CharacterArchetype enum enum=0x0124982c
+   21 +0x118 CharacterSubArchetype enum enum=0x012498a8
+   22 +0x11c ShaperStyle_AttackStyle enum enum=0x01249900
+   23 +0x120 ShaperStyle_DamageStyle enum enum=0x01249918
+   24 +0x124 ShaperStyle array elem=cCharacterStyle esize=0x8 delta=4
+   25 +0x12c roleRatingGladiator uint32_t
+   26 +0x130 roleRatingTactician uint32_t
+   27 +0x134 roleRatingPredator uint32_t
+   28 +0x138 roleRatingHunter uint32_t
+   29 +0x13c CharacterAffiliation asset
+   30 +0x140 sharedAbilityOffset cSPVector3
+   31 +0x18 mpMinimapPingData asset
+   32 +0x14c startWithAbility4 bool
+   33 +0x150 OfflineEffectDef array elem=cServerEventDefAssetWrapper esize=0x4 delta=4
+   34 +0x158 vitalityColor uint32_t
+   35 +0x15c audioIdentifier char x80
+
+== cLongDescription size=0x14 members=1 table=0x0142db50 registered=0x0111abed crc=0x43573f50
+   0 +0x0 description cLocalizedAssetString delta=8
+
+== NonPlayerClass size=0xa4 members=31 table=0x0142dbb0 registered=0x0111c5f0 crc=0x6c4b184a postload=0x008ddc90
+   0 +0x0 testingOnly bool
+   1 +0x4 clientFeedbackTokenName char*
+   2 +0x14 nameLocaleKey Key delta=-12
+   3 +0x30 voice StringHash delta=-4
+   4 +0x38 footstep StringHash delta=-4
+   5 +0x40 footstepSplash StringHash delta=-4
+   6 +0x28 basicAbility Key delta=-12
+   7 +0x58 aggroRange float
+   8 +0x5c callForHelpRange float
+   9 +0x60 dropAggroRange float
+   10 +0x64 tetherRange float
+   11 +0x44 challengeValue int
+   12 +0x68 mNPCType enum enum=0x0142ca10
+   13 +0x6c npcRank int
+   14 +0x18 mpMinimapPingData asset
+   15 +0x48 dropType array elem=enum esize=0x4 delta=4 enum=0x0142cac8
+   16 +0x54 dropDelay float
+   17 +0x70 targetable bool
+   18 +0x74 playerCountHealthScale float
+   19 +0x78 wantsHealthBar bool
+   20 +0x7c mCallForHelpFilter enum enum=0x0142ca98
+   21 +0x80 pursueToEdgeOfTetherRange bool
+   22 +0x84 mAggroVisionBlockingRule enum enum=0x0142cab0
+   23 +0x88 levelIncreaseDurationFirstSecs float
+   24 +0x8c levelIncreaseDurationSecs float
+   25 +0x90 levelIncreaseMaxLevel uint32_t
+   26 +0x94 levelIncreaseOnlyOnSpawn bool
+   27 +0x95 levelIncreaseInCombat bool
+   28 +0x98 petAttributeScale float
+   29 +0x9c opponentMeleeRangeAdjustment float
+   30 +0xa0 opponentRangedBasicRangeAdjustment float
+
+== BotClass size=0x1c members=5 table=0x0142e750 registered=0x0111ca2d crc=0xdf9d7c39
+   0 +0x0 nounDef asset
+   1 +0x4 aiDefinition asset
+   2 +0x8 role enum enum=0x0142cb10
+   3 +0xc skillOrder array elem=enum esize=0x4 delta=4 enum=0x0142caf0
+   4 +0x14 spellOrder array elem=asset esize=0x4 delta=4
+
+== ClassAttributes size=0x84 members=31 table=0x0142e930 registered=0x0111e420 crc=0x462627db
+   0 +0x0 characterResourceType enum enum=0x01249970
+   1 +0x4 baseHealth float
+   2 +0x8 tieredHealth array elem=float esize=0x4 delta=4
+   3 +0x10 tieredHealthPerLevel array elem=float esize=0x4 delta=4
+   4 +0x18 baseResourcePoints float
+   5 +0x1c resourceChunks uint32_t
+   6 +0x20 baseHealthRegen float
+   7 +0x24 baseResourcePointRegen float
+   8 +0x28 baseResourcePointPercentRegen float
+   9 +0x2c healthPerLevel float
+   10 +0x30 resourcePointsPerLevel float
+   11 +0x34 healthRegenPerLevel float
+   12 +0x38 resourcePointRegenPerLevel float
+   13 +0x3c resourcePointPercentRegenPerLevel float
+   14 +0x40 basePower float
+   15 +0x44 powerPerLevel float
+   16 +0x48 baseHaste float
+   17 +0x4c hastePerLevel float
+   18 +0x50 baseMovementSpeed float
+   19 +0x54 baseRageDecayRate float
+   20 +0x58 baseRageDecayTimer float
+   21 +0x5c basicReductionPerLevel float
+   22 +0x60 abilityReductionPerLevel float
+   23 +0x64 basePhysicalDamageReduction float
+   24 +0x68 baseMagicalDamageReduction float
+   25 +0x6c physicalDamageReductionPerLevel float
+   26 +0x70 magicalDamageReductionPerLevel float
+   27 +0x74 attackSpeedPercentPerLevel float
+   28 +0x78 basicAttackDamagePerLevel float
+   29 +0x7c deathTimeBeforeFadeOut float
+   30 +0x80 healthBarOffset float
+
+== cMinimapPingEntryData size=0x30 members=7 table=0x0142f4d0 registered=0x0111eb2d crc=0x9ca01bea
+   0 +0x0 pingType enum enum=0x012499c8
+   1 +0x4 clientFeedbackDef asset
+   2 +0x8 serverEventDef asset
+   3 +0xc minimapIcon enum enum=0x012499f8
+   4 +0x10 soundName StringHash delta=4
+   5 +0x18 durationMs uint64_t
+   6 +0x20 color cSPVector3
+
+== MinimapPingData size=0x10 members=2 table=0x0142f770 registered=0x0111edfd crc=0x59576ee0
+   0 +0x0 enemyPing array elem=cMinimapPingEntryData esize=0x30 delta=4
+   1 +0x8 friendlyPing array elem=cMinimapPingEntryData esize=0x30 delta=4
+
+== cCharacterAnimResources size=0x4 members=1 table=0x0142f830 registered=0x0111ef1d crc=0x753361bf
+   0 +0x0 name char*
+
+== cCharacterEmoteData size=0x8 members=2 table=0x0142f890 registered=0x0111f10d crc=0x69d190a6
+   0 +0x0 event asset
+   1 +0x4 delay float
+
+== CharacterAnimation size=0x124 members=20 table=0x0142f950 registered=0x011201e0 crc=0xb22bcfe9
+   0 +0x0 animResourceDirectory char*
+   1 +0x10 animStateGroup Key delta=-12
+   2 +0x20 idleAnimState Key delta=-12
+   3 +0x30 lobbyIdleAnimState Key delta=-12
+   4 +0x40 specialIdleAnimState Key delta=-12
+   5 +0x50 walkStopState Key delta=-12
+   6 +0x60 moveAnimState Key delta=-12
+   7 +0x70 basicAttackAnimState Key delta=-12
+   8 +0x80 deathAnimState Key delta=-12
+   9 +0x90 combatIdleAnimState Key delta=-12
+   10 +0xa0 combatMoveAnimState Key delta=-12
+   11 +0xb0 combatWalkStopState Key delta=-12
+   12 +0xc0 combatActivationState Key delta=-12
+   13 +0xd0 danceEmoteAnimState Key delta=-12
+   14 +0xe0 tauntEmoteAnimState Key delta=-12
+   15 +0xe4 danceEmoteEvent array elem=cCharacterEmoteData esize=0x8 delta=4
+   16 +0xec danceEmoteOutroEvent array elem=cCharacterEmoteData esize=0x8 delta=4
+   17 +0x100 overlay1AnimState Key delta=-12
+   18 +0x110 overlay2AnimState Key delta=-12
+   19 +0x120 overlay3AnimState Key delta=-12
+
+== cCharacterRewardBuffData size=0x14 members=2 table=0x014300d0 registered=0x011203fd crc=0x21fb2304
+   0 +0x0 buffType enum enum=0x0142cb34
+   1 +0x10 buff Key delta=-12
+
+== CharacterRewardData size=0x24 members=8 table=0x01430190 registered=0x01120aad crc=0x35fdca9a
+   0 +0x0 gold float
+   1 +0x8 bonusGoldPerLevel float
+   2 +0x4 xp float
+   3 +0xc bonusXPPerLevel float
+   4 +0x10 overrideRadius float
+   5 +0x14 xpRewardType enum enum=0x0142cb34
+   6 +0x18 goldRewardType enum enum=0x0142cb34
+   7 +0x1c buffs array elem=cCharacterRewardBuffData esize=0x14 delta=4
+
+== cCharacterBanterTargetNoun size=0x4 members=1 table=0x01430490 registered=0x01120bad crc=0x64709f06
+   0 +0x0 noun asset
+
+== cCharacterBanterTarget size=0x14 members=4 table=0x014304f0 registered=0x01120f3d crc=0x2a786106
+   0 +0x0 TargetNoun array elem=cCharacterBanterTargetNoun esize=0x4 delta=4
+   1 +0x8 friendlyCount int
+   2 +0xc enemyCount int
+   3 +0x10 killCount int
+
+== CharacterBanterData size=0x10 members=2 table=0x01430670 registered=0x0112113d crc=0xa53ab2d3
+   0 +0x0 target array elem=cCharacterBanterTarget esize=0x14 delta=4
+   1 +0x8 sequentialEmote array elem=enum esize=0x4 delta=4 enum=0x0142cb70
+
+== ClientFeedbackEvent size=0x24 members=7 table=0x01430740 registered=0x0112172d crc=0x46216844
+   0 +0x0 eventId uint32_t
+   1 +0x4 objectId tObjID
+   2 +0x8 targetId tObjID
+   3 +0xc uintVal uint32_t
+   4 +0x10 vectorVal cSPVector3
+   5 +0x1c eventDef asset
+   6 +0x20 objectNoun asset
+
+== cClientFeedbackReplacementRuleDef size=0x8 members=1 table=0x014309e0 registered=0x0112184d crc=0x23fa51dc
+   0 +0x4 ruleName StringHash delta=-4
+
+== ClientFeedbackDef size=0x68 members=22 table=0x01430a40 registered=0x011229fd crc=0x400c7e8d
+   0 +0x0 priority uint32_t
+   1 +0x4 channel enum enum=0x0124ae6c
+   2 +0x8 lifetime uint32_t
+   3 +0xc cooldown uint32_t
+   4 +0x10 cooldownPerObject bool
+   5 +0x20 textLocaleKey Key delta=-12
+   6 +0x30 spectatorTextLocaleKey Key delta=-12
+   7 +0x34 textType enum enum=0x0124ae7c
+   8 +0x38 showTextInAlert bool
+   9 +0x3c chatMessageFilterType enum enum=0x0124ae8c
+   10 +0x40 soundID char*
+   11 +0x44 spectatorSoundID char*
+   12 +0x48 attachSoundToObj bool
+   13 +0x4c noQueueSoundID char*
+   14 +0x50 pingMinimap bool
+   15 +0x51 doNotQueue bool
+   16 +0x52 doNotStartIfSourceDies bool
+   17 +0x53 doNotStartIfTargetDies bool
+   18 +0x54 onFinishedFeedbackDef asset
+   19 +0x58 sharedCooldownFeedbackDef asset
+   20 +0x5c sharedCooldown uint32_t
+   21 +0x60 replacementRules array elem=cClientFeedbackReplacementRuleDef esize=0x8 delta=4
+
+== CombatEvent size=0x40 members=15 table=0x01431280 registered=0x0112364d crc=0xf67d3ef7
+   0 +0x0 flags uint32_t
+   1 +0x8 descriptors uint64_t
+   2 +0x10 deltaHealth float
+   3 +0x14 targetID tObjID
+   4 +0x18 sourceID tObjID
+   5 +0x1c lastPlayerToHitID tObjID
+   6 +0x20 abilityID tObjID
+   7 +0x24 damageDirection cSPVector3
+   8 +0x30 integerHpChange uint16_t
+   9 +0x32 integerGoldChange uint16_t
+   10 +0x34 integerBonusGoldChange uint16_t
+   11 +0x36 integerXPChange uint16_t
+   12 +0x38 integerBonusXPChange uint16_t
+   13 +0x3a lastPlayerKillStreak uint16_t
+   14 +0x3c lastPlayerMultiKill uint16_t
+
+== CombatEventHandler size=0x5c members=4 table=0x01431820 registered=0x011239cd crc=0x3958a314
+   0 +0x0 namespace char x80
+   1 +0x50 matchFlags int
+   2 +0x54 matchRule uint8_t
+   3 +0x58 priority int
+
+== ControlsTuning size=0x30 members=12 table=0x014319b0 registered=0x0112440d crc=0x86674989
+   0 +0x0 spamControl_MinTimeBetweenAbilityCommands int
+   1 +0x4 spamControl_MinTimeBetweenMoveCommands int
+   2 +0x8 commandQueueTime int
+   3 +0xc basicAttackDelay float
+   4 +0x10 basicAttackPursuitDelay float
+   5 +0x14 clientMovement_MaxSlowPercent float
+   6 +0x18 clientMovement_CatchUpAcceleration float
+   7 +0x1c clientMovement_CheatTowardsServerSpeed float
+   8 +0x20 clientMovement_DirectionChangeAngle float
+   9 +0x24 clientMovement_MinPingToHide int
+   10 +0x28 clientMovement_MaxPingToHide int
+   11 +0x2c abilityRangeCheck_MinHeight float
+
+== cVolumeDef size=0x1c members=7 table=0x01432360 registered=0x011253cd crc=0x33661345
+   0 +0x0 shape enum enum=0x01432340
+   1 +0x4 boxWidth float
+   2 +0x8 boxLength float
+   3 +0xc boxHeight float
+   4 +0x10 sphereRadius float
+   5 +0x14 capsuleHeight float
+   6 +0x18 capsuleRadius float
+
+== cTitanNodeDef size=0x40 members=12 table=0x01432600 registered=0x0112601d crc=0x30526dcd
+   0 +0x0 graphicsState_locked nullable elem=cNewGfxState esize=0x3c
+   1 +0x4 graphicsState_unlocking nullable elem=cNewGfxState esize=0x3c
+   2 +0x8 graphicsState_unlocked nullable elem=cNewGfxState esize=0x3c
+   3 +0xc graphicsState_beingCaptured nullable elem=cNewGfxState esize=0x3c
+   4 +0x10 graphicsState_locking nullable elem=cNewGfxState esize=0x3c
+   5 +0x14 graphicsState_destroyed nullable elem=cNewGfxState esize=0x3c
+   6 +0x18 spawnedTitanNoun asset
+   7 +0x1c numFollowerSlots uint16_t
+   8 +0x1e isBaseNode bool
+   9 +0x1f isGoldMine bool
+   10 +0x20 enableCaptureVolume bool
+   11 +0x24 captureVolume cVolumeDef
+
+== cNewGfxState size=0x3c members=5 table=0x01432a80 registered=0x0112664d crc=0x2d4ff6fb postload=0x008fc350
+   0 +0x0 prefab asset
+   1 +0x10 model Key delta=-12
+   2 +0x20 animation Key delta=-12
+   3 +0x30 audio Key delta=-12
+   4 +0x34 animationLoops bool
+
+== cInteractableDef size=0x18 members=3 table=0x01432c90 registered=0x01126a3d crc=0xddc1780f
+   0 +0x0 numUsesAllowed int
+   1 +0x10 interactableAbility Key delta=-12
+   2 +0x14 whoCanUse bitfield enum=0x01432c70
+
+== ItemAttributeTag size=0x14 members=2 table=0x01432dd0 registered=0x01126ccd crc=0x9ff7175d
+   0 +0x10 key Key delta=-12
+   1 +0x0 tag enum enum=0x012464b8
+
+== ItemCustomTag size=0x14 members=2 table=0x01432e90 registered=0x01126edd crc=0xd440ba08
+   0 +0x10 key Key delta=-12
+   1 +0x0 tag enum enum=0x0124ed68
+
+== ItemFilterGroup size=0x28 members=4 table=0x01432f50 registered=0x0112728d crc=0xa8c355e7
+   0 +0x0 name StringHash delta=4
+   1 +0x14 localeKey Key delta=-12
+   2 +0x18 attributeTag array elem=ItemAttributeTag esize=0x14 delta=4
+   3 +0x20 customTag array elem=ItemCustomTag esize=0x14 delta=4
+
+== ItemFilterSet size=0x8 members=1 table=0x014330d0 registered=0x011273ad crc=0x3e9c0bac
+   0 +0x0 group array elem=ItemFilterGroup esize=0x28 delta=4
+
+== ItemAttribute size=0xc members=3 table=0x01433130 registered=0x0112769d crc=0xf15ab435
+   0 +0x0 id enum enum=0x012464b8
+   1 +0x4 value float
+   2 +0x8 uniqueness enum enum=0x01432db0
+
+== ItemPassive size=0xc members=2 table=0x01433250 registered=0x011278ad crc=0x6bca1a10
+   0 +0x4 PassiveModifier StringHash delta=-4
+   1 +0x8 PassiveModifierRank int
+
+== Item size=0xbc members=25 table=0x01433310 registered=0x01128d50 crc=0x9ebe199c postload=0x008fd2b0 unload=0x008fc9f0
+   0 +0x0 Category enum enum=0x0124edc0
+   1 +0x4 Tier enum enum=0x0124edd8
+   2 +0x8 AbilityItemCategory enum enum=0x0124edf0
+   3 +0x10 ItemCost uint32_t
+   4 +0x14 SellPercent float
+   5 +0x24 Name Key delta=-12
+   6 +0x34 Description Key delta=-12
+   7 +0x44 IconSmall Key delta=-12
+   8 +0x54 IconLarge Key delta=-12
+   9 +0x58 ProjectileEffect asset
+   10 +0x5c ProjectileOnHit asset
+   11 +0x60 attributeTag array elem=enum esize=0x4 delta=4 enum=0x012464b8
+   12 +0x68 customTag array elem=enum esize=0x4 delta=4 enum=0x0124ed68
+   13 +0x70 Attribute array elem=ItemAttribute esize=0xc delta=4
+   14 +0x78 Passive array elem=ItemPassive esize=0xc delta=4
+   15 +0x84 ActiveAbility StringHash delta=-4
+   16 +0x8c ActiveModifier StringHash delta=-4
+   17 +0x98 CooldownTimer StringHash delta=-4
+   18 +0x90 Consumable bool
+   19 +0x91 ConsumeOnFullInventory bool
+   20 +0xc StackCount uint8_t
+   21 +0x9c UpgradesFrom array elem=ItemAssetContainer esize=0x4 delta=4
+   22 +0xa4 UpgradesInto array elem=ItemAssetContainer esize=0x4 delta=4
+   23 +0xac AssociatedUniqueItem array elem=ItemAssetContainer esize=0x4 delta=4
+   24 +0xb4 CheatItem bool
+
+== ItemSet size=0x8 members=1 table=0x01433c70 registered=0x01128e7d crc=0x02f811db
+   0 +0x0 Item array elem=ItemAssetContainer esize=0x4 delta=4
+
+== ItemAssetContainer size=0x4 members=1 table=0x01433cd0 registered=0x01128f7d crc=0xa246b461
+   0 +0x0 asset asset
+
+== BuildCategory size=0x18 members=2 table=0x01433d30 registered=0x0112919d crc=0xc3f42a91 postload=0x009a3f00
+   0 +0x0 item array elem=ItemAssetContainer esize=0x4 delta=4
+   1 +0x14 name Key delta=-12
+
+== ItemBuild size=0x18 members=2 table=0x01433df0 registered=0x011293cd crc=0x3f24a972 postload=0x009a3f00
+   0 +0x0 category array elem=BuildCategory esize=0x18 delta=4
+   1 +0x14 name Key delta=-12
+
+== Markerset size=0x28 members=4 table=0x01433f70 registered=0x011299dd crc=0x3785bff5 postload=0x009104f0 unload=0x00910520
+   0 +0x0 markers array elem=cLabsMarker esize=0xc8 delta=4
+   1 +0x14 group Key delta=-12
+   2 +0x18 weight float
+   3 +0x20 condition array elem=enum esize=0x4 delta=4 enum=0x01433f50
+
+== LevelMarkerset size=0x4 members=1 table=0x014340f0 registered=0x01129add crc=0x994c322e
+   0 +0x0 markersetAsset asset
+
+== LevelCameraSettings size=0xc members=3 table=0x01434150 registered=0x01129eed crc=0x14a581a8
+   0 +0x0 pitchOverride float
+   1 +0x4 yawOverride float
+   2 +0x8 distanceOverride float
+
+== LevelKey size=0x10 members=1 table=0x01434270 registered=0x0112a08d crc=0xe2b474c6
+   0 +0xc key Key delta=-12
+
+== LevelObjectives size=0x8 members=1 table=0x014342d0 registered=0x0112a21d crc=0x26497af4
+   0 +0x0 objective array elem=LevelKey esize=0x10 delta=4
+
+== Level size=0x620 members=30 table=0x01434330 registered=0x0112c4e0 crc=0xa70b4c39
+   0 +0x0 markersets array elem=LevelMarkerset esize=0x4 delta=4
+   1 +0x14 music Key delta=-12
+   2 +0x24 navMeshPlayer Key delta=-12
+   3 +0x28 navMeshPathPlayer char x128
+   4 +0xb4 navMeshNPC Key delta=-12
+   5 +0xb8 navMeshPathNPC char x128
+   6 +0x144 physicsMesh Key delta=-12
+   7 +0x148 physicsMeshPath char x128
+   8 +0x1c8 outlinePath char x128
+   9 +0x248 lineOfSightMap char x128
+   10 +0x2c8 grassMap char x128
+   11 +0x348 miniMap char x128
+   12 +0x3c8 tagMap char x128
+   13 +0x448 gameEndScriptNameCustom char x128
+   14 +0x4c8 gameEndScriptNameMatchmade char x128
+   15 +0x548 gameEndScriptNamePractice char x128
+   16 +0x5c8 levelSize cSPVector2
+   17 +0x5ec footstepEffect Key delta=-12
+   18 +0x5f0 levelObjectives asset
+   19 +0x5f4 name uint32_t
+   20 +0x5f8 briefDescription uint32_t
+   21 +0x5fc description uint32_t
+   22 +0x600 cameraSettings nullable elem=LevelCameraSettings esize=0xc
+   23 +0x604 activeItems asset
+   24 +0x608 rolesTuning asset
+   25 +0x60c levelUpTuning asset
+   26 +0x610 rewardsTuning asset
+   27 +0x614 gameplayTuning asset
+   28 +0x618 energyLineTuning asset
+   29 +0x61c notGameplayLevel bool
+
+== cLabsMarker size=0xc8 members=41 table=0x01434eb0 registered=0x0112f3b0 crc=0x6e6cf05a version=3 upgrade=0x00910990
+   0 +0x0 markerName char*
+   1 +0x4 markerId uint32_t
+   2 +0x8 nounDef asset
+   3 +0x14 pos cSPVector3
+   4 +0x20 rotDegrees cSPVector3
+   5 +0x2c scale float
+   6 +0x30 dimensions cSPVector3
+   7 +0x3c visible bool
+   8 +0x3d castShadows bool
+   9 +0x3e backFaceShadows bool
+   10 +0x3f onlyShadows bool
+   11 +0x40 createWithCollision bool
+   12 +0x42 debugDisplayKDTree bool
+   13 +0x43 debugDisplayNormals bool
+   14 +0x44 debugNormalLength float
+   15 +0x48 navMeshSetting enum enum=0x01434e70
+   16 +0xac componentData SharedComponentData
+   17 +0x60 pointLightData nullable elem=cPointLightData esize=0xc4
+   18 +0x64 spotLightData nullable elem=cSpotLightData esize=0xd0
+   19 +0x68 lineLightData nullable elem=cLineLightData esize=0xc4
+   20 +0x6c parallelLightData nullable elem=cParallelLightData esize=0x54
+   21 +0x74 graphicsData nullable elem=cGraphicsData esize=0x6b0
+   22 +0x80 animatedData nullable elem=cAnimatedData esize=0x4
+   23 +0x7c animatorData nullable elem=cAnimatorData esize=0x10
+   24 +0x78 cameraComponentData nullable elem=cCameraComponentData esize=0x14
+   25 +0x84 decalData nullable elem=cDecalData esize=0x190
+   26 +0x88 waterData nullable elem=cWaterData esize=0x374
+   27 +0x90 grassData nullable elem=cGrassData esize=0x2f4
+   28 +0x94 mapCameraData nullable elem=cMapCameraData esize=0x54
+   29 +0x98 occluderData nullable elem=cOccluderData esize=0x2c
+   30 +0x9c splineCameraData nullable elem=cSplineCameraData esize=0x84
+   31 +0xa0 splineCameraNodeData nullable elem=cSplineCameraNodeData esize=0x80
+   32 +0xa4 splinePathNodeData nullable elem=cSplinePathNodeData esize=0x30
+   33 +0xa8 navmeshMarkerData nullable elem=cNavmeshMarkerData esize=0x2
+   34 +0x50 volumeDef nullable elem=cVolumeDef esize=0x1c
+   35 +0x4c ignoreOnXBox bool
+   36 +0x4d ignoreOnMinSpec bool
+   37 +0x4e ignoreOnPC bool
+   38 +0x4f highSpecOnly bool
+   39 +0x54 targetMarkerId uint32_t
+   40 +0x58 childMarkerIds array elem=uint32_t esize=0x4 delta=4
+
+== cLevelUpTuningLevel size=0xc members=3 table=0x01435e70 registered=0x0112f6dd crc=0x2f52260c
+   0 +0x0 xpRequired float
+   1 +0x4 abilityPointsGranted uint32_t
+   2 +0x8 spellPointsGranted uint32_t
+
+== LevelUpTuning size=0x18 members=5 table=0x01435f90 registered=0x0112fb9d crc=0xdd756e92
+   0 +0x0 Level array elem=cLevelUpTuningLevel esize=0xc delta=4
+   1 +0x8 maxAbilityRank uint32_t
+   2 +0xc maxUltimateRank uint32_t
+   3 +0x10 abilityRankFrequency uint32_t
+   4 +0x14 ultimateRankFrequency uint32_t
+
+== labsPlayerGlobalData size=0x5a8 members=18 table=0x01436170 registered=0x01130a60 crc=0xc78ee433
+   0 +0x10 mStatus uint32_t
+   1 +0x14 mStatusProgress float
+   2 +0xc mCurrentCreatureId tObjID
+   3 +0x240 mKills uint32_t
+   4 +0x244 mDeaths uint32_t
+   5 +0x248 mAssists uint32_t
+   6 +0x270 mDeathTime uint64_t
+   7 +0x278 mRespawnTime uint64_t
+   8 +0xa0 mTeam uint8_t
+   9 +0x8 mRole uint8_t
+   10 +0x2c mPlayerIndex uint8_t
+   11 +0x48 mbIsBot bool
+   12 +0x298 mDeveloperPermissions uint32_t
+   13 +0x2cc mLoadoutID uint32_t
+   14 +0x2d0 mLoadoutVersion uint32_t
+   15 +0x4c mpBotData asset
+   16 +0x4 mpNounDef asset
+   17 +0x30 mPlayerOnlineId uint64_t
+
+== labsPlayerFowData size=0x5a8 members=63 table=0x01436830 registered=0x01133b50 crc=0x028bb639
+   0 +0xa4 mXP float
+   1 +0xa8 mAvailableGold float
+   2 +0xac mTotalGold float
+   3 +0x24c mCreeps uint32_t
+   4 +0xb0 mLevel uint32_t
+   5 +0x1c mAbilityPoints uint32_t
+   6 +0x20 mSpellPoints uint32_t
+   7 +0x24 mResourceColor uint32_t
+   8 +0x28 mResourceEmptyColor uint32_t
+   9 +0x2b4 mAbilityRankMap[kAbility_Enrage1-kRankedAbilitiesStart] uint32_t
+   10 +0x2b8 mAbilityRankMap[kAbility_Enrage2-kRankedAbilitiesStart] uint32_t
+   11 +0x2bc mAbilityRankMap[kAbility_Enrage3-kRankedAbilitiesStart] uint32_t
+   12 +0x2c0 mAbilityRankMap[kAbility_Enrage4-kRankedAbilitiesStart] uint32_t
+   13 +0x2c4 mAbilityUseAlt[kAbility_Basic] bool
+   14 +0x2c7 mAbilityUseAlt[kAbility_Enrage1] bool
+   15 +0x2c8 mAbilityUseAlt[kAbility_Enrage2] bool
+   16 +0x2c9 mAbilityUseAlt[kAbility_Enrage3] bool
+   17 +0x2ca mAbilityUseAlt[kAbility_Enrage4] bool
+   18 +0x29c mLockCamera bool
+   19 +0xb4 mItems[0].asset asset
+   20 +0xcc mItems[0].count int
+   21 +0xd0 mItems[0].upgradePath[0] asset
+   22 +0xd4 mItems[0].upgradePath[1] asset
+   23 +0xd8 mItems[1].asset asset
+   24 +0xf0 mItems[1].count int
+   25 +0xf4 mItems[1].upgradePath[0] asset
+   26 +0xf8 mItems[1].upgradePath[1] asset
+   27 +0xfc mItems[2].asset asset
+   28 +0x114 mItems[2].count int
+   29 +0x118 mItems[2].upgradePath[0] asset
+   30 +0x11c mItems[2].upgradePath[1] asset
+   31 +0x120 mItems[3].asset asset
+   32 +0x138 mItems[3].count int
+   33 +0x13c mItems[3].upgradePath[0] asset
+   34 +0x140 mItems[3].upgradePath[1] asset
+   35 +0x144 mItems[4].asset asset
+   36 +0x15c mItems[4].count int
+   37 +0x160 mItems[4].upgradePath[0] asset
+   38 +0x164 mItems[4].upgradePath[1] asset
+   39 +0x168 mItems[5].asset asset
+   40 +0x180 mItems[5].count int
+   41 +0x184 mItems[5].upgradePath[0] asset
+   42 +0x188 mItems[5].upgradePath[1] asset
+   43 +0x18c mItems[6].asset asset
+   44 +0x1a4 mItems[6].count int
+   45 +0x1a8 mItems[6].upgradePath[0] asset
+   46 +0x1ac mItems[6].upgradePath[1] asset
+   47 +0x1b0 mItems[7].asset asset
+   48 +0x1c8 mItems[7].count int
+   49 +0x1cc mItems[7].upgradePath[0] asset
+   50 +0x1d0 mItems[7].upgradePath[1] asset
+   51 +0x1d4 mItems[8].asset asset
+   52 +0x1ec mItems[8].count int
+   53 +0x1f0 mItems[8].upgradePath[0] asset
+   54 +0x1f4 mItems[8].upgradePath[1] asset
+   55 +0x1f8 mItems[9].asset asset
+   56 +0x210 mItems[9].count int
+   57 +0x214 mItems[9].upgradePath[0] asset
+   58 +0x218 mItems[9].upgradePath[1] asset
+   59 +0x21c mItems[10].asset asset
+   60 +0x234 mItems[10].count int
+   61 +0x238 mItems[10].upgradePath[0] asset
+   62 +0x23c mItems[10].upgradePath[1] asset
+
+== CollisionVolumeDef size=0x14 members=5 table=0x01438410 registered=0x011342ed crc=0xca65029a
+   0 +0x0 shape enum enum=0x014382a0
+   1 +0x4 boxWidth float
+   2 +0x8 boxLength float
+   3 +0xc boxHeight float
+   4 +0x10 sphereRadius float
+
+== ProjectileDef size=0x8 members=2 table=0x014385f0 registered=0x011345bd crc=0xeffa5c15
+   0 +0x0 creatureCollisionVolume nullable elem=CollisionVolumeDef esize=0x14
+   1 +0x4 otherCollisionVolume nullable elem=CollisionVolumeDef esize=0x14
+
+== OrbitDef size=0x24 members=9 table=0x014386b0 registered=0x011350ed crc=0x40395cd3
+   0 +0x0 orbitHeight float
+   1 +0x4 orbitRadius float
+   2 +0x8 orbitSpeed float
+   3 +0xc orbitWaveAmplitudeHorizontal float
+   4 +0x10 orbitWaveAmplitudeVertical float
+   5 +0x14 orbitWaveFrequencyHorizontal float
+   6 +0x18 orbitWaveFrequencyVertical float
+   7 +0x1c orbitWaveFrequencyOffsetHorizontal float
+   8 +0x20 orbitWaveFrequencyOffsetVertical float
+
+== cSPBoundingBox size=0x18 members=2 table=0x01438cf0 registered=0x011353fd crc=0x218baff8
+   0 +0x0 min cSPVector3
+   1 +0xc max cSPVector3
+
+== ObjectExtents size=0x24 members=3 table=0x01438db0 registered=0x011357ed crc=0x6b147131
+   0 +0x0 extents cSPVector3
+   1 +0xc extentsNavmesh cSPVector3
+   2 +0x18 extentsProjectileCollision cSPVector3
+
+== ItemBuildContainer size=0x4 members=1 table=0x01438ed0 registered=0x011358ed crc=0x225f4ef4
+   0 +0x0 build asset
+
+== cNounIconData size=0x60 members=6 table=0x01438f30 registered=0x01135e4d crc=0x064b3633
+   0 +0xc largeIcon Key delta=-12
+   1 +0x1c minimapIcon Key delta=-12
+   2 +0x2c fullBodyIcon Key delta=-12
+   3 +0x3c skinSelectIcon Key delta=-12
+   4 +0x4c vitalityIcon Key delta=-12
+   5 +0x5c purchaseIcon Key delta=-12
+
+== Noun size=0x32c members=83 table=0x01439170 registered=0x0113ba60 crc=0xf7e1104c
+   0 +0x0 nounType enum enum=0x01438a48
+   1 +0x4 clientOnly bool
+   2 +0x5 isFixed bool
+   3 +0x6 isSelfPowered bool
+   4 +0x7 isBlocking bool
+   5 +0x8 noRepulsion bool
+   6 +0x9 ignoreObstacles bool
+   7 +0xa isCombatObject bool
+   8 +0xb isCinematicProp bool
+   9 +0xc acceptsModifiers bool
+   10 +0x10 targetingFilter bitfield enum=0x01438c78
+   11 +0x18 graphicsScale float
+   12 +0x1c tintColor cSPVector3
+   13 +0x34 modelKey Key delta=-12
+   14 +0x38 modelPath char x128
+   15 +0x14 prefab asset
+   16 +0xc4 levelEditorModelKey Key delta=-12
+   17 +0xc8 levelEditorModelPath char x128
+   18 +0x148 applyFriendlyEnemyColorMask bool
+   19 +0x14c effectScaleMultiplier float
+   20 +0x150 bbox cSPBoundingBox
+   21 +0x18c presetExtents asset
+   22 +0x168 pickingExtents cSPBoundingBox
+   23 +0x190 uiCamOffset cSPVector3
+   24 +0x19c uiCamRotate cSPVector3
+   25 +0x1a8 uiAssetRotate float
+   26 +0x1ac bakeCamOffset cSPVector3
+   27 +0x1b8 bakeCamRotate cSPVector3
+   28 +0x1c4 bakeAssetRotate float
+   29 +0x180 highlightScale cSPVector3
+   30 +0x1c8 gfxStates nullable elem=cGameObjectGfxStates esize=0x8
+   31 +0x1cc titanNodeDef nullable elem=cTitanNodeDef esize=0x40
+   32 +0x1d0 interactableDef nullable elem=cInteractableDef esize=0x18
+   33 +0x1d4 npcClassData asset
+   34 +0x1d8 playerClassData asset
+   35 +0x1dc classAttributeData asset
+   36 +0x1e0 characterAnimationData asset
+   37 +0x290 minimapDefinition asset
+   38 +0x1e4 physicsType enum enum=0x01438ba8
+   39 +0x1e8 density float
+   40 +0x1f8 physicsKey Key delta=-12
+   41 +0x1fc physicsPath char x128
+   42 +0x27c affectsNavMesh bool
+   43 +0x27d dynamicWall bool
+   44 +0x289 hasLocomotion bool
+   45 +0x28c locomotionType enum enum=0x01438bd8
+   46 +0x286 hasNetworkComponent bool
+   47 +0x288 hasCombatantComponent bool
+   48 +0x284 hasAudioComponent bool
+   49 +0x285 hasBanterComponent bool
+   50 +0x28a hasProjectileComponent bool
+   51 +0x280 aiDefinition asset
+   52 +0x287 hasCameraComponent bool
+   53 +0x294 spawnTeamId enum enum=0x01438ca0
+   54 +0x298 isIslandMarker bool
+   55 +0x299 isTesselationMarker bool
+   56 +0x2b8 triggerVolume nullable elem=TriggerVolumeDef esize=0x88
+   57 +0x2bc projectile nullable elem=ProjectileDef esize=0x8
+   58 +0x2c0 orbit nullable elem=OrbitDef esize=0x24
+   59 +0x2c4 locomotionTuning nullable elem=LocomotionTuning esize=0xc
+   60 +0x2c8 gravityData asset
+   61 +0x2cc fowTracked bool
+   62 +0x2cd fowControlsObjectVisibility bool
+   63 +0x2ce fowUseOwnerVision bool
+   64 +0x2d0 fowVisibleRadius float
+   65 +0x2d4 fowVisibleHyst float
+   66 +0x2d8 fowAreaRadius float
+   67 +0x2dc fowIgnoreTerrainTest bool
+   68 +0x2dd fowIgnoreGrassTest bool
+   69 +0x29c componentData SharedComponentData
+   70 +0x2ec outlineType Key delta=-12
+   71 +0x2f0 componentName char*
+   72 +0x2f4 modelEffect asset
+   73 +0x2f8 RewardData asset
+   74 +0x2fc BanterData asset
+   75 +0x300 collectionItem asset
+   76 +0x320 recommendedItems array elem=ItemBuildContainer esize=0x4 delta=4
+   77 +0x30c skinName StringHash delta=4
+   78 +0x304 skin array elem=asset esize=0x4 delta=4
+   79 +0x314 parentNoun asset
+   80 +0x318 clientFeedbackTokenName char*
+   81 +0x31c iconData nullable elem=cNounIconData esize=0x60
+   82 +0x328 ignoreFrustumChecks bool
+
+== RewardsTuning size=0xb0 members=29 table=0x0143b0c0 registered=0x0113d230 crc=0x83d78b37
+   0 +0x0 playerTeamPassiveVimMultiplier float
+   1 +0x4 enemyTeamPassiveVimMultiplier array elem=float esize=0x4 delta=4
+   2 +0xc startingGold float
+   3 +0x10 passiveStartDelayInSeconds float
+   4 +0x14 passiveXP float
+   5 +0x18 passiveGold float
+   6 +0x1c titanGoldRewardInterval float
+   7 +0x20 radiusForPlayerKillRewards float
+   8 +0x24 playerKillXPPercent float
+   9 +0x28 playerXPRewardNearbyShare array elem=float esize=0x4 delta=4
+   10 +0x30 playerGoldRewardNearbyShare array elem=float esize=0x4 delta=4
+   11 +0x38 playerRewardAssistShare array elem=float esize=0x4 delta=4
+   12 +0x40 playerKillStreakGold array elem=float esize=0x4 delta=4
+   13 +0x48 playerDeathStreakGold array elem=float esize=0x4 delta=4
+   14 +0x50 playerXPLevelGold array elem=float esize=0x4 delta=4
+   15 +0x58 playerLowerLevelGoldMultiplier array elem=float esize=0x4 delta=4
+   16 +0x60 playerHigherLevelGoldMultiplier array elem=float esize=0x4 delta=4
+   17 +0x68 playerLowerLevelXPMultiplier array elem=float esize=0x4 delta=4
+   18 +0x70 playerHigherLevelXPMultiplier array elem=float esize=0x4 delta=4
+   19 +0xac firstBloodGoldReward float
+   20 +0x78 playerMinionFatalHitGoldBonusRatio float
+   21 +0x7c radiusForMinionKillRewards float
+   22 +0x80 minionXPRewardNearbyShare array elem=float esize=0x4 delta=4
+   23 +0x88 minionGoldRewardNearbyShare array elem=float esize=0x4 delta=4
+   24 +0x90 playerJungleFatalHitGoldBonusRatio float
+   25 +0x94 radiusForJungleKillRewards float
+   26 +0x98 jungleXPRewardNearbyShare array elem=float esize=0x4 delta=4
+   27 +0xa0 jungleGoldRewardNearbyShare array elem=float esize=0x4 delta=4
+   28 +0xa8 towerGoldReward float
+
+== rolePassive size=0x8 members=1 table=0x0143bbf0 registered=0x0113d35d crc=0xb92d7807
+   0 +0x4 name StringHash delta=-4
+
+== role size=0xb0 members=21 table=0x0143bc50 registered=0x0113e4b0 crc=0x74aa7231
+   0 +0x0 passiveXPOverride float
+   1 +0x4 passiveGoldOverride float
+   2 +0x8 lastHitMinionGoldModifier float
+   3 +0xc lastHitCreatureGoldModifier float
+   4 +0x10 proximityToMinionOrCreatureDeathGoldModifier float
+   5 +0x14 proximityToAllyLastHitMinionOrCreatureGoldModifier float
+   6 +0x18 enemyPlayerKillGoldModifier float
+   7 +0x1c enemyPlayerAssistGoldModifier float
+   8 +0x20 enemyPlayerKillOrAssistXPModifier float
+   9 +0x24 rolePassive array elem=rolePassive esize=0x8 delta=4
+   10 +0x2c name char x80
+   11 +0x7c localizedName uint32_t
+   12 +0x80 localizedShortDesc uint32_t
+   13 +0x84 localizedLongDesc uint32_t
+   14 +0x88 localizedLongDesc_Assassin uint32_t
+   15 +0x8c localizedLongDesc_Bruiser uint32_t
+   16 +0x90 localizedLongDesc_Tank uint32_t
+   17 +0x94 localizedLongDesc_Mage uint32_t
+   18 +0x98 localizedLongDesc_Carry uint32_t
+   19 +0x9c localizedLongDesc_Support uint32_t
+   20 +0xac icon Key delta=-12
+
+== RolesTuning size=0x8 members=1 table=0x0143c430 registered=0x0113e5dd crc=0x969c42e2
+   0 +0x0 role array elem=role esize=0xb0 delta=4
+
+== cServerEventAudioParam size=0x8 members=2 table=0x0143c6e0 registered=0x0113eb5d crc=0xef33aa47
+   0 +0x0 paramId uint32_t
+   1 +0x4 value float
+
+== cServerEventText size=0x8 members=2 table=0x0143c7a0 registered=0x0113ed5d crc=0x5c8469c2
+   0 +0x0 groupId uint32_t
+   1 +0x4 instanceId uint32_t
+
+== ServerEvent size=0x60 members=17 table=0x0143c860 registered=0x0113fb6d crc=0x4a34aac6
+   0 +0x0 type uint8_t
+   1 +0x4 objectId tObjID
+   2 +0x8 objectFxHandle uint32_t
+   3 +0xc position cSPVector3
+   4 +0x18 facing cSPVector3
+   5 +0x24 bHardStop bool
+   6 +0x25 bForceAttach bool
+   7 +0x28 asset asset
+   8 +0x2c secondaryObjectId tObjID
+   9 +0x30 targetPoint cSPVector3
+   10 +0x3c textValue int
+   11 +0x40 text cServerEventText
+   12 +0x48 casterPlayerIdx uint8_t
+   13 +0x49 casterTeam uint8_t
+   14 +0x4c length float
+   15 +0x50 audioParams[0] cServerEventAudioParam
+   16 +0x58 audioParams[1] cServerEventAudioParam
+
+== cAudioEventData size=0x18 members=4 table=0x0143cec0 registered=0x0114008d crc=0x0a08a464 postload=0x009241a0
+   0 +0x4 name StringHash delta=4
+   1 +0xc stop StringHash delta=4
+   2 +0x14 localPlayerOnly bool
+   3 +0x15 attached bool
+
+== cHardpointInfo size=0x1c members=5 table=0x0143d040 registered=0x011406ad crc=0x9be5d811
+   0 +0x0 type enum enum=0x0143c590
+   1 +0x8 bodyCap StringHash delta=-4
+   2 +0xc localOffset cSPVector3
+   3 +0x18 attractor bool
+   4 +0x19 attached bool
+
+== cEffectEventData size=0xb4 members=23 table=0x0143d220 registered=0x01142210 crc=0x2d6ca3a6
+   0 +0xc name Key delta=-12
+   1 +0x1c friendlyName Key delta=-12
+   2 +0x2c enemyName Key delta=-12
+   3 +0x3c selfName Key delta=-12
+   4 +0x4c friendlyOthersName Key delta=-12
+   5 +0x5c spectatorMortalName Key delta=-12
+   6 +0x6c spectatorSpiritName Key delta=-12
+   7 +0x7c attachedToLocalPlayerName Key delta=-12
+   8 +0x80 bRotateWithObject bool
+   9 +0x81 bScaleWithObject bool
+   10 +0x82 bUseObjectScaleMultiplier bool
+   11 +0x88 localizedTextKey Key delta=4
+   12 +0x83 bHasTextValue bool
+   13 +0x84 bSetModelPointer bool
+   14 +0x85 bUseTargetPoint bool
+   15 +0x86 bSetDirectionFromSecondaryObject bool
+   16 +0x98 objectHardpoint nullable elem=cHardpointInfo esize=0x1c
+   17 +0x9c secondaryObjectHardpoint nullable elem=cHardpointInfo esize=0x1c
+   18 +0xa0 screenShakeScaleLocalPlayer float
+   19 +0xa4 screenShakeScaleEveryone float
+   20 +0xa8 scale float
+   21 +0xac noPauseDuration float
+   22 +0xb0 ignoreFrustumCheck bool
+
+== cSkinnedDef size=0xc members=2 table=0x0143dac0 registered=0x011424dd crc=0xdf2e7773
+   0 +0x4 skin StringHash delta=-4
+   1 +0x8 def asset
+
+== cDrawBoxEventData size=0x1c members=5 table=0x0143db80 registered=0x01142b5d crc=0x2d880d03
+   0 +0x4 friendlyMaterial StringHash delta=-4
+   1 +0xc enemyMaterial StringHash delta=-4
+   2 +0x10 width float
+   3 +0x14 height float
+   4 +0x18 fillRate float
+
+== ServerEventDef size=0x20 members=4 table=0x0143dd60 registered=0x0114306d crc=0x851405f5
+   0 +0x18 SkinnedEvent array elem=cSkinnedDef esize=0xc delta=4
+   1 +0x0 audio array elem=cAudioEventData esize=0x18 delta=4
+   2 +0x8 effects array elem=cEffectEventData esize=0xb4 delta=4
+   3 +0x10 drawbox array elem=cDrawBoxEventData esize=0x1c delta=4
+
+== cServerEventDefAssetWrapper size=0x4 members=1 table=0x0143dee0 registered=0x0114316d crc=0xb479bee3
+   0 +0x0 asset asset
+
+== cAnimatorData size=0x10 members=4 table=0x0143df40 registered=0x011436bd crc=0xc1bf2068
+   0 +0x0 animator_name char*
+   1 +0x4 rate float
+   2 +0x8 delay float
+   3 +0xc track char*
+
+== cAnimatedData size=0x4 members=1 table=0x0143e0c0 registered=0x0114385d crc=0x20f05803
+   0 +0x0 animator char*
+
+== TriggerVolumeEvents size=0x20 members=2 table=0x0143e5c0 registered=0x01143cdd crc=0xd8b19fa5
+   0 +0xc onEnterEvent Key delta=-12
+   1 +0x1c onExitEvent Key delta=-12
+
+== TriggerVolumeDef size=0x88 members=22 table=0x0143e680 registered=0x01145750 crc=0xc1159da6 postload=0x00952ed0
+   0 +0xc onEnter Key delta=-12
+   1 +0x1c onExit Key delta=-12
+   2 +0x2c onStay Key delta=-12
+   3 +0x30 events nullable elem=TriggerVolumeEvents esize=0x20
+   4 +0x34 useGameObjectDimensions bool
+   5 +0x35 isKinematic bool
+   6 +0x38 shape enum enum=0x0143e450
+   7 +0x3c offset cSPVector3
+   8 +0x48 timeToActivate float
+   9 +0x4c persistentTimer bool
+   10 +0x4d triggerOnceOnly bool
+   11 +0x50 triggerActivationType enum enum=0x0143e468
+   12 +0x54 luaCallbackOnEnter char*
+   13 +0x58 luaCallbackOnExit char*
+   14 +0x5c luaCallbackOnStay char*
+   15 +0x60 boxWidth float
+   16 +0x64 boxLength float
+   17 +0x68 boxHeight float
+   18 +0x6c sphereRadius float
+   19 +0x70 capsuleHeight float
+   20 +0x74 capsuleRadius float
+   21 +0x78 serverOnly bool
+
+enum 0x011dd90c enum 3: 0=Free Camera | 1=Maya Camera | 2=Art Camera
+enum 0x011dd924 enum 2: 0=World Space | 1=Object Space
+enum 0x011dd934 enum 3: 0=Always allow | 1=Warn if out of date | 2=Warn always
+enum 0x0123ca7c enum 3: 0=Water | 2=Fog and Reflection | 1=Fog
+enum 0x0123eaf4 enum 3: 0=melee | 1=ranged | 2=any
+enum 0x0123eb0c enum 3: 0=physical | 1=magical | 2=any
+enum 0x012464b8 enum 72: 0=Power | 1=Mastery | 2=MaxHealth | 3=MaxResourcePoints | 4=HealthRegen | 5=ResourcePointRegen | 6=ResourcePointPercentRegen | 7=DisableResourcePointRegen | 8=NonCombatSpeed | 9=MovementSpeedFlatDecrease | 10=MovementSpeedCap | 11=MovementSpeedPercentIncrease | 12=MovementSpeedPercentDecrease | 13=SlowEffectivenessReduction | 14=AttackSpeedDecrease | 15=AttackSpeedIncrease | 16=Haste | 17=SpellCooldownReduction | 18=AbilityCooldownReduction | 19=BasicRangeScale | 20=AbilityRangeScale | 21=DamageReduction | 22=BasicReduction | 23=AbilityReduction | 24=PhysicalDamageReduction | 25=MagicalDamageReduction | 26=ArmorReductionFlatDecrease | 27=ArmorReductionPercentDecrease | 28=MagicResistReductionFlatDecrease | 29=MagicResistReductionPercentDecrease | 30=DefensePenetration | 31=PercentDefensePenetration | 32=PercentBonusDefensePenetration | 33=PercentDamageDebuff | 34=PercentCriticalStrikeDamage | 35=FlatCriticalStrikeDamage | 36=PercentSpellOverloadDamage | 37=FlatSpellOverloadDamage | 38=MaxHealthIncrease | 39=HealingReduction | 40=HealIncrease | 41=Silence | 42=AutoAttackSilence | 43=Immobilized | 44=ImmobilizedNoRotate | 45=Unit Pass Through | 46=Immune | 47=StealthDetection | 48=Untargetable | 49=Unattackable | 50=Suppressed | 51=HighMobilityDisabled | 52=AutoAttackDisabled | 53=CrowdControlDurationDecrease | 54=ImmuneToDebuffs | 55=ImmuneToKnockback | 56=ImmuneToStunned | 57=ImmuneToFear | 58=ImmuneToSilence | 59=ImmuneToRooted | 60=ImmuneToSlow | 61=ImmuneToSuppression | 62=BehindDirectDamageIncrease | 63=AoeResistance | 64=LifeDrain | 65=BuffDuration | 66=BodyScale | 67=StructureDamageDeltIncrease | 68=StructureDamageTakenReduction | 69=VimPer5 | 70=ExperiencePercentIncrease | 71=HideHealthBar
+enum 0x0124982c enum 7: -1=any | 0=carry | 1=bruiser | 2=mage | 3=support | 4=tank | 5=assassin
+enum 0x012498a8 enum 11: 0=ranged carry | 1=melee carry | 2=ability bruiser | 3=carry bruiser | 4=control mage | 5=sustain mage | 6=burst mage | 7=melee support | 8=ranged support | 9=tank | 10=assassin
+enum 0x01249900 enum 3: 0=melee | 1=ranged | 2=hybrid
+enum 0x01249918 enum 3: 0=physical | 1=magical | 2=hybrid
+enum 0x01249930 enum 8: 0=carry | 1=disabler | 2=initiator | 3=sustain | 4=recommended | 5=durable | 6=mobile | 7=utility
+enum 0x01249970 enum 11: 0=mana | 1=rage | 2=energy | 3=discipline | 4=stamina | 5=spirit | 6=focus | 7=inspiration | 8=health | 9=frost | 10=radiance
+enum 0x012499c8 enum 6: 0=danger | 1=onmyway | 2=missing | 3=retreat | 4=attention | 5=defend
+enum 0x012499f8 enum 8: 0=danger | 1=onmyway | 2=missing | 3=retreat | 4=attention | 5=defend | 6=attack | 7=protect
+enum 0x0124ae6c enum 2: 0=announcer | 1=character
+enum 0x0124ae7c enum 2: 0=normal | 1=high
+enum 0x0124ae8c enum 3: 0=off | 1=unfiltered | 2=ping
+enum 0x0124ed68 enum 11: 72=Consumable | 73=Aura | 74=OffensiveEffect | 75=DefensiveEffect | 76=DebuffingEffect | 77=DisableReduction | 78=Carry | 79=Caster | 80=Bruiser | 81=Tank | 82=Support
+enum 0x0124edc0 enum 3: 0=Stat | 1=Ability | 2=Consumable
+enum 0x0124edd8 enum 3: 0=Basic | 1=Advanced | 2=Legendary
+enum 0x0124edf0 enum 3: 0=Offense | 1=Defense | 2=Utility
+enum 0x013db780 enum 19: -1=none | 0=abilities | 1=ultimate | 2=xpBar | 3=shop | 4=ward | 5=spells | 6=consumables | 7=cameraLock | 8=recall | 9=scoreboard | 10=ping | 11=startingItems | 12=recommendedItems | 13=startingRecommendedItems | 14=spiritWells | 15=allItems | 16=deathRecap | 17=startingTip
+enum 0x01412610 enum 2: 0=OnMyPlayerEnter | 1=OnAnyPlayerEnter
+enum 0x01412d00 enum 11: -1=unknown | 0=shaper | 1=shaper skin | 2=perk | 3=gem | 4=loadout | 5=ward | 6=announcer pack | 7=avatar | 8=demo loot | 9=living lore vote
+enum 0x01412d58 enum 2: 0=exclusive | 1=additive
+enum 0x01412d68 enum 4: 0=none | 1=alwaysOwned | 2=hide | 3=hideIfUnowned
+enum 0x01418520 enum 8: 0=global0 | 1=global1 | 2=global2 | 3=local0 | 4=local1 | 5=local2 | 6=character0 | 7=character1
+enum 0x01418560 enum 3: 0=not_shadowed | 1=yes_shadowed | 2=inv_shadowed
+enum 0x01419bb4 enum 6: 0=square | 1=rectangle | 2=trapezoid | 3=triangle | 4=angle | 5=polygon
+enum 0x01419be4 enum 4: 0=offense | 1=defense | 2=utility | 3=chromatic
+enum 0x01419c04 enum 4: 1=green | 2=red | 3=blue | 4=any
+enum 0x01419c28 bitfield 9: 1=offense | 2=defense | 4=utility | 8=passive | 16=health | 32=mitigation | 4096=large | 8192=medium | 16384=small
+enum 0x01419c70 enum 8: 0=NoOp | 1=Add | 2=PercentChange | 3=Clamp | 4=AddBest | 5=PercentChangeBest | 6=MultiplyAdd | 7=DiminishingReturns
+enum 0x0141ab80 enum 2: 0=IndependentEvents | 1=WeightedRandom
+enum 0x0141ca30 enum 2: 0=optionA | 1=optionB
+enum 0x0141ebf0 enum 5: 0=none | 1=minions | 2=creeps | 3=parasite | 4=super minion
+enum 0x0141ec18 enum 3: 0=none | 1=blue | 2=red
+enum 0x0141ec30 enum 3: 0=minor | 1=medium | 2=major
+enum 0x0141f7a0 enum 7: 0=normal | 1=ignore | 2=minion | 3=jungle creature | 4=tower | 5=bot | 6=objective
+enum 0x0141f7d8 enum 4: 0=prioritizedList | 1=sequential | 2=random | 3=weightedRandom
+enum 0x0141f7f8 enum 2: 1=and | 2=or
+enum 0x0141f808 enum 5: 0= | 1=intValue | 2=floatValue | 3=boolValue | 4=stringValue
+enum 0x0141f830 enum 12: -1=none | 0=basic | 1=ward | 3=Q | 4=W | 5=E | 6=R | 7=spell1 | 8=spell2 | 9=spell3 | 10=consume1 | 11=consume2
+enum 0x014280b0 enum 3: 0=MinionsSpawnFromBaseOnly | 1=MinionsSpawnFromForwardBases | 2=MinionsSpawnFromAllBases
+enum 0x014280c8 enum 2: 0=unlimited | 1=gold mine not empty
+enum 0x0142ca10 enum 17: 0=melee minion | 1=ranged minion | 2=super minion | 3=creep | 6=objective minor | 7=objective medium | 8=objective major | 4=destructible | 5=interactable | 9=tower | 10=gold mine | 11=player pet | 12=follower | 13=guardian | 14=nub | 15=locus | 16=ward
+enum 0x0142ca98 enum 3: 0=any | 1=basic | 2=abilities
+enum 0x0142cab0 enum 3: 0=everything | 1=terrain | 2=nothing
+enum 0x0142cac8 enum 5: 1=none | 2=orbs | 4=catalysts | 8=loot | 16=dna
+enum 0x0142caf0 enum 4: 3=Q | 4=W | 5=E | 6=R
+enum 0x0142cb10 enum 4: 0=gladiator | 1=tactician | 2=hunter | 3=predator
+enum 0x0142cb34 enum 7: 0=last player to hit | 1=last player to hit and assist | 2=area | 3=area and last hit | 4=team | 5=friendly titans | 6=enemy titans
+enum 0x0142cb70 enum 13: 0=charge | 1=care | 2=no | 3=sorry | 4=thank | 5=yes | 6=mia | 8=compliment | 9=laugh | 10=taunt | 11=joke | 12=flirt | 13=dance
+enum 0x01432340 enum 4: 0=game object | 2=sphere | 3=box | 4=capsule
+enum 0x01432c70 bitfield 3: 1=owner | 2=allies | 4=enemies
+enum 0x01432db0 enum 3: 0=None | 1=Item Unique | 2=Global Unique
+enum 0x01433f50 enum 2: 0=hordeLevelsOnly | 1=bossLevelsOnly
+enum 0x01434e70 enum 3: 0=from definition | 1=include | 2=exclude
+enum 0x014382a0 enum 2: 0=sphere | 1=box
+enum 0x01438a48 enum 44: 113409280=creature | -639573535=titan | 44938362=obstacle | -638914300=spawn point | -1650855174=path point | 1021600019=trigger | -1823121973=point light | -1126602949=spot light | 1029181725=line light | -1961879388=parallel light | -434786341=hemisphere light | -117102634=animator | -217768362=animated | -375240555=graphics control | -429652670=material | -1591006184=levelshop object | 354267144=terrain | -401550075=weapon | -1380931477=handle | 1227356799=Movie | 691006003=Loot | 943327861=Placeable Effect | -1567585774=Lua Job | 1214237073=Ability Object | 1299678392=Decal | -1640219142=Water | -46321959=Grass | 1877847629=door | 158838625=interactable | 624914268=projectile | 1309620=DestructibleOrnament | -67422512=MapCamera | 119526356=Occluder | 1824104447=SplineCamera | -45584233=SplineCameraNode | -1698298001=SplinePathNode | 213110983=Tower | 1937850491=Lantern | 228910467=Follower Spawn Point | 235566511=Vision Object | 426258729=Perception Proxy Object | 243082007=Follower | 262194389=Tower Respawn Graphics | -577323379=Navmesh Marker
+enum 0x01438ba8 enum 6: 0=none | 1=box | 2=sphere | 3=capsule | 4=hull | 5=mesh
+enum 0x01438bd8 enum 8: 0=default | 0=pathfinding | 1=orbit_owner | 2=track_target | 3=follower_mining | 4=face target | 5=stay on navmesh | 6=none
+enum 0x01438c78 bitfield 5: 1=basics | 2=abilities | 4=highmobility | 8=enemies | 16=allies
+enum 0x01438ca0 enum 4: 0=npc | 1=team blue | 2=team red | 255=invalid
+enum 0x0143c590 enum 6: 0=none | 1=bottom | 2=center | 3=top | 4=body part | 5=local offset
+enum 0x0143e450 enum 3: 0=sphere | 1=box | 2=capsule
+enum 0x0143e468 enum 4: 0=each object | 1=each player | 2=any player | 3=all players

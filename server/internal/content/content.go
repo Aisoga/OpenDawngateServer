@@ -4,7 +4,9 @@
 //
 // The data comes from the user's own copy of the game: re/scripts/assetdata.py dump writes the
 // client's AssetData as JSON (docs/ASSETDATA.md), and Build turns that dump into one content file
-// (dgserver --make-content <dump dir>, default server\data\content.json). The content file is
+// (dgserver --make-content <dump dir>, default server\data\content.json);
+// server/internal/setup/gamecontent makes the same file from the game folder alone (BuildFrom with a
+// Source that reads AssetData.snap; dgserver --make-content <game folder>). The content file is
 // copyrighted game data: it is generated at setup, lives in the gitignored server data folder and is
 // never committed. Tests use the synthetic dump in server/testdata/assetdata.
 //
@@ -408,16 +410,25 @@ func Load(path string) (*Content, error) {
 	return &c, nil
 }
 
+// Marshal is the content file's bytes, as Write writes them.
+func (c *Content) Marshal() ([]byte, error) {
+	raw, err := json.MarshalIndent(c, "", " ")
+	if err != nil {
+		return nil, err
+	}
+	return append(raw, '\n'), nil
+}
+
 // Write writes the content file (creating its folder).
 func (c *Content) Write(path string) error {
-	raw, err := json.MarshalIndent(c, "", " ")
+	raw, err := c.Marshal()
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(raw, '\n'), 0o644)
+	return os.WriteFile(path, raw, 0o644)
 }
 
 // Grant policies for a new account's inventory (dgserver --owned).

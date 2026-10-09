@@ -39,9 +39,11 @@
   of each t. Fractions are measured on the screenshots (they show the whole client area).
   -ShotTimes overrides the default screenshot times (comma-separated seconds, even).
   -Background (D7-live) keeps the game window off the desktop: every 200 ms the monitor moves it to (-30000, -30000)
-  and the bottom of the z-order without activating it (SetWindowPos with SWP_NOACTIVATE). The window still appears
-  for up to 200 ms when it is created and may take the focus once then (the game shows and activates it itself);
-  after that it stays out of the user's way. Its screenshots come out black or frozen unless -ShotFocus on (below).
+  and the bottom of the z-order without activating it (SetWindowPos with SWP_NOACTIVATE, posted). The game
+  shows its splash itself in the screen's centre for 1-3 s while it loads (nothing outside it can move it then) and
+  its main window for a moment. Unless shots are focused, the foreground is also locked while the user has
+  been idle past ForegroundLockTimeout (the game took it then in a test run) and given back if the game takes it anyway
+  (GuardForeground). Its screenshots come out black or frozen unless -ShotFocus on (below).
   -ShotFocus auto|on|off (V1): PrintWindow gets new frames only for the parts of the game window that lie on a monitor
   (V1-live; the client itself keeps rendering in the background, docs/RUNNING_THE_CLIENT.md *Screenshots and
   rendering in the background (V1)*). With 'on' every screenshot first brings the game window on-screen (from
@@ -74,6 +76,10 @@
   -GameArgs '<arguments>' (A6) is the game's command line, e.g. '-multipleInstances' for the clients of lanes b, c and
   d, which run beside lane a's (lane a's client holds the Global\Dawngate mutex; docs/RUNNING_THE_CLIENT.md *Test
   lanes (A6, A6b)*).
+  -Attach (the release's test hook): start nothing; wait up to -AttachWait seconds (90) for a Dawngate.exe whose
+  path is <GameDir>\game\Dawngate.exe (started by the release's Start-Client.exe, which holds Global\Dawngate L2G
+  itself) and watch, log in, click and close that one as if this script had started it. With Start-Client.exe
+  --test-park the game window is kept off the desktop by Start-Client too; pass -Background here as well.
   Never point -GameDir at client\ia_*: those extracted builds stay pristine.
 #>
 param(
@@ -92,7 +98,9 @@ param(
     [switch]$NoCapture,       # no dumpcap (play mode only)
     [int]$KeepAlive = 0,      # B12: post a key-up of VK_F24 every N s against the AFK kick (even; 0 = off)
     [string]$GameArgs,        # the game's command line (A6: '-multipleInstances' for lanes b-d)
-    [switch]$NoTypeActivate   # G3b: no posted WM_ACTIVATEAPP/WM_ACTIVATE before -Login's and text='s typing
+    [switch]$NoTypeActivate,  # G3b: no posted WM_ACTIVATEAPP/WM_ACTIVATE before -Login's and text='s typing
+    [switch]$Attach,          # attach to the game Start-Client.exe started from -GameDir instead of starting it
+    [int]$AttachWait = 90     # seconds -Attach waits for that game to appear
 )
 $ErrorActionPreference = 'Continue'
 if ($KeepAlive -lt 0 -or $KeepAlive % 2) { throw "-KeepAlive $KeepAlive must be 0 or even (the watch loop steps by 2 s)" }
@@ -120,6 +128,16 @@ public static class W {
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+  // the foreground guard of -Background (GuardForeground below)
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool LockSetForegroundWindow(uint code);
+  [StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+  [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO l);
+  [DllImport("user32.dll")] static extern bool SystemParametersInfoW(uint action, uint p, out uint v, uint w);
+  public static uint IdleMs() { LASTINPUTINFO l = new LASTINPUTINFO(); l.cbSize = 8; GetLastInputInfo(ref l); return (uint)Environment.TickCount - l.dwTime; }
+  public static uint LockTimeoutMs() { uint v; return SystemParametersInfoW(0x2000, 0, out v, 0) ? v : 0; }  // SPI_GETFOREGROUNDLOCKTIMEOUT
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
   [DllImport("user32.dll")] public static extern bool GetKeyboardState(byte[] s);
   [DllImport("user32.dll")] public static extern bool SetKeyboardState(byte[] s);
@@ -350,10 +368,34 @@ function KeepInBackground($p) {
         if ($script:HomeKnown) { Log "background: shot home now ($($r.L),$($r.T)), $($r.R - $r.L)x$($r.B - $r.T) (the game moved its window)" }
         $script:HomeX = $r.L; $script:HomeY = $r.T; $script:HomeKnown = $true
     }
-    # HWND_BOTTOM, SWP_NOSIZE | SWP_NOACTIVATE
-    [void][W]::SetWindowPos($h, [IntPtr]1, -30000, -30000, 0, 0, 0x0011)
+    # HWND_BOTTOM, SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS (a plain SetWindowPos waited while the game's
+    # thread loaded without handling window messages, 3 s at its splash in a test run, and held up this loop meanwhile)
+    [void][W]::SetWindowPos($h, [IntPtr]1, -30000, -30000, 0, 0, 0x4011)
     $script:BackgroundMoves++
     if ($script:BackgroundMoves -le 10) { Log "background: window moved off the desktop from ($($r.L),$($r.T)) (#$($script:BackgroundMoves))" }
+}
+# With -Background (and no focused shots) the game must not take the foreground either. Windows lets it whenever
+# the user has been idle longer than ForegroundLockTimeout (200 s; in a test run the release's game took it at its splash,
+# when shaper select opened and twice in it). So while the user is away the foreground is locked
+# (LockSetForegroundWindow; with it every try of the game was refused, its taskbar button flashed instead), released as
+# soon as the user is back; and a game window that has the foreground anyway gets it taken back for the window that had
+# it before (once per take). The release's Start-Client.exe --test-park does the same every 50 ms.
+$FgPrev = [IntPtr]::Zero; $FgTried = $false; $FgLocked = $false; $FgBacks = 0
+function GuardForeground($p) {
+    if (-not $Background -or $FocusShots -or $script:InFront) { return }
+    $timeout = [W]::LockTimeoutMs()
+    if ($timeout -gt 0 -and [W]::IdleMs() -ge $timeout) {
+        if (-not $script:FgLocked -and [W]::LockSetForegroundWindow(1)) { $script:FgLocked = $true; Log 'background: the user is idle past ForegroundLockTimeout: foreground locked' }
+    } elseif ($script:FgLocked) {
+        [void][W]::LockSetForegroundWindow(2); $script:FgLocked = $false; Log 'background: the user is back: foreground lock released'
+    }
+    $fg = [W]::GetForegroundWindow()
+    if ($fg -eq [IntPtr]::Zero) { return }
+    $fpid = [uint32]0; [void][W]::GetWindowThreadProcessId($fg, [ref]$fpid)
+    if ($fpid -ne $p.Id) { $script:FgPrev = $fg; $script:FgTried = $false; return }
+    if ($script:FgTried -or $script:FgPrev -eq [IntPtr]::Zero -or -not [W]::IsWindow($script:FgPrev)) { return }
+    $ok = [W]::SetForegroundWindow($script:FgPrev); $script:FgTried = $true; $script:FgBacks++
+    if ($script:FgBacks -le 10) { Log "background: the game took the foreground (#$($script:FgBacks)); given back to the window that had it: $ok" }
 }
 function Shot($p, $name) {
     $p.Refresh()
@@ -397,16 +439,31 @@ if ($NoCapture) {
 
 # 2. play the launcher's part: Dawngate.exe exits with -1337 unless the named event
 #    "Global\Dawngate L2G" exists (it opens it, SetEvent()s it, and carries on)
-$l2g = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::ManualReset, 'Global\Dawngate L2G')
-Log "created event Global\Dawngate L2G"
-
-# start the game from the working copy
 $start = Get-Date
 $exe = Join-Path $GameDir 'game\Dawngate.exe'
-$startArgs = @{ FilePath = $exe; WorkingDirectory = (Join-Path $GameDir 'game'); PassThru = $true }
-if ($GameArgs) { $startArgs.ArgumentList = $GameArgs }
-$p = Start-Process @startArgs
-Log "started $exe pid=$($p.Id)$(if ($GameArgs) { " args '$GameArgs'" })"
+if ($Attach) {
+    # the release's Start-Client.exe started the game and holds the event; find that game by its path
+    $l2g = $null
+    $p = $null
+    $deadline = (Get-Date).AddSeconds($AttachWait)
+    while (-not $p -and (Get-Date) -lt $deadline) {
+        $found = @(Get-CimInstance Win32_Process -Filter "Name = 'Dawngate.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { "$($_.ExecutablePath)" -ieq $exe })
+        if ($found.Count) { $p = Get-Process -Id $found[0].ProcessId -ErrorAction SilentlyContinue }
+        if (-not $p) { Start-Sleep -Milliseconds 250 }
+    }
+    if (-not $p) { Log "attach: no $exe appeared within $AttachWait s"; throw "-Attach: no $exe appeared within $AttachWait s" }
+    $null = $p.Handle  # Windows PowerShell 5.1: the exit code needs the handle opened while the game runs
+    Log "attached to $exe pid=$($p.Id) (started by another program, -Attach)"
+} else {
+    $l2g = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::ManualReset, 'Global\Dawngate L2G')
+    Log "created event Global\Dawngate L2G"
+    # start the game from the working copy
+    $startArgs = @{ FilePath = $exe; WorkingDirectory = (Join-Path $GameDir 'game'); PassThru = $true }
+    if ($GameArgs) { $startArgs.ArgumentList = $GameArgs }
+    $p = Start-Process @startArgs
+    Log "started $exe pid=$($p.Id)$(if ($GameArgs) { " args '$GameArgs'" })"
+}
 
 # 3. watch: network endpoints owned by the game, child processes, window, screenshots
 $seen = @{}
@@ -431,7 +488,7 @@ for ($t = 0; $Seconds -le 0 -or $t -le $Seconds; $t += 2) {
         $k = "child $($ch.ProcessId) $($ch.Name) $($ch.CommandLine)"
         if (-not $seen[$k]) { $seen[$k] = 1; Log "t=${t}s $k" }
     }
-    if (-not $l2gSeen -and $l2g.WaitOne(0)) { $l2gSeen = $true; Log "t=${t}s game signalled Global\Dawngate L2G" }
+    if (-not $l2gSeen -and $l2g -and $l2g.WaitOne(0)) { $l2gSeen = $true; Log "t=${t}s game signalled Global\Dawngate L2G" }
     $p.Refresh()
     $k = "window '$($p.MainWindowTitle)' responding=$($p.Responding)"
     if (-not $seen[$k]) { $seen[$k] = 1; Log "t=${t}s $k" }
@@ -442,9 +499,11 @@ for ($t = 0; $Seconds -le 0 -or $t -le $Seconds; $t += 2) {
     # poll the game's endpoints several times per step so short-lived connections are caught too
     # (an HTTP request to a local stub can still finish between two polls; the capture has those)
     $stepEnd = (Get-Date).AddSeconds(2)
-    while ((Get-Date) -lt $stepEnd -and -not $p.HasExited) { PollEndpoints $t; KeepInBackground $p; Start-Sleep -Milliseconds 200 }
+    while ((Get-Date) -lt $stepEnd -and -not $p.HasExited) { PollEndpoints $t; KeepInBackground $p; GuardForeground $p; Start-Sleep -Milliseconds 200 }
 }
 if ($KeepAlive -gt 0) { Log "keepalive: $KeepAlivePosts key-up(s) posted (every $KeepAlive s)" }
+if ($FgLocked) { [void][W]::LockSetForegroundWindow(2); Log 'background: foreground lock released (end)' }
+if ($Background -and -not $FocusShots) { Log "background: the game took the foreground $FgBacks time(s) (given back each time)" }
 
 # 4. close the game (gracefully first)
 if (-not $p.HasExited) {
@@ -475,5 +534,5 @@ foreach ($r in $roots) {
 }
 Get-ChildItem 'HKCU:\Software\Electronic Arts' -Recurse -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -match '(?i)dawngate|battlegrounds|waystone' } | ForEach-Object { Log "reg: $($_.Name)" }
-$l2g.Dispose()
+if ($l2g) { $l2g.Dispose() }
 Log "done"

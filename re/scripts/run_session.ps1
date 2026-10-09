@@ -449,7 +449,7 @@ function Get-SessionProcesses {
     # A5b: with -Lan also the lan test copy's game (client\run_854_l) and what binds the LAN address (never
     # client\run_854_lan, setup_all.py --player's copy, which a player may run by hand).
     $client = (Join-Path $MainRoot 'client\').ToLower()
-    $mainDir = $MainRoot.ToLower() + '\'  # the main checkout and its worktrees (.claude\worktrees\...)
+    $mainDir = $MainRoot.ToLower() + '\'  # the main checkout and the git worktrees inside it
     $logs = (Join-Path $MainRoot 're\logs\').ToLower()
     $probeDir = (Join-Path $MainRoot 'tools\raknet\build\').ToLower()
     $all = @(Get-CimInstance Win32_Process)
@@ -465,7 +465,7 @@ function Get-SessionProcesses {
                 if ($cmd -match '--bind') { Test-OwnBind $cmd }
                 # D14b-live: one without --bind and not started by a dgserver is lane a's only from this checkout's own
                 # gms\build (lane a's -GmsProbe session); d14b_cc1's cleanup had stopped an offline package's
-                # gms_script.exe from its worktree (.claude\worktrees\...\gms\build), which no lane a session starts
+                # gms_script.exe from its worktree (<worktree>\gms\build), which no lane a session starts
                 else { $parent = $byPid[[int]$_.ParentProcessId]; if ($parent -and $parent.Name -eq 'dgserver.exe') { Test-OwnBind "$($parent.CommandLine)" } else { $Lane -eq 'a' -and $exe.StartsWith((Join-Path $RepoRoot 'gms\build\').ToLower()) } })) -or
             ($_.Name -in @('Dawngate.exe', 'CrashSender1402.exe') -and $exe.StartsWith($client) -and $(
                 $cl = Get-CopyLane $exe; $cl -eq $Lane -or ($LanAddr -and $cl -eq 'l'))) -or

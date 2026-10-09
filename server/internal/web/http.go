@@ -10,6 +10,8 @@ package web
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -73,6 +75,21 @@ func WriteBuiltins(dir string) ([]string, error) {
 type HTTP struct {
 	Log *logging.Log
 	WWW string // absolute web root, or "" (then only built-in answers, else 404)
+	// Extra answers are served at exactly their Path (before --www and the built-ins), e.g. the CA modulus
+	// (dgserver --serve-ca, CAModulusPath).
+	Extra []Builtin
+}
+
+// CAModulusPath is where dgserver --serve-ca serves the redirector CA's public modulus (128 bytes, ca_modulus.bin):
+// Start-Client.exe fetches it from a server on another machine and has the player compare its Fingerprint with the
+// one the operator's Start-Server.exe shows.
+const CAModulusPath = "dawngate/ca_modulus.bin"
+
+// Fingerprint is a CA modulus's fingerprint: the first 16 hex digits of its SHA-256 (patch_client.py --show's
+// ca_sha256, certs.Fingerprint).
+func Fingerprint(modulus []byte) string {
+	h := sha256.Sum256(modulus)
+	return hex.EncodeToString(h[:])[:16]
 }
 
 // maxHead bounds the request head, like asyncio's StreamReader limit.
@@ -141,7 +158,13 @@ func (h *HTTP) ServeConn(c net.Conn) {
 	}
 	var data []byte
 	ctype, status, source := "text/plain", "404 Not Found", ""
-	if file := h.lookup(target); file != "" {
+	for _, b := range h.Extra {
+		if urlPath(target) == "/"+b.Path {
+			data, ctype, status, source = b.Body, b.ContentType, "200 OK", "(served)"
+			break
+		}
+	}
+	if file := h.lookup(target); file != "" && source == "" {
 		if b, err := os.ReadFile(file); err == nil {
 			data, status, source = b, "200 OK", "from "+file
 			ctype = "application/octet-stream"

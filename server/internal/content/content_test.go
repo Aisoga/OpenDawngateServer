@@ -21,6 +21,30 @@ func Fixture(t testing.TB) *Content {
 	return c
 }
 
+// BuildFrom asks its Source for exactly Classes, in that order; the dump folder's source gives the
+// fixture's content.
+func TestBuildFromSource(t *testing.T) {
+	var asked []string
+	dump := DumpDir(filepath.Join(golden.Dir(), "assetdata"))
+	c, err := BuildFrom(func(class string, into any) error {
+		asked = append(asked, class)
+		return dump(class, into)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(asked, Classes) {
+		t.Errorf("asked %v, Classes %v", asked, Classes)
+	}
+	if !reflect.DeepEqual(c, Fixture(t)) {
+		t.Error("BuildFrom(DumpDir) differs from Build")
+	}
+	raw, err := c.Marshal()
+	if err != nil || raw[len(raw)-1] != '\n' {
+		t.Errorf("Marshal: %v", err)
+	}
+}
+
 // B7d: a shaper's or skin's Noun, a PlayerClass's shaper Noun or a shaper/skin catalogID names the shaper's
 // catalogID; anything else (a ward's Noun, a perk, unknown ids, no content) names none.
 func TestShaperOf(t *testing.T) {

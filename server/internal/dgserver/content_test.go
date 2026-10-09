@@ -1,4 +1,4 @@
-package main
+package dgserver
 
 import (
 	"fmt"
@@ -9,7 +9,10 @@ import (
 	"testing"
 
 	"dawngate/server/internal/blaze"
+	"dawngate/server/internal/content"
 	"dawngate/server/internal/golden"
+	"dawngate/server/internal/setup/gamecontent"
+	"dawngate/server/internal/setup/testgame/synthgame"
 	"dawngate/server/internal/tdf"
 )
 
@@ -66,6 +69,28 @@ func TestServerContentAndPersistence(t *testing.T) {
 	}
 	if raw, _ := os.ReadFile(filepath.Join(data, "accounts.json")); string(raw) != "{" {
 		t.Errorf("accounts.json changed: %s", raw)
+	}
+}
+
+// --make-content also takes a game folder (game\Data\AssetData.snap) and writes what
+// gamecontent.JSON makes from it.
+func TestMakeContentFromGameFolder(t *testing.T) {
+	game := t.TempDir()
+	if err := synthgame.Write(game); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "content.json")
+	if err := makeContent(game, file); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(file)
+	want, err := gamecontent.JSON(game)
+	if err != nil || string(got) != string(want) {
+		t.Errorf("content from the game folder: %v\n%s", err, got)
+	}
+	c, err := content.Load(file)
+	if err != nil || len(c.Items) != 3 || len(c.Shapers) != 2 {
+		t.Errorf("load: %v %+v", err, c)
 	}
 }
 

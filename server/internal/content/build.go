@@ -2,22 +2,59 @@ package content
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 )
 
+// Classes are the AssetData classes Build reads; CollectionItem and PlayerClass must exist.
+var Classes = []string{"CollectionItem", "PlayerClass", "Noun", "PerkShape", "Shape", "Socket", "Gem", "Item",
+	"LootBag", "LootBagRarity", "LootBagTuning"}
+
+// A Source gives Build a class's instances: it decodes them into into (a *map[string]T) from JSON as
+// re/scripts/assetdata.py dump writes it ({name: object}; with --locale, Locale keys are {"ref", "text"}
+// objects). An error wrapping fs.ErrNotExist says the source has no such class. DumpDir reads a dump
+// folder; server/internal/setup/gamecontent reads the game's AssetData.snap itself.
+type Source func(class string, into any) error
+
 // Build makes the content from an AssetData dump: the folder re/scripts/assetdata.py dump writes
-// (<Class>.json per class, {"class", "count", "errors", "instances": {name: object}}; with --locale,
-// Locale keys are {"ref", "text"} objects, which gives the titles). It reads CollectionItem,
-// PlayerClass, Noun, PerkShape, Shape, Socket, Gem, Item, LootBag, LootBagRarity and LootBagTuning;
-// CollectionItem and PlayerClass must exist.
+// (<Class>.json per class, {"class", "count", "errors", "instances": {name: object}}).
+func Build(dumpDir string) (*Content, error) { return BuildFrom(DumpDir(dumpDir)) }
+
+// DumpDir is the Source of a dump folder: <dir>/<Class>.json, whose "class" must be the class.
+func DumpDir(dir string) Source {
+	return func(class string, into any) error {
+		path := filepath.Join(dir, class+".json")
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("content: %w (run re/scripts/assetdata.py dump first, see docs/ASSETDATA.md)", err)
+		}
+		var doc struct {
+			Class     string          `json:"class"`
+			Instances json.RawMessage `json:"instances"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			return fmt.Errorf("content: %s: %v", path, err)
+		}
+		if doc.Class != class {
+			return fmt.Errorf("content: %s holds class %q, want %q", path, doc.Class, class)
+		}
+		if err := json.Unmarshal(doc.Instances, into); err != nil {
+			return fmt.Errorf("content: %s: %v", path, err)
+		}
+		return nil
+	}
+}
+
+// BuildFrom makes the content from a Source's classes (Classes).
 //
 // Links followed (ASSETDATA.md *Meta classes*): a shaper's or skin's CollectionItem.parentAsset is a
 // Noun whose playerClassData names its PlayerClass; a perk's parentAsset is a PerkShape whose shape
 // names a Shape (maxOwnable); a gem's parentAsset is a Gem (maxOwnable).
-func Build(dumpDir string) (*Content, error) {
+func BuildFrom(src Source) (*Content, error) {
 	var (
 		items      map[string]dumpCollectionItem
 		classes    map[string]dumpPlayerClass
@@ -41,7 +78,7 @@ func Build(dumpDir string) (*Content, error) {
 		{"Gem", &gems, false}, {"Item", &matchItems, false}, {"LootBag", &lootBags, false},
 		{"LootBagRarity", &rarities, false}, {"LootBagTuning", &tuning, false},
 	} {
-		if err := readClass(dumpDir, f.class, f.into, f.required); err != nil {
+		if err := src(f.class, f.into); err != nil && (f.required || !errors.Is(err, fs.ErrNotExist)) {
 			return nil, err
 		}
 	}
@@ -158,32 +195,6 @@ func Build(dumpDir string) (*Content, error) {
 		c.FTUELoot = []uint32{}
 	}
 	return c, nil
-}
-
-// readClass reads <dir>/<class>.json's instances into into (a *map[string]T).
-func readClass(dir, class string, into any, required bool) error {
-	path := filepath.Join(dir, class+".json")
-	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) && !required {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("content: %v (run re/scripts/assetdata.py dump first, see docs/ASSETDATA.md)", err)
-	}
-	var doc struct {
-		Class     string          `json:"class"`
-		Instances json.RawMessage `json:"instances"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return fmt.Errorf("content: %s: %v", path, err)
-	}
-	if doc.Class != class {
-		return fmt.Errorf("content: %s holds class %q, want %q", path, doc.Class, class)
-	}
-	if err := json.Unmarshal(doc.Instances, into); err != nil {
-		return fmt.Errorf("content: %s: %v", path, err)
-	}
-	return nil
 }
 
 // locKey is a Key member as the dump writes it: a plain string (the key's text, e.g. a Locale

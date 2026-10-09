@@ -1,0 +1,7 @@
+# Keep Go sources and golden test data byte-exact on Windows checkouts. core.autocrlf=true would turn
+# them into CRLF: gofmt -l would then list every file, and the golden telemetry_rules.xml would differ.
+*.go text eol=lf
+go.mod text eol=lf
+testdata/** -text
+# The web content dgserver embeds and serves (B6): the bytes on the wire must not depend on the checkout.
+internal/web/www/** -text

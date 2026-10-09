@@ -1,0 +1,8 @@
+{
+ "class": "Item",
+ "count": 1,
+ "errors": {},
+ "instances": {
+  "Basic_Blade": {"Category": "Stat", "Tier": "Basic", "ItemCost": 300, "Name": {"ref": "Test!0x00000010", "text": "Blade"}, "Description": null}
+ }
+}

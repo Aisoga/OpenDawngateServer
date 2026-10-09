@@ -1,0 +1,13 @@
+{
+ "class": "Noun",
+ "count": 6,
+ "errors": {},
+ "instances": {
+  "ember": {"nounType": "creature", "playerClassData": "PC_Ember.PlayerClass", "collectionItem": "ember.CollectionItem"},
+  "ember_frost": {"nounType": "creature", "playerClassData": "PC_Ember.PlayerClass", "collectionItem": "ember_frost.CollectionItem"},
+  "stone": {"nounType": "creature", "playerClassData": "PC_Stone.PlayerClass", "collectionItem": "stone.CollectionItem"},
+  "ghost": {"nounType": "creature", "playerClassData": "PC_Ghost.PlayerClass", "collectionItem": "ghost.CollectionItem"},
+  "ghost_mist": {"nounType": "creature", "playerClassData": "PC_Ghost.PlayerClass", "collectionItem": "ghost_mist.CollectionItem"},
+  "lantern": {"nounType": "placeable", "playerClassData": null, "collectionItem": "lantern.CollectionItem", "bbox": {"min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 1.0]}}
+ }
+}

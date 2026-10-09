@@ -1,0 +1,9 @@
+{
+ "class": "Socket",
+ "count": 2,
+ "errors": {},
+ "instances": {
+  "Combo": {"type": "any", "texture": "test.dds", "thumbnailTexture": "test_mini.dds"},
+  "Defense": {"type": "red", "texture": "test.dds", "thumbnailTexture": "test_mini.dds"}
+ }
+}

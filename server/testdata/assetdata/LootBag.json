@@ -1,0 +1,9 @@
+{
+ "class": "LootBag",
+ "count": 2,
+ "errors": {},
+ "instances": {
+  "Silverish": {"Drop": {"DropType": "IndependentEvents", "Drop": [{"DropType": "IndependentEvents", "Drop": [], "Rarity": "Shiny.LootBagRarity", "Chance": 1.0}, {"DropType": "IndependentEvents", "Drop": [], "Rarity": "Shiny.LootBagRarity", "Chance": 1.0}], "Rarity": null, "Chance": 1.0}, "RequiredBagScore": 400, "TierName": "Test!0x00000012", "Name": "SILVERISH"},
+  "Copper": {"Drop": null, "RequiredBagScore": 25, "TierName": {"ref": "Test!0x00000011", "text": "Common"}, "Name": "COPPER"}
+ }
+}

@@ -1,0 +1,2167 @@
+// Agent AI per frame (D1b-live): see agents.h.
+#include "agents.h"
+
+#include <windows.h>
+
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "core/agents/aggro.h"
+#include "core/agents/brain.h"
+#include "bots.h"
+#include "game.h"
+#include "log.h"
+
+using namespace game;
+
+namespace agents {
+namespace {
+
+Options g_opt;
+bool g_installed;
+bool g_blackboardOk;  // the blackboard functions' prologues matched
+bool g_brainOk;       // AIConditions_Evaluate's prologue matched
+unsigned g_frame = 1;
+void* g_sim;
+
+// AgentBehaviorTree_Tick's prologue (sub esp, 8; push esi; mov esi, [esp+0x10]).
+constexpr unsigned char kAgentTickBytes[] = {0x83, 0xEC, 0x08, 0x56, 0x8B, 0x74, 0x24, 0x10};
+
+// The leaves of the two static trees by their decider record (tree data +0x2DC holds the active one; the id hashes at
+// +0x2D8 repeat, 0x0A288B82 is five leaves). Numbers as in docs/AGENT_AI.md §2.2 (the default tree's as D1-D5).
+struct Leaf {
+  std::uintptr_t record;
+  const char* name;
+};
+constexpr Leaf kLeaves[] = {
+    {0x0141E0A8, "1 DeathAbility"},     {0x0141E130, "2 Death"},          {0x0141E1B8, "3 AbilityHoldsAgent"},
+    {0x0141E240, "4 GameOver"},         {0x0141E2C8, "5 Idle"},           {0x0141E350, "6 Disconnected"},
+    {0x0141E3D8, "7 ClearRequests"},    {0x0141E460, "8 UseAbility"},     {0x0141E4E8, "9 ClearRequests"},
+    {0x0141E570, "10 MoveToRange"},     {0x0141E5F8, "11 FollowObject"},  {0x0141E680, "12 Pursue"},
+    {0x0141E708, "13 PhaseDefault"},    {0x0141E790, "14 CombatIdle"},    {0x0141E818, "15 CombatIdleDefault"},
+    {0x0141E8A0, "16 PassiveIdle"},     {0x0141E928, "17 IdleDefault"},   {0x0141DD80, "D1 DeathAbility"},
+    {0x0141DE08, "D2 ClearRequests"},   {0x0141DE90, "D3 AbilityHoldsAgent"}, {0x0141DF18, "D4 UseAbility"},
+    {0x0141DFA0, "D5 Idle"},
+};
+constexpr int kNumLeaves = static_cast<int>(sizeof kLeaves / sizeof kLeaves[0]);
+constexpr std::uintptr_t kLeafDeath = 0x0141E130;
+constexpr std::uintptr_t kLeafDeathAbility = 0x0141E0A8;
+constexpr std::uintptr_t kLeafDeathAbilityDefault = 0x0141DD80;
+constexpr std::uintptr_t kLeafPursue = 0x0141E680;  // 12: nBehavior_Follow (AIDefinition.targetTooFar if set)
+
+int LeafIndex(std::uintptr_t record) {
+  for (int i = 0; i < kNumLeaves; ++i)
+    if (kLeaves[i].record == record) return i;
+  return -1;
+}
+const char* LeafName(std::uintptr_t record) {
+  const int i = LeafIndex(record);
+  if (i >= 0) return kLeaves[i].name;
+  if (!record) return "none";
+  static char buf[4][24];  // a record outside the leaf table (the shaper's tree, which runs no leaf: its root group)
+  static unsigned k;
+  char* b = buf[k++ & 3];
+  std::snprintf(b, sizeof buf[0], "?%08X", static_cast<unsigned>(record));
+  return b;
+}
+
+// Behavior tree data (object +0x89C, AGENT_AI.md §1.5).
+namespace bt {
+constexpr std::uintptr_t kActiveLeafId = 0x2D8;
+constexpr std::uintptr_t kActiveLeaf = 0x2DC;  // the active leaf's decider record (BehaviorTree_Update 0x008B2910)
+constexpr std::uintptr_t kFlags = 0x700;       // persistent agent flags (2 creature tree, 8 pursue, 0x20 bot, 0x40)
+constexpr std::uintptr_t kTicking = 0x704;     // re-entrancy guard
+}  // namespace bt
+
+constexpr unsigned kBlackboardPeriodMs = 500;  // cAgentBlackboard +0x08 (constructor, AgentBlackboard_Init)
+
+struct AgentState {
+  std::uintptr_t leaf = 0;
+  unsigned lastFrame = 0;  // frame of the last tree tick
+  unsigned seenFrame = 0;  // frame the agent loop last saw it
+  double deathAt = -1;     // game seconds the Death leaf (2) or a death ability (1) started
+  float deathPos[3] = {};
+  bool movedLogged = false;
+  const char* noun = "?";
+  // step 2: the blackboard update
+  bool scheduled = false;
+  unsigned long long nextUpdateMs = 0;
+  std::uint32_t bestTarget = 0;   // the best target the last update reported (OnBestTargetChanged)
+  bool battleReady = false;
+  std::string listSig;            // the aggro list's ids after the last update (logged on change)
+  unsigned updates = 0;
+  // step 3: the brain (host-side state; the brain's own per-node arrays at +0x30 stay as AgentBrain_Init left them)
+  bool brainSeen = false;
+  int node = -1;                                   // the current AI node
+  unsigned long long nodeEnteredMs = 0;
+  std::vector<unsigned long long> gambitReadyMs;   // per gambit of the current node
+  int seqCursor = -1;
+  std::vector<unsigned long long> linkReadyMs, linkNextCheckMs;
+  std::vector<char> linkFired;
+  int lastResult = 0x7FFFFFFF;
+  std::uint32_t lastGuid = 0;
+  bool pursue = false;
+  unsigned requests = 0;
+  unsigned long long nextThinkMs = 0;  // after a step without a usable gambit: think again 100 ms later
+  int lastSlot = -2;
+  // D6a: a bot's brain (the plan and phase layer; host-side timers, the engine's +0x14/+0x18 written on changes)
+  int isBot = -1;                      // GameObject_IsBot, asked once
+  int botPlan = -2, botPhase = -1;     // -2: not seen yet
+  unsigned long long planEnteredMs = 0, phaseEnteredMs = 0, botNextThinkMs = 0;
+  std::vector<unsigned long long> nodeLinkReady, nodeLinkNext, phaseLinkReady, phaseLinkNext;
+  std::vector<char> nodeLinkFired, phaseLinkFired;
+  std::string botBehavior;             // the phase's default behavior last set
+  // D6c: the timers of every AI node visited, kept across visits. The engine's brain holds one state block per AI node
+  // (brain +0x30, 0x350 bytes a node: per output link a flag word and three u64 timers, per Plan.output link the same,
+  // per gambit two u64 and a byte), which AgentBrain_Init (0x008AE050) and AgentBrain_InitBot (0x008AD970) zero once
+  // and nothing else writes; so a link's cooldown, its next check, its activated-once bit and a gambit's cooldown
+  // belong to the node and outlive a visit [inferred: the update that read them is stripped]. The vectors above are the
+  // current node's; NodeTimers keeps the others. [host] brain_node_timers=0: D6a's fresh timers on every visit.
+  struct NodeTimers {
+    std::vector<unsigned long long> linkReady, linkNext, phaseLinkReady, phaseLinkNext, gambitReady;
+    std::vector<char> linkFired, phaseLinkFired;
+  };
+  std::unordered_map<int, NodeTimers> nodeTimers;
+  // D6c: plan bounces (a plan left again within kQuickExitMs of entering it)
+  int prevPlan = -1;
+  unsigned long long prevPlanLeftMs = 0;
+  // D6d: a bot's pursuit of a point (its gambit at a point was out of range): the point the blackboard's target position
+  // holds, since when, and the distance then
+  bool pointPursuit = false;
+  float point[3] = {};
+  unsigned long long pointSinceMs = 0;
+  float pointStartDistance = 0.f;
+  std::uint32_t pointDiagTarget = 0;  // [host] bot_pursue_point=0: the object the last logged point request had
+};
+std::unordered_map<std::uint32_t, AgentState> g_agents;  // by object id
+
+struct Stats {
+  unsigned frames = 0, ticks = 0, refused = 0, exceptions = 0, viaCommands = 0;
+  unsigned leafChanges = 0, deaths = 0, deathAbilities = 0, deletedAfterDeath = 0;
+  unsigned agentsLastFrame = 0, ticksLastFrame = 0;
+  double tickMsLastFrame = 0, tickMsMax = 0;
+  // step 2
+  unsigned updates = 0, forced = 0, perceived = 0, added = 0, addRefused = 0, removed = 0, reordered = 0;
+  unsigned bestChanges = 0, events = 0, battleReadyChanges = 0, engagedAgents = 0, damageHooks = 0, callsForHelp = 0;
+  unsigned removedBy[6] = {};  // gone/dead, invalid, untargetable/unattackable, invisible, beyond drop range, tether
+  unsigned bbExceptions = 0;
+  unsigned madeVisible = 0;
+  // step 3
+  unsigned brainSteps = 0, requests = 0, started = 0, outOfRange = 0, requestRefused = 0, noTarget = 0, conditionsRun = 0;
+  unsigned linksFired = 0, brainExceptions = 0, pursueOn = 0, pursueOff = 0;
+  unsigned nodeTimersKept = 0;  // D6c: NPC node entries that got their timers back from an earlier visit
+  unsigned heldThinks = 0;      // D6c: NPC brain steps without gambits: an uninterruptible ability held the agent
+  unsigned prunedAbilities = 0, prunedModifiers = 0;
+  // D5: nBattlegrounds.AddBaseStructuresToAggroList
+  unsigned baseCalls = 0, baseAdded = 0, baseMarked = 0, baseSkipped = 0, baseKeptBeyondRange = 0;
+};
+Stats g_st;
+unsigned g_logLines;
+
+bool LogBudget() {
+  ++g_logLines;
+  return g_logLines <= static_cast<unsigned>(g_opt.logLimit) || g_logLines % 100 == 0;
+}
+
+DWORD SehNote(EXCEPTION_POINTERS* ep, const char* what) {
+  Log("EXCEPTION in agents (%s): code %08lX at %08lX", what, ep->ExceptionRecord->ExceptionCode,
+      reinterpret_cast<DWORD>(ep->ExceptionRecord->ExceptionAddress));
+  return EXCEPTION_EXECUTE_HANDLER;
+}
+
+bool CodeMatches(std::uintptr_t va, const unsigned char* bytes, std::size_t n) {
+  __try {
+    return std::memcmp(reinterpret_cast<const void*>(va), bytes, n) == 0;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
+unsigned long long NowMs(void* sim) {
+  __try {
+    return GetTimeMs(sim);
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return 0;
+  }
+}
+
+double PreciseMs() {
+  static LARGE_INTEGER freq;
+  if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
+  LARGE_INTEGER c;
+  QueryPerformanceCounter(&c);
+  return static_cast<double>(c.QuadPart) * 1000.0 / static_cast<double>(freq.QuadPart);
+}
+
+// -1 exception, 0 refused (re-entry: the tree asserts and returns 0), 1 ticked.
+int SehAgentTick(void* object, float dt) {
+  __try {
+    return AgentTickDt(object, dt) ? 1 : 0;
+  } __except (SehNote(GetExceptionInformation(), "AgentBehaviorTree_Tick")) {
+    return -1;
+  }
+}
+
+// Every live object with tree data and no pending delete.
+bool SehCollect(void* sim, std::vector<void*>* out) {
+  __try {
+    void* om = Field<void*>(sim, sim::kObjectManager);
+    int it = ObjMgrIterBegin(om);
+    for (void* o = ObjMgrIterNext(om, &it); o; o = ObjMgrIterNext(om, &it))
+      if (Field<void*>(o, obj::kBehaviorTree) && !Field<unsigned char>(o, obj::kPendingDelete)) out->push_back(o);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "collect")) {
+    return false;
+  }
+}
+
+// The object's id, false if it is marked for delete (or unreadable).
+bool SehLiveId(void* o, std::uint32_t* id) {
+  __try {
+    if (Field<unsigned char>(o, obj::kPendingDelete)) return false;
+    *id = Field<std::uint32_t>(o, gobj::kId);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
+bool SehObjectId(void* o, std::uint32_t* id) {
+  __try {
+    *id = Field<std::uint32_t>(o, gobj::kId);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
+const char* NounName(void* o) {
+  void* noun = Field<void*>(o, gobj::kNoun);
+  const char* name = noun ? *static_cast<const char**>(noun) : nullptr;
+  if (!name) return "?";
+  volatile char probe = name[0];
+  (void)probe;
+  return name;
+}
+
+const char* SehNounName(void* o) {
+  __try {
+    return NounName(o);
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return "?";
+  }
+}
+
+struct Snapshot {
+  std::uint32_t id = 0;
+  std::uintptr_t leaf = 0;
+  float pos[3] = {};
+  float hp = 0;
+  bool hasHp = false;
+  const char* noun = "?";
+};
+
+bool SehSnapshot(void* o, Snapshot* s) {
+  __try {
+    s->id = Field<std::uint32_t>(o, gobj::kId);
+    void* btd = Field<void*>(o, obj::kBehaviorTree);
+    s->leaf = btd ? Field<std::uintptr_t>(btd, bt::kActiveLeaf) : 0;
+    std::memcpy(s->pos, static_cast<char*>(o) + gobj::kPosition, sizeof s->pos);
+    void* c = Field<void*>(o, combatant::kOfObject);
+    s->hasHp = c != nullptr;
+    s->hp = c ? Field<float>(c, combatant::kHitPoints) : 0.f;
+    s->noun = NounName(o);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "snapshot")) {
+    return false;
+  }
+}
+
+AgentState& StateOf(std::uint32_t id) { return g_agents[id]; }
+
+// After a tree tick: the leaf log, the death watch.
+void Observe(void* o, double now) {
+  Snapshot s;
+  if (!SehSnapshot(o, &s)) return;
+  AgentState& a = StateOf(s.id);
+  a.seenFrame = g_frame;
+  a.noun = s.noun;
+  if (s.leaf != a.leaf) {
+    ++g_st.leafChanges;
+    if (LogBudget())
+      Log("agents: %08X %s leaf %s -> %s (t %.2f s, hp %.1f, at (%.2f, %.2f))", s.id, s.noun, LeafName(a.leaf),
+          LeafName(s.leaf), now, s.hp, s.pos[0], s.pos[1]);
+    if ((s.leaf == kLeafDeath || s.leaf == kLeafDeathAbility || s.leaf == kLeafDeathAbilityDefault) && a.deathAt < 0) {
+      a.deathAt = now;
+      std::memcpy(a.deathPos, s.pos, sizeof a.deathPos);
+      if (s.leaf == kLeafDeath) ++g_st.deaths;
+      else ++g_st.deathAbilities;
+    }
+    a.leaf = s.leaf;
+  }
+  if (a.deathAt >= 0 && !a.movedLogged) {
+    const float dx = s.pos[0] - a.deathPos[0], dy = s.pos[1] - a.deathPos[1];
+    if (dx * dx + dy * dy > 0.01f) {
+      a.movedLogged = true;
+      Log("agents: %08X %s moved %.2f units after its death leaf (t %.2f s)", s.id, s.noun,
+          static_cast<double>(std::sqrt(dx * dx + dy * dy)), now);
+    }
+  }
+}
+
+// ---- step 2: the blackboard update (AGENT_AI.md §6.2-§6.4) -------------------------------------------------------
+
+// What the update needs of an object.
+struct ObjInfo {
+  void* obj = nullptr;
+  std::uint32_t id = 0;
+  float pos[3] = {};
+  float radius = 0;
+  std::uint8_t team = 0;
+  bool player = false;  // mbPlayerControlled (+0x56)
+  bool hasHp = false;
+  float hp = 0;
+};
+
+bool SehObjInfo(void* o, ObjInfo* out) {
+  __try {
+    out->obj = o;
+    out->id = Field<std::uint32_t>(o, gobj::kId);
+    std::memcpy(out->pos, static_cast<char*>(o) + gobj::kPosition, sizeof out->pos);
+    out->radius = FootprintRadius(o);
+    if (!(out->radius >= 0.f && out->radius < 100.f)) out->radius = 0.f;
+    out->team = Field<std::uint8_t>(o, gobj::kTeam);
+    out->player = Field<unsigned char>(o, gobj::kPlayerControlled) != 0;
+    void* c = Field<void*>(o, combatant::kOfObject);
+    out->hasHp = c != nullptr;
+    out->hp = c ? Field<float>(c, combatant::kHitPoints) : 0.f;
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "object info")) {
+    return false;
+  }
+}
+
+void* SehFind(std::uint32_t id) {
+  __try {
+    return id ? GetObjectById(id) : nullptr;
+  } __except (SehNote(GetExceptionInformation(), "find object")) {
+    return nullptr;
+  }
+}
+
+// The agent's own data for the update.
+struct AgentInfo {
+  ObjInfo self;
+  void* agent = nullptr;
+  bool hasBrain = false;
+  bool hasNpc = false;
+  float aggro = 0, help = 0, drop = 0, tether = 0;
+  int aggroType = 0;
+  int timer = 0;  // +0x0C
+};
+
+bool SehAgentInfo(void* o, AgentInfo* out) {
+  __try {
+    out->agent = Field<void*>(o, agent::kOfObject);
+    if (!out->agent) return false;
+    out->hasBrain = Field<void*>(o, obj::kBrain) != nullptr;
+    void* npcAsset = Field<void*>(o, npc::kOfObject);
+    char* d = npcAsset ? Field<char*>(npcAsset, noun::kData) : nullptr;
+    out->hasNpc = d != nullptr;
+    if (d) {
+      out->aggro = Field<float>(d, npc::kAggroRange);
+      out->help = Field<float>(d, npc::kCallForHelpRange);
+      out->drop = Field<float>(d, npc::kDropAggroRange);
+      out->tether = Field<float>(d, npc::kTetherRange);
+    }
+    out->aggroType = GetAggroType(o);
+    out->timer = Field<int>(out->agent, agent::kUpdateTimer);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "agent info")) {
+    return false;
+  }
+}
+
+// The perception circle and the spatial query: every live, targetable player, NPC and structure of either team in it
+// but the agent itself, nearest first (GameObjects_GetInRadius with distance sorting).
+// The broadphase writes its raw results here first: GameObjects_GetInRadius asserts unless the raw count < max, and the
+// physics query (GamePhysicsPhysX.cpp 1151, on every query in d1b_run2) unless max <= its internal buffer of 256.
+constexpr int kQueryMax = 256;
+std::uint32_t g_queryIds[kQueryMax];
+
+int SehPerceive(void* sim, void* agentPtr, const ObjInfo& self, float centre[3], float* radius) {
+  __try {
+    PerceptionCircle(agentPtr, centre, radius, Field<void*>(sim, sim::kObjectManager));
+    ObjectQuery q = {};
+    q.sortType = 1;              // nGetObjectsSortType.Distance
+    q.targetTypes = 0x77;        // enemy and allied players, NPCs and structures
+    q.team = self.team;
+    q.self = self.id;            // not the agent itself (nTargetType.Self is not set)
+    return GetInRadius(g_queryIds, kQueryMax, centre[0], centre[1], centre[2], *radius, &q);
+  } __except (SehNote(GetExceptionInformation(), "perception query")) {
+    return -1;
+  }
+}
+
+struct Perceived {
+  ObjInfo info;
+  float distance = 0;  // edge distance from the perception centre [assumed]: centre distance minus both footprints
+};
+
+bool SehWritePerception(void* agentPtr, const std::vector<Perceived>& list, unsigned* written) {
+  __try {
+    char* begin = Field<char*>(agentPtr, agent::kPerceptionBegin);
+    char* cap = Field<char*>(agentPtr, agent::kPerceptionCap);
+    const unsigned room = static_cast<unsigned>((cap - begin) / agent::kPerceptionEntrySize);
+    unsigned n = 0;
+    for (const Perceived& p : list) {
+      if (n >= room) break;
+      Field<std::uint32_t>(begin, n * agent::kPerceptionEntrySize) = p.info.id;
+      Field<float>(begin, n * agent::kPerceptionEntrySize + 4) = p.distance;
+      ++n;
+    }
+    Field<char*>(agentPtr, agent::kPerceptionEnd) = begin + n * agent::kPerceptionEntrySize;
+    *written = n;
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "write perception")) {
+    return false;
+  }
+}
+
+struct AggroEntry {
+  unsigned char raw[agent::kAggroEntrySize];
+  std::uint32_t Id() const { return *reinterpret_cast<const std::uint32_t*>(raw); }
+  unsigned long long U64(std::size_t off) const { return *reinterpret_cast<const unsigned long long*>(raw + off); }
+};
+
+bool SehReadAggro(void* agentPtr, std::vector<AggroEntry>* out) {
+  __try {
+    char* b = Field<char*>(agentPtr, agent::kAggroBegin);
+    char* e = Field<char*>(agentPtr, agent::kAggroEnd);
+    const std::size_t n = static_cast<std::size_t>(e - b) / agent::kAggroEntrySize;
+    if (n > 512) return false;
+    out->resize(n);
+    if (n) std::memcpy(out->data(), b, n * agent::kAggroEntrySize);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "read aggro list")) {
+    return false;
+  }
+}
+
+// Writes `list` over the vector (same or fewer entries: an erase or a reorder in place) and sets its end.
+bool SehWriteAggro(void* agentPtr, const std::vector<AggroEntry>& list) {
+  __try {
+    char* b = Field<char*>(agentPtr, agent::kAggroBegin);
+    char* e = Field<char*>(agentPtr, agent::kAggroEnd);
+    const std::size_t had = static_cast<std::size_t>(e - b) / agent::kAggroEntrySize;
+    if (list.size() > had) return false;
+    if (!list.empty()) std::memcpy(b, list.data(), list.size() * agent::kAggroEntrySize);
+    Field<char*>(agentPtr, agent::kAggroEnd) = b + list.size() * agent::kAggroEntrySize;
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "write aggro list")) {
+    return false;
+  }
+}
+
+// The checks an aggro entry or a perceived enemy must pass (AGENT_AI.md §6.3, [assumed]); 0 = keep, else the reason
+// index of Stats::removedBy. A base structure (an entry AddBaseStructures marked, D5) is kept beyond the drop range and
+// outside the tether (gms/core/agents/aggro.h KeepByRange).
+int SehTargetCheck(const AgentInfo& a, void* target, const ObjInfo& t, float distance, bool forAdd,
+                   bool baseStructure = false) {
+  __try {
+    if (!target || (t.hasHp && t.hp <= 0.f)) return 1;
+    if (!ValidateHostile(a.self.team, target, 0)) return 2;
+    if (!IsTargetable(target) || !IsAttackable(target)) return 3;
+    if (!IsVisibleTo(a.self.obj, target)) return 4;
+    const float limit = forAdd ? a.aggro : a.drop;
+    const bool inTether = baseStructure || IsInTether(a.agent, target);
+    if (!gms::agents::KeepByRange(baseStructure, distance, limit, inTether)) return distance > limit ? 5 : 6;
+    return 0;
+  } __except (SehNote(GetExceptionInformation(), "target check")) {
+    return 1;
+  }
+}
+
+bool SehAdd(void* agentObj, std::uint32_t id) {
+  __try {
+    return AddToAggroList(agentObj, id, nullptr, 0, 0) != nullptr;
+  } __except (SehNote(GetExceptionInformation(), "Agent_AddToAggroList")) {
+    return false;
+  }
+}
+
+std::uint32_t SehBestTarget(void* agentPtr) {
+  __try {
+    return GetBestTarget(agentPtr);
+  } __except (SehNote(GetExceptionInformation(), "GetBestTarget")) {
+    return 0;
+  }
+}
+
+float SehSecondsSinceCombat(void* o) {
+  __try {
+    if (!Field<void*>(o, 0x918)) return 1e9f;  // no damage tracker (object +0x918)
+    return DamageTrackerSecondsSinceCombat(o);
+  } __except (SehNote(GetExceptionInformation(), "DamageTracker_GetSecondsSinceCombat")) {
+    return 1e9f;
+  }
+}
+
+void SehWriteFlags(void* agentPtr, bool engaged, bool inCombat, int battleReady /* -1 keep */) {
+  __try {
+    Field<unsigned char>(agentPtr, agent::kEngaged) = engaged ? 1 : 0;
+    Field<unsigned char>(agentPtr, agent::kInCombat) = inCombat ? 1 : 0;
+    Field<unsigned char>(agentPtr, agent::kFlag1E72) = inCombat ? 1 : 0;
+    if (battleReady >= 0) Field<unsigned char>(agentPtr, agent::kBattleReady) = battleReady ? 1 : 0;
+    Field<int>(agentPtr, agent::kUpdateTimer) = static_cast<int>(kBlackboardPeriodMs);
+  } __except (SehNote(GetExceptionInformation(), "write flags")) {
+  }
+}
+
+// One event on the object's ability and modifier instances, with one object-id argument or none
+// (AbilityDataContainer_FireEvent; the record as LuaUtilities_FillOutPrivateTable reads it).
+bool SehFireEvent(void* o, int event, const char* argName, std::uint32_t argValue) {
+  __try {
+    void* container = Field<void*>(o, obj::kAbilityData);
+    if (!container) return false;
+    alignas(8) unsigned char rec[kEventRecordSize];
+    std::memset(rec, 0, sizeof rec);
+    Field<const char*>(rec, 0) = argName;
+    Field<std::uint32_t>(rec, 0x54) = argValue;
+    Field<std::uint16_t>(rec, 0x60) = kEventTypeObjectId;
+    FireEvent(container, event, argName ? rec : nullptr, argName ? 1 : 0);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "AbilityDataContainer_FireEvent")) {
+    return false;
+  }
+}
+
+std::string Hex8(std::uint32_t v) {
+  char b[12];
+  std::snprintf(b, sizeof b, "%08X", v);
+  return b;
+}
+
+// The blackboard update of one agent (AGENT_AI.md §5 step 5.1): perception list, aggro list (prune, add, order),
+// flags, events, timer.
+void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long nowMs) {
+  AgentInfo a;
+  if (!SehAgentInfo(o, &a) || !SehObjInfo(o, &a.self)) return;
+  if (!a.self.player && !a.hasNpc) return;  // gold mines, regen zones, shops: no AI ranges, nothing reads their lists
+  ++g_st.updates;
+  ++st.updates;
+
+  // 1. perception (everyone with an agent: the players' GetAutoAttackTarget and CallForHelp read it)
+  float centre[3] = {}, radius = 0.f;
+  const int n = SehPerceive(sim, a.agent, a.self, centre, &radius);
+  if (n < 0) {
+    ++g_st.bbExceptions;
+    return;
+  }
+  std::vector<Perceived> seen;
+  seen.reserve(static_cast<std::size_t>(n));
+  for (int i = 0; i < n && i < kQueryMax; ++i) {
+    Perceived p;
+    void* t = SehFind(g_queryIds[i]);
+    if (!t || !SehObjInfo(t, &p.info)) continue;
+    const float dx = p.info.pos[0] - centre[0], dy = p.info.pos[1] - centre[1], dz = p.info.pos[2] - centre[2];
+    p.distance = std::sqrt(dx * dx + dy * dy + dz * dz) - a.self.radius - p.info.radius;
+    if (p.distance < 0.f) p.distance = 0.f;
+    seen.push_back(p);
+  }
+  std::stable_sort(seen.begin(), seen.end(), [](const Perceived& x, const Perceived& y) { return x.distance < y.distance; });
+  if (st.updates == 1 && LogBudget())
+    Log("agents: %08X %s first blackboard update: footprint radius %.2f, perception radius %.1f, aggro %.1f, call for "
+        "help %.1f, drop %.1f, tether %.1f, aggro type %d, %d perceived", a.self.id, st.noun, a.self.radius, radius,
+        a.aggro, a.help, a.drop, a.tether, a.aggroType, static_cast<int>(seen.size()));
+  unsigned written = 0;
+  SehWritePerception(a.agent, seen, &written);
+  g_st.perceived += written;
+
+  // battle ready (player-controlled agents): an enemy shaper near
+  int battleReady = -1;
+  if (a.self.player) {
+    float nearest = -1.f;
+    for (const Perceived& p : seen)
+      if (p.info.player && p.info.team != a.self.team) {
+        nearest = p.distance;
+        break;
+      }
+    const bool next = gms::agents::NextBattleReady(st.battleReady, nearest);
+    if (next != st.battleReady) {
+      ++g_st.battleReadyChanges;
+      st.battleReady = next;
+      if (SehFireEvent(o, next ? kEventOnEnterBattleReady : kEventOnExitBattleReady, nullptr, 0)) ++g_st.events;
+      if (LogBudget())
+        Log("agents: %08X %s battle ready %d (nearest enemy shaper %.1f)", a.self.id, st.noun, next ? 1 : 0, nearest);
+    }
+    battleReady = st.battleReady ? 1 : 0;
+  }
+
+  // 2. the aggro list: only AI agents with an NPC class (not the players' creatures, not ignore or bot)
+  const bool aggroList = a.hasBrain && a.hasNpc && !a.self.player && a.aggroType != gms::agents::kAggroIgnore &&
+                         a.aggroType != gms::agents::kAggroBot;
+  std::uint32_t best = 0;
+  // D5: a dead agent (a destroyed Binding or nub stays an object) keeps an empty list: d5_run1's three killed Spirit
+  // Bindings went on adding the passing minions and changing their best target
+  const bool selfDead = a.self.hasHp && a.self.hp <= 0.f;
+  if (aggroList) {
+    std::vector<AggroEntry> list;
+    if (!SehReadAggro(a.agent, &list)) {
+      ++g_st.bbExceptions;
+      return;
+    }
+    // prune
+    std::vector<AggroEntry> kept;
+    std::vector<gms::agents::AggroCandidate> cands;
+    for (const AggroEntry& e : list) {
+      void* t = SehFind(e.Id());
+      ObjInfo ti;
+      int why = 1;
+      float dist = 0.f;
+      if (!selfDead && t && SehObjInfo(t, &ti)) {
+        const float dx = ti.pos[0] - a.self.pos[0], dy = ti.pos[1] - a.self.pos[1], dz = ti.pos[2] - a.self.pos[2];
+        dist = std::sqrt(dx * dx + dy * dy + dz * dz) - a.self.radius - ti.radius;
+        if (dist < 0.f) dist = 0.f;
+        const bool base = e.raw[agent::kAggroEntryFlag] == gms::agents::kEntryFlagBaseStructure;
+        why = SehTargetCheck(a, t, ti, dist, false, base);
+        if (!why && base && dist > a.drop) ++g_st.baseKeptBeyondRange;
+        const bool taunting = e.U64(0x10) > nowMs;
+        if (why >= 3 && taunting) why = 0;  // a taunt holds unless the target is gone, dead or no valid target
+      }
+      if (why) {
+        ++g_st.removed;
+        ++g_st.removedBy[why - 1];
+        continue;
+      }
+      gms::agents::AggroCandidate c;
+      c.id = e.Id();
+      c.taunting = e.U64(0x10) > nowMs;
+      c.playerReportAgeMs = e.U64(0x18) ? static_cast<std::int64_t>(nowMs - e.U64(0x18)) : -1;
+      c.otherReportAgeMs = e.U64(0x20) ? static_cast<std::int64_t>(nowMs - e.U64(0x20)) : -1;
+      c.isPlayer = ti.player;
+      c.sticky = c.id == st.bestTarget;
+      c.distance = dist;
+      c.index = static_cast<int>(kept.size());
+      kept.push_back(e);
+      cands.push_back(c);
+    }
+    if (kept.size() != list.size() && !SehWriteAggro(a.agent, kept)) ++g_st.bbExceptions;
+    // add: every enemy in the perception list within aggroRange that passes the checks (D14: not for the objective
+    // type, the parasite, unless [host] objective_aggro_on_sight=1; gms::agents::AddsOnSight)
+    if (a.aggro > 0.f && !selfDead && (g_opt.objectiveOnSight || gms::agents::AddsOnSight(a.aggroType))) {
+      for (const Perceived& p : seen) {
+        if (p.info.team == a.self.team) continue;
+        bool on = false;
+        for (const auto& c : cands) on = on || c.id == p.info.id;
+        if (on) continue;
+        // the add test measures from the agent, like the prune
+        const float dx = p.info.pos[0] - a.self.pos[0], dy = p.info.pos[1] - a.self.pos[1],
+                    dz = p.info.pos[2] - a.self.pos[2];
+        float dist = std::sqrt(dx * dx + dy * dy + dz * dz) - a.self.radius - p.info.radius;
+        if (dist < 0.f) dist = 0.f;
+        if (SehTargetCheck(a, p.info.obj, p.info, dist, true)) continue;
+        if (!SehAdd(o, p.info.id)) {
+          ++g_st.addRefused;
+          continue;
+        }
+        ++g_st.added;
+        gms::agents::AggroCandidate c;
+        c.id = p.info.id;
+        c.isPlayer = p.info.player;
+        c.distance = dist;
+        c.index = static_cast<int>(cands.size());
+        cands.push_back(c);
+      }
+    }
+    // order (the targeting priority, gms/core/agents/aggro.h); the entries are re-read (the adds appended theirs)
+    std::vector<AggroEntry> now;
+    if (SehReadAggro(a.agent, &now) && now.size() == cands.size() && now.size() > 1) {
+      gms::agents::OrderAggro(&cands, a.aggroType);
+      std::vector<AggroEntry> ordered;
+      ordered.reserve(now.size());
+      bool moved = false;
+      for (std::size_t i = 0; i < cands.size(); ++i) {
+        for (const AggroEntry& e : now)
+          if (e.Id() == cands[i].id) {
+            ordered.push_back(e);
+            break;
+          }
+        moved = moved || ordered.back().Id() != now[i].Id();
+      }
+      if (moved && ordered.size() == now.size()) {
+        if (SehWriteAggro(a.agent, ordered)) ++g_st.reordered;
+        else ++g_st.bbExceptions;
+      }
+    }
+    best = SehBestTarget(a.agent);
+    // the list after the update, logged when it changes
+    std::string sig;
+    for (const auto& c : cands) sig += (sig.empty() ? "" : " ") + Hex8(c.id);
+    if (sig != st.listSig) {
+      if (LogBudget())
+        Log("agents: %08X %s aggro list [%s] -> [%s], best %08X (t %.2f s)", a.self.id, st.noun, st.listSig.c_str(),
+            sig.c_str(), best, static_cast<double>(nowMs) / 1000.0);
+      st.listSig = sig;
+    }
+  }
+
+  // 3. flags and events
+  const bool engaged = best != 0;
+  if (engaged) ++g_st.engagedAgents;
+  const bool inCombat = engaged || SehSecondsSinceCombat(o) < 5.f;  // [assumed] 5 s after the last hit
+  SehWriteFlags(a.agent, engaged, inCombat, battleReady);
+  if (aggroList && best != st.bestTarget) {
+    ++g_st.bestChanges;
+    if (LogBudget())
+      Log("agents: %08X %s best target %08X -> %08X: OnBestTargetChanged (bestTargetNew)", a.self.id, st.noun,
+          st.bestTarget, best);
+    st.bestTarget = best;
+    if (SehFireEvent(o, kEventOnBestTargetChanged, "bestTargetNew", best)) ++g_st.events;
+  }
+}
+
+// When the agent's next blackboard update is due: the init's random 0-500 ms after it was first seen (+0x0C), then
+// every 500 ms; at once when +0x0C reads 0 (nAgent.ForceAggroListUpdate).
+bool SehTimer(void* o, int* timer) {
+  __try {
+    void* ag = Field<void*>(o, agent::kOfObject);
+    if (!ag) return false;
+    *timer = Field<int>(ag, agent::kUpdateTimer);
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
+// No fog of war yet (D2g-live step 2): every agent visible to every team (bits 0 NPC, 1 Mortal, 2 Spirit).
+// GameObjectManager_CreateObject sets mVisibleToTeam (+0x888) to 6 (teams 1 and 2), but LineOfSight_AddObject
+// (0x00917F40) narrows fog-tracked objects to their own team (GameObject_SetVisibleToOwnTeam 0x00880610) and the pass
+// that added the enemy team is stripped, so Agent_IsVisibleTo hid every minion and shaper from enemy viewers with the
+// vision rule "everything" (d1b_run2: the minions saw the Binding, a Tower, but never an enemy minion), and from the
+// NPC team's (bit 0, never set: the parasite, d1b_run5).
+constexpr std::uintptr_t kVisibleToTeam = 0x888;
+void SehMarkVisible(void* o) {
+  __try {
+    unsigned char& v = Field<unsigned char>(o, kVisibleToTeam);
+    if ((v & 7) != 7) {
+      v = static_cast<unsigned char>(v | 7);
+      ++g_st.madeVisible;
+    }
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+  }
+}
+
+// The agent's ability data container (object +0x8A8) keeps the ids of its ability instances (+0x08 begin, +0x0C end,
+// a fixed vector of 32: AbilityDataContainer_AddAbilityInstance 0x00904AB0 asserts "Max abilities per agent exceeded"
+// and adds nothing beyond) and of its modifiers (+0x9C/+0xA0); AbilityDataContainer_FireEvent walks both.
+// LabsAbilities_RemoveInstance (0x00905D40) frees an ended instance but erases its id from neither list, so the ids of
+// ended instances piled up until a minion's 33rd attack asserted (d1b_run4: "Ability List:" empty, every entry stale).
+// The host drops the ids whose instance is gone (LabsAbilities_GetInstance null) with each agent's blackboard period.
+int PruneIdList(char* container, std::uintptr_t beginOff) {
+  std::uint32_t* b = Field<std::uint32_t*>(container, beginOff);
+  std::uint32_t* e = Field<std::uint32_t*>(container, beginOff + 4);
+  if (!b || e < b || e - b > 256) return 0;
+  std::uint32_t* w = b;
+  for (std::uint32_t* r = b; r < e; ++r)
+    if (*r && GetInstance(*r)) *w++ = *r;
+  Field<std::uint32_t*>(container, beginOff + 4) = w;
+  return static_cast<int>(e - w);
+}
+
+void SehPruneInstanceLists(void* o) {
+  __try {
+    char* c = Field<char*>(o, obj::kAbilityData);
+    if (!c) return;
+    g_st.prunedAbilities += static_cast<unsigned>(PruneIdList(c, 0x08));
+    g_st.prunedModifiers += static_cast<unsigned>(PruneIdList(c, 0x9C));
+  } __except (SehNote(GetExceptionInformation(), "prune instance lists")) {
+  }
+}
+
+bool UpdateDue(void* o, AgentState& st, unsigned long long nowMs) {
+  int timer = 0;
+  if (!SehTimer(o, &timer)) return false;
+  if (!st.scheduled) {
+    st.scheduled = true;
+    st.nextUpdateMs = nowMs + static_cast<unsigned long long>(timer > 0 && timer <= 500 ? timer : 0);
+  }
+  if (timer == 0 && st.updates > 0) {
+    ++g_st.forced;
+    return true;
+  }
+  return nowMs >= st.nextUpdateMs;
+}
+
+// ---- step 3: the brain step (AGENT_AI.md §6.5) ----------------------------------------------------------------------
+
+std::uint32_t g_rng = 0x9E3779B9u;
+double Random01() {  // xorshift32: deterministic per run, enough for gambit picks and random cooldowns
+  g_rng ^= g_rng << 13;
+  g_rng ^= g_rng >> 17;
+  g_rng ^= g_rng << 5;
+  return static_cast<double>(g_rng % 1000000u) / 1000000.0;
+}
+
+struct GambitDef {
+  std::uint32_t guid = 0;
+  char* conditions = nullptr;
+  int conditionCount = 0;
+  bool randomize = false, waitOnCondition = false;
+  float weight = 1.f, cooldown = 0.f, maxCooldown = 0.f;
+};
+struct LinkDef {
+  int outputNode = 0;
+  char* conditions = nullptr;
+  int conditionCount = 0;
+  bool startOnCooldown = false, activateOnce = false;
+  float activateTime = 0.f, interval = 0.f, cooldown = 0.f, maxCooldown = 0.f;
+};
+struct NodeDef {
+  int phaseType = 0;
+  bool hasDefaultBehavior = false;
+  std::vector<GambitDef> gambits;
+  std::vector<LinkDef> links;
+};
+struct BrainView {
+  void* brain = nullptr;
+  int nodeCount = 0;
+  int engineNode = 0;  // brain +0x18
+  NodeDef node;        // the node the host keeps current
+  int rank = 1;
+};
+
+// The brain's AI definition and node `wantNode` (-1: the brain's own +0x18). False if the object has no active brain
+// with an AI definition.
+bool SehReadBrain(void* o, int wantNode, BrainView* v) {
+  __try {
+    void* b = Field<void*>(o, obj::kBrain);
+    if (!b || !Field<unsigned char>(b, brain::kActive)) return false;
+    void* defAsset = Field<void*>(b, brain::kAiDefinition);
+    char* def = defAsset ? Field<char*>(defAsset, noun::kData) : nullptr;
+    if (!def) return false;
+    v->brain = b;
+    v->nodeCount = Field<int>(def, 4);
+    v->engineNode = Field<int>(b, brain::kNode);
+    if (v->nodeCount <= 0 || v->nodeCount > 64) return false;
+    int n = wantNode >= 0 ? wantNode : v->engineNode;
+    if (n < 0 || n >= v->nodeCount) n = 0;
+    char* nodeRec = Field<char*>(def, 0) + n * aidef::kNodeSize;
+    void* phaseAsset = Field<void*>(nodeRec, 0);
+    char* phase = phaseAsset ? Field<char*>(phaseAsset, noun::kData) : nullptr;
+    v->node.gambits.clear();
+    v->node.links.clear();
+    if (phase) {
+      v->node.phaseType = Field<int>(phase, 8);
+      const char* dflt = Field<const char*>(phase, 0x10);
+      v->node.hasDefaultBehavior = dflt && dflt[0];
+      const int ng = Field<int>(phase, 4);
+      char* g0 = Field<char*>(phase, 0);
+      for (int i = 0; i < ng && i < 32; ++i) {
+        char* g = g0 + i * aidef::kGambitSize;
+        GambitDef d;
+        d.conditions = Field<char*>(g, 0);
+        d.conditionCount = Field<int>(g, 4);
+        d.guid = Field<std::uint32_t>(g, 8);
+        d.randomize = Field<unsigned char>(g, 0x1C) != 0;
+        d.waitOnCondition = Field<unsigned char>(g, 0x1D) != 0;
+        d.weight = Field<float>(g, 0x20);
+        d.cooldown = Field<float>(g, 0x24);
+        d.maxCooldown = Field<float>(g, 0x28);
+        v->node.gambits.push_back(d);
+      }
+    }
+    const int nl = Field<int>(nodeRec, 0x18);
+    char* l0 = Field<char*>(nodeRec, 0x14);
+    for (int i = 0; i < nl && i < 16; ++i) {
+      char* l = l0 + i * aidef::kLinkSize;
+      LinkDef d;
+      d.outputNode = Field<int>(l, 0);
+      d.conditions = Field<char*>(l, 4);
+      d.conditionCount = Field<int>(l, 8);
+      d.startOnCooldown = Field<unsigned char>(l, 0xC) != 0;
+      d.activateOnce = Field<unsigned char>(l, 0xD) != 0;
+      d.activateTime = Field<float>(l, 0x10);
+      d.interval = Field<float>(l, 0x14);
+      d.cooldown = Field<float>(l, 0x1C);
+      d.maxCooldown = Field<float>(l, 0x20);
+      v->node.links.push_back(d);
+    }
+    void* npcAsset = Field<void*>(o, npc::kOfObject);
+    char* npcData = npcAsset ? Field<char*>(npcAsset, noun::kData) : nullptr;
+    v->rank = npcData ? Field<int>(npcData, npc::kRank) : 1;
+    if (v->rank < 1) v->rank = 1;
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "read brain")) {
+    return false;
+  }
+}
+
+// What AIConditions_Evaluate writes back (0x008AE9B0 dispatches by the condition's type, table 0x0123E75C): gambit and
+// mission conditions (types 0, 2: AIConditions_CallLuaCondition 0x008AED20) x, y, z, target (+0xC), useTarget (+0x10);
+// link conditions (type 1: AIConditions_CallLuaLinkCondition 0x008AEF90) +0xC (the 2nd value: an object, kObjIDNone for
+// condition_Bot_IsMissionAvailable) and +0x14 (the 3rd: a number, its mission id). D6a found the +0x14 write: with a
+// 0x14-byte struct the bots' first link conditions overran the caller's stack (d6a_run1: the host died with
+// 0xC0000409, the stack cookie).
+// D6b: the 3rd value is an integer (the call's result slot has GearsLua's type 3, which converts the Lua number to an int
+// and asserts "Integer value passed to Lua will lose precision" beyond 2^23; d6b_run1 read it as a float: a denormal).
+struct ConditionOut {
+  float x, y, z;
+  std::uint32_t target;
+  unsigned char useTarget;
+  unsigned char pad[3];
+  std::int32_t linkValue;  // +0x14: a link condition's 3rd value (condition_Bot_IsMissionAvailable: the mission id)
+  std::uint32_t spare[2];
+};
+static_assert(sizeof(ConditionOut) == 0x20, "ConditionOut layout");
+
+// One condition record: AIConditions_Evaluate on its GUID and parameters. `anyTarget` (D6a, bots): a target the
+// condition returns counts without useTargetInfo/useTarget (the bots' gambit conditions return it as their 5th value,
+// condition_nearest_minion: `return true, 0, 0, 0, v5`, and set neither). `pointOnly` (D6d): set when a passing, not
+// negated condition with useTargetInfo gives a position and, with useTarget, kObjIDNone as its target: its target info
+// is that point and no object (condition_Bot_Ward: `return true, x, y, z, kObjIDNone, true`).
+bool SehCondition(char* rec, std::uint32_t self, gms::agents::ConditionResult* r, std::uint32_t* target,
+                  bool anyTarget, float* pos, std::int32_t* linkValue, bool* pointOnly) {
+  __try {
+    const std::uint32_t guid = Field<std::uint32_t>(rec, 0);
+    r->postfixOperator = Field<int>(rec, 0x10);
+    r->negate = Field<unsigned char>(rec, 0x14) != 0;
+    const bool useTargetInfo = Field<unsigned char>(rec, 0x15) != 0;
+    ConditionOut out = {};
+    r->pass = guid ? ConditionEvaluate(guid, self, &out, Field<void*>(rec, 0x18), Field<int>(rec, 0x1C)) : true;
+    if (out.target && ((useTargetInfo && out.useTarget) || (anyTarget && r->pass && !*target))) *target = out.target;
+    // D6b: a passing, not negated link condition's 3rd value (condition_Bot_IsMissionAvailable: the mission id), the
+    // first one given
+    if (linkValue && r->pass && !r->negate && out.linkValue > 0 && *linkValue <= 0) *linkValue = out.linkValue;
+    // D6a: a passing condition's position (the ward's spot, base_position) for a bot's gambit, the first one given
+    if (pos && anyTarget && r->pass && (out.x != 0.f || out.y != 0.f) && pos[0] == 0.f && pos[1] == 0.f) {
+      pos[0] = out.x;
+      pos[1] = out.y;
+      pos[2] = out.z;
+    }
+    if (pointOnly && useTargetInfo && out.useTarget && !out.target && r->pass && !r->negate &&
+        (out.x != 0.f || out.y != 0.f))
+      *pointOnly = true;
+    ++g_st.conditionsRun;
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "AIConditions_Evaluate")) {
+    return false;
+  }
+}
+
+// A condition list: true if it passes; `target` gets a condition's target when one gives it; `linkValue` (D6b) a
+// passing link condition's 3rd value; `pointOnly` (D6d) whether a condition aimed the list at a point and no object.
+bool Conditions(char* list, int count, std::uint32_t self, std::uint32_t* target, bool anyTarget = false,
+                float* pos = nullptr, std::int32_t* linkValue = nullptr, bool* pointOnly = nullptr) {
+  if (!list || count <= 0) return true;
+  std::vector<gms::agents::ConditionResult> results;
+  for (int i = 0; i < count && i < 16; ++i) {
+    gms::agents::ConditionResult r;
+    if (!SehCondition(list + i * aidef::kConditionSize, self, &r, target, anyTarget, pos, linkValue, pointOnly)) {
+      ++g_st.brainExceptions;
+      return false;
+    }
+    results.push_back(r);
+  }
+  return gms::agents::CombineConditions(results);
+}
+
+int SehRequest(std::uint32_t guid, std::uint32_t self, std::uint32_t target, const float* pos, int rank) {
+  __try {
+    int instance = 0;
+    return RequestAbilityCall(guid, -1, self, target, pos[0], pos[1], pos[2], rank, 0, 0, 0, 1, nullptr, &instance);
+  } __except (SehNote(GetExceptionInformation(), "LabsAbilities_RequestAbility")) {
+    return -0x7FFF;
+  }
+}
+
+void SehSetTreeFlag(void* o, unsigned flag, bool on) {
+  __try {
+    void* btd = Field<void*>(o, obj::kBehaviorTree);
+    if (!btd) return;
+    unsigned& f = Field<unsigned>(btd, bt::kFlags);
+    f = on ? (f | flag) : (f & ~flag);
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+  }
+}
+
+void SehSetEngineNode(void* brainPtr, int node) {
+  __try {
+    Field<int>(brainPtr, brain::kNode) = node;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+  }
+}
+
+// D6c: whether the agent's current agent ability (container +0x53C, the behavior tree's UseAbility instance, else
+// +0x540: AbilityDataContainer_GetAgentAbility 0x008A8800) still holds the agent and may not be interrupted
+// (cStaticAbility +0x49A canInterrupt false). A gambit requested then would abort it: LabsAbilities_RequestAbility pushes
+// a behavior-tree request unless the new ability may be cast on top, and the tree's UseAbility abort
+// (BTAction_UseAbility_Abort 0x008A7FC0) interrupts the instance that holds the agent. The scripts mark the bots'
+// movement abilities interruptible (canInterrupt true) and leave every other ability at the constructor's false, and no
+// client instruction reads the flag, so the stripped brain update consulted it [inferred]: the brain doesn't replace an
+// uninterruptible ability. `name` gets its static ability's name.
+bool SehHeldByUninterruptible(void* o, const char** name) {
+  __try {
+    char* c = Field<char*>(o, obj::kAbilityData);
+    if (!c) return false;
+    unsigned id = Field<unsigned>(c, kContainerTreeAbility);
+    if (!id) id = Field<unsigned>(c, kContainerHeldAbility);
+    void* in = id ? GetInstance(id) : nullptr;
+    if (!in || Field<int>(in, inst::kType) != 0 || !Field<unsigned char>(in, inst::kHoldsAgent) ||
+        Field<unsigned char>(in, inst::kEndPending))
+      return false;
+    char* st = Field<char*>(in, inst::kStatic);
+    if (!st || Field<unsigned char>(st, kStaticCanInterrupt)) return false;
+    *name = *reinterpret_cast<const char**>(st);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "held ability")) {
+    return false;
+  }
+}
+
+bool GameOver(void* sim) {
+  __try {
+    return Field<unsigned char>(sim, 0x15) != 0;  // GameSimulator_IsGameOver 0x008EFC30
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
+void EnterNode(AgentState& st, const BrainView& v, int node, unsigned long long nowMs) {
+  // D6c: the node left keeps its timers; the node entered gets back its own from an earlier visit
+  if (g_opt.keepNodeTimers && st.node >= 0) {
+    AgentState::NodeTimers& t = st.nodeTimers[st.node];
+    t.gambitReady = st.gambitReadyMs;
+    t.linkReady = st.linkReadyMs;
+    t.linkNext = st.linkNextCheckMs;
+    t.linkFired = st.linkFired;
+  }
+  st.node = node;
+  st.nodeEnteredMs = nowMs;
+  st.seqCursor = -1;
+  const auto kept = g_opt.keepNodeTimers ? st.nodeTimers.find(node) : st.nodeTimers.end();
+  if (kept != st.nodeTimers.end() && kept->second.gambitReady.size() == v.node.gambits.size() &&
+      kept->second.linkReady.size() == v.node.links.size()) {
+    st.gambitReadyMs = kept->second.gambitReady;
+    st.linkReadyMs = kept->second.linkReady;
+    st.linkNextCheckMs = kept->second.linkNext;
+    st.linkFired = kept->second.linkFired;
+    ++g_st.nodeTimersKept;
+  } else {
+    st.gambitReadyMs.assign(v.node.gambits.size(), 0);
+    st.linkReadyMs.assign(v.node.links.size(), 0);
+    st.linkNextCheckMs.assign(v.node.links.size(), 0);
+    st.linkFired.assign(v.node.links.size(), 0);
+  }
+  for (std::size_t i = 0; i < v.node.links.size(); ++i)  // startOnCooldown: at every entry [assumed]
+    if (v.node.links[i].startOnCooldown)
+      st.linkReadyMs[i] = nowMs + static_cast<unsigned long long>(gms::agents::GambitCooldownSeconds(
+                                      v.node.links[i].cooldown, v.node.links[i].maxCooldown, false, 0) * 1000.0);
+}
+
+// The brain step of one AI agent (AGENT_AI.md §5 step 5.2): the current node's gambits (conditions, cooldowns, the
+// phase type), the chosen gambit's ability requested on the condition's target or the best target (noTick: the tree
+// tick below runs it), the pursue flag (8) on "out of range", the phase-default flag (0x40), then the node's links.
+void BrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) {
+  if (st.leaf == kLeafDeath || st.leaf == kLeafDeathAbility || st.leaf == kLeafDeathAbilityDefault ||
+      st.leaf == 0x0141E1B8 || st.leaf == 0x0141DE90)  // dying, or an ability holds the agent (leaves 1-3, D1, D3)
+    return;
+  if (nowMs < st.nextThinkMs) return;
+  BrainView v;
+  if (!SehReadBrain(o, st.brainSeen ? st.node : -1, &v)) return;  // no active brain with an AI definition
+  ObjInfo self;
+  if (!SehObjInfo(o, &self) || self.player || (self.hasHp && self.hp <= 0.f)) return;
+  if (GameOver(sim)) return;
+  if (!st.brainSeen || st.gambitReadyMs.size() != v.node.gambits.size()) {
+    st.brainSeen = true;
+    EnterNode(st, v, v.engineNode >= 0 && v.engineNode < v.nodeCount ? v.engineNode : 0, nowMs);
+  }
+  ++g_st.brainSteps;
+  AgentInfo a;
+  if (!SehAgentInfo(o, &a)) return;
+  const std::uint32_t best = SehBestTarget(a.agent);
+
+  // gambits: a cheap pass first (no Lua) to see whether any is off cooldown; D6c: none while an uninterruptible ability
+  // holds the agent (the request would abort it)
+  bool anyReady = false;
+  const char* held = nullptr;
+  if (g_opt.respectCanInterrupt && SehHeldByUninterruptible(o, &held)) {
+    ++g_st.heldThinks;
+  } else {
+    for (std::size_t i = 0; i < v.node.gambits.size(); ++i)
+      anyReady = anyReady || (v.node.gambits[i].guid && nowMs >= st.gambitReadyMs[i]);
+  }
+  int chosen = -1;
+  std::uint32_t target = 0;
+  if (anyReady) {
+    std::vector<gms::agents::GambitView> views(v.node.gambits.size());
+    std::vector<std::uint32_t> targets(v.node.gambits.size(), 0);
+    for (std::size_t i = 0; i < v.node.gambits.size(); ++i) {
+      const GambitDef& g = v.node.gambits[i];
+      views[i].coolingDown = nowMs < st.gambitReadyMs[i];
+      views[i].waitOnCondition = g.waitOnCondition;
+      views[i].weight = g.weight;
+      views[i].conditionsPass = g.guid != 0 && Conditions(g.conditions, g.conditionCount, self.id, &targets[i]);
+    }
+    chosen = gms::agents::ChooseGambit(v.node.phaseType, views, &st.seqCursor, Random01());
+    if (chosen >= 0) target = targets[static_cast<std::size_t>(chosen)] ? targets[static_cast<std::size_t>(chosen)] : best;
+  }
+  if (chosen >= 0 && !target) {
+    ++g_st.noTarget;  // [assumed] a gambit needs a target: the condition's or the best target
+    chosen = -1;
+  }
+  // nothing to do now: think again in 100 ms (a usable gambit's Lua conditions run at most 10 times a second)
+  if (chosen < 0) st.nextThinkMs = nowMs + 100;
+  if (chosen >= 0) {
+    const GambitDef& g = v.node.gambits[static_cast<std::size_t>(chosen)];
+    ObjInfo t;
+    void* tobj = SehFind(target);
+    float pos[3] = {self.pos[0], self.pos[1], self.pos[2]};
+    if (tobj && SehObjInfo(tobj, &t)) std::memcpy(pos, t.pos, sizeof pos);
+    const int r = SehRequest(g.guid, self.id, target, pos, v.rank);
+    ++g_st.requests;
+    ++st.requests;
+    if (r == 1 || r == 2) {
+      ++g_st.started;
+      st.gambitReadyMs[static_cast<std::size_t>(chosen)] =
+          nowMs + static_cast<unsigned long long>(
+                      gms::agents::GambitCooldownSeconds(g.cooldown, g.maxCooldown, g.randomize, Random01()) * 1000.0);
+    } else if (r == 5) {
+      ++g_st.outOfRange;
+    } else {
+      ++g_st.requestRefused;
+    }
+    const bool pursue = r == 5;
+    if (pursue != st.pursue) {
+      st.pursue = pursue;
+      SehSetTreeFlag(o, 8, pursue);
+      ++(pursue ? g_st.pursueOn : g_st.pursueOff);
+    }
+    if ((r != st.lastResult || g.guid != st.lastGuid) && LogBudget())
+      Log("agents: %08X %s gambit %d (ability %08X) on %08X%s -> %d%s (t %.2f s)", self.id, st.noun, chosen, g.guid,
+          target, target == best ? "" : " (the condition's target)", r,
+          r == 1 || r == 2 ? " started" : r == 5 ? " out of range: pursue" : "", static_cast<double>(nowMs) / 1000.0);
+    st.lastResult = r;
+    st.lastGuid = g.guid;
+  } else if (!best && st.pursue && !held) {
+    st.pursue = false;
+    SehSetTreeFlag(o, 8, false);
+    ++g_st.pursueOff;
+  }
+  // phase default (0x40): no usable gambit and the phase has a default behavior (D6c: left alone while held)
+  if (!held) SehSetTreeFlag(o, 0x40, chosen < 0 && v.node.hasDefaultBehavior);
+
+  // links: the first that fires moves the brain to its output node
+  for (std::size_t i = 0; i < v.node.links.size(); ++i) {
+    const LinkDef& l = v.node.links[i];
+    if (nowMs < st.linkNextCheckMs[i]) continue;
+    if (l.interval > 0) st.linkNextCheckMs[i] = nowMs + static_cast<unsigned long long>(l.interval * 1000.0f);
+    gms::agents::LinkView lv;
+    lv.activateOnce = l.activateOnce;
+    lv.firedBefore = st.linkFired[i] != 0;
+    lv.activateTime = l.activateTime;
+    lv.secondsInNode = static_cast<double>(nowMs - st.nodeEnteredMs) / 1000.0;
+    lv.cooldownLeft = nowMs < st.linkReadyMs[i] ? static_cast<double>(st.linkReadyMs[i] - nowMs) / 1000.0 : 0.0;
+    if (lv.cooldownLeft > 0 || lv.secondsInNode < lv.activateTime || (lv.activateOnce && lv.firedBefore)) continue;
+    std::uint32_t unused = 0;
+    lv.conditionsPass = Conditions(l.conditions, l.conditionCount, self.id, &unused);
+    if (!gms::agents::LinkFires(lv)) continue;
+    if (l.outputNode < 0 || l.outputNode >= v.nodeCount) continue;
+    st.linkFired[i] = 1;
+    ++g_st.linksFired;
+    if (LogBudget())
+      Log("agents: %08X %s link %zu: node %d -> %d (t %.2f s)", self.id, st.noun, i, st.node, l.outputNode,
+          static_cast<double>(nowMs) / 1000.0);
+    BrainView next;
+    if (SehReadBrain(o, l.outputNode, &next)) {
+      EnterNode(st, next, l.outputNode, nowMs);
+      SehSetEngineNode(v.brain, l.outputNode);
+    }
+    break;
+  }
+}
+
+// ---- D6a: the bot brain step (AGENT_AI.md §11, *D6a*) -------------------------------------------------------------
+
+struct BotLink {
+  int outputNode = 0;
+  char* conditions = nullptr;
+  int conditionCount = 0;
+  bool startOnCooldown = false, activateOnce = false;
+  float activateTime = 0.f, interval = 0.f, cooldown = 0.f, maxCooldown = 0.f;
+};
+struct BotGambit {
+  std::uint32_t guid = 0;
+  int slot = -1;
+  char* conditions = nullptr;
+  int conditionCount = 0;
+  bool randomize = false, waitOnCondition = false;
+  float weight = 1.f, cooldown = 0.f, maxCooldown = 0.f;
+};
+struct BotView {
+  void* brain = nullptr;
+  int nodeCount = 0;
+  int enginePlan = -1, enginePhase = -1;  // brain +0x14 / +0x18
+  // the plan node asked for
+  bool planOk = false;
+  const char* planName = "?";
+  std::vector<BotLink> nodeLinks;   // cAINode.output: to other plans
+  std::vector<BotLink> phaseLinks;  // Plan.output: to its phases
+  int missionType = 0;              // Plan +0x14
+  bool requestMission = false;      // Plan +0x18 (D6b: the EngageForKill plans)
+  // the phase node asked for
+  bool phaseOk = false;
+  const char* phaseName = "?";
+  int phaseType = 0;
+  const char* defaultBehavior = nullptr;
+  std::vector<BotGambit> gambits;
+};
+
+const char* AssetNameOr(void* asset, const char* dflt) {
+  const char* n = asset ? Field<const char*>(asset, 0) : nullptr;
+  if (!n) return dflt;
+  volatile char probe = n[0];
+  (void)probe;
+  return n;
+}
+
+void ReadLinks(char* l0, int nl, std::vector<BotLink>* out) {
+  out->clear();
+  for (int i = 0; i < nl && i < 32; ++i) {
+    char* l = l0 + i * aidef::kLinkSize;
+    BotLink d;
+    d.outputNode = Field<int>(l, 0);
+    d.conditions = Field<char*>(l, 4);
+    d.conditionCount = Field<int>(l, 8);
+    d.startOnCooldown = Field<unsigned char>(l, 0xC) != 0;
+    d.activateOnce = Field<unsigned char>(l, 0xD) != 0;
+    d.activateTime = Field<float>(l, 0x10);
+    d.interval = Field<float>(l, 0x14);
+    d.cooldown = Field<float>(l, 0x1C);
+    d.maxCooldown = Field<float>(l, 0x20);
+    out->push_back(d);
+  }
+}
+
+// Whether node `n` of the bot's AIDefinition is a plan (cAINode +4 mpPlanData) or a phase (+0 mpPhaseData).
+bool SehNodeKind(void* o, int n, bool* isPlan, bool* isPhase) {
+  __try {
+    *isPlan = *isPhase = false;
+    void* b = Field<void*>(o, obj::kBrain);
+    void* defAsset = b ? Field<void*>(b, brain::kAiDefinition) : nullptr;
+    char* def = defAsset ? Field<char*>(defAsset, noun::kData) : nullptr;
+    if (!def || n < 0 || n >= Field<int>(def, 4)) return false;
+    char* rec = Field<char*>(def, 0) + n * aidef::kNodeSize;
+    *isPhase = Field<void*>(rec, 0) != nullptr;
+    *isPlan = Field<void*>(rec, 4) != nullptr;
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "bot node kind")) {
+    return false;
+  }
+}
+
+// The bot brain's plan node `plan` and phase node `phase` (-1: none). False without an active brain with a definition.
+bool SehReadBotView(void* o, int plan, int phase, BotView* v) {
+  __try {
+    void* b = Field<void*>(o, obj::kBrain);
+    if (!b || !Field<unsigned char>(b, brain::kActive)) return false;
+    void* defAsset = Field<void*>(b, brain::kAiDefinition);
+    char* def = defAsset ? Field<char*>(defAsset, noun::kData) : nullptr;
+    if (!def) return false;
+    v->brain = b;
+    v->nodeCount = Field<int>(def, 4);
+    v->enginePlan = Field<int>(b, brain::kPlan);
+    v->enginePhase = Field<int>(b, brain::kNode);
+    if (v->nodeCount <= 0 || v->nodeCount > 64) return false;
+    char* nodes = Field<char*>(def, 0);
+    v->planOk = false;
+    v->nodeLinks.clear();
+    v->phaseLinks.clear();
+    v->missionType = 0;
+    v->requestMission = false;
+    if (plan >= 0 && plan < v->nodeCount) {
+      char* rec = nodes + plan * aidef::kNodeSize;
+      void* planAsset = Field<void*>(rec, 4);
+      char* pd = planAsset ? Field<char*>(planAsset, noun::kData) : nullptr;
+      if (pd) {
+        v->planOk = true;
+        v->planName = AssetNameOr(planAsset, "?");
+        ReadLinks(Field<char*>(rec, 0x14), Field<int>(rec, 0x18), &v->nodeLinks);
+        ReadLinks(Field<char*>(pd, 0), Field<int>(pd, 4), &v->phaseLinks);
+        v->missionType = Field<int>(pd, 0x14);
+        v->requestMission = Field<unsigned char>(pd, 0x18) != 0;
+      }
+    }
+    v->phaseOk = false;
+    v->gambits.clear();
+    v->defaultBehavior = nullptr;
+    if (phase >= 0 && phase < v->nodeCount) {
+      char* rec = nodes + phase * aidef::kNodeSize;
+      void* phaseAsset = Field<void*>(rec, 0);
+      char* ph = phaseAsset ? Field<char*>(phaseAsset, noun::kData) : nullptr;
+      if (ph) {
+        v->phaseOk = true;
+        v->phaseName = AssetNameOr(phaseAsset, "?");
+        v->phaseType = Field<int>(ph, 8);
+        const char* dflt = Field<const char*>(ph, 0x10);
+        v->defaultBehavior = dflt && dflt[0] ? dflt : nullptr;
+        const int ng = Field<int>(ph, 4);
+        char* g0 = Field<char*>(ph, 0);
+        for (int i = 0; i < ng && i < 32; ++i) {
+          char* g = g0 + i * aidef::kGambitSize;
+          BotGambit d;
+          d.conditions = Field<char*>(g, 0);
+          d.conditionCount = Field<int>(g, 4);
+          d.guid = Field<std::uint32_t>(g, 8);
+          d.slot = Field<int>(g, 0x18);
+          d.randomize = Field<unsigned char>(g, 0x1C) != 0;
+          d.waitOnCondition = Field<unsigned char>(g, 0x1D) != 0;
+          d.weight = Field<float>(g, 0x20);
+          d.cooldown = Field<float>(g, 0x24);
+          d.maxCooldown = Field<float>(g, 0x28);
+          v->gambits.push_back(d);
+        }
+      }
+    }
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "read bot brain")) {
+    return false;
+  }
+}
+
+void SehSetBrainNodes(void* brainPtr, int plan, int phase) {
+  __try {
+    Field<int>(brainPtr, brain::kPlan) = plan;
+    Field<int>(brainPtr, brain::kNode) = phase;
+  } __except (SehNote(GetExceptionInformation(), "set bot brain nodes")) {
+  }
+}
+
+bool SehResetDefaultBehavior(void* o) {
+  __try {
+    void* btd = Field<void*>(o, obj::kBehaviorTree);
+    if (!btd) return false;
+    PushTreeRequest(btd, kRequestResetDefaultBehavior, 0, kLifetimeForever, 0, 0);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "AgentBehaviorTree_PushRequest 0x400")) {
+    return false;
+  }
+}
+
+// The bot's player (object +0x4C on the current simulator) and what its gambits need of it.
+struct BotPlayerView {
+  void* player = nullptr;
+  int ranks[7] = {};          // slots 0-6 (0-2: 1)
+  void* items[11] = {};       // the inventory's assets
+};
+
+bool SehBotPlayer(void* sim, void* o, BotPlayerView* p) {
+  __try {
+    const unsigned index = Field<unsigned char>(o, gobj::kPlayerIndex);
+    p->player = GetPlayerByIndex(sim, index);
+    if (!p->player) return false;
+    for (int s = 0; s < 7; ++s) p->ranks[s] = s >= 3 ? GetAbilityRank(p->player, s) : 1;
+    for (unsigned i = 0; i < player::kItemSlots; ++i)
+      p->items[i] = Field<void*>(p->player, player::kItems + i * player::kItemSize);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "bot player")) {
+    return false;
+  }
+}
+
+// Whether a gambit can be tried at all (before its conditions): its ability is learned or its item is carried.
+bool GambitAvailable(const BotGambit& g, const BotPlayerView& p) {
+  if (gms::agents::SlotIsRanked(g.slot)) return p.ranks[g.slot] > 0;
+  if (gms::agents::SlotIsItem(g.slot)) {
+    const int inv = gms::agents::SlotInventoryIndex(g.slot);
+    return inv >= 0 && inv < static_cast<int>(player::kItemSlots) && p.items[inv] != nullptr;
+  }
+  if (g.slot == gms::agents::kSlotNone) return g.guid != 0;
+  return g.slot == gms::agents::kSlotBasic || g.slot == gms::agents::kSlotWard;
+}
+
+bool SehHostile(int team, std::uint32_t target) {
+  __try {
+    void* t = target ? GetObjectById(target) : nullptr;
+    return t && ValidateHostile(team, t, 0);
+  } __except (SehNote(GetExceptionInformation(), "ValidateHostileTarget")) {
+    return false;
+  }
+}
+
+void SehSetTarget(void* o, std::uint32_t target) {
+  __try {
+    SetAgentTarget(o, target);
+  } __except (SehNote(GetExceptionInformation(), "AgentBlackboard_SetTarget")) {
+  }
+}
+
+// D6d: the agent's raw mTarget (+0x1E5C; GetBestTarget's bot case also asks BotDirector_IsValidTargetById) and the
+// blackboard's target position (+0x1E64, what the Pursue leaf and nBehavior_Follow read).
+std::uint32_t SehRawTarget(void* o) {
+  __try {
+    char* bb = Field<char*>(o, agent::kOfObject);
+    return bb ? Field<std::uint32_t>(bb, agent::kTarget) : 0u;
+  } __except (SehNote(GetExceptionInformation(), "read mTarget")) {
+    return 0;
+  }
+}
+
+void SehSetTargetPosition(void* o, const float* p) {
+  __try {
+    char* bb = Field<char*>(o, agent::kOfObject);
+    if (!bb) return;
+    for (int i = 0; i < 3; ++i) Field<float>(bb, agent::kTargetPosition + 4 * i) = p[i];
+  } __except (SehNote(GetExceptionInformation(), "write the target position")) {
+  }
+}
+
+int SehBotRequest(std::uint32_t guid, int slot, std::uint32_t self, std::uint32_t target, const float* pos, int rank) {
+  __try {
+    int instance = 0;
+    return RequestAbilityCall(guid, slot, self, target, pos[0], pos[1], pos[2], rank, 0, 0, 0, 1, nullptr, &instance);
+  } __except (SehNote(GetExceptionInformation(), "LabsAbilities_RequestAbility (bot)")) {
+    return -0x7FFF;
+  }
+}
+
+// A consumable (potion): LabsPlayer_CanUseItem, then LabsPlayer_UseItem (it requests the item's ability and takes one
+// of the stack). 1 = used, 0 = refused, -1 = exception.
+int SehBotUseItem(void* player, void* item, unsigned invSlot) {
+  __try {
+    if (!CanUseItem(player, item, invSlot)) return 0;
+    UseItem(player, item, invSlot);
+    return 1;
+  } __except (SehNote(GetExceptionInformation(), "LabsPlayer_UseItem (bot)")) {
+    return -1;
+  }
+}
+
+struct BotStats {
+  unsigned thinks = 0, planChanges = 0, phaseChanges = 0, behaviorResets = 0, requests = 0, started = 0;
+  unsigned outOfRange = 0, refused = 0, items = 0, noPhase = 0, conditions = 0, exceptions = 0;
+  // D6c: timers kept across visits (plan and phase entries that got their node's timers back); plans left again
+  // within kQuickExitMs of entering them, the back-and-forth among them (into the plan left within kQuickExitMs), and
+  // for quick exits from a requestMission plan (EngageForKill) the bot's distance to its mTarget then
+  unsigned planTimersKept = 0, phaseTimersKept = 0, quickExits = 0, bounces = 0;
+  unsigned heldThinks = 0;  // thinks without gambits: an uninterruptible ability held the agent
+  unsigned quickExitNear = 0, quickExitMid = 0, quickExitFar = 0, quickExitNoTarget = 0;  // < 30, 30-55, > 55, none
+  // D6d: requests aimed at a point only, pursuits of a point (mTarget cleared for them), how they ended: the gambit
+  // started at the point, or the bot chose something else (another gambit, phase or plan)
+  unsigned pointRequests = 0, pointStarted = 0, pointPursuits = 0, pointTargetsCleared = 0, pointReached = 0;
+  unsigned pointDropped = 0;
+  unsigned pointLeafRestarts = 0;  // a running Pursue leaf restarted (request 0x400) to take the point
+};
+BotStats g_bot;
+constexpr unsigned long long kQuickExitMs = 1000;
+
+void BotEnterPlan(AgentState& st, const BotView& v, int plan, unsigned long long nowMs) {
+  // D6c: the plan left keeps its link timers (its cAINode.output and its Plan.output); the plan entered gets back its own
+  if (g_opt.keepNodeTimers && st.botPlan >= 0) {
+    AgentState::NodeTimers& t = st.nodeTimers[st.botPlan];
+    t.linkReady = st.nodeLinkReady;
+    t.linkNext = st.nodeLinkNext;
+    t.linkFired = st.nodeLinkFired;
+    t.phaseLinkReady = st.phaseLinkReady;
+    t.phaseLinkNext = st.phaseLinkNext;
+    t.phaseLinkFired = st.phaseLinkFired;
+  }
+  st.botPlan = plan;
+  st.planEnteredMs = nowMs;
+  const auto kept = g_opt.keepNodeTimers ? st.nodeTimers.find(plan) : st.nodeTimers.end();
+  if (kept != st.nodeTimers.end() && kept->second.linkReady.size() == v.nodeLinks.size() &&
+      kept->second.phaseLinkReady.size() == v.phaseLinks.size()) {
+    st.nodeLinkReady = kept->second.linkReady;
+    st.nodeLinkNext = kept->second.linkNext;
+    st.nodeLinkFired = kept->second.linkFired;
+    st.phaseLinkReady = kept->second.phaseLinkReady;
+    st.phaseLinkNext = kept->second.phaseLinkNext;
+    st.phaseLinkFired = kept->second.phaseLinkFired;
+    ++g_bot.planTimersKept;
+  } else {
+    st.nodeLinkReady.assign(v.nodeLinks.size(), 0);
+    st.nodeLinkNext.assign(v.nodeLinks.size(), 0);
+    st.nodeLinkFired.assign(v.nodeLinks.size(), 0);
+    st.phaseLinkReady.assign(v.phaseLinks.size(), 0);
+    st.phaseLinkNext.assign(v.phaseLinks.size(), 0);
+    st.phaseLinkFired.assign(v.phaseLinks.size(), 0);
+  }
+  st.phaseEnteredMs = nowMs;
+  for (std::size_t i = 0; i < v.nodeLinks.size(); ++i)  // startOnCooldown: at every entry [assumed]
+    if (v.nodeLinks[i].startOnCooldown)
+      st.nodeLinkReady[i] = nowMs + static_cast<unsigned long long>(gms::agents::LinkCooldownSeconds(
+                                        v.nodeLinks[i].cooldown, v.nodeLinks[i].maxCooldown, Random01()) * 1000.0);
+  for (std::size_t i = 0; i < v.phaseLinks.size(); ++i)
+    if (v.phaseLinks[i].startOnCooldown)
+      st.phaseLinkReady[i] = nowMs + static_cast<unsigned long long>(gms::agents::LinkCooldownSeconds(
+                                         v.phaseLinks[i].cooldown, v.phaseLinks[i].maxCooldown, Random01()) * 1000.0);
+}
+
+// D6c: a phase node entered: the phase left keeps its gambit cooldowns, the phase entered gets back its own.
+void BotEnterPhase(AgentState& st, int phase, std::size_t gambits) {
+  if (g_opt.keepNodeTimers && st.botPhase >= 0) st.nodeTimers[st.botPhase].gambitReady = st.gambitReadyMs;
+  st.botPhase = phase;
+  const auto kept = g_opt.keepNodeTimers ? st.nodeTimers.find(phase) : st.nodeTimers.end();
+  if (kept != st.nodeTimers.end() && kept->second.gambitReady.size() == gambits) {
+    st.gambitReadyMs = kept->second.gambitReady;
+    ++g_bot.phaseTimersKept;
+  } else {
+    st.gambitReadyMs.assign(gambits, 0);
+  }
+}
+
+// D6c: a bot's distance to its mTarget (-1: none or gone).
+float SehDistanceToTarget(void* o, const ObjInfo& self) {
+  AgentInfo ai;
+  const std::uint32_t t = SehAgentInfo(o, &ai) ? SehBestTarget(ai.agent) : 0;
+  void* tobj = t ? SehFind(t) : nullptr;
+  ObjInfo ti;
+  if (!tobj || !SehObjInfo(tobj, &ti)) return -1.f;
+  const float dx = ti.pos[0] - self.pos[0], dy = ti.pos[1] - self.pos[1];
+  return std::sqrt(dx * dx + dy * dy);
+}
+
+// The link set's view for `i` (time in the node, cooldown, once).
+gms::agents::LinkView BotLinkView(const BotLink& l, double secondsInNode, unsigned long long readyMs, bool fired,
+                                  unsigned long long nowMs) {
+  gms::agents::LinkView lv;
+  lv.activateOnce = l.activateOnce;
+  lv.firedBefore = fired;
+  lv.activateTime = l.activateTime;
+  lv.secondsInNode = secondsInNode;
+  lv.cooldownLeft = nowMs < readyMs ? static_cast<double>(readyMs - nowMs) / 1000.0 : 0.0;
+  return lv;
+}
+
+// D6d: the point pursuit's own log budget (the agent log is busy in long matches): 600 lines, then every 20th.
+unsigned g_pointLogLines;
+bool PointLogBudget() {
+  ++g_pointLogLines;
+  return g_pointLogLines <= 600 || g_pointLogLines % 20 == 0;
+}
+
+float Distance2D(const float* a, const float* b) {
+  const float dx = a[0] - b[0], dy = a[1] - b[1];
+  return std::sqrt(dx * dx + dy * dy);
+}
+
+// D6d: a bot's gambit at a point was out of range (5). The Pursue leaf (12, BTNode_Pursue_Evaluate 0x008A8CA0) hands
+// nBehavior_Follow the best target and the blackboard's target position; Follow walks to the position only when the
+// target is kObjIDNone, and a bot's best target is its mTarget (AgentBlackboard_GetBestTarget's aggro type 5). So the
+// point goes into +0x1E64 and mTarget is cleared [inferred: nothing in the client writes +0x1E64, the stripped brain
+// did]. A Pursue leaf that is running still follows the object it started with (Follow keeps the request block's
+// target), so a new point restarts it through request 0x400 (leaf 9 preempts it and redecides).
+void BeginPointPursuit(void* o, AgentState& st, const ObjInfo& self, const BotView& v, int gambit, const float* p,
+                       unsigned long long nowMs) {
+  SehSetTargetPosition(o, p);
+  const std::uint32_t old = SehRawTarget(o);
+  if (old) {
+    SehSetTarget(o, 0);
+    ++g_bot.pointTargetsCleared;
+  }
+  const bool newPoint = !st.pointPursuit || std::fabs(p[0] - st.point[0]) > 0.01f || std::fabs(p[1] - st.point[1]) > 0.01f;
+  if (!newPoint) return;
+  bool restarted = false;
+  if (st.leaf == kLeafPursue && SehResetDefaultBehavior(o)) {
+    ++g_bot.pointLeafRestarts;
+    restarted = true;
+  }
+  if (!st.pointPursuit) ++g_bot.pointPursuits;
+  st.pointPursuit = true;
+  std::memcpy(st.point, p, sizeof st.point);
+  st.pointSinceMs = nowMs;
+  st.pointStartDistance = Distance2D(p, self.pos);
+  if (PointLogBudget()) {
+    char extra[64] = "";
+    if (old) std::snprintf(extra, sizeof extra, ", mTarget %08X cleared", old);
+    Log("agents: bot %08X %s phase %d (%s) gambit %d at the point (%.1f, %.1f), %.1f units away: out of range, pursue "
+        "the point%s%s (t %.2f s)",
+        self.id, st.noun, st.botPhase, v.phaseName, gambit, static_cast<double>(p[0]), static_cast<double>(p[1]),
+        static_cast<double>(st.pointStartDistance), extra, restarted ? ", Pursue restarted" : "",
+        static_cast<double>(nowMs) / 1000.0);
+  }
+}
+
+// D6d: the pursuit of a point ends: the gambit started (`startedAt`: its point, the pursued one or another the
+// condition chose meanwhile) or the bot chose something else. The target position goes back to the zero vector (the
+// constructor's), so the Pursue leaf has nothing left to walk to.
+void EndPointPursuit(void* o, AgentState& st, const ObjInfo& self, int r, const float* startedAt,
+                     unsigned long long nowMs) {
+  static const float kZero[3] = {};
+  SehSetTargetPosition(o, kZero);
+  st.pointPursuit = false;
+  ++(startedAt ? g_bot.pointReached : g_bot.pointDropped);
+  if (!PointLogBudget()) return;
+  char how[96];
+  if (startedAt)
+    std::snprintf(how, sizeof how, "the gambit started at (%.1f, %.1f), %.1f units away",
+                  static_cast<double>(startedAt[0]), static_cast<double>(startedAt[1]),
+                  static_cast<double>(Distance2D(startedAt, self.pos)));
+  else
+    std::snprintf(how, sizeof how, "the bot chose otherwise, result %d", r);
+  Log("agents: bot %08X %s pursuit of the point (%.1f, %.1f) ended after %.1f s, %.1f units from it (%.1f at the "
+      "start): %s (t %.2f s)",
+      self.id, st.noun, static_cast<double>(st.point[0]), static_cast<double>(st.point[1]),
+      static_cast<double>(nowMs - st.pointSinceMs) / 1000.0, static_cast<double>(Distance2D(st.point, self.pos)),
+      static_cast<double>(st.pointStartDistance), how, static_cast<double>(nowMs) / 1000.0);
+}
+
+void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) {
+  if (st.leaf == kLeafDeath || st.leaf == kLeafDeathAbility || st.leaf == kLeafDeathAbilityDefault ||
+      st.leaf == 0x0141E1B8 || st.leaf == 0x0141DE90)
+    return;
+  if (nowMs < st.botNextThinkMs) return;
+  st.botNextThinkMs = nowMs + static_cast<unsigned long long>(g_opt.botThinkMs > 0 ? g_opt.botThinkMs : 200);
+  ObjInfo self;
+  if (!SehObjInfo(o, &self) || (self.hasHp && self.hp <= 0.f) || GameOver(sim)) return;
+  BotView v;
+  if (st.botPlan == -2) {  // first sight: the start plan AgentBrain_InitBot chose
+    if (!SehReadBotView(o, -1, -1, &v)) return;
+    if (!SehReadBotView(o, v.enginePlan, -1, &v)) return;
+    BotEnterPlan(st, v, v.enginePlan, nowMs);
+    st.botPhase = -1;
+    if (LogBudget())
+      Log("agents: bot %08X %s brain: %d nodes, start plan %d (%s), phase %d", self.id, st.noun, v.nodeCount,
+          v.enginePlan, v.planOk ? v.planName : "none", v.enginePhase);
+  } else if (!SehReadBotView(o, st.botPlan, st.botPhase, &v)) {
+    return;
+  }
+  ++g_bot.thinks;
+  const double inPlan = static_cast<double>(nowMs - st.planEnteredMs) / 1000.0;
+
+  // 1. the plan node's links to other plans (prioritized list)
+  if (v.planOk) {
+    for (std::size_t i = 0; i < v.nodeLinks.size() && i < st.nodeLinkReady.size(); ++i) {
+      const BotLink& l = v.nodeLinks[i];
+      if (nowMs < st.nodeLinkNext[i]) continue;
+      if (l.interval > 0) st.nodeLinkNext[i] = nowMs + static_cast<unsigned long long>(l.interval * 1000.0f);
+      gms::agents::LinkView lv = BotLinkView(l, inPlan, st.nodeLinkReady[i], st.nodeLinkFired[i] != 0, nowMs);
+      if (!gms::agents::LinkOpen(lv)) continue;
+      std::uint32_t unused = 0;
+      std::int32_t linkMission = 0;  // D6b: condition_Bot_IsMissionAvailable's mission id (ConditionOut::linkValue)
+      if (!Conditions(l.conditions, l.conditionCount, self.id, &unused, false, nullptr, &linkMission)) continue;
+      bool isPlan = false, isPhase = false;
+      if (!SehNodeKind(o, l.outputNode, &isPlan, &isPhase) || !isPlan) continue;
+      st.nodeLinkFired[i] = 1;
+      st.nodeLinkReady[i] =
+          nowMs + static_cast<unsigned long long>(gms::agents::LinkCooldownSeconds(l.cooldown, l.maxCooldown, Random01()) *
+                                                  1000.0);
+      BotView next;
+      if (!SehReadBotView(o, l.outputNode, -1, &next) || !next.planOk) break;
+      ++g_bot.planChanges;
+      // D6c: a quick exit (the plan left within kQuickExitMs) and a bounce (back into the plan left just before)
+      const bool quick = nowMs - st.planEnteredMs < kQuickExitMs;
+      const bool bounce = l.outputNode == st.prevPlan && nowMs - st.prevPlanLeftMs < kQuickExitMs;
+      float targetDist = -2.f;
+      if (quick) {
+        ++g_bot.quickExits;
+        if (v.requestMission) {
+          targetDist = SehDistanceToTarget(o, self);
+          ++(targetDist < 0 ? g_bot.quickExitNoTarget
+                            : targetDist < 30.f ? g_bot.quickExitNear
+                                                : targetDist <= 55.f ? g_bot.quickExitMid : g_bot.quickExitFar);
+        }
+      }
+      if (bounce) ++g_bot.bounces;
+      if (LogBudget()) {
+        char extra[64] = "";
+        if (targetDist >= 0.f)
+          std::snprintf(extra, sizeof extra, "; quick exit, mTarget at %.1f units", static_cast<double>(targetDist));
+        else if (targetDist == -1.f)
+          std::snprintf(extra, sizeof extra, "; quick exit, no mTarget");
+        Log("agents: bot %08X %s plan %d (%s) -> %d (%s) by link %zu after %.2f s%s%s (t %.2f s)", self.id, st.noun,
+            st.botPlan, v.planName, l.outputNode, next.planName, i, inPlan, bounce ? ", a bounce" : "", extra,
+            static_cast<double>(nowMs) / 1000.0);
+      }
+      st.prevPlan = st.botPlan;
+      st.prevPlanLeftMs = nowMs;
+      BotEnterPlan(st, next, l.outputNode, nowMs);
+      SehSetBrainNodes(v.brain, l.outputNode, st.botPhase);
+      // D6b: the plan's mission (bots.h OnPlanEntered: take the link's id, open an own one, or leave)
+      AgentInfo ai;
+      const std::uint32_t mtarget = SehAgentInfo(o, &ai) ? SehBestTarget(ai.agent) : 0;
+      bots::OnPlanEntered(self.id, self.team, next.missionType, next.requestMission,
+                          linkMission > 0 ? static_cast<std::uint32_t>(linkMission) : 0u, mtarget, st.noun,
+                          next.planName);
+      v = next;
+      break;
+    }
+  }
+  // D6b: a requestMission plan (EngageForKill) keeps its own mission open while the bot stays in it
+  if (v.planOk && v.requestMission && v.missionType > 0) {
+    AgentInfo ai;
+    if (SehAgentInfo(o, &ai)) bots::OnRequestPlanThink(self.id, self.team, v.missionType, SehBestTarget(ai.agent));
+  }
+
+  // 2. the plan's links to its phases (ChoosePhaseLink: the current phase's link counts while it cools down)
+  if (v.planOk) {
+    const double inPhase = static_cast<double>(nowMs - st.phaseEnteredMs) / 1000.0;
+    int chosen = -1;
+    for (std::size_t i = 0; i < v.phaseLinks.size() && i < st.phaseLinkReady.size(); ++i) {
+      const BotLink& l = v.phaseLinks[i];
+      const bool current = l.outputNode == st.botPhase;
+      if (nowMs < st.phaseLinkNext[i]) {
+        if (current) {  // between its checks the current phase's link holds (checkTimeInterval)
+          chosen = static_cast<int>(i);
+          break;
+        }
+        continue;
+      }
+      if (l.interval > 0) st.phaseLinkNext[i] = nowMs + static_cast<unsigned long long>(l.interval * 1000.0f);
+      gms::agents::LinkView lv = BotLinkView(l, current ? inPhase : inPlan, st.phaseLinkReady[i],
+                                             st.phaseLinkFired[i] != 0, nowMs);
+      if (!gms::agents::LinkOpen(lv, current)) continue;
+      std::uint32_t unused = 0;
+      if (!Conditions(l.conditions, l.conditionCount, self.id, &unused, false)) continue;
+      chosen = static_cast<int>(i);
+      break;
+    }
+    if (chosen >= 0 && v.phaseLinks[static_cast<std::size_t>(chosen)].outputNode != st.botPhase) {
+      const BotLink& l = v.phaseLinks[static_cast<std::size_t>(chosen)];
+      bool isPlan = false, isPhase = false;
+      if (SehNodeKind(o, l.outputNode, &isPlan, &isPhase) && isPhase) {
+        st.phaseLinkFired[static_cast<std::size_t>(chosen)] = 1;
+        st.phaseLinkReady[static_cast<std::size_t>(chosen)] =
+            nowMs + static_cast<unsigned long long>(
+                        gms::agents::LinkCooldownSeconds(l.cooldown, l.maxCooldown, Random01()) * 1000.0);
+        BotView next;
+        if (SehReadBotView(o, st.botPlan, l.outputNode, &next) && next.phaseOk) {
+          ++g_bot.phaseChanges;
+          if (LogBudget())
+            Log("agents: bot %08X %s phase %d -> %d (%s, default %s) in plan %d (%s) (t %.2f s)", self.id, st.noun,
+                st.botPhase, l.outputNode, next.phaseName, next.defaultBehavior ? next.defaultBehavior : "none",
+                st.botPlan, v.planName, static_cast<double>(nowMs) / 1000.0);
+          BotEnterPhase(st, l.outputNode, next.gambits.size());
+          st.phaseEnteredMs = nowMs;
+          st.seqCursor = -1;
+          SehSetBrainNodes(v.brain, st.botPlan, st.botPhase);
+          v = next;
+        }
+      }
+    }
+  }
+  if (!v.phaseOk) {
+    // no phase yet (the Idle plan has none): the tree idles (leaf 17)
+    ++g_bot.noPhase;
+    if (!SehReadBotView(o, st.botPlan, st.botPhase, &v) || !v.phaseOk) {
+      SehSetTreeFlag(o, 0x40, false);
+      if (st.pointPursuit) EndPointPursuit(o, st, self, 0, nullptr, nowMs);  // D6d
+      return;
+    }
+  }
+  if (st.gambitReadyMs.size() != v.gambits.size()) st.gambitReadyMs.assign(v.gambits.size(), 0);
+
+  // D6c: while an uninterruptible ability holds the agent (a cast before its ReleaseAgent, a dodge, a channel) the bot
+  // neither requests a gambit nor restarts its default behavior: either would abort the ability (SehHeldByUninterruptible)
+  const char* held = nullptr;
+  if (g_opt.respectCanInterrupt && SehHeldByUninterruptible(o, &held)) {
+    ++g_bot.heldThinks;
+    return;
+  }
+
+  // 3. the default behavior: flag 0x40 while the phase has one; a new one restarts through request 0x400
+  const std::string behavior = v.defaultBehavior ? v.defaultBehavior : "";
+  if (behavior != st.botBehavior) {
+    if (!st.botBehavior.empty() && !behavior.empty() && SehResetDefaultBehavior(o)) ++g_bot.behaviorResets;
+    st.botBehavior = behavior;
+  }
+  SehSetTreeFlag(o, 0x40, !behavior.empty());
+
+  // 4. the phase's gambits (prioritized lists evaluated lazily: the first usable one wins)
+  BotPlayerView pv;
+  if (!SehBotPlayer(sim, o, &pv)) return;
+  AgentInfo a;
+  if (!SehAgentInfo(o, &a)) return;
+  const std::uint32_t mtarget = SehBestTarget(a.agent);
+  std::vector<gms::agents::GambitView> views(v.gambits.size());
+  std::vector<std::uint32_t> targets(v.gambits.size(), 0);
+  std::vector<float> spots(v.gambits.size() * 3, 0.f);
+  std::vector<char> pointOnly(v.gambits.size(), 0);  // D6d: the conditions aimed the gambit at a point, no object
+  int chosen = -1;
+  const bool prioritized = v.phaseType == gms::agents::kPrioritizedList;
+  for (std::size_t i = 0; i < v.gambits.size(); ++i) {
+    const BotGambit& g = v.gambits[i];
+    gms::agents::GambitView& gv = views[i];
+    gv.coolingDown = nowMs < st.gambitReadyMs[i];
+    gv.waitOnCondition = g.waitOnCondition;
+    gv.weight = g.weight;
+    gv.conditionsPass = false;
+    if (!GambitAvailable(g, pv)) continue;
+    if (gv.coolingDown && !(prioritized && g.waitOnCondition)) continue;
+    bool po = false;
+    gv.conditionsPass =
+        Conditions(g.conditions, g.conditionCount, self.id, &targets[i], true, &spots[i * 3], nullptr, &po);
+    pointOnly[i] = po ? 1 : 0;
+    ++g_bot.conditions;
+    if (prioritized && gv.conditionsPass) {
+      chosen = gv.coolingDown ? -1 : static_cast<int>(i);  // a waiting gambit holds the list while it cools down
+      break;
+    }
+  }
+  if (!prioritized) chosen = gms::agents::ChooseGambit(v.phaseType, views, &st.seqCursor, Random01());
+  int r = 0;
+  gms::agents::GambitAim aim;  // D6d: the request's object, or a point alone
+  const float* spot = nullptr;
+  if (chosen >= 0) {
+    const BotGambit& g = v.gambits[static_cast<std::size_t>(chosen)];
+    std::uint32_t target = targets[static_cast<std::size_t>(chosen)];
+    if (target && !SehFind(target)) target = 0;
+    spot = &spots[static_cast<std::size_t>(chosen) * 3];
+    const bool hasSpot = spot[0] != 0.f || spot[1] != 0.f;
+    // D6d: a condition that aimed the gambit at a point (useTargetInfo; kObjIDNone with useTarget: the ward's spot)
+    // gives it no object, so the agent's mTarget doesn't stand in for one
+    aim = gms::agents::AimGambit(target, mtarget, hasSpot, pointOnly[static_cast<std::size_t>(chosen)] != 0,
+                                 g_opt.botPursuePoint);
+    target = aim.target;
+    if (aim.atPoint) ++g_bot.pointRequests;
+    ObjInfo t;
+    void* tobj = SehFind(target);
+    float pos[3] = {self.pos[0], self.pos[1], self.pos[2]};
+    if (hasSpot) std::memcpy(pos, spot, sizeof pos);  // the condition's position first
+    else if (tobj && SehObjInfo(tobj, &t)) std::memcpy(pos, t.pos, sizeof pos);
+    ++g_bot.requests;
+    if (gms::agents::SlotIsConsumable(g.slot)) {
+      const int inv = gms::agents::SlotInventoryIndex(g.slot);
+      r = SehBotUseItem(pv.player, pv.items[inv], static_cast<unsigned>(inv));
+      r = r > 0 ? 1 : -0x7FFE;  // used / refused
+      ++g_bot.items;
+    } else {
+      // a hostile target becomes the agent's mTarget: GetBestTarget's bot case, which leaf 12 (Pursue) follows
+      if (target && target != mtarget && SehHostile(self.team, target)) SehSetTarget(o, target);
+      const int slot = g.guid ? (g.slot >= 0 ? g.slot : -1) : g.slot;
+      const int rank = gms::agents::SlotIsRanked(g.slot) ? pv.ranks[g.slot] : 1;
+      r = SehBotRequest(g.guid, slot, self.id, target, pos, rank);
+    }
+    if (r == 1 || r == 2) {
+      ++g_bot.started;
+      st.gambitReadyMs[static_cast<std::size_t>(chosen)] =
+          nowMs + static_cast<unsigned long long>(
+                      gms::agents::GambitCooldownSeconds(g.cooldown, g.maxCooldown, g.randomize, Random01()) * 1000.0);
+    } else if (r == 5) {
+      ++g_bot.outOfRange;
+    } else {
+      ++g_bot.refused;
+    }
+    if ((r != st.lastResult || g.guid != st.lastGuid || g.slot != st.lastSlot) && LogBudget())
+      Log("agents: bot %08X %s phase %d (%s) gambit %d (slot %d, ability %08X) on %08X -> %d%s (t %.2f s)", self.id,
+          st.noun, st.botPhase, v.phaseName, chosen, g.slot, g.guid, target, r,
+          r == 1 || r == 2 ? " started" : r == 5 ? " out of range: pursue" : "", static_cast<double>(nowMs) / 1000.0);
+    st.lastResult = r;
+    st.lastGuid = g.guid;
+    st.lastSlot = g.slot;
+  }
+  // D6d: the pursuit of a point: the point into the blackboard, mTarget cleared; cleared again when it ends
+  const bool startedAtPoint = chosen >= 0 && aim.atPoint && (r == 1 || r == 2);
+  if (g_opt.botPursuePoint) {
+    if (startedAtPoint) {  // a gambit at a point started (the bots' wards)
+      ++g_bot.pointStarted;
+      if (PointLogBudget())
+        Log("agents: bot %08X %s phase %d (%s) gambit %d at the point (%.1f, %.1f) started, %.1f units away (t %.2f s)",
+            self.id, st.noun, st.botPhase, v.phaseName, chosen, static_cast<double>(spot[0]),
+            static_cast<double>(spot[1]), static_cast<double>(Distance2D(spot, self.pos)),
+            static_cast<double>(nowMs) / 1000.0);
+    }
+    if (chosen >= 0 && gms::agents::PursuesPoint(aim, r)) BeginPointPursuit(o, st, self, v, chosen, spot, nowMs);
+    else if (st.pointPursuit) EndPointPursuit(o, st, self, r, startedAtPoint ? spot : nullptr, nowMs);
+  } else if (chosen >= 0 && r == 5 && spot && (spot[0] != 0.f || spot[1] != 0.f) &&
+             (aim.target != st.pointDiagTarget || std::fabs(spot[0] - st.point[0]) > 0.01f ||
+              std::fabs(spot[1] - st.point[1]) > 0.01f)) {
+    // D6a's rule ([host] bot_pursue_point=0), for the comparison: what the Pursue leaf gets to follow
+    const std::uint32_t requestTarget = aim.target;
+    st.pointDiagTarget = requestTarget;
+    std::memcpy(st.point, spot, sizeof st.point);
+    ObjInfo t;
+    void* tobj = requestTarget ? SehFind(requestTarget) : nullptr;
+    const bool known = tobj && SehObjInfo(tobj, &t);
+    if (PointLogBudget())
+      Log("agents: bot %08X %s phase %d (%s) gambit %d at the point (%.1f, %.1f), %.1f units away: out of range; the "
+          "request's object %08X (%s, hp %.0f, %.1f units away), mTarget %08X (t %.2f s)",
+          self.id, st.noun, st.botPhase, v.phaseName, chosen, static_cast<double>(spot[0]),
+          static_cast<double>(spot[1]), static_cast<double>(Distance2D(spot, self.pos)), requestTarget,
+          known ? SehNounName(tobj) : (requestTarget ? "gone" : "none"), known && t.hasHp ? static_cast<double>(t.hp) : -1.0,
+          known ? static_cast<double>(Distance2D(t.pos, self.pos)) : -1.0, SehRawTarget(o),
+          static_cast<double>(nowMs) / 1000.0);
+  }
+  const bool pursue = chosen >= 0 && r == 5;
+  if (pursue != st.pursue) {
+    st.pursue = pursue;
+    SehSetTreeFlag(o, 8, pursue);
+    ++(pursue ? g_st.pursueOn : g_st.pursueOff);
+  }
+}
+
+bool SehIsBot(void* o) {
+  __try {
+    return GameObjectIsBot(o);
+  } __except (SehNote(GetExceptionInformation(), "GameObject_IsBot")) {
+    return false;
+  }
+}
+
+}  // namespace
+
+bool Install(const Options& options) {
+  g_opt = options;
+  if (g_installed) return true;
+  if (!CodeMatches(0x008A9060, kAgentTickBytes, sizeof kAgentTickBytes)) {
+    Log("agents: AgentBehaviorTree_Tick at 008A9060 has other bytes; agent AI off");
+    return false;
+  }
+  struct Check {
+    std::uintptr_t va;
+    const unsigned char* bytes;
+    std::size_t n;
+    const char* name;
+  };
+  const Check checks[] = {
+      {0x008AA4A0, kPerceptionCircleBytes, sizeof kPerceptionCircleBytes, "AgentBlackboard_GetPerceptionCircle"},
+      {0x008820B0, kGetInRadiusBytes, sizeof kGetInRadiusBytes, "GameObjects_GetInRadius"},
+      {0x008AB710, kAddToAggroListBytes, sizeof kAddToAggroListBytes, "Agent_AddToAggroList"},
+      {0x008AA270, kGetBestTargetBytes, sizeof kGetBestTargetBytes, "AgentBlackboard_GetBestTarget"},
+      {0x008AB040, kIsInTetherBytes, sizeof kIsInTetherBytes, "AgentBlackboard_IsInTether"},
+      {0x008AB860, kCallForHelpBytes, sizeof kCallForHelpBytes, "Agent_CallForHelp"},
+      {0x008E3390, kFootprintRadiusBytes, sizeof kFootprintRadiusBytes, "GameObject_GetFootprintRadius"},
+      {0x009064E0, kFireEventBytes, sizeof kFireEventBytes, "AbilityDataContainer_FireEvent"},
+  };
+  g_blackboardOk = true;
+  for (const Check& c : checks)
+    if (!CodeMatches(c.va, c.bytes, c.n)) {
+      Log("agents: %s at %08X has other bytes; blackboard update off", c.name, static_cast<unsigned>(c.va));
+      g_blackboardOk = false;
+    }
+  g_brainOk = CodeMatches(0x008AE9B0, kConditionEvaluateBytes, sizeof kConditionEvaluateBytes);
+  if (!g_brainOk) Log("agents: AIConditions_Evaluate at 008AE9B0 has other bytes; brain step off");
+  g_installed = true;
+  Log("agents: installed (D1b-live): tree tick %d, blackboard update %d%s, brain step %d%s, log limit %d; bot brain "
+      "(D6a) %d, think every %d ms; node timers kept across visits (D6c) %d, canInterrupt respected (D6c) %d; a bot "
+      "walks to a point out of range (D6d) %d; the objective type adds on sight (D14) %d",
+      g_opt.tickTrees, g_opt.blackboard, g_blackboardOk ? "" : " (prologues differ: off)", g_opt.brain,
+      g_brainOk ? "" : " (prologue differs: off)", g_opt.logLimit, g_opt.botBrain, g_opt.botThinkMs,
+      g_opt.keepNodeTimers, g_opt.respectCanInterrupt, g_opt.botPursuePoint, g_opt.objectiveOnSight);
+  return true;
+}
+
+bool Installed() { return g_installed; }
+
+void BeginFrame() { ++g_frame; }
+
+bool TickTree(void* object, float dt) {
+  if (!g_installed || !g_opt.tickTrees || !object) return false;
+  std::uint32_t id = 0;
+  if (!SehObjectId(object, &id)) return false;
+  AgentState& a = StateOf(id);
+  if (a.lastFrame == g_frame) return false;  // never tick a tree twice per frame (AGENT_AI.md §5)
+  a.lastFrame = g_frame;
+  const int r = SehAgentTick(object, dt);
+  if (r > 0) ++g_st.ticks;
+  else if (r == 0) ++g_st.refused;
+  else ++g_st.exceptions;
+  return r > 0;
+}
+
+void Tick(void* sim, float dt) {
+  g_sim = sim;
+  if (!g_installed) return;
+  const double t0 = PreciseMs();
+  ++g_st.frames;
+  std::vector<void*> objs;
+  objs.reserve(512);
+  if (!SehCollect(sim, &objs)) return;
+  const unsigned long long nowMs = NowMs(sim);
+  const double now = static_cast<double>(nowMs) / 1000.0;
+  const unsigned before = g_st.ticks;
+  const bool blackboard = g_opt.blackboard && g_blackboardOk;
+  const bool brain = g_opt.brain && g_brainOk && blackboard;  // the brain reads the best target the update keeps
+  for (void* o : objs) {
+    std::uint32_t id = 0;
+    if (!SehLiveId(o, &id)) continue;  // marked for delete during this loop
+    AgentState& st = StateOf(id);
+    if (st.noun[0] == '?') st.noun = SehNounName(o);  // for the update's and the brain's log lines
+    if (g_opt.allVisible) SehMarkVisible(o);
+    // 5.1 the blackboard update, when due
+    if (blackboard && UpdateDue(o, st, nowMs)) {
+      st.nextUpdateMs = nowMs + kBlackboardPeriodMs;
+      SehPruneInstanceLists(o);
+      UpdateBlackboard(sim, o, st, nowMs);
+    }
+    // 5.2 the brain step (AI agents with an AI definition; D6a: the bots' plans, phases and gambits)
+    if (brain) {
+      if (st.isBot < 0) st.isBot = SehIsBot(o) ? 1 : 0;
+      if (st.isBot) {
+        if (g_opt.botBrain) BotBrainStep(sim, o, st, nowMs);
+      } else {
+        BrainStep(sim, o, st, nowMs);
+      }
+    }
+    // 5.3 the tree tick (a player's creature was ticked by the command intake already)
+    if (g_opt.tickTrees) {
+      if (st.lastFrame == g_frame) ++g_st.viaCommands;
+      else TickTree(o, dt);
+    }
+    Observe(o, now);
+  }
+  g_st.agentsLastFrame = static_cast<unsigned>(objs.size());
+  g_st.ticksLastFrame = g_st.ticks - before;
+  // agents gone since the last frame: deleted (pending delete) or freed
+  for (auto it = g_agents.begin(); it != g_agents.end();) {
+    if (it->second.seenFrame == g_frame) {
+      ++it;
+      continue;
+    }
+    if (it->second.deathAt >= 0) {
+      ++g_st.deletedAfterDeath;
+      if (LogBudget())
+        Log("agents: %08X %s gone %.2f s after its death leaf (t %.2f s)%s", it->first, it->second.noun,
+            now - it->second.deathAt, now, it->second.movedLogged ? "" : "; it did not move after its death");
+    }
+    it = g_agents.erase(it);
+  }
+  g_st.tickMsLastFrame = PreciseMs() - t0;
+  if (g_st.tickMsLastFrame > g_st.tickMsMax) g_st.tickMsMax = g_st.tickMsLastFrame;
+}
+
+void OnDamaged(void* victim, void* attacker, unsigned descLo, unsigned descHi, bool lethal) {
+  if (!g_installed || !g_opt.blackboard || !g_blackboardOk || !victim || !attacker || victim == attacker) return;
+  ObjInfo v, at;
+  if (!SehObjInfo(victim, &v) || !SehObjInfo(attacker, &at) || v.team == at.team) return;
+  AgentInfo a;
+  if (!SehAgentInfo(victim, &a)) return;
+  ++g_st.damageHooks;
+  // the victim's own list (AGENT_AI.md §6.3, [assumed]): the attacker, stamped with the victim as the source
+  if (!lethal && a.hasBrain && !v.player) SehAdd(victim, at.id);
+  // its helpers (Agent_CallForHelp: perception list, team, camp, callForHelpRange, filter, tether)
+  __try {
+    CallForHelp(victim, attacker, descLo, descHi);
+    ++g_st.callsForHelp;
+  } __except (SehNote(GetExceptionInformation(), "Agent_CallForHelp")) {
+  }
+}
+
+namespace {
+
+// Puts `id` on the agent's list with the base-structure mark (a new entry gets it from Agent_AddToAggroList's flag, an
+// entry the perception rule added earlier gets it written). -1 exception or refused, 0 marked, 1 newly added.
+int SehAddBase(void* agentObj, void* agentPtr, std::uint32_t id) {
+  __try {
+    bool present = false;
+    char* b = Field<char*>(agentPtr, agent::kAggroBegin);
+    char* e = Field<char*>(agentPtr, agent::kAggroEnd);
+    for (char* p = b; p < e; p += agent::kAggroEntrySize) present = present || Field<std::uint32_t>(p, 0) == id;
+    char* entry = static_cast<char*>(AddToAggroList(agentObj, id, nullptr, 0, gms::agents::kEntryFlagBaseStructure));
+    if (!entry) return -1;
+    Field<unsigned char>(entry, agent::kAggroEntryFlag) = gms::agents::kEntryFlagBaseStructure;
+    return present ? 0 : 1;
+  } __except (SehNote(GetExceptionInformation(), "Agent_AddToAggroList (base structure)")) {
+    return -1;
+  }
+}
+
+bool SehAttackable(void* o) {
+  __try {
+    return IsTargetable(o) && IsAttackable(o);
+  } __except (SehNote(GetExceptionInformation(), "targetable/attackable")) {
+    return false;
+  }
+}
+
+}  // namespace
+
+int AddBaseStructures(std::uint32_t agentId, const std::uint32_t* ids, int n, std::string* report) {
+  if (!g_installed || !g_opt.blackboard || !g_blackboardOk) return -1;
+  void* o = SehFind(agentId);
+  AgentInfo a;
+  if (!o || !SehObjInfo(o, &a.self) || !SehAgentInfo(o, &a)) return -1;
+  ++g_st.baseCalls;
+  // nearest first (the order rule's last criterion), so the first entry is right before the next blackboard update
+  struct Item {
+    std::uint32_t id;
+    float distance;
+  };
+  std::vector<Item> items;
+  for (int i = 0; i < n; ++i) {
+    void* t = SehFind(ids[i]);
+    ObjInfo ti;
+    if (!t || !SehObjInfo(t, &ti) || ti.team == a.self.team || (ti.hasHp && ti.hp <= 0.f) || !SehAttackable(t)) {
+      ++g_st.baseSkipped;
+      continue;
+    }
+    const float dx = ti.pos[0] - a.self.pos[0], dy = ti.pos[1] - a.self.pos[1], dz = ti.pos[2] - a.self.pos[2];
+    float dist = std::sqrt(dx * dx + dy * dy + dz * dz) - a.self.radius - ti.radius;
+    if (dist < 0.f) dist = 0.f;
+    items.push_back({ids[i], dist});
+  }
+  std::stable_sort(items.begin(), items.end(), [](const Item& x, const Item& y) { return x.distance < y.distance; });
+  int marked = 0;
+  for (const Item& it : items) {
+    const int r = SehAddBase(o, a.agent, it.id);
+    if (r < 0) continue;
+    ++marked;
+    ++g_st.baseMarked;
+    if (r > 0) ++g_st.baseAdded;
+    if (report) {
+      char b[48];
+      std::snprintf(b, sizeof b, "%s%08X %.1f%s", report->empty() ? "" : " ", it.id, static_cast<double>(it.distance),
+                    r > 0 ? "" : " (was on)");
+      *report += b;
+    }
+  }
+  return marked;
+}
+
+std::string DescribeBot(std::uint32_t objectId) {
+  auto it = g_agents.find(objectId);
+  if (it == g_agents.end() || it->second.botPlan == -2) return std::string();
+  char b[96];
+  std::snprintf(b, sizeof b, "plan %d phase %d leaf %s%s%s", it->second.botPlan, it->second.botPhase,
+                LeafName(it->second.leaf), it->second.pursue ? " pursue" : "",
+                it->second.pointPursuit ? " point" : "");  // D6d: the pursuit goes to a point
+  return b;
+}
+
+void FormatStats(char* buf, std::size_t size) {
+  int counts[kNumLeaves + 2] = {};
+  for (const auto& kv : g_agents) {
+    const int i = LeafIndex(kv.second.leaf);
+    ++counts[i >= 0 ? i : (kv.second.leaf ? kNumLeaves : kNumLeaves + 1)];
+  }
+  int len = std::snprintf(
+      buf, size,
+      "agents %u, tree ticks %u this frame (%u total, refused %u, exceptions %u, players' via the command intake %u), "
+      "leaf changes %u, deaths %u, death abilities %u, deleted after death %u; blackboard updates %u (forced %u, "
+      "exceptions %u), perceived %u, aggro added %u (refused %u) removed %u (gone/dead %u, invalid %u, untargetable %u, "
+      "invisible %u, range %u, tether %u) reordered %u, best-target changes %u, events %u, battle ready %u, damage "
+      "hooks %u, calls for help %u, made visible %u; brain steps %u, requests %u (started %u, out of range %u, "
+      "refused %u), no target %u, conditions %u, links %u, pursue on %u off %u, brain exceptions %u; step %.2f ms "
+      "(max %.2f); ended instance ids pruned: abilities %u, modifiers %u; base structures (D5): calls %u, marked %u "
+      "(added %u), skipped %u, kept beyond the drop range %u; bots (D6a): thinks %u, plan changes %u, phase changes %u, "
+      "default behavior resets %u, no phase %u, gambit conditions %u, requests %u (started %u, out of range %u, refused "
+      "%u, items %u); node timers kept (D6c): NPC %u, bot plans %u, bot phases %u; quick plan exits %u (bounces %u; "
+      "from EngageForKill with mTarget < 30: %u, 30-55: %u, > 55: %u, none: %u); held by an uninterruptible ability "
+      "(D6c): NPC steps %u, bot thinks %u; points (D6d): requests %u (started %u), pursuits %u (mTarget cleared %u, "
+      "Pursue restarted %u), started there %u, dropped %u; leaves:",
+      g_st.agentsLastFrame, g_st.ticksLastFrame, g_st.ticks, g_st.refused, g_st.exceptions, g_st.viaCommands,
+      g_st.leafChanges, g_st.deaths, g_st.deathAbilities, g_st.deletedAfterDeath, g_st.updates, g_st.forced,
+      g_st.bbExceptions, g_st.perceived, g_st.added, g_st.addRefused, g_st.removed, g_st.removedBy[0],
+      g_st.removedBy[1], g_st.removedBy[2], g_st.removedBy[3], g_st.removedBy[4], g_st.removedBy[5], g_st.reordered,
+      g_st.bestChanges, g_st.events, g_st.battleReadyChanges, g_st.damageHooks, g_st.callsForHelp, g_st.madeVisible,
+      g_st.brainSteps, g_st.requests, g_st.started, g_st.outOfRange, g_st.requestRefused, g_st.noTarget, g_st.conditionsRun,
+      g_st.linksFired, g_st.pursueOn, g_st.pursueOff, g_st.brainExceptions,
+      g_st.tickMsLastFrame, g_st.tickMsMax, g_st.prunedAbilities, g_st.prunedModifiers, g_st.baseCalls,
+      g_st.baseMarked, g_st.baseAdded, g_st.baseSkipped, g_st.baseKeptBeyondRange, g_bot.thinks, g_bot.planChanges,
+      g_bot.phaseChanges, g_bot.behaviorResets, g_bot.noPhase, g_bot.conditions, g_bot.requests, g_bot.started,
+      g_bot.outOfRange, g_bot.refused, g_bot.items, g_st.nodeTimersKept, g_bot.planTimersKept, g_bot.phaseTimersKept,
+      g_bot.quickExits, g_bot.bounces, g_bot.quickExitNear, g_bot.quickExitMid, g_bot.quickExitFar,
+      g_bot.quickExitNoTarget, g_st.heldThinks, g_bot.heldThinks, g_bot.pointRequests, g_bot.pointStarted,
+      g_bot.pointPursuits,
+      g_bot.pointTargetsCleared, g_bot.pointLeafRestarts, g_bot.pointReached, g_bot.pointDropped);
+  for (int i = 0; i < kNumLeaves + 2 && len > 0 && static_cast<std::size_t>(len) < size; ++i)
+    if (counts[i])
+      len += std::snprintf(buf + len, size - len, " %s=%d",
+                           i < kNumLeaves ? kLeaves[i].name : (i == kNumLeaves ? "?" : "none"), counts[i]);
+}
+
+}  // namespace agents

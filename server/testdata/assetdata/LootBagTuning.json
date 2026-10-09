@@ -1,0 +1,8 @@
+{
+ "class": "LootBagTuning",
+ "count": 1,
+ "errors": {},
+ "instances": {
+  "Tuning": {"LootBag": [{"asset": "Copper.LootBag"}, {"asset": "Silverish.LootBag"}], "LootBagRarity": [{"asset": "Shiny.LootBagRarity"}, {"asset": "Dull.LootBagRarity"}], "FTUELoot": [268435462, 268435463], "FTUEBag_Loot": "Silverish.LootBag", "FTUEBag_Default": "Copper.LootBag", "Points_WonGame": 100, "Points_FirstWinOfTheDay": 100}
+ }
+}

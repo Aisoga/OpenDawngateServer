@@ -1,0 +1,1140 @@
+{
+ "generator": "re/scripts/tdf_golden.py",
+ "writer": [
+  {
+   "name": "ints",
+   "hex": "840000000088000000018c0000003f9000000080019400000041980000007f9c000000c001a0000000bf7fa4000000808001a8000000bfffffff0fac000000c080808010b0000000bfffffff1fb4000000bfffffffffffffffff01b8000000c0808080808080808002bc000000bfffffffffffffffff03cf4a6d0083b0b5ac0db2f8c00093d5f2d60c",
+   "pretty": "    A: 0\n    B: 1\n    C: 63\n    D: 64\n    E: -1\n    F: -63\n    G: -64\n    H: 8191\n    I: 8192\n    J: 2147483647\n    K: -2147483648\n    L: 4294967295\n    M: 9223372036854775807\n    N: -9223372036854775808\n    O: 18446744073709551615\n    STIM: 1791405059\n    LOC: 1701729619"
+  },
+  {
+   "name": "labels",
+   "hex": "e00000000186200000018628c000018628e40001a700000001c33440000187fe9900010420000001d2fbec0001",
+   "pretty": "    X: 1\n    AB: 1\n    ABC: 1\n    ABCD: 1\n    IP: 1\n    PS1: 1\n    A_Z9: 1\n    !\": 1\n    TOOL: 1"
+  },
+  {
+   "name": "strings",
+   "hex": "96dc34010100a25b2f010668656c6c6f00d749980110c3a4c3b6c3bc20e282ac20f09f988000cf1000010569742773008afd28010969742773202278220093100001097361792022686922008f4cac010a6109620a630d64017f008b3b000108433a5c7061746800ba2cf0010961c2a062e2808b6300",
+   "pretty": "    EMPT: ''\n    HELO: 'hello'\n    UTF8: 'äöü € 😀'\n    SQ: \"it's\"\n    BOTH: 'it\\'s \"x\"'\n    DQ: 'say \"hi\"'\n    CTRL: 'a\\tb\\nc\\rd\\x01\\x7f'\n    BSL: 'C:\\\\path'\n    NBSP: 'a\\xa0b\\u200bc'"
+  },
+  {
+   "name": "blobs",
+   "hex": "96dc3402008a9b80020d00017f80ff27225c090a0d417a",
+   "pretty": "    EMPT: b''\n    BIN: b'\\x00\\x01\\x7f\\x80\\xff\\'\"\\\\\\t\\n\\rAz'"
+  },
+  {
+   "name": "structs",
+   "hex": "bf5d32038400000001a6ebb203cc00000102780096dc3403000088000000020096dc340300",
+   "pretty": "    OUTR: \n      A: 1\n      INNR: \n        S: 'x'\n        EMPT: {}\n      B: 2\n    EMPT: {}"
+  },
+  {
+   "name": "lists",
+   "hex": "a6ed3304000501040582e00347cf4cb304010302610001000462206300cf48f4040302a640000001ba1b6501046f6e6500000096dc34040000",
+   "pretty": "    INTS: \n      - 1\n      - 4\n      - 5\n      - 30722\n      - -7\n    STRS: \n      - 'a'\n      - ''\n      - 'b c'\n    STCT: \n      - \n        ID: 1\n        NAME: 'one'\n      - \n\n    EMPT: []"
+  },
+  {
+   "name": "maps",
+   "hex": "cf30000501010210636f6e6e49646c6554696d656f75740004393073000b70696e67506572696f64000432307300cf400005010301066c6f63616c00c33840010a3132372e302e302e3100c33c00009e9102cee84001066c6f63616c0000a6900005000002010a4214a73000050001010706736576656e0096dc3405010000",
+   "pretty": "    SS: \n      connIdleTimeout: '90s'\n      pingPeriod: '20s'\n    ST: \n      local: \n        PSA: '127.0.0.1'\n        PSP: 17502\n        SNA: 'local'\n    II: \n      1: 10\n      -2: 20\n    IS: \n      7: 'seven'\n    EMPT: {}"
+  },
+  {
+   "name": "unions",
+   "hex": "8649320600da1b3503a2fcf4010a3132372e302e302e310000d6ecf4067fa6ed000602da1b350005",
+   "pretty": "    ADDR: \n      <union member 0>\n        VALU: \n          HOST: '127.0.0.1'\n    UNST: \n      <union member 127>\n    INT: \n      <union member 2>\n        VALU: 5"
+  },
+  {
+   "name": "list_unions",
+   "hex": "a2e97404030302978a7003a7000000818080f00fc2fcb400ba9c0100a6ea7003a7000000818080f00fc2fcb4008b39000003a700000001c2fcb40002007f96dc34040300",
+   "pretty": "    HNET: \n      - ('union', 2, {'EXIP': {'IP': 2130706433, 'PORT': 10042}, 'INIP': {'IP': 2130706433, 'PORT': 3659}})\n      - ('union', 3, {'IP': 1, 'PORT': 2})\n      - ('union', 127, None)\n    EMPT: []"
+  },
+  {
+   "name": "getserverinstance_reply",
+   "hex": "8649320600da1b3503a2fcf4010a3132372e302e302e3100a7000000818080f00fc2fcb400b99c0100ce58f50000e24bb30000",
+   "pretty": "    ADDR: \n      <union member 0>\n        VALU: \n          HOST: '127.0.0.1'\n          IP: 2130706433\n          PORT: 10041\n    SECU: 0\n    XDNS: 0"
+  },
+  {
+   "name": "preauth_reply",
+   "hex": "873ca30107333033313037008e99330400130104050607090a0f15191b1c9f20a020a320a520a620a72082e0038efba6038efba60501010310636f6e6e49646c6554696d656f75740004393073001664656661756c745265717565737454696d656f75740004383073000b70696e67506572696f6400043230730000973ca3010733303331303700a6ecf40113626174746c6567726f756e64732d312d706300ba1cf0010a63656d5f65615f696400c29b24010100c2c8740103706300c6fcf3038b7c3303c33840010a3132372e302e302e3100c33c00009e9102cee84001066c6f63616c0000b2ec00000ab34c3305010301066c6f63616c00c33840010a3132372e302e302e3100c33c00009e9102cee84001066c6f63616c0000cf6a640085a088d40800cb3ca3010733303331303700cf6972012c426c617a6520332e31392e31312e3020284461776e6761746520726573746f726174696f6e20737475622900",
+   "pretty": "    ASRC: '303107'\n    CIDS: \n      - 1\n      - 4\n      - 5\n      - 6\n      - 7\n      - 9\n      - 10\n      - 15\n      - 21\n      - 25\n      - 27\n      - 28\n      - 2079\n      - 2080\n      - 2083\n      - 2085\n      - 2086\n      - 2087\n      - 30722\n    CONF: \n      CONF: \n        connIdleTimeout: '90s'\n        defaultRequestTimeout: '80s'\n        pingPeriod: '20s'\n    ESRC: '303107'\n    INST: 'battlegrounds-1-pc'\n    NASP: 'cem_ea_id'\n    PILD: ''\n    PLAT: 'pc'\n    QOSS: \n      BWPS: \n        PSA: '127.0.0.1'\n        PSP: 17502\n        SNA: 'local'\n      LNP: 10\n      LTPS: \n        local: \n          PSA: '127.0.0.1'\n          PSP: 17502\n          SNA: 'local'\n      SVID: 1161889797\n    RSRC: '303107'\n    SVER: 'Blaze 3.19.11.0 (Dawngate restoration stub)'"
+  },
+  {
+   "name": "ping_reply",
+   "hex": "cf4a6d0083b0b5ac0d",
+   "pretty": "    STIM: 1791405059"
+  },
+  {
+   "name": "login_reply",
+   "hex": "86ebee0000bb4bf30000c23d2b010100c2ccf4040301933bad0107706c6179657200b21cf40083b0b5ac0dc299000081d0acf30ec2c874000400ceb9790121303132333435363738396162636465663031323334353637383961626364656600cf086d0000d699000081a8d6b907d6e9320000",
+   "pretty": "    ANON: 0\n    NTOS: 0\n    PCTK: ''\n    PLST: \n      - \n        DSNM: 'player'\n        LAST: 1791405059\n        PID: 2000000001\n        PLAT: 4\n    SKEY: '0123456789abcdef0123456789abcdef'\n    SPAM: 0\n    UID: 1000000001\n    UNDR: 0"
+  },
+  {
+   "name": "loginpersona_reply",
+   "hex": "8b5a640081d0acf30e9b2cf40001ae5e400121303132333435363738396162636465663031323334353637383961626364656600b2cbe70083b0b5ac0db61a6c0113706c61796572406578616d706c652e636f6d00c24d2c03933bad0107706c6179657200b21cf40083b0b5ac0dc299000081d0acf30ec2c874000400d699000081a8d6b907",
+   "pretty": "    BUID: 2000000001\n    FRST: 1\n    KEY: '0123456789abcdef0123456789abcdef'\n    LLOG: 1791405059\n    MAIL: 'player@example.com'\n    PDTL: \n      DSNM: 'player'\n      LAST: 1791405059\n      PID: 2000000001\n      PLAT: 4\n    UID: 1000000001"
+  },
+  {
+   "name": "userauthenticated_notification",
+   "hex": "86cbe30093d5f2d60c8b5a640081d0acf30e933bad0107706c61796572009b2cf40001ae5e400121303132333435363738396162636465663031323334353637383961626364656600b21cf40083b0b5ac0db2cbe70083b0b5ac0db61a6c0113706c61796572406578616d706c652e636f6d00c299000081d0acf30ec2c8740004d699000081a8d6b907e329660000",
+   "pretty": "    ALOC: 1701729619\n    BUID: 2000000001\n    DSNM: 'player'\n    FRST: 1\n    KEY: '0123456789abcdef0123456789abcdef'\n    LAST: 1791405059\n    LLOG: 1791405059\n    MAIL: 'player@example.com'\n    PID: 2000000001\n    PLAT: 4\n    UID: 1000000001\n    XREF: 0"
+  },
+  {
+   "name": "extendeddataupdate_notification",
+   "hex": "921d21038b0cc001066c6f63616c008f4e40010100c6487403922c330000ba1d340000d62c33000000d61d34000000cf58b30001d73a640081d0acf30e",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CTY: ''\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    SUBS: 1\n    USID: 2000000001"
+  },
+  {
+   "name": "postauth_reply",
+   "hex": "c33cc003864cb3010100c2aa64010100c2fcb40000d29a64000000d25b2503864cb3010a3132372e302e302e310086ebee0000929ce10101009648f400009a9b34010100b2f8c00093d5f2d60cb69bb20000bafbeb010100c2fcb400849c01ce4b390098ea01ce5cf3010100ceb979010100cf08f4008b01cf4a6d010100cf6bad01010000d298eb03864cb3010100c2fcb40000ceb97901010000d72bf003d2dbf00000d699000081a8d6b90700",
+   "pretty": "    PSS: \n      ADRS: ''\n      PJID: ''\n      PORT: 0\n      TIID: 0\n    TELE: \n      ADRS: '127.0.0.1'\n      ANON: 0\n      DISA: ''\n      EDCT: 0\n      FILT: ''\n      LOC: 1701729619\n      MINR: 0\n      NOOK: ''\n      PORT: 9988\n      SDLY: 15000\n      SESS: ''\n      SKEY: ''\n      SPCT: 75\n      STIM: ''\n      SVNM: ''\n    TICK: \n      ADRS: ''\n      PORT: 0\n      SKEY: ''\n    UROP: \n      TMOP: 0\n      UID: 1000000001"
+  },
+  {
+   "name": "gettelemetryserver_reply",
+   "hex": "864cb3010a3132372e302e302e310086ebee0000929ce10101009648f400009a9b34010100b2f8c00093d5f2d60cb69bb20000bafbeb010100c2fcb400849c01ce4b390098ea01ce5cf3010100ceb979010100cf08f4008b01cf4a6d010100cf6bad010100",
+   "pretty": "    ADRS: '127.0.0.1'\n    ANON: 0\n    DISA: ''\n    EDCT: 0\n    FILT: ''\n    LOC: 1701729619\n    MINR: 0\n    NOOK: ''\n    PORT: 9988\n    SDLY: 15000\n    SESS: ''\n    SKEY: ''\n    SPCT: 75\n    STIM: ''\n    SVNM: ''"
+  },
+  {
+   "name": "enterservice_reply",
+   "hex": "8e896b0000c70bf30000ca5cf00000de1a740000",
+   "pretty": "    CHEK: 0\n    QPOS: 0\n    RESP: 0\n    WAIT: 0"
+  },
+  {
+   "name": "getcompletedata_reply",
+   "hex": "b29cf40403018a1ce403862864000086c976000186ce300000874a6c0000876d3200008baa640081d0acf30e925da600009a9cb300009ac86700000000",
+   "pretty": "    LIST: \n      - \n        BASD: \n          ABAD: 0\n          ALEV: 1\n          ALXP: 0\n          ATIL: 0\n          AVTR: 0\n          BZID: 2000000001\n          DEVF: 0\n          FIRS: 0\n          FLAG: 0"
+  },
+  {
+   "name": "getbasicdata_reply",
+   "hex": "8a1ce4040301862864000086c976000186ce300000874a6c0000876d3200008baa640081d0acf30e925da600009a9cb300009ac867000000",
+   "pretty": "    BASD: \n      - \n        ABAD: 0\n        ALEV: 1\n        ALXP: 0\n        ATIL: 0\n        AVTR: 0\n        BZID: 2000000001\n        DEVF: 0\n        FIRS: 0\n        FLAG: 0"
+  },
+  {
+   "name": "getcatalog_reply",
+   "hex": "da5cb3010100",
+   "pretty": "    VERS: ''"
+  },
+  {
+   "name": "getcommerceprofile_reply",
+   "hex": "9e3c32038739630000873c2300008ac8e300008ac96300008f496300008f4c23000000",
+   "pretty": "    GCPR: \n      ASEC: 0\n      ASPC: 0\n      BLCC: 0\n      BLEC: 0\n      CTEC: 0\n      CTPC: 0"
+  },
+  {
+   "name": "getbalance_reply",
+   "hex": "8e38ac00009638ac0000c238ac0000",
+   "pretty": "    CCBL: 0\n    ECBL: 0\n    PCBL: 0"
+  },
+  {
+   "name": "bgweb_getcurrentversion_reply",
+   "hex": "9328c001023100",
+   "pretty": "    DRC: '1'"
+  },
+  {
+   "name": "getstatgroup_reply",
+   "hex": "8ee86d010100925ce3010100b65d21010100ba1b65010c506c61796572537461747300",
+   "pretty": "    CNAM: ''\n    DESC: ''\n    META: ''\n    NAME: 'PlayerStats'"
+  },
+  {
+   "name": "getstatsasync_notification",
+   "hex": "9f2bad010c506c61796572537461747300ae5e4001114e6f5f53636f70655f446566696e656400b21cf40001da99000001",
+   "pretty": "    GRNM: 'PlayerStats'\n    KEY: 'No_Scope_Defined'\n    LAST: 1\n    VID: 1"
+  },
+  {
+   "name": "messagecount_reply",
+   "hex": "b63bb40000",
+   "pretty": "    MCNT: 0"
+  },
+  {
+   "name": "getgameid_reply",
+   "hex": "9eda64010100",
+   "pretty": "    GMID: ''"
+  },
+  {
+   "name": "bgops_getcurrentversion_reply",
+   "hex": "b65bb6010a70726f642d696e666f00bb6cf20114323031342d31312d30345f31302d32352d353600",
+   "pretty": "    MENV: 'prod-info'\n    NVSR: '2014-11-04_10-25-56'"
+  },
+  {
+   "name": "ismmlockedout_reply",
+   "hex": "b2f8eb0000",
+   "pretty": "    LOCK: 0"
+  },
+  {
+   "name": "resetdedicatedserver_reply",
+   "hex": "9e99000001aa7cc00000",
+   "pretty": "    GID: 1\n    JGS: 0"
+  },
+  {
+   "name": "notifygamesetup_notification",
+   "hex": "9e1b6503864b6e04000181d0acf30e874d3205010107144578706563746564506c61796572436f756e74000231000a47616d65466c616773000531323932000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c496400023000135365727665724275696c6456657273696f6e001c312e302e3930332e3835342d524c2d50726f642d52656c65617365008e1c000400020a009e990000019ee86d010e706c6179657227732047616d65009f39740084149f3d21008202a2e97404030102978a7003a7000000818080f00fc2fcb400ba9c0100a6ea7003a7000000818080f00fc2fcb400ba9c010000b63870000abb4bf00001c28cf403a30a640081f882ad16a33b34000000c329730001c3387301066c6f63616c00ce596400af7bd238700005d28cf403a30a640081f882ad16a33b34000000d299330400020102d75a64012530303030303030302d303030302d303030302d303030302d30303030303030303030303100db3d32011c312e302e3930332e3835342d524c2d50726f642d52656c656173650000c32bf30403019e99000001b2f8c00093d5f2d60cba1b650107706c6179657200c299000081d0acf30ec2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000818080f00fc2fcb4008b390000ce99000000cecbf40000cf48740002d299380000d29b6500809b86e3bfd1ae06d699000081d0acf30e00ca58730600da1b3503923d38000000",
+   "pretty": "    GAME: \n      ADMN: \n        - 2000000001\n      ATTR: \n        ExpectedPlayerCount: '1'\n        GameFlags: '1292'\n        GameOwnerId: '77359401'\n        GameOwnerName: 'player'\n        GameType: '1'\n        LevelId: '0'\n        ServerBuildVersion: '1.0.903.854-RL-Prod-Release'\n      CAP: \n        - 10\n        - 0\n      GID: 1\n      GNAM: \"player's Game\"\n      GSET: 1284\n      GSTA: 130\n      HNET: \n        - ('union', 2, {'EXIP': {'IP': 2130706433, 'PORT': 10042}, 'INIP': {'IP': 2130706433, 'PORT': 10042}})\n      MCAP: 10\n      NTOP: 1\n      PHST: \n        HPID: 3000000001\n        HSLT: 0\n      PRES: 1\n      PSAS: 'local'\n      SEED: 7919\n      TCAP: 5\n      THST: \n        HPID: 3000000001\n        HSLT: 0\n      TIDS: \n        - 1\n        - 2\n      UUID: '00000000-0000-0000-0000-000000000001'\n      VSTR: '1.0.903.854-RL-Prod-Release'\n    PROS: \n      - \n        GID: 1\n        LOC: 1701729619\n        NAME: 'player'\n        PID: 2000000001\n        PNET: \n          <union member 2>\n            VALU: \n              EXIP: \n                IP: 2130706433\n                PORT: 3659\n              INIP: \n                IP: 2130706433\n                PORT: 3659\n        SID: 0\n        SLOT: 0\n        STAT: 2\n        TIDX: 0\n        TIME: 1791405059000000\n        UID: 2000000001\n    REAS: \n      <union member 0>\n        VALU: \n          DCTX: 0"
+  },
+  {
+   "name": "b7a_getcompletedata_reply",
+   "hex": "b29cf40403018a1ce403862864000086c976000186ce300000874a6c0000876d32008a808080028baa640081d0acf30e925da600009a9cb300009ac867000100a7496d0403098efbb40001a74a64008180808002d39c250001008efbb40001a74a64008280808002d39c250001008efbb40001a74a64008480808002d39c250002008efbb40002a74a64008680808002d39c250004008efbb40003a74a64008780808002d39c250003008efbb40001a74a64008880808002d39c250005008efbb40001a74a64008980808002d39c250006008efbb40001a74a64008a80808002d39c250007008efbb40001a74a64008b80808002d39c2500090000",
+   "pretty": "    LIST: \n      - \n        BASD: \n          ABAD: 0\n          ALEV: 1\n          ALXP: 0\n          ATIL: 0\n          AVTR: 268435466\n          BZID: 2000000001\n          DEVF: 0\n          FIRS: 0\n          FLAG: 1\n        ITEM: \n          - \n            CONT: 1\n            ITID: 268435457\n            TYPE: 1\n          - \n            CONT: 1\n            ITID: 268435458\n            TYPE: 1\n          - \n            CONT: 1\n            ITID: 268435460\n            TYPE: 2\n          - \n            CONT: 2\n            ITID: 268435462\n            TYPE: 4\n          - \n            CONT: 3\n            ITID: 268435463\n            TYPE: 3\n          - \n            CONT: 1\n            ITID: 268435464\n            TYPE: 5\n          - \n            CONT: 1\n            ITID: 268435465\n            TYPE: 6\n          - \n            CONT: 1\n            ITID: 268435466\n            TYPE: 7\n          - \n            CONT: 1\n            ITID: 268435467\n            TYPE: 9"
+  },
+  {
+   "name": "b7a_getbasicdata_reply",
+   "hex": "8a1ce4040301862864000086c976000186ce300000874a6c0000876d32008a808080028baa640081d0acf30e925da600009a9cb300009ac867000100",
+   "pretty": "    BASD: \n      - \n        ABAD: 0\n        ALEV: 1\n        ALXP: 0\n        ATIL: 0\n        AVTR: 268435466\n        BZID: 2000000001\n        DEVF: 0\n        FIRS: 0\n        FLAG: 1"
+  },
+  {
+   "name": "b7a_getbalance_reply",
+   "hex": "8e38ac00009638ac00909c01c238ac00a80f",
+   "pretty": "    CCBL: 0\n    ECBL: 10000\n    PCBL: 1000"
+  },
+  {
+   "name": "b7a_getcatalog_reply",
+   "hex": "8e1d21040306972ba303876a6c0001c21a6300804b009ac9f30001a74b6304000101a74b690400018180808002c21a6303876a6c0001c21a63008f0f00c35a64010a32363834333534353700c35a69010a3236383433353435370000972ba303876a6c0001c21a6300804b009ac9f30001a74b6304000101a74b690400018280808002c21a6303876a6c0001c21a63008f0f00c35a64010a32363834333534353800c35a69010a3236383433353435380000972ba303876a6c0000c21a630000009ac9f30001a74b6304000101a74b690400018480808002c21a6303876a6c0001c21a6300ae0b00c35a64010a32363834333534363000c35a69010a3236383433353436300000972ba303876a6c0001c21a6300b407009ac9f30001a74b6304000101a74b690400018680808002c21a6303876a6c0000c21a63000000c35a64010a32363834333534363200c35a69010a3236383433353436320000972ba303876a6c0001c21a63009602009ac9f30001a74b6304000101a74b690400018780808002c21a6303876a6c0000c21a63000000c35a64010a32363834333534363300c35a69010a3236383433353436330000972ba303876a6c0001c21a6300901f009ac9f30001a74b6304000101a74b690400018b80808002c21a6303876a6c0001c21a6300ac0400c35a64010a32363834333534363700c35a69010a3236383433353436370000da5cb301023100",
+   "pretty": "    CATA: \n      - \n        ERNC: \n          AVIL: 1\n          PAIC: 4800\n        FLGS: 1\n        ITMC: \n          - 1\n        ITMI: \n          - 268435457\n        PAIC: \n          AVIL: 1\n          PAIC: 975\n        PUID: '268435457'\n        PUII: '268435457'\n      - \n        ERNC: \n          AVIL: 1\n          PAIC: 4800\n        FLGS: 1\n        ITMC: \n          - 1\n        ITMI: \n          - 268435458\n        PAIC: \n          AVIL: 1\n          PAIC: 975\n        PUID: '268435458'\n        PUII: '268435458'\n      - \n        ERNC: \n          AVIL: 0\n          PAIC: 0\n        FLGS: 1\n        ITMC: \n          - 1\n        ITMI: \n          - 268435460\n        PAIC: \n          AVIL: 1\n          PAIC: 750\n        PUID: '268435460'\n        PUII: '268435460'\n      - \n        ERNC: \n          AVIL: 1\n          PAIC: 500\n        FLGS: 1\n        ITMC: \n          - 1\n        ITMI: \n          - 268435462\n        PAIC: \n          AVIL: 0\n          PAIC: 0\n        PUID: '268435462'\n        PUII: '268435462'\n      - \n        ERNC: \n          AVIL: 1\n          PAIC: 150\n        FLGS: 1\n        ITMC: \n          - 1\n        ITMI: \n          - 268435463\n        PAIC: \n          AVIL: 0\n          PAIC: 0\n        PUID: '268435463'\n        PUII: '268435463'\n      - \n        ERNC: \n          AVIL: 1\n          PAIC: 2000\n        FLGS: 1\n        ITMC: \n          - 1\n        ITMI: \n          - 268435467\n        PAIC: \n          AVIL: 1\n          PAIC: 300\n        PUID: '268435467'\n        PUII: '268435467'\n    VERS: '1'"
+  },
+  {
+   "name": "b7a_getgameitems_reply",
+   "hex": "a74b7304030b96e8ac0001a74a64008180808002ca1ca50000cf48eb0001d39c2500010096e8ac0001a74a64008280808002ca1ca50000cf48eb0001d39c2500010096e8ac0000a74a64008380808002ca1ca50000cf48eb0001d39c2500010096e8ac0001a74a64008480808002ca1ca50000cf48eb0001d39c2500020096e8ac0000a74a64008580808002ca1ca50000cf48eb0001d39c2500020096e8ac0001a74a64008680808002ca1ca50000cf48eb0002d39c2500040096e8ac0001a74a64008780808002ca1ca50000cf48eb0003d39c2500030096e8ac0001a74a64008880808002ca1ca50000cf48eb0001d39c2500050096e8ac0001a74a64008980808002ca1ca50000cf48eb0001d39c2500060096e8ac0001a74a64008a80808002ca1ca50000cf48eb0001d39c2500070096e8ac0001a74a64008b80808002ca1ca50000cf48eb0001d39c25000900",
+   "pretty": "    ITMS: \n      - \n        ENBL: 1\n        ITID: 268435457\n        RARE: 0\n        STCK: 1\n        TYPE: 1\n      - \n        ENBL: 1\n        ITID: 268435458\n        RARE: 0\n        STCK: 1\n        TYPE: 1\n      - \n        ENBL: 0\n        ITID: 268435459\n        RARE: 0\n        STCK: 1\n        TYPE: 1\n      - \n        ENBL: 1\n        ITID: 268435460\n        RARE: 0\n        STCK: 1\n        TYPE: 2\n      - \n        ENBL: 0\n        ITID: 268435461\n        RARE: 0\n        STCK: 1\n        TYPE: 2\n      - \n        ENBL: 1\n        ITID: 268435462\n        RARE: 0\n        STCK: 2\n        TYPE: 4\n      - \n        ENBL: 1\n        ITID: 268435463\n        RARE: 0\n        STCK: 3\n        TYPE: 3\n      - \n        ENBL: 1\n        ITID: 268435464\n        RARE: 0\n        STCK: 1\n        TYPE: 5\n      - \n        ENBL: 1\n        ITID: 268435465\n        RARE: 0\n        STCK: 1\n        TYPE: 6\n      - \n        ENBL: 1\n        ITID: 268435466\n        RARE: 0\n        STCK: 1\n        TYPE: 7\n      - \n        ENBL: 1\n        ITID: 268435467\n        RARE: 0\n        STCK: 1\n        TYPE: 9"
+  },
+  {
+   "name": "b7a_getusersettings_reply",
+   "hex": "d73974050101020d417564696f2e4d61737465720004302e35000c566964656f2e576964746800053132383000",
+   "pretty": "    USET: \n      Audio.Master: '0.5'\n      Video.Width: '1280'"
+  },
+  {
+   "name": "b7a_getstatgroup_reply",
+   "hex": "8ee86d010100925ce3010100b65d21010100ba1b65010c506c61796572537461747300cf487404030d926b34010230009b2b740103256400b24ce301084153534953545300ba1b6501084153534953545300ce4ce30108415353495354530000926b34010230009b2b740103256400b24ce3010e41535349535453494e47414d4500ba1b65010e41535349535453494e47414d4500ce4ce3010e41535349535453494e47414d450000926b34010230009b2b740103256400b24ce301064b494c4c5300ba1b6501064b494c4c5300ce4ce301064b494c4c530000926b34010230009b2b740103256400b24ce3010c4b494c4c53494e47414d4500ba1b65010c4b494c4c53494e47414d4500ce4ce3010c4b494c4c53494e47414d450000926b34010230009b2b740103256400b24ce3010c444f55424c454b494c4c5300ba1b65010c444f55424c454b494c4c5300ce4ce3010c444f55424c454b494c4c530000926b34010230009b2b740103256400b24ce3010c545249504c454b494c4c5300ba1b65010c545249504c454b494c4c5300ce4ce3010c545249504c454b494c4c530000926b34010230009b2b740103256400b24ce3010a4f4d4e494b494c4c5300ba1b65010a4f4d4e494b494c4c5300ce4ce3010a4f4d4e494b494c4c530000926b34010230009b2b740103256400b24ce3010b54455452414b494c4c5300ba1b65010b54455452414b494c4c5300ce4ce3010b54455452414b494c4c530000926b34010230009b2b740103256400b24ce3010d53545245414b494e47414d4500ba1b65010d53545245414b494e47414d4500ce4ce3010d53545245414b494e47414d450000926b34010230009b2b740103256400b24ce3010557494e5300ba1b65010557494e5300ce4ce3010557494e530000926b34010230009b2b740103256400b24ce30107504c4159454400ba1b650107504c4159454400ce4ce30107504c415945440000926b34010230009b2b740103256400b24ce301044d505300ba1b6501044d505300ce4ce301044d50530000926b34010230009b2b740103256400b24ce301054d50534700ba1b6501054d50534700ce4ce301054d5053470000",
+   "pretty": "    CNAM: ''\n    DESC: ''\n    META: ''\n    NAME: 'PlayerStats'\n    STAT: \n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'ASSISTS'\n        NAME: 'ASSISTS'\n        SDSC: 'ASSISTS'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'ASSISTSINGAME'\n        NAME: 'ASSISTSINGAME'\n        SDSC: 'ASSISTSINGAME'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'KILLS'\n        NAME: 'KILLS'\n        SDSC: 'KILLS'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'KILLSINGAME'\n        NAME: 'KILLSINGAME'\n        SDSC: 'KILLSINGAME'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'DOUBLEKILLS'\n        NAME: 'DOUBLEKILLS'\n        SDSC: 'DOUBLEKILLS'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'TRIPLEKILLS'\n        NAME: 'TRIPLEKILLS'\n        SDSC: 'TRIPLEKILLS'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'OMNIKILLS'\n        NAME: 'OMNIKILLS'\n        SDSC: 'OMNIKILLS'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'TETRAKILLS'\n        NAME: 'TETRAKILLS'\n        SDSC: 'TETRAKILLS'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'STREAKINGAME'\n        NAME: 'STREAKINGAME'\n        SDSC: 'STREAKINGAME'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'WINS'\n        NAME: 'WINS'\n        SDSC: 'WINS'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'PLAYED'\n        NAME: 'PLAYED'\n        SDSC: 'PLAYED'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'MPS'\n        NAME: 'MPS'\n        SDSC: 'MPS'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'MPSG'\n        NAME: 'MPSG'\n        SDSC: 'MPSG'"
+  },
+  {
+   "name": "b7a_getstatsasync_notification",
+   "hex": "9f2bad010c506c61796572537461747300ae5e4001114e6f5f53636f70655f446566696e656400b21cf40001cf4cc003cf48740403019699000081d0acf30ecf487404010d0230000230000230000230000230000230000230000230000230000230000230000230000230000000da99000001",
+   "pretty": "    GRNM: 'PlayerStats'\n    KEY: 'No_Scope_Defined'\n    LAST: 1\n    STS: \n      STAT: \n        - \n          EID: 2000000001\n          STAT: \n            - '0'\n            - '0'\n            - '0'\n            - '0'\n            - '0'\n            - '0'\n            - '0'\n            - '0'\n            - '0'\n            - '0'\n            - '0'\n            - '0'\n            - '0'\n    VID: 1"
+  },
+  {
+   "name": "b7a_extendeddataupdate_notification",
+   "hex": "921d21038b0cc001066c6f63616c008f4e40010100c6487403922c330000ba1d340000d62c33000000d61d34008080808080808080800100cf58b30001d73a640081d0acf30e",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CTY: ''\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 4611686018427387904\n    SUBS: 1\n    USID: 2000000001"
+  },
+  {
+   "name": "notifygamestatechange_notification",
+   "hex": "9e990000019f3d210004",
+   "pretty": "    GID: 1\n    GSTA: 4"
+  },
+  {
+   "name": "notifyplayerremoved_notification",
+   "hex": "8eed3800009e99000001c299000081d0acf30eca58730005",
+   "pretty": "    CNTX: 0\n    GID: 1\n    PID: 2000000001\n    REAS: 5"
+  },
+  {
+   "name": "notifyplayerremoved_playerleft_notification",
+   "hex": "8eed3800009e99000001c299000081d0acf30eca58730006",
+   "pretty": "    CNTX: 0\n    GID: 1\n    PID: 2000000001\n    REAS: 6"
+  },
+  {
+   "name": "createplaygroup_reply",
+   "hex": "a6e9af03874d32050101010d506c617967726f75704b6579000547472d310096e8b60000a33a640000aafa6e0000b6ca6d000fba1b65010547472d3100bb4bf00000bf7bb20081d0acf30ec27a640001c329730000d6b979010547472d3100d70cb30000d75a64010100dafa70000000",
+   "pretty": "    INFO: \n      ATTR: \n        PlaygroupKey: 'GG-1'\n      ENBV: 0\n      HSID: 0\n      JOIN: 0\n      MLIM: 15\n      NAME: 'GG-1'\n      NTOP: 0\n      OWNR: 2000000001\n      PGID: 1\n      PRES: 0\n      UKEY: 'GG-1'\n      UPRS: 0\n      UUID: ''\n      VOIP: 0"
+  },
+  {
+   "name": "notifyjoinplaygroup_notification",
+   "hex": "a6e9af03874d32050101010d506c617967726f75704b6579000547472d310096e8b60000a33a640000aafa6e0000b6ca6d000fba1b65010547472d3100bb4bf00000bf7bb20081d0acf30ec27a640001c329730000d6b979010547472d3100d70cb30000d75a64010100dafa70000000b6ccf4040301ab4a6d0083b0b5ac0dc25cad0000ce99000000d73972038699000081a8d6b90786cbe30093d5f2d60ca640000081d0acf30eba1b650107706c61796572000000d739720081d0acf30e",
+   "pretty": "    INFO: \n      ATTR: \n        PlaygroupKey: 'GG-1'\n      ENBV: 0\n      HSID: 0\n      JOIN: 0\n      MLIM: 15\n      NAME: 'GG-1'\n      NTOP: 0\n      OWNR: 2000000001\n      PGID: 1\n      PRES: 0\n      UKEY: 'GG-1'\n      UPRS: 0\n      UUID: ''\n      VOIP: 0\n    MLST: \n      - \n        JTIM: 1791405059\n        PERM: 0\n        SID: 0\n        USER: \n          AID: 1000000001\n          ALOC: 1701729619\n          ID: 2000000001\n          NAME: 'player'\n    USER: 2000000001"
+  },
+  {
+   "name": "notifymemberjoinedplaygroup_notification",
+   "hex": "b65b6203ab4a6d0083b0b5ac0dc25cad0000ce99000001d73972038699000082a8d6b90786cbe30093d5f2d60ca640000082d0acf30eba1b6501077365636f6e64000000c27a640001",
+   "pretty": "    MEMB: \n      JTIM: 1791405059\n      PERM: 0\n      SID: 1\n      USER: \n        AID: 1000000002\n        ALOC: 1701729619\n        ID: 2000000002\n        NAME: 'second'\n    PGID: 1"
+  },
+  {
+   "name": "notifymemberremovedfromplaygroup_notification",
+   "hex": "b6ccf40082d0acf30ec27a640001ca58730001",
+   "pretty": "    MLST: 2000000002\n    PGID: 1\n    REAS: 1"
+  },
+  {
+   "name": "getserverinstance_reply_lan",
+   "hex": "8649320600da1b3503a2fcf4010d3139322e3136382e312e323000a70000009484c08a18c2fcb400b99c0100ce58f50000e24bb30000",
+   "pretty": "    ADDR: \n      <union member 0>\n        VALU: \n          HOST: '192.168.1.20'\n          IP: 3232235796\n          PORT: 10041\n    SECU: 0\n    XDNS: 0"
+  },
+  {
+   "name": "preauth_reply_lan",
+   "hex": "873ca30107333033313037008e99330400130104050607090a0f15191b1c9f20a020a320a520a620a72082e0038efba6038efba60501010310636f6e6e49646c6554696d656f75740004393073001664656661756c745265717565737454696d656f75740004383073000b70696e67506572696f6400043230730000973ca3010733303331303700a6ecf40113626174746c6567726f756e64732d312d706300ba1cf0010a63656d5f65615f696400c29b24010100c2c8740103706300c6fcf3038b7c3303c33840010d3139322e3136382e312e323000c33c00009e9102cee84001066c6f63616c0000b2ec00000ab34c3305010301066c6f63616c00c33840010d3139322e3136382e312e323000c33c00009e9102cee84001066c6f63616c0000cf6a640085a088d40800cb3ca3010733303331303700cf6972012c426c617a6520332e31392e31312e3020284461776e6761746520726573746f726174696f6e20737475622900",
+   "pretty": "    ASRC: '303107'\n    CIDS: \n      - 1\n      - 4\n      - 5\n      - 6\n      - 7\n      - 9\n      - 10\n      - 15\n      - 21\n      - 25\n      - 27\n      - 28\n      - 2079\n      - 2080\n      - 2083\n      - 2085\n      - 2086\n      - 2087\n      - 30722\n    CONF: \n      CONF: \n        connIdleTimeout: '90s'\n        defaultRequestTimeout: '80s'\n        pingPeriod: '20s'\n    ESRC: '303107'\n    INST: 'battlegrounds-1-pc'\n    NASP: 'cem_ea_id'\n    PILD: ''\n    PLAT: 'pc'\n    QOSS: \n      BWPS: \n        PSA: '192.168.1.20'\n        PSP: 17502\n        SNA: 'local'\n      LNP: 10\n      LTPS: \n        local: \n          PSA: '192.168.1.20'\n          PSP: 17502\n          SNA: 'local'\n      SVID: 1161889797\n    RSRC: '303107'\n    SVER: 'Blaze 3.19.11.0 (Dawngate restoration stub)'"
+  },
+  {
+   "name": "postauth_reply_lan",
+   "hex": "c33cc003864cb3010100c2aa64010100c2fcb40000d29a64000000d25b2503864cb3010d3139322e3136382e312e32300086ebee0000929ce10101009648f400009a9b34010100b2f8c00093d5f2d60cb69bb20000bafbeb010100c2fcb400849c01ce4b390098ea01ce5cf3010100ceb979010100cf08f4008b01cf4a6d010100cf6bad01010000d298eb03864cb3010100c2fcb40000ceb97901010000d72bf003d2dbf00000d699000081a8d6b90700",
+   "pretty": "    PSS: \n      ADRS: ''\n      PJID: ''\n      PORT: 0\n      TIID: 0\n    TELE: \n      ADRS: '192.168.1.20'\n      ANON: 0\n      DISA: ''\n      EDCT: 0\n      FILT: ''\n      LOC: 1701729619\n      MINR: 0\n      NOOK: ''\n      PORT: 9988\n      SDLY: 15000\n      SESS: ''\n      SKEY: ''\n      SPCT: 75\n      STIM: ''\n      SVNM: ''\n    TICK: \n      ADRS: ''\n      PORT: 0\n      SKEY: ''\n    UROP: \n      TMOP: 0\n      UID: 1000000001"
+  },
+  {
+   "name": "gettelemetryserver_reply_lan",
+   "hex": "864cb3010d3139322e3136382e312e32300086ebee0000929ce10101009648f400009a9b34010100b2f8c00093d5f2d60cb69bb20000bafbeb010100c2fcb400849c01ce4b390098ea01ce5cf3010100ceb979010100cf08f4008b01cf4a6d010100cf6bad010100",
+   "pretty": "    ADRS: '192.168.1.20'\n    ANON: 0\n    DISA: ''\n    EDCT: 0\n    FILT: ''\n    LOC: 1701729619\n    MINR: 0\n    NOOK: ''\n    PORT: 9988\n    SDLY: 15000\n    SESS: ''\n    SKEY: ''\n    SPCT: 75\n    STIM: ''\n    SVNM: ''"
+  },
+  {
+   "name": "notifygamesetup_notification_lan",
+   "hex": "9e1b6503864b6e04000181d0acf30e874d3205010107144578706563746564506c61796572436f756e74000231000a47616d65466c616773000531323932000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c496400023000135365727665724275696c6456657273696f6e001c312e302e3930332e3835342d524c2d50726f642d52656c65617365008e1c000400020a009e990000019ee86d010e706c6179657227732047616d65009f39740084149f3d21008202a2e97404030102978a7003a70000009484c08a18c2fcb400ba9c0100a6ea7003a70000009484c08a18c2fcb400ba9c010000b63870000abb4bf00001c28cf403a30a640081f882ad16a33b34000000c329730001c3387301066c6f63616c00ce596400af7bd238700005d28cf403a30a640081f882ad16a33b34000000d299330400020102d75a64012530303030303030302d303030302d303030302d303030302d30303030303030303030303100db3d32011c312e302e3930332e3835342d524c2d50726f642d52656c656173650000c32bf30403019e99000001b2f8c00093d5f2d60cba1b650107706c6179657200c299000081d0acf30ec2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000828080a001c2fcb4008b390000ce99000000cecbf40000cf48740002d299380000d29b6500809b86e3bfd1ae06d699000081d0acf30e00ca58730600da1b3503923d38000000",
+   "pretty": "    GAME: \n      ADMN: \n        - 2000000001\n      ATTR: \n        ExpectedPlayerCount: '1'\n        GameFlags: '1292'\n        GameOwnerId: '77359401'\n        GameOwnerName: 'player'\n        GameType: '1'\n        LevelId: '0'\n        ServerBuildVersion: '1.0.903.854-RL-Prod-Release'\n      CAP: \n        - 10\n        - 0\n      GID: 1\n      GNAM: \"player's Game\"\n      GSET: 1284\n      GSTA: 130\n      HNET: \n        - ('union', 2, {'EXIP': {'IP': 3232235796, 'PORT': 10042}, 'INIP': {'IP': 3232235796, 'PORT': 10042}})\n      MCAP: 10\n      NTOP: 1\n      PHST: \n        HPID: 3000000001\n        HSLT: 0\n      PRES: 1\n      PSAS: 'local'\n      SEED: 7919\n      TCAP: 5\n      THST: \n        HPID: 3000000001\n        HSLT: 0\n      TIDS: \n        - 1\n        - 2\n      UUID: '00000000-0000-0000-0000-000000000001'\n      VSTR: '1.0.903.854-RL-Prod-Release'\n    PROS: \n      - \n        GID: 1\n        LOC: 1701729619\n        NAME: 'player'\n        PID: 2000000001\n        PNET: \n          <union member 2>\n            VALU: \n              EXIP: \n                IP: 2130706433\n                PORT: 3659\n              INIP: \n                IP: 167772162\n                PORT: 3659\n        SID: 0\n        SLOT: 0\n        STAT: 2\n        TIDX: 0\n        TIME: 1791405059000000\n        UID: 2000000001\n    REAS: \n      <union member 0>\n        VALU: \n          DCTX: 0"
+  },
+  {
+   "name": "startmatchmaking_reply",
+   "hex": "b73a640001",
+   "pretty": "    MSID: 1"
+  },
+  {
+   "name": "notifymatchmakingfailed_notification",
+   "hex": "b61e260000b73a640001cb3b340004d73a640081d0acf30e",
+   "pretty": "    MAXF: 0\n    MSID: 1\n    RSLT: 4\n    USID: 2000000001"
+  },
+  {
+   "name": "notifygamesetup_matchmade_notification",
+   "hex": "9e1b6503864b6e04000181d0acf30e874d3205010107144578706563746564506c61796572436f756e7400033130000a47616d65466c616773000231000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c496400023000135365727665724275696c6456657273696f6e001c312e302e3930332e3835342d524c2d50726f642d52656c65617365008e1c000400020a009e990000019ee86d010e706c6179657227732047616d65009f39740086149f3d21008202a2e97404030102978a7003a7000000818080f00fc2fcb400ba9c0100a6ea7003a7000000818080f00fc2fcb400ba9c010000b63870000abb4bf00001c28cf403a30a640081f882ad16a33b34000000c329730001c3387301066c6f63616c00ce596400af7bd238700005d28cf403a30a640081f882ad16a33b34000000d299330400020102d75a64012530303030303030302d303030302d303030302d303030302d30303030303030303030303100db3d32011c312e302e3930332e3835342d524c2d50726f642d52656c656173650000c32bf30403019e99000001b2f8c00093d5f2d60cba1b650107706c6179657200c299000081d0acf30ec2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000818080f00fc2fcb4008b390000ce99000000cecbf40000cf48740002d299380000d29b6500809b86e3bfd1ae06d699000081d0acf30e00ca58730603da1b35039a9d000000b61e260000b73a640001cb3b340000d73a640081d0acf30e00",
+   "pretty": "    GAME: \n      ADMN: \n        - 2000000001\n      ATTR: \n        ExpectedPlayerCount: '10'\n        GameFlags: '1'\n        GameOwnerId: '77359401'\n        GameOwnerName: 'player'\n        GameType: '1'\n        LevelId: '0'\n        ServerBuildVersion: '1.0.903.854-RL-Prod-Release'\n      CAP: \n        - 10\n        - 0\n      GID: 1\n      GNAM: \"player's Game\"\n      GSET: 1286\n      GSTA: 130\n      HNET: \n        - ('union', 2, {'EXIP': {'IP': 2130706433, 'PORT': 10042}, 'INIP': {'IP': 2130706433, 'PORT': 10042}})\n      MCAP: 10\n      NTOP: 1\n      PHST: \n        HPID: 3000000001\n        HSLT: 0\n      PRES: 1\n      PSAS: 'local'\n      SEED: 7919\n      TCAP: 5\n      THST: \n        HPID: 3000000001\n        HSLT: 0\n      TIDS: \n        - 1\n        - 2\n      UUID: '00000000-0000-0000-0000-000000000001'\n      VSTR: '1.0.903.854-RL-Prod-Release'\n    PROS: \n      - \n        GID: 1\n        LOC: 1701729619\n        NAME: 'player'\n        PID: 2000000001\n        PNET: \n          <union member 2>\n            VALU: \n              EXIP: \n                IP: 2130706433\n                PORT: 3659\n              INIP: \n                IP: 2130706433\n                PORT: 3659\n        SID: 0\n        SLOT: 0\n        STAT: 2\n        TIDX: 0\n        TIME: 1791405059000000\n        UID: 2000000001\n    REAS: \n      <union member 3>\n        VALU: \n          FIT: 0\n          MAXF: 0\n          MSID: 1\n          RSLT: 0\n          USID: 2000000001"
+  },
+  {
+   "name": "notifygamesetup_party_member_notification",
+   "hex": "9e1b6503864b6e04000181d0acf30e874d3205010107144578706563746564506c61796572436f756e7400033130000a47616d65466c616773000231000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c496400023000135365727665724275696c6456657273696f6e001c312e302e3930332e3835342d524c2d50726f642d52656c65617365008e1c000400020a009e990000019ee86d010e706c6179657227732047616d65009f39740086149f3d21008202a2e97404030102978a7003a7000000818080f00fc2fcb400ba9c0100a6ea7003a7000000818080f00fc2fcb400ba9c010000b63870000abb4bf00001c28cf403a30a640081f882ad16a33b34000000c329730001c3387301066c6f63616c00ce596400af7bd238700005d28cf403a30a640081f882ad16a33b34000000d299330400020102d75a64012530303030303030302d303030302d303030302d303030302d30303030303030303030303100db3d32011c312e302e3930332e3835342d524c2d50726f642d52656c656173650000c32bf30403029e99000001b2f8c00093d5f2d60cba1b650107706c6179657200c299000081d0acf30ec2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000818080f00fc2fcb4008b390000ce99000000cecbf40000cf48740002d299380000d29b6500809b86e3bfd1ae06d699000081d0acf30e009e99000001b2f8c00093d5f2d60cba1b6501077365636f6e6400c299000082d0acf30ec2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000818080f00fc2fcb4008b390000ce99000001cecbf40000cf48740002d299380000d29b6500809b86e3bfd1ae06d699000082d0acf30e00ca58730604da1b35039a9d0000009f2a6409060101b61e260000b73a640001cb0da30000cb3b340000d73a640082d0acf30e00",
+   "pretty": "    GAME: \n      ADMN: \n        - 2000000001\n      ATTR: \n        ExpectedPlayerCount: '10'\n        GameFlags: '1'\n        GameOwnerId: '77359401'\n        GameOwnerName: 'player'\n        GameType: '1'\n        LevelId: '0'\n        ServerBuildVersion: '1.0.903.854-RL-Prod-Release'\n      CAP: \n        - 10\n        - 0\n      GID: 1\n      GNAM: \"player's Game\"\n      GSET: 1286\n      GSTA: 130\n      HNET: \n        - ('union', 2, {'EXIP': {'IP': 2130706433, 'PORT': 10042}, 'INIP': {'IP': 2130706433, 'PORT': 10042}})\n      MCAP: 10\n      NTOP: 1\n      PHST: \n        HPID: 3000000001\n        HSLT: 0\n      PRES: 1\n      PSAS: 'local'\n      SEED: 7919\n      TCAP: 5\n      THST: \n        HPID: 3000000001\n        HSLT: 0\n      TIDS: \n        - 1\n        - 2\n      UUID: '00000000-0000-0000-0000-000000000001'\n      VSTR: '1.0.903.854-RL-Prod-Release'\n    PROS: \n      - \n        GID: 1\n        LOC: 1701729619\n        NAME: 'player'\n        PID: 2000000001\n        PNET: \n          <union member 2>\n            VALU: \n              EXIP: \n                IP: 2130706433\n                PORT: 3659\n              INIP: \n                IP: 2130706433\n                PORT: 3659\n        SID: 0\n        SLOT: 0\n        STAT: 2\n        TIDX: 0\n        TIME: 1791405059000000\n        UID: 2000000001\n      - \n        GID: 1\n        LOC: 1701729619\n        NAME: 'second'\n        PID: 2000000002\n        PNET: \n          <union member 2>\n            VALU: \n              EXIP: \n                IP: 2130706433\n                PORT: 3659\n              INIP: \n                IP: 2130706433\n                PORT: 3659\n        SID: 1\n        SLOT: 0\n        STAT: 2\n        TIDX: 0\n        TIME: 1791405059000000\n        UID: 2000000002\n    REAS: \n      <union member 4>\n        VALU: \n          FIT: 0\n          GRID: \n            (6, 1, 1)\n          MAXF: 0\n          MSID: 1\n          RPVC: 0\n          RSLT: 0\n          USID: 2000000002"
+  },
+  {
+   "name": "createplaygroup_party_reply",
+   "hex": "a6e9af03874d320501010096e8b60000a33a640000aafa6e0000b6ca6d0005ba1b65012232663165346339612d306237642d346532312d396333662d35613662376338643900bb4bf00000bf7bb20081d0acf30ec27a640001c329730000d6b979010100d70cb30000d75a64010100dafa70000000",
+   "pretty": "    INFO: \n      ATTR: {}\n      ENBV: 0\n      HSID: 0\n      JOIN: 0\n      MLIM: 5\n      NAME: '2f1e4c9a-0b7d-4e21-9c3f-5a6b7c8d9'\n      NTOP: 0\n      OWNR: 2000000001\n      PGID: 1\n      PRES: 0\n      UKEY: ''\n      UPRS: 0\n      UUID: ''\n      VOIP: 0"
+  },
+  {
+   "name": "notifyjoinplaygroup_party_notification",
+   "hex": "a6e9af03874d320501010096e8b60000a33a640000aafa6e0000b6ca6d0005ba1b65012232663165346339612d306237642d346532312d396333662d35613662376338643900bb4bf00000bf7bb20081d0acf30ec27a640001c329730000d6b979010100d70cb30000d75a64010100dafa70000000b6ccf4040301ab4a6d0083b0b5ac0dc25cad001fce99000000d73972038699000081a8d6b90786cbe30093d5f2d60ca640000081d0acf30eba1b650107706c61796572000000d739720081d0acf30e",
+   "pretty": "    INFO: \n      ATTR: {}\n      ENBV: 0\n      HSID: 0\n      JOIN: 0\n      MLIM: 5\n      NAME: '2f1e4c9a-0b7d-4e21-9c3f-5a6b7c8d9'\n      NTOP: 0\n      OWNR: 2000000001\n      PGID: 1\n      PRES: 0\n      UKEY: ''\n      UPRS: 0\n      UUID: ''\n      VOIP: 0\n    MLST: \n      - \n        JTIM: 1791405059\n        PERM: 31\n        SID: 0\n        USER: \n          AID: 1000000001\n          ALOC: 1701729619\n          ID: 2000000001\n          NAME: 'player'\n    USER: 2000000001"
+  },
+  {
+   "name": "notifyplaygroupattributesset_notification",
+   "hex": "874d3205010101124d617463686d616b696e675374617475730006317c317c3000c27a640001",
+   "pretty": "    ATTR: \n      MatchmakingStatus: '1|1|0'\n    PGID: 1"
+  },
+  {
+   "name": "notifymemberattributesset_notification",
+   "hex": "874d32050101010a6d656d62657247454d000230009699000082d0acf30ec27a640001",
+   "pretty": "    ATTR: \n      memberGEM: '0'\n    EID: 2000000002\n    PGID: 1"
+  },
+  {
+   "name": "notifyleaderchange_notification",
+   "hex": "a33a640001b299000082d0acf30ec27a640001",
+   "pretty": "    HSID: 1\n    LID: 2000000002\n    PGID: 1"
+  },
+  {
+   "name": "notifymemberpermissionschange_notification",
+   "hex": "b299000082d0acf30ec25cad001fc27a640001",
+   "pretty": "    LID: 2000000002\n    PERM: 31\n    PGID: 1"
+  },
+  {
+   "name": "notifyjoincontrolschange_notification",
+   "hex": "bf096e0001c27a640001",
+   "pretty": "    OPEN: 1\n    PGID: 1"
+  },
+  {
+   "name": "notifydestroyplaygroup_notification",
+   "hex": "c27a640001ca58730000",
+   "pretty": "    PGID: 1\n    REAS: 0"
+  },
+  {
+   "name": "sendmessage_reply",
+   "hex": "b67a640001b69933040000",
+   "pretty": "    MGID: 1\n    MIDS: []"
+  },
+  {
+   "name": "sendmessage_stored_reply",
+   "hex": "b67a640004b6993304000104",
+   "pretty": "    MGID: 4\n    MIDS: \n      - 4"
+  },
+  {
+   "name": "notifymessage_pvpinvite_notification",
+   "hex": "9ac8670000b67a640001ba1b650107706c6179657200c39b2403874d320500010480805807706c61796572008380580231008580580231008680580230009ac8670000cf48740000d219c00000d2993304000182d0acf30ed34e700882e00301d39c2500abb4d0f60200cf28e50982e0030181d0acf30ed29b650083b0b5ac0d",
+   "pretty": "    FLAG: 0\n    MGID: 1\n    NAME: 'player'\n    PYLD: \n      ATTR: \n        720896: 'player'\n        720899: '1'\n        720901: '1'\n        720902: '0'\n      FLAG: 0\n      STAT: 0\n      TAG: 0\n      TIDS: \n        - 2000000002\n      TTYP: \n        (30722, 1)\n      TYPE: 392826155\n    SRCE: \n      (30722, 1, 2000000001)\n    TIME: 1791405059"
+  },
+  {
+   "name": "notifymessage_inviteanswer_notification",
+   "hex": "9ac8670000b67a640002ba1b6501077365636f6e6400c39b2403874d32050001028280580254008580580231009ac8670000cf48740000d219c00000d2993304000181d0acf30ed34e700882e00301d39c25009e848ed01400cf28e50982e0030182d0acf30ed29b650083b0b5ac0d",
+   "pretty": "    FLAG: 0\n    MGID: 2\n    NAME: 'second'\n    PYLD: \n      ATTR: \n        720898: 'T'\n        720901: '1'\n      FLAG: 0\n      STAT: 0\n      TAG: 0\n      TIDS: \n        - 2000000001\n      TTYP: \n        (30722, 1)\n      TYPE: 2768355614\n    SRCE: \n      (30722, 1, 2000000002)\n    TIME: 1791405059"
+  },
+  {
+   "name": "notifymessage_chat_notification",
+   "hex": "9ac8670000b67a640003ba1b650107706c6179657200c39b2403874d320500010382fc0706676c2068660083805802320089805806676c206866009ac8670006cf48740000d219c00000d2993304000101d34e70080601d39c25000200cf28e50982e0030181d0acf30ed29b650083b0b5ac0d",
+   "pretty": "    FLAG: 0\n    MGID: 3\n    NAME: 'player'\n    PYLD: \n      ATTR: \n        65282: 'gl hf'\n        720899: '2'\n        720905: 'gl hf'\n      FLAG: 6\n      STAT: 0\n      TAG: 0\n      TIDS: \n        - 1\n      TTYP: \n        (6, 1)\n      TYPE: 2\n    SRCE: \n      (30722, 1, 2000000001)\n    TIME: 1791405059"
+  },
+  {
+   "name": "notifymessage_whisper_notification",
+   "hex": "9ac8670000b67a640004ba1b650107706c6179657200c39b2403874d320500010482fc0706676c206866008380580230008480580666616c73650089805806676c206866009ac8670007cf48740000d219c00000d2993304000182d0acf30ed34e700882e00301d39c25000300cf28e50982e0030181d0acf30ed29b650083b0b5ac0d",
+   "pretty": "    FLAG: 0\n    MGID: 4\n    NAME: 'player'\n    PYLD: \n      ATTR: \n        65282: 'gl hf'\n        720899: '0'\n        720900: 'false'\n        720905: 'gl hf'\n      FLAG: 7\n      STAT: 0\n      TAG: 0\n      TIDS: \n        - 2000000002\n      TTYP: \n        (30722, 1)\n      TYPE: 3\n    SRCE: \n      (30722, 1, 2000000001)\n    TIME: 1791405059"
+  },
+  {
+   "name": "filterforprofanity_reply",
+   "hex": "d2ccf4040301929cb40000d74e340106676c2068660000",
+   "pretty": "    TLST: \n      - \n        DIRT: 0\n        UTXT: 'gl hf'"
+  },
+  {
+   "name": "lookupuser_reply",
+   "hex": "964874038b0cc001066c6f63616c008f4e40010100c6487403922c330000ba1d340000d62c33000000d61d340000009ac9f30002d73972038699000082a8d6b90786cbe30093d5f2d60ca640000082d0acf30eba1b6501077365636f6e640000",
+   "pretty": "    EDAT: \n      BPS: 'local'\n      CTY: ''\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    FLGS: 2\n    USER: \n      AID: 1000000002\n      ALOC: 1701729619\n      ID: 2000000002\n      NAME: 'second'"
+  },
+  {
+   "name": "lookupuser_offline_reply",
+   "hex": "964874038b0cc001066c6f63616c008f4e40010100c6487403922c330000ba1d340000d62c33000000d61d340000009ac9f30000d73972038699000082a8d6b90786cbe30093d5f2d60ca640000082d0acf30eba1b6501077365636f6e640000",
+   "pretty": "    EDAT: \n      BPS: 'local'\n      CTY: ''\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    FLGS: 0\n    USER: \n      AID: 1000000002\n      ALOC: 1701729619\n      ID: 2000000002\n      NAME: 'second'"
+  },
+  {
+   "name": "b7c_getcompletedata_reply",
+   "hex": "b29cf40403018a1ce403862864000086c976000186ce300000874a6c0000876d32008a808080028baa640081d0acf30e925da600009a9cb300009ac867000100a7496d0403098efbb40001a74a64008180808002d39c250001008efbb40001a74a64008280808002d39c250001008efbb40001a74a64008480808002d39c250002008efbb40002a74a64008680808002d39c250004008efbb40003a74a64008780808002d39c250003008efbb40001a74a64008880808002d39c250005008efbb40001a74a64008980808002d39c250006008efbb40001a74a64008a80808002d39c250007008efbb40001a74a64008b80808002d39c25000900c25cab040301c25cab040300cf5b6d03ba1b65010750616765203100c299000001cf48740001da5cb30001000000",
+   "pretty": "    LIST: \n      - \n        BASD: \n          ABAD: 0\n          ALEV: 1\n          ALXP: 0\n          ATIL: 0\n          AVTR: 268435466\n          BZID: 2000000001\n          DEVF: 0\n          FIRS: 0\n          FLAG: 1\n        ITEM: \n          - \n            CONT: 1\n            ITID: 268435457\n            TYPE: 1\n          - \n            CONT: 1\n            ITID: 268435458\n            TYPE: 1\n          - \n            CONT: 1\n            ITID: 268435460\n            TYPE: 2\n          - \n            CONT: 2\n            ITID: 268435462\n            TYPE: 4\n          - \n            CONT: 3\n            ITID: 268435463\n            TYPE: 3\n          - \n            CONT: 1\n            ITID: 268435464\n            TYPE: 5\n          - \n            CONT: 1\n            ITID: 268435465\n            TYPE: 6\n          - \n            CONT: 1\n            ITID: 268435466\n            TYPE: 7\n          - \n            CONT: 1\n            ITID: 268435467\n            TYPE: 9\n        PERK: \n          - \n            PERK: []\n            SUMM: \n              NAME: 'Page 1'\n              PID: 1\n              STAT: 1\n              VERS: 1"
+  },
+  {
+   "name": "b7c_getgameitems_reply",
+   "hex": "a74b7304030b96e8ac0001a74a64008180808002ca1ca50000cf48eb0001d39c2500010096e8ac0001a74a64008280808002ca1ca50000cf48eb0001d39c2500010096e8ac0000a74a64008380808002ca1ca50000cf48eb0001d39c2500010096e8ac0001a74a64008480808002ca1ca50000cf48eb0001d39c2500020096e8ac0000a74a64008580808002ca1ca50000cf48eb0001d39c2500020096e8ac0001a74a64008680808002ca1ca50000cf48eb0002d39c2500040096e8ac0001a74a64008780808002ca1ca50000cf48eb0003d39c2500030096e8ac0001a74a64008880808002ca1ca50000cf48eb0001d39c2500050096e8ac0001a74a64008980808002ca1ca50000cf48eb0001d39c2500060096e8ac0001a74a64008a80808002ca1ca50000cf48eb0001d39c2500070096e8ac0001a74a64008b80808002ca1ca50000cf48eb000ad39c25000900",
+   "pretty": "    ITMS: \n      - \n        ENBL: 1\n        ITID: 268435457\n        RARE: 0\n        STCK: 1\n        TYPE: 1\n      - \n        ENBL: 1\n        ITID: 268435458\n        RARE: 0\n        STCK: 1\n        TYPE: 1\n      - \n        ENBL: 0\n        ITID: 268435459\n        RARE: 0\n        STCK: 1\n        TYPE: 1\n      - \n        ENBL: 1\n        ITID: 268435460\n        RARE: 0\n        STCK: 1\n        TYPE: 2\n      - \n        ENBL: 0\n        ITID: 268435461\n        RARE: 0\n        STCK: 1\n        TYPE: 2\n      - \n        ENBL: 1\n        ITID: 268435462\n        RARE: 0\n        STCK: 2\n        TYPE: 4\n      - \n        ENBL: 1\n        ITID: 268435463\n        RARE: 0\n        STCK: 3\n        TYPE: 3\n      - \n        ENBL: 1\n        ITID: 268435464\n        RARE: 0\n        STCK: 1\n        TYPE: 5\n      - \n        ENBL: 1\n        ITID: 268435465\n        RARE: 0\n        STCK: 1\n        TYPE: 6\n      - \n        ENBL: 1\n        ITID: 268435466\n        RARE: 0\n        STCK: 1\n        TYPE: 7\n      - \n        ENBL: 1\n        ITID: 268435467\n        RARE: 0\n        STCK: 10\n        TYPE: 9"
+  },
+  {
+   "name": "b7c_getperkpagedata_reply",
+   "hex": "c309f3040301c25cab040300cf5b6d03ba1b65010750616765203100c299000001cf48740001da5cb300010000d739720081d0acf30e",
+   "pretty": "    PPGS: \n      - \n        PERK: []\n        SUMM: \n          NAME: 'Page 1'\n          PID: 1\n          STAT: 1\n          VERS: 1\n    USER: 2000000001"
+  },
+  {
+   "name": "b7c_getperkpagedata_two_reply",
+   "hex": "c309f3040302c25cab0403019e5b730403019e9900008780808002ce99380000009e99380005c29900008680808002cafd00000100cf5b6d03ba1b65010750616765203100c299000001cf48740001da5cb300020000c25cab040300cf5b6d03ba1b65010750616765203200c299000002cf48740001da5cb300010000d739720081d0acf30e",
+   "pretty": "    PPGS: \n      - \n        PERK: \n          - \n            GEMS: \n              - \n                GID: 268435463\n                SIDX: 0\n            GIDX: 5\n            PID: 268435462\n            ROT: 1\n        SUMM: \n          NAME: 'Page 1'\n          PID: 1\n          STAT: 1\n          VERS: 2\n      - \n        PERK: []\n        SUMM: \n          NAME: 'Page 2'\n          PID: 2\n          STAT: 1\n          VERS: 1\n    USER: 2000000001"
+  },
+  {
+   "name": "b7c_updateperkpage_reply",
+   "hex": "96ed6d0001",
+   "pretty": "    ENUM: 1"
+  },
+  {
+   "name": "b7c_updateperkpage_failed_reply",
+   "hex": "96ed6d0002",
+   "pretty": "    ENUM: 2"
+  },
+  {
+   "name": "b7c_purchasewithec_reply",
+   "hex": "8baa640081d0acf30e8eed000001963b22009c9401a74b730400018680808002c6ed3304000101",
+   "pretty": "    BZID: 2000000001\n    CNT: 1\n    ECLB: 9500\n    ITMS: \n      - 268435462\n    QNTS: \n      - 1"
+  },
+  {
+   "name": "b7c_purchasewithpc_reply",
+   "hex": "8baa640081d0acf30e8eed000001a74b730400018b80808002c238ac00bc0ac6ed3304000101",
+   "pretty": "    BZID: 2000000001\n    CNT: 1\n    ITMS: \n      - 268435467\n    PCBL: 700\n    QNTS: \n      - 1"
+  },
+  {
+   "name": "b7c_getcommerceprofile_reply",
+   "hex": "9e3c3203873963008a0a873c2300ac048ac8e300008ac96300008f496300028f4c23000100",
+   "pretty": "    GCPR: \n      ASEC: 650\n      ASPC: 300\n      BLCC: 0\n      BLEC: 0\n      CTEC: 2\n      CTPC: 1"
+  },
+  {
+   "name": "b7c_extendeddataupdate_notification",
+   "hex": "921d21038b0cc001066c6f63616c008f4e4001010092d87005000001b4803801c6487403922c330000ba1d340000d62c33000000d61d34000000cf58b30001d73a640081d0acf30e",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CTY: ''\n      DMAP: \n        458804: 1\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    SUBS: 1\n    USID: 2000000001"
+  },
+  {
+   "name": "b7c_getbasicdata_reply",
+   "hex": "8a1ce4040301862864000086c976000286ce3000bc01874a6c0000876d32008a808080028baa640081d0acf30e925da600009a9cb300009ac867000100",
+   "pretty": "    BASD: \n      - \n        ABAD: 0\n        ALEV: 2\n        ALXP: 124\n        ATIL: 0\n        AVTR: 268435466\n        BZID: 2000000001\n        DEVF: 0\n        FIRS: 0\n        FLAG: 1"
+  },
+  {
+   "name": "b7c_getstatsasync_notification",
+   "hex": "9f2bad010c506c61796572537461747300ae5e4001114e6f5f53636f70655f446566696e656400b21cf40001cf4cc003cf48740403019699000081d0acf30ecf487404010d0232000232000233000233000231000230000230000230000233000231000231000230000230000000da99000001",
+   "pretty": "    GRNM: 'PlayerStats'\n    KEY: 'No_Scope_Defined'\n    LAST: 1\n    STS: \n      STAT: \n        - \n          EID: 2000000001\n          STAT: \n            - '2'\n            - '2'\n            - '3'\n            - '3'\n            - '1'\n            - '0'\n            - '0'\n            - '0'\n            - '3'\n            - '1'\n            - '1'\n            - '0'\n            - '0'\n    VID: 1"
+  },
+  {
+   "name": "b7d_getstatgroup_shaperstats_reply",
+   "hex": "8ee86d010100925ce3010100b65d21010100ba1b65010c536861706572537461747300cf4874040302926b34010230009b2b740103256400b24ce30107504c4159454400ba1b650107504c4159454400ce4ce30107504c415945440000926b34010230009b2b740103256400b24ce3010557494e5300ba1b65010557494e5300ce4ce3010557494e530000",
+   "pretty": "    CNAM: ''\n    DESC: ''\n    META: ''\n    NAME: 'ShaperStats'\n    STAT: \n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'PLAYED'\n        NAME: 'PLAYED'\n        SDSC: 'PLAYED'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'WINS'\n        NAME: 'WINS'\n        SDSC: 'WINS'"
+  },
+  {
+   "name": "b7d_getstatgroup_shaperhistorystats_reply",
+   "hex": "8ee86d010100925ce3010100b65d21010100ba1b650113536861706572486973746f7279537461747300cf4874040308926b34010230009b2b740103256400b24ce30107504c4159454400ba1b650107504c4159454400ce4ce30107504c415945440000926b34010230009b2b740103256400b24ce3010557494e5300ba1b65010557494e5300ce4ce3010557494e530000926b34010230009b2b740103256400b24ce301064b494c4c5300ba1b6501064b494c4c5300ce4ce301064b494c4c530000926b34010230009b2b740103256400b24ce3010744454154485300ba1b65010744454154485300ce4ce301074445415448530000926b34010230009b2b740103256400b24ce301084153534953545300ba1b6501084153534953545300ce4ce30108415353495354530000926b34010230009b2b740103256400b24ce30103435300ba1b650103435300ce4ce3010343530000926b34010230009b2b740103256400b24ce3010456494d00ba1b65010456494d00ce4ce3010456494d0000926b34010230009b2b740103256400b24ce301085345434f4e445300ba1b6501085345434f4e445300ce4ce301085345434f4e44530000",
+   "pretty": "    CNAM: ''\n    DESC: ''\n    META: ''\n    NAME: 'ShaperHistoryStats'\n    STAT: \n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'PLAYED'\n        NAME: 'PLAYED'\n        SDSC: 'PLAYED'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'WINS'\n        NAME: 'WINS'\n        SDSC: 'WINS'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'KILLS'\n        NAME: 'KILLS'\n        SDSC: 'KILLS'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'DEATHS'\n        NAME: 'DEATHS'\n        SDSC: 'DEATHS'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'ASSISTS'\n        NAME: 'ASSISTS'\n        SDSC: 'ASSISTS'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'CS'\n        NAME: 'CS'\n        SDSC: 'CS'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'VIM'\n        NAME: 'VIM'\n        SDSC: 'VIM'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'SECONDS'\n        NAME: 'SECONDS'\n        SDSC: 'SECONDS'"
+  },
+  {
+   "name": "b7d_getstatgroup_rolehistorystats_reply",
+   "hex": "8ee86d010100925ce3010100b65d21010100ba1b650111526f6c65486973746f7279537461747300cf4874040302926b34010230009b2b740103256400b24ce30107504c4159454400ba1b650107504c4159454400ce4ce30107504c415945440000926b34010230009b2b740103256400b24ce3010557494e5300ba1b65010557494e5300ce4ce3010557494e530000",
+   "pretty": "    CNAM: ''\n    DESC: ''\n    META: ''\n    NAME: 'RoleHistoryStats'\n    STAT: \n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'PLAYED'\n        NAME: 'PLAYED'\n        SDSC: 'PLAYED'\n      - \n        DFLT: '0'\n        FRMT: '%d'\n        LDSC: 'WINS'\n        NAME: 'WINS'\n        SDSC: 'WINS'"
+  },
+  {
+   "name": "b7d_shaperstats_empty_notification",
+   "hex": "9f2bad010c536861706572537461747300ae5e40010100b21cf40001da99000002",
+   "pretty": "    GRNM: 'ShaperStats'\n    KEY: ''\n    LAST: 1\n    VID: 2"
+  },
+  {
+   "name": "b7d_shaperstats_ember_notification",
+   "hex": "9f2bad010c536861706572537461747300ae5e4001117368617065723d32363834333534353700b21cf40000cf4cc003cf48740403019699000081d0acf30ecf48740401020231000231000000da99000002",
+   "pretty": "    GRNM: 'ShaperStats'\n    KEY: 'shaper=268435457'\n    LAST: 0\n    STS: \n      STAT: \n        - \n          EID: 2000000001\n          STAT: \n            - '1'\n            - '1'\n    VID: 2"
+  },
+  {
+   "name": "b7d_shaperstats_stone_notification",
+   "hex": "9f2bad010c536861706572537461747300ae5e4001117368617065723d32363834333534353800b21cf40001cf4cc003cf48740403019699000081d0acf30ecf48740401020231000230000000da99000002",
+   "pretty": "    GRNM: 'ShaperStats'\n    KEY: 'shaper=268435458'\n    LAST: 1\n    STS: \n      STAT: \n        - \n          EID: 2000000001\n          STAT: \n            - '1'\n            - '0'\n    VID: 2"
+  },
+  {
+   "name": "b7d_shaperhistorystats_ember_notification",
+   "hex": "9f2bad0113536861706572486973746f7279537461747300ae5e4001117368617065723d32363834333534353700b21cf40000cf4cc003cf48740403019699000081d0acf30ec2f9a60002cf48740401080231000231000233000231000232000334300005353030300004373230000000da99000003",
+   "pretty": "    GRNM: 'ShaperHistoryStats'\n    KEY: 'shaper=268435457'\n    LAST: 0\n    STS: \n      STAT: \n        - \n          EID: 2000000001\n          POFF: 2\n          STAT: \n            - '1'\n            - '1'\n            - '3'\n            - '1'\n            - '2'\n            - '40'\n            - '5000'\n            - '720'\n    VID: 3"
+  },
+  {
+   "name": "b7d_shaperhistorystats_stone_notification",
+   "hex": "9f2bad0113536861706572486973746f7279537461747300ae5e4001117368617065723d32363834333534353800b21cf40001cf4cc003cf48740403019699000081d0acf30ec2f9a60000cf4874040108023100023000023100023400023600033930000539303030000531383030000000da99000003",
+   "pretty": "    GRNM: 'ShaperHistoryStats'\n    KEY: 'shaper=268435458'\n    LAST: 1\n    STS: \n      STAT: \n        - \n          EID: 2000000001\n          POFF: 0\n          STAT: \n            - '1'\n            - '0'\n            - '1'\n            - '4'\n            - '6'\n            - '90'\n            - '9000'\n            - '1800'\n    VID: 3"
+  },
+  {
+   "name": "b7d_rolehistorystats_gladiator_notification",
+   "hex": "9f2bad0111526f6c65486973746f7279537461747300ae5e400107726f6c653d3100b21cf40000cf4cc003cf48740403019699000081d0acf30ec2f9a60002cf48740401020231000231000000da99000004",
+   "pretty": "    GRNM: 'RoleHistoryStats'\n    KEY: 'role=1'\n    LAST: 0\n    STS: \n      STAT: \n        - \n          EID: 2000000001\n          POFF: 2\n          STAT: \n            - '1'\n            - '1'\n    VID: 4"
+  },
+  {
+   "name": "b7d_rolehistorystats_hunter_notification",
+   "hex": "9f2bad0111526f6c65486973746f7279537461747300ae5e400107726f6c653d3300b21cf40001cf4cc003cf48740403019699000081d0acf30ec2f9a60000cf48740401020231000230000000da99000004",
+   "pretty": "    GRNM: 'RoleHistoryStats'\n    KEY: 'role=3'\n    LAST: 1\n    STS: \n      STAT: \n        - \n          EID: 2000000001\n          POFF: 0\n          STAT: \n            - '1'\n            - '0'\n    VID: 4"
+  },
+  {
+   "name": "notifyplayerremoved_connlost_notification",
+   "hex": "8eed3800009e99000001c299000081d0acf30eca58730002",
+   "pretty": "    CNTX: 0\n    GID: 1\n    PID: 2000000001\n    REAS: 2"
+  },
+  {
+   "name": "getlists_reply",
+   "hex": "b2d870040303a6e9af038afa64091901029ac9f30001b2990003b2eb400111726563656e74506c617965724c69737400d39c25000200b2dcc00000c32a64000000b65b6c040300be6ca30000d2f8f4000000a6e9af038afa64091901049ac9f30000b2990003b2eb40010a626c6f636b4c69737400d39c25000400b2dcc00000c32a64000000b65b6c040300be6ca30000d2f8f4000000a6e9af038afa64091901019ac9f30015b2990003b2eb40010b667269656e644c69737400d39c25000100b2dcc00000c32a64000000b65b6c040300be6ca30000d2f8f4000000",
+   "pretty": "    LMAP: \n      - \n        INFO: \n          BOID: \n            (25, 1, 2)\n          FLGS: 1\n          LID: \n            LNM: 'recentPlayerList'\n            TYPE: 2\n          LMS: 0\n          PRID: 0\n        MEML: []\n        OFRC: 0\n        TOCT: 0\n      - \n        INFO: \n          BOID: \n            (25, 1, 4)\n          FLGS: 0\n          LID: \n            LNM: 'blockList'\n            TYPE: 4\n          LMS: 0\n          PRID: 0\n        MEML: []\n        OFRC: 0\n        TOCT: 0\n      - \n        INFO: \n          BOID: \n            (25, 1, 1)\n          FLGS: 21\n          LID: \n            LNM: 'friendList'\n            TYPE: 1\n          LMS: 0\n          PRID: 0\n        MEML: []\n        OFRC: 0\n        TOCT: 0"
+  },
+  {
+   "name": "notifygamesetup_hosted_notification",
+   "hex": "9e1b6503864b6e04000181d0acf30e874d3205010107144578706563746564506c61796572436f756e74000231000a47616d65466c616773000531323932000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c496400023000135365727665724275696c6456657273696f6e001c312e302e3930332e3835342d524c2d50726f642d52656c65617365008e1c000400020a009e990000019ee86d010e706c6179657227732047616d65009f39740084149f3d21008202a2e97404030102978a7003a7000000818080f00fc2fcb400ba9c0100a6ea7003a7000000818080f00fc2fcb400ba9c010000b63870000abb4bf00001c27a6401106461776e676174652d67616d652d3100c28cf403a30a640081f882ad16a33b34000000c329730001c3387301066c6f63616c00ce596400af7bd238700005d28cf403a30a640081f882ad16a33b34000000d299330400020102d75a64012530303030303030302d303030302d303030302d303030302d30303030303030303030303100db3d32011c312e302e3930332e3835342d524c2d50726f642d52656c656173650000c32bf30403019e99000001b2f8c00093d5f2d60cba1b650107706c6179657200c299000081d0acf30ec2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000818080f00fc2fcb4008b390000ce99000000cecbf40000cf48740002d299380000d29b6500809b86e3bfd1ae06d699000081d0acf30e00ca58730600da1b3503923d38000000",
+   "pretty": "    GAME: \n      ADMN: \n        - 2000000001\n      ATTR: \n        ExpectedPlayerCount: '1'\n        GameFlags: '1292'\n        GameOwnerId: '77359401'\n        GameOwnerName: 'player'\n        GameType: '1'\n        LevelId: '0'\n        ServerBuildVersion: '1.0.903.854-RL-Prod-Release'\n      CAP: \n        - 10\n        - 0\n      GID: 1\n      GNAM: \"player's Game\"\n      GSET: 1284\n      GSTA: 130\n      HNET: \n        - ('union', 2, {'EXIP': {'IP': 2130706433, 'PORT': 10042}, 'INIP': {'IP': 2130706433, 'PORT': 10042}})\n      MCAP: 10\n      NTOP: 1\n      PGID: 'dawngate-game-1'\n      PHST: \n        HPID: 3000000001\n        HSLT: 0\n      PRES: 1\n      PSAS: 'local'\n      SEED: 7919\n      TCAP: 5\n      THST: \n        HPID: 3000000001\n        HSLT: 0\n      TIDS: \n        - 1\n        - 2\n      UUID: '00000000-0000-0000-0000-000000000001'\n      VSTR: '1.0.903.854-RL-Prod-Release'\n    PROS: \n      - \n        GID: 1\n        LOC: 1701729619\n        NAME: 'player'\n        PID: 2000000001\n        PNET: \n          <union member 2>\n            VALU: \n              EXIP: \n                IP: 2130706433\n                PORT: 3659\n              INIP: \n                IP: 2130706433\n                PORT: 3659\n        SID: 0\n        SLOT: 0\n        STAT: 2\n        TIDX: 0\n        TIME: 1791405059000000\n        UID: 2000000001\n    REAS: \n      <union member 0>\n        VALU: \n          DCTX: 0"
+  },
+  {
+   "name": "notifygamesetup_hosted_notification_lan",
+   "hex": "9e1b6503864b6e04000181d0acf30e874d3205010107144578706563746564506c61796572436f756e74000231000a47616d65466c616773000531323932000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c496400023000135365727665724275696c6456657273696f6e001c312e302e3930332e3835342d524c2d50726f642d52656c65617365008e1c000400020a009e990000019ee86d010e706c6179657227732047616d65009f39740084149f3d21008202a2e97404030102978a7003a70000009484c08a18c2fcb400ba9c0100a6ea7003a70000009484c08a18c2fcb400ba9c010000b63870000abb4bf00001c27a6401106461776e676174652d67616d652d3100c28cf403a30a640081f882ad16a33b34000000c329730001c3387301066c6f63616c00ce596400af7bd238700005d28cf403a30a640081f882ad16a33b34000000d299330400020102d75a64012530303030303030302d303030302d303030302d303030302d30303030303030303030303100db3d32011c312e302e3930332e3835342d524c2d50726f642d52656c656173650000c32bf30403019e99000001b2f8c00093d5f2d60cba1b650107706c6179657200c299000081d0acf30ec2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000828080a001c2fcb4008b390000ce99000000cecbf40000cf48740002d299380000d29b6500809b86e3bfd1ae06d699000081d0acf30e00ca58730600da1b3503923d38000000",
+   "pretty": "    GAME: \n      ADMN: \n        - 2000000001\n      ATTR: \n        ExpectedPlayerCount: '1'\n        GameFlags: '1292'\n        GameOwnerId: '77359401'\n        GameOwnerName: 'player'\n        GameType: '1'\n        LevelId: '0'\n        ServerBuildVersion: '1.0.903.854-RL-Prod-Release'\n      CAP: \n        - 10\n        - 0\n      GID: 1\n      GNAM: \"player's Game\"\n      GSET: 1284\n      GSTA: 130\n      HNET: \n        - ('union', 2, {'EXIP': {'IP': 3232235796, 'PORT': 10042}, 'INIP': {'IP': 3232235796, 'PORT': 10042}})\n      MCAP: 10\n      NTOP: 1\n      PGID: 'dawngate-game-1'\n      PHST: \n        HPID: 3000000001\n        HSLT: 0\n      PRES: 1\n      PSAS: 'local'\n      SEED: 7919\n      TCAP: 5\n      THST: \n        HPID: 3000000001\n        HSLT: 0\n      TIDS: \n        - 1\n        - 2\n      UUID: '00000000-0000-0000-0000-000000000001'\n      VSTR: '1.0.903.854-RL-Prod-Release'\n    PROS: \n      - \n        GID: 1\n        LOC: 1701729619\n        NAME: 'player'\n        PID: 2000000001\n        PNET: \n          <union member 2>\n            VALU: \n              EXIP: \n                IP: 2130706433\n                PORT: 3659\n              INIP: \n                IP: 167772162\n                PORT: 3659\n        SID: 0\n        SLOT: 0\n        STAT: 2\n        TIDX: 0\n        TIME: 1791405059000000\n        UID: 2000000001\n    REAS: \n      <union member 0>\n        VALU: \n          DCTX: 0"
+  },
+  {
+   "name": "getgameid_saved_reply",
+   "hex": "9eda6401106461776e676174652d67616d652d3100",
+   "pretty": "    GMID: 'dawngate-game-1'"
+  },
+  {
+   "name": "getgamedatafromid_reply",
+   "hex": "9e4874040301864b6e04000181d0acf30e874d320501010a144578706563746564506c61796572436f756e7400033130000a47616d65466c616773000231000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c49640002300014506c6179657249644c6973745f5465616d5f30000d415a5131647741414141413d0014506c6179657249644c6973745f5465616d5f31000d41705131647741414141413d0017506c6179657249644c6973745f5465616d436f756e7400023200135365727665724275696c6456657273696f6e001c312e302e3930332e3835342d524c2d50726f642d52656c65617365008e1c0004000202009e990000019ee86d010e706c6179657227732047616d65009f39740086149f3d21008302a2e97404030102978a7003a7000000818080f00fc2fcb400ba9c0100a6ea7003a7000000818080f00fc2fcb400ba9c010000bb4bf00001c23bb40400020200c329730001c3387301066c6f63616c00d238700001db3d32011c312e302e3930332e3835342d524c2d50726f642d52656c656173650000",
+   "pretty": "    GDAT: \n      - \n        ADMN: \n          - 2000000001\n        ATTR: \n          ExpectedPlayerCount: '10'\n          GameFlags: '1'\n          GameOwnerId: '77359401'\n          GameOwnerName: 'player'\n          GameType: '1'\n          LevelId: '0'\n          PlayerIdList_Team_0: 'AZQ1dwAAAAA='\n          PlayerIdList_Team_1: 'ApQ1dwAAAAA='\n          PlayerIdList_TeamCount: '2'\n          ServerBuildVersion: '1.0.903.854-RL-Prod-Release'\n        CAP: \n          - 2\n          - 0\n        GID: 1\n        GNAM: \"player's Game\"\n        GSET: 1286\n        GSTA: 131\n        HNET: \n          - ('union', 2, {'EXIP': {'IP': 2130706433, 'PORT': 10042}, 'INIP': {'IP': 2130706433, 'PORT': 10042}})\n        NTOP: 1\n        PCNT: \n          - 2\n          - 0\n        PRES: 1\n        PSAS: 'local'\n        TCAP: 1\n        VSTR: '1.0.903.854-RL-Prod-Release'"
+  },
+  {
+   "name": "notifygamesetup_rejoin_notification",
+   "hex": "9e1b6503864b6e04000181d0acf30e874d3205010107144578706563746564506c61796572436f756e7400033130000a47616d65466c616773000231000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c496400023000135365727665724275696c6456657273696f6e001c312e302e3930332e3835342d524c2d50726f642d52656c65617365008e1c0004000202009e990000019ee86d010e706c6179657227732047616d65009f39740086149f3d21008302a2e97404030102978a7003a7000000818080f00fc2fcb400ba9c0100a6ea7003a7000000818080f00fc2fcb400ba9c010000b638700002bb4bf00001c27a6401106461776e676174652d67616d652d3100c28cf403a30a640081f882ad16a33b34000000c329730001c3387301066c6f63616c00ce596400af7bd238700001d28cf403a30a640081f882ad16a33b34000000d299330400020102d75a64012530303030303030302d303030302d303030302d303030302d30303030303030303030303100db3d32011c312e302e3930332e3835342d524c2d50726f642d52656c656173650000c32bf30403029e99000001b2f8c00093d5f2d60cba1b650107706c6179657200c299000081d0acf30ec2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000818080f00fc2fcb4008b390000ce99000000cecbf40000cf48740002d299380000d29b6500809b86e3bfd1ae06d699000081d0acf30e009e99000001b2f8c00093d5f2d60cba1b6501077365636f6e6400c299000082d0acf30ec2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000818080f00fc2fcb4008b390000ce99000001cecbf40000cf48740002d299380001d29b6500809b86e3bfd1ae06d699000082d0acf30e00ca58730600da1b3503923d38000100",
+   "pretty": "    GAME: \n      ADMN: \n        - 2000000001\n      ATTR: \n        ExpectedPlayerCount: '10'\n        GameFlags: '1'\n        GameOwnerId: '77359401'\n        GameOwnerName: 'player'\n        GameType: '1'\n        LevelId: '0'\n        ServerBuildVersion: '1.0.903.854-RL-Prod-Release'\n      CAP: \n        - 2\n        - 0\n      GID: 1\n      GNAM: \"player's Game\"\n      GSET: 1286\n      GSTA: 131\n      HNET: \n        - ('union', 2, {'EXIP': {'IP': 2130706433, 'PORT': 10042}, 'INIP': {'IP': 2130706433, 'PORT': 10042}})\n      MCAP: 2\n      NTOP: 1\n      PGID: 'dawngate-game-1'\n      PHST: \n        HPID: 3000000001\n        HSLT: 0\n      PRES: 1\n      PSAS: 'local'\n      SEED: 7919\n      TCAP: 1\n      THST: \n        HPID: 3000000001\n        HSLT: 0\n      TIDS: \n        - 1\n        - 2\n      UUID: '00000000-0000-0000-0000-000000000001'\n      VSTR: '1.0.903.854-RL-Prod-Release'\n    PROS: \n      - \n        GID: 1\n        LOC: 1701729619\n        NAME: 'player'\n        PID: 2000000001\n        PNET: \n          <union member 2>\n            VALU: \n              EXIP: \n                IP: 2130706433\n                PORT: 3659\n              INIP: \n                IP: 2130706433\n                PORT: 3659\n        SID: 0\n        SLOT: 0\n        STAT: 2\n        TIDX: 0\n        TIME: 1791405059000000\n        UID: 2000000001\n      - \n        GID: 1\n        LOC: 1701729619\n        NAME: 'second'\n        PID: 2000000002\n        PNET: \n          <union member 2>\n            VALU: \n              EXIP: \n                IP: 2130706433\n                PORT: 3659\n              INIP: \n                IP: 2130706433\n                PORT: 3659\n        SID: 1\n        SLOT: 0\n        STAT: 2\n        TIDX: 1\n        TIME: 1791405059000000\n        UID: 2000000002\n    REAS: \n      <union member 0>\n        VALU: \n          DCTX: 1"
+  },
+  {
+   "name": "notifyplayerjoining_notification",
+   "hex": "9e99000001c24874039e99000001b2f8c00093d5f2d60cba1b6501077365636f6e6400c299000082d0acf30ec2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000818080f00fc2fcb4008b390000ce99000001cecbf40000cf48740002d299380001d29b6500809b86e3bfd1ae06d699000082d0acf30e00",
+   "pretty": "    GID: 1\n    PDAT: \n      GID: 1\n      LOC: 1701729619\n      NAME: 'second'\n      PID: 2000000002\n      PNET: \n        <union member 2>\n          VALU: \n            EXIP: \n              IP: 2130706433\n              PORT: 3659\n            INIP: \n              IP: 2130706433\n              PORT: 3659\n      SID: 1\n      SLOT: 0\n      STAT: 2\n      TIDX: 1\n      TIME: 1791405059000000\n      UID: 2000000002"
+  },
+  {
+   "name": "getlists_members_reply",
+   "hex": "b2d870040303a6e9af038afa64091901029ac9f30001b2990003b2eb400111726563656e74506c617965724c69737400d39c25000200b2dcc00000c32a64000000b65b6c040301b2da64038aca640082d0acf30e9788a20200c2c8740004c2e86d01077365636f6e6400e32966000000d29b650083b0b5ac0d00be6ca30000d2f8f4000100a6e9af038afa64091901049ac9f30000b2990003b2eb40010a626c6f636b4c69737400d39c25000400b2dcc00000c32a64000000b65b6c040301b2da64038aca640083d0acf30e9788a20200c2c8740004c2e86d0106746869726400e32966000000d29b650083b0b5ac0d00be6ca30000d2f8f4000100a6e9af038afa64091901019ac9f30015b2990003b2eb40010b667269656e644c69737400d39c25000100b2dcc00000c32a64000000b65b6c040301b2da64038aca640082d0acf30e9788a20200c2c8740004c2e86d01077365636f6e6400e32966000000d29b650083b0b5ac0d00be6ca30000d2f8f4000100",
+   "pretty": "    LMAP: \n      - \n        INFO: \n          BOID: \n            (25, 1, 2)\n          FLGS: 1\n          LID: \n            LNM: 'recentPlayerList'\n            TYPE: 2\n          LMS: 0\n          PRID: 0\n        MEML: \n          - \n            LMID: \n              BLID: 2000000002\n              EXBB: b''\n              PLAT: 4\n              PNAM: 'second'\n              XREF: 0\n            TIME: 1791405059\n        OFRC: 0\n        TOCT: 1\n      - \n        INFO: \n          BOID: \n            (25, 1, 4)\n          FLGS: 0\n          LID: \n            LNM: 'blockList'\n            TYPE: 4\n          LMS: 0\n          PRID: 0\n        MEML: \n          - \n            LMID: \n              BLID: 2000000003\n              EXBB: b''\n              PLAT: 4\n              PNAM: 'third'\n              XREF: 0\n            TIME: 1791405059\n        OFRC: 0\n        TOCT: 1\n      - \n        INFO: \n          BOID: \n            (25, 1, 1)\n          FLGS: 21\n          LID: \n            LNM: 'friendList'\n            TYPE: 1\n          LMS: 0\n          PRID: 0\n        MEML: \n          - \n            LMID: \n              BLID: 2000000002\n              EXBB: b''\n              PLAT: 4\n              PNAM: 'second'\n              XREF: 0\n            TIME: 1791405059\n        OFRC: 0\n        TOCT: 1"
+  },
+  {
+   "name": "useradded_notification",
+   "hex": "921d21038b0cc001066c6f63616c008ed8700500000190d502008f4e40010100c6487403922c330000ba1d340000d62c33000000d61d34000000d73972038699000082a8d6b90786cbe30093d5f2d60ca640000082d0acf30eba1b6501077365636f6e640000",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CMAP: \n        21840: 0\n      CTY: ''\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    USER: \n      AID: 1000000002\n      ALOC: 1701729619\n      ID: 2000000002\n      NAME: 'second'"
+  },
+  {
+   "name": "userupdated_online_notification",
+   "hex": "9ac9f30003a640000082d0acf30e",
+   "pretty": "    FLGS: 3\n    ID: 2000000002"
+  },
+  {
+   "name": "userupdated_offline_notification",
+   "hex": "9ac9f30001a640000082d0acf30e",
+   "pretty": "    FLGS: 1\n    ID: 2000000002"
+  },
+  {
+   "name": "presence_notification",
+   "hex": "921d21038b0cc001066c6f63616c008ed8700500000190d5028180088f4e40010100c6487403922c330000ba1d340000d62c33000000d61d34000000cf58b30001d73a640082d0acf30e",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CMAP: \n        21840: 65537\n      CTY: ''\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    SUBS: 1\n    USID: 2000000002"
+  },
+  {
+   "name": "adduserstolist_friend_reply",
+   "hex": "b2da64040301b2da64038aca640082d0acf30e9788a20200c2c8740004c2e86d01077365636f6e6400e32966000000d29b650083b0b5ac0d00ca5b40040300",
+   "pretty": "    LMID: \n      - \n        LMID: \n          BLID: 2000000002\n          EXBB: b''\n          PLAT: 4\n          PNAM: 'second'\n          XREF: 0\n        TIME: 1791405059\n    REM: []"
+  },
+  {
+   "name": "removeusersfromlist_friend_reply",
+   "hex": "b2da64040300ca5b400403018aca640082d0acf30e9788a20200c2c8740004c2e86d01077365636f6e6400e32966000000",
+   "pretty": "    LMID: []\n    REM: \n      - \n        BLID: 2000000002\n        EXBB: b''\n        PLAT: 4\n        PNAM: 'second'\n        XREF: 0"
+  },
+  {
+   "name": "notifyupdatelistmembership_add_notification",
+   "hex": "8a992c040301b2da6403b2da64038aca640081d0acf30e9788a20200c2c8740004c2e86d0107706c6179657200e32966000000d29b650083b0b5ac0d00b35c34000100b2990003b2eb40010b667269656e644c69737400d39c25000100",
+   "pretty": "    BIDL: \n      - \n        LMID: \n          LMID: \n            BLID: 2000000001\n            EXBB: b''\n            PLAT: 4\n            PNAM: 'player'\n            XREF: 0\n          TIME: 1791405059\n        LUPT: 1\n    LID: \n      LNM: 'friendList'\n      TYPE: 1"
+  },
+  {
+   "name": "notifyupdatelistmembership_remove_notification",
+   "hex": "8a992c040301b2da6403b2da64038aca640081d0acf30e9788a20200c2c8740004c2e86d0107706c6179657200e32966000000d29b65000000b35c34000200b2990003b2eb40010b667269656e644c69737400d39c25000100",
+   "pretty": "    BIDL: \n      - \n        LMID: \n          LMID: \n            BLID: 2000000001\n            EXBB: b''\n            PLAT: 4\n            PNAM: 'player'\n            XREF: 0\n          TIME: 0\n        LUPT: 2\n    LID: \n      LNM: 'friendList'\n      TYPE: 1"
+  },
+  {
+   "name": "notifymessage_killswitches_notification",
+   "hex": "9ac8670000b67a640001ba1b65010100c39b2403874d3205000101020231009ac8670000cf48740000d219c00000d29933040000d34e70080000d39c2500ac0400cf28e509000000d29b650083b0b5ac0d",
+   "pretty": "    FLAG: 0\n    MGID: 1\n    NAME: ''\n    PYLD: \n      ATTR: \n        2: '1'\n      FLAG: 0\n      STAT: 0\n      TAG: 0\n      TIDS: []\n      TTYP: \n        (0, 0)\n      TYPE: 300\n    SRCE: \n      (0, 0, 0)\n    TIME: 1791405059"
+  },
+  {
+   "name": "notifymessage_killswitches_two_notification",
+   "hex": "9ac8670000b67a640001ba1b65010100c39b2403874d320500010202023100080231009ac8670000cf48740000d219c00000d29933040000d34e70080000d39c2500ac0400cf28e509000000d29b650083b0b5ac0d",
+   "pretty": "    FLAG: 0\n    MGID: 1\n    NAME: ''\n    PYLD: \n      ATTR: \n        2: '1'\n        8: '1'\n      FLAG: 0\n      STAT: 0\n      TAG: 0\n      TIDS: []\n      TTYP: \n        (0, 0)\n      TYPE: 300\n    SRCE: \n      (0, 0, 0)\n    TIME: 1791405059"
+  },
+  {
+   "name": "notifymessage_hidebroadcasts_notification",
+   "hex": "9ac8670000b67a640002ba1b65010100c39b2403874d32050001009ac8670000cf48740000d219c00001d29933040000d34e70080000d39c2500ac0400cf28e509000000d29b650083b0b5ac0d",
+   "pretty": "    FLAG: 0\n    MGID: 2\n    NAME: ''\n    PYLD: \n      ATTR: {}\n      FLAG: 0\n      STAT: 0\n      TAG: 1\n      TIDS: []\n      TTYP: \n        (0, 0)\n      TYPE: 300\n    SRCE: \n      (0, 0, 0)\n    TIME: 1791405059"
+  },
+  {
+   "name": "notifymessage_broadcast_notification",
+   "hex": "9ac8670000b67a640003ba1b65010100c39b2403874d320500010480805802310081805802340082805807363034383030008380581c53657276657220726573746172742061742032303a303020555443009ac8670000cf48740000d219c00002d29933040000d34e70080000d39c2500ac0400cf28e509000000d29b650083b0b5ac0d",
+   "pretty": "    FLAG: 0\n    MGID: 3\n    NAME: ''\n    PYLD: \n      ATTR: \n        720896: '1'\n        720897: '4'\n        720898: '604800'\n        720899: 'Server restart at 20:00 UTC'\n      FLAG: 0\n      STAT: 0\n      TAG: 2\n      TIDS: []\n      TTYP: \n        (0, 0)\n      TYPE: 300\n    SRCE: \n      (0, 0, 0)\n    TIME: 1791405059"
+  },
+  {
+   "name": "useradded_wins_notification",
+   "hex": "921d21038b0cc001066c6f63616c008ed8700500000190d502008f4e4001010092d87005000001b4803803c6487403922c330000ba1d340000d62c33000000d61d34000000d73972038699000081a8d6b90786cbe30093d5f2d60ca640000081d0acf30eba1b650107706c617965720000",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CMAP: \n        21840: 0\n      CTY: ''\n      DMAP: \n        458804: 3\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    USER: \n      AID: 1000000001\n      ALOC: 1701729619\n      ID: 2000000001\n      NAME: 'player'"
+  },
+  {
+   "name": "memberdata_notification",
+   "hex": "921d21038b0cc001066c6f63616c008ed8700500000190d502008f4e4001010092d87005000001b4803803c6487403922c330000ba1d340000d62c33000000d61d34000000cf58b30001d73a640081d0acf30e",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CMAP: \n        21840: 0\n      CTY: ''\n      DMAP: \n        458804: 3\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    SUBS: 1\n    USID: 2000000001"
+  },
+  {
+   "name": "notifygamesetup_custom_notification",
+   "hex": "9e1b6503864b6e04000181d0acf30e874d3205010107144578706563746564506c61796572436f756e7400033130000a47616d65466c616773000232000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c4964000b3234393031383832383600135365727665724275696c6456657273696f6e001c312e302e3930332e3835342d524c2d50726f642d52656c65617365008e1c000400020f009e990000019ee86d0109437573746f6d2031009f39740085149f3d21008202a2e97404030102978a7003a7000000818080f00fc2fcb400ba9c0100a6ea7003a7000000818080f00fc2fcb400ba9c010000b63870000fbb4bf00001c27a6401106461776e676174652d67616d652d3100c28cf403a30a640081f882ad16a33b34000000c329730001c3387301066c6f63616c00ce596400af7bd238700005d28cf403a30a640081f882ad16a33b34000000d29933040003010203d75a64012530303030303030302d303030302d303030302d303030302d30303030303030303030303100db3d32011c312e302e3930332e3835342d524c2d50726f642d52656c656173650000c32bf30403019e99000001b2f8c00093d5f2d60cba1b650107706c6179657200c299000081d0acf30ec2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000818080f00fc2fcb4008b390000ce99000000cecbf40000cf48740002d299380000d29b6500809b86e3bfd1ae06d699000081d0acf30e00ca58730600da1b3503923d38000000",
+   "pretty": "    GAME: \n      ADMN: \n        - 2000000001\n      ATTR: \n        ExpectedPlayerCount: '10'\n        GameFlags: '2'\n        GameOwnerId: '77359401'\n        GameOwnerName: 'player'\n        GameType: '1'\n        LevelId: '2490188286'\n        ServerBuildVersion: '1.0.903.854-RL-Prod-Release'\n      CAP: \n        - 15\n        - 0\n      GID: 1\n      GNAM: 'Custom 1'\n      GSET: 1285\n      GSTA: 130\n      HNET: \n        - ('union', 2, {'EXIP': {'IP': 2130706433, 'PORT': 10042}, 'INIP': {'IP': 2130706433, 'PORT': 10042}})\n      MCAP: 15\n      NTOP: 1\n      PGID: 'dawngate-game-1'\n      PHST: \n        HPID: 3000000001\n        HSLT: 0\n      PRES: 1\n      PSAS: 'local'\n      SEED: 7919\n      TCAP: 5\n      THST: \n        HPID: 3000000001\n        HSLT: 0\n      TIDS: \n        - 1\n        - 2\n        - 3\n      UUID: '00000000-0000-0000-0000-000000000001'\n      VSTR: '1.0.903.854-RL-Prod-Release'\n    PROS: \n      - \n        GID: 1\n        LOC: 1701729619\n        NAME: 'player'\n        PID: 2000000001\n        PNET: \n          <union member 2>\n            VALU: \n              EXIP: \n                IP: 2130706433\n                PORT: 3659\n              INIP: \n                IP: 2130706433\n                PORT: 3659\n        SID: 0\n        SLOT: 0\n        STAT: 2\n        TIDX: 0\n        TIME: 1791405059000000\n        UID: 2000000001\n    REAS: \n      <union member 0>\n        VALU: \n          DCTX: 0"
+  },
+  {
+   "name": "notifygamesetup_customjoin_notification",
+   "hex": "9e1b6503864b6e04000181d0acf30e874d3205010107144578706563746564506c61796572436f756e7400033130000a47616d65466c616773000232000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c4964000b3234393031383832383600135365727665724275696c6456657273696f6e001c312e302e3930332e3835342d524c2d50726f642d52656c65617365008e1c000400020f009e990000019ee86d0109437573746f6d2031009f39740085149f3d21008202a2e97404030102978a7003a7000000818080f00fc2fcb400ba9c0100a6ea7003a7000000818080f00fc2fcb400ba9c010000b63870000fbb4bf00001c27a6401106461776e676174652d67616d652d3100c28cf403a30a640081f882ad16a33b34000000c329730001c3387301066c6f63616c00ce596400af7bd238700005d28cf403a30a640081f882ad16a33b34000000d29933040003010203d75a64012530303030303030302d303030302d303030302d303030302d30303030303030303030303100db3d32011c312e302e3930332e3835342d524c2d50726f642d52656c656173650000c32bf30403029e99000001b2f8c00093d5f2d60cba1b650107706c6179657200c299000081d0acf30ec2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000818080f00fc2fcb4008b390000ce99000000cecbf40000cf48740004d299380000d29b6500809b86e3bfd1ae06d699000081d0acf30e009e99000001b2f8c00093d5f2d60cba1b6501077365636f6e6400c299000082d0acf30ec2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000818080f00fc2fcb4008b390000ce99000001cecbf40000cf48740002d299380001d29b6500809b86e3bfd1ae06d699000082d0acf30e00ca58730600da1b3503923d38000100",
+   "pretty": "    GAME: \n      ADMN: \n        - 2000000001\n      ATTR: \n        ExpectedPlayerCount: '10'\n        GameFlags: '2'\n        GameOwnerId: '77359401'\n        GameOwnerName: 'player'\n        GameType: '1'\n        LevelId: '2490188286'\n        ServerBuildVersion: '1.0.903.854-RL-Prod-Release'\n      CAP: \n        - 15\n        - 0\n      GID: 1\n      GNAM: 'Custom 1'\n      GSET: 1285\n      GSTA: 130\n      HNET: \n        - ('union', 2, {'EXIP': {'IP': 2130706433, 'PORT': 10042}, 'INIP': {'IP': 2130706433, 'PORT': 10042}})\n      MCAP: 15\n      NTOP: 1\n      PGID: 'dawngate-game-1'\n      PHST: \n        HPID: 3000000001\n        HSLT: 0\n      PRES: 1\n      PSAS: 'local'\n      SEED: 7919\n      TCAP: 5\n      THST: \n        HPID: 3000000001\n        HSLT: 0\n      TIDS: \n        - 1\n        - 2\n        - 3\n      UUID: '00000000-0000-0000-0000-000000000001'\n      VSTR: '1.0.903.854-RL-Prod-Release'\n    PROS: \n      - \n        GID: 1\n        LOC: 1701729619\n        NAME: 'player'\n        PID: 2000000001\n        PNET: \n          <union member 2>\n            VALU: \n              EXIP: \n                IP: 2130706433\n                PORT: 3659\n              INIP: \n                IP: 2130706433\n                PORT: 3659\n        SID: 0\n        SLOT: 0\n        STAT: 4\n        TIDX: 0\n        TIME: 1791405059000000\n        UID: 2000000001\n      - \n        GID: 1\n        LOC: 1701729619\n        NAME: 'second'\n        PID: 2000000002\n        PNET: \n          <union member 2>\n            VALU: \n              EXIP: \n                IP: 2130706433\n                PORT: 3659\n              INIP: \n                IP: 2130706433\n                PORT: 3659\n        SID: 1\n        SLOT: 0\n        STAT: 2\n        TIDX: 1\n        TIME: 1791405059000000\n        UID: 2000000002\n    REAS: \n      <union member 0>\n        VALU: \n          DCTX: 1"
+  },
+  {
+   "name": "notifyplayerjoining_custom_notification",
+   "hex": "9e99000001c24874039e99000001b2f8c00093d5f2d60cba1b6501077365636f6e6400c299000082d0acf30ec2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000818080f00fc2fcb4008b390000ce99000001cecbf40000cf48740002d299380001d29b6500809b86e3bfd1ae06d699000082d0acf30e00",
+   "pretty": "    GID: 1\n    PDAT: \n      GID: 1\n      LOC: 1701729619\n      NAME: 'second'\n      PID: 2000000002\n      PNET: \n        <union member 2>\n          VALU: \n            EXIP: \n              IP: 2130706433\n              PORT: 3659\n            INIP: \n              IP: 2130706433\n              PORT: 3659\n      SID: 1\n      SLOT: 0\n      STAT: 2\n      TIDX: 1\n      TIME: 1791405059000000\n      UID: 2000000002"
+  },
+  {
+   "name": "notifyplayerjoincompleted_notification",
+   "hex": "9e99000001c299000082d0acf30e",
+   "pretty": "    GID: 1\n    PID: 2000000002"
+  },
+  {
+   "name": "notifygameattribchange_notification",
+   "hex": "874d320501010310526f737465724c6f636b65644b65790002300016537065637461746f72506c6179657249644c6973740001000f5465616d526f73746572734b6579002d415a5131647741414141414341414d46415147554e58634141414141425145436c4456334141414141415541009e99000001",
+   "pretty": "    ATTR: \n      RosterLockedKey: '0'\n      SpectatorPlayerIdList: ''\n      TeamRostersKey: 'AZQ1dwAAAAACAAMFAQGUNXcAAAAABQEClDV3AAAAAAUA'\n    GID: 1"
+  },
+  {
+   "name": "notifyplayerattribchange_notification",
+   "hex": "874d3205010101115072697661746541757468546f6b656e00093141324233433444009e99000001c299000082d0acf30e",
+   "pretty": "    ATTR: \n      PrivateAuthToken: '1A2B3C4D'\n    GID: 1\n    PID: 2000000002"
+  },
+  {
+   "name": "notifygameplayerteamchange_notification",
+   "hex": "9e99000001c299000082d0acf30ed299380002",
+   "pretty": "    GID: 1\n    PID: 2000000002\n    TIDX: 2"
+  },
+  {
+   "name": "getgamelist_reply",
+   "hex": "9eca640001b61e2600a401ba79000001",
+   "pretty": "    GLID: 1\n    MAXF: 100\n    NGD: 1"
+  },
+  {
+   "name": "notifygamelistupdate_notification",
+   "hex": "92fba500019eca640001d709340403019a9d0000a4019e1b4003864b6e04000181d0acf30e874d3205010107144578706563746564506c61796572436f756e7400033130000a47616d65466c616773000232000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c4964000b3234393031383832383600135365727665724275696c6456657273696f6e001c312e302e3930332e3835342d524c2d50726f642d52656c65617365008e1c000400020f009e990000019ee86d0109437573746f6d2031009f39740085149f3d21008202a2e97404030102978a7003a7000000818080f00fc2fcb400ba9c0100a6ea7003a7000000818080f00fc2fcb400ba9c010000a2fcf40081f882ad16bb4bf00001c23bb40400020200c329730001c3387301036e6100cafcf4040302978a640000b2f8c00093d5f2d60cba1b650107706c6179657200c299000081d0acf30ecf48740004d29938000000978a640000b2f8c00093d5f2d60cba1b6501077365636f6e6400c299000082d0acf30ecf48740002d29938000100d238700005d29ba6040303d299000001d33ea5000100d299000002d33ea5000100d299000003d33ea5000000db3d32011c312e302e3930332e3835342d524c2d50726f642d52656c65617365000000",
+   "pretty": "    DONE: 1\n    GLID: 1\n    UPDT: \n      - \n        FIT: 100\n        GAM: \n          ADMN: \n            - 2000000001\n          ATTR: \n            ExpectedPlayerCount: '10'\n            GameFlags: '2'\n            GameOwnerId: '77359401'\n            GameOwnerName: 'player'\n            GameType: '1'\n            LevelId: '2490188286'\n            ServerBuildVersion: '1.0.903.854-RL-Prod-Release'\n          CAP: \n            - 15\n            - 0\n          GID: 1\n          GNAM: 'Custom 1'\n          GSET: 1285\n          GSTA: 130\n          HNET: \n            - ('union', 2, {'EXIP': {'IP': 2130706433, 'PORT': 10042}, 'INIP': {'IP': 2130706433, 'PORT': 10042}})\n          HOST: 3000000001\n          NTOP: 1\n          PCNT: \n            - 2\n            - 0\n          PRES: 1\n          PSAS: 'na'\n          ROST: \n            - \n              EXID: 0\n              LOC: 1701729619\n              NAME: 'player'\n              PID: 2000000001\n              STAT: 4\n              TIDX: 0\n            - \n              EXID: 0\n              LOC: 1701729619\n              NAME: 'second'\n              PID: 2000000002\n              STAT: 2\n              TIDX: 1\n          TCAP: 5\n          TINF: \n            - \n              TID: 1\n              TSZE: 1\n            - \n              TID: 2\n              TSZE: 1\n            - \n              TID: 3\n              TSZE: 0\n          VSTR: '1.0.903.854-RL-Prod-Release'"
+  },
+  {
+   "name": "notifygamelistupdate_removed_notification",
+   "hex": "92fba500019eca640001ca5b7604000101",
+   "pretty": "    DONE: 1\n    GLID: 1\n    REMV: \n      - 1"
+  }
+ ],
+ "decode": [
+  {
+   "name": "intlist",
+   "hex": "a6c00007030142ac04969b000700",
+   "pretty": "    IL: \n      - 1\n      - -2\n      - 300\n    EIL: []"
+  },
+  {
+   "name": "objtype",
+   "hex": "bf4000080401",
+   "pretty": "    OT: \n      (4, 1)"
+  },
+  {
+   "name": "objid",
+   "hex": "be90000982e0030195b4de75",
+   "pretty": "    OI: \n      (30722, 1, 123456789)"
+  },
+  {
+   "name": "float",
+   "hex": "9910000a3fc000009920000a3dcccccd9930000ac00000009940000a60ad78ec9950000a3649539c9960000a000000009970000a5a0e1bca9980000a47f12000",
+   "pretty": "    F1: 1.5\n    F2: 0.10000000149011612\n    F3: -2.0\n    F4: 1.0000000200408773e+20\n    F5: 3.000000106112566e-06\n    F6: 0.0\n    F7: 1.0000000272564224e+16\n    F8: 123456.0"
+  },
+  {
+   "name": "timevalue",
+   "hex": "d360000b809b86e3bfd1ae06",
+   "pretty": "    TV: 1791405059000000"
+  },
+  {
+   "name": "list_of_lists",
+   "hex": "b2c000040402000201020100",
+   "pretty": "    LL: \n      - \n        - 1\n        - 2\n      - \n"
+  },
+  {
+   "name": "list_of_unions",
+   "hex": "b3500004060200da1b3500097f",
+   "pretty": "    LU: \n      - ('union', 0, {'VALU': 9})\n      - ('union', 127, None)"
+  },
+  {
+   "name": "list_of_blobs_floats",
+   "hex": "b22000040201020027b26000040a0140200000b2f0000408010102",
+   "pretty": "    LB: \n      - b\"\\x00'\"\n    LF: \n      - 2.5\n    LO: \n      - (1, 2)"
+  },
+  {
+   "name": "list_of_empty_structs",
+   "hex": "b250000403020000",
+   "pretty": "    LE: \n      - \n\n      - \n"
+  },
+  {
+   "name": "map_of_lists",
+   "hex": "b6c000050104020261000001050262000000",
+   "pretty": "    ML: \n      a: \n        - 5\n      b: []"
+  },
+  {
+   "name": "map_blob_keys",
+   "hex": "b6200005020001026b2701",
+   "pretty": "    MB: \n      b\"k'\": 1"
+  },
+  {
+   "name": "map_list_keys",
+   "hex": "b6b00005040002000201020300010406",
+   "pretty": "    MK: \n      (1, 2): 3\n      (4,): 6"
+  },
+  {
+   "name": "map_duplicate_keys",
+   "hex": "b6400005010003026100010262000202610003",
+   "pretty": "    MD: \n      a: 3\n      b: 2"
+  },
+  {
+   "name": "map_union_values",
+   "hex": "b75000050006010103da1b3501027a00",
+   "pretty": "    MU: \n      1: \n        <union member 3>\n          VALU: 'z'"
+  },
+  {
+   "name": "struct_in_union_in_map",
+   "hex": "ced00005010301026b00d400000600da1b350384000000010000",
+   "pretty": "    SM: \n      k: \n        U: \n          <union member 0>\n            VALU: \n              A: 1"
+  },
+  {
+   "name": "duplicate_labels",
+   "hex": "935c000001bf4a320002935c0001027800",
+   "pretty": "    DUP: 'x'\n    OTHR: 2"
+  },
+  {
+   "name": "string_no_nul",
+   "hex": "ceeb800103616263",
+   "pretty": "    SNN: 'ab'"
+  },
+  {
+   "name": "string_bad_utf8",
+   "hex": "ce2d40010961ffe28262eda08000",
+   "pretty": "    SBU: 'a��b���'"
+  },
+  {
+   "name": "struct_unterminated",
+   "hex": "cf5000038400000001",
+   "pretty": "    SU: \n      A: 1"
+  },
+  {
+   "name": "empty",
+   "hex": "",
+   "pretty": ""
+  },
+  {
+   "name": "getserverinstance_request",
+   "hex": "8b392b0116332e31392e31312e302028332e31392e31312e3029008b4a6d011553657020313520323031342031383a31393a3131008ecbb401094461776e67617465008ecd3000008f0b3400048f3af5010531323334008f6972010976657273696f6e330093392b010a382e31382e31312e300096ed80010570726f64009b0a64067fb2f8c00093d5f2d60cba1b650113626174746c6567726f756e64732d312d706300c2c874010857696e646f777300c32be601127374616e646172645365637572655f763300",
+   "pretty": "    BSDK: '3.19.11.0 (3.19.11.0)'\n    BTIM: 'Sep 15 2014 18:19:11'\n    CLNT: 'Dawngate'\n    CLTP: 0\n    CPLT: 4\n    CSKU: '1234'\n    CVER: 'version3'\n    DSDK: '8.18.11.0'\n    ENV: 'prod'\n    FPID: \n      <union member 127>\n    LOC: 1701729619\n    NAME: 'battlegrounds-1-pc'\n    PLAT: 'Windows'\n    PROF: 'standardSecure_v3'"
+  },
+  {
+   "name": "preauth_request",
+   "hex": "8e487403a69d2f0000b21ba70093d5f2d60ccf68ee0113626174746c6567726f756e64732d312d706300d39c250000008e9ba6038b392b0116332e31392e31312e302028332e31392e31312e3029008b4a6d011553657020313520323031342031383a31383a3437008ecbb401094461776e67617465008f09b400048f3af5010531323334008f6972010976657273696f6e330093392b010a382e31382e31312e300096ed80010570726f6400a37a64010100b2f8c00093d5f2d60cb618c0011230303a30303a30303a30303a30303a303000009a38f2038e6a640109426c617a6553444b0000",
+   "pretty": "    CDAT: \n      IITO: 0\n      LANG: 1701729619\n      SVCN: 'battlegrounds-1-pc'\n      TYPE: 0\n    CINF: \n      BSDK: '3.19.11.0 (3.19.11.0)'\n      BTIM: 'Sep 15 2014 18:18:47'\n      CLNT: 'Dawngate'\n      CPFT: 4\n      CSKU: '1234'\n      CVER: 'version3'\n      DSDK: '8.18.11.0'\n      ENV: 'prod'\n      HWID: ''\n      LOC: 1701729619\n      MAC: '00:00:00:00:00:00'\n    FCCR: \n      CFID: 'BlazeSDK'"
+  },
+  {
+   "name": "login_request",
+   "hex": "b61a6c0113706c61796572406578616d706c652e636f6d00c21cf3010a6461776e676174653100d2faee010100d39c250000",
+   "pretty": "    MAIL: 'player@example.com'\n    PASS: 'dawngate1'\n    TOKN: ''\n    TYPE: 0"
+  },
+  {
+   "name": "loginpersona_request",
+   "hex": "c2e86d0107706c6179657200",
+   "pretty": "    PNAM: 'player'"
+  },
+  {
+   "name": "creategame_request",
+   "hex": "874d3205010106144578706563746564506c61796572436f756e74000231000a47616d65466c616773000531323932000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c4964000230008b4c2c090000009e3d320101009e5bb400009ee86d010e706c6179657227732047616d65009f39740084149f4e700101009f5cac010100a2e97404030102978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000828080a001c2fcb4008b390000a67baf0000bb29730000bb4bf00001c238700400020a00c27a64010100c27ce30200c2d8780000c329730001c638700000ca7a640000cecbf40000d238700005d299330400020102d299380000dafa700000db3d32011c312e302e3930332e3835342d524c2d50726f642d52656c6561736500",
+   "pretty": "    ATTR: \n      ExpectedPlayerCount: '1'\n      GameFlags: '1292'\n      GameOwnerId: '77359401'\n      GameOwnerName: 'player'\n      GameType: '1'\n      LevelId: '0'\n    BTPL: \n      (0, 0, 0)\n    GCTR: ''\n    GENT: 0\n    GNAM: \"player's Game\"\n    GSET: 1284\n    GTYP: ''\n    GURL: ''\n    HNET: \n      - ('union', 2, {'EXIP': {'IP': 2130706433, 'PORT': 3659}, 'INIP': {'IP': 167772162, 'PORT': 3659}})\n    IGNO: 0\n    NRES: 0\n    NTOP: 1\n    PCAP: \n      - 10\n      - 0\n    PGID: ''\n    PGSC: b''\n    PMAX: 0\n    PRES: 1\n    QCAP: 0\n    RGID: 0\n    SLOT: 0\n    TCAP: 5\n    TIDS: \n      - 1\n      - 2\n    TIDX: 0\n    VOIP: 0\n    VSTR: '1.0.903.854-RL-Prod-Release'"
+  },
+  {
+   "name": "saveusersettings_request",
+   "hex": "d73974050101020d417564696f2e4d61737465720004302e35000c566964656f2e576964746800053132383000",
+   "pretty": "    USET: \n      Audio.Master: '0.5'\n      Video.Width: '1280'"
+  },
+  {
+   "name": "setuserinfoattribute_request",
+   "hex": "874d360080808080808080808001b61ceb0000d6ccf404090182e0030181d0acf30e",
+   "pretty": "    ATTV: 4611686018427387904\n    MASK: 0\n    ULST: \n      - (30722, 1, 2000000001)"
+  },
+  {
+   "name": "createplaygroup_request",
+   "hex": "aafa6e0001c27cb003874d32050101010d506c617967726f75704b6579000547472d310096e8b60000a2e974067fa33a640000aafa6e0000b6ca6d000fba1b65010547472d3100bb4bf00000bf7bb20000c27a640000c329730000d6b979010547472d3100d70cb30000d75a64010100dafa700000e2eba30200e33973020000",
+   "pretty": "    JOIN: 1\n    PGRP: \n      ATTR: \n        PlaygroupKey: 'GG-1'\n      ENBV: 0\n      HNET: \n        <union member 127>\n      HSID: 0\n      JOIN: 0\n      MLIM: 15\n      NAME: 'GG-1'\n      NTOP: 0\n      OWNR: 0\n      PGID: 0\n      PRES: 0\n      UKEY: 'GG-1'\n      UPRS: 0\n      UUID: ''\n      VOIP: 0\n      XNNC: b''\n      XSES: b''"
+  },
+  {
+   "name": "startmatchmaking_request",
+   "hex": "874d3205010106144578706563746564506c61796572436f756e7400033130000a47616d65466c616773000231000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c4964000230008b4c2c090000008f2a740386786d0300870b3203008f5cf4030092e9800392e98000a501009e5bc003d28b24010100009ee86d03cf58b301010000ba1d0003d28b2401010000c30b3203c3397409000000ca5c70000000c33c8003d28b24010f7370656369666963526567696f6e0000ca1bab03d28b24010100da1b35000100caccf4040302ba1b65011067616d6573506c6179656452756c6500d28b24010b6465636179506c75733000da1b35040101044e65770000ba1b65010c7072656d61646552756c6500d28b24010b6465636179506c75733000da1b3504010102310000cb3eb203c2387000bfff07c2da6e000000ce9ea503a73ce70000c238700001c23bb40001c2da6e0001d28b2401010000d2586d03c238700005c23bb40005c2da6e0001ce4a660000d28b2401127265717569726545786163744d6174636800d2990000beff07d2ccf4040002beff07beff0700d65900050103010b736b696c6c5f52756c65008f686c0000ba1b65010b736b696c6c5f52756c6500bf686c0000d28b24010b6465636179506c7573300000da986203d28b2401010000da9cb403d28b24010100da1b3500010000935c800080aea60a9e5bb400009ee86d010e706c6179657227732047616d65009f39740086149f6972011c312e302e3930332e3835342d524c2d50726f642d52656c6561736500a67baf0000b6f9250002bb4bf00001c21d34050101020c67616d6573506c6179656400044e6577000c7072656d61646553697a6500023100c2d8780000c2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000828080a001c2fcb4008b390000c329730001c638700000dafa700000",
+   "pretty": "    ATTR: \n      ExpectedPlayerCount: '10'\n      GameFlags: '1'\n      GameOwnerId: '77359401'\n      GameOwnerName: 'player'\n      GameType: '1'\n      LevelId: '0'\n    BTPL: \n      (0, 0, 0)\n    CRIT: \n      AGAM: {}\n      APLR: {}\n      CUST: {}\n      DNF: \n        DNF: 101\n      GEO: \n        THLD: ''\n      GNAM: \n        SUBS: ''\n      NAT: \n        THLD: ''\n      PPLR: \n        PSET: \n          (0, 0, 0)\n        REQP: 0\n      PSR: \n        THLD: 'specificRegion'\n      RANK: \n        THLD: ''\n        VALU: 1\n      RLST: \n        - \n          NAME: 'gamesPlayedRule'\n          THLD: 'decayPlus0'\n          VALU: \n            - 'New'\n        - \n          NAME: 'premadeRule'\n          THLD: 'decayPlus0'\n          VALU: \n            - '1'\n      RSZR: \n        PCAP: 65535\n        PMIN: 0\n      SIZE: \n        ISSG: 0\n        PCAP: 1\n        PCNT: 1\n        PMIN: 1\n        THLD: ''\n      TEAM: \n        PCAP: 5\n        PCNT: 5\n        PMIN: 1\n        SDIF: 0\n        THLD: 'requireExactMatch'\n        TID: 65534\n        TLST: \n          - 65534\n          - 65534\n      UED: \n        skill_Rule: \n          CVAL: 0\n          NAME: 'skill_Rule'\n          OVAL: 0\n          THLD: 'decayPlus0'\n      VIAB: \n        THLD: ''\n      VIRT: \n        THLD: ''\n        VALU: 1\n    DUR: 10800000\n    GENT: 0\n    GNAM: \"player's Game\"\n    GSET: 1286\n    GVER: '1.0.903.854-RL-Prod-Release'\n    IGNO: 0\n    MODE: 2\n    NTOP: 1\n    PATT: \n      gamesPlayed: 'New'\n      premadeSize: '1'\n    PMAX: 0\n    PNET: \n      <union member 2>\n        VALU: \n          EXIP: \n            IP: 2130706433\n            PORT: 3659\n          INIP: \n            IP: 167772162\n            PORT: 3659\n    PRES: 1\n    QCAP: 0\n    VOIP: 0"
+  },
+  {
+   "name": "startmatchmaking_party_request",
+   "hex": "874d3205010106144578706563746564506c61796572436f756e7400033130000a47616d65466c616773000231000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c4964000230008b4c2c090601018f2a740386786d0300870b3203008f5cf4030092e9800392e98000a501009e5bc003d28b24010100009ee86d03cf58b301010000ba1d0003d28b2401010000c30b3203c3397409000000ca5c70000000c33c8003d28b24010f7370656369666963526567696f6e0000ca1bab03d28b24010100da1b35000100caccf4040302ba1b65011067616d6573506c6179656452756c6500d28b24010b6465636179506c75733000da1b35040101044e65770000ba1b65010c7072656d61646552756c6500d28b24010b6465636179506c75733000da1b3504010102320000cb3eb203c2387000bfff07c2da6e000000ce9ea503a73ce70000c238700001c23bb40001c2da6e0001d28b2401010000d2586d03c238700005c23bb40005c2da6e0001ce4a660000d28b2401127265717569726545786163744d6174636800d2990000beff07d2ccf4040002beff07beff0700d65900050103010b736b696c6c5f52756c65008f686c0000ba1b65010b736b696c6c5f52756c6500bf686c0000d28b24010b6465636179506c7573300000da986203d28b2401010000da9cb403d28b24010100da1b3500010000935c800080aea60a9e5bb400009ee86d010e706c6179657227732047616d65009f39740086149f6972011c312e302e3930332e3835342d524c2d50726f642d52656c6561736500a67baf0000b6f9250002bb4bf00001c21d34050101020c67616d6573506c6179656400044e6577000c7072656d61646553697a6500023200c2d8780000c2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000828080a001c2fcb4008b390000c329730001c638700000dafa700000",
+   "pretty": "    ATTR: \n      ExpectedPlayerCount: '10'\n      GameFlags: '1'\n      GameOwnerId: '77359401'\n      GameOwnerName: 'player'\n      GameType: '1'\n      LevelId: '0'\n    BTPL: \n      (6, 1, 1)\n    CRIT: \n      AGAM: {}\n      APLR: {}\n      CUST: {}\n      DNF: \n        DNF: 101\n      GEO: \n        THLD: ''\n      GNAM: \n        SUBS: ''\n      NAT: \n        THLD: ''\n      PPLR: \n        PSET: \n          (0, 0, 0)\n        REQP: 0\n      PSR: \n        THLD: 'specificRegion'\n      RANK: \n        THLD: ''\n        VALU: 1\n      RLST: \n        - \n          NAME: 'gamesPlayedRule'\n          THLD: 'decayPlus0'\n          VALU: \n            - 'New'\n        - \n          NAME: 'premadeRule'\n          THLD: 'decayPlus0'\n          VALU: \n            - '2'\n      RSZR: \n        PCAP: 65535\n        PMIN: 0\n      SIZE: \n        ISSG: 0\n        PCAP: 1\n        PCNT: 1\n        PMIN: 1\n        THLD: ''\n      TEAM: \n        PCAP: 5\n        PCNT: 5\n        PMIN: 1\n        SDIF: 0\n        THLD: 'requireExactMatch'\n        TID: 65534\n        TLST: \n          - 65534\n          - 65534\n      UED: \n        skill_Rule: \n          CVAL: 0\n          NAME: 'skill_Rule'\n          OVAL: 0\n          THLD: 'decayPlus0'\n      VIAB: \n        THLD: ''\n      VIRT: \n        THLD: ''\n        VALU: 1\n    DUR: 10800000\n    GENT: 0\n    GNAM: \"player's Game\"\n    GSET: 1286\n    GVER: '1.0.903.854-RL-Prod-Release'\n    IGNO: 0\n    MODE: 2\n    NTOP: 1\n    PATT: \n      gamesPlayed: 'New'\n      premadeSize: '2'\n    PMAX: 0\n    PNET: \n      <union member 2>\n        VALU: \n          EXIP: \n            IP: 2130706433\n            PORT: 3659\n          INIP: \n            IP: 167772162\n            PORT: 3659\n    PRES: 1\n    QCAP: 0\n    VOIP: 0"
+  },
+  {
+   "name": "updatenetworkinfo_request",
+   "hex": "8649320602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000828080a001c2fcb4008b390000bacb70050100040365750096020765752d616e79008803036e610032076e612d616e7900a401bb1bf303922c330080e0c65bba1d340000d62c330080e0c65b00",
+   "pretty": "    ADDR: \n      <union member 2>\n        VALU: \n          EXIP: \n            IP: 2130706433\n            PORT: 3659\n          INIP: \n            IP: 167772162\n            PORT: 3659\n    NLMP: \n      eu: 150\n      eu-any: 200\n      na: 50\n      na-any: 100\n    NQOS: \n      DBPS: 96000000\n      NATT: 0\n      UBPS: 96000000"
+  },
+  {
+   "name": "createplaygroup_party_request",
+   "hex": "aafa6e0000c27cb003874d320501010096e8b60000a2e974067fa33a640000aafa6e0000b6ca6d0005ba1b65012232663165346339612d306237642d346532312d396333662d35613662376338643900bb4bf00000bf7bb20000c27a640000c329730000d6b979010100d70cb30000d75a64010100dafa700000e2eba30200e33973020000",
+   "pretty": "    JOIN: 0\n    PGRP: \n      ATTR: {}\n      ENBV: 0\n      HNET: \n        <union member 127>\n      HSID: 0\n      JOIN: 0\n      MLIM: 5\n      NAME: '2f1e4c9a-0b7d-4e21-9c3f-5a6b7c8d9'\n      NTOP: 0\n      OWNR: 0\n      PGID: 0\n      PRES: 0\n      UKEY: ''\n      UPRS: 0\n      UUID: ''\n      VOIP: 0\n      XNNC: b''\n      XSES: b''"
+  },
+  {
+   "name": "joinplaygroup_request",
+   "hex": "c27a640001c2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000828080a001c2fcb4008b390000d6b979010100d7397203869900000086cbe300009788a20200978a640000a640000000ba1b65010100bf2a67000000",
+   "pretty": "    PGID: 1\n    PNET: \n      <union member 2>\n        VALU: \n          EXIP: \n            IP: 2130706433\n            PORT: 3659\n          INIP: \n            IP: 167772162\n            PORT: 3659\n    UKEY: ''\n    USER: \n      AID: 0\n      ALOC: 0\n      EXBB: b''\n      EXID: 0\n      ID: 0\n      NAME: ''\n      ORIG: 0"
+  },
+  {
+   "name": "sendmessage_pvpinvite_request",
+   "hex": "874d320500010480805807706c61796572008380580231008580580231008680580230009ac8670000cf48740000d219c00000d2993304000182d0acf30ed34e700882e00301d39c2500abb4d0f602",
+   "pretty": "    ATTR: \n      720896: 'player'\n      720899: '1'\n      720901: '1'\n      720902: '0'\n    FLAG: 0\n    STAT: 0\n    TAG: 0\n    TIDS: \n      - 2000000002\n    TTYP: \n      (30722, 1)\n    TYPE: 392826155"
+  },
+  {
+   "name": "sendmessage_inviteanswer_request",
+   "hex": "874d32050001028280580254008580580231009ac8670000cf48740000d219c00000d2993304000181d0acf30ed34e700882e00301d39c25009e848ed014",
+   "pretty": "    ATTR: \n      720898: 'T'\n      720901: '1'\n    FLAG: 0\n    STAT: 0\n    TAG: 0\n    TIDS: \n      - 2000000001\n    TTYP: \n      (30722, 1)\n    TYPE: 2768355614"
+  },
+  {
+   "name": "sendmessage_partychat_request",
+   "hex": "874d320500010382fc0706676c2068660083805802320089805806676c206866009ac8670006cf48740000d219c00000d2993304000101d34e70080601d39c250002",
+   "pretty": "    ATTR: \n      65282: 'gl hf'\n      720899: '2'\n      720905: 'gl hf'\n    FLAG: 6\n    STAT: 0\n    TAG: 0\n    TIDS: \n      - 1\n    TTYP: \n      (6, 1)\n    TYPE: 2"
+  },
+  {
+   "name": "sendmessage_whisper_request",
+   "hex": "874d320500010482fc0706676c206866008380580230008480580666616c73650089805806676c206866009ac8670007cf48740000d219c00000d2993304000182d0acf30ed34e700882e00301d39c250003",
+   "pretty": "    ATTR: \n      65282: 'gl hf'\n      720899: '0'\n      720900: 'false'\n      720905: 'gl hf'\n    FLAG: 7\n    STAT: 0\n    TAG: 0\n    TIDS: \n      - 2000000002\n    TTYP: \n      (30722, 1)\n    TYPE: 3"
+  },
+  {
+   "name": "filterforprofanity_request",
+   "hex": "d74e34040301d74e340106676c2068660000",
+   "pretty": "    UTXT: \n      - \n        UTXT: 'gl hf'"
+  },
+  {
+   "name": "lookupuser_request",
+   "hex": "869900000086cbe300009788a20200978a640000a640000000ba1b6501077365636f6e6400bf2a670000",
+   "pretty": "    AID: 0\n    ALOC: 0\n    EXBB: b''\n    EXID: 0\n    ID: 0\n    NAME: 'second'\n    ORIG: 0"
+  },
+  {
+   "name": "getperkpagedata_request",
+   "hex": "cedcb90001d739720081d0acf30e",
+   "pretty": "    SMRY: 1\n    USER: 2000000001"
+  },
+  {
+   "name": "updateperkpage_request",
+   "hex": "c219e503c25cab0403019e5b730403019e9900008780808002ce99380000009e99380005c29900008680808002cafd00000100cf5b6d03ba1b65010750616765203100c299000001cf48740001da5cb300020000",
+   "pretty": "    PAGE: \n      PERK: \n        - \n          GEMS: \n            - \n              GID: 268435463\n              SIDX: 0\n          GIDX: 5\n          PID: 268435462\n          ROT: 1\n      SUMM: \n        NAME: 'Page 1'\n        PID: 1\n        STAT: 1\n        VERS: 2"
+  },
+  {
+   "name": "purchasewithec_request",
+   "hex": "8eed000001a74b730400018680808002c30ca90000c32be9010a32363834333534363200c6ed3304000101da5cb301023100",
+   "pretty": "    CNT: 1\n    ITMS: \n      - 268435462\n    PPRI: 0\n    PROI: '268435462'\n    QNTS: \n      - 1\n    VERS: '1'"
+  },
+  {
+   "name": "purchasewithpc_request",
+   "hex": "8eed000001a74b730400018b80808002c30ca900ac04c32be9010a32363834333534363700c6ed3304000101da5cb301023100",
+   "pretty": "    CNT: 1\n    ITMS: \n      - 268435467\n    PPRI: 300\n    PROI: '268435467'\n    QNTS: \n      - 1\n    VERS: '1'"
+  },
+  {
+   "name": "getstatsbygroupasync_shaperstats_request",
+   "hex": "8679f2000096990004000181d0acf30eba1b65010c536861706572537461747300c23d320001c2f9a60000c32a640000c34e700000d29b650000da99000002",
+   "pretty": "    AGGR: 0\n    EID: \n      - 2000000001\n    NAME: 'ShaperStats'\n    PCTR: 1\n    POFF: 0\n    PRID: 0\n    PTYP: 0\n    TIME: 0\n    VID: 2"
+  },
+  {
+   "name": "getstatsbygroupasync_shaperhistorystats_request",
+   "hex": "8679f2000096990004000181d0acf30eba1b650113536861706572486973746f7279537461747300c23d320007c2f9a60000c32a640000c34e700003d29b650000da99000003",
+   "pretty": "    AGGR: 0\n    EID: \n      - 2000000001\n    NAME: 'ShaperHistoryStats'\n    PCTR: 7\n    POFF: 0\n    PRID: 0\n    PTYP: 3\n    TIME: 0\n    VID: 3"
+  },
+  {
+   "name": "getstatsbygroupasync_rolehistorystats_request",
+   "hex": "8679f2000096990004000181d0acf30eba1b650111526f6c65486973746f7279537461747300c23d320007c2f9a60000c32a640000c34e700003d29b650000da99000004",
+   "pretty": "    AGGR: 0\n    EID: \n      - 2000000001\n    NAME: 'RoleHistoryStats'\n    PCTR: 7\n    POFF: 0\n    PRID: 0\n    PTYP: 3\n    TIME: 0\n    VID: 4"
+  },
+  {
+   "name": "getlists_request",
+   "hex": "86ccf40403038afa64090000009ac9f30001b2990003b2eb40010100d39c25000200b2dcc00000c32a640000008afa64090000009ac9f30000b2990003b2eb40010100d39c25000400b2dcc00000c32a640000008afa64090000009ac9f30015b2990003b2eb40010100d39c25000100b2dcc00000c32a64000000b78ca300bfffffff1fbe6ca30000",
+   "pretty": "    ALST: \n      - \n        BOID: \n          (0, 0, 0)\n        FLGS: 1\n        LID: \n          LNM: ''\n          TYPE: 2\n        LMS: 0\n        PRID: 0\n      - \n        BOID: \n          (0, 0, 0)\n        FLGS: 0\n        LID: \n          LNM: ''\n          TYPE: 4\n        LMS: 0\n        PRID: 0\n      - \n        BOID: \n          (0, 0, 0)\n        FLGS: 21\n        LID: \n          LNM: ''\n          TYPE: 1\n        LMS: 0\n        PRID: 0\n    MXRC: 4294967295\n    OFRC: 0"
+  },
+  {
+   "name": "adduserstolist_request",
+   "hex": "8a990000008a992c0403018aca640082d0acf30e9788a20200c2c8740000c2e86d010100e32966000000b2990003b2eb400111726563656e74506c617965724c69737400d39c25000200b75d210000da1b210001da1b240001",
+   "pretty": "    BID: 0\n    BIDL: \n      - \n        BLID: 2000000002\n        EXBB: b''\n        PLAT: 0\n        PNAM: ''\n        XREF: 0\n    LID: \n      LNM: 'recentPlayerList'\n      TYPE: 2\n    MUTA: 0\n    VALA: 1\n    VALD: 1"
+  },
+  {
+   "name": "adduserstolist_empty_request",
+   "hex": "8a990000008a992c040300b2990003b2eb400111726563656e74506c617965724c69737400d39c25000200b75d210000da1b210001da1b240001",
+   "pretty": "    BID: 0\n    BIDL: []\n    LID: \n      LNM: 'recentPlayerList'\n      TYPE: 2\n    MUTA: 0\n    VALA: 1\n    VALD: 1"
+  },
+  {
+   "name": "sendmessage_friendrequest_request",
+   "hex": "874d320500010382fc07010083805802360089805801009ac8670005cf48740000d219c00000d2993304000181d0acf30ed34e700882e00301d39c250008",
+   "pretty": "    ATTR: \n      65282: ''\n      720899: '6'\n      720905: ''\n    FLAG: 5\n    STAT: 0\n    TAG: 0\n    TIDS: \n      - 2000000001\n    TTYP: \n      (30722, 1)\n    TYPE: 8"
+  },
+  {
+   "name": "sendmessage_friendaccepted_request",
+   "hex": "874d320500010382fc07010083805802360089805801009ac8670005cf48740000d219c00000d2993304000182d0acf30ed34e700882e00301d39c250009",
+   "pretty": "    ATTR: \n      65282: ''\n      720899: '6'\n      720905: ''\n    FLAG: 5\n    STAT: 0\n    TAG: 0\n    TIDS: \n      - 2000000002\n    TTYP: \n      (30722, 1)\n    TYPE: 9"
+  },
+  {
+   "name": "adduserstolist_friend_request",
+   "hex": "8a990000008a992c0403018aca640082d0acf30e9788a20200c2c8740000c2e86d010100e32966000000b2990003b2eb40010b667269656e644c69737400d39c25000100b75d210001da1b210001da1b240001",
+   "pretty": "    BID: 0\n    BIDL: \n      - \n        BLID: 2000000002\n        EXBB: b''\n        PLAT: 0\n        PNAM: ''\n        XREF: 0\n    LID: \n      LNM: 'friendList'\n      TYPE: 1\n    MUTA: 1\n    VALA: 1\n    VALD: 1"
+  },
+  {
+   "name": "removeusersfromlist_friend_request",
+   "hex": "8a990000008a992c0403018aca640082d0acf30e9788a20200c2c8740000c2e86d010100e32966000000b2990003b2eb40010b667269656e644c69737400d39c25000100b75d210001da1b210001da1b240001",
+   "pretty": "    BID: 0\n    BIDL: \n      - \n        BLID: 2000000002\n        EXBB: b''\n        PLAT: 0\n        PNAM: ''\n        XREF: 0\n    LID: \n      LNM: 'friendList'\n      TYPE: 1\n    MUTA: 1\n    VALA: 1\n    VALD: 1"
+  },
+  {
+   "name": "adduserstolist_blockbyname_request",
+   "hex": "8a990000008a992c0403018aca6400009788a20200c2c8740000c2e86d0106746869726400e32966000000b2990003b2eb40010a626c6f636b4c69737400d39c25000400b75d210000da1b210001da1b240001",
+   "pretty": "    BID: 0\n    BIDL: \n      - \n        BLID: 0\n        EXBB: b''\n        PLAT: 0\n        PNAM: 'third'\n        XREF: 0\n    LID: \n      LNM: 'blockList'\n      TYPE: 4\n    MUTA: 0\n    VALA: 1\n    VALD: 1"
+  },
+  {
+   "name": "removeusersfromlist_unblockbyname_request",
+   "hex": "8a990000008a992c0403018aca6400009788a20200c2c8740000c2e86d0106746869726400e32966000000b2990003b2eb40010a626c6f636b4c69737400d39c25000400b75d210000da1b210001da1b240001",
+   "pretty": "    BID: 0\n    BIDL: \n      - \n        BLID: 0\n        EXBB: b''\n        PLAT: 0\n        PNAM: 'third'\n        XREF: 0\n    LID: \n      LNM: 'blockList'\n      TYPE: 4\n    MUTA: 0\n    VALA: 1\n    VALD: 1"
+  },
+  {
+   "name": "updateextendeddataattribute_presence_request",
+   "hex": "874a640090d502bf09720000d729610000da1b3500818008",
+   "pretty": "    ATID: 21840\n    OPER: 0\n    UREA: 0\n    VALU: 65537"
+  },
+  {
+   "name": "getgamelistsubscription_request",
+   "hex": "92e86d010e424744656661756c744c697374009eca640386786d0300870b3203008f5cf4030092e9800392e98000a501009e5bc003d28b24010100009ee86d03cf58b301010000ba1d0003d28b2401010000c30b3203c3397409000000ca5c70000000c33c8003d28b2401010000ca1bab03d28b24010100da1b35000100cb3eb203c2387000bfff07c2da6e000000ce9ea503a73ce70000c238700001c23bb40001c2da6e0001d28b2401010000d2586d03c238700000c23bb40000c2da6e0000ce4a660000d28b24010100d2990000bfff0700da986203d28b2401010000da9cb403d28b24010100da1b35000100009f6972011c312e302e3930332e3835342d524c2d50726f642d52656c6561736500a67baf0001b2387000a80fbafaad0001",
+   "pretty": "    DNAM: 'BGDefaultList'\n    GLID: \n      AGAM: {}\n      APLR: {}\n      CUST: {}\n      DNF: \n        DNF: 101\n      GEO: \n        THLD: ''\n      GNAM: \n        SUBS: ''\n      NAT: \n        THLD: ''\n      PPLR: \n        PSET: \n          (0, 0, 0)\n        REQP: 0\n      PSR: \n        THLD: ''\n      RANK: \n        THLD: ''\n        VALU: 1\n      RSZR: \n        PCAP: 65535\n        PMIN: 0\n      SIZE: \n        ISSG: 0\n        PCAP: 1\n        PCNT: 1\n        PMIN: 1\n        THLD: ''\n      TEAM: \n        PCAP: 0\n        PCNT: 0\n        PMIN: 0\n        SDIF: 0\n        THLD: ''\n        TID: 65535\n      VIAB: \n        THLD: ''\n      VIRT: \n        THLD: ''\n        VALU: 1\n    GVER: '1.0.903.854-RL-Prod-Release'\n    IGNO: 1\n    LCAP: 1000\n    NOJM: 1"
+  },
+  {
+   "name": "resetdedicatedserver_custom_request",
+   "hex": "874d3205010106144578706563746564506c61796572436f756e7400033130000a47616d65466c616773000232000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c4964000b32343930313838323836008b4c2c090000009e3d320101009e5bb400009ee86d0109437573746f6d2031009f39740085149f4e700101009f5cac010100a2e97404030102978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000828080a001c2fcb4008b390000a67baf0000bb29730000bb4bf00001c238700400020f00c27a64010100c27ce30200c2d8780000c329730001c638700000ca7a640000cecbf40000d238700005d29933040003010203d299380000dafa700000db3d32011c312e302e3930332e3835342d524c2d50726f642d52656c6561736500",
+   "pretty": "    ATTR: \n      ExpectedPlayerCount: '10'\n      GameFlags: '2'\n      GameOwnerId: '77359401'\n      GameOwnerName: 'player'\n      GameType: '1'\n      LevelId: '2490188286'\n    BTPL: \n      (0, 0, 0)\n    GCTR: ''\n    GENT: 0\n    GNAM: 'Custom 1'\n    GSET: 1285\n    GTYP: ''\n    GURL: ''\n    HNET: \n      - ('union', 2, {'EXIP': {'IP': 2130706433, 'PORT': 3659}, 'INIP': {'IP': 167772162, 'PORT': 3659}})\n    IGNO: 0\n    NRES: 0\n    NTOP: 1\n    PCAP: \n      - 15\n      - 0\n    PGID: ''\n    PGSC: b''\n    PMAX: 0\n    PRES: 1\n    QCAP: 0\n    RGID: 0\n    SLOT: 0\n    TCAP: 5\n    TIDS: \n      - 1\n      - 2\n      - 3\n    TIDX: 0\n    VOIP: 0\n    VSTR: '1.0.903.854-RL-Prod-Release'"
+  },
+  {
+   "name": "joingame_browser_request",
+   "hex": "8b4c2c090000009e5bb400009e990000019f6972011c312e302e3930332e3835342d524c2d50726f642d52656c6561736500aad9740001c2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000828080a001c2fcb4008b390000cec96e0000ceca6400bf03cecbf40000cf4cb40000d2993800bfff07d7397203869900000086cbe300009788a20200978a640000a640000000ba1b65010100bf2a67000000e339730200",
+   "pretty": "    BTPL: \n      (0, 0, 0)\n    GENT: 0\n    GID: 1\n    GVER: '1.0.903.854-RL-Prod-Release'\n    JMET: 1\n    PNET: \n      <union member 2>\n        VALU: \n          EXIP: \n            IP: 2130706433\n            PORT: 3659\n          INIP: \n            IP: 167772162\n            PORT: 3659\n    SLEN: 0\n    SLID: 255\n    SLOT: 0\n    STRT: 0\n    TIDX: 65535\n    USER: \n      AID: 0\n      ALOC: 0\n      EXBB: b''\n      EXID: 0\n      ID: 0\n      NAME: ''\n      ORIG: 0\n    XSES: b''"
+  },
+  {
+   "name": "joingame_spectate_request",
+   "hex": "8b4c2c090000009e5bb400009e990000019f6972011c312e302e3930332e3835342d524c2d50726f642d52656c6561736500aad9740001c2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000828080a001c2fcb4008b390000cec96e0000ceca6400bf03cecbf40000cf4cb40000d299380002d7397203869900000086cbe300009788a20200978a640000a640000000ba1b65010100bf2a67000000e339730200",
+   "pretty": "    BTPL: \n      (0, 0, 0)\n    GENT: 0\n    GID: 1\n    GVER: '1.0.903.854-RL-Prod-Release'\n    JMET: 1\n    PNET: \n      <union member 2>\n        VALU: \n          EXIP: \n            IP: 2130706433\n            PORT: 3659\n          INIP: \n            IP: 167772162\n            PORT: 3659\n    SLEN: 0\n    SLID: 255\n    SLOT: 0\n    STRT: 0\n    TIDX: 2\n    USER: \n      AID: 0\n      ALOC: 0\n      EXBB: b''\n      EXID: 0\n      ID: 0\n      NAME: ''\n      ORIG: 0\n    XSES: b''"
+  },
+  {
+   "name": "joingame_private_request",
+   "hex": "874d3205010101115072697661746541757468546f6b656e00093141324233433444008b4c2c090000009e5bb400009e990000019f6972011c312e302e3930332e3835342d524c2d50726f642d52656c6561736500aad9740001c2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000828080a001c2fcb4008b390000cec96e0000ceca6400bf03cecbf40000cf4cb40000d2993800bfff07d7397203869900000086cbe300009788a20200978a640000a640000000ba1b65010100bf2a67000000e339730200",
+   "pretty": "    ATTR: \n      PrivateAuthToken: '1A2B3C4D'\n    BTPL: \n      (0, 0, 0)\n    GENT: 0\n    GID: 1\n    GVER: '1.0.903.854-RL-Prod-Release'\n    JMET: 1\n    PNET: \n      <union member 2>\n        VALU: \n          EXIP: \n            IP: 2130706433\n            PORT: 3659\n          INIP: \n            IP: 167772162\n            PORT: 3659\n    SLEN: 0\n    SLID: 255\n    SLOT: 0\n    STRT: 0\n    TIDX: 65535\n    USER: \n      AID: 0\n      ALOC: 0\n      EXBB: b''\n      EXID: 0\n      ID: 0\n      NAME: ''\n      ORIG: 0\n    XSES: b''"
+  },
+  {
+   "name": "setgameattributes_request",
+   "hex": "874d320501010310526f737465724c6f636b65644b65790002300016537065637461746f72506c6179657249644c6973740001000f5465616d526f73746572734b6579002d415a5131647741414141414341414d46415147554e58634141414141425145436c4456334141414141415541009e99000001",
+   "pretty": "    ATTR: \n      RosterLockedKey: '0'\n      SpectatorPlayerIdList: ''\n      TeamRostersKey: 'AZQ1dwAAAAACAAMFAQGUNXcAAAAABQEClDV3AAAAAAUA'\n    GID: 1"
+  },
+  {
+   "name": "swapplayersteam_request",
+   "hex": "9e99000001b2786d040302c299000081d0acf30ed29938000000c299000082d0acf30ed29938000200",
+   "pretty": "    GID: 1\n    LGAM: \n      - \n        PID: 2000000001\n        TIDX: 0\n      - \n        PID: 2000000002\n        TIDX: 2"
+  },
+  {
+   "name": "advancegamestate_request",
+   "hex": "9e990000019f3d21008302",
+   "pretty": "    GID: 1\n    GSTA: 131"
+  },
+  {
+   "name": "setplayerattributes_request",
+   "hex": "874d3205010101115072697661746541757468546f6b656e00093141324233433444009e99000001c299000082d0acf30e",
+   "pretty": "    ATTR: \n      PrivateAuthToken: '1A2B3C4D'\n    GID: 1\n    PID: 2000000002"
+  },
+  {
+   "name": "sendmessage_jointeam_request",
+   "hex": "874d32050001028080580231008180580232009ac8670000cf48740000d219c00000d2993304000181d0acf30ed34e700882e00301d39c250087e5b1c018",
+   "pretty": "    ATTR: \n      720896: '1'\n      720897: '2'\n    FLAG: 0\n    STAT: 0\n    TAG: 0\n    TIDS: \n      - 2000000001\n    TTYP: \n      (30722, 1)\n    TYPE: 3288742215"
+  },
+  {
+   "name": "destroygamelist_request",
+   "hex": "9eca640001",
+   "pretty": "    GLID: 1"
+  }
+ ],
+ "errors": [
+  {
+   "name": "truncated_label",
+   "hex": "86",
+   "error": "truncated TDF"
+  },
+  {
+   "name": "missing_type",
+   "hex": "8628c0",
+   "error": "index out of range"
+  },
+  {
+   "name": "truncated_varint",
+   "hex": "8400000080",
+   "error": "index out of range"
+  },
+  {
+   "name": "truncated_string",
+   "hex": "cc000001056162",
+   "error": "truncated TDF"
+  },
+  {
+   "name": "truncated_float",
+   "hex": "9800000a0000",
+   "error": "truncated TDF"
+  },
+  {
+   "name": "unknown_type",
+   "hex": "e000000c00",
+   "error": "unknown TDF type 12 at 3"
+  },
+  {
+   "name": "list_missing_elem_type",
+   "hex": "b0000004",
+   "error": "index out of range"
+  },
+  {
+   "name": "map_truncated",
+   "hex": "b4000005010101026100",
+   "error": "index out of range"
+  },
+  {
+   "name": "union_truncated",
+   "hex": "d40000060001",
+   "error": "truncated TDF"
+  }
+ ],
+ "frames": [
+  {
+   "name": "getserverinstance_reply",
+   "component": 5,
+   "command": 1,
+   "type": 1,
+   "id": 0,
+   "error": 0,
+   "payload": "8649320600da1b3503a2fcf4010a3132372e302e302e3100a7000000818080f00fc2fcb400b99c0100ce58f50000e24bb30000",
+   "pretty": "    ADDR: \n      <union member 0>\n        VALU: \n          HOST: '127.0.0.1'\n          IP: 2130706433\n          PORT: 10041\n    SECU: 0\n    XDNS: 0",
+   "hex": "0033000500010000100000008649320600da1b3503a2fcf4010a3132372e302e302e3100a7000000818080f00fc2fcb400b99c0100ce58f50000e24bb30000"
+  },
+  {
+   "name": "preauth_reply",
+   "component": 9,
+   "command": 7,
+   "type": 1,
+   "id": 0,
+   "error": 0,
+   "payload": "873ca30107333033313037008e99330400130104050607090a0f15191b1c9f20a020a320a520a620a72082e0038efba6038efba60501010310636f6e6e49646c6554696d656f75740004393073001664656661756c745265717565737454696d656f75740004383073000b70696e67506572696f6400043230730000973ca3010733303331303700a6ecf40113626174746c6567726f756e64732d312d706300ba1cf0010a63656d5f65615f696400c29b24010100c2c8740103706300c6fcf3038b7c3303c33840010a3132372e302e302e3100c33c00009e9102cee84001066c6f63616c0000b2ec00000ab34c3305010301066c6f63616c00c33840010a3132372e302e302e3100c33c00009e9102cee84001066c6f63616c0000cf6a640085a088d40800cb3ca3010733303331303700cf6972012c426c617a6520332e31392e31312e3020284461776e6761746520726573746f726174696f6e20737475622900",
+   "pretty": "    ASRC: '303107'\n    CIDS: \n      - 1\n      - 4\n      - 5\n      - 6\n      - 7\n      - 9\n      - 10\n      - 15\n      - 21\n      - 25\n      - 27\n      - 28\n      - 2079\n      - 2080\n      - 2083\n      - 2085\n      - 2086\n      - 2087\n      - 30722\n    CONF: \n      CONF: \n        connIdleTimeout: '90s'\n        defaultRequestTimeout: '80s'\n        pingPeriod: '20s'\n    ESRC: '303107'\n    INST: 'battlegrounds-1-pc'\n    NASP: 'cem_ea_id'\n    PILD: ''\n    PLAT: 'pc'\n    QOSS: \n      BWPS: \n        PSA: '127.0.0.1'\n        PSP: 17502\n        SNA: 'local'\n      LNP: 10\n      LTPS: \n        local: \n          PSA: '127.0.0.1'\n          PSP: 17502\n          SNA: 'local'\n      SVID: 1161889797\n    RSRC: '303107'\n    SVER: 'Blaze 3.19.11.0 (Dawngate restoration stub)'",
+   "hex": "016300090007000010000000873ca30107333033313037008e99330400130104050607090a0f15191b1c9f20a020a320a520a620a72082e0038efba6038efba60501010310636f6e6e49646c6554696d656f75740004393073001664656661756c745265717565737454696d656f75740004383073000b70696e67506572696f6400043230730000973ca3010733303331303700a6ecf40113626174746c6567726f756e64732d312d706300ba1cf0010a63656d5f65615f696400c29b24010100c2c8740103706300c6fcf3038b7c3303c33840010a3132372e302e302e3100c33c00009e9102cee84001066c6f63616c0000b2ec00000ab34c3305010301066c6f63616c00c33840010a3132372e302e302e3100c33c00009e9102cee84001066c6f63616c0000cf6a640085a088d40800cb3ca3010733303331303700cf6972012c426c617a6520332e31392e31312e3020284461776e6761746520726573746f726174696f6e20737475622900"
+  },
+  {
+   "name": "ping_reply",
+   "component": 9,
+   "command": 2,
+   "type": 1,
+   "id": 1,
+   "error": 0,
+   "payload": "cf4a6d0083b0b5ac0d",
+   "pretty": "    STIM: 1791405059",
+   "hex": "000900090002000010000001cf4a6d0083b0b5ac0d"
+  },
+  {
+   "name": "login_request",
+   "component": 1,
+   "command": 40,
+   "type": 0,
+   "id": 2,
+   "error": 0,
+   "payload": "b61a6c0113706c61796572406578616d706c652e636f6d00c21cf3010a6461776e676174653100d2faee010100d39c250000",
+   "pretty": "    MAIL: 'player@example.com'\n    PASS: 'dawngate1'\n    TOKN: ''\n    TYPE: 0",
+   "hex": "003200010028000000000002b61a6c0113706c61796572406578616d706c652e636f6d00c21cf3010a6461776e676174653100d2faee010100d39c250000"
+  },
+  {
+   "name": "error_reply",
+   "component": 1,
+   "command": 40,
+   "type": 3,
+   "id": 2,
+   "error": 16388,
+   "payload": "",
+   "pretty": "",
+   "hex": "000000010028400430000002"
+  },
+  {
+   "name": "notification",
+   "component": 30722,
+   "command": 2,
+   "type": 2,
+   "id": 0,
+   "error": 0,
+   "payload": "8400000001",
+   "pretty": "    A: 1",
+   "hex": "0005780200020000200000008400000001"
+  },
+  {
+   "name": "msgid_masked",
+   "component": 9,
+   "command": 2,
+   "type": 0,
+   "id": 1193046,
+   "error": 0,
+   "payload": "",
+   "pretty": "",
+   "hex": "000000090002000000023456"
+  },
+  {
+   "name": "logout_request",
+   "component": 1,
+   "command": 70,
+   "type": 0,
+   "id": 71,
+   "error": 0,
+   "payload": "",
+   "pretty": "",
+   "hex": "000000010046000000000047"
+  },
+  {
+   "name": "logout_reply",
+   "component": 1,
+   "command": 70,
+   "type": 1,
+   "id": 71,
+   "error": 0,
+   "payload": "",
+   "pretty": "",
+   "hex": "000000010046000010000047"
+  }
+ ]
+}

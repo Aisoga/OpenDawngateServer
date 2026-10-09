@@ -1,0 +1,9 @@
+{
+ "class": "LootBagRarity",
+ "count": 2,
+ "errors": {},
+ "instances": {
+  "Shiny": {"DropType": [{"Name": "2_MAX_SHAPES", "Chance": 0.75}, {"Name": "GEMS", "Chance": 0.25}], "TelemetryPrefix": "SHY", "RarityScore": 100.0},
+  "Dull": {"DropType": [{"Name": "16_MAX_SHAPES", "Chance": 1.0}], "TelemetryPrefix": "DUL", "RarityScore": 50.0}
+ }
+}

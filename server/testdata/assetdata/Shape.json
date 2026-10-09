@@ -1,0 +1,8 @@
+{
+ "class": "Shape",
+ "count": 1,
+ "errors": {},
+ "instances": {
+  "spark": {"texture": "test.dds", "maxOwnable": 2, "convexShape": [], "category": "square"}
+ }
+}

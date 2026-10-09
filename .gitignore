@@ -1,0 +1,37 @@
+# Original game archives and extracted client builds (copyrighted, large) - never commit
+*.zip
+client/
+
+# Third-party tools (Ghidra, JDK, x64dbg, ProcMon, downloads) - reinstall per docs/SETUP.md
+tools/
+
+# Python environment
+.venv/
+__pycache__/
+*.pyc
+
+# Ghidra project databases and analysis logs (large binary state)
+re/ghidra/
+re/logs/
+
+# Extracted / decompiled game content (e.g. re/out/serverdata_lua) - copyrighted, never commit
+re/out/
+
+# Captures / runtime output
+*.pcap
+*.pcapng
+*.PML
+
+# Go server: built binary, throwaway TLS keys (server/tools/make_certs.py), default log folder.
+# server/tools/ is ours (the tools/ rule above is for third-party tools).
+server/bin/
+server/certs/
+server/logs/
+!server/tools/
+
+# Go server data folder (B7a): accounts.json (player accounts) and content.json (built by
+# dgserver --make-content from the user's own game data: copyrighted) - never commit.
+server/data/
+
+# gms/ (C++ match host): CMake build tree (cmake -S gms -B gms/build -A Win32)
+gms/build/

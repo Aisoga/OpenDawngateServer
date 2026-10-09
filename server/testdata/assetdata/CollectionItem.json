@@ -1,0 +1,20 @@
+{
+ "class": "CollectionItem",
+ "count": 13,
+ "errors": {},
+ "instances": {
+  "ember": {"type": "shaper", "specialStatus": "none", "catalogID": 268435457, "parentAsset": "ember.Noun", "longName": {"ref": "Test!0x00000001", "text": "Ember"}},
+  "stone": {"type": "shaper", "specialStatus": "none", "catalogID": 268435458, "parentAsset": "stone.Noun", "longName": "Test!0x00000002"},
+  "ghost": {"type": "shaper", "specialStatus": "none", "catalogID": 268435459, "parentAsset": "ghost.Noun", "longName": null},
+  "ember_frost": {"type": "shaper skin", "specialStatus": "none", "catalogID": 268435460, "parentAsset": "ember_frost.Noun", "longName": {"ref": "Test!0x00000004", "text": "Frost Ember"}},
+  "ghost_mist": {"type": "shaper skin", "specialStatus": "none", "catalogID": 268435461, "parentAsset": "ghost_mist.Noun", "longName": null},
+  "Spark": {"type": "perk", "specialStatus": "none", "catalogID": 268435462, "parentAsset": "Spark.PerkShape", "longName": {"ref": "Test!0x00000006", "text": "Spark"}},
+  "RedGem": {"type": "gem", "specialStatus": "none", "catalogID": 268435463, "parentAsset": "RedGem.Gem", "longName": null},
+  "lantern": {"type": "ward", "specialStatus": "alwaysOwned", "catalogID": 268435464, "parentAsset": "lantern.Noun", "longName": null},
+  "Herald": {"type": "announcer pack", "specialStatus": "alwaysOwned", "catalogID": 268435465, "parentAsset": "Herald.AnnouncerPack", "longName": null},
+  "Founder": {"type": "avatar", "specialStatus": "hide", "catalogID": 268435466, "parentAsset": "Founder.AvatarIcon", "longName": null},
+  "Page": {"type": "loadout", "specialStatus": "hide", "catalogID": 268435467, "parentAsset": "Page.LoadoutPage", "longName": null},
+  "Trinket": {"type": "demo loot", "specialStatus": "none", "catalogID": 268435468, "parentAsset": "Trinket.DemoModeLoot", "longName": null},
+  "VoteA": {"type": "living lore vote", "specialStatus": "none", "catalogID": 268435469, "parentAsset": "VoteA.LivingLoreVote", "longName": null}
+ }
+}

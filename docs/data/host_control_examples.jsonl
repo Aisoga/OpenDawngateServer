@@ -1,0 +1,62 @@
+# Control channel between dgserver and the match host (roadmap C1, docs/HOST_CONTROL.md): one example
+# line per message, exactly as both encoders write it (server/internal/gmshost, gms/core/control).
+# The tests of both sides decode every line and encode it back byte for byte. Lines starting with '#'
+# are comments for those tests; the protocol itself has none.
+{"t":"hello","match":1,"token":"00112233445566778899aabbccddeeff","pid":4242,"build":"dgsim c1"}
+{"t":"createGame","gameId":1,"level":"SM_Map_v5","mode":"practice","seed":7919,"roster":[{"user":2000000001,"name":"player","index":0,"team":1,"noun":"","bot":false}]}
+{"t":"createGame","gameId":7,"level":"SM_Map_v5","mode":"practice","seed":-1,"roster":[{"user":2000000001,"name":"Zoë \"Z\" <a&b>","index":0,"team":1,"noun":"alpha.Noun","bot":false},{"user":3,"name":"bot","index":5,"team":2,"noun":"","bot":true}],"timers":{"shaperSelectMs":300000}}
+{"t":"gameReady","port":10042}
+{"t":"addPlayer","user":2000000001,"index":0}
+{"t":"disconnectPlayer","user":2000000001,"reason":"connection lost"}
+{"t":"reportGMSUpdate","phase":"inGame","elapsedMs":5000,"players":[2000000001]}
+{"t":"playerFinish","user":2000000001,"stats":{"deaths":1,"kills":3}}
+{"t":"finishGame","winnerTeam":1,"durationMs":1234567,"reason":"guardian"}
+{"t":"reportGMSError","code":7,"text":"line1\nline2\ttab \\ \u0001","fatal":true}
+{"t":"logoutGMS"}
+{"t":"removePlayer","user":2000000001,"reason":"PLAYER_LEFT"}
+{"t":"abortGame","reason":"no players left"}
+# D8-live: createGame's descriptors (the game's GameFlags), playerFinish with the host's own rewards (B7c), and
+# dgserver's answer playerRewards (B7c; the C++ side since D8-live). An empty item list is [] (Go writes null for none).
+{"t":"createGame","gameId":2,"level":"SM_Map_v5","mode":"practice","seed":7919,"roster":[{"user":2000000001,"name":"player","index":0,"team":1,"noun":"","bot":false}],"descriptors":1292}
+{"t":"playerFinish","user":2000000001,"stats":{"won":1},"rewards":{"lootBag":272547319,"destiny":12,"cc":0,"items":[{"catalogId":279208847,"duplicate":false,"alternate":0},{"catalogId":279208835,"duplicate":false,"alternate":0}],"ftue":true,"baseRoll":218,"winPoints":200,"winAltPoints":10,"firstWinPoints":0}}
+{"t":"playerRewards","user":2000000001,"rewards":{"lootBag":1325899411,"destiny":8,"cc":50,"items":[{"catalogId":279208847,"duplicate":true,"alternate":50}],"ftue":true,"baseRoll":67,"winPoints":0,"winAltPoints":0,"firstWinPoints":0}}
+{"t":"playerRewards","user":3,"rewards":{"lootBag":1325899411,"destiny":5,"cc":0,"items":[],"ftue":false,"baseRoll":100,"winPoints":0,"winAltPoints":3,"firstWinPoints":0}}
+# D8c: a matchmade game's karma (after the post-game's vote): the host's playerKarma per player, and dgserver's
+# playerRewards with the karma it counted into the bag score (exactly what blaze's TestHostedMatchmadeKarma sends:
+# roll 379 + 18 for a lost 20-minute game + 10 for one enemy vote = 407, the fixture's Silverish bag).
+{"t":"playerKarma","user":2000000001,"party":0,"team":0,"enemy":1}
+{"t":"playerRewards","user":2000000001,"rewards":{"lootBag":2079898500,"destiny":0,"cc":30,"items":[{"catalogId":268435463,"duplicate":true,"alternate":15},{"catalogId":268435463,"duplicate":true,"alternate":15}],"ftue":false,"baseRoll":379,"winPoints":0,"winAltPoints":18,"firstWinPoints":0,"karma":{"points":10,"party":0,"team":0,"enemy":1}}}
+# D3-live step 4: createGame with shaper select (dgserver --shaper-select): the flag, the timers (ShaperSelectTuning's
+# names, ms) and a human's content from its account (list entries with flags and an optional offer, skins by the
+# shaper's default skin, saved skins, wards, announcer packs); each content field is left out when empty.
+{"t":"createGame","gameId":3,"level":"SM_Map_v5","mode":"practice","seed":7919,"roster":[{"user":2000000001,"name":"player","index":0,"team":1,"noun":"","bot":false,"shapers":[{"noun":"alpha.Noun","flags":1},{"noun":"artificer.Noun","flags":1},{"noun":"gunman.Noun","flags":2,"offer":272547319}],"skins":{"alpha.Noun":["alpha_thenine.Noun","alpha_seawolf.Noun"]},"savedSkins":{"alpha.Noun":"alpha_seawolf.Noun"},"wards":["wardskin_default.Noun","wardskin_east.Noun"],"announcers":["Default.AnnouncerPack"]},{"user":2,"name":"bot","index":1,"team":1,"noun":"","bot":true}],"timers":{"RevealTime":16,"RolePerkSelectTime":8000,"ShaperSelectionTime":8000,"SkinSelectTime":4000},"descriptors":1292,"shaperSelect":true}
+# B10d: a matchmade game that started with open seats (--mm-fill-after) asks its host for bots up to the team size
+# (fillTeams, after shaperSelect; omitted when 0). Exactly what blaze's TestMatchmakingHostedBots sends for a lone player in a
+# 5v5 queue (GameFlags "1": descriptors 1, IsMatchmade only).
+{"t":"createGame","gameId":1,"level":"SM_Map_v5","mode":"pvp","seed":7919,"roster":[{"user":2000000001,"name":"alpha","index":0,"team":1,"noun":"","bot":false}],"descriptors":1,"fillTeams":5}
+# D3-perks: a human's perk pages after announcers (perkPages: id = SUMM.PID, version = SUMM.VERS, the page's summed
+# stats as C0 02 carries them: attribute enum, op enum, value in thousandths; the modifiers' Lua names), each list left
+# out when empty. Page 1 holds a complete Spark (MaxHealth Add 50, Power PercentChange 0.05, its modifier) and two
+# RedGems (Power Add 0.4 each); page 4 is empty.
+{"t":"createGame","gameId":4,"level":"SM_Map_v5","mode":"practice","seed":7919,"roster":[{"user":2000000001,"name":"player","index":0,"team":1,"noun":"","bot":false,"shapers":[{"noun":"alpha.Noun","flags":1}],"perkPages":[{"id":1,"version":3,"attributes":[{"attribute":0,"op":1,"milli":800},{"attribute":0,"op":2,"milli":50},{"attribute":2,"op":1,"milli":50000}],"modifiers":["modifier_MediumPerk_BushSpeed"]},{"id":4,"version":1}]}],"shaperSelect":true}
+# D8b: a party's match (QUEUE AS GROUP): each member's roster entry ends with the party's playgroup id (party, omitted
+# when 0), so the host's karma tally can tell party votes from team votes. Exactly what blaze's
+# TestMatchmakingHostedParty sends for a party of two in a 2v2 queue with bots in the open seats.
+{"t":"createGame","gameId":1,"level":"SM_Map_v5","mode":"pvp","seed":7919,"roster":[{"user":2000000001,"name":"player","index":0,"team":1,"noun":"","bot":false,"party":1},{"user":2000000002,"name":"second","index":1,"team":1,"noun":"","bot":false,"party":1}],"descriptors":1,"fillTeams":2}
+# H5: the frozen host. reportGMSError codes (both sides: gms/core/control kErr*, gmshost Err*): 1 GMS endpoint,
+# 2 tick stalled (the watchdog; fatal, the host exits with code 6), 3 step failing (a step threw in every run for
+# step_fail_s; fatal, exit code 7), 4 step exception (that run skipped, the tick goes on; not fatal). A fatal one makes
+# dgserver end the match as aborted (Outcome.Error). Exactly the lines blaze's TestHostedGameStalls has its host send.
+{"t":"reportGMSError","code":4,"text":"step tick.lua threw C0000005 at 0085C1A3 (exception #1 of this step); that run was skipped, the tick goes on","fatal":false}
+{"t":"reportGMSError","code":2,"text":"no server tick for 10.0 s (tick 1834, match 61.0 s); the engine thread was in step test.stall for 10.0 s, eip 77A42F6C (ntdll.dll+0x72F6C); minidump watchdog.dmp","fatal":true}
+# B15: a custom game (CREATE GAME; GameFlags 2: descriptors 2) starts its host in mode custom with its creator; the
+# host holds every HelloReq until startGame. updateRoster is the lobby's roster after each change (who may connect),
+# startGame the final one: team 1 at indexes 0-4, team 2 at 5-9, the spectators at 10-14 with team 0 and
+# "spectator":true (omitted when false). Exactly what blaze's TestCustomGameHosted sends.
+{"t":"createGame","gameId":1,"level":"SM_Map_v5","mode":"custom","seed":7919,"roster":[{"user":2000000001,"name":"alpha","index":0,"team":1,"noun":"","bot":false}],"descriptors":2}
+{"t":"updateRoster","roster":[{"user":2000000001,"name":"alpha","index":0,"team":1,"noun":"","bot":false},{"user":2000000002,"name":"bravo","index":5,"team":2,"noun":"","bot":false}]}
+{"t":"startGame","roster":[{"user":2000000001,"name":"alpha","index":0,"team":1,"noun":"","bot":false},{"user":2000000002,"name":"bravo","index":10,"team":0,"noun":"","bot":false,"spectator":true}]}
+# B15b: after the start an updateRoster carries the spectators' changes (dgserver: a spectator of the running game
+# joined or one left); the host keeps startGame's players and takes the spectators (WithSpectatorsOf). Exactly what
+# blaze's TestCustomGameHosted sends when delta spectates the started game.
+{"t":"updateRoster","roster":[{"user":2000000001,"name":"alpha","index":0,"team":1,"noun":"","bot":false},{"user":2000000002,"name":"bravo","index":10,"team":0,"noun":"","bot":false,"spectator":true},{"user":2000000004,"name":"delta","index":11,"team":0,"noun":"","bot":false,"spectator":true}]}

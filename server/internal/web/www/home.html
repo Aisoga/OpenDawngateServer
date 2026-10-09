@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Dawngate</title>
+<!--
+  Dawngate restoration server: the main menu's home page (docs/WEB_CONTENT.md). The client's
+  HomePageBodyView loads ~webContentUrlRootCommon~/home.html into an EAWebKit view and runs
+  onLivingLoreVoteUpdate() and onRegionKillswitchEuUpdate() in it; it reloads the page itself when the
+  web content version changes. The native object Client (bound by the client) answers the calls below.
+  Self-contained on purpose: no scripts, styles or images from other hosts.
+-->
+<style type="text/css">
+  html, body { margin: 0; padding: 0; }
+  body { background: #0d1117; color: #c9d1d9; font-family: Arial, Helvetica, sans-serif; font-size: 15px; }
+  .page { padding: 28px 36px; }
+  h1 { margin: 0 0 4px 0; font-size: 30px; font-weight: normal; letter-spacing: 3px; color: #e6c87a; }
+  .sub { margin: 0 0 22px 0; color: #8b949e; }
+  .panel { background: #161b22; border: 1px solid #30363d; padding: 16px 20px; margin-bottom: 16px; }
+  .panel h2 { margin: 0 0 8px 0; font-size: 17px; font-weight: normal; color: #e6c87a; }
+  .panel p { margin: 0 0 6px 0; line-height: 1.4; }
+  .buttons a { display: inline-block; margin: 4px 8px 4px 0; padding: 7px 16px; border: 1px solid #e6c87a;
+               color: #e6c87a; text-decoration: none; cursor: pointer; }
+  .buttons a:hover { background: #e6c87a; color: #0d1117; }
+  .foot { color: #6e7681; font-size: 12px; }
+</style>
+<script type="text/javascript">
+  // Calls a function of the client's native Client object; null if there is none (e.g. in a browser).
+  function clientCall(name) {
+    try {
+      if (typeof Client != "undefined" && Client && typeof Client[name] == "function") {
+        return Client[name].apply(Client, Array.prototype.slice.call(arguments, 1));
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  function setText(id, text) {
+    var el = document.getElementById(id);
+    if (el) {
+      el.innerHTML = "";
+      el.appendChild(document.createTextNode(text == null ? "" : String(text)));
+    }
+  }
+
+  function refresh() {
+    var name = clientCall("getLocalPlayerName");
+    setText("player", name ? name : "Shaper");
+    var eu = clientCall("getEuServersAvailable");
+    setText("eu", eu === null ? "unknown" : (eu ? "available" : "unavailable"));
+    setText("build", clientCall("getBuildVersion") || "?");
+    setText("webver", clientCall("webContentGetVersion") || "?");
+  }
+
+  // Main menu content ids (the client's MainMenuContent).
+  function show(content) {
+    clientCall("requestMainMenuContent", content);
+    return false;
+  }
+
+  // Hooks the client runs in this page.
+  function onLivingLoreVoteUpdate() { refresh(); }
+  function onRegionKillswitchEuUpdate() { refresh(); }
+  function onWebVersionUpdate() { refresh(); }
+
+  window.onload = refresh;
+</script>
+</head>
+<body>
+<div class="page">
+  <h1>DAWNGATE</h1>
+  <p class="sub">Welcome back, <span id="player">Shaper</span>.</p>
+
+  <div class="panel">
+    <h2>A restored server</h2>
+    <p>This server is part of a community project that keeps the 2014 client playable after the
+       official servers closed. It is not run by Waystone Games or Electronic Arts.</p>
+    <p>Press PLAY to start a practice match.</p>
+  </div>
+
+  <div class="panel buttons">
+    <h2>Go to</h2>
+    <a onclick="return show(12);">Collection</a>
+    <a onclick="return show(10);">Profile</a>
+    <a onclick="return show(11);">Leaderboard</a>
+    <a onclick="return show(0);">Lore</a>
+    <a onclick="return show(2);">Help</a>
+  </div>
+
+  <p class="foot">EU servers: <span id="eu">unknown</span> &middot; client <span id="build">?</span>
+     &middot; web content <span id="webver">?</span></p>
+</div>
+</body>
+</html>

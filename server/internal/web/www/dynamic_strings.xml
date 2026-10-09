@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dawngate restoration server: dynamic strings (docs/WEB_CONTENT.md).
+     The client fetches this file after login and every 5 minutes. Each element
+       <DynamicString tableId="0x41bbc437" instanceId="0x10">text</DynamicString>
+     directly under the root replaces one string of the client's Locale tables (tableId = FNV-1 of the
+     lower-case table name, instanceId = the string id). Keep each text on one line and without entity
+     references: the client keeps only the last piece of text the XML parser hands it per element.
+     The list is empty: the client then shows its own strings. -->
+<DynamicStrings>
+</DynamicStrings>

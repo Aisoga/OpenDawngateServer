@@ -1,0 +1,10 @@
+{
+ "class": "PlayerClass",
+ "count": 3,
+ "errors": {},
+ "instances": {
+  "PC_Ember": {"testingOnly": false, "nameLocaleKey": {"ref": "Test!0x00000001", "text": "Ember"}, "basicAbility": "ability_Ember_Basic", "specialAbility1": "ability_Ember_Q", "specialAbility2": "ability_Ember_W", "specialAbility3": "ability_Ember_E", "specialAbility4": "ability_Ember_R", "passiveAbility": "modifier_Ember_Passive", "CharacterArchetype": "mage", "CharacterSubArchetype": "burst mage"},
+  "PC_Stone": {"testingOnly": false, "nameLocaleKey": "Test!0x00000002", "basicAbility": "ability_Stone_Basic", "specialAbility1": "ability_Stone_Q", "specialAbility2": null, "specialAbility3": null, "specialAbility4": null, "passiveAbility": null, "CharacterArchetype": "tank", "CharacterSubArchetype": "initiator"},
+  "PC_Ghost": {"testingOnly": true, "nameLocaleKey": null, "basicAbility": "ability_Ghost_Basic", "CharacterArchetype": "mage", "CharacterSubArchetype": "burst mage"}
+ }
+}

@@ -1,0 +1,2445 @@
+# TDF member tables in Dawngate.exe: 417 tables, 1549 members, 417 named, 219 nested links, 5 unions. Written by re/scripts/tdf_tables.py.
+# == table @ <first entry>: <labels in tag order>  (<class>)
+#    <entry address>  <label>  <type>  +<offset>[ ptr][ list<elem>| map<key,value>][ -> <table> (<class>) | -> empty (<class>) | -> union <vtable>][ default=<value>]
+# == union @ <vtable>: <n> members
+#    member <index>  <tag>  <wire type>[ -> <table> (<class>)]
+# Type codes and the wire type the client's Heat2 decoder expects for them:
+# code 0x00 map wire 5 map
+# code 0x01 list wire 4 list
+# code 0x02 float wire 10 float
+# code 0x03 enum wire 0 int
+# code 0x04 string wire 1 string
+# code 0x05 tdf_05 wire 3 struct
+# code 0x06 variable wire 7 intlist
+# code 0x07 bitfield wire 0 int
+# code 0x08 blob wire 2 blob
+# code 0x09 union wire 6 union
+# code 0x0a struct wire 3 struct
+# code 0x0b objtype wire 8 objtype
+# code 0x0c objid wire 9 objid
+# code 0x0d timevalue wire 0 int
+# code 0x0e bool wire 0 int
+# code 0x0f bool_0f wire 0 int
+# code 0x10 int8 wire 0 int
+# code 0x11 uint8 wire 0 int
+# code 0x12 int16 wire 0 int
+# code 0x13 uint16 wire 0 int
+# code 0x14 int32 wire 0 int
+# code 0x15 uint32 wire 0 int
+# code 0x16 int64 wire 0 int
+# code 0x17 uint64 wire 0 int
+# code 0x18 int64_18 wire 0 int
+# code 0x19 uint16_19 wire 0 int
+# code 0x1a uint16_1a wire 0 int
+# code 0x1b int64_1b wire 0 int
+
+== table @ 012E2EB0: ID  (Blaze::BattlegroundsAccounts::BattlegroundsAccountsCreateAccountRequest)
+   012E2EB0  ID    string       +0x0008
+
+== table @ 012E2F08: CAT DESC FREQ SCAT SEVR SYS TITL VERS  (Blaze::BattlegroundsAccounts::BattlegroundsAccountsSubmitBugRequest)
+   012E2F08  CAT   string       +0x0014
+   012E2F18  DESC  string       +0x0008
+   012E2F28  FREQ  int32        +0x0038
+   012E2F34  SCAT  string       +0x0020
+   012E2F44  SEVR  int32        +0x003c
+   012E2F50  SYS   string       +0x0040
+   012E2F60  TITL  string       +0x002c
+   012E2F70  VERS  string       +0x004c
+
+== table @ 012E3030: PLCH  (Blaze::BattlegroundsAccounts::BattlegroundsAccountsSubmitBugResponse)
+   012E3030  PLCH  uint32       +0x0008
+
+== table @ 012E30B0: MSG  (Blaze::BattlegroundsAccounts::BattlegroundsAccountsError)
+   012E30B0  MSG   string       +0x0008
+
+== table @ 012E30C0: ABAD ALEV ALXP ATIL AVTR BZID DEVF FIRS FLAG GOOD VOTE  (Blaze::BattlegroundsAccounts::BGABasicData)
+   012E30C0  ABAD  uint32       +0x001c
+   012E30CC  ALEV  uint32       +0x0020
+   012E30D8  ALXP  uint32       +0x0024
+   012E30E4  ATIL  uint32       +0x0018
+   012E30F0  AVTR  uint32       +0x0014
+   012E3100  BZID  uint64       +0x0008
+   012E3110  DEVF  uint32       +0x0010
+   012E311C  FIRS  int32        +0x0028
+   012E3128  FLAG  uint64       +0x0038
+   012E3138  GOOD  float        +0x0030
+   012E3144  VOTE  float        +0x002c
+
+== table @ 012E3150: CONT ITID TYPE  (Blaze::BattlegroundsAccounts::BGAInventoryItem)
+   012E3150  CONT  uint32       +0x0010
+   012E315C  ITID  uint32       +0x0008
+   012E3168  TYPE  uint32       +0x000c
+
+== table @ 012E31B0: GID SIDX  (Blaze::BattlegroundsAccounts::BGAPerkPageGem)
+   012E31B0  GID   uint32       +0x0008
+   012E31BC  SIDX  uint8        +0x000c
+
+== table @ 012E31C8: GEMS GIDX PID ROT  (Blaze::BattlegroundsAccounts::BGAPerkPageShape)
+   012E31C8  GEMS  list         +0x0010 list<struct> -> 012E31B0 (Blaze::BattlegroundsAccounts::BGAPerkPageGem)
+   012E31D4  GIDX  uint8        +0x000c
+   012E31E0  PID   uint32       +0x0008
+   012E31EC  ROT   uint8        +0x000d
+
+== table @ 012E31F8: NAME PID STAT VERS  (Blaze::BattlegroundsAccounts::BGASummaryPerkPage)
+   012E31F8  NAME  string       +0x000c
+   012E3208  PID   uint32       +0x0008
+   012E3214  STAT  uint8        +0x001c
+   012E3220  VERS  uint32       +0x0018
+
+== table @ 012E322C: PERK SUMM  (Blaze::BattlegroundsAccounts::BGACompletePerkPage)
+   012E322C  PERK  list         +0x0028 list<struct> -> 012E31C8 (Blaze::BattlegroundsAccounts::BGAPerkPageShape)
+   012E3238  SUMM  struct       +0x0008 -> 012E31F8 (Blaze::BattlegroundsAccounts::BGASummaryPerkPage)
+
+== table @ 012E3244: BASD ITEM PERK  (Blaze::BattlegroundsAccounts::BGACompleteAccount)
+   012E3244  BASD  struct       +0x0008 -> 012E30C0 (Blaze::BattlegroundsAccounts::BGABasicData)
+   012E3250  ITEM  list         +0x0048 list<struct> -> 012E3150 (Blaze::BattlegroundsAccounts::BGAInventoryItem)
+   012E325C  PERK  list         +0x0078 list<struct> -> 012E322C (Blaze::BattlegroundsAccounts::BGACompletePerkPage)
+
+== table @ 012E32F8: BZID  (Blaze::BattlegroundsAccounts::BGAMetagameGetBasicAccountDataRequest)
+   012E32F8  BZID  list         +0x0008 list<int>
+
+== table @ 012E3304: USRS  (Blaze::BattlegroundsAccounts::BGAMetagameGetCompleteAccountDataRequest)
+   012E3304  USRS  list         +0x0008 list<int>
+
+== table @ 012E3350: AVTR  (Blaze::BattlegroundsAccounts::BGASetAvatarRequest)
+   012E3350  AVTR  uint32       +0x0008
+
+== table @ 012E3368: SMRY USER  (Blaze::BattlegroundsAccounts::BGAGetPerkPageDataRequest)
+   012E3368  SMRY  bool         +0x0010 default=0x1
+   012E3378  USER  uint64       +0x0008
+
+== table @ 012E3388: PAGE  (Blaze::BattlegroundsAccounts::BGAUpdatePerkPageRequest)
+   012E3388  PAGE  struct       +0x0008 -> 012E322C (Blaze::BattlegroundsAccounts::BGACompletePerkPage)
+
+== table @ 012E3414: USET  (Blaze::BattlegroundsAccounts::SaveUserSettingsRequest)
+   012E3414  USET  map          +0x0008 map<string,string>
+
+== table @ 012E3430: BASD  (Blaze::BattlegroundsAccounts::BGAMetagameGetBasicAccountDataResponse)
+   012E3430  BASD  list         +0x0008 list<struct> -> 012E30C0 (Blaze::BattlegroundsAccounts::BGABasicData)
+
+== table @ 012E343C: LIST  (Blaze::BattlegroundsAccounts::BGAMetagameGetCompleteAccountDataResponse)
+   012E343C  LIST  list         +0x0008 list<struct> -> 012E3244 (Blaze::BattlegroundsAccounts::BGACompleteAccount)
+
+== table @ 012E3480: PPGS USER  (Blaze::BattlegroundsAccounts::BGAGetPerkPageDataResponse)
+   012E3480  PPGS  list         +0x0010 list<struct> -> 012E322C (Blaze::BattlegroundsAccounts::BGACompletePerkPage)
+   012E3490  USER  uint64       +0x0008
+
+== table @ 012E34D0: USET  (Blaze::BattlegroundsAccounts::GetUserSettingsResponse)
+   012E34D0  USET  map          +0x0008 map<string,string>
+
+== table @ 012E66C0: MSG  (Blaze::LivingLore::LivingLoreError)
+   012E66C0  MSG   string       +0x0008
+
+== table @ 012E6708: ETM PVS STM VIF  (Blaze::LivingLore::AbsoluteVoteInfo)
+   012E6708  ETM   uint32       +0x0050
+   012E6714  PVS   uint32       +0x0048
+   012E6720  STM   uint32       +0x004c
+   012E672C  VIF   struct       +0x0008 -> 014611F0 (Blaze::LivingLore::VoteInfo)
+
+== table @ 012E6738: SPV STE STS VIF  (Blaze::LivingLore::RelativeVoteInfo)
+   012E6738  SPV   int32        +0x0048
+   012E6744  STE   int32        +0x0050
+   012E6750  STS   int32        +0x004c
+   012E675C  VIF   struct       +0x0008 -> 014611F0 (Blaze::LivingLore::VoteInfo)
+
+== table @ 012E738C: GREQ MID  (Blaze::GameManager::NotifyCreateDynamicDedicatedServerGame)
+   012E738C  GREQ  struct       +0x0018 -> 01461AF0 (Blaze::GameManager::CreateGameRequest)
+   012E7398  MID   string       +0x0008
+
+== table @ 012E73A8: TID TSZE  (Blaze::GameManager::GameBrowserTeamInfo)
+   012E73A8  TID   uint16       +0x0008
+   012E73B4  TSZE  uint16       +0x000a
+
+== table @ 012E73C0: DNAM GLID GVER IGNO LCAP NOJM  (Blaze::GameManager::GetGameListRequest)
+   012E73C0  DNAM  string       +0x02b0 default="default"
+   012E73D0  GLID  struct       +0x0008 -> 012E8110 (Blaze::GameManager::MatchmakingCriteriaData)
+   012E73DC  GVER  string       +0x02a0
+   012E73EC  IGNO  bool_0f      +0x02bc
+   012E73F8  LCAP  uint32       +0x02ac default=0xffffffff
+   012E7404  NOJM  bool_0f      +0x02bd default=0x1
+
+== table @ 012E7418: GLID MAXF NGD  (Blaze::GameManager::GetGameListResponse)
+   012E7418  GLID  uint64       +0x0008
+   012E7428  MAXF  uint32       +0x0010
+   012E7434  NGD   uint32       +0x0014
+
+== table @ 012E7440: GLID  (Blaze::GameManager::DestroyGameListRequest)
+   012E7440  GLID  uint64       +0x0008
+
+== table @ 012E7474: FIT GAM  (Blaze::GameManager::GameBrowserMatchData)
+   012E7474  FIT   uint32       +0x01bc
+   012E7480  GAM   struct       +0x01b8 ptr -> 01461800 (Blaze::GameManager::GameBrowserGameData)
+
+== table @ 012E748C: DNAM GLST PIDL  (Blaze::GameManager::GetGameDataFromIdRequest)
+   012E748C  DNAM  string       +0x0040 default="default"
+   012E749C  GLST  list         +0x0008 list<int>
+   012E74A8  PIDL  list         +0x0024 list<string>
+
+== table @ 012E74B4: GDAT  (Blaze::GameManager::GameBrowserDataList)
+   012E74B4  GDAT  list         +0x0008 list<struct> -> 01461800 (Blaze::GameManager::GameBrowserGameData)
+
+== table @ 012E74C0: DONE GLID REMV UPDT  (Blaze::GameManager::NotifyGameListUpdate)
+   012E74C0  DONE  uint8        +0x0010
+   012E74D0  GLID  uint64       +0x0008
+   012E74E0  REMV  list         +0x0014 list<int>
+   012E74EC  UPDT  list         +0x0030 list<struct> -> 012E7474 (Blaze::GameManager::GameBrowserMatchData)
+
+== table @ 012E76F0: HPID HSLT  (Blaze::GameManager::HostInfo)
+   012E76F0  HPID  int64_18     +0x0008
+   012E7700  HSLT  uint8        +0x0010
+
+== table @ 012E7728: GID XNNC XSES  (Blaze::GameManager::UpdateGameSessionRequest)
+   012E7728  GID   uint64       +0x0008
+   012E7738  XNNC  blob         +0x0010
+   012E7740  XSES  blob         +0x0020
+
+== table @ 012E7758: GID  (Blaze::GameManager::EjectHostRequest)
+   012E7758  GID   uint64       +0x0008
+
+== table @ 012E7768: GID  (Blaze::GameManager::DestroyGameResponse)
+   012E7768  GID   uint64       +0x0008
+
+== table @ 012E77B4: ERR  (Blaze::GameManager::ResetDedicatedServerSetupContext)
+   012E77B4  ERR   uint32       +0x0008
+
+== table @ 012E7808: GRID RPVC  (Blaze::GameManager::IndirectJoinGameSetupContext)
+   012E7808  GRID  objid        +0x0008
+   012E7810  RPVC  bool_0f      +0x0018
+
+== table @ 012E7828: GID TARG  (Blaze::GameManager::UpdateMeshConnectionRequest)
+   012E7828  GID   uint64       +0x0008
+   012E7838  TARG  list         +0x0010 list<struct> -> 01461970 (Blaze::GameManager::PlayerConnectionStatus)
+
+== table @ 012E79F8: ATTR GID  (Blaze::GameManager::SetGameAttributesRequest)
+   012E79F8  ATTR  map          +0x0010 map<string,string>
+   012E7A08  GID   uint64       +0x0008
+
+== table @ 012E7A18: ATTR GID PID  (Blaze::GameManager::SetPlayerAttributesRequest)
+   012E7A18  ATTR  map          +0x0018 map<string,string>
+   012E7A28  GID   uint64       +0x0008
+   012E7A38  PID   int64_18     +0x0010
+
+== table @ 012E7AA0: PID TIDX  (Blaze::GameManager::SwapPlayerTeamData)
+   012E7AA0  PID   int64_18     +0x0008
+   012E7AB0  TIDX  uint16       +0x0010
+
+== table @ 012E7AC0: GID LGAM  (Blaze::GameManager::SwapPlayersTeamRequest)
+   012E7AC0  GID   uint64       +0x0008
+   012E7AD0  LGAM  list         +0x0010 list<struct> -> 012E7AA0 (Blaze::GameManager::SwapPlayerTeamData)
+
+== table @ 012E7B60: GAME PROS QUEU REAS  (Blaze::GameManager::NotifyGameSetup)
+   012E7B60  GAME  struct       +0x0218 ptr -> 014615A8 (Blaze::GameManager::ReplicatedGameData)
+   012E7B6C  PROS  list         +0x021c list<struct> -> 01461EA0 (Blaze::GameManager::ReplicatedGamePlayer)
+   012E7B78  QUEU  list         +0x024c list<struct> -> 01461EA0 (Blaze::GameManager::ReplicatedGamePlayer)
+   012E7B84  REAS  union        +0x027c -> union 012EA098
+
+== table @ 012E7B8C: DATA  (Blaze::GameManager::NotifyGameReset)
+   012E7B8C  DATA  struct       +0x0218 ptr -> 014615A8 (Blaze::GameManager::ReplicatedGameData)
+
+== table @ 012E7B98: GID PDAT  (Blaze::GameManager::NotifyPlayerJoining)
+   012E7B98  GID   uint64       +0x0008
+   012E7BA8  PDAT  struct       +0x00e8 ptr -> 01461EA0 (Blaze::GameManager::ReplicatedGamePlayer)
+
+== table @ 012E7BB8: GID PID  (Blaze::GameManager::NotifyPlayerJoinCompleted)
+   012E7BB8  GID   uint64       +0x0008
+   012E7BC8  PID   int64_18     +0x0010
+
+== table @ 012E7BD8: GID PHST  (Blaze::GameManager::NotifyPlatformHostInitialized)
+   012E7BD8  GID   uint64       +0x0008
+   012E7BE8  PHST  uint8        +0x0010
+
+== table @ 012E7BF8: GID  (Blaze::GameManager::NotifyHostMigrationFinished)
+   012E7BF8  GID   uint64       +0x0008
+
+== table @ 012E7C18: ATTR GID  (Blaze::GameManager::NotifyGameAttribChange)
+   012E7C18  ATTR  map          +0x0010 map<string,string>
+   012E7C28  GID   uint64       +0x0008
+
+== table @ 012E7C38: ATTR GID  (Blaze::GameManager::NotifyGameSettingsChange)
+   012E7C38  ATTR  bitfield     +0x0010
+   012E7C40  GID   uint64       +0x0008
+
+== table @ 012E7C50: CAP GID TCAP  (Blaze::GameManager::NotifyGameCapacityChange)
+   012E7C50  CAP   list         +0x0010 list<int>
+   012E7C60  GID   uint64       +0x0008
+   012E7C70  TCAP  uint16       +0x002c
+
+== table @ 012E7C80: ATTR GID PID  (Blaze::GameManager::NotifyPlayerAttribChange)
+   012E7C80  ATTR  map          +0x003c ptr map<string,string>
+   012E7C90  GID   uint64       +0x0008
+   012E7CA0  PID   int64_18     +0x0010
+
+== table @ 012E7CB0: CDAT GID PID  (Blaze::GameManager::NotifyPlayerCustomDataChange)
+   012E7CB0  CDAT  blob         +0x0018
+   012E7CB8  GID   uint64       +0x0008
+   012E7CC8  PID   int64_18     +0x0010
+
+== table @ 012E7CD8: GID GRID  (Blaze::GameManager::NotifyGameReportingIdChange)
+   012E7CD8  GID   uint64       +0x0008
+   012E7CE8  GRID  uint64       +0x0010
+
+== table @ 012E7CF8: GID  (Blaze::GameManager::NotifyGameCreated)
+   012E7CF8  GID   uint64       +0x0008
+
+== table @ 012E7D08: GID  (Blaze::GameManager::NotifyGameRecreateRequested)
+   012E7D08  GID   uint64       +0x0008
+
+== table @ 012E7D18: GID XNNC XSES  (Blaze::GameManager::GameSessionUpdatedNotification)
+   012E7D18  GID   uint64       +0x0008
+   012E7D28  XNNC  blob         +0x0010
+   012E7D30  XSES  blob         +0x0020
+
+== table @ 012E7D38: GID PID TIDX  (Blaze::GameManager::NotifyGamePlayerTeamChange)
+   012E7D38  GID   uint64       +0x0008
+   012E7D48  PID   int64_18     +0x0010
+   012E7D58  TIDX  uint16       +0x0018
+
+== table @ 012E7D68: GID NTID OTID TIDX  (Blaze::GameManager::NotifyGameTeamIdChange)
+   012E7D68  GID   uint64       +0x0008
+   012E7D78  NTID  uint16       +0x0012
+   012E7D84  OTID  uint16       +0x0010
+   012E7D90  TIDX  uint16       +0x0014
+
+== table @ 012E7DA0: GID  (Blaze::GameManager::NotifyProcessQueue)
+   012E7DA0  GID   uint64       +0x0008
+
+== table @ 012E7DB0: GID GNAM  (Blaze::GameManager::NotifyGameNameChange)
+   012E7DB0  GID   uint64       +0x0008
+   012E7DC0  GNAM  string       +0x0010
+
+== table @ 012E7DD0: GID PIDL  (Blaze::GameManager::NotifyQueueChanged)
+   012E7DD0  GID   uint64       +0x0008
+   012E7DE0  PIDL  list         +0x0010 list<int>
+
+== table @ 012E7E20: ATTN ATTV NOFG NOFP  (Blaze::GameManager::GameAttributeCensusData)
+   012E7E20  ATTN  string       +0x0008
+   012E7E30  ATTV  string       +0x0014
+   012E7E40  NOFG  uint32       +0x0020
+   012E7E4C  NOFP  uint32       +0x0024
+
+== table @ 012E7E58: AGN GACD JPN LSN MMSN  (Blaze::GameManager::GameManagerCensusData)
+   012E7E58  AGN   uint32       +0x000c
+   012E7E64  GACD  list         +0x0018 list<struct> -> 012E7E20 (Blaze::GameManager::GameAttributeCensusData)
+   012E7E70  JPN   uint32       +0x0010
+   012E7E7C  LSN   uint32       +0x0008
+   012E7E88  MMSN  uint32       +0x0014
+
+== table @ 012E7E94: NOMM  (Blaze::GameManager::NumOfMatchmakingResponse)
+   012E7E94  NOMM  uint32       +0x0008
+
+== table @ 012E7EA0: NOMM  (Blaze::GameManager::NumOfPlayerSessionsResponse)
+   012E7EA0  NOMM  uint32       +0x0008
+
+== table @ 012E7EAC: VALU  (Blaze::GameManager::PingSiteRuleStatus)
+   012E7EAC  VALU  list         +0x0008 list<string>
+
+== table @ 012E7ED8: THLD  (Blaze::GameManager::PingSiteRulePrefs)
+   012E7ED8  THLD  string       +0x0008
+
+== table @ 012E7EE8: NAME THLD VALU  (Blaze::GameManager::GenericRulePrefs)
+   012E7EE8  NAME  string       +0x0008
+   012E7EF8  THLD  string       +0x0014
+   012E7F08  VALU  list         +0x0020 list<string>
+
+== table @ 012E7F14: NAME VALU  (Blaze::GameManager::GenericRuleStatus)
+   012E7F14  NAME  string       +0x0008
+   012E7F24  VALU  list         +0x0014 list<string>
+
+== table @ 012E7F50: RVAL  (Blaze::GameManager::RankRuleStatus)
+   012E7F50  RVAL  uint8        +0x0008
+
+== table @ 012E7F5C: GNUM  (Blaze::GameManager::FindGameStatus)
+   012E7F5C  GNUM  uint32       +0x0008
+
+== table @ 012E7F68: PCAP PCNT PMIN SDIF THLD TID TLST  (Blaze::GameManager::TeamSizeRulePrefs)
+   012E7F68  PCAP  uint16       +0x0036
+   012E7F74  PCNT  uint16       +0x0034
+   012E7F80  PMIN  uint16       +0x0038
+   012E7F8C  SDIF  uint16       +0x003a
+   012E7F98  THLD  string       +0x0008
+   012E7FA8  TID   uint16       +0x0014 default=0xffff
+   012E7FB4  TLST  list         +0x0018 list<int>
+
+== table @ 012E7FC0: TMAX TMIN  (Blaze::GameManager::TeamSizeRuleStatus)
+   012E7FC0  TMAX  uint16       +0x0008
+   012E7FCC  TMIN  uint16       +0x000a
+
+== table @ 012E7FD8: ISSG PCAP PCNT PMIN THLD  (Blaze::GameManager::GameSizeRulePrefs)
+   012E7FD8  ISSG  uint8        +0x0008
+   012E7FE4  PCAP  uint16       +0x001a default=0x1
+   012E7FF0  PCNT  uint16       +0x0018 default=0x1
+   012E7FFC  PMIN  uint16       +0x001c default=0x1
+   012E8008  THLD  string       +0x000c
+
+== table @ 012E8018: PMAX PMIN  (Blaze::GameManager::GameSizeRuleStatus)
+   012E8018  PMAX  uint32       +0x000c
+   012E8024  PMIN  uint32       +0x0008
+
+== table @ 012E8030: PCAP PMIN  (Blaze::GameManager::RosterSizeRulePrefs)
+   012E8030  PCAP  uint16       +0x000a default=0xffff
+   012E803C  PMIN  uint16       +0x0008
+
+== table @ 012E8058: NAME SKMN SKMX  (Blaze::GameManager::SkillRuleStatus)
+   012E8058  NAME  string       +0x0008
+   012E8068  SKMN  int64        +0x0018
+   012E8078  SKMX  int64        +0x0020
+
+== table @ 012E8088: DNF  (Blaze::GameManager::DNFRulePrefs)
+   012E8088  DNF   int64        +0x0008 default=0x65
+
+== table @ 012E8098: MDNF XDNF  (Blaze::GameManager::DNFRuleStatus)
+   012E8098  MDNF  int64        +0x0010
+   012E80A8  XDNF  int64        +0x0008
+
+== table @ 012E80B8: THLD  (Blaze::GameManager::HostBalancingRulePrefs)
+   012E80B8  THLD  string       +0x0008
+
+== table @ 012E80E0: THLD  (Blaze::GameManager::HostViabilityRulePrefs)
+   012E80E0  THLD  string       +0x0008
+
+== table @ 012E8110: AGAM APLR CUST CVAR DNF GEO GNAM NAT PPLR PSR RANK RLST RSZR SIZE SKLZ TEAM UED VIAB VIRT  (Blaze::GameManager::MatchmakingCriteriaData)
+   012E8110  AGAM  struct       +0x0178 -> 012E8430 (Blaze::GameManager::AvoidGamesRuleCriteria)
+   012E811C  APLR  struct       +0x019c -> 012E843C (Blaze::GameManager::AvoidPlayersRuleCriteria)
+   012E8128  CUST  struct       +0x0258 -> empty (Blaze::GameManager::MatchmakingCustomCriteriaData)
+   012E8134  CVAR  map          +0x0260 map<string,intlist>
+   012E8140  DNF   struct       +0x00f0 -> 012E8088 (Blaze::GameManager::DNFRulePrefs)
+   012E814C  GEO   struct       +0x0150 -> 012E83E0 (Blaze::GameManager::GeoLocationRuleCriteria)
+   012E8158  GNAM  struct       +0x0164 -> 012E83FC (Blaze::GameManager::GameNameRuleCriteria)
+   012E8164  NAT   struct       +0x0094 -> 012E80B8 (Blaze::GameManager::HostBalancingRulePrefs)
+   012E8170  PPLR  struct       +0x01e0 -> 012E8454 (Blaze::GameManager::PreferredPlayersRuleCriteria)
+   012E817C  PSR   struct       +0x0100 -> 012E7ED8 (Blaze::GameManager::PingSiteRulePrefs)
+   012E8188  RANK  struct       +0x0008 -> 01461D58 (Blaze::GameManager::RankedGameRulePrefs)
+   012E8194  RLST  list         +0x0114 list<struct> -> 012E7EE8 (Blaze::GameManager::GenericRulePrefs)
+   012E81A0  RSZR  struct       +0x0144 -> 012E8030 (Blaze::GameManager::RosterSizeRulePrefs)
+   012E81AC  SIZE  struct       +0x0038 -> 012E7FD8 (Blaze::GameManager::GameSizeRulePrefs)
+   012E81B8  SKLZ  list         +0x00bc list<struct> -> 01461430 (Blaze::GameManager::SkillRulePrefs)
+   012E81C4  TEAM  struct       +0x0058 -> 012E7F68 (Blaze::GameManager::TeamSizeRulePrefs)
+   012E81D0  UED   map          +0x0220 map<string,struct> -> 012E8478 (Blaze::GameManager::UEDRuleCriteria)
+   012E81DC  VIAB  struct       +0x00a8 -> 012E80E0 (Blaze::GameManager::HostViabilityRulePrefs)
+   012E81E8  VIRT  struct       +0x0020 -> 014612E8 (Blaze::GameManager::VirtualGameRulePrefs)
+
+== table @ 012E81F4: EVST MMSN NOMP  (Blaze::GameManager::CreateGameStatus)
+   012E81F4  EVST  bitfield     +0x0010
+   012E81FC  MMSN  uint32       +0x0008
+   012E8208  NOMP  uint32       +0x000c
+
+== table @ 012E8238: CGS CUST CVAR DNFS FGS GEOS GRDA GSRD HBRD HVRD PSRS RRDA SKRS TSRS UEDS VGRS  (Blaze::GameManager::MatchmakingAsyncStatus)
+   012E8238  CGS   struct       +0x0110 -> 012E81F4 (Blaze::GameManager::CreateGameStatus)
+   012E8244  CUST  struct       +0x016c -> empty (Blaze::GameManager::MatchmakingCustomAsyncStatus)
+   012E8250  CVAR  map          +0x0174 map<string,intlist>
+   012E825C  DNFS  struct       +0x0090 -> 012E8098 (Blaze::GameManager::DNFRuleStatus)
+   012E8268  FGS   struct       +0x0104 -> 012E7F5C (Blaze::GameManager::FindGameStatus)
+   012E8274  GEOS  struct       +0x0128 -> 012E83F0 (Blaze::GameManager::GeoLocationRuleStatus)
+   012E8280  GRDA  map          +0x00cc map<string,struct> -> 012E7F14 (Blaze::GameManager::GenericRuleStatus)
+   012E828C  GSRD  struct       +0x0008 -> 012E8018 (Blaze::GameManager::GameSizeRuleStatus)
+   012E8298  HBRD  struct       +0x0074 -> 014612D8 (Blaze::GameManager::HostBalanceRuleStatus)
+   012E82A4  HVRD  struct       +0x0080 -> 01461D48 (Blaze::GameManager::HostViabilityRuleStatus)
+   012E82B0  PSRS  struct       +0x00a8 -> 012E7EAC (Blaze::GameManager::PingSiteRuleStatus)
+   012E82BC  RRDA  struct       +0x005c -> 012E7F50 (Blaze::GameManager::RankRuleStatus)
+   012E82C8  SKRS  map          +0x0024 map<string,struct> -> 012E8058 (Blaze::GameManager::SkillRuleStatus)
+   012E82D4  TSRS  struct       +0x0018 -> 012E7FC0 (Blaze::GameManager::TeamSizeRuleStatus)
+   012E82E0  UEDS  map          +0x0134 map<string,struct> -> 012E84B8 (Blaze::GameManager::UEDRuleStatus)
+   012E82EC  VGRS  struct       +0x0068 -> 012E8424 (Blaze::GameManager::VirtualGameRuleStatus)
+
+== table @ 012E82F8: ASIL MSID USID  (Blaze::GameManager::NotifyMatchmakingAsyncStatus)
+   012E82F8  ASIL  list         +0x0018 list<struct> -> 012E8238 (Blaze::GameManager::MatchmakingAsyncStatus)
+   012E8308  MSID  uint64       +0x0010
+   012E8318  USID  uint64       +0x0008
+
+== table @ 012E8328: MSID  (Blaze::GameManager::StartMatchmakingResponse)
+   012E8328  MSID  uint64       +0x0008
+
+== table @ 012E8338: MSG  (Blaze::GameManager::MatchmakingCriteriaError)
+   012E8338  MSG   string       +0x0008
+
+== table @ 012E8348: MSID  (Blaze::GameManager::CancelMatchmakingRequest)
+   012E8348  MSID  uint64       +0x0008
+
+== table @ 012E83E0: THLD  (Blaze::GameManager::GeoLocationRuleCriteria)
+   012E83E0  THLD  string       +0x0008
+
+== table @ 012E83F0: DIST  (Blaze::GameManager::GeoLocationRuleStatus)
+   012E83F0  DIST  uint32       +0x0008
+
+== table @ 012E83FC: SUBS  (Blaze::GameManager::GameNameRuleCriteria)
+   012E83FC  SUBS  string       +0x0008
+
+== table @ 012E8424: VVAL  (Blaze::GameManager::VirtualGameRuleStatus)
+   012E8424  VVAL  uint8        +0x0008
+
+== table @ 012E8430: GIDL  (Blaze::GameManager::AvoidGamesRuleCriteria)
+   012E8430  GIDL  list         +0x0008 list<int>
+
+== table @ 012E843C: ALST ASTS  (Blaze::GameManager::AvoidPlayersRuleCriteria)
+   012E843C  ALST  list         +0x0024 list<int>
+   012E8448  ASTS  list         +0x0008 list<objid>
+
+== table @ 012E8454: PLST PSET REQP  (Blaze::GameManager::PreferredPlayersRuleCriteria)
+   012E8454  PLST  list         +0x0020 list<int>
+   012E8460  PSET  objid        +0x0010
+   012E8468  REQP  bool_0f      +0x0008
+
+== table @ 012E8478: CVAL NAME OVAL THLD  (Blaze::GameManager::UEDRuleCriteria)
+   012E8478  CVAL  int64        +0x0020 default=0x8000000000000000
+   012E8488  NAME  string       +0x0008
+   012E8498  OVAL  int64        +0x0028 default=0x8000000000000000
+   012E84A8  THLD  string       +0x0014
+
+== table @ 012E84B8: AMAX AMIN MUED NAME  (Blaze::GameManager::UEDRuleStatus)
+   012E84B8  AMAX  int64        +0x0028
+   012E84C8  AMIN  int64        +0x0020
+   012E84D8  MUED  int64        +0x0018
+   012E84E8  NAME  string       +0x0008
+
+== table @ 012ED170: ATTR JTIM PERM PNET SID USER  (Blaze::Playgroups::PlaygroupMemberInfo)
+   012ED170  ATTR  map          +0x0060 map<string,string>
+   012ED17C  JTIM  uint32       +0x00c8
+   012ED188  PERM  bitfield     +0x0058
+   012ED190  PNET  union        +0x0084 -> union 012F22E8
+   012ED198  SID   uint8        +0x00c4
+   012ED1A4  USER  struct       +0x0008 -> 012F1C70 (Blaze::UserIdentification)
+
+== table @ 012ED1B0: JOIN PGRP  (Blaze::Playgroups::CreatePlaygroupRequest)
+   012ED1B0  JOIN  bool_0f      +0x00f0
+   012ED1BC  PGRP  struct       +0x0008 -> 01462028 (Blaze::Playgroups::PlaygroupInfo)
+
+== table @ 012ED1C8: PGID XNNC XSES  (Blaze::Playgroups::UpdatePlaygroupSessionRequest)
+   012ED1C8  PGID  uint64       +0x0008
+   012ED1D8  XNNC  blob         +0x0010
+   012ED1E0  XSES  blob         +0x0020
+
+== table @ 012ED228: PGID  (Blaze::Playgroups::DestroyPlaygroupRequest)
+   012ED228  PGID  uint64       +0x0008
+
+== table @ 012ED238: PGID PNET UKEY USER  (Blaze::Playgroups::JoinPlaygroupRequest)
+   012ED238  PGID  uint64       +0x0008
+   012ED248  PNET  union        +0x0070 -> union 012F22E8
+   012ED250  UKEY  string       +0x0010
+   012ED260  USER  struct       +0x0020 -> 012F1C70 (Blaze::UserIdentification)
+
+== table @ 012ED270: INFO  (Blaze::Playgroups::JoinPlaygroupResponse)
+   012ED270  INFO  struct       +0x0008 -> 01462028 (Blaze::Playgroups::PlaygroupInfo)
+
+== table @ 012ED288: INFO MLST USER  (Blaze::Playgroups::NotifyJoinPlaygroup)
+   012ED288  INFO  struct       +0x0010 -> 01462028 (Blaze::Playgroups::PlaygroupInfo)
+   012ED294  MLST  list         +0x00f8 list<struct> -> 012ED170 (Blaze::Playgroups::PlaygroupMemberInfo)
+   012ED2A0  USER  int64_18     +0x0008
+
+== table @ 012ED2B0: MEMB PGID  (Blaze::Playgroups::NotifyMemberJoinedPlaygroup)
+   012ED2B0  MEMB  struct       +0x0010 -> 012ED170 (Blaze::Playgroups::PlaygroupMemberInfo)
+   012ED2C0  PGID  uint64       +0x0008
+
+== table @ 012ED2D0: PGID  (Blaze::Playgroups::LeavePlaygroupRequest)
+   012ED2D0  PGID  uint64       +0x0008
+
+== table @ 012ED2E0: HSID LID PGID  (Blaze::Playgroups::NotifyLeaderChange)
+   012ED2E0  HSID  uint8        +0x0018
+   012ED2F0  LID   int64_18     +0x0010
+   012ED300  PGID  uint64       +0x0008
+
+== table @ 012ED310: LID PERM PGID  (Blaze::Playgroups::NotifyMemberPermissionsChange)
+   012ED310  LID   int64_18     +0x0010
+   012ED320  PERM  bitfield     +0x0018
+   012ED328  PGID  uint64       +0x0008
+
+== table @ 012ED338: ATTR PGID  (Blaze::Playgroups::SetPlaygroupAttributesRequest)
+   012ED338  ATTR  map          +0x0010 map<string,string>
+   012ED348  PGID  uint64       +0x0008
+
+== table @ 012ED358: ATTR PGID  (Blaze::Playgroups::NotifyPlaygroupAttributesSet)
+   012ED358  ATTR  map          +0x0010 map<string,string>
+   012ED368  PGID  uint64       +0x0008
+
+== table @ 012ED378: ATTR EID PGID  (Blaze::Playgroups::SetMemberAttributesRequest)
+   012ED378  ATTR  map          +0x0018 map<string,string>
+   012ED388  EID   int64_18     +0x0010
+   012ED398  PGID  uint64       +0x0008
+
+== table @ 012ED3A8: ATTR EID PGID  (Blaze::Playgroups::NotifyMemberAttributesSet)
+   012ED3A8  ATTR  map          +0x0018 map<string,string>
+   012ED3B8  EID   int64_18     +0x0010
+   012ED3C8  PGID  uint64       +0x0008
+
+== table @ 012ED3E8: PGID PRES XNNC XSES  (Blaze::Playgroups::NotifyXboxSessionInfo)
+   012ED3E8  PGID  uint64       +0x0008
+   012ED3F8  PRES  bool         +0x0030
+   012ED404  XNNC  blob         +0x0010
+   012ED40C  XSES  blob         +0x0020
+
+== table @ 012ED448: PGN PIPN  (Blaze::Playgroups::PlaygroupCensusData)
+   012ED448  PGN   uint32       +0x0008
+   012ED454  PIPN  uint32       +0x000c
+
+== table @ 012EE228: ATTR FLAG STAT TAG TIDS TTYP TYPE  (Blaze::Messaging::ClientMessage)
+   012EE228  ATTR  map          +0x0064 ptr map<int,string>
+   012EE234  FLAG  bitfield     +0x002c
+   012EE23C  STAT  uint32       +0x003c
+   012EE248  TAG   uint32       +0x0038
+   012EE254  TIDS  list         +0x0028 ptr list<int>
+   012EE260  TTYP  objtype      +0x0008
+   012EE268  TYPE  uint32       +0x0034
+
+== table @ 012EE2D0: FLAG MGID NAME PYLD SRCE TIME  (Blaze::Messaging::ServerMessage)
+   012EE2D0  FLAG  bitfield     +0x002c
+   012EE2D8  MGID  uint64       +0x0008
+   012EE2E8  NAME  string       +0x0020
+   012EE2F8  PYLD  struct       +0x00a0 ptr -> 012EE228 (Blaze::Messaging::ClientMessage)
+   012EE304  SRCE  objid        +0x0010
+   012EE30C  TIME  uint32       +0x0034
+
+== table @ 012EE318: FLAG MGID SMSK SRCE STAT TYPE  (Blaze::Messaging::PurgeMessageRequest)
+   012EE318  FLAG  bitfield     +0x0008
+   012EE320  MGID  uint64       +0x0010
+   012EE330  SMSK  uint32       +0x002c
+   012EE33C  SRCE  objid        +0x0018
+   012EE344  STAT  uint32       +0x0030
+   012EE350  TYPE  uint32       +0x0028
+
+== table @ 012EE3E8: MGID MIDS  (Blaze::Messaging::SendMessageResponse)
+   012EE3E8  MGID  uint64       +0x0008
+   012EE3F8  MIDS  list         +0x0010 list<int>
+
+== table @ 012EE408: MCNT  (Blaze::Messaging::FetchMessageResponse)
+   012EE408  MCNT  uint32       +0x0008
+
+== table @ 012EE420: MCNT  (Blaze::Messaging::PurgeMessageResponse)
+   012EE420  MCNT  uint32       +0x0008
+
+== table @ 012EEAA4: MSG  (Blaze::BGOps::BGOpsError)
+   012EEAA4  MSG   string       +0x0008
+
+== table @ 012EED10: ACID GMID  (Blaze::BGOps::SetPlayerGameIDRequest)
+   012EED10  ACID  uint64       +0x0018
+   012EED20  GMID  string       +0x0008
+
+== table @ 012EED30: ACID  (Blaze::BGOps::GetPlayerGameIDRequest)
+   012EED30  ACID  uint64       +0x0008
+
+== table @ 012EED90: ACID  (Blaze::BGOps::IsUserMMLockedoutRequest)
+   012EED90  ACID  uint64       +0x0008
+
+== table @ 012EEEEC: MENV  (Blaze::BGOps::GetCurrentVersionRequest)
+   012EEEEC  MENV  string       +0x0008
+
+== table @ 012EF1C0: GMID  (Blaze::BGOps::GetPlayerGameIDResponse)
+   012EF1C0  GMID  string       +0x0008
+
+== table @ 012EF1E8: LOCK  (Blaze::BGOps::IsUserMMLockedoutResponse)
+   012EF1E8  LOCK  uint64       +0x0008
+
+== table @ 012EF208: BLTD CRNU CRTD CUTO EMLR INST LACT MANU MENV NVSR TMLR  (Blaze::BGOps::GetCurrentVersionResponse)
+   012EF208  BLTD  string       +0x0060
+   012EF218  CRNU  string       +0x0030
+   012EF228  CRTD  string       +0x0054
+   012EF238  CUTO  uint32       +0x006c
+   012EF244  EMLR  string       +0x0048
+   012EF254  INST  string       +0x0070
+   012EF264  LACT  uint32       +0x0008
+   012EF270  MANU  string       +0x0024
+   012EF280  MENV  string       +0x000c
+   012EF290  NVSR  string       +0x0018
+   012EF2A0  TMLR  string       +0x003c
+
+== table @ 012EFA00: MSG  (Blaze::Entry::EntryError)
+   012EFA00  MSG   string       +0x0008
+
+== table @ 012EFF7C: KSIT  (Blaze::Stats::KeyScopes)
+   012EFF7C  KSIT  map          +0x0040 ptr map<string,struct> -> 012EFF88 (Blaze::Stats::KeyScopeItem)
+
+== table @ 012EFF88: AGKY ENAG KSVL  (Blaze::Stats::KeyScopeItem)
+   012EFF88  AGKY  int64        +0x0030
+   012EFF98  ENAG  bool_0f      +0x002c
+   012EFFA4  KSVL  map          +0x0008 map<int,int>
+
+== table @ 012EFFF8: CATG DFLT DRVD FRMT KIND LDSC META NAME SDSC TYPE  (Blaze::Stats::StatDescSummary)
+   012EFFF8  CATG  string       +0x0060
+   012F0008  DFLT  string       +0x0030
+   012F0018  DRVD  bool_0f      +0x006c
+   012F0024  FRMT  string       +0x003c
+   012F0034  KIND  string       +0x0048
+   012F0044  LDSC  string       +0x0020
+   012F0054  META  string       +0x0054
+   012F0064  NAME  string       +0x0008
+   012F0074  SDSC  string       +0x0014
+   012F0084  TYPE  int32        +0x002c
+
+== table @ 012F0090: EID ETYP POFF STAT  (Blaze::Stats::EntityStats)
+   012F0090  EID   int64_1b     +0x0008
+   012F009C  ETYP  objtype      +0x0010
+   012F00A4  POFF  int32        +0x0014
+   012F00B0  STAT  list         +0x0018 list<string>
+
+== table @ 012F0128: AGGR STAT  (Blaze::Stats::StatValues)
+   012F0128  AGGR  list         +0x0038 list<struct> -> 014623AC (Blaze::Stats::EntityStatAggregates)
+   012F0134  STAT  list         +0x0008 list<struct> -> 012F0090 (Blaze::Stats::EntityStats)
+
+== table @ 012F014C: NAME  (Blaze::Stats::GetStatGroupRequest)
+   012F014C  NAME  string       +0x0008
+
+== table @ 012F0178: CNAM DESC ETYP KSUM META NAME STAT  (Blaze::Stats::StatGroupResponse)
+   012F0178  CNAM  string       +0x0020
+   012F0188  DESC  string       +0x0014
+   012F0198  ETYP  objtype      +0x002c
+   012F01A0  KSUM  map          +0x006c map<string,int>
+   012F01AC  META  string       +0x0030
+   012F01BC  NAME  string       +0x0008
+   012F01CC  STAT  list         +0x003c list<struct> -> 012EFFF8 (Blaze::Stats::StatDescSummary)
+
+== table @ 012F0220: AGGR EID KSUM NAME PCTR POFF PRID PTYP TIME VID  (Blaze::Stats::GetStatsByGroupRequest)
+   012F0220  AGGR  bitfield     +0x0068
+   012F0228  EID   list         +0x0014 list<int>
+   012F0234  KSUM  map          +0x0040 map<string,int>
+   012F0240  NAME  string       +0x0008
+   012F0250  PCTR  int32        +0x003c default=0x1
+   012F025C  POFF  int32        +0x0038
+   012F0268  PRID  int32        +0x0034
+   012F0274  PTYP  int32        +0x0030
+   012F0280  TIME  int32        +0x0070
+   012F028C  VID   uint32       +0x0064
+
+== table @ 012F050C: LDLS  (Blaze::Stats::LeaderboardStatValues)
+   012F050C  LDLS  list         +0x0008 list<struct> -> 012F0590 (Blaze::Stats::LeaderboardStatValuesRow)
+
+== table @ 012F0518: COUN KSUM LBID NAME POFF PRID STRT TIME USET  (Blaze::Stats::LeaderboardStatsRequest)
+   012F0518  COUN  int32        +0x0024
+   012F0524  KSUM  map          +0x0028 map<string,int>
+   012F0530  LBID  int32        +0x0014
+   012F053C  NAME  string       +0x0008
+   012F054C  POFF  int32        +0x001c
+   012F0558  PRID  int32        +0x0018
+   012F0564  STRT  int32        +0x0020
+   012F0570  TIME  int32        +0x004c
+   012F057C  USET  objid        +0x0050
+
+== table @ 012F0590: ENAM ENID RANK RSTA RWFG RWOT RWST STAT UATT  (Blaze::Stats::LeaderboardStatValuesRow)
+   012F0590  ENAM  string       +0x0018
+   012F05A0  ENID  int64_1b     +0x0010
+   012F05AC  RANK  int32        +0x0008
+   012F05B8  RSTA  string       +0x0030
+   012F05C8  RWFG  bool         +0x0058
+   012F05D4  RWOT  list         +0x0080 list<struct> -> union 012F0E40
+   012F05E0  RWST  union        +0x0060 -> union 012F0E40
+   012F05E8  STAT  list         +0x003c list<string>
+   012F05F8  UATT  uint64       +0x0028
+
+== table @ 012F06F8: GRNM KEY LAST STS VID  (Blaze::Stats::KeyScopedStatValues)
+   012F06F8  GRNM  string       +0x000c
+   012F0708  KEY   string       +0x0018
+   012F0718  LAST  bool_0f      +0x0024
+   012F0724  STS   struct       +0x0028 -> 012F0128 (Blaze::Stats::StatValues)
+   012F0730  VID   uint32       +0x0008
+
+== table @ 012F0750: CHDE CHDS LAST NAME NDID RTNM SDES  (Blaze::Stats::LeaderboardTreeNode)
+   012F0750  CHDE  uint32       +0x0028
+   012F075C  CHDS  uint32       +0x0024
+   012F0768  LAST  bool_0f      +0x002c
+   012F0774  NAME  string       +0x000c
+   012F0784  NDID  uint32       +0x0008
+   012F0790  RTNM  string       +0x0030
+   012F07A0  SDES  string       +0x0018
+
+== table @ 012F1A5C: FCRT  (Blaze::EntryCriteriaError)
+   012F1A5C  FCRT  string       +0x0008
+
+== table @ 012F1ADC: IP PORT  (Blaze::IpAddress)
+   012F1ADC  IP    uint32       +0x0008
+   012F1AE8  PORT  uint16       +0x000c
+
+== table @ 012F1AF4: NAME PORT  (Blaze::HostNameAddress)
+   012F1AF4  NAME  string       +0x0008
+   012F1B04  PORT  uint16       +0x0014
+
+== table @ 012F1B10: EXIP INIP  (Blaze::IpPairAddress)
+   012F1B10  EXIP  struct       +0x0018 -> 012F1ADC (Blaze::IpAddress)
+   012F1B1C  INIP  struct       +0x0008 -> 012F1ADC (Blaze::IpAddress)
+
+== table @ 012F1B28: XDDR XUID  (Blaze::XboxClientAddress)
+   012F1B28  XDDR  blob         +0x0010
+   012F1B30  XUID  uint64       +0x0008
+
+== table @ 012F1B40: PORT SITE SVID  (Blaze::XboxServerAddress)
+   012F1B40  PORT  uint16       +0x0018
+   012F1B4C  SITE  string       +0x000c
+   012F1B5C  SVID  uint32       +0x0008
+
+== table @ 012F1BA0: PSA PSP SNA  (Blaze::QosPingSiteInfo)
+   012F1BA0  PSA   string       +0x0008
+   012F1BB0  PSP   uint16       +0x0014
+   012F1BBC  SNA   string       +0x0018
+
+== table @ 012F1BCC: BWPS LNP LTPS SVID  (Blaze::QosConfigInfo)
+   012F1BCC  BWPS  struct       +0x0010 -> 012F1BA0 (Blaze::QosPingSiteInfo)
+   012F1BD8  LNP   uint16       +0x0008 default=0xa
+   012F1BE4  LTPS  map          +0x0034 map<string,struct> -> 012F1BA0 (Blaze::QosPingSiteInfo)
+   012F1BF0  SVID  uint32       +0x000c default=0x45410805
+
+== table @ 012F1BFC: NLMP  (Blaze::UpdatePingSiteLatencyRequest)
+   012F1BFC  NLMP  map          +0x0008 map<string,int>
+
+== table @ 012F1C08: ADDR NLMP NQOS  (Blaze::NetworkInfo)
+   012F1C08  ADDR  union        +0x0040 -> union 012F22E8
+   012F1C10  NLMP  map          +0x0008 map<string,int>
+   012F1C1C  NQOS  struct       +0x002c -> 01462610 (Blaze::Util::NetworkQosData)
+
+== table @ 012F1C70: AID ALOC EXBB EXID ID NAME ORIG  (Blaze::UserIdentification)
+   012F1C70  AID   int64        +0x0038
+   012F1C80  ALOC  uint32       +0x0040
+   012F1C8C  EXBB  blob         +0x0028
+   012F1C98  EXID  uint64       +0x0020
+   012F1CA8  ID    int64_18     +0x0018
+   012F1CB8  NAME  string       +0x0008
+   012F1CC8  ORIG  uint64       +0x0048
+
+== table @ 012F1CD8: FLGS ID  (Blaze::UserStatus)
+   012F1CD8  FLGS  bitfield     +0x0010
+   012F1CE0  ID    int64_18     +0x0008
+
+== table @ 012F1D5C: CPCM  (Blaze::UserManagerCensusData)
+   012F1D5C  CPCM  map          +0x0008 map<int,int>
+
+== table @ 012F1EA8: SKEY  (Blaze::ResumeSessionRequest)
+   012F1EA8  SKEY  string       +0x0008
+
+== table @ 012F1F68: HWFG  (Blaze::UpdateHardwareFlagsRequest)
+   012F1F68  HWFG  bitfield     +0x0008
+
+== table @ 012F1F70: ADDR BPS CMAP CTY CVAR DMAP HWFG PSLM QDAT UATT ULST  (Blaze::UserSessionExtendedData)
+   012F1F70  ADDR  union        +0x0084 -> union 012F22E8
+   012F1F78  BPS   string       +0x0048
+   012F1F88  CMAP  map          +0x00c4 map<int,int>
+   012F1F94  CTY   string       +0x00fc
+   012F1FA4  CVAR  variable     +0x00e8
+   012F1FAC  DMAP  map          +0x0008 map<int,int>
+   012F1FB8  HWFG  bitfield     +0x00f4
+   012F1FC0  PSLM  list         +0x0054 list<int>
+   012F1FCC  QDAT  struct       +0x0070 -> 01462610 (Blaze::Util::NetworkQosData)
+   012F1FD8  UATT  uint64       +0x0108
+   012F1FE8  ULST  list         +0x002c list<objid>
+
+== table @ 012F1FF8: DATA SUBS USID  (Blaze::UserSessionExtendedDataUpdate)
+   012F1FF8  DATA  struct       +0x0118 ptr -> 012F1F70 (Blaze::UserSessionExtendedData)
+   012F2004  SUBS  bool_0f      +0x0128
+   012F2010  USID  int64_18     +0x0120
+
+== table @ 012F2020: DATA USER  (Blaze::NotifyUserAdded)
+   012F2020  DATA  struct       +0x0168 ptr -> 012F1F70 (Blaze::UserSessionExtendedData)
+   012F202C  USER  struct       +0x0008 -> 012F1C70 (Blaze::UserIdentification)
+
+== table @ 012F2038: BUID  (Blaze::NotifyUserRemoved)
+   012F2038  BUID  int64_18     +0x0008
+
+== table @ 012F2088: ATID OPER UREA VALU  (Blaze::UpdateUserSessionAttributeRequest)
+   012F2088  ATID  uint64       +0x0010
+   012F2098  OPER  bool_0f      +0x0008
+   012F20A4  UREA  uint32       +0x0020
+   012F20B0  VALU  uint64       +0x0018
+
+== table @ 012F20C0: EDAT FLGS USER  (Blaze::UserData)
+   012F20C0  EDAT  struct       +0x0058 -> 012F1F70 (Blaze::UserSessionExtendedData)
+   012F20CC  FLGS  bitfield     +0x0168
+   012F20D4  USER  struct       +0x0008 -> 012F1C70 (Blaze::UserIdentification)
+
+== table @ 012F20E0: ATTV MASK ULST  (Blaze::SetUserInfoAttributeRequest)
+   012F20E0  ATTV  uint64       +0x0028
+   012F20F0  MASK  uint64       +0x0030
+   012F2100  ULST  list         +0x0008 list<objid>
+
+== table @ 012F2DC0: ASEC ASPC BLCC BLEC CTEC CTPC  (Blaze::BGEcommerce::CommerceProfile)
+   012F2DC0  ASEC  uint32       +0x0014
+   012F2DCC  ASPC  uint32       +0x0010
+   012F2DD8  BLCC  uint32       +0x000c
+   012F2DE4  BLEC  uint32       +0x0008
+   012F2DF0  CTEC  uint32       +0x001c
+   012F2DFC  CTPC  uint32       +0x0018
+
+== table @ 012F2EC8: AVIL PAIC PAIS  (Blaze::BGEcommerce::PurchaseOption)
+   012F2EC8  AVIL  bool         +0x0018
+   012F2ED4  PAIC  uint32       +0x0008
+   012F2EE0  PAIS  string       +0x000c
+
+== table @ 012F2F08: DESC ENDT ERNC FEAT FLGS ITMC ITMI PAIC PUBD PUID PUIF PUII PUOT SART  (Blaze::BGEcommerce::PurchasableUnitTdf)
+   012F2F08  DESC  string       +0x0068
+   012F2F18  ENDT  int64        +0x00b8
+   012F2F28  ERNC  struct       +0x0030 -> 012F2EC8 (Blaze::BGEcommerce::PurchaseOption)
+   012F2F38  FEAT  int64        +0x00c8
+   012F2F48  FLGS  int64        +0x00c0
+   012F2F58  ITMC  list         +0x0090 list<int>
+   012F2F64  ITMI  list         +0x0074 list<int>
+   012F2F70  PAIC  struct       +0x0014 -> 012F2EC8 (Blaze::BGEcommerce::PurchaseOption)
+   012F2F80  PUBD  int64        +0x00d0
+   012F2F90  PUID  string       +0x0008
+   012F2FA0  PUIF  bool_0f      +0x004c
+   012F2FAC  PUII  string       +0x005c
+   012F2FBC  PUOT  string       +0x0050
+   012F2FD0  SART  int64        +0x00b0
+
+== table @ 012F3310: CNT ITMS PPRI PROI QNTS VERS  (Blaze::BGEcommerce::PurchaseWithPCRequest)
+   012F3310  CNT   uint8        +0x0024 default=0x1
+   012F331C  ITMS  list         +0x0028 list<int>
+   012F3328  PPRI  int32        +0x0014
+   012F3334  PROI  string       +0x0008
+   012F3344  QNTS  list         +0x0044 list<int>
+   012F3350  VERS  string       +0x0018
+
+== table @ 012F3360: CNT ITMS PPRI PROI QNTS VERS  (Blaze::BGEcommerce::PurchaseWithECRequest)
+   012F3360  CNT   uint8        +0x0024 default=0x1
+   012F336C  ITMS  list         +0x0028 list<int>
+   012F3378  PPRI  int32        +0x0014
+   012F3384  PROI  string       +0x0008
+   012F3394  QNTS  list         +0x0044 list<int>
+   012F33A0  VERS  string       +0x0018
+
+== table @ 012F3444: CATA VERS  (Blaze::BGEcommerce::GetCatalogResponse)
+   012F3444  CATA  list         +0x0008 list<struct> -> 012F2F08 (Blaze::BGEcommerce::PurchasableUnitTdf)
+   012F3450  VERS  string       +0x0038
+
+== table @ 012F3470: BZID CNT ITMS PCBL QNTS  (Blaze::BGEcommerce::PurchaseWithPCResponse)
+   012F3470  BZID  uint64       +0x0008
+   012F3480  CNT   uint8        +0x0014 default=0x1
+   012F348C  ITMS  list         +0x0018 list<int>
+   012F3498  PCBL  uint32       +0x0010
+   012F34A4  QNTS  list         +0x0034 list<int>
+
+== table @ 012F34B0: BZID CNT ECLB ITMS QNTS  (Blaze::BGEcommerce::PurchaseWithECResponse)
+   012F34B0  BZID  uint64       +0x0008
+   012F34C0  CNT   uint8        +0x0014 default=0x1
+   012F34CC  ECLB  uint32       +0x0010
+   012F34D8  ITMS  list         +0x0018 list<int>
+   012F34E4  QNTS  list         +0x0034 list<int>
+
+== table @ 012F34FC: GCPR  (Blaze::BGEcommerce::GetCommerceProfileResponse)
+   012F34FC  GCPR  struct       +0x0008 -> 012F2DC0 (Blaze::BGEcommerce::CommerceProfile)
+
+== table @ 012F3514: CCBL ECBL PCBL  (Blaze::BGEcommerce::GetBalanceResponse)
+   012F3514  CCBL  uint32       +0x0010
+   012F3520  ECBL  uint32       +0x000c
+   012F352C  PCBL  uint32       +0x0008
+
+== table @ 012F3538: LBXU  (Blaze::BGEcommerce::GetLockboxURLResponse)
+   012F3538  LBXU  string       +0x0008
+
+== table @ 012F3554: ITMS  (Blaze::BGEcommerce::GetGameItemsResponse)
+   012F3554  ITMS  list         +0x0008 list<struct> -> 014626F0 (Blaze::BGEcommerce::GameItem)
+
+== table @ 012F360C: MSG  (Blaze::BGEcommerce::BGEcommerceError)
+   012F360C  MSG   string       +0x0008
+
+== table @ 012F4568: LMID TIME  (Blaze::Association::ListMemberInfo)
+   012F4568  LMID  struct       +0x0010 -> 014627B8 (Blaze::Association::ListMemberId)
+   012F4578  TIME  int64        +0x0008
+
+== table @ 012F4588: LNM TYPE  (Blaze::Association::ListIdentification)
+   012F4588  LNM   string       +0x000c
+   012F4598  TYPE  uint32       +0x0008
+
+== table @ 012F45A4: BOID FLGS LID LMS PRID  (Blaze::Association::ListInfo)
+   012F45A4  BOID  objid        +0x0030
+   012F45AC  FLGS  bitfield     +0x0024
+   012F45B4  LID   struct       +0x0008 -> 012F4588 (Blaze::Association::ListIdentification)
+   012F45C0  LMS   uint32       +0x0020
+   012F45CC  PRID  uint32       +0x002c
+
+== table @ 012F45D8: INFO MEML OFRC TOCT  (Blaze::Association::ListMembers)
+   012F45D8  INFO  struct       +0x0008 -> 012F45A4 (Blaze::Association::ListInfo)
+   012F45E4  MEML  list         +0x0048 list<struct> -> 012F4568 (Blaze::Association::ListMemberInfo)
+   012F45F0  OFRC  uint32       +0x007c
+   012F45FC  TOCT  uint32       +0x0078
+
+== table @ 012F4608: LMAP  (Blaze::Association::Lists)
+   012F4608  LMAP  list         +0x0008 list<struct> -> 012F45D8 (Blaze::Association::ListMembers)
+
+== table @ 012F4614: ALST MXRC OFRC  (Blaze::Association::GetListsRequest)
+   012F4614  ALST  list         +0x0008 list<struct> -> 012F45A4 (Blaze::Association::ListInfo)
+   012F4620  MXRC  uint32       +0x0038 default=0xffffffff
+   012F462C  OFRC  uint32       +0x003c
+
+== table @ 012F4660: BID BIDL LID MUTA VALA VALD  (Blaze::Association::UpdateListMembersRequest)
+   012F4660  BID   int64_18     +0x0008
+   012F4670  BIDL  list         +0x0028 list<struct> -> 014627B8 (Blaze::Association::ListMemberId)
+   012F467C  LID   struct       +0x0010 -> 012F4588 (Blaze::Association::ListIdentification)
+   012F4688  MUTA  bool         +0x0058
+   012F4694  VALA  bool         +0x0059 default=0x1
+   012F46A0  VALD  bool         +0x005a default=0x1
+
+== table @ 012F46B0: LMID REM  (Blaze::Association::UpdateListMembersResponse)
+   012F46B0  LMID  list         +0x0008 list<struct> -> 012F4568 (Blaze::Association::ListMemberInfo)
+   012F46BC  REM   list         +0x0038 list<struct> -> 014627B8 (Blaze::Association::ListMemberId)
+
+== table @ 012F4770: BIDL LID  (Blaze::Association::UpdateListWithMembersRequest)
+   012F4770  BIDL  list         +0x0020 list<struct> -> 01462798 (Blaze::Association::ListMemberInfoUpdate)
+   012F477C  LID   struct       +0x0008 -> 012F4588 (Blaze::Association::ListIdentification)
+
+== table @ 012F5148: CLID PNTS RPTS  (Blaze::GameReporting::ArsonClub::PlayerReport)
+   012F5148  CLID  uint64       +0x0008
+   012F5158  PNTS  uint16       +0x0010
+   012F5164  RPTS  uint16       +0x0012
+
+== table @ 012F5170: CREG LOSS PNTS RLOS RPTS RTIE RWIN SLVL TIES WINS  (Blaze::GameReporting::ArsonClub::ClubReport)
+   012F5170  CREG  uint32       +0x0008
+   012F517C  LOSS  uint16       +0x0012
+   012F5188  PNTS  uint16       +0x0016
+   012F5194  RLOS  uint16       +0x001a
+   012F51A0  RPTS  uint16       +0x001e
+   012F51AC  RTIE  uint16       +0x001c
+   012F51B8  RWIN  uint16       +0x0018
+   012F51C4  SLVL  uint32       +0x000c
+   012F51D0  TIES  uint16       +0x0014
+   012F51DC  WINS  uint16       +0x0010
+
+== table @ 012F51E8: CLUB PLYR  (Blaze::GameReporting::ArsonClub::Report)
+   012F51E8  CLUB  map          +0x0040 map<int,struct> -> 012F5170 (Blaze::GameReporting::ArsonClub::ClubReport)
+   012F51F4  PLYR  map          +0x0008 map<int,struct> -> 012F5148 (Blaze::GameReporting::ArsonClub::PlayerReport)
+
+== table @ 012F5200: LOSS WINS  (Blaze::GameReporting::ArsonClubGameKeyscopes_NonDerived::ClubReport)
+   012F5200  LOSS  uint16       +0x000a
+   012F520C  WINS  uint16       +0x0008
+
+== table @ 012F5218: HITS PID SERV TEAM  (Blaze::GameReporting::ArsonClubGameKeyscopes_NonDerived::OffensiveAthlete)
+   012F5218  HITS  uint16       +0x0010
+   012F5228  PID   int64_18     +0x0008
+   012F5238  SERV  uint16       +0x0012
+   012F5244  TEAM  uint16       +0x0014
+
+== table @ 012F5250: CLID CREG PNTS  (Blaze::GameReporting::ArsonClubGameKeyscopes_NonDerived::PlayerReport)
+   012F5250  CLID  uint64       +0x0008
+   012F5260  CREG  uint32       +0x0014
+   012F526C  PNTS  uint16       +0x0010
+
+== table @ 012F5278: CLUB OFFS PLYR  (Blaze::GameReporting::ArsonClubGameKeyscopes_NonDerived::Report)
+   012F5278  CLUB  map          +0x0008 map<int,struct> -> 012F5200 (Blaze::GameReporting::ArsonClubGameKeyscopes_NonDerived::ClubReport)
+   012F5284  OFFS  map          +0x0078 map<int,struct> -> 012F5218 (Blaze::GameReporting::ArsonClubGameKeyscopes_NonDerived::OffensiveAthlete)
+   012F5290  PLYR  map          +0x0040 map<int,struct> -> 012F5250 (Blaze::GameReporting::ArsonClubGameKeyscopes_NonDerived::PlayerReport)
+
+== table @ 012F529C: LTAL  (Blaze::GameReporting::ArsonCTF_NonDerived::SkippedPlayerReport)
+   012F529C  LTAL  uint16       +0x0008
+
+== table @ 012F52A8: DETH FCAP KILL LOC RMR RSMP SKRP  (Blaze::GameReporting::ArsonCTF_NonDerived::PlayerReport)
+   012F52A8  DETH  uint16       +0x000a
+   012F52B4  FCAP  uint32       +0x000c
+   012F52C0  KILL  uint16       +0x0008
+   012F52CC  LOC   uint32       +0x0044
+   012F52D8  RMR   uint32       +0x0040
+   012F52E4  RSMP  map          +0x001c map<string,int>
+   012F52F0  SKRP  variable     +0x0010
+
+== table @ 012F52F8: DUR GNAM GSNA GSVA MAP TIME  (Blaze::GameReporting::ArsonCTF_NonDerived::GameAttributes)
+   012F52F8  DUR   float        +0x000c
+   012F5304  GNAM  string       +0x001c
+   012F5314  GSNA  string       +0x0028
+   012F5324  GSVA  string       +0x0034
+   012F5334  MAP   string       +0x0010
+   012F5344  TIME  uint32       +0x0008
+
+== table @ 012F5350: GAME PLYR  (Blaze::GameReporting::ArsonCTF_NonDerived::Report)
+   012F5350  GAME  struct       +0x0040 -> 012F52F8 (Blaze::GameReporting::ArsonCTF_NonDerived::GameAttributes)
+   012F535C  PLYR  map          +0x0008 map<int,struct> -> 012F52A8 (Blaze::GameReporting::ArsonCTF_NonDerived::PlayerReport)
+
+== table @ 012F5368: DERV DETH KILL LOC RMR  (Blaze::GameReporting::ArsonCTF_Common::PlayerReport)
+   012F5368  DERV  variable     +0x000c
+   012F5370  DETH  uint16       +0x000a
+   012F537C  KILL  uint16       +0x0008
+   012F5388  LOC   uint32       +0x001c
+   012F5394  RMR   uint32       +0x0018
+
+== table @ 012F53A0: DUR GNAM GSNA GSVA MAP TIME  (Blaze::GameReporting::ArsonCTF_Common::GameAttributes)
+   012F53A0  DUR   float        +0x000c
+   012F53AC  GNAM  string       +0x001c
+   012F53BC  GSNA  string       +0x0028
+   012F53CC  GSVA  string       +0x0034
+   012F53DC  MAP   string       +0x0010
+   012F53EC  TIME  uint32       +0x0008
+
+== table @ 012F53F8: GAME PLYR  (Blaze::GameReporting::ArsonCTF_Common::Report)
+   012F53F8  GAME  struct       +0x0040 -> 012F53A0 (Blaze::GameReporting::ArsonCTF_Common::GameAttributes)
+   012F5404  PLYR  map          +0x0008 map<int,struct> -> 012F5368 (Blaze::GameReporting::ArsonCTF_Common::PlayerReport)
+
+== table @ 012F5410: FCAP LOC RMR  (Blaze::GameReporting::ArsonCTF_Derived::PlayerReport)
+   012F5410  FCAP  uint32       +0x0008
+   012F541C  LOC   uint32       +0x0010
+   012F5428  RMR   uint32       +0x000c
+
+== table @ 012F5434: DETH FCAP KILL  (Blaze::GameReporting::ArsonCTF_Custom::PlayerReport)
+   012F5434  DETH  uint16       +0x000a
+   012F5440  FCAP  uint32       +0x000c
+   012F544C  KILL  uint16       +0x0008
+
+== table @ 012F5458: DUR GNAM MAP TIME  (Blaze::GameReporting::ArsonCTF_Custom::GameAttributes)
+   012F5458  DUR   float        +0x000c
+   012F5464  GNAM  string       +0x001c
+   012F5474  MAP   string       +0x0010
+   012F5484  TIME  uint32       +0x0008
+
+== table @ 012F5490: GAME PLYR  (Blaze::GameReporting::ArsonCTF_Custom::Report)
+   012F5490  GAME  struct       +0x0040 -> 012F5458 (Blaze::GameReporting::ArsonCTF_Custom::GameAttributes)
+   012F549C  PLYR  map          +0x0008 map<int,struct> -> 012F5434 (Blaze::GameReporting::ArsonCTF_Custom::PlayerReport)
+
+== table @ 012F54A8: SCOR WINP  (Blaze::GameReporting::ArsonCTF_Custom::ResultNotification)
+   012F54A8  SCOR  map          +0x0024 map<int,int>
+   012F54B4  WINP  list         +0x0008 list<int>
+
+== table @ 012F54C0: DETH RSMP  (Blaze::GameReporting::ArsonCTF_EndGame::PlayerReport)
+   012F54C0  DETH  uint16       +0x0008
+   012F54CC  RSMP  map          +0x000c map<string,int>
+
+== table @ 012F54D8: DUR TIME  (Blaze::GameReporting::ArsonCTF_EndGame::GameAttributes)
+   012F54D8  DUR   float        +0x000c
+   012F54E4  TIME  uint32       +0x0008
+
+== table @ 012F54F0: GAME PLYR  (Blaze::GameReporting::ArsonCTF_EndGame::Report)
+   012F54F0  GAME  struct       +0x0040 -> 012F54D8 (Blaze::GameReporting::ArsonCTF_EndGame::GameAttributes)
+   012F54FC  PLYR  map          +0x0008 map<int,struct> -> 012F54C0 (Blaze::GameReporting::ArsonCTF_EndGame::PlayerReport)
+
+== table @ 012F5508: ACCR DETH FCAP KILL SCOR  (Blaze::GameReporting::ArsonCTF_GSA_NonDerived::PlayerReport)
+   012F5508  ACCR  float        +0x0010
+   012F5514  DETH  uint16       +0x000a
+   012F5520  FCAP  uint32       +0x000c
+   012F552C  KILL  uint16       +0x0008
+   012F5538  SCOR  uint32       +0x0014
+
+== table @ 012F5544: FCAP  (Blaze::GameReporting::ArsonCTF_GSA_Derived::PlayerReport)
+   012F5544  FCAP  uint32       +0x0008
+
+== table @ 012F5550: DUR GNAM GPRP MAP RATG TIME  (Blaze::GameReporting::ArsonCTF_GSA_NonDerived::GameAttributes)
+   012F5550  DUR   float        +0x000c
+   012F555C  GNAM  string       +0x001c
+   012F556C  GPRP  float        +0x0028
+   012F5578  MAP   string       +0x0010
+   012F5588  RATG  int32        +0x002c
+   012F5594  TIME  uint32       +0x0008
+
+== table @ 012F55A0: GAME PLYR  (Blaze::GameReporting::ArsonCTF_GSA_NonDerived::Report)
+   012F55A0  GAME  struct       +0x0040 -> 012F5550 (Blaze::GameReporting::ArsonCTF_GSA_NonDerived::GameAttributes)
+   012F55AC  PLYR  map          +0x0008 map<int,struct> -> 012F5508 (Blaze::GameReporting::ArsonCTF_GSA_NonDerived::PlayerReport)
+
+== table @ 012F55B8: ACCR DERV DETH KILL SCOR  (Blaze::GameReporting::ArsonCTF_GSA_Common::PlayerReport)
+   012F55B8  ACCR  float        +0x000c
+   012F55C4  DERV  variable     +0x0014
+   012F55CC  DETH  uint16       +0x000a
+   012F55D8  KILL  uint16       +0x0008
+   012F55E4  SCOR  uint32       +0x0010
+
+== table @ 012F55F0: DUR GNAM GPRP MAP RATG TIME  (Blaze::GameReporting::ArsonCTF_GSA_Common::GameAttributes)
+   012F55F0  DUR   float        +0x000c
+   012F55FC  GNAM  string       +0x001c
+   012F560C  GPRP  float        +0x0028
+   012F5618  MAP   string       +0x0010
+   012F5628  RATG  int32        +0x002c
+   012F5634  TIME  uint32       +0x0008
+
+== table @ 012F5640: GAME PLYR  (Blaze::GameReporting::ArsonCTF_GSA_Common::Report)
+   012F5640  GAME  struct       +0x0040 -> 012F55F0 (Blaze::GameReporting::ArsonCTF_GSA_Common::GameAttributes)
+   012F564C  PLYR  map          +0x0008 map<int,struct> -> 012F55B8 (Blaze::GameReporting::ArsonCTF_GSA_Common::PlayerReport)
+
+== table @ 012F5658: DETH FCAP KILL RSMP WEPN  (Blaze::GameReporting::ArsonCTF_KS_NonDerived::PlayerReport)
+   012F5658  DETH  uint16       +0x000a
+   012F5664  FCAP  uint32       +0x000c
+   012F5670  KILL  uint16       +0x0008
+   012F567C  RSMP  map          +0x0014 map<string,int>
+   012F5688  WEPN  int32        +0x0010
+
+== table @ 012F5694: DERV DETH KILL WEPN  (Blaze::GameReporting::ArsonCTF_KS_Common::PlayerReport)
+   012F5694  DERV  variable     +0x0010
+   012F569C  DETH  uint16       +0x000a
+   012F56A8  KILL  uint16       +0x0008
+   012F56B4  WEPN  int32        +0x000c
+
+== table @ 012F56C0: DUR GNAM LEVL MAP TIME  (Blaze::GameReporting::ArsonCTF_KS_NonDerived::GameAttributes)
+   012F56C0  DUR   float        +0x000c
+   012F56CC  GNAM  string       +0x001c
+   012F56DC  LEVL  int32        +0x0028
+   012F56E8  MAP   string       +0x0010
+   012F56F8  TIME  uint32       +0x0008
+
+== table @ 012F5704: GAME PLYR  (Blaze::GameReporting::ArsonCTF_KS_NonDerived::Report)
+   012F5704  GAME  struct       +0x0040 -> 012F56C0 (Blaze::GameReporting::ArsonCTF_KS_NonDerived::GameAttributes)
+   012F5710  PLYR  map          +0x0008 map<int,struct> -> 012F5658 (Blaze::GameReporting::ArsonCTF_KS_NonDerived::PlayerReport)
+
+== table @ 012F571C: FCAP  (Blaze::GameReporting::ArsonCTF_KS_Derived::PlayerReport)
+   012F571C  FCAP  uint32       +0x0008
+
+== table @ 012F5728: DUR GNAM LEVL MAP TIME  (Blaze::GameReporting::ArsonCTF_KS_Common::GameAttributes)
+   012F5728  DUR   float        +0x000c
+   012F5734  GNAM  string       +0x001c
+   012F5744  LEVL  int32        +0x0028
+   012F5750  MAP   string       +0x0010
+   012F5760  TIME  uint32       +0x0008
+
+== table @ 012F576C: GAME PLYR  (Blaze::GameReporting::ArsonCTF_KS_Common::Report)
+   012F576C  GAME  struct       +0x0040 -> 012F5728 (Blaze::GameReporting::ArsonCTF_KS_Common::GameAttributes)
+   012F5778  PLYR  map          +0x0008 map<int,struct> -> 012F5694 (Blaze::GameReporting::ArsonCTF_KS_Common::PlayerReport)
+
+== table @ 012F5784: FCAP KILL  (Blaze::GameReporting::ArsonCTF_MidGame::PlayerReport)
+   012F5784  FCAP  uint32       +0x000c
+   012F5790  KILL  uint16       +0x0008
+
+== table @ 012F579C: GNAM MAP  (Blaze::GameReporting::ArsonCTF_MidGame::GameAttributes)
+   012F579C  GNAM  string       +0x0014
+   012F57AC  MAP   string       +0x0008
+
+== table @ 012F57BC: GAME PLYR  (Blaze::GameReporting::ArsonCTF_MidGame::Report)
+   012F57BC  GAME  struct       +0x0040 -> 012F579C (Blaze::GameReporting::ArsonCTF_MidGame::GameAttributes)
+   012F57C8  PLYR  map          +0x0008 map<int,struct> -> 012F5784 (Blaze::GameReporting::ArsonCTF_MidGame::PlayerReport)
+
+== table @ 012F57D4: MAP MODE  (Blaze::GameReporting::GameHistoryBasic::GameAttributes)
+   012F57D4  MAP   int32        +0x0008
+   012F57E0  MODE  string       +0x000c
+
+== table @ 012F57F0: DETH GLRD GSPT KILL LOSR LSPT MONY PCLS RANK TALV WDNF WINR  (Blaze::GameReporting::GameHistoryBasic::PlayerReport)
+   012F57F0  DETH  uint16       +0x000a
+   012F57FC  GLRD  int32        +0x0020
+   012F5808  GSPT  int32        +0x001c
+   012F5814  KILL  uint16       +0x0008
+   012F5820  LOSR  bool_0f      +0x0015
+   012F582C  LSPT  int32        +0x0018
+   012F5838  MONY  uint32       +0x0010
+   012F5844  PCLS  int32        +0x0028
+   012F5850  RANK  int32        +0x0024
+   012F585C  TALV  uint32       +0x000c
+   012F5868  WDNF  bool_0f      +0x0016
+   012F5874  WINR  bool_0f      +0x0014
+
+== table @ 012F5880: CUST GAME PLYR  (Blaze::GameReporting::GameHistoryBasic::Report)
+   012F5880  CUST  variable     +0x0058
+   012F5888  GAME  struct       +0x0040 -> 012F57D4 (Blaze::GameReporting::GameHistoryBasic::GameAttributes)
+   012F5894  PLYR  map          +0x0008 map<int,struct> -> 012F57F0 (Blaze::GameReporting::GameHistoryBasic::PlayerReport)
+
+== table @ 012F58A0: HITS SERV  (Blaze::GameReporting::GameHistoryClubs_NonDerived::OffensiveAthlete)
+   012F58A0  HITS  uint16       +0x000a
+   012F58AC  SERV  uint16       +0x0008
+
+== table @ 012F58B8: CLUB PTS  (Blaze::GameReporting::GameHistoryClubs_NonDerived::PlayerReport)
+   012F58B8  CLUB  uint64       +0x0010
+   012F58C8  PTS   uint16       +0x0008
+
+== table @ 012F58D8: LOSS POIN TIES WINS  (Blaze::GameReporting::GameHistoryClubs_NonDerived::ClubReport)
+   012F58D8  LOSS  uint16       +0x000a
+   012F58E4  POIN  uint16       +0x000e
+   012F58F0  TIES  uint16       +0x000c
+   012F58FC  WINS  uint16       +0x0008
+
+== table @ 012F5908: ATHL CLUB PLYR  (Blaze::GameReporting::GameHistoryClubs_NonDerived::Report)
+   012F5908  ATHL  map          +0x0078 map<int,struct> -> 012F58A0 (Blaze::GameReporting::GameHistoryClubs_NonDerived::OffensiveAthlete)
+   012F5914  CLUB  map          +0x0040 map<int,struct> -> 012F58D8 (Blaze::GameReporting::GameHistoryClubs_NonDerived::ClubReport)
+   012F5920  PLYR  map          +0x0008 map<int,struct> -> 012F58B8 (Blaze::GameReporting::GameHistoryClubs_NonDerived::PlayerReport)
+
+== table @ 012F592C: GAME HITS PF SERV TIME  (Blaze::GameReporting::ArsonLeague::OffensiveStats)
+   012F592C  GAME  uint32       +0x0008
+   012F5938  HITS  uint32       +0x0010
+   012F5944  PF    uint32       +0x0014
+   012F5950  SERV  uint32       +0x0018
+   012F595C  TIME  uint32       +0x000c
+
+== table @ 012F5968: BLKS HITS MISS REBS SCOR SERV  (Blaze::GameReporting::ArsonLeague::PlayerReport)
+   012F5968  BLKS  int32        +0x0018
+   012F5974  HITS  int32        +0x000c
+   012F5980  MISS  int32        +0x0014
+   012F598C  REBS  int32        +0x001c
+   012F5998  SCOR  int32        +0x0008
+   012F59A4  SERV  int32        +0x0010
+
+== table @ 012F59B0: ISIM LGID  (Blaze::GameReporting::ArsonLeague::GameAttributes)
+   012F59B0  ISIM  int32        +0x000c
+   012F59BC  LGID  uint32       +0x0008
+
+== table @ 012F59C8: BLOC GAME MISS REBS TIME  (Blaze::GameReporting::ArsonLeague::DefensiveStats)
+   012F59C8  BLOC  uint32       +0x0014
+   012F59D4  GAME  uint32       +0x0008
+   012F59E0  MISS  uint32       +0x0010
+   012F59EC  REBS  uint32       +0x0018
+   012F59F8  TIME  uint32       +0x000c
+
+== table @ 012F5A04: DEFS OFFS  (Blaze::GameReporting::ArsonLeague::AthleteReport)
+   012F5A04  DEFS  struct       +0x0024 -> 012F59C8 (Blaze::GameReporting::ArsonLeague::DefensiveStats)
+   012F5A10  OFFS  struct       +0x0008 -> 012F592C (Blaze::GameReporting::ArsonLeague::OffensiveStats)
+
+== table @ 012F5A1C: GAME OFFS PLYR  (Blaze::GameReporting::ArsonLeague::Report)
+   012F5A1C  GAME  struct       +0x0008 -> 012F59B0 (Blaze::GameReporting::ArsonLeague::GameAttributes)
+   012F5A28  OFFS  map          +0x0050 map<int,struct> -> 012F5A04 (Blaze::GameReporting::ArsonLeague::AthleteReport)
+   012F5A34  PLYR  map          +0x0018 map<int,struct> -> 012F5968 (Blaze::GameReporting::ArsonLeague::PlayerReport)
+
+== table @ 012F5A40: LEAG MAP  (Blaze::GameReporting::ArsonLeagueGameKeyscopes::GameAttributes)
+   012F5A40  LEAG  uint32       +0x0008
+   012F5A4C  MAP   uint16       +0x000c
+
+== table @ 012F5A58: LOSS SLVL WINS  (Blaze::GameReporting::ArsonLeagueGameKeyscopes::PlayerReport)
+   012F5A58  LOSS  uint16       +0x000a
+   012F5A64  SLVL  uint16       +0x000c
+   012F5A70  WINS  uint16       +0x0008
+
+== table @ 012F5A7C: SERV TEAM  (Blaze::GameReporting::ArsonLeagueGameKeyscopes::OffensiveAthlete)
+   012F5A7C  SERV  uint16       +0x0008
+   012F5A88  TEAM  uint16       +0x000a
+
+== table @ 012F5A94: BLKS  (Blaze::GameReporting::ArsonLeagueGameKeyscopes::DefensiveAthlete)
+   012F5A94  BLKS  uint16       +0x0008
+
+== table @ 012F5AA0: DEFS GAME OFFS PLYR  (Blaze::GameReporting::ArsonLeagueGameKeyscopes::Report)
+   012F5AA0  DEFS  map          +0x0088 map<int,struct> -> 012F5A94 (Blaze::GameReporting::ArsonLeagueGameKeyscopes::DefensiveAthlete)
+   012F5AAC  GAME  struct       +0x0008 -> 012F5A40 (Blaze::GameReporting::ArsonLeagueGameKeyscopes::GameAttributes)
+   012F5AB8  OFFS  map          +0x0050 map<int,struct> -> 012F5A7C (Blaze::GameReporting::ArsonLeagueGameKeyscopes::OffensiveAthlete)
+   012F5AC4  PLYR  map          +0x0018 map<int,struct> -> 012F5A58 (Blaze::GameReporting::ArsonLeagueGameKeyscopes::PlayerReport)
+
+== table @ 012F5AD0: HITS SHOT  (Blaze::GameReporting::ArsonMultiKeyscopes::Weapon)
+   012F5AD0  HITS  uint16       +0x000a
+   012F5ADC  SHOT  uint16       +0x0008
+
+== table @ 012F5AE8: WEAP  (Blaze::GameReporting::ArsonMultiKeyscopes::PlayerReport)
+   012F5AE8  WEAP  map          +0x0008 map<int,struct> -> 012F5AD0 (Blaze::GameReporting::ArsonMultiKeyscopes::Weapon)
+
+== table @ 012F5AF4: LVL  (Blaze::GameReporting::ArsonMultiKeyscopes::GameAttributes)
+   012F5AF4  LVL   uint16       +0x0008
+
+== table @ 012F5B00: GAME PLYR  (Blaze::GameReporting::ArsonMultiKeyscopes::Report)
+   012F5B00  GAME  struct       +0x0008 -> 012F5AF4 (Blaze::GameReporting::ArsonMultiKeyscopes::GameAttributes)
+   012F5B0C  PLYR  map          +0x0014 map<int,struct> -> 012F5AE8 (Blaze::GameReporting::ArsonMultiKeyscopes::PlayerReport)
+
+== table @ 012F5B18: LEAG  (Blaze::GameReporting::ArsonMultiStatUpdates::GameAttributes)
+   012F5B18  LEAG  uint32       +0x0008
+
+== table @ 012F5B24: GAME OFFS PLYR  (Blaze::GameReporting::ArsonMultiStatUpdates::Report)
+   012F5B24  GAME  struct       +0x0008 -> 012F5B18 (Blaze::GameReporting::ArsonMultiStatUpdates::GameAttributes)
+   012F5B30  OFFS  map          +0x004c map<int,struct> -> 012F5B80 (Blaze::GameReporting::ArsonMultiStatUpdates::OffensiveAthlete)
+   012F5B3C  PLYR  map          +0x0014 map<int,struct> -> 012F5B48 (Blaze::GameReporting::ArsonMultiStatUpdates::PlayerReport)
+
+== table @ 012F5B48: CID LOSS PNTS WINS  (Blaze::GameReporting::ArsonMultiStatUpdates::PlayerReport)
+   012F5B48  CID   uint64       +0x0008
+   012F5B58  LOSS  uint16       +0x0012
+   012F5B64  PNTS  uint16       +0x0014
+   012F5B70  WINS  uint16       +0x0010
+
+== table @ 012F5B80: HITS PID SERV  (Blaze::GameReporting::ArsonMultiStatUpdates::OffensiveAthlete)
+   012F5B80  HITS  uint16       +0x0010
+   012F5B90  PID   int64_18     +0x0008
+   012F5BA0  SERV  uint16       +0x0012
+
+== table @ 012F5BB0: LEAG LEVE  (Blaze::GameReporting::ArsonMultiStatUpdatesKeyscopes::GameAttributes)
+   012F5BB0  LEAG  uint32       +0x0008
+   012F5BBC  LEVE  int32        +0x000c
+
+== table @ 012F5BC8: CID LOSS PNTS WEPN WINS  (Blaze::GameReporting::ArsonMultiStatUpdatesKeyscopes::PlayerReport)
+   012F5BC8  CID   uint64       +0x0008
+   012F5BD8  LOSS  uint16       +0x0016
+   012F5BE4  PNTS  uint16       +0x0018
+   012F5BF0  WEPN  int32        +0x0010
+   012F5BFC  WINS  uint16       +0x0014
+
+== table @ 012F5C08: HITS PID SERV  (Blaze::GameReporting::ArsonMultiStatUpdatesKeyscopes::OffensiveAthlete)
+   012F5C08  HITS  uint16       +0x0010
+   012F5C18  PID   int64_18     +0x0008
+   012F5C28  SERV  uint16       +0x0012
+
+== table @ 012F5C38: GAME OFFS PLYR  (Blaze::GameReporting::ArsonMultiStatUpdatesKeyscopes::Report)
+   012F5C38  GAME  struct       +0x0008 -> 012F5BB0 (Blaze::GameReporting::ArsonMultiStatUpdatesKeyscopes::GameAttributes)
+   012F5C44  OFFS  map          +0x0050 map<int,struct> -> 012F5C08 (Blaze::GameReporting::ArsonMultiStatUpdatesKeyscopes::OffensiveAthlete)
+   012F5C50  PLYR  map          +0x0018 map<int,struct> -> 012F5BC8 (Blaze::GameReporting::ArsonMultiStatUpdatesKeyscopes::PlayerReport)
+
+== table @ 012F5C5C: PLYR  (Blaze::GameReporting::Battlegrounds::GameReport)
+   012F5C5C  PLYR  map          +0x0008 map<int,struct> -> 012F5C68 (Blaze::GameReporting::Battlegrounds::PlayerReport)
+
+== table @ 012F5C68: ASST CRPS DBLK DETH DRTN EXPR GPSZ KILL KSTR LEVL OMNK ROLE SHAP TEAM TRPK TTRK VIM WIN  (Blaze::GameReporting::Battlegrounds::PlayerReport)
+   012F5C68  ASST  uint16       +0x001a
+   012F5C74  CRPS  uint16       +0x0026
+   012F5C80  DBLK  uint16       +0x001c
+   012F5C8C  DETH  uint16       +0x0018
+   012F5C98  DRTN  uint32       +0x0008
+   012F5CA4  EXPR  uint32       +0x002c
+   012F5CB0  GPSZ  uint8        +0x000e
+   012F5CBC  KILL  uint16       +0x0016
+   012F5CC8  KSTR  uint16       +0x0024
+   012F5CD4  LEVL  uint8        +0x0015
+   012F5CE0  OMNK  uint16       +0x0022
+   012F5CEC  ROLE  uint8        +0x0014
+   012F5CF8  SHAP  uint32       +0x0010
+   012F5D04  TEAM  uint8        +0x000d
+   012F5D10  TRPK  uint16       +0x001e
+   012F5D1C  TTRK  uint16       +0x0020
+   012F5D28  VIM   uint32       +0x0028
+   012F5D34  WIN   uint8        +0x000c
+
+== table @ 012F5D40: HITS LOSE MISS TRCH WIN  (Blaze::GameReporting::IntegratedSample::PlayerReport)
+   012F5D40  HITS  uint16       +0x0008
+   012F5D4C  LOSE  uint16       +0x0010
+   012F5D58  MISS  uint16       +0x000a
+   012F5D64  TRCH  uint16       +0x000c
+   012F5D70  WIN   uint16       +0x000e
+
+== table @ 012F5D7C: MAP MODE  (Blaze::GameReporting::IntegratedSample::GameAttributes)
+   012F5D7C  MAP   int32        +0x0008
+   012F5D88  MODE  int32        +0x000c
+
+== table @ 012F5D94: GAME PLYR  (Blaze::GameReporting::IntegratedSample::Report)
+   012F5D94  GAME  struct       +0x0040 -> 012F5D7C (Blaze::GameReporting::IntegratedSample::GameAttributes)
+   012F5DA0  PLYR  map          +0x0008 map<int,struct> -> 012F5D40 (Blaze::GameReporting::IntegratedSample::PlayerReport)
+
+== table @ 012F5DAC: STAT  (Blaze::GameReporting::Shooter::EntityReport)
+   012F5DAC  STAT  map          +0x0008 map<string,float>
+
+== table @ 012F5DB8: CTRY DETH KILL MONY TALV  (Blaze::GameReporting::SampleBase::PlayerReport)
+   012F5DB8  CTRY  string       +0x0014
+   012F5DC8  DETH  uint16       +0x000a
+   012F5DD4  KILL  uint16       +0x0008
+   012F5DE0  MONY  uint32       +0x0010
+   012F5DEC  TALV  uint32       +0x000c
+
+== table @ 012F5DF8: MAP MODE  (Blaze::GameReporting::SampleBase::GameAttributes)
+   012F5DF8  MAP   int32        +0x0008
+   012F5E04  MODE  int32        +0x000c
+
+== table @ 012F5E10: GAME PLYR  (Blaze::GameReporting::SampleBase::Report)
+   012F5E10  GAME  struct       +0x0040 -> 012F5DF8 (Blaze::GameReporting::SampleBase::GameAttributes)
+   012F5E1C  PLYR  map          +0x0008 map<int,struct> -> 012F5DB8 (Blaze::GameReporting::SampleBase::PlayerReport)
+
+== table @ 012F5E28: ATRB PLYR  (Blaze::GameReporting::Shooter::GroupReport)
+   012F5E28  ATRB  map          +0x0008 map<string,float>
+   012F5E34  PLYR  map          +0x002c map<int,struct> -> 012F5DAC (Blaze::GameReporting::Shooter::EntityReport)
+
+== table @ 012F5E40: CLBS GAME NATN PLYR SRVR  (Blaze::GameReporting::Shooter::Report)
+   012F5E40  CLBS  map          +0x0064 map<int,struct> -> 012F5E28 (Blaze::GameReporting::Shooter::GroupReport)
+   012F5E4C  GAME  map          +0x0008 map<string,string>
+   012F5E58  NATN  map          +0x00d4 map<int,struct> -> 012F5E28 (Blaze::GameReporting::Shooter::GroupReport)
+   012F5E64  PLYR  map          +0x002c map<int,struct> -> 012F5DAC (Blaze::GameReporting::Shooter::EntityReport)
+   012F5E70  SRVR  map          +0x009c map<int,struct> -> 012F5E28 (Blaze::GameReporting::Shooter::GroupReport)
+
+== table @ 012F6370: DATA EROR FNL GHID GRID  (Blaze::GameReporting::ResultNotification)
+   012F6370  DATA  variable     +0x0020
+   012F6378  EROR  int32        +0x0008
+   012F6384  FNL   bool_0f      +0x000c
+   012F6390  GHID  uint64       +0x0018
+   012F63A0  GRID  uint64       +0x0010
+
+== table @ 012F9910: MAIL PLST  (Blaze::Authentication::UserDetails)
+   012F9910  MAIL  string       +0x0008
+   012F9920  PLST  list         +0x0014 list<struct> -> 01462E20 (Blaze::Authentication::PersonaDetails)
+
+== table @ 012F992C: LIST  (Blaze::Authentication::FieldValidateErrorList)
+   012F992C  LIST  list         +0x0008 list<struct> -> 01462AB0 (Blaze::Authentication::FieldValidationError)
+
+== table @ 012F9938: BUID FRST KEY LLOG MAIL PDTL UID  (Blaze::Authentication::SessionInfo)
+   012F9938  BUID  int64_18     +0x0018
+   012F9948  FRST  bool_0f      +0x0034
+   012F9954  KEY   string       +0x0008
+   012F9968  LLOG  int64        +0x0038
+   012F9978  MAIL  string       +0x0028
+   012F9988  PDTL  struct       +0x0040 -> 01462E20 (Blaze::Authentication::PersonaDetails)
+   012F9998  UID   int64        +0x0020
+
+== table @ 012F99A8: BDAY BMON BYR CTRY LANG MAIL OPT1 OPT3 PASS PNAM PRIV PRNT PROF TSUI  (Blaze::Authentication::CreateAccountParameters)
+   012F99A8  BDAY  int32        +0x0024
+   012F99B4  BMON  int32        +0x0020
+   012F99C0  BYR   int32        +0x0028
+   012F99CC  CTRY  string       +0x002c
+   012F99DC  LANG  string       +0x0038
+   012F99EC  MAIL  string       +0x0008
+   012F99FC  OPT1  uint8        +0x005c
+   012F9A08  OPT3  uint8        +0x005d
+   012F9A14  PASS  string       +0x0014
+   012F9A24  PNAM  string       +0x00f8
+   012F9A34  PRIV  string       +0x0050
+   012F9A44  PRNT  string       +0x0060
+   012F9A54  PROF  struct       +0x0070 -> 014628A0 (Blaze::Authentication::UserProfileInfo)
+   012F9A60  TSUI  string       +0x0044
+
+== table @ 012F9A70: PNAM UID  (Blaze::Authentication::CreateAccountResponse)
+   012F9A70  PNAM  string       +0x0010
+   012F9A80  UID   int64        +0x0008
+
+== table @ 012F9A90: CPWD CTRY DOB LANG MAIL OPT1 OPT3 PASS PRNT  (Blaze::Authentication::UpdateAccountRequest)
+   012F9A90  CPWD  string       +0x0054
+   012F9AA0  CTRY  string       +0x002c
+   012F9AB0  DOB   string       +0x0020
+   012F9AC0  LANG  string       +0x0038
+   012F9AD0  MAIL  string       +0x0008
+   012F9AE0  OPT1  int8         +0x0050 default=0xff
+   012F9AEC  OPT3  int8         +0x0051 default=0xff
+   012F9AF8  PASS  string       +0x0014
+   012F9B08  PRNT  string       +0x0044
+
+== table @ 012F9B18: INFO PCTK  (Blaze::Authentication::UpdateAccountResponse)
+   012F9B18  INFO  struct       +0x0018 -> 01462EE8 (Blaze::Authentication::AccountInfo)
+   012F9B24  PCTK  string       +0x0008
+
+== table @ 012F9B34: LDVC TCOL TCOT  (Blaze::Authentication::GetLegalDocContentResponse)
+   012F9B34  LDVC  string       +0x0018
+   012F9B44  TCOL  uint32       +0x0008
+   012F9B50  TCOT  string       +0x000c
+
+== table @ 012F9B60: ANON NTOS PCTK PLST SKEY SPAM UID UNDR  (Blaze::Authentication::LoginResponse)
+   012F9B60  ANON  bool_0f      +0x005b
+   012F9B6C  NTOS  bool_0f      +0x0059
+   012F9B78  PCTK  string       +0x0010
+   012F9B88  PLST  list         +0x001c list<struct> -> 01462E20 (Blaze::Authentication::PersonaDetails)
+   012F9B94  SKEY  string       +0x004c
+   012F9BA4  SPAM  bool_0f      +0x0058
+   012F9BB0  UID   int64        +0x0008
+   012F9BC0  UNDR  bool_0f      +0x005a
+
+== table @ 012F9BD0: CDKY GNAM KEY PID PNID  (Blaze::Authentication::ConsumecodeRequest)
+   012F9BD0  CDKY  bool_0f      +0x002d
+   012F9BDC  GNAM  string       +0x0020
+   012F9BEC  KEY   string       +0x0008
+   012F9BFC  PID   string       +0x0014
+   012F9C0C  PNID  bool_0f      +0x002c
+
+== table @ 012F9C28: PRIV TSUI  (Blaze::Authentication::AcceptLegalDocsRequest)
+   012F9C28  PRIV  string       +0x0014
+   012F9C38  TSUI  string       +0x0008
+
+== table @ 012F9C48: EAMC PMC  (Blaze::Authentication::GetEmailOptInSettingsResponse)
+   012F9C48  EAMC  uint32       +0x0008
+   012F9C54  PMC   uint32       +0x000c
+
+== table @ 012F9C70: AUTH  (Blaze::Authentication::GetAuthTokenResponse)
+   012F9C70  AUTH  string       +0x0008
+
+== table @ 012F9C80: MAIL PASS PNAM  (Blaze::Authentication::ExpressLoginRequest)
+   012F9C80  MAIL  string       +0x0008
+   012F9C90  PASS  string       +0x0014
+   012F9CA0  PNAM  string       +0x0020
+
+== table @ 012F9CE0: AGUP ANON NTOS PCTK SESS SPAM UNDR  (Blaze::Authentication::FullLoginResponse)
+   012F9CE0  AGUP  bool_0f      +0x0090
+   012F9CEC  ANON  bool_0f      +0x0092
+   012F9CF8  NTOS  bool_0f      +0x0094
+   012F9D04  PCTK  string       +0x0008
+   012F9D14  SESS  struct       +0x0018 -> 012F9938 (Blaze::Authentication::SessionInfo)
+   012F9D20  SPAM  bool_0f      +0x0093
+   012F9D2C  UNDR  bool_0f      +0x0091
+
+== table @ 012F9D80: ORIG PASS PNAM  (Blaze::Authentication::CreatePersonaRequest)
+   012F9D80  ORIG  bool         +0x0014
+   012F9D8C  PASS  string       +0x0018
+   012F9D9C  PNAM  string       +0x0008
+
+== table @ 012F9DAC: PINF  (Blaze::Authentication::ListPersonasResponse)
+   012F9DAC  PINF  list         +0x0008 list<struct> -> 01462E20 (Blaze::Authentication::PersonaDetails)
+
+== table @ 012F9DD8: PNAM  (Blaze::Authentication::LoginPersonaRequest)
+   012F9DD8  PNAM  string       +0x0008
+
+== table @ 012F9E08: PID  (Blaze::Authentication::PersonaRequest)
+   012F9E08  PID   int64        +0x0008
+
+== table @ 012F9E18: CREQ PERS PLOC TICK XREF  (Blaze::Authentication::ConsoleCreateAccountRequest)
+   012F9E18  CREQ  struct       +0x0008 -> 012F99A8 (Blaze::Authentication::CreateAccountParameters)
+   012F9E24  PERS  string       +0x012c
+   012F9E34  PLOC  uint16       +0x0118
+   012F9E40  TICK  blob         +0x011c
+   012F9E48  XREF  uint64       +0x0110
+
+== table @ 012F9F58: BDAY BMON BYR CTRY  (Blaze::Authentication::CheckAgeReqRequest)
+   012F9F58  BDAY  int32        +0x0018
+   012F9F64  BMON  int32        +0x0014
+   012F9F70  BYR   int32        +0x001c
+   012F9F7C  CTRY  string       +0x0008
+
+== table @ 012F9F8C: SPAM UAGE UNDR  (Blaze::Authentication::CheckAgeReqResponse)
+   012F9F8C  SPAM  uint8        +0x0008
+   012F9F98  UAGE  bool_0f      +0x0009
+   012F9FA4  UNDR  bool_0f      +0x000a
+
+== table @ 012FA0E0: MAXS MIND MINL MINS MINU VDCH  (Blaze::Authentication::PasswordRulesInfo)
+   012FA0E0  MAXS  uint16       +0x000a
+   012FA0EC  MIND  uint16       +0x0010
+   012FA0F8  MINL  uint16       +0x000c
+   012FA104  MINS  uint16       +0x0008
+   012FA110  MINU  uint16       +0x000e
+   012FA11C  VDCH  string       +0x0014
+
+== table @ 012FC350: ANVP COID COTY PTDE SUBJ TMZO TRGT  (Blaze::GpsContentController::FilePetitionRequest)
+   012FC350  ANVP  map          +0x0058 map<string,string>
+   012FC35C  COID  objid        +0x0008
+   012FC364  COTY  string       +0x0024
+   012FC374  PTDE  string       +0x004c
+   012FC384  SUBJ  string       +0x0018
+   012FC394  TMZO  string       +0x007c
+   012FC3A4  TRGT  list         +0x0030 list<int>
+
+== table @ 012FC3B0: GUID  (Blaze::GpsContentController::FilePetitionResponse)
+   012FC3B0  GUID  string       +0x0008
+
+== table @ 012FC6E8: MSG  (Blaze::BGWeb::BGWebError)
+   012FC6E8  MSG   string       +0x0008
+
+== table @ 012FC738: DRC  (Blaze::BGWeb::GetCurrentVersionResponse)
+   012FC738  DRC   string       +0x0008
+
+== table @ 012FC9E8: CFID  (Blaze::Util::FetchClientConfigRequest)
+   012FC9E8  CFID  string       +0x0008
+
+== table @ 012FC9F8: CONF  (Blaze::Util::FetchConfigResponse)
+   012FC9F8  CONF  map          +0x002c ptr map<string,string>
+
+== table @ 012FCA28: UTXT  (Blaze::Util::UserText)
+   012FCA28  UTXT  string       +0x0008
+
+== table @ 012FCA38: UTXT  (Blaze::Util::UserStringList)
+   012FCA38  UTXT  list         +0x0008 list<struct> -> 012FCA28 (Blaze::Util::UserText)
+
+== table @ 012FCA44: ADRS PORT SKEY  (Blaze::Util::GetTickerServerResponse)
+   012FCA44  ADRS  string       +0x0008
+   012FCA54  PORT  uint32       +0x0014
+   012FCA60  SKEY  string       +0x0018
+
+== table @ 012FCA70: ADRS CSIG OIDS PJID PORT RPRT TIID  (Blaze::Util::PssConfig)
+   012FCA70  ADRS  string       +0x0008
+   012FCA80  CSIG  blob         +0x004c
+   012FCA88  OIDS  list         +0x0030 list<string>
+   012FCA94  PJID  string       +0x001c
+   012FCAA4  PORT  uint32       +0x0014
+   012FCAB0  RPRT  bitfield     +0x0028
+   012FCAB8  TIID  uint32       +0x0018
+
+== table @ 012FCAC4: STIM  (Blaze::Util::PingResponse)
+   012FCAC4  STIM  uint32       +0x0008
+
+== table @ 012FCAD0: ADRS ANON DISA EDCT FILT LOC MINR NOOK PORT SDLY SESS SKEY SPCT STIM SVNM  (Blaze::Util::GetTelemetryServerResponse)
+   012FCAD0  ADRS  string       +0x0008
+   012FCAE0  ANON  bool_0f      +0x0060
+   012FCAEC  DISA  string       +0x0024
+   012FCAFC  EDCT  bool_0f      +0x0080
+   012FCB08  FILT  string       +0x0048
+   012FCB18  LOC   uint32       +0x005c
+   012FCB24  MINR  bool_0f      +0x0070
+   012FCB30  NOOK  string       +0x0030
+   012FCB40  PORT  uint32       +0x0014
+   012FCB4C  SDLY  uint32       +0x0058
+   012FCB58  SESS  string       +0x0064
+   012FCB68  SKEY  string       +0x0018
+   012FCB78  SPCT  uint32       +0x0054
+   012FCB84  STIM  string       +0x003c
+   012FCB94  SVNM  string       +0x0074
+
+== table @ 012FCBA4: CMAC SNAM  (Blaze::Util::GetTelemetryServerRequest)
+   012FCBA4  CMAC  string       +0x0008
+   012FCBB4  SNAM  string       +0x0014
+
+== table @ 012FCBC4: CDAT CINF FCCR  (Blaze::Util::PreAuthRequest)
+   012FCBC4  CDAT  struct       +0x0084 -> 01463338 (Blaze::Util::ClientData)
+   012FCBD0  CINF  struct       +0x0008 -> 01462540 (Blaze::ClientInfo)
+   012FCBDC  FCCR  struct       +0x00a4 -> 012FC9E8 (Blaze::Util::FetchClientConfigRequest)
+
+== table @ 012FCBE8: ASRC CIDS CONF EEFA ESRC INST MINR NASP PILD PLAT QOSS RSRC SVER  (Blaze::Util::PreAuthResponse)
+   012FCBE8  ASRC  string       +0x00f0
+   012FCBF8  CIDS  list         +0x002c list<int>
+   012FCC04  CONF  struct       +0x0048 -> 012FC9F8 (Blaze::Util::FetchConfigResponse)
+   012FCC10  EEFA  bool         +0x0124 default=0x1
+   012FCC1C  ESRC  string       +0x0118
+   012FCC2C  INST  string       +0x0020
+   012FCC3C  MINR  bool         +0x0114
+   012FCC48  NASP  string       +0x00e4
+   012FCC58  PILD  string       +0x0108
+   012FCC68  PLAT  string       +0x0014
+   012FCC78  QOSS  struct       +0x0078 -> 012F1BCC (Blaze::QosConfigInfo)
+   012FCC84  RSRC  string       +0x00fc
+   012FCC94  SVER  string       +0x0008
+
+== table @ 012FCCB4: PSS TELE TICK UROP  (Blaze::Util::PostAuthResponse)
+   012FCCB4  PSS   struct       +0x0008 -> 012FCA70 (Blaze::Util::PssConfig)
+   012FCCC0  TELE  struct       +0x0064 -> 012FCAD0 (Blaze::Util::GetTelemetryServerResponse)
+   012FCCCC  TICK  struct       +0x00e8 -> 012FCA44 (Blaze::Util::GetTickerServerResponse)
+   012FCCD8  UROP  struct       +0x0110 -> 01463318 (Blaze::Util::UserOptions)
+
+== table @ 012FCD98: TLST  (Blaze::Util::FilterUserTextResponse)
+   012FCD98  TLST  list         +0x0008 list<struct> -> 014632F8 (Blaze::Util::FilteredUserText)
+
+== table @ 012FD8D0: HOST IP PORT  (Blaze::Redirector::IpAddress)
+   012FD8D0  HOST  string       +0x0008
+   012FD8E0  IP    uint32       +0x0014
+   012FD8EC  PORT  uint16       +0x0018
+
+== table @ 012FD8F8: PORT SID SITE  (Blaze::Redirector::XboxServerAddress)
+   012FD8F8  PORT  uint16       +0x0018
+   012FD904  SID   uint32       +0x0008
+   012FD910  SITE  string       +0x000c
+
+== table @ 012FD920: DPRT MASK SID SIP SPRT  (Blaze::Redirector::AddressRemapEntry)
+   012FD920  DPRT  uint16       +0x0016
+   012FD92C  MASK  uint32       +0x000c
+   012FD938  SID   uint32       +0x0010
+   012FD944  SIP   uint32       +0x0008
+   012FD950  SPRT  uint16       +0x0014
+
+== table @ 012FD95C: MSGS  (Blaze::Redirector::ServerInstanceError)
+   012FD95C  MSGS  list         +0x0008 list<string>
+
+== table @ 012FD968: DPRT SID SIP SITE SPRT  (Blaze::Redirector::NameRemapEntry)
+   012FD968  DPRT  uint16       +0x0026
+   012FD974  SID   uint32       +0x0014
+   012FD980  SIP   string       +0x0008
+   012FD990  SITE  string       +0x0018
+   012FD9A0  SPRT  uint16       +0x0024
+
+== table @ 012FD9D0: AMAP BTGT BTIM CGVS CVER DEPO INST IVER LOCN MSTR NAME NASP NMAP PLAT SNMS SVID VERS XDNS XMST XSLV  (Blaze::Redirector::ServerInfoData)
+   012FD9D0  AMAP  list         +0x01c8 list<struct> -> 012FD920 (Blaze::Redirector::AddressRemapEntry)
+   012FD9DC  BTGT  string       +0x006c
+   012FD9EC  BTIM  string       +0x0054
+   012FD9FC  CGVS  string       +0x0048
+   012FDA0C  CVER  list         +0x0190 list<string>
+   012FDA18  DEPO  string       +0x0078
+   012FDA28  INST  list         +0x0160 list<struct> -> 014635F8 (Blaze::Redirector::ServerInstance)
+   012FDA34  IVER  list         +0x01ac list<string>
+   012FDA40  LOCN  string       +0x0060
+   012FDA50  MSTR  struct       +0x0084 -> 014635F8 (Blaze::Redirector::ServerInstance)
+   012FDA5C  NAME  string       +0x0008
+   012FDA6C  NASP  string       +0x0230
+   012FDA7C  NMAP  list         +0x01f8 list<struct> -> 012FD968 (Blaze::Redirector::NameRemapEntry)
+   012FDA88  PLAT  string       +0x0030
+   012FDA98  SNMS  list         +0x0014 list<string>
+   012FDAA4  SVID  uint32       +0x022c
+   012FDAB0  VERS  string       +0x003c
+   012FDAC0  XDNS  uint32       +0x0228
+   012FDACC  XMST  list         +0x0100 list<struct> -> 014635F8 (Blaze::Redirector::ServerInstance)
+   012FDAD8  XSLV  list         +0x0130 list<struct> -> 014635F8 (Blaze::Redirector::ServerInstance)
+
+== table @ 012FDAF0: GTAG XUID  (Blaze::Redirector::XboxId)
+   012FDAF0  GTAG  string       +0x0010
+   012FDB00  XUID  uint64       +0x0008
+
+== table @ 012FDB10: ADDR AMAP CERT MSGS NMAP SECU XDNS  (Blaze::Redirector::ServerInstanceInfo)
+   012FDB10  ADDR  union        +0x0008 -> union 012FDF28
+   012FDB18  AMAP  list         +0x0020 list<struct> -> 012FD920 (Blaze::Redirector::AddressRemapEntry)
+   012FDB24  CERT  list         +0x00a0 list<blob>
+   012FDB30  MSGS  list         +0x0084 list<string>
+   012FDB3C  NMAP  list         +0x0050 list<struct> -> 012FD968 (Blaze::Redirector::NameRemapEntry)
+   012FDB48  SECU  bool_0f      +0x001c
+   012FDB54  XDNS  uint32       +0x0080
+
+== table @ 012FF778: DISP GMET META MXRM NAME USRM VWID  (Blaze::Rooms::RoomViewData)
+   012FF778  DISP  string       +0x0014
+   012FF788  GMET  map          +0x0048 map<string,string>
+   012FF794  META  map          +0x0024 map<string,string>
+   012FF7A0  MXRM  uint32       +0x0020
+   012FF7AC  NAME  string       +0x0008
+   012FF7BC  USRM  uint32       +0x0078
+   012FF7C8  VWID  uint64       +0x0070
+
+== table @ 012FF7D8: CAPA CMET CRIT CTID DESC DISP DISR EMAX EPCT FLAG GMET LOCL NAME NEXP PASS UCRT VWID  (Blaze::Rooms::RoomCategoryData)
+   012FF7D8  CAPA  uint32       +0x0054
+   012FF7E4  CMET  map          +0x009c map<string,string>
+   012FF7F0  CRIT  map          +0x0078 map<string,string>
+   012FF800  CTID  uint64       +0x0008
+   012FF810  DESC  string       +0x003c
+   012FF820  DISP  string       +0x0024
+   012FF830  DISR  string       +0x0030
+   012FF840  EMAX  uint32       +0x0060
+   012FF84C  EPCT  uint16       +0x005a
+   012FF858  FLAG  bitfield     +0x0070
+   012FF860  GMET  map          +0x00c0 map<string,string>
+   012FF86C  LOCL  string       +0x0064
+   012FF87C  NAME  string       +0x0018
+   012FF88C  NEXP  uint16       +0x005c
+   012FF898  PASS  string       +0x0048
+   012FF8A8  UCRT  bool_0f      +0x0058
+   012FF8B8  VWID  uint64       +0x0010
+
+== table @ 012FF8C8: AREM ATTR BLST CAP CNAM CRET CRIT CRTM CTID ENUM HNAM HOST NAME POPU PSWD PVAL RMID UCRT  (Blaze::Rooms::RoomData)
+   012FF8C8  AREM  bool_0f      +0x00bc
+   012FF8D4  ATTR  map          +0x0070 map<string,string>
+   012FF8E0  BLST  list         +0x00c4 list<int>
+   012FF8EC  CAP   int32        +0x0048
+   012FF8F8  CNAM  string       +0x0038
+   012FF908  CRET  int64_18     +0x0030
+   012FF918  CRIT  map          +0x0094 map<string,string>
+   012FF924  CRTM  uint32       +0x00c0
+   012FF930  CTID  uint64       +0x0010
+   012FF940  ENUM  uint32       +0x00b8
+   012FF94C  HNAM  string       +0x0020
+   012FF960  HOST  int64_18     +0x0018
+   012FF970  NAME  string       +0x0058
+   012FF980  POPU  uint32       +0x0044
+   012FF98C  PSWD  string       +0x0064
+   012FF99C  PVAL  string       +0x004c
+   012FF9B0  RMID  uint64       +0x0008
+   012FF9C0  UCRT  bool_0f      +0x00bd
+
+== table @ 012FF9D0: ATTR BZID RMID  (Blaze::Rooms::RoomMemberData)
+   012FF9D0  ATTR  map          +0x0018 map<string,string>
+   012FF9E0  BZID  int64_18     +0x0008
+   012FF9F0  RMID  uint64       +0x0010
+
+== table @ 012FFAC0: VWID  (Blaze::Rooms::SelectCategoryUpdatesResponse)
+   012FFAC0  VWID  uint64       +0x0008
+
+== table @ 012FFAD0: UPDT  (Blaze::Rooms::SelectViewUpdatesRequest)
+   012FFAD0  UPDT  uint32       +0x0008
+
+== table @ 012FFB00: VWID  (Blaze::Rooms::SelectCategoryUpdatesRequest)
+   012FFB00  VWID  uint64       +0x0008
+
+== table @ 012FFB10: CTID INID INVT PASS PVAL RMID  (Blaze::Rooms::JoinRoomRequest)
+   012FFB10  CTID  uint64       +0x0010
+   012FFB20  INID  int64_18     +0x0038
+   012FFB30  INVT  bool_0f      +0x0024
+   012FFB3C  PASS  string       +0x0018
+   012FFB4C  PVAL  string       +0x0028
+   012FFB60  RMID  uint64       +0x0008
+
+== table @ 012FFB70: CDAT CRIT MDAT RDAT VDAT VERS  (Blaze::Rooms::JoinRoomResponse)
+   012FFB70  CDAT  struct       +0x0090 -> 012FF7D8 (Blaze::Rooms::RoomCategoryData)
+   012FFB7C  CRIT  string       +0x0258
+   012FFB8C  MDAT  struct       +0x02a8 ptr -> 012FF9D0 (Blaze::Rooms::RoomMemberData)
+   012FFB98  RDAT  struct       +0x0178 -> 012FF8C8 (Blaze::Rooms::RoomData)
+   012FFBA4  VDAT  struct       +0x0010 -> 012FF778 (Blaze::Rooms::RoomViewData)
+   012FFBB0  VERS  uint64       +0x0008
+
+== table @ 012FFBC0: RMID  (Blaze::Rooms::LeaveRoomRequest)
+   012FFBC0  RMID  uint64       +0x0008
+
+== table @ 012FFBD0: CTID RMID  (Blaze::Rooms::LeaveRoomResponse)
+   012FFBD0  CTID  uint64       +0x0010
+   012FFBE0  RMID  uint64       +0x0008
+
+== table @ 012FFD7C: ENBL  (Blaze::Rooms::ToggleRoomNotificationsRequest)
+   012FFD7C  ENBL  bool_0f      +0x0008
+
+== table @ 012FFDC0: CTID PVAL  (Blaze::Rooms::SelectPseudoRoomUpdatesRequest)
+   012FFDC0  CTID  uint64       +0x0008
+   012FFDD0  PVAL  string       +0x0010
+
+== table @ 012FFEE4: ATTR  (Blaze::Rooms::RoomsPopulationUpdate::RoomAttributes)
+   012FFEE4  ATTR  map          +0x0008 map<string,string>
+
+== table @ 012FFFA0: ATTR RMID  (Blaze::Rooms::RoomAttributesSet)
+   012FFFA0  ATTR  map          +0x0010 map<string,string>
+   012FFFB0  RMID  uint64       +0x0008
+
+== table @ 012FFFC0: ATTR EID RMID  (Blaze::Rooms::MemberAttributesSet)
+   012FFFC0  ATTR  map          +0x0018 map<string,string>
+   012FFFD0  EID   int64_18     +0x0010
+   012FFFE0  RMID  uint64       +0x0008
+
+== table @ 012FFFF0: VWID  (Blaze::Rooms::RoomViewRemoved)
+   012FFFF0  VWID  uint64       +0x0008
+
+== table @ 01300000: CTID  (Blaze::Rooms::RoomCategoryRemoved)
+   01300000  CTID  uint64       +0x0008
+
+== table @ 01300010: POPA POPM  (Blaze::Rooms::RoomsPopulationUpdate)
+   01300010  POPA  map          +0x002c map<int,struct> -> 012FFEE4 (Blaze::Rooms::RoomsPopulationUpdate::RoomAttributes)
+   0130001C  POPM  map          +0x0008 map<int,int>
+
+== table @ 01300028: RMID  (Blaze::Rooms::RoomRemoved)
+   01300028  RMID  uint64       +0x0008
+
+== table @ 01300038: MBID RMID  (Blaze::Rooms::RoomMemberRemoved)
+   01300038  MBID  int64_18     +0x0008
+   01300048  RMID  uint64       +0x0010
+
+== table @ 01300058: MBID RMID  (Blaze::Rooms::RoomMemberKicked)
+   01300058  MBID  int64_18     +0x0008
+   01300068  RMID  uint64       +0x0010
+
+== table @ 01300078: MBID RMID  (Blaze::Rooms::RoomHostTransfered)
+   01300078  MBID  int64_18     +0x0008
+   01300088  RMID  uint64       +0x0010
+
+== table @ 013012CC: TDF  (Blaze::CensusData::NotifyServerCensusDataItem)
+   013012CC  TDF   variable     +0x0008
+
+== table @ 013012D4: TDFL  (Blaze::CensusData::NotifyServerCensusData)
+   013012D4  TDFL  list         +0x0008 list<struct> -> 013012CC (Blaze::CensusData::NotifyServerCensusDataItem)
+
+== table @ 013012E0: CNOU  (Blaze::CensusData::RegionCounts)
+   013012E0  CNOU  map          +0x0008 map<string,int>
+
+== table @ 01460FD4: VTN VTV  (Blaze::BattlegroundsAccounts::BGAUpdateLivingLoreVoteRequest)
+   01460FD4  VTN   string       +0x0008
+   01460FE4  VTV   enum         +0x0014
+
+== table @ 01460FF4: ENUM  (Blaze::BattlegroundsAccounts::BGAUpdatePerkPageResponse)
+   01460FF4  ENUM  enum         +0x0008
+
+== table @ 014611F0: INV ISV NAM NIV TRD VAP  (Blaze::LivingLore::VoteInfo)
+   014611F0  INV   list         +0x0014 list<int>
+   014611FC  ISV   uint32       +0x0030
+   01461208  NAM   string       +0x0008
+   01461218  NIV   uint32       +0x0034
+   01461224  TRD   enum         +0x0038
+   01461234  VAP   float        +0x003c
+
+== table @ 01461240: CUV CVT  (Blaze::LivingLore::GetCurrentVoteResponse)
+   01461240  CUV   enum         +0x005c
+   01461250  CVT   struct       +0x0008 -> 012E6738 (Blaze::LivingLore::RelativeVoteInfo)
+
+== table @ 01461298: ALST GID OPER UID  (Blaze::GameManager::NotifyAdminListChange)
+   01461298  ALST  int64_18     +0x0010
+   014612A8  GID   uint64       +0x0008
+   014612B8  OPER  enum         +0x0018
+   014612C8  UID   int64_18     +0x0020
+
+== table @ 014612D8: BVAL  (Blaze::GameManager::HostBalanceRuleStatus)
+   014612D8  BVAL  enum         +0x0008
+
+== table @ 014612E8: THLD VALU  (Blaze::GameManager::VirtualGameRulePrefs)
+   014612E8  THLD  string       +0x0008
+   014612F8  VALU  enum         +0x0014 default=0x1
+
+== table @ 01461308: GID MTYP  (Blaze::GameManager::UpdateGameHostMigrationStatusRequest)
+   01461308  GID   uint64       +0x0008
+   01461318  MTYP  enum         +0x0010
+
+== table @ 01461328: CNTX GID PID REAS  (Blaze::GameManager::NotifyPlayerRemoved)
+   01461328  CNTX  uint16       +0x001c
+   01461338  GID   uint64       +0x0008
+   01461348  PID   int64_18     +0x0010
+   01461358  REAS  enum         +0x0018
+
+== table @ 01461368: GID PRES  (Blaze::GameManager::NotifyPresenceModeChanged)
+   01461368  GID   uint64       +0x0008
+   01461378  PRES  enum         +0x0010
+
+== table @ 01461388: MAXF MSID RSLT USID  (Blaze::GameManager::NotifyMatchmakingFailed)
+   01461388  MAXF  uint32       +0x001c
+   01461398  MSID  uint64       +0x0010
+   014613A8  RSLT  enum         +0x0018
+   014613B8  USID  uint64       +0x0008
+
+== table @ 014613C8: GID REAS  (Blaze::GameManager::NotifyGameRemoved)
+   014613C8  GID   uint64       +0x0008
+   014613D8  REAS  enum         +0x0010
+
+== table @ 014613E8: FIT MAXF MSID RSLT USID  (Blaze::GameManager::MatchmakingSetupContext)
+   014613E8  FIT   uint32       +0x001c
+   014613F4  MAXF  uint32       +0x0020
+   01461400  MSID  uint64       +0x0010
+   01461410  RSLT  enum         +0x0018
+   01461420  USID  uint64       +0x0008
+
+== table @ 01461430: SKDS SKRN SVOR THLD  (Blaze::GameManager::SkillRulePrefs)
+   01461430  SKDS  int64        +0x0028
+   01461440  SKRN  string       +0x0008
+   01461450  SVOR  enum         +0x0020
+   01461460  THLD  string       +0x0014
+
+== table @ 01461470: ATTR BTPL GENT GID GVER JMET PLST PNET SLEN SLID SLOT STRT TIDX USER XSES  (Blaze::GameManager::JoinGameRequest)
+   01461470  ATTR  map          +0x0010 map<string,string>
+   0146147C  BTPL  objid        +0x0090
+   01461484  GENT  enum         +0x00f0
+   01461498  GID   uint64       +0x0008
+   014614A8  GVER  string       +0x0078
+   014614B8  JMET  enum         +0x0034 default=0x1
+   014614C8  PLST  list         +0x00f4 list<int>
+   014614D4  PNET  union        +0x0038 -> union 012F22E8
+   014614DC  SLEN  int32        +0x0124
+   014614E8  SLID  uint8        +0x0088 default=0xff
+   014614F4  SLOT  enum         +0x0084
+   01461504  STRT  int32        +0x0120
+   01461510  TIDX  uint16       +0x008a default=0xffff
+   0146151C  USER  struct       +0x00a0 -> 012F1C70 (Blaze::UserIdentification)
+   01461528  XSES  blob         +0x0110
+
+== table @ 01461530: GID JGS  (Blaze::GameManager::JoinGameResponse)
+   01461530  GID   uint64       +0x0008
+   01461540  JGS   enum         +0x0010
+
+== table @ 01461550: BTPL CNTX GID PID REAS SCTX  (Blaze::GameManager::RemovePlayerRequest)
+   01461550  BTPL  objid        +0x0020
+   01461558  CNTX  uint16       +0x001c
+   01461568  GID   uint64       +0x0008
+   01461578  PID   int64_18     +0x0010
+   01461588  REAS  enum         +0x0018
+   01461598  SCTX  string       +0x0030
+
+== table @ 014615A8: ADMN ATTR CAP CRIT GID GNAM GPVH GSET GSID GSTA GTYP GURL HNET HSES IGNO MATR MCAP NQOS NRES NTOP PGID PGSR PHST PRES PSAS QCAP SEED TCAP THST TIDS UUID VOIP VSTR XNNC XSES  (Blaze::GameManager::ReplicatedGameData)
+   014615A8  ADMN  list         +0x0160 list<int>
+   014615B4  ATTR  map          +0x0118 map<string,string>
+   014615C0  CAP   list         +0x017c list<int>
+   014615CC  CRIT  map          +0x01b8 map<string,string>
+   014615D8  GID   uint64       +0x0018
+   014615E8  GNAM  string       +0x0008
+   014615F8  GPVH  uint64       +0x0050
+   01461608  GSET  bitfield     +0x0110
+   01461610  GSID  uint64       +0x0030
+   01461620  GSTA  enum         +0x010c
+   01461630  GTYP  string       +0x0038
+   01461640  GURL  string       +0x0200
+   01461650  HNET  list         +0x00c8 list<struct> -> union 012F22E8
+   01461660  HSES  uint64       +0x00c0
+   01461670  IGNO  bool_0f      +0x01dc
+   0146167C  MATR  map          +0x013c map<string,string>
+   01461688  MCAP  uint16       +0x01b6
+   01461694  NQOS  struct       +0x00f8 -> 01462610 (Blaze::Util::NetworkQosData)
+   014616A0  NRES  bool_0f      +0x01fc
+   014616AC  NTOP  enum         +0x007c
+   014616BC  PGID  string       +0x01e0
+   014616CC  PGSR  blob         +0x01ec
+   014616D4  PHST  struct       +0x00a8 -> 012E76F0 (Blaze::GameManager::HostInfo)
+   014616E0  PRES  enum         +0x0058
+   014616F0  PSAS  string       +0x0084
+   01461700  QCAP  uint16       +0x01de
+   0146170C  SEED  uint32       +0x002c
+   01461718  TCAP  uint16       +0x01b4
+   01461724  THST  struct       +0x0090 -> 012E76F0 (Blaze::GameManager::HostInfo)
+   01461730  TIDS  list         +0x0198 list<int>
+   0146173C  UUID  string       +0x0020
+   0146174C  VOIP  enum         +0x0080
+   0146175C  VSTR  string       +0x0044
+   0146176C  XNNC  blob         +0x005c
+   01461774  XSES  blob         +0x006c
+
+== table @ 01461800: ADMN ATTR CAP CRIT GID GNAM GSET GSTA GURL HNET HOST NTOP PCNT PRES PSAS PSID QCAP QCNT ROST SID TCAP TINF VOIP VSTR  (Blaze::GameManager::GameBrowserGameData)
+   01461800  ADMN  list         +0x0174 list<int>
+   0146180C  ATTR  map          +0x00a8 map<string,string>
+   01461818  CAP   list         +0x0030 list<int>
+   01461824  CRIT  map          +0x0120 map<string,string>
+   01461830  GID   uint64       +0x0008
+   01461840  GNAM  string       +0x0018
+   01461850  GSET  bitfield     +0x00a0
+   01461858  GSTA  enum         +0x009c
+   01461868  GURL  string       +0x01a0
+   01461878  HNET  list         +0x00d8 list<struct> -> union 012F22E8
+   01461888  HOST  int64_18     +0x00d0
+   01461898  NTOP  enum         +0x0110
+   014618A8  PCNT  list         +0x004c list<int>
+   014618B4  PRES  enum         +0x010c
+   014618C4  PSAS  string       +0x0114
+   014618D4  PSID  string       +0x0190
+   014618E4  QCAP  uint16       +0x019c
+   014618F0  QCNT  uint16       +0x019e
+   014618FC  ROST  list         +0x0144 list<struct> -> 01461A88 (Blaze::GameManager::GameBrowserPlayerData)
+   01461908  SID   uint64       +0x0010
+   01461918  TCAP  uint16       +0x0098
+   01461924  TINF  list         +0x0068 list<struct> -> 012E73A8 (Blaze::GameManager::GameBrowserTeamInfo)
+   01461930  VOIP  enum         +0x0108
+   01461940  VSTR  string       +0x0024
+
+== table @ 01461950: GID GSTA  (Blaze::GameManager::AdvanceGameStateRequest)
+   01461950  GID   uint64       +0x0008
+   01461960  GSTA  enum         +0x0010
+
+== table @ 01461970: FLGS PID STAT  (Blaze::GameManager::PlayerConnectionStatus)
+   01461970  FLGS  bitfield     +0x0014
+   01461978  PID   int64_18     +0x0008
+   01461988  STAT  enum         +0x0010
+
+== table @ 01461998: GID REAS  (Blaze::GameManager::DestroyGameRequest)
+   01461998  GID   uint64       +0x0008
+   014619A8  REAS  enum         +0x0010
+
+== table @ 014619B8: GID HOST PMIG SLOT  (Blaze::GameManager::NotifyHostMigrationStart)
+   014619B8  GID   uint64       +0x0010
+   014619C8  HOST  int64_18     +0x0018
+   014619D8  PMIG  enum         +0x0008
+   014619E8  SLOT  uint8        +0x0020
+
+== table @ 014619F8: GID GSTA  (Blaze::GameManager::NotifyGameStateChange)
+   014619F8  GID   uint64       +0x0008
+   01461A08  GSTA  enum         +0x0010
+
+== table @ 01461A18: DCTX  (Blaze::GameManager::DatalessSetupContext)
+   01461A18  DCTX  enum         +0x0008
+
+== table @ 01461A88: EXID LOC NAME PATT PID STAT TIDX  (Blaze::GameManager::GameBrowserPlayerData)
+   01461A88  EXID  uint64       +0x0020
+   01461A98  LOC   uint32       +0x0028
+   01461AA4  NAME  string       +0x0010
+   01461AB4  PATT  map          +0x002c map<string,string>
+   01461AC0  PID   int64_18     +0x0008
+   01461AD0  STAT  enum         +0x0054
+   01461AE0  TIDX  uint16       +0x0050
+
+== table @ 01461AF0: ADMN ATTR BTPL CRIT GCTR GENT GNAM GSET GTYP GURL HNET IGNO MATR NRES NTOP PATT PCAP PGID PGSC PMAX PRES QCAP RGID SEAT SIDL SLOT TCAP TIDS TIDX VOIP VSTR  (Blaze::GameManager::CreateGameRequest)
+   01461AF0  ADMN  list         +0x0024 list<int>
+   01461AFC  ATTR  map          +0x0138 map<string,string>
+   01461B08  BTPL  objid        +0x0180
+   01461B10  CRIT  map          +0x01ac map<string,string>
+   01461B1C  GCTR  string       +0x00a8
+   01461B2C  GENT  enum         +0x01f4
+   01461B3C  GNAM  string       +0x00e8
+   01461B4C  GSET  bitfield     +0x00f4
+   01461B54  GTYP  string       +0x00dc
+   01461B64  GURL  string       +0x00d0
+   01461B74  HNET  list         +0x0104 list<struct> -> union 012F22E8
+   01461B80  IGNO  bool_0f      +0x01d0
+   01461B8C  MATR  map          +0x0084 map<string,string>
+   01461B98  NRES  bool_0f      +0x01f0
+   01461BA4  NTOP  enum         +0x00fc
+   01461BB4  PATT  map          +0x015c map<string,string>
+   01461BC0  PCAP  list         +0x0044 list<int>
+   01461BCC  PGID  string       +0x01d4
+   01461BDC  PGSC  blob         +0x01e0
+   01461BE4  PMAX  uint16       +0x0040
+   01461BF0  PRES  enum         +0x0008 default=0x1
+   01461C00  QCAP  uint16       +0x0134
+   01461C10  RGID  uint64       +0x0010
+   01461C20  SEAT  list         +0x00b4 list<int>
+   01461C2C  SIDL  list         +0x0190 list<int>
+   01461C38  SLOT  enum         +0x0060
+   01461C48  TCAP  uint16       +0x0080
+   01461C54  TIDS  list         +0x0064 list<int>
+   01461C60  TIDX  uint16       +0x0082 default=0xffff
+   01461C6C  VOIP  enum         +0x0100
+   01461C7C  VSTR  string       +0x0018
+
+== table @ 01461CE8: FIT GRID MAXF MSID RPVC RSLT USID  (Blaze::GameManager::IndirectMatchmakingSetupContext)
+   01461CE8  FIT   uint32       +0x002c
+   01461CF4  GRID  objid        +0x0008
+   01461CFC  MAXF  uint32       +0x0030
+   01461D08  MSID  uint64       +0x0020
+   01461D18  RPVC  bool_0f      +0x0034
+   01461D24  RSLT  enum         +0x0028
+   01461D38  USID  uint64       +0x0018
+
+== table @ 01461D48: VVAL  (Blaze::GameManager::HostViabilityRuleStatus)
+   01461D48  VVAL  enum         +0x0008
+
+== table @ 01461D58: THLD VALU  (Blaze::GameManager::RankedGameRulePrefs)
+   01461D58  THLD  string       +0x0008
+   01461D68  VALU  enum         +0x0014 default=0x1
+
+== table @ 01461D78: ATTR BTPL CRIT DUR ECRI GENT GNAM GSET GVER IGNO MODE NTOP PATT PLST PMAX PNET PRES QCAP SIDL VOIP  (Blaze::GameManager::StartMatchmakingRequest)
+   01461D78  ATTR  map          +0x0318 map<string,string>
+   01461D84  BTPL  objid        +0x0368
+   01461D8C  CRIT  struct       +0x0020 -> 012E8110 (Blaze::GameManager::MatchmakingCriteriaData)
+   01461D98  DUR   uint32       +0x001c
+   01461DA4  ECRI  map          +0x0394 map<string,string>
+   01461DB0  GENT  enum         +0x03d8
+   01461DC0  GNAM  string       +0x02b8
+   01461DD0  GSET  bitfield     +0x02c4
+   01461DD8  GVER  string       +0x0010
+   01461DE8  IGNO  bool_0f      +0x03b8
+   01461DF4  MODE  bitfield     +0x0008
+   01461DFC  NTOP  enum         +0x02cc
+   01461E0C  PATT  map          +0x0340 map<string,string>
+   01461E18  PLST  list         +0x03bc list<int>
+   01461E24  PMAX  uint16       +0x033c
+   01461E30  PNET  union        +0x02d4 -> union 012F22E8
+   01461E38  PRES  enum         +0x03dc default=0x1
+   01461E48  QCAP  uint16       +0x0314
+   01461E54  SIDL  list         +0x0378 list<int>
+   01461E60  VOIP  enum         +0x02d0
+
+== table @ 01461E70: GID PID STAT  (Blaze::GameManager::NotifyGamePlayerStateChange)
+   01461E70  GID   uint64       +0x0008
+   01461E80  PID   int64_18     +0x0010
+   01461E90  STAT  enum         +0x0018
+
+== table @ 01461EA0: BLOB EXID GID LOC NAME PATT PID PNET SID SLOT STAT TIDX TIME UGID UID  (Blaze::GameManager::ReplicatedGamePlayer)
+   01461EA0  BLOB  blob         +0x0040
+   01461EA8  EXID  uint64       +0x0018
+   01461EB8  GID   uint64       +0x0008
+   01461EC8  LOC   uint32       +0x0020
+   01461ED4  NAME  string       +0x0030
+   01461EE4  PATT  map          +0x0050 map<string,string>
+   01461EF0  PID   int64_18     +0x0010
+   01461F00  PNET  union        +0x0074 -> union 012F22E8
+   01461F08  SID   uint8        +0x0024 default=0xff
+   01461F14  SLOT  enum         +0x00b4
+   01461F24  STAT  enum         +0x003c
+   01461F34  TIDX  uint16       +0x00b8 default=0xffff
+   01461F40  TIME  int64        +0x00d0
+   01461F50  UGID  objid        +0x00c0
+   01461F58  UID   uint64       +0x0028
+
+== table @ 01461FB8: OPEN PGID  (Blaze::Playgroups::NotifyJoinControlsChange)
+   01461FB8  OPEN  enum         +0x0010
+   01461FC8  PGID  uint64       +0x0008
+
+== table @ 01461FD8: OPEN PGID  (Blaze::Playgroups::SetJoinControlsRequest)
+   01461FD8  OPEN  enum         +0x0010
+   01461FE8  PGID  uint64       +0x0008
+
+== table @ 01461FF8: MLST PGID REAS  (Blaze::Playgroups::NotifyMemberRemoveFromPlaygroup)
+   01461FF8  MLST  int64_18     +0x0010
+   01462008  PGID  uint64       +0x0008
+   01462018  REAS  enum         +0x0018
+
+== table @ 01462028: ATTR ENBV HNET HSID JOIN MLIM NAME NTOP OWNR PGID PRES UKEY UPRS UUID VOIP XNNC XSES  (Blaze::Playgroups::PlaygroupInfo)
+   01462028  ATTR  map          +0x003c map<string,string>
+   01462034  ENBV  bool_0f      +0x00cc
+   01462040  HNET  union        +0x0064 -> union 012F22E8
+   01462048  HSID  uint8        +0x0038
+   01462054  JOIN  enum         +0x0060
+   01462064  MLIM  uint16       +0x0028
+   01462070  NAME  string       +0x0010
+   01462080  NTOP  enum         +0x00a4
+   01462090  OWNR  int64_18     +0x0030
+   014620A0  PGID  uint64       +0x0008
+   014620B0  PRES  enum         +0x00dc
+   014620C0  UKEY  string       +0x001c
+   014620D0  UPRS  bool         +0x00e0
+   014620DC  UUID  string       +0x00d0
+   014620EC  VOIP  enum         +0x00a8
+   014620FC  XNNC  blob         +0x00ac
+   01462104  XSES  blob         +0x00bc
+
+== table @ 01462110: PGID REAS  (Blaze::Playgroups::NotifyDestroyPlaygroup)
+   01462110  PGID  uint64       +0x0008
+   01462120  REAS  enum         +0x0010
+
+== table @ 01462130: EID PGID REAS  (Blaze::Playgroups::KickPlaygroupMemberRequest)
+   01462130  EID   int64_18     +0x0010
+   01462140  PGID  uint64       +0x0008
+   01462150  REAS  enum         +0x0018
+
+== table @ 01462190: FLAG MGID PIDX PSIZ SMSK SORT SRCE STAT TARG TYPE TYPL  (Blaze::Messaging::FetchMessageRequest)
+   01462190  FLAG  bitfield     +0x0008
+   01462198  MGID  uint64       +0x0010
+   014621A8  PIDX  uint32       +0x0068
+   014621B4  PSIZ  uint32       +0x0064
+   014621C0  SMSK  uint32       +0x0058
+   014621CC  SORT  enum         +0x0060
+   014621DC  SRCE  objid        +0x0018
+   014621E4  STAT  uint32       +0x005c
+   014621F0  TARG  objid        +0x0028
+   014621F8  TYPE  uint32       +0x0038
+   01462204  TYPL  list         +0x003c list<int>
+
+== table @ 01462308: CHEK QPOS RESP WAIT  (Blaze::Entry::EnterServiceResponse)
+   01462308  CHEK  uint32       +0x000c
+   01462314  QPOS  uint32       +0x0014
+   01462320  RESP  enum         +0x0008
+   01462330  WAIT  uint32       +0x0010
+
+== table @ 014623AC: AGGR TYPE  (Blaze::Stats::EntityStatAggregates)
+   014623AC  AGGR  list         +0x000c list<string>
+   014623B8  TYPE  enum         +0x0008
+
+== table @ 01462488: ALOC BUID DSNM FRST KEY LAST LLOG MAIL PID PLAT UID XREF  (Blaze::UserSessionLoginInfo)
+   01462488  ALOC  uint32       +0x0040
+   01462498  BUID  int64_18     +0x0018
+   014624A8  DSNM  string       +0x0050
+   014624B8  FRST  bool_0f      +0x0034
+   014624C4  KEY   string       +0x0008
+   014624D4  LAST  uint32       +0x006c
+   014624E0  LLOG  int64        +0x0038
+   014624F0  MAIL  string       +0x0028
+   01462500  PID   int64        +0x0048
+   01462510  PLAT  enum         +0x0068
+   01462520  UID   int64        +0x0020
+   01462530  XREF  uint64       +0x0060
+
+== table @ 01462540: BSDK BTIM CLNT CPFT CSKU CVER DSDK ENV HWID LOC MAC  (Blaze::ClientInfo)
+   01462540  BSDK  string       +0x0040
+   01462550  BTIM  string       +0x004c
+   01462560  CLNT  string       +0x0018
+   01462570  CPFT  enum         +0x0014 default=0xffff
+   01462580  CSKU  string       +0x0030
+   01462590  CVER  string       +0x0024
+   014625A0  DSDK  string       +0x0058
+   014625B0  ENV   string       +0x0008
+   014625C0  HWID  string       +0x0070
+   014625D0  LOC   uint32       +0x003c
+   014625DC  MAC   string       +0x0064
+
+== table @ 014625F0: BID LOTP  (Blaze::UserSessionLogoutInfo)
+   014625F0  BID   int64_18     +0x0008
+   01462600  LOTP  enum         +0x0010
+
+== table @ 01462610: DBPS NATT UBPS  (Blaze::Util::NetworkQosData)
+   01462610  DBPS  uint32       +0x0010
+   0146261C  NATT  enum         +0x0008
+   0146262C  UBPS  uint32       +0x000c
+
+== table @ 01462658: SDR  (Blaze::UserSessionDisconnectReason)
+   01462658  SDR   enum         +0x0008
+
+== table @ 01462668: UBFL UDEV UFLG ULRC UNAT USTA UWAN  (Blaze::ClientMetrics)
+   01462668  UBFL  bitfield     +0x0014
+   01462670  UDEV  string       +0x0024
+   01462680  UFLG  uint16       +0x0010
+   0146268C  ULRC  int32        +0x0008
+   01462698  UNAT  uint16       +0x001c
+   014626A4  USTA  enum         +0x0020
+   014626B4  UWAN  uint32       +0x000c
+
+== table @ 014626F0: ENBL ITID RARE STCK TYPE  (Blaze::BGEcommerce::GameItem)
+   014626F0  ENBL  bool         +0x0018
+   014626FC  ITID  uint32       +0x0008
+   01462708  RARE  uint32       +0x0010
+   01462714  STCK  uint32       +0x0014
+   01462720  TYPE  enum         +0x000c
+
+== table @ 01462798: LMID LUPT  (Blaze::Association::ListMemberInfoUpdate)
+   01462798  LMID  struct       +0x0010 -> 012F4568 (Blaze::Association::ListMemberInfo)
+   014627A4  LUPT  enum         +0x0008 default=0x1
+
+== table @ 014627B8: BLID EXBB PLAT PNAM XREF  (Blaze::Association::ListMemberId)
+   014627B8  BLID  int64_18     +0x0008
+   014627C8  EXBB  blob         +0x0020
+   014627D0  PLAT  enum         +0x0010
+   014627E0  PNAM  string       +0x0030
+   014627F0  XREF  uint64       +0x0018
+
+== table @ 014628A0: CITY CTRY ELEM GNDR STAT STRT UID ZIP  (Blaze::Authentication::UserProfileInfo)
+   014628A0  CITY  string       +0x001c
+   014628B0  CTRY  string       +0x0034
+   014628C0  ELEM  map          +0x0050 map<string,struct>
+   014628CC  GNDR  enum         +0x004c
+   014628DC  STAT  string       +0x0028
+   014628EC  STRT  string       +0x0010
+   01462900  UID   int64        +0x0008
+   01462910  ZIP   string       +0x0040
+
+== table @ 01462A70: MAIL PASS TOKN TYPE  (Blaze::Authentication::LoginRequest)
+   01462A70  MAIL  string       +0x0008
+   01462A80  PASS  string       +0x0014
+   01462A90  TOKN  string       +0x0020
+   01462AA0  TYPE  enum         +0x002c default=0x1
+
+== table @ 01462AB0: ERR FLD  (Blaze::Authentication::FieldValidationError)
+   01462AB0  ERR   enum         +0x000c
+   01462AC0  FLD   enum         +0x0008
+
+== table @ 01462BC8: CTRY PTFM  (Blaze::Authentication::GetEmailOptInSettingsRequest)
+   01462BC8  CTRY  string       +0x0008
+   01462BD8  PTFM  enum         +0x0014 default=0xffff
+
+== table @ 01462BE8: EXRF KEY MCNT MFLG MLMT PRID PRMN STAT UID  (Blaze::Authentication::ConsumecodeResponse)
+   01462BE8  EXRF  string       +0x0014
+   01462BF8  KEY   string       +0x0008
+   01462C08  MCNT  int64        +0x0050
+   01462C18  MFLG  int8         +0x0048
+   01462C28  MLMT  int64        +0x0058
+   01462C38  PRID  string       +0x0020
+   01462C48  PRMN  string       +0x002c
+   01462C58  STAT  enum         +0x0038
+   01462C68  UID   int64        +0x0040
+
+== table @ 01462C78: AUTH PID TYPE  (Blaze::Authentication::SilentLoginRequest)
+   01462C78  AUTH  string       +0x0008
+   01462C88  PID   int64        +0x0018
+   01462C98  TYPE  enum         +0x0020 default=0x1
+
+== table @ 01462E00: AUTH TYPE  (Blaze::Authentication::OriginLoginRequest)
+   01462E00  AUTH  string       +0x0008
+   01462E10  TYPE  enum         +0x0014 default=0x1
+
+== table @ 01462E20: DSNM LAST PID PLAT STAS XREF  (Blaze::Authentication::PersonaDetails)
+   01462E20  DSNM  string       +0x0010
+   01462E30  LAST  uint32       +0x002c
+   01462E40  PID   int64        +0x0008
+   01462E50  PLAT  enum         +0x0028
+   01462E60  STAS  enum         +0x0030
+   01462E70  XREF  uint64       +0x0020
+
+== table @ 01462E80: CPFT CTRY FTCH LANG TEXT  (Blaze::Authentication::GetLegalDocContentRequest)
+   01462E80  CPFT  enum         +0x0014 default=0xffff
+   01462E90  CTRY  string       +0x0008
+   01462EA0  FTCH  bool_0f      +0x0028 default=0x1
+   01462EAC  LANG  string       +0x0018
+   01462EBC  TEXT  enum         +0x0024
+
+== table @ 01462EE8: AMU ASRC CO DOB DTCR GOPT LATH LN MAIL PML RC STAS STAT TOSV TPOT UDU UID  (Blaze::Authentication::AccountInfo)
+   01462EE8  AMU   bool_0f      +0x008c
+   01462EF4  ASRC  string       +0x0074
+   01462F04  CO    string       +0x002c
+   01462F14  DOB   string       +0x0020
+   01462F24  DTCR  string       +0x0080
+   01462F34  GOPT  int8         +0x0064 default=0xff
+   01462F40  LATH  string       +0x0068
+   01462F50  LN    string       +0x0038
+   01462F60  MAIL  string       +0x0010
+   01462F70  PML   string       +0x0050
+   01462F80  RC    enum         +0x0060
+   01462F90  STAS  enum         +0x005c
+   01462FA0  STAT  enum         +0x001c
+   01462FB0  TOSV  string       +0x0044
+   01462FC0  TPOT  int8         +0x0065 default=0xff
+   01462FCC  UDU   bool_0f      +0x008d
+   01462FD8  UID   int64        +0x0008
+
+== table @ 01463100: MAIL PLAT XREF  (Blaze::Authentication::PasswordForgotRequest)
+   01463100  MAIL  string       +0x0008
+   01463110  PLAT  enum         +0x0020
+   01463120  XREF  uint64       +0x0018
+
+== table @ 014632F8: DIRT UTXT  (Blaze::Util::FilteredUserText)
+   014632F8  DIRT  enum         +0x0008
+   01463308  UTXT  string       +0x000c
+
+== table @ 01463318: TMOP UID  (Blaze::Util::UserOptions)
+   01463318  TMOP  enum         +0x0008
+   01463328  UID   int64_18     +0x0010
+
+== table @ 01463338: IITO LANG SVCN TYPE  (Blaze::Util::ClientData)
+   01463338  IITO  bool         +0x0010
+   01463344  LANG  uint32       +0x0008
+   01463350  SVCN  string       +0x0014
+   01463360  TYPE  enum         +0x000c
+
+== table @ 014633F0: ADDR TYPE  (Blaze::Redirector::ServerAddressInfo)
+   014633F0  ADDR  union        +0x000c -> union 012FDF28
+   014633F8  TYPE  enum         +0x0008
+
+== table @ 01463460: ADRS BIND CCON CHAN DEC ENC MCON PROT  (Blaze::Redirector::ServerEndpointInfo)
+   01463460  ADRS  list         +0x003c list<struct> -> 014633F0 (Blaze::Redirector::ServerAddressInfo)
+   0146346C  BIND  enum         +0x0038
+   0146347C  CCON  uint32       +0x006c default=0xffffffff
+   01463488  CHAN  string       +0x0008
+   01463498  DEC   string       +0x002c
+   014634A8  ENC   string       +0x0020
+   014634B8  MCON  uint32       +0x0070 default=0xffffffff
+   014634C4  PROT  string       +0x0014
+
+== table @ 014634D8: BSDK BTIM CLNT CLTP CPLT CSKU CVER DSDK ENV FPID LOC NAME PLAT PROF  (Blaze::Redirector::ServerInstanceRequest)
+   014634D8  BSDK  string       +0x0060
+   014634E8  BTIM  string       +0x006c
+   014634F8  CLNT  string       +0x0038
+   01463508  CLTP  enum         +0x0098 default=0x4
+   01463518  CPLT  enum         +0x009c
+   01463528  CSKU  string       +0x0050
+   01463538  CVER  string       +0x0044
+   01463548  DSDK  string       +0x0078
+   01463558  ENV   string       +0x0014
+   01463568  FPID  union        +0x0084 -> union 012FE054
+   01463570  LOC   uint32       +0x005c
+   0146357C  NAME  string       +0x0008
+   0146358C  PLAT  string       +0x0020
+   0146359C  PROF  string       +0x002c
+
+== table @ 014635F8: CLTP CWD ENDP ID LOAD NAME SVC TYPE  (Blaze::Redirector::ServerInstance)
+   014635F8  CLTP  list         +0x0060 list<int>
+   01463604  CWD   string       +0x0054
+   01463614  ENDP  list         +0x0024 list<struct> -> 01463460 (Blaze::Redirector::ServerEndpointInfo)
+   01463620  ID    uint32       +0x0010
+   0146362C  LOAD  int32        +0x0008
+   01463638  NAME  string       +0x0018
+   01463648  SVC   bool_0f      +0x000c default=0x1
+   01463654  TYPE  enum         +0x0014
+
+== table @ 014636F8: UPRE  (Blaze::Rooms::RoomViewReplicationContext)
+   014636F8  UPRE  enum         +0x0008
+
+== table @ 01463708: SEID UPRE USID VWID  (Blaze::Rooms::RoomReplicationContext)
+   01463708  SEID  uint64       +0x0020
+   01463718  UPRE  enum         +0x0008
+   01463728  USID  int64_18     +0x0018
+   01463738  VWID  uint64       +0x0010
+
+== table @ 01463748: SEID UPRE USID  (Blaze::Rooms::RoomCategoryReplicationContext)
+   01463748  SEID  uint64       +0x0010
+   01463758  UPRE  enum         +0x0018
+   01463768  USID  int64_18     +0x0008
+
+== table @ 01463778: UPRE USID  (Blaze::Rooms::RoomMemberReplicationContext)
+   01463778  UPRE  enum         +0x0008
+   01463788  USID  int64_18     +0x0010
+
+== union @ 012EA098: 5 members
+   member 0  VALU  struct -> 01461A18 (Blaze::GameManager::DatalessSetupContext)
+   member 1  VALU  struct -> 012E77B4 (Blaze::GameManager::ResetDedicatedServerSetupContext)
+   member 2  VALU  struct -> 012E7808 (Blaze::GameManager::IndirectJoinGameSetupContext)
+   member 3  VALU  struct -> 014613E8 (Blaze::GameManager::MatchmakingSetupContext)
+   member 4  VALU  struct -> 01461CE8 (Blaze::GameManager::IndirectMatchmakingSetupContext)
+
+== union @ 012F0E40: 3 members
+   member 0  VALU  float
+   member 1  VALU  int
+   member 2  VALU  string
+
+== union @ 012F22E8: 5 members
+   member 0  VALU  struct -> 012F1B28 (Blaze::XboxClientAddress)
+   member 1  VALU  struct -> 012F1B40 (Blaze::XboxServerAddress)
+   member 2  VALU  struct -> 012F1B10 (Blaze::IpPairAddress)
+   member 3  VALU  struct -> 012F1ADC (Blaze::IpAddress)
+   member 4  VALU  struct -> 012F1AF4 (Blaze::HostNameAddress)
+
+== union @ 012FDF28: 2 members
+   member 0  VALU  struct -> 012FD8D0 (Blaze::Redirector::IpAddress)
+   member 1  VALU  struct -> 012FD8F8 (Blaze::Redirector::XboxServerAddress)
+
+== union @ 012FE054: 3 members
+   member 0  VALU  blob
+   member 1  VALU  blob
+   member 2  VALU  string

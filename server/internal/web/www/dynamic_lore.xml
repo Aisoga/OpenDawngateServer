@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dawngate restoration server: dynamic lore (docs/WEB_CONTENT.md). The server packs this file into
+     dynamic_lore.snap as dynamic_lore/dynamic_lore.xml (property DynamicLoreXmlPath).
+     Under <DynamicLore><Votes> each
+       <Vote name="..." cardtexta="..." cardtextb="..." cardimga="..." cardimgb="..."/>
+     is one living lore vote; all five attributes must be non-empty. The vote whose name is the
+     current vote (LivingLore) fills the living lore card of the post-game rewards. No votes: the
+     client falls back to its own default strings. -->
+<DynamicLore>
+  <Votes>
+  </Votes>
+</DynamicLore>

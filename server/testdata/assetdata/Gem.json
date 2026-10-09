@@ -1,0 +1,9 @@
+{
+ "class": "Gem",
+ "count": 2,
+ "errors": {},
+ "instances": {
+  "RedGem": {"type": "red", "collectionItem": "RedGem.CollectionItem", "tags": [], "maxOwnable": 3, "attribute": [{"id": "Power", "value": 0.4, "op": "Add"}], "modifier": []},
+  "BlueGem": {"type": "blue", "collectionItem": null, "tags": [], "maxOwnable": 16, "attribute": [{"id": "Haste", "value": 0.007, "op": "PercentChange"}], "modifier": []}
+ }
+}

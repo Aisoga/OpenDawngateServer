@@ -1,0 +1,98 @@
+package main
+
+import (
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"dawngate/server/internal/blaze"
+	"dawngate/server/internal/golden"
+	"dawngate/server/internal/tdf"
+)
+
+// B7a: --make-content builds the content file from an AssetData dump (here the synthetic fixture), and
+// a server with a data folder grants it to a new account and keeps the account across a restart.
+func TestServerContentAndPersistence(t *testing.T) {
+	data := t.TempDir()
+	cfg := config{bind: "127.0.0.1", certs: testCerts(t), logDir: t.TempDir(), dataDir: data, policy: blaze.DefaultPolicy()}
+	if err := makeContent(filepath.Join(golden.Dir(), "assetdata"), cfg.contentFile()); err != nil {
+		t.Fatal(err)
+	}
+	if err := makeContent(t.TempDir(), cfg.contentFile()); err == nil {
+		t.Error("--make-content accepted a folder without a dump")
+	}
+	if err := makeContent(filepath.Join(golden.Dir(), "assetdata"), ""); err == nil {
+		t.Error("--make-content without a content file")
+	}
+
+	session := func() {
+		in, err := start(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer in.stop()
+		bc, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", in.ports[1]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer bc.Close()
+		call(t, bc, 1, 0x28, 0, tdf.NewWriter().String("MAIL", "player@example.com").String("PASS", "x").Bytes())
+		bal := call(t, bc, 0x820, 0x08, 1, nil)
+		if ec, _ := bal.Int("ECBL"); ec != blaze.DefaultStartEC {
+			t.Errorf("ECBL %d, want %d", ec, blaze.DefaultStartEC)
+		}
+		complete := call(t, bc, 0x81F, 0x76, 2, nil)
+		list, _ := complete.Get("LIST")
+		acct := list.Value.(*tdf.List).Items[0].(*tdf.Struct)
+		if items, ok := acct.Get("ITEM"); !ok || len(items.Value.(*tdf.List).Items) != 9 {
+			t.Errorf("ITEM: %+v", items)
+		}
+	}
+	session()
+	session() // the same account, not granted twice (ECBL unchanged)
+	raw, err := os.ReadFile(filepath.Join(data, "accounts.json"))
+	if err != nil || !strings.Contains(string(raw), `"email": "player@example.com"`) || strings.Count(string(raw), `"userID"`) != 1 {
+		t.Errorf("accounts.json: %v\n%s", err, raw)
+	}
+
+	// a broken accounts file stops the server and stays as it is
+	os.WriteFile(filepath.Join(data, "accounts.json"), []byte("{"), 0o644)
+	if in, err := start(cfg); err == nil {
+		in.stop()
+		t.Error("started with a broken accounts.json")
+	}
+	if raw, _ := os.ReadFile(filepath.Join(data, "accounts.json")); string(raw) != "{" {
+		t.Errorf("accounts.json changed: %s", raw)
+	}
+}
+
+// Without a content file the server runs as before B7a and says how to make one; without a data folder
+// it keeps accounts in memory only.
+func TestServerWithoutContent(t *testing.T) {
+	for _, c := range []struct {
+		data string
+		want string
+	}{
+		{t.TempDir(), "content.json (new accounts get no items; build it with --make-content); new accounts: all owned, EC 10000, PC 1000; FTUE done for all: false; perk pages: 10\n"},
+		{"", "[stub] accounts in memory only; no content; new accounts: all owned, EC 10000, PC 1000; FTUE done for all: false; perk pages: 10\n"},
+	} {
+		logDir := t.TempDir()
+		in, err := start(config{bind: "127.0.0.1", certs: testCerts(t), logDir: logDir, dataDir: c.data, policy: blaze.DefaultPolicy(),
+			mm: blaze.DefaultMatchmaking()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		in.stop()
+		files, _ := filepath.Glob(filepath.Join(logDir, "*.log"))
+		raw, _ := os.ReadFile(files[0])
+		text := strings.ReplaceAll(string(raw), "\r\n", "\n")
+		for _, want := range []string{c.want, "[stub] PvP matchmaking: 5v5, start with 1+ players after 15s\n"} { // B10a
+			if !strings.Contains(text, want) {
+				t.Errorf("log lacks %q:\n%s", want, text)
+			}
+		}
+	}
+}

@@ -1,0 +1,125 @@
+// Bot players on the match host (roadmap D6a; docs/AGENT_AI.md §11 and *D6a: bot players on the match host*;
+// docs/SERVER_LUA_API.md *Tier 3 for the bots (D6b-shims)*). What the stripped bot director did for a practice game
+// (nGameDescriptors.BotsFillTeams, 0x400, is set in the practice game's 0x50C), run by the host with the client's own
+// pieces:
+//   - the bot players (EnsurePlayers, at the first accepted HelloReq): Tuning.BotPlan's slots and bot classes, team
+//     fill with gms/core/bots (FillTeam / PlanBotPlayers: the humans take slots first, the bots the rest, gameplay
+//     indexes the humans don't hold, online id = index + 1), each a GameSimulator_AddPlayer (0x008F3E20) on the server
+//     simulator with its team and online id, LabsPlayer_ReflectBotData (0x00915D30: mbIsBot, mpBotData, the BotClass's
+//     noun and role, the "<shaper> BOT" name) and the status of a player that has accepted, picked and loaded
+//     (0x10000 | 0x100 | 0x400, progress 1.0); the GMS session announces them to every client (IMatch::OtherPlayers:
+//     HelloPlayer records of type 1, then their LabsPlayerGlobalUpdates written from the server's cLabsPlayer);
+//   - their creatures (DeployAll, at the first client's level-loaded point, before the world is built): the same
+//     LabsPlayer_DeployCharacter (0x00915400) as a human's shaper, at the team's start point; its bot branch ranks up
+//     the first skill and buys the first spell; GameObjectManager_OnObjectCreated gives the creature a brain
+//     (AgentBrain_InitBot 0x008AD970: the BotClass's AIDefinition, the start plan) and agents.cpp's bot brain step runs
+//     its plans, phases and gambits;
+//   - the bots' Lua API (OnLevelStarted): the optional nBotHost namespace over gms/core/bots's BotsState (lanes, lane
+//     fronts, first-time players), registered before gms/engine/lua/dgsim_bots_api.lua runs on the server's lua_State;
+//   - every tick (Tick): the lane fronts from the living lane minions twice a second (nBot.GetLaneCenterAndDirection).
+// D6b (docs/AGENT_AI.md *D6b*): the rest of nBotHost over the same BotsState:
+//   - missions: RequestMission, IsMissionAvailable, GetAvailableMission, AcceptMission, GetMissionID, GetMissionTarget,
+//     GetMissionDestination, OpenMission, EndMission (gms/core/bots/missions.h); every `bot_mission_ms` (1000) the Tick
+//     ends the missions whose target is gone (BotsState::Forget), expires the stale ones (MissionBoard::Expire) and runs
+//     dgsim_bots.MissionTick() (Tuning.BotPlan's seven condition_Mission_*: Check, then CheckEnd); the brain's plan
+//     layer (agents.cpp) reports the plans a bot enters (OnPlanEntered: BotsState::EnterPlan) and refreshes a
+//     requestMission plan's own mission (OnRequestPlanThink);
+//   - shopping: CanAffordNextItem, PurchaseNextItem, CanBuyPotion, PurchasePotions over gms/core/bots ShopPlanner with
+//     the bot class's recommended build ("PC_<Shaper>".Noun recommendedItems) and its cLabsPlayer's slots and gold; a
+//     purchase goes through D7b's item transaction (cmds::OnClientMessage, ItemTransaction purchase with "no slot"):
+//     GameSimulator_OnItemTransaction's checks and LabsPlayer_PurchaseItem on the bot's player, the C3 answer to its team;
+//   - IsPositionSafe over the bot director's fire tracker, which the host switches on with the bots (director +0x978).
+// The wells' three nBotHost functions are wells.cpp's (D9); GearsLua_RegisterNamespace merges both into one table.
+// Every engine call runs under SEH with the server simulator bound. Settings ([host] keys, experiment.cpp reads them):
+// bots (-1 = auto: createGame's fillTeams seats a team when dgserver asks (B10d: a matchmade game that started with open
+// seats), else 5 seats a team when the game's descriptors have BotsFillTeams, else none; N = N seats a team, 0 =
+// none), bots_allies (1: fill the humans' teams too), bot_classes ("" = Tuning.BotPlan's bots; "PC_Warden,PC_Guardian"
+// replaces the list), bots_lua (1), bot_lanes (1), bot_ftue (1: the humans of an IsFTUE game are first-time players for
+// nBot.IsEnemyOfFirstTimePlayer), bot_log_limit (300); D6b: bot_missions (1), bot_mission_ms (1000), bot_shopping (1),
+// bot_potions (2: carried at most), bot_fire_tracker (1), bot_fixups (1: dgsim_bots_api.lua's two script fix-ups); the
+// brain's bot_think_ms is agents.h's.
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace bots {
+
+struct Options {
+  int teamSize = -1;
+  bool allies = true;
+  std::string classes;
+  bool lua = true;
+  bool lanes = true;
+  bool ftue = true;
+  int logLimit = 300;
+  // D6b
+  bool missions = true;
+  int missionMs = 1000;
+  bool shopping = true;
+  int potions = 2;
+  bool fireTracker = true;
+  bool fixups = true;
+};
+
+void Configure(const Options& o);
+
+// B10d: createGame's fillTeams (the seats a team dgserver asks the host to fill with bots; 0 = not asked), for the
+// `bots` auto rule. Called at createGame, before the first HelloReq plans the bots.
+void SetFillTeams(int seats);
+
+// After GameSimulator_Init, before the level (server simulator bound): nBotHost on the shared lua_State.
+void OnSimulatorCreated(void* sim);
+// After the level load (bound): Tuning.BotPlan, the lanes, dgsim_bots_api.lua.
+void OnLevelStarted(void* sim);
+
+// A human of the match: gameplay index, team, shaper (its Noun asset, for the slot it takes).
+struct Human {
+  int index = -1;
+  int team = 0;
+  void* noun = nullptr;
+};
+
+struct Bot {
+  int index = -1;
+  int team = 0;
+  std::uint64_t onlineId = 0;
+  std::string botClass;
+  int lane = 0;              // nLaneID: the first lane
+  std::uint32_t creature = 0;
+  std::uint32_t status = 0;  // the server player's mStatus
+  bool created = false;      // the server player exists
+  std::uint32_t noun = 0;    // D3-live: its mpNounDef's asset id (BotClass.nounDef: a default skin, as a list entry)
+  int role = 0;              // D3-live: its mRole (BotClass.role)
+};
+
+// Plans and creates the bot players once (later calls return the same list): `humans` (connected) and `waiting`
+// (createGame's roster humans not connected yet: index and roster team, noun unknown) keep their gameplay indexes, and
+// since G3b a waiting human counts for its team's seats too (gms::bots::CountedHumans: a party whose guest connected
+// first got a bot for its leader, d8b_run6d). Bound to the server simulator inside.
+const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& humans, const std::vector<Human>& waiting);
+const std::vector<Bot>& Players();
+bool IsBotIndex(int index);
+
+// Deploys every bot's creature once (the replication must be initialized: repl::Init). Returns how many were deployed
+// by this call. Bound inside.
+int DeployAll(void* sim);
+
+// Every server tick (bound): the lane fronts; D6b: the missions (gone targets, expiry, dgsim_bots.MissionTick).
+void Tick(void* sim);
+
+// D6b: the bot brain's plan layer (agents.cpp BotBrainStep, bound) moved the bot `creature` into plan `planName`
+// (Plan +0x14 missionType, +0x18 requestMission) by a link whose condition_Bot_IsMissionAvailable gave `linkMission`
+// (0 = none); `target` = the bot's mTarget. BotsState::EnterPlan; logged.
+void OnPlanEntered(std::uint32_t creature, int team, int missionType, bool requestMission, std::uint32_t linkMission,
+                   std::uint32_t target, const char* noun, const char* planName);
+// D6b: every think while the bot is in a requestMission plan (EngageForKill): its own mission stays open.
+void OnRequestPlanThink(std::uint32_t creature, int team, int missionType, std::uint32_t target);
+// The bot's mission id (0 = none), for the brain's log.
+std::uint32_t MissionOf(std::uint32_t creature);
+
+void FormatStats(char* buf, std::size_t size);
+
+}  // namespace bots

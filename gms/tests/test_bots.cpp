@@ -2,6 +2,7 @@
 // and the shopping plan (docs/SERVER_LUA_API.md tier 3 *D6b-shims*).
 #include <cmath>
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -592,4 +593,129 @@ GMS_TEST(BotsTeamSizeRule) {
       PlanBotPlayers(PlanSlots(), PlanBots(), {h}, BotTeamSize(-1, 5, 0x1), {1, 2}, 2, 3);
   CHECK_EQ(static_cast<int>(bots.size()), 9);
   CHECK(bots.size() == 9 && bots[3].team == 1 && bots[4].team == 2 && bots[8].index == 9);
+}
+
+// ---- BOTCOMP: the preferred 5v5 setup (gms/core/bots/composition.h) ------------------------------------------------
+
+namespace {
+std::set<std::string> AllBotClasses() {
+  return {"PC_HighHuntress", "PC_Creature", "PC_Guardian", "PC_Artist", "PC_TidalQueen", "PC_Sculptor", "PC_Warden",
+          "PC_Artificer"};
+}
+std::vector<std::string> PlanClassNames() {
+  return {"PC_HighHuntress", "PC_TidalQueen", "PC_Guardian", "PC_Artist", "PC_Warden"};
+}
+std::vector<int> Roles(const std::vector<ComposedSeat>& seats) {
+  std::vector<int> r;
+  for (const ComposedSeat& s : seats) r.push_back(s.role);
+  return r;
+}
+}  // namespace
+
+GMS_TEST(BotsCompositionDefaultSetup) {
+  const std::vector<int> drop = ParseDropOrder("");
+  const std::vector<ComposedSeat> seats =
+      ComposeTeam(WantedSeats(5, {}, drop), AllBotClasses(), PlanClassNames());
+  CHECK_EQ(static_cast<int>(seats.size()), 5);
+  // two Gladiators (one per lane), the Tactician with the first, the Predator and the Hunter with the second
+  CHECK(Roles(seats) == (std::vector<int>{kRoleGladiator, kRoleTactician, kRoleGladiator, kRolePredator, kRoleHunter}));
+  CHECK(seats[0].botClass == "PC_HighHuntress" && seats[0].lane == kLaneTop);
+  CHECK(seats[1].botClass == "PC_Guardian" && seats[1].lane == kLaneTop);
+  CHECK(seats[2].botClass == "PC_Creature" && seats[2].lane == kLaneBottom);
+  CHECK(seats[3].botClass == "PC_Warden" && seats[3].roleOverride && seats[3].lane == kLaneBottom);
+  CHECK(seats[4].botClass == "PC_Artificer" && seats[4].lane == kLaneBottom);
+  // the lane slots of Tuning.BotPlan: 2 top, 3 bottom
+  int top = 0, bottom = 0;
+  for (const ComposedSeat& s : seats) (s.lane == kLaneTop ? top : bottom)++;
+  CHECK(top == 2 && bottom == 3);
+  // no class is used twice
+  std::set<std::string> names;
+  for (const ComposedSeat& s : seats) names.insert(s.botClass);
+  CHECK_EQ(static_cast<int>(names.size()), 5);
+}
+
+GMS_TEST(BotsCompositionWithHumans) {
+  const std::vector<int> drop = ParseDropOrder("");
+  // a human Gladiator: the bots fill the other four roles, Gladiator 2 keeps the bottom lane
+  std::vector<ComposedSeat> seats = ComposeTeam(WantedSeats(4, {kRoleGladiator}, drop), AllBotClasses(), PlanClassNames());
+  CHECK(Roles(seats) == (std::vector<int>{kRoleTactician, kRoleGladiator, kRolePredator, kRoleHunter}));
+  CHECK(seats[1].lane == kLaneBottom && seats[0].lane == kLaneTop);
+  // a human Hunter
+  seats = ComposeTeam(WantedSeats(4, {kRoleHunter}, drop), AllBotClasses(), PlanClassNames());
+  CHECK(Roles(seats) == (std::vector<int>{kRoleGladiator, kRoleTactician, kRoleGladiator, kRolePredator}));
+  // a human whose role is unknown: the surplus role goes in the drop order (Predator first)
+  seats = ComposeTeam(WantedSeats(4, {-1}, drop), AllBotClasses(), PlanClassNames());
+  CHECK(Roles(seats) == (std::vector<int>{kRoleGladiator, kRoleTactician, kRoleGladiator, kRoleHunter}));
+  // two humans unknown: Predator and Hunter go
+  seats = ComposeTeam(WantedSeats(3, {-1, -1}, drop), AllBotClasses(), PlanClassNames());
+  CHECK(Roles(seats) == (std::vector<int>{kRoleGladiator, kRoleTactician, kRoleGladiator}));
+  // a custom drop order: the Hunter first, then the Tactician
+  seats = ComposeTeam(WantedSeats(3, {-1, -1}, ParseDropOrder("hunter,tactician")), AllBotClasses(), PlanClassNames());
+  CHECK(Roles(seats) == (std::vector<int>{kRoleGladiator, kRoleGladiator, kRolePredator}));
+  // a role the human holds twice over (a second Gladiator human): the list loses both Gladiators
+  seats = ComposeTeam(WantedSeats(3, {kRoleGladiator, kRoleGladiator}, drop), AllBotClasses(), PlanClassNames());
+  CHECK(Roles(seats) == (std::vector<int>{kRoleTactician, kRolePredator, kRoleHunter}));
+  // more seats than the setup has: it repeats
+  seats = ComposeTeam(WantedSeats(6, {}, drop), AllBotClasses(), PlanClassNames());
+  CHECK_EQ(static_cast<int>(seats.size()), 6);
+  CHECK(seats[5].role == kRoleGladiator && seats[5].lane == kLaneTop);
+  // an unknown name is ignored, the missing roles are appended in the default order
+  const std::vector<int> d = ParseDropOrder("nonsense,tactician");
+  CHECK(d.size() == 4 && d[0] == kRoleTactician && d[1] == kRolePredator && d[2] == kRoleHunter && d[3] == kRoleGladiator);
+}
+
+GMS_TEST(BotsCompositionMissingClasses) {
+  const std::vector<int> drop = ParseDropOrder("");
+  // no Hunter BotClass in the catalog: the seat takes an unused plan class (fallback), not nothing
+  std::set<std::string> avail = AllBotClasses();
+  avail.erase("PC_Artificer");
+  std::vector<ComposedSeat> seats = ComposeTeam(WantedSeats(5, {}, drop), avail, PlanClassNames());
+  CHECK(seats[4].role == kRoleHunter && seats[4].fallback && !seats[4].botClass.empty());
+  CHECK(seats[4].botClass != seats[0].botClass && seats[4].botClass != seats[3].botClass);
+  // no catalog at all: no seats get a class
+  seats = ComposeTeam(WantedSeats(5, {}, drop), {}, {});
+  for (const ComposedSeat& s : seats) CHECK(s.botClass.empty());
+  // the Tactician list skips PC_Warden when the Predator holds it
+  avail = {"PC_Warden", "PC_Guardian"};
+  seats = ComposeTeam(WantedSeats(5, {}, drop), avail, {});
+  CHECK(seats[1].botClass == "PC_Guardian" && seats[3].botClass == "PC_Warden");
+}
+
+GMS_TEST(BotsCompositionPlanBotPlayers) {
+  HumanPlayer h;
+  h.index = 0;
+  h.team = 1;
+  h.shaper = T("mage", "ranged", "magical");
+  h.role = -1;
+  const std::vector<int> drop = ParseDropOrder("");
+  // the practice game: a human with an unknown role and nine bots; team 1 first (indexes 1-4), team 2 (5-9)
+  std::vector<BotPlayer> bots = PlanBotPlayersComposed({h}, 5, {1, 2}, AllBotClasses(), PlanClassNames(), drop);
+  CHECK_EQ(static_cast<int>(bots.size()), 9);
+  CHECK(bots[0].index == 1 && bots[3].index == 4 && bots[4].index == 5 && bots[8].index == 9);
+  CHECK(bots[0].team == 1 && bots[3].team == 1 && bots[4].team == 2 && bots[8].team == 2);
+  CHECK(bots[0].onlineId == 2 && bots[8].onlineId == 10);
+  int predators = 0, hunters = 0;
+  for (const BotPlayer& b : bots) {
+    predators += b.role == kRolePredator;
+    hunters += b.role == kRoleHunter;
+    CHECK(b.lane == kLaneTop || b.lane == kLaneBottom);
+  }
+  CHECK_EQ(predators, 1);  // team 2 only: the human's team dropped its Predator
+  CHECK_EQ(hunters, 2);
+  CHECK(bots[4].botClass == "PC_HighHuntress" && bots[7].botClass == "PC_Warden" && bots[7].roleOverride && bots[7].role == kRolePredator);
+  // the human picked the Hunter: team 1 keeps its Predator
+  h.role = kRoleHunter;
+  bots = PlanBotPlayersComposed({h}, 5, {1, 2}, AllBotClasses(), PlanClassNames(), drop);
+  CHECK_EQ(static_cast<int>(bots.size()), 9);
+  CHECK(bots[0].role == kRoleGladiator && bots[3].role == kRolePredator);
+  // bots_allies off: the enemy team only
+  bots = PlanBotPlayersComposed({h}, 5, BotTeams({h}, false), AllBotClasses(), PlanClassNames(), drop);
+  CHECK_EQ(static_cast<int>(bots.size()), 5);
+  CHECK(bots[0].team == 2 && bots[0].index == 1);
+  // a waiting roster human of unknown role counts for its team
+  HumanPlayer w;
+  w.index = 1;
+  w.team = 2;
+  bots = PlanBotPlayersComposed({h, w}, 5, {1, 2}, AllBotClasses(), PlanClassNames(), drop);
+  CHECK_EQ(static_cast<int>(bots.size()), 8);
 }

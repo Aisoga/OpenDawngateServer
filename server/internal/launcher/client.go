@@ -106,6 +106,9 @@ func RunClient(args []string, o IO) int {
 		folder = DefaultFolder
 	}
 	l := setup.Layout{Root: Resolve(o.ExeDir, folder)}
+	if IsPublicAddress(server) {
+		ClientRiskNotice(o.Out, server)
+	}
 	local := !remoteServer(server)
 	fmt.Fprintf(o.Out, "  server   %s\n  folder   %s\n", server, l.Root)
 

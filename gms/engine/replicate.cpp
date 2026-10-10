@@ -3,6 +3,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -964,6 +965,23 @@ void Drain(void* sim, std::vector<Outgoing>* out, DrainCounts* counts) {
     }
     out->push_back(std::move(o));
   }
+  // A ClientAbilityMessage (AE) names objects the script has just removed (Sakari's "forcefield_remove": RemoveObjectById,
+  // then SendMessageToClientAbility), and the client decodes an id through its server-to-client id table, which
+  // GameClient_OnGmsObjectDelete (0x006B7F60) empties at once: an AE behind the ObjectDelete reads the id as 0 and
+  // removes nothing, so the ghost kept snapping to icebergs that were gone. The deletes in front of an AE go behind the
+  // last one of the tick (stable; the other messages keep their order).
+  std::size_t lastAe = 0;
+  bool anyAe = false;
+  for (std::size_t k = 0; k < out->size(); ++k) {
+    const Outgoing& o = (*out)[k];
+    if (o.kind != 0 && !o.msg.empty() && o.msg[0] == gms::kGmsClientAbilityMessage) {
+      lastAe = k;
+      anyAe = true;
+    }
+  }
+  if (anyAe)
+    std::stable_partition(out->begin(), out->begin() + static_cast<std::ptrdiff_t>(lastAe) + 1,
+                          [](const Outgoing& o) { return o.kind != 0; });
 }
 
 namespace {

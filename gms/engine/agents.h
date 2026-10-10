@@ -71,8 +71,17 @@ struct Options {
   int botThinkMs = 200;    // D6a: a bot thinks (links, phase, gambits) this often [assumed rate]
   bool keepNodeTimers = true;  // D6c: a node's link and gambit timers outlive a visit (the engine's per-node state)
   bool respectCanInterrupt = true;  // D6c: no gambit while an ability with canInterrupt false holds the agent
+  // MINTARGET: lane minions (aggro type minion) take towers/structures/minions before shapers, a shaper only when nothing
+  // else is in range or it hits an own-team shaper in range, and drop it beyond the leash
+  bool minionTarget = true;      // [host] minion_target_priority
+  float minionLeash = 25.f;      // [host] minion_leash_range: a shaper farther than this (edge distance) is dropped
+  int minionDefendMs = 2500;     // [host] minion_defend_ms: how long an own shaper counts as under attack
   bool botPursuePoint = true;  // D6d: a bot's gambit at a point out of range walks to the point (blackboard +0x1E64)
   bool objectiveOnSight = false;    // D14: the objective type (the parasite) adds perceived enemies too (D1b-live)
+  // BOTIDLE: bots that stand still. All three are on with [host] bot_idle_fixes (1); bot_fixups=0 turns them off too.
+  bool botGambitFallthrough = true;  // [host] bot_gambit_fallthrough: a refused gambit (cooldown, resource, CanUse) lets the next one try
+  int botPursueStuckMs = 6000;       // [host] bot_pursue_stuck_ms: a pursuit that gets no closer for this long drops its gambit (0 = off)
+  int botIdleFallbackMs = 2500;      // [host] bot_idle_fallback_ms: idle this long under attack -> hit the attacker (0 = off)
 };
 
 // Checks the prologues of the client functions it calls. False (logged) if AgentBehaviorTree_Tick differs; then nothing

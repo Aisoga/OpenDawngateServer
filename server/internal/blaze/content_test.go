@@ -230,7 +230,10 @@ func TestGrantAtLaterLogin(t *testing.T) {
 		}
 		s.Store = st
 	}
-	ps := newPipeSessionWith(t, open)
+	ps := newPipeSessionWith(t, func(s *Server) {
+		open(s)
+		s.Policy.FTUEDone = false // the original's closed gate (open by default)
+	})
 	ps.login(0, "extendeddataupdate_notification")
 	ps.send(0x81F, 0x76, 2, nil)
 	ps.expect(0x81F, 0x76, fire.Reply, 2, "getcompletedata_reply")

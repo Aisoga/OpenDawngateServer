@@ -263,14 +263,14 @@ def cmake_cache(build_dir):
 
 
 def lan_host(text, what):
-    """An IPv4 address of our own network (patch_client.py's lan rule: not loopback, wildcard, multicast or public)."""
+    """The IPv4 address of a server on another machine (patch_client.py's lan rule: not loopback, wildcard,
+    multicast or reserved; a public address too)."""
     try:
         ip = ipaddress.IPv4Address(text)
     except ValueError:
         raise ValueError(f"{what} must be an IPv4 address, got {text!r}") from None
-    if ip.is_loopback or ip.is_unspecified or ip.is_multicast or ip.is_reserved or ip.is_global:
-        raise ValueError(f"{what} {ip} is not an address of our own network (loopback is the default setup; public "
-                         "addresses are out of scope)")
+    if ip.is_loopback or ip.is_unspecified or ip.is_multicast or ip.is_reserved:
+        raise ValueError(f"{what} {ip} is not a host address of another machine (loopback is the default setup)")
     return str(ip)
 
 

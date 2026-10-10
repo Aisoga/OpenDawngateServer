@@ -8,7 +8,7 @@ import (
 )
 
 // Policy says what a new account gets and which account flags the server forces (B7a; dgserver flags
-// --owned, --start-ec, --start-pc, --ftue-done).
+// --owned, --start-ec, --start-pc, --ftue-required).
 type Policy struct {
 	// Owned is the inventory policy for new accounts: content.OwnAll or content.OwnStarter.
 	Owned string
@@ -16,7 +16,8 @@ type Policy struct {
 	StartEC, StartPC uint32
 	// FTUEDone gives every account store.FlagFTUEDone in BGABasicData.FLAG, so PLAY opens the normal
 	// play screen instead of the Practice-only first-time-user screen (needed for PvP matchmaking,
-	// roadmap B10). Without it only accounts whose stored Flags have the bit pass the gate.
+	// B10). True by default; dgserver --ftue-required clears it, then only accounts whose
+	// stored Flags have the bit pass the gate (the original game's behavior).
 	FTUEDone bool
 	// PerkPages is the most perk pages an account can have (B7c, dgserver --perk-pages; the loadout
 	// page's GameItem.STCK); 0 = DefaultPerkPages.
@@ -36,10 +37,10 @@ const (
 	DefaultStartPC = 1000
 )
 
-// DefaultPolicy is everything owned, DefaultStartEC/DefaultStartPC, the first-time-user gate as the
-// original game had it (closed for new accounts), DefaultPerkPages.
+// DefaultPolicy is everything owned, DefaultStartEC/DefaultStartPC, the first-time-user gate open for
+// every account (--ftue-required restores the original's closed gate), DefaultPerkPages.
 func DefaultPolicy() Policy {
-	return Policy{Owned: content.OwnAll, StartEC: DefaultStartEC, StartPC: DefaultStartPC, PerkPages: DefaultPerkPages}
+	return Policy{Owned: content.OwnAll, StartEC: DefaultStartEC, StartPC: DefaultStartPC, PerkPages: DefaultPerkPages, FTUEDone: true}
 }
 
 // grant gives an account the new-account content once (inventory, avatar, currencies) and logs it.

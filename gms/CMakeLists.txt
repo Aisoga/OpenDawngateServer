@@ -80,6 +80,7 @@ add_library(dgsim SHARED
   engine/damage.cpp            # D1f-live: the TakeDamage core (docs/DAMAGE.md)
   engine/death.cpp             # D1f-live: death processing, rewards, gold
   engine/passives.cpp          # D6c: the shapers' passives at the deploy and each respawn
+  engine/volumes.cpp           # D12c: attached trigger volumes follow their objects
   engine/components.cpp        # D1j: the ability data containers' release, the server pools' census
   engine/regen.cpp             # D1i: health and resource regeneration
   engine/agents.cpp

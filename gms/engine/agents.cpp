@@ -3,6 +3,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -12,6 +13,7 @@
 
 #include "core/agents/aggro.h"
 #include "core/agents/brain.h"
+#include "core/agents/minion_target.h"
 #include "bots.h"
 #include "game.h"
 #include "log.h"
@@ -27,6 +29,7 @@ bool g_blackboardOk;  // the blackboard functions' prologues matched
 bool g_brainOk;       // AIConditions_Evaluate's prologue matched
 unsigned g_frame = 1;
 void* g_sim;
+gms::agents::ShaperHitLog g_shaperHits;  // MINTARGET: shaper-on-shaper hits (OnDamaged)
 
 // AgentBehaviorTree_Tick's prologue (sub esp, 8; push esi; mov esi, [esp+0x10]).
 constexpr unsigned char kAgentTickBytes[] = {0x83, 0xEC, 0x08, 0x56, 0x8B, 0x74, 0x24, 0x10};
@@ -52,6 +55,8 @@ constexpr std::uintptr_t kLeafDeath = 0x0141E130;
 constexpr std::uintptr_t kLeafDeathAbility = 0x0141E0A8;
 constexpr std::uintptr_t kLeafDeathAbilityDefault = 0x0141DD80;
 constexpr std::uintptr_t kLeafPursue = 0x0141E680;  // 12: nBehavior_Follow (AIDefinition.targetTooFar if set)
+constexpr std::uintptr_t kLeafIdleDefault = 0x0141E928;  // 17: the tree's last resort, nothing to do
+constexpr std::uintptr_t kLeafIdle = 0x0141E2C8;         // 5
 
 int LeafIndex(std::uintptr_t record) {
   for (int i = 0; i < kNumLeaves; ++i)
@@ -136,6 +141,14 @@ struct AgentState {
   unsigned long long pointSinceMs = 0;
   float pointStartDistance = 0.f;
   std::uint32_t pointDiagTarget = 0;  // [host] bot_pursue_point=0: the object the last logged point request had
+  // BOTIDLE: the last hit the bot took (OnDamaged), when it began to stand without an acting gambit, the pursuit watchdog's
+  // window (gambit, target, since when, the distance then) and the last skipped refusal (logged on change only)
+  std::uint32_t lastAttacker = 0;
+  unsigned long long lastHitMs = 0, idleSinceMs = 0, pwSinceMs = 0;
+  int pwGambit = -1;
+  std::uint32_t pwTarget = 0;
+  float pwDist = 0.f;
+  int skipGambit = -1, skipResult = 0, fallbackResult = 0x7FFFFFFF;
 };
 std::unordered_map<std::uint32_t, AgentState> g_agents;  // by object id
 
@@ -158,6 +171,7 @@ struct Stats {
   unsigned prunedAbilities = 0, prunedModifiers = 0;
   // D5: nBattlegrounds.AddBaseStructuresToAggroList
   unsigned baseCalls = 0, baseAdded = 0, baseMarked = 0, baseSkipped = 0, baseKeptBeyondRange = 0;
+  unsigned minShaperDropped = 0, minShaperLeash = 0, minShaperDefend = 0;  // MINTARGET
 };
 Stats g_st;
 unsigned g_logLines;
@@ -678,10 +692,56 @@ void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long now
         cands.push_back(c);
       }
     }
+    // MINTARGET: a lane minion's shapers (see gms/core/agents/minion_target.h)
+    const bool strict = g_opt.minionTarget && a.aggroType == gms::agents::kAggroMinion;
+    std::vector<std::uint32_t> dropped;
+    if (strict) {
+      gms::agents::MinionTargetOptions mo;
+      mo.leashRange = g_opt.minionLeash;
+      mo.defendWindowMs = g_opt.minionDefendMs;
+      bool otherInRange = false;
+      for (const auto& c : cands) otherInRange = otherInRange || (!c.isPlayer && c.distance <= a.aggro);
+      for (auto& c : cands) {
+        if (!c.isPlayer) continue;
+        bool defends = false;
+        for (const Perceived& p : seen) {  // an own-team shaper in the minion's range that this shaper just hit
+          if (!p.info.player || p.info.team != a.self.team || p.distance > a.aggro) continue;
+          if (g_shaperHits.Attacked(c.id, p.info.id, static_cast<std::int64_t>(nowMs), mo.defendWindowMs)) {
+            defends = true;
+            break;
+          }
+        }
+        const bool taunting = c.taunting;
+        if (gms::agents::ShaperAllowed(mo, taunting, c.distance, otherInRange, defends)) {
+          c.defend = defends && !taunting;
+          if (c.defend) ++g_st.minShaperDefend;
+        } else {
+          dropped.push_back(c.id);
+          if (c.distance > mo.leashRange) ++g_st.minShaperLeash;
+        }
+      }
+      if (!dropped.empty()) {
+        g_st.minShaperDropped += static_cast<unsigned>(dropped.size());
+        cands.erase(std::remove_if(cands.begin(), cands.end(),
+                                   [&dropped](const gms::agents::AggroCandidate& c) {
+                                     return std::find(dropped.begin(), dropped.end(), c.id) != dropped.end();
+                                   }),
+                    cands.end());
+      }
+    }
     // order (the targeting priority, gms/core/agents/aggro.h); the entries are re-read (the adds appended theirs)
     std::vector<AggroEntry> now;
-    if (SehReadAggro(a.agent, &now) && now.size() == cands.size() && now.size() > 1) {
-      gms::agents::OrderAggro(&cands, a.aggroType);
+    bool readOk = SehReadAggro(a.agent, &now);
+    if (readOk && !dropped.empty()) {
+      now.erase(std::remove_if(now.begin(), now.end(),
+                               [&dropped](const AggroEntry& e) {
+                                 return std::find(dropped.begin(), dropped.end(), e.Id()) != dropped.end();
+                               }),
+                now.end());
+      if (!SehWriteAggro(a.agent, now)) ++g_st.bbExceptions;
+    }
+    if (readOk && now.size() == cands.size() && now.size() > 1) {
+      gms::agents::OrderAggro(&cands, a.aggroType, gms::agents::kCallForHelpTimeMs, strict);
       std::vector<AggroEntry> ordered;
       ordered.reserve(now.size());
       bool moved = false;
@@ -1393,6 +1453,38 @@ bool SehHostile(int team, std::uint32_t target) {
   }
 }
 
+// BOTIDLE: the object's nNPCType (-1: none, a player or a projectile)
+int SehNpcType(void* o) {
+  __try {
+    void* npcAsset = Field<void*>(o, npc::kOfObject);
+    char* d = npcAsset ? Field<char*>(npcAsset, noun::kData) : nullptr;
+    return d ? Field<int>(d, npc::kType) : -1;
+  } __except (SehNote(GetExceptionInformation(), "npc type")) {
+    return -1;
+  }
+}
+
+// BOTIDLE: the idle fixes' own log budget (the agent log is busy in long matches): 400 lines, then every 20th.
+unsigned g_idleLogLines;
+bool IdleLogBudget() {
+  ++g_idleLogLines;
+  return g_idleLogLines <= 400 || g_idleLogLines % 20 == 0;
+}
+
+const char* RefusalName(int r) {
+  switch (r) {
+    case gms::agents::kResultCooldown: return "on cooldown";
+    case -0x270D: return "not enough resource";
+    case -0x2704: return "the script's CanUse/CanActivate says no";
+    case -0x2708: return "invalid target";
+    case -0x2709: return "caster disabled";
+    case -0x2706: return "blocked by an attribute";
+    case -0x270C: return "out of range, no pursuit";
+    case gms::agents::kResultItemRefused: return "item refused";
+    default: return "refused";
+  }
+}
+
 void SehSetTarget(void* o, std::uint32_t target) {
   __try {
     SetAgentTarget(o, target);
@@ -1455,6 +1547,9 @@ struct BotStats {
   unsigned pointRequests = 0, pointStarted = 0, pointPursuits = 0, pointTargetsCleared = 0, pointReached = 0;
   unsigned pointDropped = 0;
   unsigned pointLeafRestarts = 0;  // a running Pursue leaf restarted (request 0x400) to take the point
+  // BOTIDLE: refusals that let the next gambit try (and the ones that then started or pursued), pursuits dropped as stuck,
+  // the idle fallback (tries, requests that started or pursued)
+  unsigned skipped = 0, skippedThenActed = 0, pursuitStuck = 0, fallbackTries = 0, fallbackActed = 0;
 };
 BotStats g_bot;
 constexpr unsigned long long kQuickExitMs = 1000;
@@ -1610,6 +1705,13 @@ void EndPointPursuit(void* o, AgentState& st, const ObjInfo& self, int r, const 
       static_cast<double>(st.pointStartDistance), how, static_cast<double>(nowMs) / 1000.0);
 }
 
+// BOTIDLE: the pursuit watchdog's progress (units) and how long a stuck gambit is left out; the idle fallback's hit window
+// (ms) and reach (units)
+constexpr float kStuckProgress = 3.f;
+constexpr unsigned long long kStuckHoldMs = 4000;
+constexpr long long kFallbackHitWindowMs = 3000;
+constexpr float kFallbackReach = 30.f;
+
 void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) {
   if (st.leaf == kLeafDeath || st.leaf == kLeafDeathAbility || st.leaf == kLeafDeathAbilityDefault ||
       st.leaf == 0x0141E1B8 || st.leaf == 0x0141DE90)
@@ -1748,6 +1850,7 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
     // no phase yet (the Idle plan has none): the tree idles (leaf 17)
     ++g_bot.noPhase;
     if (!SehReadBotView(o, st.botPlan, st.botPhase, &v) || !v.phaseOk) {
+      st.idleSinceMs = 0;  // BOTIDLE: the Idle plan's standing is the script's
       SehSetTreeFlag(o, 0x40, false);
       if (st.pointPursuit) EndPointPursuit(o, st, self, 0, nullptr, nowMs);  // D6d
       return;
@@ -1760,6 +1863,7 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
   const char* held = nullptr;
   if (g_opt.respectCanInterrupt && SehHeldByUninterruptible(o, &held)) {
     ++g_bot.heldThinks;
+    st.idleSinceMs = 0;  // BOTIDLE: an ability holds the agent, the bot is not idle
     return;
   }
 
@@ -1783,38 +1887,21 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
   std::vector<char> pointOnly(v.gambits.size(), 0);  // D6d: the conditions aimed the gambit at a point, no object
   int chosen = -1;
   const bool prioritized = v.phaseType == gms::agents::kPrioritizedList;
-  for (std::size_t i = 0; i < v.gambits.size(); ++i) {
-    const BotGambit& g = v.gambits[i];
-    gms::agents::GambitView& gv = views[i];
-    gv.coolingDown = nowMs < st.gambitReadyMs[i];
-    gv.waitOnCondition = g.waitOnCondition;
-    gv.weight = g.weight;
-    gv.conditionsPass = false;
-    if (!GambitAvailable(g, pv)) continue;
-    if (gv.coolingDown && !(prioritized && g.waitOnCondition)) continue;
-    bool po = false;
-    gv.conditionsPass =
-        Conditions(g.conditions, g.conditionCount, self.id, &targets[i], true, &spots[i * 3], nullptr, &po);
-    pointOnly[i] = po ? 1 : 0;
-    ++g_bot.conditions;
-    if (prioritized && gv.conditionsPass) {
-      chosen = gv.coolingDown ? -1 : static_cast<int>(i);  // a waiting gambit holds the list while it cools down
-      break;
-    }
-  }
-  if (!prioritized) chosen = gms::agents::ChooseGambit(v.phaseType, views, &st.seqCursor, Random01());
   int r = 0;
   gms::agents::GambitAim aim;  // D6d: the request's object, or a point alone
   const float* spot = nullptr;
-  if (chosen >= 0) {
-    const BotGambit& g = v.gambits[static_cast<std::size_t>(chosen)];
-    std::uint32_t target = targets[static_cast<std::size_t>(chosen)];
+  bool skippedThis = false;  // BOTIDLE: the last request was refused in a way that lets the next gambit try
+
+  // the request of gambit `idx` (its object, its point, the slot's ability); its result
+  auto request = [&](int idx) -> int {
+    const BotGambit& g = v.gambits[static_cast<std::size_t>(idx)];
+    std::uint32_t target = targets[static_cast<std::size_t>(idx)];
     if (target && !SehFind(target)) target = 0;
-    spot = &spots[static_cast<std::size_t>(chosen) * 3];
+    spot = &spots[static_cast<std::size_t>(idx) * 3];
     const bool hasSpot = spot[0] != 0.f || spot[1] != 0.f;
     // D6d: a condition that aimed the gambit at a point (useTargetInfo; kObjIDNone with useTarget: the ward's spot)
     // gives it no object, so the agent's mTarget doesn't stand in for one
-    aim = gms::agents::AimGambit(target, mtarget, hasSpot, pointOnly[static_cast<std::size_t>(chosen)] != 0,
+    aim = gms::agents::AimGambit(target, mtarget, hasSpot, pointOnly[static_cast<std::size_t>(idx)] != 0,
                                  g_opt.botPursuePoint);
     target = aim.target;
     if (aim.atPoint) ++g_bot.pointRequests;
@@ -1824,36 +1911,87 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
     if (hasSpot) std::memcpy(pos, spot, sizeof pos);  // the condition's position first
     else if (tobj && SehObjInfo(tobj, &t)) std::memcpy(pos, t.pos, sizeof pos);
     ++g_bot.requests;
+    int res;
     if (gms::agents::SlotIsConsumable(g.slot)) {
       const int inv = gms::agents::SlotInventoryIndex(g.slot);
-      r = SehBotUseItem(pv.player, pv.items[inv], static_cast<unsigned>(inv));
-      r = r > 0 ? 1 : -0x7FFE;  // used / refused
+      res = SehBotUseItem(pv.player, pv.items[inv], static_cast<unsigned>(inv));
+      res = res > 0 ? 1 : gms::agents::kResultItemRefused;  // used / refused
       ++g_bot.items;
     } else {
       // a hostile target becomes the agent's mTarget: GetBestTarget's bot case, which leaf 12 (Pursue) follows
       if (target && target != mtarget && SehHostile(self.team, target)) SehSetTarget(o, target);
       const int slot = g.guid ? (g.slot >= 0 ? g.slot : -1) : g.slot;
       const int rank = gms::agents::SlotIsRanked(g.slot) ? pv.ranks[g.slot] : 1;
-      r = SehBotRequest(g.guid, slot, self.id, target, pos, rank);
+      res = SehBotRequest(g.guid, slot, self.id, target, pos, rank);
     }
-    if (r == 1 || r == 2) {
+    if (res == 1 || res == 2) {
       ++g_bot.started;
-      st.gambitReadyMs[static_cast<std::size_t>(chosen)] =
+      st.gambitReadyMs[static_cast<std::size_t>(idx)] =
           nowMs + static_cast<unsigned long long>(
                       gms::agents::GambitCooldownSeconds(g.cooldown, g.maxCooldown, g.randomize, Random01()) * 1000.0);
-    } else if (r == 5) {
+    } else if (res == 5) {
       ++g_bot.outOfRange;
     } else {
       ++g_bot.refused;
     }
-    if ((r != st.lastResult || g.guid != st.lastGuid || g.slot != st.lastSlot) && LogBudget())
+    // BOTIDLE: a refusal that lets the next gambit try is logged on change only, as its own line
+    skippedThis = g_opt.botGambitFallthrough && prioritized && gms::agents::GambitRefusalSkips(res, g.slot);
+    if (skippedThis) {
+      if ((idx != st.skipGambit || res != st.skipResult) && IdleLogBudget())
+        Log("agents: bot %08X %s phase %d (%s) gambit %d (slot %d, ability %08X) on %08X refused (%d: %s): the next "
+            "gambit may try (BOTIDLE) (t %.2f s)",
+            self.id, st.noun, st.botPhase, v.phaseName, idx, g.slot, g.guid, target, res, RefusalName(res),
+            static_cast<double>(nowMs) / 1000.0);
+      st.skipGambit = idx;
+      st.skipResult = res;
+      return res;
+    }
+    if ((res != st.lastResult || g.guid != st.lastGuid || g.slot != st.lastSlot) && LogBudget())
       Log("agents: bot %08X %s phase %d (%s) gambit %d (slot %d, ability %08X) on %08X -> %d%s (t %.2f s)", self.id,
-          st.noun, st.botPhase, v.phaseName, chosen, g.slot, g.guid, target, r,
-          r == 1 || r == 2 ? " started" : r == 5 ? " out of range: pursue" : "", static_cast<double>(nowMs) / 1000.0);
-    st.lastResult = r;
+          st.noun, st.botPhase, v.phaseName, idx, g.slot, g.guid, target, res,
+          res == 1 || res == 2 ? " started" : res == 5 ? " out of range: pursue" : "",
+          static_cast<double>(nowMs) / 1000.0);
+    st.lastResult = res;
     st.lastGuid = g.guid;
     st.lastSlot = g.slot;
+    return res;
+  };
+
+  // BOTIDLE: a refused request (cooldown, no resource, CanUse false, ...) no longer ends the think: the list goes on
+  // with the next gambit whose conditions pass (GambitRefusalSkips), up to kMaxSkips
+  constexpr int kMaxSkips = 8;
+  std::size_t from = 0;
+  int skips = 0;
+  for (;;) {
+    chosen = -1;
+    for (std::size_t i = from; i < v.gambits.size(); ++i) {
+      const BotGambit& g = v.gambits[i];
+      gms::agents::GambitView& gv = views[i];
+      gv.coolingDown = nowMs < st.gambitReadyMs[i];
+      gv.waitOnCondition = g.waitOnCondition;
+      gv.weight = g.weight;
+      gv.conditionsPass = false;
+      if (!GambitAvailable(g, pv)) continue;
+      if (gv.coolingDown && !(prioritized && g.waitOnCondition)) continue;
+      bool po = false;
+      gv.conditionsPass =
+          Conditions(g.conditions, g.conditionCount, self.id, &targets[i], true, &spots[i * 3], nullptr, &po);
+      pointOnly[i] = po ? 1 : 0;
+      ++g_bot.conditions;
+      if (prioritized && gv.conditionsPass) {
+        chosen = gv.coolingDown ? -1 : static_cast<int>(i);  // a waiting gambit holds the list while it cools down
+        break;
+      }
+    }
+    if (!prioritized) chosen = gms::agents::ChooseGambit(v.phaseType, views, &st.seqCursor, Random01());
+    if (chosen < 0) break;
+    r = request(chosen);
+    if (!skippedThis || !prioritized || ++skips > kMaxSkips) break;
+    ++g_bot.skipped;
+    from = static_cast<std::size_t>(chosen) + 1;
+    if (from >= v.gambits.size()) break;
   }
+  if (skips > 0 && chosen >= 0 && (r == 1 || r == 2 || r == 5)) ++g_bot.skippedThenActed;
   // D6d: the pursuit of a point: the point into the blackboard, mTarget cleared; cleared again when it ends
   const bool startedAtPoint = chosen >= 0 && aim.atPoint && (r == 1 || r == 2);
   if (g_opt.botPursuePoint) {
@@ -1886,7 +2024,85 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
           known ? static_cast<double>(Distance2D(t.pos, self.pos)) : -1.0, SehRawTarget(o),
           static_cast<double>(nowMs) / 1000.0);
   }
-  const bool pursue = chosen >= 0 && r == 5;
+  bool pursue = chosen >= 0 && r == 5;
+  const bool acted = chosen >= 0 && (r == 1 || r == 2 || r == 5);
+
+  // BOTIDLE (pursuit watchdog, [host] bot_pursue_stuck_ms): a pursuit (result 5, the Pursue leaf follows mTarget or the
+  // point) that gets no closer for the window drops its gambit for kStuckHoldMs, so the list goes on without it
+  if (g_opt.botPursueStuckMs > 0) {
+    float dist = -1.f;
+    std::uint32_t tid = 0;
+    if (pursue) {
+      tid = aim.target;
+      void* tobj = tid ? SehFind(tid) : nullptr;
+      ObjInfo t;
+      if (tobj && SehObjInfo(tobj, &t)) dist = Distance2D(t.pos, self.pos);
+      else if (spot && (spot[0] != 0.f || spot[1] != 0.f)) dist = Distance2D(spot, self.pos);
+    }
+    if (dist < 0.f) {
+      st.pwGambit = -1;
+    } else if (st.pwGambit != chosen || st.pwTarget != tid) {
+      st.pwGambit = chosen;
+      st.pwTarget = tid;
+      st.pwSinceMs = nowMs;
+      st.pwDist = dist;
+    } else if (st.pwDist - dist >= kStuckProgress) {  // closer: a new window
+      st.pwSinceMs = nowMs;
+      st.pwDist = dist;
+    } else if (gms::agents::PursuitStuck(static_cast<double>(nowMs - st.pwSinceMs) / 1000.0, st.pwDist, dist,
+                                         g_opt.botPursueStuckMs / 1000.0, kStuckProgress)) {
+      ++g_bot.pursuitStuck;
+      if (IdleLogBudget())
+        Log("agents: bot %08X %s phase %d (%s) gambit %d: pursuit of %08X made no progress in %.1f s (%.1f -> %.1f "
+            "units); the gambit is left out for %.1f s (BOTIDLE) (t %.2f s)",
+            self.id, st.noun, st.botPhase, v.phaseName, chosen, tid, static_cast<double>(nowMs - st.pwSinceMs) / 1000.0,
+            static_cast<double>(st.pwDist), static_cast<double>(dist), static_cast<double>(kStuckHoldMs) / 1000.0,
+            static_cast<double>(nowMs) / 1000.0);
+      st.gambitReadyMs[static_cast<std::size_t>(chosen)] = nowMs + kStuckHoldMs;
+      st.pwGambit = -1;
+      pursue = false;
+      if (st.pointPursuit) EndPointPursuit(o, st, self, r, nullptr, nowMs);
+    }
+  }
+
+  // BOTIDLE (idle fallback, [host] bot_idle_fallback_ms): a bot that stands on the tree's IdleDefault with no default
+  // behavior and no gambit acting while something hits it hits back (a basic attack on the attacker, walking up on 5),
+  // so a phase whose gambits are all refused, cooling or condition-less cannot leave it to die standing
+  if (g_opt.botIdleFallbackMs > 0) {
+    const bool standing = !acted && behavior.empty() && (st.leaf == kLeafIdleDefault || st.leaf == kLeafIdle);
+    if (!standing) {
+      st.idleSinceMs = 0;
+    } else {
+      if (!st.idleSinceMs) st.idleSinceMs = nowMs;
+      if (st.lastAttacker &&
+          gms::agents::IdleFallbackDue(static_cast<long long>(nowMs - st.idleSinceMs),
+                                       static_cast<long long>(nowMs - st.lastHitMs), g_opt.botIdleFallbackMs,
+                                       kFallbackHitWindowMs)) {
+        void* aobj = SehFind(st.lastAttacker);
+        ObjInfo at;
+        if (aobj && SehObjInfo(aobj, &at) && at.hasHp && at.hp > 0.f && at.team != self.team &&
+            Distance2D(at.pos, self.pos) <= kFallbackReach &&
+            gms::agents::FallbackAttackerType(SehNpcType(aobj), at.player) && SehHostile(self.team, at.id)) {
+          ++g_bot.fallbackTries;
+          if (at.id != mtarget) SehSetTarget(o, at.id);
+          const int fr = SehBotRequest(0, gms::agents::kSlotBasic, self.id, at.id, at.pos, 1);
+          if (fr == 1 || fr == 2 || fr == 5) {
+            ++g_bot.fallbackActed;
+            if (fr == 5) pursue = true;
+          }
+          if (fr != st.fallbackResult && IdleLogBudget())
+            Log("agents: bot %08X %s phase %d (%s) idle %.1f s while %08X (%s) hit it %.1f s ago, %.1f units away: "
+                "basic attack -> %d%s (BOTIDLE) (t %.2f s)",
+                self.id, st.noun, st.botPhase, v.phaseName, static_cast<double>(nowMs - st.idleSinceMs) / 1000.0, at.id,
+                SehNounName(aobj), static_cast<double>(nowMs - st.lastHitMs) / 1000.0,
+                static_cast<double>(Distance2D(at.pos, self.pos)), fr,
+                fr == 1 || fr == 2 ? " started" : fr == 5 ? " out of range: pursue" : "",
+                static_cast<double>(nowMs) / 1000.0);
+          st.fallbackResult = fr;
+        }
+      }
+    }
+  }
   if (pursue != st.pursue) {
     st.pursue = pursue;
     SehSetTreeFlag(o, 8, pursue);
@@ -2028,10 +2244,19 @@ void OnDamaged(void* victim, void* attacker, unsigned descLo, unsigned descHi, b
   if (!g_installed || !g_opt.blackboard || !g_blackboardOk || !victim || !attacker || victim == attacker) return;
   ObjInfo v, at;
   if (!SehObjInfo(victim, &v) || !SehObjInfo(attacker, &at) || v.team == at.team) return;
+  if (g_opt.botIdleFallbackMs > 0 && v.player && g_sim) {  // BOTIDLE: who hit a bot last, and when
+    auto it = g_agents.find(v.id);
+    if (it != g_agents.end() && it->second.isBot == 1) {
+      it->second.lastAttacker = at.id;
+      it->second.lastHitMs = NowMs(g_sim);
+    }
+  }
   AgentInfo a;
   if (!SehAgentInfo(victim, &a)) return;
   ++g_st.damageHooks;
   // the victim's own list (AGENT_AI.md §6.3, [assumed]): the attacker, stamped with the victim as the source
+  // MINTARGET: the lane minions' defend rule reads who hit which shaper last
+  if (g_opt.minionTarget && v.player && at.player && g_sim) g_shaperHits.Record(at.id, v.id, static_cast<std::int64_t>(NowMs(g_sim)));
   if (!lethal && a.hasBrain && !v.player) SehAdd(victim, at.id);
   // its helpers (Agent_CallForHelp: perception list, team, camp, callForHelpRange, filter, tether)
   __try {
@@ -2162,6 +2387,11 @@ void FormatStats(char* buf, std::size_t size) {
     if (counts[i])
       len += std::snprintf(buf + len, size - len, " %s=%d",
                            i < kNumLeaves ? kLeaves[i].name : (i == kNumLeaves ? "?" : "none"), counts[i]);
+  if (len > 0 && static_cast<std::size_t>(len) < size)
+    std::snprintf(buf + len, size - len,
+                  "; bot idle fixes (BOTIDLE): refusals passed to the next gambit %u (then acted %u), pursuits dropped "
+                  "as stuck %u, idle fallback tries %u (acted %u)",
+                  g_bot.skipped, g_bot.skippedThenActed, g_bot.pursuitStuck, g_bot.fallbackTries, g_bot.fallbackActed);
 }
 
 }  // namespace agents

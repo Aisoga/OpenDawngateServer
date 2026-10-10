@@ -191,3 +191,80 @@ GMS_TEST(BotGambitAim) {
   const GambitAim none = AimGambit(0, 0, false, false, true);
   CHECK(none.target == 0 && !none.atPoint);
 }
+
+// BOTIDLE: which refusals let the next gambit of a prioritized list try (a test run's Hunter: the W on
+// cooldown above the Q and the basic attack)
+GMS_TEST(BotRefusalSkips) {
+  using namespace gms::agents;
+  // accepted, pending and out-of-range results are final
+  for (int ok : {1, 2, 3, 4, 5}) CHECK(!GambitRefusalSkips(ok, kSlotQ));
+  // the Hunter's W on cooldown (-9999) and the other "can't now" refusals pass to the next gambit
+  CHECK(GambitRefusalSkips(-9999, 4));                       // slot 4 = W, -0x270F
+  CHECK(GambitRefusalSkips(kResultCooldown, kSlotSpell1));
+  CHECK(GambitRefusalSkips(-0x270D, kSlotQ));                // no resource
+  CHECK(GambitRefusalSkips(-0x2704, kSlotQ));                // the script's CanUse
+  CHECK(GambitRefusalSkips(-0x2708, kSlotBasic));            // invalid target
+  CHECK(GambitRefusalSkips(-0x2709, kSlotBasic));            // disarmed: the spells below may still work
+  CHECK(GambitRefusalSkips(-0x270C, kSlotQ));                // out of range without pursuit
+  CHECK(GambitRefusalSkips(kResultItemRefused, kSlotConsume1));
+  // a cast or swing in progress, a dead caster, an exception: the bot waits
+  CHECK(!GambitRefusalSkips(kResultHoldsAgent, kSlotQ));
+  CHECK(!GambitRefusalSkips(kResultDead, kSlotQ));
+  CHECK(!GambitRefusalSkips(kResultException, kSlotQ));
+  // a basic attack on cooldown is the swing interval: the bot stays for the next swing
+  CHECK(!GambitRefusalSkips(kResultCooldown, kSlotBasic));
+  CHECK(GambitRefusalSkips(-0x2704, kSlotBasic));
+  // the numbers are the engine's
+  CHECK_EQ(kResultCooldown, -9999);
+  CHECK_EQ(kResultHoldsAgent, -9995);
+}
+
+// BOTIDLE: the Hunter's ClearCamp list as a model of the loop in BotBrainStep: W (cooldown) -> Q (cooldown) -> basic
+GMS_TEST(BotRefusalFallsThrough) {
+  using namespace gms::agents;
+  // slots of Artificer_Hunter_ClearCamp.Phase: spell1 (vanquish), consume1, W, Q, basic, basic
+  const int slots[] = {7, 10, 4, 3, 0, 0};
+  const bool passes[] = {false, false, true, true, true, true};
+  const int results[] = {0, 0, -9999, -9999, 1, 1};  // what the engine says to each
+  int from = 0, tries = 0, chosen = -1, r = 0;
+  for (;;) {
+    chosen = -1;
+    for (int i = from; i < 6; ++i)
+      if (passes[i]) { chosen = i; break; }
+    if (chosen < 0) break;
+    r = results[chosen];
+    if (!GambitRefusalSkips(r, slots[chosen]) || ++tries > 8) break;
+    from = chosen + 1;
+    if (from >= 6) break;
+  }
+  CHECK_EQ(chosen, 4);  // the basic attack on the objective/creep started
+  CHECK_EQ(r, 1);
+  CHECK_EQ(tries, 2);
+  // the basic attack itself on cooldown (-9999) stays the choice: the bot waits for the swing instead of walking to a
+  // lower gambit
+  const int slots2[] = {0, 3};
+  const int results2[] = {-9999, 1};
+  from = 0; tries = 0;
+  chosen = 0; r = results2[0];
+  CHECK(!GambitRefusalSkips(r, slots2[chosen]));
+}
+
+// BOTIDLE: the pursuit watchdog, the fallback's attackers and its trigger
+GMS_TEST(BotIdleRules) {
+  using namespace gms::agents;
+  // a pursuit window of 6 s: closed by progress, stuck without it
+  CHECK(!PursuitStuck(5.9, 40.f, 40.f, 6.0, 3.f));
+  CHECK(PursuitStuck(6.0, 40.f, 39.f, 6.0, 3.f));    // 1 unit in 6 s: a wall, a leash
+  CHECK(!PursuitStuck(6.0, 40.f, 36.f, 6.0, 3.f));   // 4 units: still closing in
+  CHECK(PursuitStuck(8.0, 40.f, 45.f, 6.0, 3.f));    // it ran away: further than at the start
+  // who the idle bot may hit back at
+  CHECK(FallbackAttackerType(-1, true));              // an enemy shaper
+  for (int t : {0, 1, 2, 3, 6, 7, 8, 11, 12}) CHECK(FallbackAttackerType(t, false));
+  for (int t : {-1, 4, 5, 9, 10, 13, 14, 15, 16}) CHECK(!FallbackAttackerType(t, false));  // towers, Guardian, nubs, wards...
+  // due: idle >= the threshold and hit within the window; a bot nobody hit stays as the script says
+  CHECK(IdleFallbackDue(2500, 1000, 2500, 3000));
+  CHECK(!IdleFallbackDue(2400, 1000, 2500, 3000));
+  CHECK(!IdleFallbackDue(9000, 3001, 2500, 3000));
+  CHECK(!IdleFallbackDue(9000, -1, 2500, 3000));
+  CHECK(!IdleFallbackDue(9000, 100, 0, 3000));  // switched off
+}

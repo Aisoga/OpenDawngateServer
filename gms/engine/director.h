@@ -111,6 +111,10 @@ int NearestLane(float x, float y, float* distance);
 // The bots' lane fronts use team 1's splines (gms/core/bots/lanes.h LanePath).
 bool LaneKnots(int laneId, int team, std::vector<float>* xyz);
 
+// D6e: the nearest creep camp (not the parasite's) with a living creature, by its marker position; false when
+// every camp is empty (cleared, waiting for the respawn, or not spawned yet). Backs nDirector.GetClosestCampPosition.
+bool ClosestCampPosition(float x, float y, float* out);
+
 // The server level's LevelGameplayTuning (Level +0x614, read at OnLevelStarted; the defaults are SM_Map_v5's values).
 struct Tuning {
   bool read = false;

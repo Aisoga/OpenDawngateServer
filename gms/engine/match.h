@@ -44,6 +44,7 @@ struct Options {
   bool lua = true;
   bool endOnHp = true;
   int endHpGraceMs = 2000;            // D1f-live: the HP check waits this long for the Guardian's own report (T13)
+  bool minionRangedPursue = true;     // MINRANGE2: ability_Minion_Ranged gets interfaceType Targeted + shouldPursue at the level load
   bool guardianShield = true;         // D14: modifier_Tower_Immunity on a Guardian while a core of its team lives
   std::uint32_t descriptors = 0x50C;  // the practice game's GameFlags (BLAZE.md); C1b passes the real ones
   unsigned long long gameId = 0;

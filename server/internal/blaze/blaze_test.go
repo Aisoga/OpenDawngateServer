@@ -235,7 +235,8 @@ func TestServeConn(t *testing.T) {
 // getBasicData only for known ids, getStatsByGroupAsync's empty reply plus its notification, and
 // getCurrentVersion echoing MENV (b5_run8).
 func TestMetaRequests(t *testing.T) {
-	ps := newPipeSession(t)
+	// the original's closed first-time-user gate (open by default)
+	ps := newPipeSessionWith(t, func(s *Server) { s.Policy.FTUEDone = false })
 	ps.send(1, 0x28, 0, ps.request("login_request"))
 	ps.expect(1, 0x28, fire.Reply, 0, "login_reply")
 	ps.send(1, 0x6E, 1, ps.request("loginpersona_request"))

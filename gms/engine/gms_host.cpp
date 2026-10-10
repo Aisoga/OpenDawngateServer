@@ -235,6 +235,22 @@ void* SehPlayerNoun(void* sim, unsigned index) {
   return TryPlayerNoun(sim, index);
 }
 
+// BOTCOMP: the server player's mRole once it has picked (status bit 0x100, set by shaper select's pick and by
+// LabsPlayer_SetNounDef), else -1: the bots' setup takes a known role off its team's list.
+int TryPlayerRoleIfPicked(void* sim, unsigned index) {
+  __try {
+    void* p = GetPlayerByIndex(sim, index);
+    if (!p || !(Field<unsigned>(p, player::kStatus) & 0x100u)) return -1;
+    return Field<unsigned char>(p, player::kRole);
+  } __except (SehNote(GetExceptionInformation(), "PlayerRole")) {
+    return -1;
+  }
+}
+int SehPlayerRoleIfPicked(void* sim, unsigned index) {
+  BoundTo b(sim);
+  return TryPlayerRoleIfPicked(sim, index);
+}
+
 // D3-live: shaper select's pick into the server cLabsPlayer, before the client's 0x401 (kLoaded), where D2f's deploy
 // (LabsPlayer_DeployCharacter 0x00915400) reads mpNounDef: the chosen skin's Noun asset, mRole and the perk page
 // (mLoadoutID/mLoadoutVersion). The reveal's player updates (seam 5) are then written from these fields.
@@ -721,6 +737,7 @@ class ServerMatch final : public gms::IMatch {
       unsigned status = 0, team = 0, idx = 0;
       if (SehReadPlayer(sim_, static_cast<unsigned>(h.index), &status, &team, &idx)) h.team = static_cast<int>(team);
       h.noun = SehPlayerNoun(sim_, static_cast<unsigned>(h.index));
+      h.role = SehPlayerRoleIfPicked(sim_, static_cast<unsigned>(h.index));
       humans.push_back(h);
     }
     if (hostctl::Active() && hostctl::HasGame())
@@ -3272,6 +3289,7 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
     co.emotes = HostOptionInt("emotes", 1) != 0;                        // D7b
     co.rankLog = HostOptionInt("rank_log", 1) != 0;                     // D11
     co.moveTakeover = HostOptionInt("move_takeover", 1) != 0;           // D7c
+    co.groundCastZ = HostOptionInt("ground_cast_z", 1) != 0;            // Sakari's W on the terrain
     co.queueTrace = HostOptionInt("queue_trace", 1) != 0;               // D7c
     co.queueLogLimit = HostOptionInt("queue_log_limit", co.queueLogLimit);
     cmds::Install(co);

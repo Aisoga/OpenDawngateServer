@@ -32,10 +32,8 @@ local function dist(a, b) return math.sqrt((a.x - b.x) ^ 2 + (a.y - b.y) ^ 2) en
 
 local function human()
   for _, pid in ipairs(nPlayer.GetPlayerIds() or {}) do
-    if not nPlayer.IsBot(pid) then
-      local c = nPlayer.GetPlayerControlledObjectID(pid)
-      if c ~= nil and c ~= kObjIDNone then return pid, c end
-    end
+    local c = nPlayer.GetPlayerControlledObjectID(pid)
+    if c ~= nil and c ~= kObjIDNone and not nPlayer.IsBot(c) then return pid, c end
   end
 end
 
@@ -44,7 +42,7 @@ local function players()
   for _, pid in ipairs(nPlayer.GetPlayerIds() or {}) do
     local c = nPlayer.GetPlayerControlledObjectID(pid)
     if c ~= nil and c ~= kObjIDNone then
-      list[#list + 1] = {pid = pid, c = c, bot = nPlayer.IsBot(pid), team = nGameObject.GetTeam(c),
+      list[#list + 1] = {pid = pid, c = c, bot = nPlayer.IsBot(c), team = nGameObject.GetTeam(c),
                          name = nGameObject.GetAssetName(c) or '?'}
     end
   end

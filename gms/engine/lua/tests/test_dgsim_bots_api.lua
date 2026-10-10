@@ -651,5 +651,222 @@ test('fixup bailOnKill', function()
   condition_Bot_BailOnKill = nil
 end)
 
+-- BOTIDLE: the Hunter's IsNearNextCreepCamp radius widens from 5 to the host's value (once; 0 keeps the script's)
+test('fixup campRadius', function()
+  dgsim_bots.fixupsWanted = nil
+  dgsim_bots.fixups = { veryOutnumbered = true, groupInLane = true, bailOnKill = true, parasite = true, campRadius = false }
+  condition_Bot_IsNearNextCreepCamp = nil
+  local s = dgsim_bots.ApplyFixups()
+  check(string.find(s, 'CampRadius false') ~= nil, 'nothing yet: ' .. s)
+  condition_Bot_IsNearNextCreepCamp = { radius = 5 }
+  dgsim_bots.campRadius = 9
+  s = dgsim_bots.ApplyFixups()
+  check(condition_Bot_IsNearNextCreepCamp.radius == 9 and string.find(s, 'CampRadius true') ~= nil, 'widened: ' .. s)
+  condition_Bot_IsNearNextCreepCamp.radius = 6
+  dgsim_bots.ApplyFixups()
+  check(condition_Bot_IsNearNextCreepCamp.radius == 6, 'applied once')
+  dgsim_bots.fixups.campRadius = false
+  condition_Bot_IsNearNextCreepCamp = { radius = 5 }
+  dgsim_bots.campRadius = 0
+  dgsim_bots.ApplyFixups()
+  check(condition_Bot_IsNearNextCreepCamp.radius == 5, '0 keeps the script radius')
+  dgsim_bots.fixups.campRadius = false
+  condition_Bot_IsNearNextCreepCamp = { radius = 12 }
+  dgsim_bots.campRadius = 9
+  dgsim_bots.ApplyFixups()
+  check(condition_Bot_IsNearNextCreepCamp.radius == 12, 'never narrows')
+  dgsim_bots.campRadius = nil
+  condition_Bot_IsNearNextCreepCamp = nil
+end)
+
+-- ---- BOTCOMP: the setup's role rules ------------------------------------------------------------------------------
+test('composition: pure rules', function()
+  local B = dgsim_bots
+  check(B.OutnumbersInLane(1, 0) and B.OutnumbersInLane(2, 2) and B.OutnumbersInLane(3, 1), 'allies >= enemies')
+  check(not B.OutnumbersInLane(0, 0) and not B.OutnumbersInLane(1, 2), 'alone, or fewer allies than enemies: no')
+  -- the Hunter: gather, hold, give up, the time cap with its cooldown, contest
+  local cfg = B.compositionConfig
+  local st = {}
+  local function inp(t)
+    local i = { standing = true, rallyAllies = 0, paraAllies = 0, paraEnemies = 0, inCombat = false, hp = 1 }
+    for k, v in pairs(t or {}) do i[k] = v end
+    return i
+  end
+  check(not B.HunterParasiteDecision(st, inp(), 100, cfg, 3), 'nobody gathered: no')
+  check(not B.HunterParasiteDecision(st, inp({ rallyAllies = 2 }), 101, cfg, 3), '2 at the rally point are not enough')
+  check(B.HunterParasiteDecision(st, inp({ rallyAllies = 3 }), 102, cfg, 3), '3 gathered: go')
+  check(B.HunterParasiteDecision(st, inp(), 106, cfg, 3), 'held 4 s after it stopped holding')
+  check(not B.HunterParasiteDecision(st, inp(), 111, cfg, 3), 'dropped after 8 s')
+  check(B.HunterParasiteDecision(st, inp({ inCombat = true, paraAllies = 2 }), 112, cfg, 3), '2 allies fighting it: go')
+  check(not B.HunterParasiteDecision(st, inp({ standing = false, rallyAllies = 5 }), 113, cfg, 3), 'no parasite: no')
+  st = {}
+  check(B.HunterParasiteDecision(st, inp({ rallyAllies = 3 }), 200, cfg, 3), 'start')
+  check(B.HunterParasiteDecision(st, inp({ rallyAllies = 3 }), 340, cfg, 3), 'still within 150 s')
+  check(not B.HunterParasiteDecision(st, inp({ rallyAllies = 3 }), 351, cfg, 3), 'capped at 150 s')
+  check(not B.HunterParasiteDecision(st, inp({ rallyAllies = 3 }), 380, cfg, 3), 'cooldown')
+  check(B.HunterParasiteDecision(st, inp({ rallyAllies = 3 }), 412, cfg, 3), 'after the cooldown')
+  st = {}
+  check(not B.HunterParasiteDecision(st, inp({ paraEnemies = 1 }), 10, cfg, 3), 'one enemy near, parasite idle: no')
+  check(B.HunterParasiteDecision(st, inp({ paraEnemies = 1, inCombat = true }), 11, cfg, 3), 'a steal in progress: contest')
+  st = {}
+  check(not B.HunterParasiteDecision(st, inp({ paraEnemies = 4, inCombat = true }), 10, cfg, 3), 'four enemies: no')
+  check(not B.HunterParasiteDecision(st, inp({ paraEnemies = 2, hp = 0.3 }), 11, cfg, 3), 'low HP: no')
+  check(B.HunterParasiteDecision(st, inp({ paraEnemies = 2 }), 12, cfg, 3), 'two enemies at it: contest')
+end)
+
+-- a world with the setup's globals: roles by creature, the missions of a fake host board
+local function compositionWorld()
+  local B = dgsim_bots
+  local roles, missions, held, ended = {}, {}, {}, {}
+  nDirector = { GetParasiteID = function() return kObjIDNone end,
+                GetClosestCampPosition = function() return nVector.create(-59, -57, 1) end }
+  function nGameObject.IsInCombat(id) return W.get(id).combat == true end
+  nBotHost = {
+    BotRole = function(bot) return roles[bot] or -1 end,
+    GetAvailableMission = function(bot, mtype, range)
+      return missions[mtype] or 0
+    end,
+    GetMissionID = function(bot) return held[bot] or 0 end,
+    GetMissionTarget = function(bot) return W.wellOf and W.wellOf[bot] or kObjIDNone end,
+    OpenMission = function(team, i)
+      if i == 1 and held.open then return held.open, held.target, held.guid end
+      return nil
+    end,
+    EndMission = function(id) ended[#ended + 1] = id end,
+  }
+  condition_Mission_HarassWell = { conditionGUID = 'harass', startWorkers = 16, endWorkers = 4 }
+  condition_nearest_minion = { [1] = function() return false end }
+  condition_Bot_IsNearMissionTarget = { [1] = function() return false end }
+  condition_nearest_objective = { [1] = function(bot) return true, 0, 0, 0, W.objectiveFor end }
+  condition_Bot_ShouldGank = { [1] = function() return true, 1, 2, 3 end }
+  condition_Bot_NextCreepCamp = { [1] = function(bot)
+    local v = nDirector.GetClosestCampPosition(1, nVector.create(0, 0, 0), false)
+    return true, v.x, v.y, v.z, kObjIDNone, true
+  end }
+  condition_Bot_IsNearNextCreepCamp = { [1] = function(bot)
+    return nDirector.GetClosestCampPosition(1, nVector.create(0, 0, 0), false).x == -59
+  end }
+  B.compositionWanted = true
+  B.fixups = { veryOutnumbered = true, groupInLane = true, bailOnKill = true, parasite = true, campRadius = true }
+  return roles, missions, held, ended
+end
+
+test('composition: the Predator harasses only while his team outnumbers the enemy in his lane', function()
+  local B = dgsim_bots
+  local roles, missions, held, ended = compositionWorld()
+  local pred = shaper('pred', 1, 60, -60, { bot = true })
+  local glad = shaper('glad', 1, 66, -68, { bot = true })
+  local other = shaper('other', 1, 62, -62, { bot = true })
+  roles[pred], roles[glad], roles[other] = 3, 0, 1
+  nBot.AssignLane(pred, nLaneID.Bottom)
+  missions[3], missions[12] = 31, 77
+  local s = B.ApplyFixups()
+  check(B.fixups.composition == true and string.find(s, 'Composition true') ~= nil, 'applied: ' .. s)
+  check(condition_Mission_HarassWell.startWorkers == 4 or B.harassStartWorkers == nil, 'thresholds from the host')
+  -- two allies in his lane, no enemy: he takes the harass mission instead of the capture one; the others do not
+  check(nBot.GetAvailableMission(pred, nMissionType.AttackWell, 80) == 77, 'the Predator gets HarassWell')
+  check(nBot.GetAvailableMission(glad, nMissionType.AttackWell, 80) == 31, 'the Gladiator gets the capture mission')
+  check(nBot.GetAvailableMission(pred, nMissionType.DefendWell, 80) == 0, 'other types pass through')
+  -- as many enemies as allies in the lane: still outnumbering; one more enemy: no mission at all
+  shaper('e1', 2, 70, -68)
+  shaper('e2', 2, 71, -68)
+  check(nBot.GetAvailableMission(pred, nMissionType.AttackWell, 80) == 77, '2 allies against 2 enemies: go on')
+  shaper('e3', 2, 72, -68)
+  check(nBot.GetAvailableMission(pred, nMissionType.AttackWell, 80) == 0, 'outnumbered: none (and never the capture)')
+  check(nBot.GetAvailableMission(glad, nMissionType.AttackWell, 80) == 31, 'others unchanged')
+  -- the tick ends a held harass mission after the hold
+  held[pred] = 77
+  held.open, held.target, held.guid = 77, kObjIDNone, 'harass'
+  W.matchTime = 200
+  check(B.CompositionTick() == 0, 'first sight: the hold starts')
+  W.matchTime = 203
+  check(B.CompositionTick() == 0, 'within the hold')
+  W.matchTime = 205
+  check(B.CompositionTick() == 1 and ended[1] == 77, 'ended after the hold')
+  -- outnumbering again resets the hold
+  W.kill(W.order[#W.order])  -- e3
+  held[pred] = 77
+  W.matchTime = 300
+  check(B.CompositionTick() == 0, 'outnumbering: kept')
+  -- a mission of another kind is left alone
+  held.guid = 'capture'
+  W.matchTime = 400
+  W.get(glad).alive = false
+  check(B.CompositionTick() == 0 and #ended == 1, 'not a harass mission')
+end)
+
+test('composition: the Predator hits the workers of the well he harasses', function()
+  local B = dgsim_bots
+  local roles = compositionWorld()
+  local pred = shaper('pred', 1, 100, 10, { bot = true })
+  local grunt = shaper('plain', 1, 100, 11, { bot = true })
+  roles[pred], roles[grunt] = 3, 1
+  local well = W.add({ name = 'well', team = 2, npc = nNPCType.GoldMine, pos = P(100, 20) })
+  local worker = W.add({ name = 'worker', team = 2, npc = nNPCType.Follower, pos = P(104, 14) })
+  local minion = W.add({ name = 'minion', team = 2, npc = nNPCType.MeleeMinion, pos = P(101, 10), minion = true })
+  W.wellOf = { [pred] = well, [grunt] = well }
+  B.ApplyFixups()
+  local ok, _, _, _, target = condition_nearest_minion[1](pred)
+  check(ok == true and target == worker, 'the worker, not the minion')
+  check(condition_Bot_IsNearMissionTarget[1](pred) == true, 'near enough to hit the workers')
+  check(condition_nearest_minion[1](grunt) == false, 'another role: the original')
+  W.wellOf = { [pred] = W.add({ name = 'ownwell', team = 1, npc = nNPCType.GoldMine, pos = P(0, 0) }) }
+  check(condition_nearest_minion[1](pred) == false, 'his own team well: the original')
+  W.wellOf = nil
+end)
+
+test('composition: the Hunter treats the parasite as a camp, only when allies gathered', function()
+  local B = dgsim_bots
+  local roles = compositionWorld()
+  local hunter = shaper('hunter', 1, -100, -50, { bot = true, maxhp = 700 })
+  roles[hunter] = 2
+  local para = W.add({ name = 'parasite', team = 0, npc = nNPCType.ObjectiveMajor, pos = P(-3, 3), maxhp = 5000 })
+  W.objectiveFor = para
+  nDirector.GetParasiteID = function() return para end
+  B.ApplyFixups()
+  local ok, x = condition_Bot_NextCreepCamp[1](hunter)
+  check(ok == true and x == -59, 'nobody gathered: the next camp')
+  check(condition_nearest_objective[1](hunter) == false, 'the parasite is not offered to the Hunter')
+  check(condition_Bot_ShouldGank[1](hunter) == false, 'no gank for the Hunter')
+  roles[hunter] = 1
+  check(condition_Bot_ShouldGank[1](hunter) == true and condition_nearest_objective[1](hunter) == true, 'other roles: the original')
+  roles[hunter] = 2
+  shaper('a1', 1, -36, -6, { bot = true })
+  shaper('a2', 1, -37, -5, { bot = true })
+  check(select(2, condition_Bot_NextCreepCamp[1](hunter)) == -59, 'two at the rally point: not yet')
+  shaper('a3', 1, -35, -7, { bot = true })
+  local ok2, px, py = condition_Bot_NextCreepCamp[1](hunter)
+  check(ok2 == true and px == -3 and py == 3, 'three gathered: the parasite is his camp (' .. tostring(px) .. ', ' .. tostring(py) .. ')')
+  check(condition_Bot_IsNearNextCreepCamp[1](hunter) == false, 'the near test uses the parasite too')
+  check(select(1, condition_nearest_objective[1](hunter)) == true, 'on the parasite: ClearCamp may hit it')
+  W.kill(para)
+  W.matchTime = 130
+  check(select(2, condition_Bot_NextCreepCamp[1](hunter)) == -59, 'the parasite died: back to the camps')
+  roles[hunter] = 1
+  check(select(2, condition_Bot_NextCreepCamp[1](hunter)) == -59, 'a Tactician never goes (the host asks BotRole)')
+end)
+
+test('composition: off unless the host wants it; lanes are kept', function()
+  local B = dgsim_bots
+  compositionWorld()
+  B.compositionWanted = nil
+  local s = B.ApplyFixups()
+  check(B.fixups.composition == true and condition_Bot_ShouldGank[1]() == true, 'nothing wrapped: ' .. s)
+  -- ability_Bot_GroupInLane's Tick no longer moves a bot between lanes with the setup on
+  nBotUtils = { GetAlliesInLane = function() return {} end, GetEnemiesInLane = function(team, lane) return { 1, 2 } end }
+  local moved = 0
+  local assign = nBot.AssignLane
+  nBot.AssignLane = function() moved = moved + 1 end
+  local bot = shaper('g', 1, 60, -60, { bot = true })
+  local p3 = { myObjectID = bot, myTeam = 1 }
+  ability_Bot_GroupInLane = { searchRadius = 20, descriptors = 0 }
+  B.groupInLaneTick(p3)
+  check(moved == 1, 'without the setup the script balances lanes')
+  B.compositionWanted = true
+  B.groupInLaneTick(p3)
+  check(moved == 1, 'with the setup no lane change')
+  nBot.AssignLane = assign
+end)
+
 print(checks .. ' checks, ' .. failed .. ' failed')
 if failed > 0 then error('dgsim_bots_api tests failed') end

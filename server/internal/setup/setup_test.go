@@ -302,13 +302,13 @@ func TestWrongArchive(t *testing.T) {
 
 func TestClientOptions(t *testing.T) {
 	for addr, profile := range map[string]string{"127.0.0.1": exepatch.ProfileLocal, "127.0.9.1": exepatch.ProfileLocal,
-		"192.168.1.20": exepatch.ProfileLAN, "10.0.0.5": exepatch.ProfileLAN} {
+		"192.168.1.20": exepatch.ProfileLAN, "10.0.0.5": exepatch.ProfileLAN, "8.8.8.8": exepatch.ProfileLAN} {
 		o, err := ClientOptions(addr)
 		if err != nil || o.Profile != profile || o.ServerHost != addr {
 			t.Errorf("%s: %+v %v", addr, o, err)
 		}
 	}
-	for _, addr := range []string{"", "localhost", "8.8.8.8", "0.0.0.0", "224.0.0.1", "127.000.000.001.5", "::1", "1.2.3"} {
+	for _, addr := range []string{"", "localhost", "0.0.0.0", "224.0.0.1", "127.000.000.001.5", "::1", "1.2.3"} {
 		if _, err := ClientOptions(addr); err == nil {
 			t.Errorf("%q accepted", addr)
 		}

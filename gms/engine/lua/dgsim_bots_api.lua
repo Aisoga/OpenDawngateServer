@@ -26,7 +26,7 @@
 
 dgsim_bots = dgsim_bots or {}
 local B = dgsim_bots
-B.version = '3'  -- 2: D6b's script fix-ups; 3: D6c's BailOnKill fix-up
+B.version = '7'  -- 7: BOTCOMP's composition rules (Predator harass, Hunter parasite, lane lock); 2: D6b's script fix-ups; 3: D6c's BailOnKill fix-up; 4: D6e's GetClosestCampPosition; 5: BOTPARA's parasite fix-up; 6: BOTIDLE's camp radius
 B.config = B.config or {
   scanSeconds = 5,            -- game seconds between walks of the object pool (structures, wells)
   scanLimit = 4096,           -- pool slots walked at most
@@ -862,7 +862,8 @@ local function groupInLaneTick(p3)
   p3.enemiesTop = countOf(nBotUtils.GetEnemiesInLane(p3.myTeam, nLaneID.Top))
   p3.alliesBot = countOf(nBotUtils.GetAlliesInLane(p3.myTeam, nLaneID.Bottom))
   p3.enemiesBot = countOf(nBotUtils.GetEnemiesInLane(p3.myTeam, nLaneID.Bottom))
-  if not p3.nearTower then
+  -- BOTCOMP: with the composed setup (one Gladiator per lane, a support each) the lanes are the setup's: no balancing
+  if not p3.nearTower and B.compositionWanted ~= true then
     if p3.enemiesTop > p3.alliesTop then
       nBot.AssignLane(p3.myObjectID, nLaneID.Top)
     elseif p3.enemiesBot > p3.alliesBot then
@@ -925,14 +926,419 @@ function B.ApplyFixups()
     k[1] = bailOnKillCheck(k[1])
     f.bailOnKill = true
   end
+  if not f.parasite then
+    if B.parasiteWanted == false then f.parasite = true else B.ApplyParasiteFixup() end
+  end
+  -- BOTIDLE fix-up 5: the Hunter's Farm plan leaves MoveToNextCamp only when the bot is within `radius` (5) of the camp's
+  -- marker, but ability_Bot_MoveToTarget's MoveToPointExact ends where the camp's creatures (repulsors since D1k) let it,
+  -- about 5.4 units out: the bot stood there for the match (in a test run: "gambit 0 at the point ... 5.4 units away" every
+  -- 11 s). B.campRadius (host: [host] bot_camp_radius, 9; 0 keeps the script's 5) widens the link's test; the ClearCamp
+  -- gambits look 30 units around, so nothing else changes.
+  if not f.campRadius then
+    local c = global('condition_Bot_IsNearNextCreepCamp')
+    if type(c) == 'table' then
+      local want = B.campRadius
+      if want == nil then want = 9 end
+      if want > 0 and (c.radius == nil or want > c.radius) then c.radius = want end
+      f.campRadius = true
+    end
+  end
+  if not f.composition then B.ApplyCompositionFixup() end
   return 'fix-ups: VeryOutnumbered ' .. tostring(f.veryOutnumbered) .. ', GroupInLane ' .. tostring(f.groupInLane) ..
-         ', BailOnKill ' .. tostring(f.bailOnKill == true)
+         ', BailOnKill ' .. tostring(f.bailOnKill == true) .. ', Parasite ' .. tostring(f.parasite == true) ..
+         ', CampRadius ' .. tostring(f.campRadius == true) .. ', Composition ' .. tostring(f.composition == true)
 end
 
+
+-- ---- BOTPARA: the parasite missions (fix-up 4, [host] bot_parasite_guard) -------------------------------------------
+-- The user's report: bots "guard" the parasite's area doing nothing, even when the parasite isn't there. The chain
+--: a Rally mission (11) has timeout 0 and its CheckEnd ends it only when the target is no
+-- valid hostile, fewer than 5 allies live or all 5 enemies live; its Check (match > 900 s, 5 allies, at most 3 enemies
+-- alive) only gates the opening. Bots in the RallyForParasite plan pace (nBehavior_PaceNearMissionTarget) about the
+-- mission's fixed rally point, 33 units from the parasite, until three of them stand within 20 of it AND a KillParasite
+-- mission exists; with fewer bots there (others in Flee, a well, a lane) nothing ends the mission, and a link back to
+-- Main fires only for a base defence. Fixes, all [assumed], none changes a script's table on disk:
+--   a. CheckEnd of Rally, Kill and Contest also ends when the mission's target is no longer the director's parasite or
+--      is not standing (a stale id after a stage change, a corpse);
+--   b. a Rally mission ends after rallyPatience seconds (90): the KillParasite plan does not need the Rally mission, so
+--      a gather that happened has left it already; the team's Rally Check then stays shut for rallyCooldown seconds
+--      (120) so the bots do not re-form at once;
+--   c. the two gather conditions fail while the director's parasite is not a valid standing target.
+B.parasiteConfig = B.parasiteConfig or { rallyPatience = 90, rallyCooldown = 120 }
+B.rallyOpened = B.rallyOpened or {}   -- team .. ':' .. target -> match time first seen open
+B.rallyBlocked = B.rallyBlocked or {} -- team -> match time until which Rally's Check does nothing
+
+local function matchTime() return nGameSimulator.GetMatchTime() or 0 end
+
+local function parasiteStands(team, target)
+  if isNone(target) or not exists(target) then return false end
+  local para = nDirector and nDirector.GetParasiteID and nDirector.GetParasiteID() or kObjIDNone
+  if para ~= target then return false end
+  return nGameObject.IsAlive(target) == true and nBot.ValidateHostileBotTarget(team, target, false, true) == true
+end
+B.parasiteStands = parasiteStands
+
+local function wrapParasiteEnd(original)
+  return function(team, target, ...)
+    local done = original(team, target, ...)
+    if done then return done end
+    if not parasiteStands(team, target) then return true end
+    return done
+  end
+end
+
+local function wrapRallyEnd(original)
+  return function(team, target, ...)
+    local done = original(team, target, ...)
+    local key = tostring(team) .. ':' .. tostring(target)
+    if done then B.rallyOpened[key] = nil return done end
+    local now = matchTime()
+    local e = B.rallyOpened[key]
+    -- a gap in the checks (the mission ended some other way and came back) starts the count again
+    if e == nil or now - e.last > 5 then e = { first = now } B.rallyOpened[key] = e end
+    e.last = now
+    if now - e.first >= B.parasiteConfig.rallyPatience then
+      B.rallyOpened[key] = nil
+      B.rallyBlocked[team] = now + B.parasiteConfig.rallyCooldown
+      B.stats.rallyTimeouts = (B.stats.rallyTimeouts or 0) + 1
+      return true
+    end
+    return done
+  end
+end
+
+local function wrapRallyCheck(original)
+  return function(team, ...)
+    local blocked = B.rallyBlocked[team]
+    if blocked ~= nil and matchTime() < blocked then return false, kObjIDNone, 0 end
+    return original(team, ...)
+  end
+end
+
+local function wrapGather(original)
+  return function(bot, ...)
+    local a, b, c, d, e, f = original(bot, ...)
+    if a then
+      local team = nGameObject.GetTeam(bot)
+      local para = nDirector and nDirector.GetParasiteID and nDirector.GetParasiteID() or kObjIDNone
+      if not parasiteStands(team, para) then return false end
+    end
+    return a, b, c, d, e, f
+  end
+end
+
+function B.ApplyParasiteFixup()
+  local f = B.fixups
+  if f.parasite then return end
+  local names = { 'condition_Mission_RallyForParasite', 'condition_Mission_KillParasite',
+                  'condition_Mission_RallyForParasiteContest', 'condition_Bot_GatherForParasite',
+                  'condition_Bot_GatherForParasiteContest' }
+  local t = {}
+  for _, n in ipairs(names) do
+    t[n] = global(n)
+    if type(t[n]) ~= 'table' then return end
+  end
+  local END, CHECK = nConditionFns.CheckEnd, nConditionFns.Check
+  local rally = t.condition_Mission_RallyForParasite
+  rally[END] = wrapRallyEnd(wrapParasiteEnd(rally[END]))
+  rally[CHECK] = wrapRallyCheck(rally[CHECK])
+  for _, n in ipairs({ 'condition_Mission_KillParasite', 'condition_Mission_RallyForParasiteContest' }) do
+    t[n][END] = wrapParasiteEnd(t[n][END])
+  end
+  for _, n in ipairs({ 'condition_Bot_GatherForParasite', 'condition_Bot_GatherForParasiteContest' }) do
+    t[n][1] = wrapGather(t[n][1])
+  end
+  f.parasite = true
+end
+
+-- BOTCOMP's block (below) defines B.ApplyCompositionFixup and B.CompositionTick before this wrapper is called.
 local mainMissionTick = B.MissionTick
 function B.MissionTick(names)
-  if not (B.fixups.veryOutnumbered and B.fixups.groupInLane and B.fixups.bailOnKill) then B.ApplyFixups() end
-  return mainMissionTick(names)
+  if not (B.fixups.veryOutnumbered and B.fixups.groupInLane and B.fixups.bailOnKill and B.fixups.parasite and
+          B.fixups.campRadius and B.fixups.composition) then
+    B.ApplyFixups()
+  end
+  local checks, ends, errors = mainMissionTick(names)
+  if B.fixups.composition and B.compositionWanted == true then
+    local ok, more = pcall(B.CompositionTick)
+    if not ok then
+      errors = (errors or 0) + 1
+      noteError('CompositionTick: ' .. tostring(more))
+    else
+      ends = (ends or 0) + (more or 0)
+    end
+  end
+  return checks, ends, errors
+end
+
+-- ---- BOTCOMP: the preferred 5v5 setup's role rules ----
+-- The host composes each team (2 Gladiators, Tactician, Predator, Hunter; gms/core/bots/composition.h) and exposes a
+-- bot's mRole as nBotHost.BotRole (0 Gladiator, 1 Tactician, 2 Hunter, 3 Predator). What the setup needs beyond the
+-- scripts, all [assumed rules]:
+--   a. Lanes: ability_Bot_GroupInLane (Creature's Push/BackToAction phases, the Sculptor's) no longer rebalances lanes
+--      (see groupInLaneTick), so the Gladiator of each lane stays in it.
+--   b. Predator (the BotClass of PC_Warden with mRole 3): the Warden's AI has the Well plan (missionType 3/4:
+--      MoveToMissionTarget, WellFight) and nothing accepts HarassWell (12). nBot.GetAvailableMission(predator,
+--      AttackWell) answers HarassWell instead (range ignored) while his team outnumbers the enemy in his lane, and
+--      nothing else (he never takes a capture mission); B.CompositionTick ends his harass mission when his team has not
+--      outnumbered the enemy for harassHold seconds, which sends him back to Main and his lane (`!Bot_IsMissionActive`).
+--      The mission: HarassWell opens above harassStartWorkers (the script's 16) workers and ends below
+--      harassEndWorkers (the script's 4) or when the well is his team's (not, as the script has it, when the well is
+--      unlocked). In the Well plan his basic attack goes to the nearest hostile worker (condition_nearest_minion,
+--      condition_Bot_IsNearMissionTarget).
+--   c. Hunter (PC_Artificer): his AIDefinition has no parasite plans (Farm, Shop, Flee, Gank only). The parasite is made
+--      a camp: while B.HunterParasitePos says so, nDirector.GetClosestCampPosition answers the parasite's position for
+--      the Hunter, so Farm walks him there (MoveToNextCamp) and ClearCamp's `basic` on condition_nearest_objective hits
+--      it. He goes when enough allies gathered at the rally point (hunterGatherAllies others within gatherRange of the
+--      team's rally point) or are fighting it (2 within paraRange while it is in combat), or to contest a steal (enemy
+--      shapers at it, at most contestMaxEnemies, his HP at least contestMinHp); he stays while that holds plus
+--      hunterParaHold seconds, at most hunterParaMax seconds, then waits hunterParaCooldown. Outside that
+--      condition_nearest_objective does not offer the parasite to a Hunter (a camp near it would draw him in), and
+--      condition_Bot_ShouldGank is false for him unless hunterGank (the Gank plan has no way back to Farm).
+B.compositionConfig = B.compositionConfig or {
+  harassHold = 4, hunterParaHold = 8, hunterParaMax = 150, hunterParaCooldown = 60, gatherRange = 25, paraRange = 30,
+  contestMaxEnemies = 3, contestMinHp = 0.5, laneRadius = 60,
+}
+B.harass = B.harass or {}         -- predator -> { last = match time his team last outnumbered the enemy }
+B.hunterPara = B.hunterPara or {} -- hunter -> { since, last, blockedUntil }
+
+local ROLE_HUNTER, ROLE_PREDATOR = 2, 3
+local function roleOf(bot)
+  local f = hostfn('BotRole')
+  if not f or isNone(bot) then return -1 end
+  return num(f(bot), -1)
+end
+B.roleOf = roleOf
+
+-- living allied shapers other than `bot` within r of pos, and living enemy shapers within r of pos
+local function alliesAround(bot, team, pos, r)
+  local n = 0
+  for _, o in ipairs(query(pos, r, nGetObjectsSortType.None, nTargetType.AllyPlayers, team, nil, 0)) do
+    if o ~= bot and nGameObject.IsAlive(o) == true then n = n + 1 end
+  end
+  return n
+end
+local function enemiesAround(team, pos, r)
+  local n = 0
+  for _, o in ipairs(nBot.GetEnemyPlayersNearPosition(team, pos, r)) do
+    if nGameObject.IsAlive(o) == true then n = n + 1 end
+  end
+  return n
+end
+
+-- The Predator's rule, pure: his team outnumbers the enemy in his lane when the allies there (not counting him: he is
+-- there) are at least the enemies, and there is at least one. B.PredatorOutnumbering gathers the counts.
+function B.OutnumbersInLane(alliesWithoutSelf, enemies)
+  return alliesWithoutSelf >= 1 and alliesWithoutSelf >= enemies
+end
+
+function B.PredatorOutnumbering(bot)
+  local team = nGameObject.GetTeam(bot)
+  local lane = nBot.GetLaneID(bot)
+  if lane ~= nLaneID.Top and lane ~= nLaneID.Bottom then lane = nBot.GetClosestLane(bot) end
+  local c = B.LaneCenter(lane, team)
+  local r = B.compositionConfig.laneRadius
+  return B.OutnumbersInLane(alliesAround(bot, team, c, r), enemiesAround(team, c, r)), lane
+end
+
+-- The nearest hostile worker around a Predator on a harass trip (the target of his mission is an enemy well).
+function B.HarassTarget(bot)
+  local well = nBot.GetMissionTarget(bot)
+  if isNone(well) or not exists(well) then return nil end
+  local team = nGameObject.GetTeam(bot)
+  if nGameObject.GetTeam(well) == team then return nil end
+  for _, o in ipairs(nBot.GetNearbyObjects(bot, 30, nTargetType.EnemyNPCs, 0)) do
+    if nGameObject.GetNPCType(o) == nNPCType.Follower and nBot.ValidateHostileBotTarget(team, o, false, true) then
+      return o
+    end
+  end
+  return nil
+end
+
+-- The Hunter's rule, pure: `st` is his state table, `inp` the counts. Returns whether he is on the parasite.
+--   inp.standing        the director's parasite is alive and a valid target
+--   inp.rallyAllies     other allied shapers within gatherRange of the rally point
+--   inp.paraAllies/paraEnemies   other allied / enemy shapers within paraRange of the parasite
+--   inp.inCombat        the parasite is in combat
+--   inp.hp              the Hunter's health fraction
+function B.HunterParasiteDecision(st, inp, now, cfg, gatherAllies)
+  if not inp.standing then st.since, st.last = nil, nil return false end
+  if st.blockedUntil and now < st.blockedUntil then return false end
+  local gather = inp.rallyAllies >= gatherAllies or (inp.inCombat and inp.paraAllies >= 2)
+  local contest = inp.paraEnemies >= 1 and (inp.inCombat or inp.paraEnemies >= 2) and
+                  inp.paraEnemies <= cfg.contestMaxEnemies and inp.hp >= cfg.contestMinHp
+  if gather or contest then
+    st.last = now
+    st.since = st.since or now
+  elseif not st.since then
+    return false
+  elseif now - st.last > cfg.hunterParaHold then
+    st.since, st.last = nil, nil
+    return false
+  end
+  if now - st.since > cfg.hunterParaMax then
+    st.since, st.last = nil, nil
+    st.blockedUntil = now + cfg.hunterParaCooldown
+    return false
+  end
+  return true
+end
+
+-- The parasite's position when `bot` (a Hunter) should go there now, else nil.
+function B.HunterParasitePos(bot)
+  if roleOf(bot) ~= ROLE_HUNTER then return nil end
+  local team = nGameObject.GetTeam(bot)
+  local para = nDirector and nDirector.GetParasiteID and nDirector.GetParasiteID() or kObjIDNone
+  local st = B.hunterPara[bot]
+  if st == nil then st = {} B.hunterPara[bot] = st end
+  local cfg = B.compositionConfig
+  local inp = { standing = parasiteStands(team, para), rallyAllies = 0, paraAllies = 0, paraEnemies = 0, inCombat = false,
+                hp = hpFraction(bot) }
+  local pos
+  if inp.standing then
+    pos = nGameObject.GetPosition(para)
+    local rallyCond = global('condition_Bot_GatherForParasite')
+    local rally
+    if team == nTeamID.Mortal then
+      rally = rallyCond and rallyCond.mortalRally or vec(-36, -6, 0)
+    else
+      rally = rallyCond and rallyCond.spiritRally or vec(36, 6, 0)
+    end
+    inp.rallyAllies = alliesAround(bot, team, rally, cfg.gatherRange)
+    inp.paraAllies = alliesAround(bot, team, pos, cfg.paraRange)
+    inp.paraEnemies = enemiesAround(team, pos, cfg.paraRange)
+    inp.inCombat = nGameObject.IsInCombat(para) == true
+  end
+  local on = B.HunterParasiteDecision(st, inp, matchTime(), cfg, B.hunterGatherAllies or 3)
+  if on and pos ~= nil then return pos end
+  return nil
+end
+
+-- B.CompositionTick (about once a second, after the mission tick): end the harass missions of Predators whose team has
+-- not outnumbered the enemy in their lane for harassHold seconds. Returns the number of missions ended.
+function B.CompositionTick()
+  local openf, endf = hostfn('OpenMission'), hostfn('EndMission')
+  local h = global('condition_Mission_HarassWell')
+  if not (openf and endf and type(h) == 'table') then return 0 end
+  local players = nPlayer.GetPlayerControlledObjects()
+  if type(players) ~= 'table' then return 0 end
+  local ended, t = 0, matchTime()
+  for _, c in ipairs(players) do
+    if exists(c) and roleOf(c) == ROLE_PREDATOR then
+      local mid = nBot.GetMissionID(c)
+      local harassing = false
+      if mid > 0 then
+        local team = nGameObject.GetTeam(c)
+        for i = 1, 256 do
+          local id, _, guid = openf(team, i)
+          if id == nil then break end
+          if id == mid and guid == h.conditionGUID then harassing = true break end
+        end
+      end
+      if harassing then
+        local st = B.harass[c]
+        if st == nil then st = { last = t } B.harass[c] = st end
+        local alive = nGameObject.IsAlive(c) == true
+        if alive and B.PredatorOutnumbering(c) then
+          st.last = t
+        elseif not alive or t - st.last >= B.compositionConfig.harassHold then
+          endf(mid)
+          ended = ended + 1
+          B.stats.harassEnds = (B.stats.harassEnds or 0) + 1
+          B.harass[c] = nil
+        end
+      else
+        B.harass[c] = nil
+      end
+    end
+  end
+  return ended
+end
+
+function B.ApplyCompositionFixup()
+  local f = B.fixups
+  if f.composition then return end
+  if B.compositionWanted ~= true then f.composition = true return end
+  local names = { 'condition_Mission_HarassWell', 'condition_nearest_minion', 'condition_Bot_IsNearMissionTarget',
+                  'condition_nearest_objective', 'condition_Bot_ShouldGank', 'condition_Bot_NextCreepCamp',
+                  'condition_Bot_IsNearNextCreepCamp' }
+  local t = {}
+  for _, n in ipairs(names) do
+    t[n] = global(n)
+    if type(t[n]) ~= 'table' then return end
+  end
+  if type(nBot.GetAvailableMission) ~= 'function' then return end
+  local END = nConditionFns.CheckEnd
+  -- b. HarassWell: the thresholds and the end rule
+  local hw = t.condition_Mission_HarassWell
+  hw.startWorkers = B.harassStartWorkers or hw.startWorkers
+  hw.endWorkers = B.harassEndWorkers or hw.endWorkers
+  hw[END] = function(team, well)
+    if isNone(well) or not exists(well) then return true end
+    if nGameObject.GetTeam(well) == team then return true end
+    return nBattlegrounds.GetFollowersForTitan(well) < hw.endWorkers
+  end
+  local getMission = nBot.GetAvailableMission
+  nBot.GetAvailableMission = function(bot, missionType, range)
+    if missionType == nMissionType.AttackWell and roleOf(bot) == ROLE_PREDATOR then
+      if B.PredatorOutnumbering(bot) then return getMission(bot, nMissionType.HarassWell, 0) end
+      return 0
+    end
+    return getMission(bot, missionType, range)
+  end
+  local nearestMinion = t.condition_nearest_minion[1]
+  t.condition_nearest_minion[1] = function(bot, ...)
+    if roleOf(bot) == ROLE_PREDATOR then
+      local w = B.HarassTarget(bot)
+      if w ~= nil then return true, 0, 0, 0, w end
+    end
+    return nearestMinion(bot, ...)
+  end
+  local nearMission = t.condition_Bot_IsNearMissionTarget[1]
+  t.condition_Bot_IsNearMissionTarget[1] = function(bot, ...)
+    if roleOf(bot) == ROLE_PREDATOR and B.HarassTarget(bot) ~= nil then return true end
+    return nearMission(bot, ...)
+  end
+  -- c. Hunter
+  local nearestObjective = t.condition_nearest_objective[1]
+  t.condition_nearest_objective[1] = function(bot, ...)
+    local a, b, c, d, e = nearestObjective(bot, ...)
+    if a and roleOf(bot) == ROLE_HUNTER and nDirector and nDirector.GetParasiteID and e == nDirector.GetParasiteID() and
+        B.HunterParasitePos(bot) == nil then
+      return false
+    end
+    return a, b, c, d, e
+  end
+  local shouldGank = t.condition_Bot_ShouldGank[1]
+  t.condition_Bot_ShouldGank[1] = function(bot, ...)
+    if B.hunterGank ~= true and roleOf(bot) == ROLE_HUNTER then return false end
+    return shouldGank(bot, ...)
+  end
+  for _, n in ipairs({ 'condition_Bot_NextCreepCamp', 'condition_Bot_IsNearNextCreepCamp' }) do
+    local original = t[n][1]
+    t[n][1] = function(bot, ...)
+      B.campAsker = bot
+      local ok, a, b, c, d, e, g = pcall(original, bot, ...)
+      B.campAsker = nil
+      if not ok then error(a, 0) end
+      return a, b, c, d, e, g
+    end
+  end
+  if nDirector and type(nDirector.GetClosestCampPosition) == 'function' then
+    local closest = nDirector.GetClosestCampPosition
+    nDirector.GetClosestCampPosition = function(team, pos, ignoreFoW)
+      local bot = B.campAsker
+      if bot ~= nil then
+        local p = B.HunterParasitePos(bot)
+        if p ~= nil then
+          -- condition_Bot_NextCreepCamp treats a zero coordinate as "no camp"
+          return vec(p.x ~= 0 and p.x or 0.01, p.y ~= 0 and p.y or 0.01, p.z ~= 0 and p.z or 0.01)
+        end
+      end
+      return closest(team, pos, ignoreFoW)
+    end
+  end
+  f.composition = true
 end
 
 -- ---- report ------------------------------------------------------------------------------------------------------
@@ -984,6 +1390,21 @@ function B.Report()
   p('calls: ' .. (#calls > 0 and table.concat(calls, ' ') or 'none'))
   for _, text in ipairs(B.stats.errorOrder) do p('error x' .. B.stats.errors[text] .. ': ' .. text) end
   return table.concat(out, '\n')
+end
+
+-- D6e: nDirector.GetClosestCampPosition is a stub in the client (a static vector, so condition_Bot_NextCreepCamp
+-- never passes and the Hunter's MoveToNextCamp phase idles). With the host's camps: the nearest camp with a living
+-- creature, else the zero vector (the conditions treat it as "none").
+do
+  local closestCamp = hostfn('ClosestCamp')
+  if closestCamp and nDirector then
+    nDirector.GetClosestCampPosition = function(team, pos, ignoreFoW)
+      count('GetClosestCampPosition')
+      local x, y, z = closestCamp(pos.x, pos.y, pos.z)
+      if x == nil then return vec(0, 0, 0) end
+      return vec(x, y, z)
+    end
+  end
 end
 
 local defined = 0

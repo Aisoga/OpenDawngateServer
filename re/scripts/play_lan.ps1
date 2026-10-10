@@ -20,8 +20,8 @@
                  Config_Ship.package patched (each differs from its .orig); patch_client.py --show: the lan profile
                  (redirector = <S>, not loopback), our CA (ca_flag 0), binds as shipped or one address; Config.package
                  names http://<S>:18080 (patch_config.py --host <S>)  -> prints the setup_all.py --player command
-    the server   -Server <S>, or without it the address the copy was patched for; an address of our own network
-                 (private, link-local or shared; loopback, public and multicast addresses are refused)
+    the server   -Server <S>, or without it the address the copy was patched for; a host address of another machine (public too)
+                 (private, link-local, shared or, public too: at your own risk; loopback, wildcard and multicast are refused)
     one client   setup_all.py --player's copy shares lane a's data folders (%APPDATA%\DawngateData) and runs without
                  -multipleInstances, so no other Dawngate client may hold the Global\Dawngate mutex
   Locks (run_session.ps1's format and rules): setup_all.py --player's copy (data folders DawngateData) takes lane a's
@@ -101,14 +101,15 @@ $CheckActions = '24:0.5555,0.8514;26:0.5555,0.8514;28:0.8016,0.8486;32:0.4984,0.
 
 # ---- rules without side effects (re\scripts\test_p2.ps1 runs them on their own) ----
 function Test-LanAddress([string]$addr) {
-    # $null when $addr is an IPv4 address of our own network (private, link-local or shared: a subset of what
+    # $null when $addr is the IPv4 address of a server on another machine (a LAN or a public one, as
     # patch_client.py's lan profile and egress_report.py --allow-host accept), else why not
     $ip = $null
     if ($addr -notmatch '^\d{1,3}(\.\d{1,3}){3}$' -or -not [Net.IPAddress]::TryParse($addr, [ref]$ip)) { return "'$addr' is not an IPv4 address" }
     $b = $ip.GetAddressBytes()
-    $own = $b[0] -eq 10 -or ($b[0] -eq 172 -and $b[1] -ge 16 -and $b[1] -le 31) -or ($b[0] -eq 192 -and $b[1] -eq 168) -or
-           ($b[0] -eq 169 -and $b[1] -eq 254) -or ($b[0] -eq 100 -and $b[1] -ge 64 -and $b[1] -le 127)
-    if (-not $own) { return "$addr is not an address of our own network (private 10/8, 172.16/12, 192.168/16, link-local 169.254/16 or shared 100.64/10; loopback, public and multicast addresses are refused)" }
+    $host4 = $b[0] -ne 0 -and $b[0] -ne 127 -and $b[0] -lt 224
+    if (-not $host4) { return "$addr is not a host address of another machine (loopback, wildcard, multicast and reserved addresses are refused)" }
+    if ($b[0] -eq 10 -or ($b[0] -eq 172 -and $b[1] -ge 16 -and $b[1] -le 31) -or ($b[0] -eq 192 -and $b[1] -eq 168) -or
+        ($b[0] -eq 169 -and $b[1] -eq 254) -or ($b[0] -eq 100 -and $b[1] -ge 64 -and $b[1] -le 127)) { return $null }
     $null
 }
 function ConvertFrom-ShowLines([string[]]$lines) {
@@ -257,7 +258,12 @@ function Fail([string]$m) { Write-Host $m -ForegroundColor Red; exit 2 }
 if ($Name -and $Name -notmatch '^[\w.-]+$') { Fail "invalid -Name '$Name' (letters, digits, _ . - only)" }
 if ($Check -and $NoCapture) { Fail '-Check always runs with the capture and the egress check' }
 if ($Seconds -lt 0) { Fail '-Seconds must be 0 (no time limit) or more' }
-if ($Server) { $why = Test-LanAddress $Server; if ($why) { Fail "-Server: $why" } }
+if ($Server) {
+    $why = Test-LanAddress $Server; if ($why) { Fail "-Server: $why" }
+    if ($Server -notmatch '^(10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)') {
+        Write-Host "NOTE: $Server is a public internet address. Dawngate servers have no real security: nothing is encrypted and the server sees your password as typed. Play only on a server you trust, with a password you use nowhere else." -ForegroundColor Yellow
+    }
+}
 $Allowed = @()
 foreach ($h in @("$AllowHost" -split '[,;\s]+' | Where-Object { $_ })) {
     $why = Test-LanAddress $h
@@ -317,7 +323,7 @@ if (-not (Test-Path (Join-Path $GameDir 'game\Dawngate.exe'))) {
         Info "server $Server (the address the copy was patched for; -Server not given)"
     }
     $problems = @(Get-CopyProblems $show $Server)
-    if (-not $Server -and -not $problems.Count) { $problems += "its redirector host $($show['redirector']) is not an address of our own network" }
+    if (-not $Server -and -not $problems.Count) { $problems += "its redirector host $($show['redirector']) is not an address of a server on another machine" }
     if ($problems.Count) { Missing "the copy doesn't fit: $($problems -join '; ')" @($setupCmd) }
     elseif (-not (Test-ConfigNames $GameDir $Server)) { Missing "the copy's Config.package doesn't name http://${Server}:18080 (patch_config.py --host $Server)" @($setupCmd) }
     else {

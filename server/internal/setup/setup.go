@@ -214,8 +214,9 @@ func (s *Setup) zipPath() (string, error) {
 }
 
 // ClientOptions are the exe patch options of a client copy for a server address: patch_client.py's local profile for
-// a loopback address (binds narrowed to it), its lan profile for an address of our own network (binds as shipped). A
-// public, wildcard or multicast address, a name or a loopback address longer than RakNet's literal is refused.
+// a loopback address (binds narrowed to it), its lan profile for any other host address (a LAN or a public
+// one: binds as shipped). A wildcard or multicast address, a name or a loopback address longer than RakNet's literal
+// is refused.
 func ClientOptions(server string) (exepatch.Options, error) {
 	ip := net.ParseIP(server).To4()
 	if ip == nil || strings.Count(server, ".") != 3 {
@@ -240,7 +241,7 @@ var hostOptions = exepatch.Options{Profile: exepatch.ProfileLocal, ServerHost: L
 
 // ServerOptions are Server's.
 type ServerOptions struct {
-	Address   string // the server's address: Local, another loopback address, or this machine's LAN address
+	Address   string // the server's address: Local, another loopback address, a LAN address or a public one
 	NoContent bool   // leave out the content file (new accounts then own no items)
 }
 

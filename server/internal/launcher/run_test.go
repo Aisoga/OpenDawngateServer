@@ -127,9 +127,23 @@ func TestStartServerRefusals(t *testing.T) {
 	if _, _, err := LoadOrCreate(cfg, ServerConfigText); err != nil {
 		t.Fatal(err)
 	}
-	SetKey(cfg, "address", "8.8.8.8")
-	if code, out := run(t, RunServer, dir, "--non-interactive"); code != 1 || !strings.Contains(out, "address = 8.8.8.8") {
-		t.Errorf("a public address: exit %d\n%s", code, out)
+	SetKey(cfg, "address", "8.8.8.8") // public is allowed, but only with the acknowledgement
+	if code, out := run(t, RunServer, dir, "--non-interactive"); code != 1 || !strings.Contains(out, "USE AT YOUR OWN RISK") ||
+		!strings.Contains(out, "risk is not accepted") || !strings.Contains(out, "TCP 42127") {
+		t.Errorf("a public address without the acknowledgement: exit %d\n%s", code, out)
+	}
+	if code, out := run(t, RunServer, dir, "--non-interactive", "--i-accept-the-risk"); code != 1 ||
+		strings.Contains(out, "risk is not accepted") || !strings.Contains(out, "is not an address of this PC") {
+		t.Errorf("a public address with the flag (this PC can't bind it): exit %d\n%s", code, out)
+	}
+	SetKey(cfg, "i_accept_the_risk", "yes")
+	if code, out := run(t, RunServer, dir, "--non-interactive"); code != 1 || strings.Contains(out, "risk is not accepted") {
+		t.Errorf("a public address with the ini key: exit %d\n%s", code, out)
+	}
+	SetKey(cfg, "i_accept_the_risk", "no")
+	SetKey(cfg, "address", "224.0.0.1")
+	if code, out := run(t, RunServer, dir, "--non-interactive"); code != 1 || !strings.Contains(out, "address = 224.0.0.1") {
+		t.Errorf("a multicast address: exit %d\n%s", code, out)
 	}
 	SetKey(cfg, "address", testAddress)
 	SetKey(cfg, "shaper_select", "maybe")

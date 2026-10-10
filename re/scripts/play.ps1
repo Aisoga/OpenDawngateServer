@@ -89,7 +89,7 @@ $SimDll = Join-Path $GmsBuild 'Release\dgsim.dll'
 $Wireshark = 'C:\Program Files\Wireshark'
 # B8's clicks after the login (fractions of the client area; docs/BLAZE.md *PLAY to the GMS address (B8)*): the news
 # overlay's forward arrow twice, its OK button, PLAY, PRACTICE DAWNGATE
-$CheckActions = '24:0.5555,0.8514;26:0.5555,0.8514;28:0.8016,0.8486;32:0.4984,0.0833;36:0.5,0.8236'
+$CheckActions = '24:0.5555,0.8514;26:0.5555,0.8514;28:0.8016,0.8486;32:0.4984,0.0833;36:0.1109,0.4722;40:0.4055,0.8236'
 
 if ($Check -and $NoCapture) { Write-Host '-Check always runs with the capture and the egress check' -ForegroundColor Red; exit 2 }
 

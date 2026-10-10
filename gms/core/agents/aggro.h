@@ -38,6 +38,7 @@ struct AggroCandidate {
   std::int64_t otherReportAgeMs = -1;   // now - entry +0x20; -1 = never reported by a non-player ally
   bool isPlayer = false;                // the target is player-controlled
   bool sticky = false;                  // the agent's current best target
+  bool defend = false;                  // MINTARGET: a shaper attacking an own-team shaper in range (goes first)
   float distance = 0.f;                 // edge distance from the agent
   int index = 0;                        // position in the list before ordering
 };
@@ -56,9 +57,15 @@ inline bool AddsOnSight(int aggroType) {
 inline bool Recent(std::int64_t ageMs, std::int64_t windowMs) { return ageMs >= 0 && ageMs <= windowMs; }
 
 // True if `a` goes before `b`.
+// `strict` (MINTARGET, lane minions): after a taunt the defended shaper, then every non-player (tower, structure,
+// minion) before every shaper, ahead of call-for-help reports and stickiness (which kept a shaper first once chosen).
 inline bool AggroBefore(const AggroCandidate& a, const AggroCandidate& b, bool nonPlayersFirst,
-                        std::int64_t windowMs = kCallForHelpTimeMs) {
+                        std::int64_t windowMs = kCallForHelpTimeMs, bool strict = false) {
   if (a.taunting != b.taunting) return a.taunting;
+  if (strict) {
+    if (a.defend != b.defend) return a.defend;
+    if (a.isPlayer != b.isPlayer) return !a.isPlayer;
+  }
   const bool ap = Recent(a.playerReportAgeMs, windowMs), bp = Recent(b.playerReportAgeMs, windowMs);
   if (ap != bp) return ap;
   if (a.sticky != b.sticky) return a.sticky;
@@ -70,11 +77,13 @@ inline bool AggroBefore(const AggroCandidate& a, const AggroCandidate& b, bool n
 }
 
 // Orders the candidates in place (the agent's aggro list in its new order).
-inline void OrderAggro(std::vector<AggroCandidate>* list, int aggroType, std::int64_t windowMs = kCallForHelpTimeMs) {
+inline void OrderAggro(std::vector<AggroCandidate>* list, int aggroType, std::int64_t windowMs = kCallForHelpTimeMs,
+                       bool strict = false) {
   const bool npf = NonPlayersFirst(aggroType);
-  std::stable_sort(list->begin(), list->end(), [npf, windowMs](const AggroCandidate& a, const AggroCandidate& b) {
-    return AggroBefore(a, b, npf, windowMs);
-  });
+  std::stable_sort(list->begin(), list->end(),
+                   [npf, windowMs, strict](const AggroCandidate& a, const AggroCandidate& b) {
+                     return AggroBefore(a, b, npf, windowMs, strict);
+                   });
 }
 
 // The flag byte of an aggro-list entry (entry +0x28, AgentBlackboard_AddToAggroList's last argument, written only when

@@ -140,6 +140,32 @@ int SehHp(std::uint32_t id, float* hp) {
 // GetGuardianOnTeam), Deactivate plays titan_invulnerability_deactivate_effect. No script and no AssetData applies it.
 constexpr std::uint32_t kTowerImmunityGuid = 0xB2A91715;
 
+// ---- MINRANGE2: the lane casters' range -------------------------------------------------
+// ability_Minion_Ranged (GUID = FNV-1 of its lower-case name) sets neither interfaceType nor shouldPursue, so the client's
+// own validator never range-checks it (interface type 0 = always in range) and never asks for a walk-up. Its sibling
+// ability_SuperMinion_Ranged has both: copy its interfaceType (static +0x42C, the Targeted value) and set shouldPursue
+// (+0x3C4), so the casters walk up to range 15.5 like the melee minions do.
+constexpr std::uint32_t kMinionRangedGuid = 0x42BAD29C;
+constexpr std::uint32_t kSuperMinionRangedGuid = 0x38087193;
+constexpr std::uintptr_t kStaticShouldPursue = 0x3C4;
+constexpr std::uintptr_t kStaticInterfaceType = 0x42C;
+
+int SehFixMinionRanged(int* before, int* targeted) {
+  __try {
+    void* st = FindStaticAbility(kMinionRangedGuid);
+    void* ref = FindStaticAbility(kSuperMinionRangedGuid);
+    if (!st || !ref) return -1;
+    *before = Field<int>(st, kStaticInterfaceType);
+    *targeted = Field<int>(ref, kStaticInterfaceType);
+    if (*targeted == 0) return -2;
+    Field<int>(st, kStaticInterfaceType) = *targeted;
+    Field<unsigned char>(st, kStaticShouldPursue) = 1;
+    return 1;
+  } __except (SehNote(GetExceptionInformation(), "ability_Minion_Ranged static")) {
+    return -3;
+  }
+}
+
 bool SehInstanceLive(std::uint32_t id) {
   __try {
     void* in = id ? GetInstance(id) : nullptr;
@@ -783,6 +809,12 @@ void OnLevelStarted(void* sim) {
   if (!Enabled()) return;
   g_sim = sim;
   g_levelClockMs = SehClockMs(sim);
+  if (g_opt.minionRangedPursue) {
+    int before = 0, targeted = 0;
+    const int r = SehFixMinionRanged(&before, &targeted);
+    Log("match (MINRANGE2): ability_Minion_Ranged interfaceType %d -> %d, shouldPursue on: %s", before, targeted,
+        r == 1 ? "ok" : "FAILED");
+  }
   director::OnLevelStarted(sim);
   crowd::OnLevelStarted(sim);  // D1k: the server space's constraint solver (minions push each other)
   // the Guardians (MATCH_FLOW §3.1)

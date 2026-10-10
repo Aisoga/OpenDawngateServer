@@ -2,7 +2,7 @@
 
 > **Unofficial fan project.** It is not affiliated with, endorsed by or sponsored by Electronic Arts or Waystone Games. Dawngate is a trademark of its respective owners. This repository contains no game files: get the client yourself from archive.org (<https://archive.org/details/Dawngate>, build 1.0.903.854) and set it up with the release's `Start-Server.exe` (*Play it* below) or as [`docs/PLAYING.md`](docs/PLAYING.md) describes.
 
-> **Not for the open internet.** The server accepts any login (any e-mail and password open or create an account), keeps the accounts in a plain JSON file, and isn't hardened against hostile clients or traffic. Run it for yourself or a group you trust, on a LAN or a private network, never as a public server ([`docs/OPERATORS.md`](docs/OPERATORS.md) says what must never be exposed).
+> **No security: host on the internet only at your own risk.** The server accepts any login (any e-mail and password open or create an account), has no authentication, speaks plain, unencrypted TCP for the game's Blaze connection, writes passwords to its logs as typed, keeps the accounts in a plain JSON file, and isn't hardened against hostile clients or traffic. Run it for yourself or a group you trust, on a LAN or a private network. `Start-Server.exe` can also host on a public IPv4 address, but only after you accept a risk notice (`--i-accept-the-risk`, or `i_accept_the_risk = yes` in `Start-Server.ini`), and you forward the ports yourself; players should use a password they use nowhere else ([`docs/OPERATORS.md`](docs/OPERATORS.md) says what must never be exposed).
 
 ## License
 

@@ -182,8 +182,9 @@ func ResolveProfile(o Options) (server, caveAddress string, err error) {
 	return "", "", errorf("unknown profile %s (local or lan)", pyRepr(profile))
 }
 
-// LANAddress checks an IPv4 address of our own network: not loopback, wildcard, multicast, reserved or public
-// (patch_client.py's lan_address, with Python 3.12's ipaddress rules). It returns the address as written.
+// LANAddress checks the IPv4 address of a server on another machine: not loopback, wildcard, multicast or reserved.
+// A public address is accepted (the operator's own risk, docs/OPERATORS.md); IsPublic tells them apart.
+// patch_client.py's lan_address, with Python 3.12's ipaddress rules. It returns the address as written.
 func LANAddress(text, what string) (string, error) {
 	ip, err := parseIPv4(text)
 	if err != nil {
@@ -194,10 +195,15 @@ func LANAddress(text, what string) (string, error) {
 		return "", errorf("%s %s is loopback; that is the local profile", what, ip)
 	case isUnspecified(ip) || isMulticast(ip) || isReserved(ip):
 		return "", errorf("%s %s is not a host address", what, ip)
-	case isGlobal(ip):
-		return "", errorf("%s %s is a public address; the lan profile is for our own machines only", what, ip)
 	}
 	return ip.String(), nil
+}
+
+// IsPublic says whether text is a public (internet) IPv4 address, by Python 3.12's is_global (the launchers
+// show their risk notices for it).
+func IsPublic(text string) bool {
+	ip, err := parseIPv4(text)
+	return err == nil && !isLoopback(ip) && !isUnspecified(ip) && !isMulticast(ip) && !isReserved(ip) && isGlobal(ip)
 }
 
 // CheckDataSuffix: one ASCII letter or digit (the Documents name has room for one more character).

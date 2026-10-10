@@ -1248,6 +1248,35 @@ bool LaneKnots(int laneId, int team, std::vector<float>* xyz) {
   return false;
 }
 
+bool ClosestCampPosition(float x, float y, float* out) {
+  int best = -1;
+  float bd = 3.0e38f;
+  for (int i = 0; i < static_cast<int>(g_camps.size()); ++i) {
+    const Camp& c = g_camps[i];
+    if (c.parasite || !c.timer.Alive()) continue;
+    bool any = false;
+    for (std::uint32_t id : c.members) {
+      float hp = 0.f;
+      if (SehMemberState(id, &hp, nullptr, nullptr) == 1) {
+        any = true;
+        break;
+      }
+    }
+    if (!any) continue;  // not spawned yet, or cleared and waiting for its respawn
+    const float dx = c.pos[0] - x, dy = c.pos[1] - y;
+    const float d = dx * dx + dy * dy;
+    if (d < bd) {
+      bd = d;
+      best = i;
+    }
+  }
+  if (best < 0) return false;
+  out[0] = g_camps[best].pos[0];
+  out[1] = g_camps[best].pos[1];
+  out[2] = g_camps[best].pos[2];
+  return true;
+}
+
 std::uint32_t ObjectOfMarker(std::uint32_t marker) {
   auto it = g_markerObjects.find(marker);
   return it != g_markerObjects.end() ? it->second : 0;

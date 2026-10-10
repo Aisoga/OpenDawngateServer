@@ -60,6 +60,8 @@ struct Options {
   // D7c: a plain move that meets an attack-move engaged on a target runs at once, as a second move does (the binary
   // defers the first one until the walk-up and the attack are over; core/commands/queue.h); false = the binary's rule
   bool moveTakeover = true;
+  // Sakari's W (commands.cpp kGroundedAbilities): the cast's target position gets the terrain's height instead of z 0.00
+  bool groundCastZ = true;
   bool queueTrace = true;         // D7c: a "queue:" line whenever a human player's command queue changes
   int queueLogLimit = 600;        // D7c: queue trace lines before the trace stops (counted on)
 };

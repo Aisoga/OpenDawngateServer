@@ -101,8 +101,8 @@ func TestServerWithoutContent(t *testing.T) {
 		data string
 		want string
 	}{
-		{t.TempDir(), "content.json (new accounts get no items; build it with --make-content); new accounts: all owned, EC 10000, PC 1000; FTUE done for all: false; perk pages: 10\n"},
-		{"", "[stub] accounts in memory only; no content; new accounts: all owned, EC 10000, PC 1000; FTUE done for all: false; perk pages: 10\n"},
+		{t.TempDir(), "content.json (new accounts get no items; build it with --make-content); new accounts: all owned, EC 10000, PC 1000; FTUE done for all: true; perk pages: 10\n"},
+		{"", "[stub] accounts in memory only; no content; new accounts: all owned, EC 10000, PC 1000; FTUE done for all: true; perk pages: 10\n"},
 	} {
 		logDir := t.TempDir()
 		in, err := start(config{bind: "127.0.0.1", certs: testCerts(t), logDir: logDir, dataDir: c.data, policy: blaze.DefaultPolicy(),

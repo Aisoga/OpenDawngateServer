@@ -38,6 +38,7 @@ gb::BotsState g_state;
 std::vector<Bot> g_bots;
 bool g_planned;
 int g_teamSize = 0;  // the resolved team size (EnsurePlayers)
+bool g_composed = false;  // BOTCOMP: the bots were planned by gms/core/bots/composition.h (for the log)
 
 // Tuning.BotPlan as the server's catalog holds it.
 struct Plan {
@@ -276,7 +277,7 @@ struct CreatedPlayer {
 };
 
 bool SehCreateBot(void* sim, unsigned index, unsigned char team, unsigned long long onlineId, std::uint32_t classId,
-                  CreatedPlayer* out) {
+                  int roleOverride, CreatedPlayer* out) {
   __try {
     void* p = GetPlayerByIndex(sim, index);
     if (!p) p = AddPlayer(sim, index, 0);
@@ -285,6 +286,7 @@ bool SehCreateBot(void* sim, unsigned index, unsigned char team, unsigned long l
     Field<unsigned long long>(p, player::kOnlineId) = onlineId;
     const std::uint32_t id = classId;
     ReflectBotData(p, 0, 0, &id);
+    if (roleOverride >= 0) Field<unsigned char>(p, player::kRole) = static_cast<unsigned char>(roleOverride);  // BOTCOMP
     Field<std::uint32_t>(p, player::kStatus) |= kStatusAccepted | kStatusPicked | kStatusLoaded;
     Field<float>(p, player::kStatusProgress) = 1.0f;
     out->status = Field<std::uint32_t>(p, player::kStatus);
@@ -491,6 +493,21 @@ int __cdecl LuaClosestLane(void* L) {
   return 1;
 }
 
+// nBotHost.ClosestCamp(x, y, z) -> x, y, z of the nearest creep camp with a living creature, or nothing (D6e: backs
+// nDirector.GetClosestCampPosition, whose client stub always answers a static vector)
+int __cdecl LuaClosestCamp(void* L) {
+  if (!Ours()) {
+    ++g_st.calls[5];
+    return 0;
+  }
+  float p[3] = {};
+  if (!director::ClosestCampPosition(SehArgNumber(L, 1), SehArgNumber(L, 2), p)) return 0;
+  SehPushNumber(L, p[0]);
+  SehPushNumber(L, p[1]);
+  SehPushNumber(L, p[2]);
+  return 3;
+}
+
 // nBotHost.LaneCenterAndDirection(lane, team) -> cx, cy, cz, dx, dy, dz, or nothing (the shim's static centre)
 int __cdecl LuaLaneCenterAndDirection(void* L) {
   if (!Ours()) {
@@ -620,6 +637,20 @@ const Bot* BotByCreature(std::uint32_t creature) {
   for (const Bot& b : g_bots)
     if (b.creature && b.creature == creature) return &b;
   return nullptr;
+}
+
+// BOTCOMP: nBotHost.BotRole(obj) -> the bot's mRole (RolesTuning.role index: 0 Gladiator, 1 Tactician, 2 Hunter, 3 Predator),
+// -1 for an object that is no bot of ours.
+int __cdecl LuaBotRole(void* L) {
+  int role = -1;
+  if (Ours()) {
+    const Bot* b = BotByCreature(SehArgId(L, 1));
+    if (b) role = b->role;
+  } else {
+    ++g_st.calls[5];
+  }
+  SehPushNumber(L, static_cast<float>(role));
+  return 1;
 }
 
 std::string DescribeMission(const gb::Mission& m) {
@@ -1116,7 +1147,9 @@ const LuaReg kBotHostRegs[] = {
     {"GetLane", &LuaGetLane},
     {"ClosestLane", &LuaClosestLane},
     {"LaneCenterAndDirection", &LuaLaneCenterAndDirection},
+    {"ClosestCamp", &LuaClosestCamp},
     {"IsFirstTimePlayer", &LuaIsFirstTimePlayer},
+    {"BotRole", &LuaBotRole},  // BOTCOMP
     // D6b
     {"RequestMission", &LuaRequestMission},
     {"IsMissionAvailable", &LuaIsMissionAvailable},
@@ -1186,7 +1219,14 @@ void LoadApi(void* sim) {
   char out[512];
   // D6b: the script fix-ups' switch, read by the chunk (dgsim_bots.config.fixups)
   const std::string pre = std::string("dgsim_bots = dgsim_bots or {} dgsim_bots.fixupsWanted = ") +
-                          (g_opt.fixups ? "true" : "false") + " return 'ok'";
+                          (g_opt.fixups ? "true" : "false") +
+                          " dgsim_bots.parasiteWanted = " + (g_opt.parasiteGuard ? "true" : "false") +
+                          " dgsim_bots.campRadius = " + std::to_string(g_opt.campRadius) +
+                          " dgsim_bots.compositionWanted = " + (g_opt.composition && g_opt.classes.empty() ? "true" : "false") +
+                          " dgsim_bots.harassStartWorkers = " + std::to_string(g_opt.harassStartWorkers) +
+                          " dgsim_bots.harassEndWorkers = " + std::to_string(g_opt.harassEndWorkers) +
+                          " dgsim_bots.hunterGatherAllies = " + std::to_string(g_opt.hunterGatherAllies) +
+                          " dgsim_bots.hunterGank = " + (g_opt.hunterGank ? "true" : "false") + " return 'ok'";
   SehRunLua(sim, pre.c_str(), static_cast<unsigned>(pre.size()), "dgsim_bots_pre", out, sizeof out);
   const bool ok = SehRunLua(sim, chunk.c_str(), static_cast<unsigned>(chunk.size()), "dgsim_bots_api.lua", out, sizeof out);
   Log("bots: dgsim_bots_api.lua (%zu bytes) on the server's lua_State: %s %s", chunk.size(), ok ? "ok" : "FAILED", out);
@@ -1255,15 +1295,31 @@ void Configure(const Options& o) {
   g_opt.potions = HostOptionInt("bot_potions", o.potions);
   g_opt.fireTracker = HostOptionInt("bot_fire_tracker", o.fireTracker ? 1 : 0) != 0;
   g_opt.fixups = HostOptionInt("bot_fixups", o.fixups ? 1 : 0) != 0;
+  g_opt.parasiteGuard = HostOptionInt("bot_parasite_guard", o.parasiteGuard ? 1 : 0) != 0;
+  g_opt.campRadius = HostOptionInt("bot_camp_radius", o.campRadius);  // BOTIDLE: fix-up 5, 0 = the script's 5
+  // BOTCOMP: the preferred 5v5 setup and the Predator's and Hunter's rules
+  g_opt.composition = HostOptionInt("bot_composition", o.composition ? 1 : 0) != 0;
+  {
+    char drop[128];
+    HostOptionString("bot_composition_drop", o.compositionDrop.c_str(), drop, sizeof drop);
+    g_opt.compositionDrop = drop;
+  }
+  g_opt.harassStartWorkers = HostOptionInt("bot_harass_start_workers", o.harassStartWorkers);
+  g_opt.harassEndWorkers = HostOptionInt("bot_harass_end_workers", o.harassEndWorkers);
+  g_opt.hunterGatherAllies = HostOptionInt("bot_hunter_gather_allies", o.hunterGatherAllies);
+  g_opt.hunterGank = HostOptionInt("bot_hunter_gank", o.hunterGank) != 0 ? 1 : 0;
   if (g_opt.missionMs < 100) g_opt.missionMs = 100;
   Log("bots (D6a, D6b): bots %d%s, allies %d, classes '%s', lua %d, lanes %d, ftue %d, log limit %d; missions %d (every "
-      "%d ms), shopping %d (potions %d), fire tracker %d, script fix-ups %d",
+      "%d ms), shopping %d (potions %d), fire tracker %d, script fix-ups %d; BOTCOMP composition %d (drop '%s'), harass "
+      "workers %d..%d, Hunter parasite allies %d, Hunter gank %d",
       g_opt.teamSize,
       g_opt.teamSize < 0
           ? " (auto: createGame's fillTeams a team, else 5 a team when the game's descriptors have BotsFillTeams 0x400)"
           : "",
       g_opt.allies, g_opt.classes.c_str(), g_opt.lua, g_opt.lanes, g_opt.ftue, g_opt.logLimit, g_opt.missions,
-      g_opt.missionMs, g_opt.shopping, g_opt.potions, g_opt.fireTracker, g_opt.fixups);
+      g_opt.missionMs, g_opt.shopping, g_opt.potions, g_opt.fireTracker, g_opt.fixups, g_opt.composition,
+      g_opt.compositionDrop.c_str(), g_opt.harassStartWorkers, g_opt.harassEndWorkers, g_opt.hunterGatherAllies,
+      g_opt.hunterGank);
 }
 
 void SetFillTeams(int seats) {
@@ -1316,6 +1372,7 @@ const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& human
     gb::HumanPlayer p;
     p.index = h.index;
     p.team = h.team;
+    p.role = h.role;
     ShaperTypeOfNoun(h.noun, &p.shaper);
     hs.push_back(p);
     char buf[160];
@@ -1335,8 +1392,36 @@ const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& human
   // G3b: a roster human that hasn't connected yet counts for its team (CountedHumans) and keeps its index
   const std::vector<gb::HumanPlayer> counted = gb::CountedHumans(hs, ws);
   const std::vector<int> teams = gb::BotTeams(counted, g_opt.allies);
-  const std::vector<gb::BotPlayer> plan =
-      gb::PlanBotPlayers(g_plan.slots, g_plan.bots, counted, g_teamSize, teams, g_plan.topLaners, g_plan.botLaners);
+  std::vector<gb::BotPlayer> plan;
+  g_composed = g_opt.composition && g_opt.classes.empty();  // [host] bot_classes overrides the setup
+  if (g_composed) {
+    // BOTCOMP: the BotClass assets the setup may use: the role lists' names and the
+    // plan's own bots as the any-class fallback
+    std::set<std::string> available;
+    std::vector<std::string> anyClass;
+    std::vector<std::string> names;
+    for (int role = 0; role < 4; ++role)
+      for (const gb::ClassChoice& c : gb::ClassPreference(role)) names.push_back(c.botClass);
+    for (const gb::BotCandidate& c : g_plan.bots) {
+      names.push_back(c.botClass);
+      anyClass.push_back(c.botClass);
+    }
+    for (const std::string& n : names) {
+      if (available.count(n)) continue;
+      void* a = SehAsset(gms::AssetIdOf(n + ".BotClass"));
+      if (!a) {
+        Log("bots: BOTCOMP: %s.BotClass not in the catalog", n.c_str());
+        continue;
+      }
+      g_classIds[n] = SehAssetId(a);
+      available.insert(n);
+    }
+    plan = gb::PlanBotPlayersComposed(counted, g_teamSize, teams, available, anyClass, gb::ParseDropOrder(g_opt.compositionDrop));
+    for (const gb::HumanPlayer& h : counted)
+      Log("bots: BOTCOMP: human index %d team %d: role %s", h.index, h.team, gb::RoleName(h.role));
+  } else {
+    plan = gb::PlanBotPlayers(g_plan.slots, g_plan.bots, counted, g_teamSize, teams, g_plan.topLaners, g_plan.botLaners);
+  }
   Log("bots: team fill (team size %d from %s, descriptors 0x%X): humans%s; waiting roster humans (G3b: counted for "
       "their teams)%s; %zu bot(s)",
       g_teamSize,
@@ -1352,17 +1437,18 @@ const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& human
     const std::uint32_t classId = g_classIds.count(p.botClass) ? g_classIds[p.botClass] : 0;
     CreatedPlayer cp = {};
     bot.created = classId != 0 && SehCreateBot(sim, static_cast<unsigned>(p.index), static_cast<unsigned char>(p.team),
-                                               p.onlineId, classId, &cp);
+                                               p.onlineId, classId, p.roleOverride ? p.role : -1, &cp);
     bot.status = cp.status;
     bot.noun = SehAssetId(cp.noun);
     bot.role = cp.role;
     if (bot.created) ++g_st.created;
     else ++g_st.createFailed;
     Log("bots: player %d: %s (asset %08X), team %d, slot %d, first lane %d, online id %llu -> %s: mbIsBot %d, noun %s, "
-        "role %d, status 0x%x",
+        "role %d%s, status 0x%x",
         p.index, p.botClass.c_str(), classId, p.team, p.slot, p.lane, static_cast<unsigned long long>(p.onlineId),
         bot.created ? "GameSimulator_AddPlayer + LabsPlayer_ReflectBotData" : "FAILED", cp.isBot, SehAssetName(cp.noun),
-        cp.role, cp.status);
+        cp.role, p.roleOverride ? " (BOTCOMP: the setup's Predator on this BotClass)" : g_composed ? " (BOTCOMP)" : "",
+        cp.status);
     if (bot.created) g_bots.push_back(bot);
   }
   return g_bots;

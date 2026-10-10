@@ -47,7 +47,7 @@
 //	    [--blaze-port 10041] [--qos-port 17502] [--http-port 18080]
 //	    [--telemetry-port 9988] [--gms-port 10042] [--gms-external] [--www DIR] [--certs DIR] [--log DIR]
 //	    [--seconds N] [--data DIR] [--content FILE] [--owned all|starter] [--start-ec N] [--start-pc N]
-//	    [--ftue-done] [--perk-pages 10] [--print-ports]
+//	    [--ftue-required] [--perk-pages 10] [--print-ports]
 //	    [--gms-dir DIR [--gms-args "-multipleInstances"] [--gms-ports 10042-10051] [--gms-data DIR]
 //	    [--gms-options "key=value;..."] [--gms-warm N]]
 //	    [--agent-key FILE] [--gms-control-bind 127.0.0.1] [--gms-control-port 10040]
@@ -90,8 +90,9 @@
 // folder (client\ia_Dawngate\Dawngate: its game\Data\AssetData.snap and Locale\en-us\Locale.package; the
 // same bytes) and exits; without it the server
 // runs as before B7a (no items, empty store). New accounts get the inventory of --owned, the
-// currencies --start-ec/--start-pc and the lowest-catalogID avatar; --ftue-done gives every account the
-// "first-time-user experience done" flag, so PLAY opens the normal play screen (docs/BLAZE.md, B7a).
+// currencies --start-ec/--start-pc and the lowest-catalogID avatar; every account has the
+// "first-time-user experience done" flag, so PLAY opens the normal play screen; --ftue-required
+// restores the original's Practice-only first screen.
 // Since B7c accounts keep perk pages (at most --perk-pages), purchases and their commerce profile, and a
 // finished hosted game stores PlayerStats, XP, level, wins and its rewards (docs/BLAZE.md *Progression
 // (B7c)*).

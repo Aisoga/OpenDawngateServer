@@ -21,9 +21,11 @@
 #pragma once
 
 #include <cstdint>
+#include <set>
 #include <string>
 #include <vector>
 
+#include "core/bots/composition.h"
 #include "core/bots/lanes.h"  // LaneId
 
 namespace gms::bots {
@@ -148,6 +150,7 @@ struct HumanPlayer {
   int index = -1;
   int team = 0;
   ShaperType shaper;
+  int role = -1;  // BOTCOMP: its mRole when known (picked), else -1
 };
 
 // One bot player of the match.
@@ -158,6 +161,8 @@ struct BotPlayer {
   std::string botClass;    // the BotClass asset's name (PC_<Shaper>)
   int lane = kLaneNone;    // the first lane (FillTeam)
   std::uint64_t onlineId = 0;
+  int role = -1;           // BOTCOMP: the composition's role (mRole is set to it when roleOverride), -1 = the BotClass's
+  bool roleOverride = false;
 };
 
 constexpr int kMaxPlayerIndexes = 10;  // gameplay indexes 0-9 (10-14 are spectators)
@@ -193,6 +198,50 @@ inline std::vector<BotPlayer> PlanBotPlayers(const std::vector<Slot>& slots, con
       b.botClass = s.botClass;
       b.lane = s.lane;
       b.onlineId = static_cast<std::uint64_t>(index) + 1;
+      out.push_back(b);
+    }
+  }
+  return out;
+}
+
+// BOTCOMP: the same with composition.h's setup per team: each team's bot seats are teamSize minus its humans; a human
+// of known role takes that role off the list (`WantedSeats`), the class per seat comes from `ComposeTeam`. A seat that
+// finds no class (none available) is left out. `slot` is the seat's position in the team's wanted list.
+inline std::vector<BotPlayer> PlanBotPlayersComposed(const std::vector<HumanPlayer>& humans, int teamSize,
+                                                     const std::vector<int>& teams, const std::set<std::string>& available,
+                                                     const std::vector<std::string>& anyClass,
+                                                     const std::vector<int>& dropOrder, unsigned reserved = 0) {
+  unsigned taken = reserved;
+  for (const HumanPlayer& h : humans)
+    if (h.index >= 0 && h.index < kMaxPlayerIndexes) taken |= 1u << h.index;
+  std::vector<BotPlayer> out;
+  for (int team : teams) {
+    std::vector<int> roles;
+    int mineCount = 0;
+    for (const HumanPlayer& h : humans)
+      if (h.team == team) {
+        roles.push_back(h.role);
+        ++mineCount;
+      }
+    const std::vector<ComposedSeat> seats = ComposeTeam(WantedSeats(teamSize - mineCount, roles, dropOrder), available, anyClass);
+    int slot = 0;
+    for (const ComposedSeat& s : seats) {
+      const int seatSlot = slot++;
+      if (s.botClass.empty()) continue;
+      int index = -1;
+      for (int i = 0; i < kMaxPlayerIndexes && index < 0; ++i)
+        if (!(taken & (1u << i))) index = i;
+      if (index < 0) return out;
+      taken |= 1u << index;
+      BotPlayer b;
+      b.index = index;
+      b.team = team;
+      b.slot = seatSlot;
+      b.botClass = s.botClass;
+      b.lane = s.lane;
+      b.onlineId = static_cast<std::uint64_t>(index) + 1;
+      b.role = s.role;
+      b.roleOverride = s.roleOverride;
       out.push_back(b);
     }
   }

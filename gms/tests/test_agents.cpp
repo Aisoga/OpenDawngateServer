@@ -2,6 +2,7 @@
 #include <vector>
 
 #include "core/agents/aggro.h"
+#include "core/agents/minion_target.h"
 #include "tests/check.h"
 
 using gms::agents::AggroCandidate;
@@ -106,4 +107,53 @@ GMS_TEST(AggroKeepByRange) {
   CHECK(KeepByRange(true, 41.f, 33.f, true));
   CHECK(KeepByRange(true, 80.f, 33.f, false));
   CHECK_EQ(static_cast<int>(gms::agents::kEntryFlagBaseStructure), 1);
+}
+
+// ---- MINTARGET: lane minions and shapers ----
+
+GMS_TEST(MinionTargetOrderNonPlayersBeforeSticky) {
+  using namespace gms::agents;
+  AggroCandidate shaper = Cand(1, 3.f, 0);
+  shaper.isPlayer = true;
+  shaper.sticky = true;
+  shaper.playerReportAgeMs = 100;
+  AggroCandidate tower = Cand(2, 19.f, 1);
+  std::vector<AggroCandidate> v = {shaper, tower};
+  OrderAggro(&v, kAggroMinion);  // the old rule: a sticky/reported shaper stays first
+  CHECK(Ids(v) == (std::vector<unsigned>{1, 2}));
+  OrderAggro(&v, kAggroMinion, kCallForHelpTimeMs, true);
+  CHECK(Ids(v) == (std::vector<unsigned>{2, 1}));
+  v[1].defend = true;  // the defended shaper goes first
+  OrderAggro(&v, kAggroMinion, kCallForHelpTimeMs, true);
+  CHECK(Ids(v) == (std::vector<unsigned>{1, 2}));
+  AggroCandidate taunt = Cand(3, 30.f, 2);
+  taunt.taunting = true;
+  taunt.isPlayer = true;
+  v.push_back(taunt);
+  OrderAggro(&v, kAggroMinion, kCallForHelpTimeMs, true);
+  CHECK(v[0].id == 3);
+}
+
+GMS_TEST(MinionTargetShaperAllowed) {
+  using namespace gms::agents;
+  MinionTargetOptions o;
+  CHECK(ShaperAllowed(o, false, 10.f, false, false));  // nothing else in range
+  CHECK(!ShaperAllowed(o, false, 10.f, true, false));  // a minion/tower in range
+  CHECK(ShaperAllowed(o, false, 10.f, true, true));    // defending an own shaper
+  CHECK(!ShaperAllowed(o, false, 26.f, false, true));  // beyond the leash: dropped even then
+  CHECK(ShaperAllowed(o, false, 25.f, false, false));
+  CHECK(ShaperAllowed(o, true, 40.f, true, false));    // a taunt holds
+  o.enabled = false;
+  CHECK(ShaperAllowed(o, false, 40.f, true, false));   // the old behaviour
+}
+
+GMS_TEST(MinionTargetShaperHitLog) {
+  gms::agents::ShaperHitLog log;
+  log.Record(7, 9, 1000);
+  CHECK(log.Attacked(7, 9, 3500, 2500));
+  CHECK(!log.Attacked(7, 9, 3501, 2500));  // window over
+  CHECK(!log.Attacked(8, 9, 1500, 2500));  // another attacker
+  CHECK(!log.Attacked(7, 10, 1500, 2500));
+  log.Record(8, 9, 2000);                  // the latest hit replaces the earlier one
+  CHECK(log.Attacked(8, 9, 2500, 2500) && !log.Attacked(7, 9, 2500, 2500));
 }

@@ -588,7 +588,8 @@ func Run(args []string, h Hooks) int {
 	fs.StringVar(&cfg.policy.Owned, "owned", cfg.policy.Owned, `inventory of new accounts: "all" or "starter"`)
 	startEC := fs.Uint("start-ec", uint(cfg.policy.StartEC), "earned currency (Destiny) of new accounts")
 	startPC := fs.Uint("start-pc", uint(cfg.policy.StartPC), "paid currency (Waypoints) of new accounts")
-	fs.BoolVar(&cfg.policy.FTUEDone, "ftue-done", false, "every account is past the first-time-user (Practice-only) gate")
+	fs.BoolVar(&cfg.policy.FTUEDone, "ftue-done", cfg.policy.FTUEDone, "every account is past the first-time-user (Practice-only) gate (the default; kept for old command lines)")
+	ftueRequired := fs.Bool("ftue-required", false, "the original's first-time-user gate: a new account sees the Practice-only screen until its FTUE flag is set (off by default)")
 	perkPages := fs.Uint("perk-pages", uint(cfg.policy.PerkPages), "the most perk pages an account can have (the loadout page's STCK; B7c)")
 	fs.BoolVar(&cfg.policy.SpentElsewhere, "test-spent-elsewhere", false, "test aid (B7c-live): every purchase finds its currency's balance spent elsewhere (set to 0) and is refused for insufficient funds")
 	cfg.mm = blaze.DefaultMatchmaking()
@@ -633,6 +634,9 @@ func Run(args []string, h Hooks) int {
 		return 2
 	}
 	cfg.policy.PerkPages = uint32(*perkPages)
+	if *ftueRequired {
+		cfg.policy.FTUEDone = false
+	}
 	for _, n := range strings.Split(*freeRotation, ",") {
 		if n = strings.TrimSpace(n); n != "" {
 			cfg.shaperSelect.FreeRotation = append(cfg.shaperSelect.FreeRotation, n)

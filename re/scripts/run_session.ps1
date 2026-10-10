@@ -92,7 +92,7 @@
   a game: dgserver ends the match as aborted and sends NotifyPlayerRemoved GAME_DESTROYED).
   -ServerArgs '<dgserver flags>' (D8-live, a test aid) adds flags to dgserver's command line, split at blanks, e.g.
   '--owned starter' (new accounts own only the starter items, so a post-game's loot is not a duplicate) or
-  '--ftue-done' (every account past the Practice-only gate, B7b); they come after the script's own flags, so a flag
+  '--ftue-required' (the original's Practice-only gate for new accounts; every account is past it by default); they come after the script's own flags, so a flag
   given twice takes this value. The summary's 'server' line shows them with dgserver's accounts and content line.
   -FreshData (B7b) gives dgserver an empty accounts folder of this session's own (re\logs\<Name>\data, with the content
   file of the main checkout's server\data\content.json), so every login is a fresh account and nothing is kept in the

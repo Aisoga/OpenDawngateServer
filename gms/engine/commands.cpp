@@ -34,6 +34,7 @@ constexpr unsigned kMaxPlayers = 10;
 constexpr int kGoldSourceCheat = 13;  // nGoldSourceType.Cheat (GlobalDefinitions.lua; death::GrantGold takes Lua's)
 
 Options g_opt;
+int g_groundLogged;  // the first lines of the ground cast
 bool g_installed;
 void* g_sim;  // the server simulator the stub detour serves (set by every entry point)
 std::vector<Answer> g_answers;
@@ -146,6 +147,34 @@ std::uint16_t SehKnownMask(void* object) {
 
 // ServerCommand_Init, the fields of the proposal's conversion (SERVER_MODE.md *Proposal for gms/*), then
 // ServerCommandQueue_QueueCommand(index, &cmd, tickNow 1). `rank` gets what went into +0x28.
+// Sakari's W (ability_SnowQueen_W_Forcefield, 1F827AC1) puts an object without locomotion (and the client's ghost, through
+// forcefieldLocation) at the cast's target position, and the client sends that point at z 0.00 (aim z 0.70) like every
+// server object has, while the client's terrain is higher there (level objects stand at z 1 to 12): the iceberg and the
+// ghost sank into the ground. The cast's target position gets the terrain's height at its x, y
+// (nLocomotion.GetTerrainHeightAtPosition's own call) [host] ground_cast_z (1). Nothing else is changed.
+constexpr std::uint32_t kGroundedAbilities[] = {0x1F827AC1u};
+
+// 1 grounded, 0 not one of these abilities or no height, -2 exception.
+int SehGroundCast(void* sim, void* player, const gms::ActionCommand& c, float* z) {
+  __try {
+    std::uint32_t guid = c.slot != -1 ? GetAbilityInSlot(player, c.slot, 0) : c.guid;
+    bool wanted = false;
+    for (std::uint32_t g : kGroundedAbilities) wanted = wanted || g == guid;
+    if (!wanted || !sim) return 0;
+    void* ground = Field<void*>(sim, sim::kGround);
+    if (!ground) return 0;
+    using HeightFn = float(__thiscall*)(void*, const float*);
+    const HeightFn fn = reinterpret_cast<HeightFn*>(*reinterpret_cast<void**>(ground))[1];
+    const float at[3] = {c.targetPos.x, c.targetPos.y, c.targetPos.z};
+    const float h = fn(ground, at);
+    if (!(h > -50.f && h < 200.f)) return 0;  // NaN, or not a height
+    *z = h;
+    return 1;
+  } __except (SehNote(GetExceptionInformation(), "GroundCast")) {
+    return -2;
+  }
+}
+
 bool SehQueue(unsigned index, void* player, const gms::ActionCommand& c, int* rank) {
   __try {
     alignas(8) unsigned char cmd[kServerCommandSize];
@@ -161,6 +190,20 @@ bool SehQueue(unsigned index, void* player, const gms::ActionCommand& c, int* ra
     } else if (c.type == gms::kCmdAbility) {
       Field<std::uint32_t>(cmd, scmd::kTarget) = c.target;
       std::memcpy(cmd + scmd::kTargetPos, &c.targetPos, 12);
+      if (g_opt.groundCastZ && c.targetPos.z == 0.f) {
+        float z = 0.f;
+        const int gr = SehGroundCast(g_sim, player, c, &z);
+        if (gr == 1) {
+          Field<float>(cmd, scmd::kTargetPos + 8) = z;
+          if (g_groundLogged < 6) {
+            ++g_groundLogged;
+            Log("commands: ground cast (ability %08X): target pos (%.2f, %.2f) z 0.00 -> %.3f", c.guid, c.targetPos.x,
+                c.targetPos.y, z);
+          }
+        } else if (gr < 0) {
+          Log("commands: ground cast: EXCEPTION (the target position stays)");
+        }
+      }
       std::memcpy(cmd + scmd::kPosition, &c.aim, 12);  // [assumed: nothing in the server reads +0x10 for abilities]
       if (c.slot != -1) ServerCommandSetSlot(cmd, c.slot);
       else ServerCommandSetGuid(cmd, static_cast<int>(c.guid));

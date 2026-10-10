@@ -133,6 +133,38 @@ void ActivateRole(void* sim, unsigned index, const char* why) {
       r.modifier);
 }
 
+// The modifiers a passive grants once, from its own Tick, that end at the death while the passive itself survives it
+// (deactivationType OnAgentDestroyed), so no respawn restarts that Tick: Sakari's modifier_SnowQueen_Passive (93480BB0)
+// requests modifier_SnowQueen_W_Feedback (F69737A6, OnAgentDeath: the client's W ghost, its snap to the live icebergs and
+// the cast position) once, and OnRevive renews only the crystals and the ammo, so after her first death the ghost and the
+// snapping were gone for the match (the host log: "modifier ... W_Feedback ended" at the death, then "passive already
+// active" at the respawn). The host renews them at a respawn, as the Tick's request would.
+struct Renewal {
+  std::uint32_t passive, modifier;
+};
+const Renewal kRenewals[] = {{0x93480BB0u, 0xF69737A6u}};
+
+// 1 renewed, 0 nothing to do (no entry, or it is active), -1 refused, -2 exception.
+int SehRenew(void* sim, unsigned index, std::uint32_t passive, std::uint32_t* creatureId, std::uint32_t* modifier) {
+  __try {
+    int rc = 0;
+    for (const Renewal& e : kRenewals) {
+      if (e.passive != passive) continue;
+      void* player = GetPlayerByIndex(sim, index);
+      if (!player) return 0;
+      *creatureId = Field<std::uint32_t>(player, player::kCurrentCreature);
+      void* creature = *creatureId ? GetObjectById(*creatureId) : nullptr;
+      void* st = FindStaticAbility(e.modifier);
+      if (!creature || !st || HasInstanceOf(creature, st)) return 0;
+      *modifier = ActivateFromDefinition(e.modifier, *creatureId, *creatureId, 0, 1, 0.f, 0.f, 0.f, 0);
+      rc = *modifier ? 1 : -1;
+    }
+    return rc;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return -2;
+  }
+}
+
 }  // namespace
 
 std::uint32_t Activate(void* sim, unsigned index, const char* why) {
@@ -154,6 +186,13 @@ std::uint32_t Activate(void* sim, unsigned index, const char* why) {
       r.guid,
       rc == 1 ? "activated" : rc == 0 ? (r.had ? "already active" : "no passive") : rc == -1 ? "REFUSED" : "EXCEPTION",
       r.modifier);
+  if (rc == 0 && r.had && std::strcmp(why, "respawn") == 0) {
+    std::uint32_t creatureId = 0, mod = 0;
+    const int rr = SehRenew(sim, index, r.guid, &creatureId, &mod);
+    if (rr != 0)
+      Log("passives: player %u's creature %08X at the respawn: %s's companion modifier renewed -> %s (modifier %08X)",
+          index, creatureId, r.name, rr == 1 ? "activated" : rr == -1 ? "REFUSED" : "EXCEPTION", mod);
+  }
   return rc == 1 ? r.modifier : 0;
 }
 

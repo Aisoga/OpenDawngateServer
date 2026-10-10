@@ -19,6 +19,14 @@ local ok, err = pcall(function()
     p('d15 heal: no shaper for player 0')
     return
   end
+  -- D15-live: run it twice, 1 s apart. The first run (phase 'hit') hits every enemy once as player 0 and stops; the
+  -- second (phase 'measure') heals them: the Mortal Strike modifier's Tick adds the reduction a frame after the request.
+  -- dgsim_d15_heal_twice = false keeps the single-run behaviour.
+  if dgsim_d15_heal_twice ~= false then
+    if dgsim_d15_heal_phase ~= 'hit' then dgsim_d15_heal_phase = 'hit' else dgsim_d15_heal_phase = 'measure' end
+  else
+    dgsim_d15_heal_phase = 'measure'
+  end
   local amount = dgsim_d15_heal_amount or 100
   local mortal = nUtil.SPID('modifier_StatusEffect_MortalStrike')
   local quiet = nDescriptors.IsTrueDamage
@@ -32,8 +40,16 @@ local ok, err = pcall(function()
   for _, id in ipairs(ids or {}) do
     if nGameObject.IsAlive(id) then
       n = n + 1
+      if dgsim_d15_heal_phase == 'hit' then
+        -- D15-live: Mortal Strike lasts 3 s and the basic attacks kill the dummies, so hit each one once as player 0
+        -- (a true-damage point from the shaper's snapshot: the items' OnDealtDamage runs) before measuring
+        local ps = nAttribute.CreateAttributeSnapshot_FromObject(shaper, kObjIDNone)
+        nGameObject.TakeDamage(ps, id, 1, 0, nDescriptors.IsTrueDamage, kZeroVector)
+        nAttribute.RemoveAttributeSnapshot(ps)
+        p('d15 heal: hit', tostring(id), nGameObject.GetAssetName(id), 'by player 0 (phase hit)')
+      else
       local snap = nAttribute.CreateAttributeSnapshot_FromObject(id, kObjIDNone)
-      if nGameObject.GetHitPoints(id) >= nGameObject.GetMaxHitPoints(id) then
+      if nGameObject.GetMaxHitPoints(id) - nGameObject.GetHitPoints(id) < amount + 1 then
         nGameObject.TakeDamage(snap, id, 150, 0, quiet, kZeroVector)
       end
       local reduction = nAttribute.GetAttributeValue(id, nAttributeType.HealingReduction)
@@ -45,6 +61,7 @@ local ok, err = pcall(function()
       p('d15 heal:', tostring(id), nGameObject.GetAssetName(id), 'HealingReduction', f2(reduction), 'Mortal Strike',
         tostring(mod ~= nil and mod ~= kObjIDNone), 'heal', amount, '-> healed', f2(healed), '(expected',
         f2(amount * (1 - reduction)) .. ')')
+      end
     end
   end
   p('d15 heal:', n, 'enemies checked at match time', f2(nGameSimulator.GetMatchTime()))

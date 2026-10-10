@@ -31,8 +31,18 @@ const ServerConfigText = `; Start-Server.ini: the options of Start-Server.exe. S
 ;   127.0.0.1      this PC only: you play here with Start-Client.exe (the default)
 ;   a LAN address  this PC's address in your home network (e.g. 192.168.1.20): players on other machines
 ;                  start Start-Client.exe with that address (README.txt, "Playing over your network").
-;                  Never an internet address: the server accepts any login and isn't hardened.
+;   a public one   your internet address, for players anywhere: USE AT YOUR OWN RISK. The server accepts any
+;                  login, isn't encrypted and isn't hardened (OPERATORS.md). It starts only with the
+;                  acknowledgement below, and you forward the ports on your router yourself.
 address = 127.0.0.1
+
+; Only for a public address behind a router: the address of this PC that the server listens on (its LAN address),
+; while "address" is the public one players use. Empty: the server listens on "address" itself.
+bind =
+
+; A public address needs your explicit acknowledgement that you have read the risk notice Start-Server prints:
+; yes, or the flag  Start-Server.exe --i-accept-the-risk
+i_accept_the_risk = no
 
 ; Shaper select before every match: on, or off (then everyone plays Fenmore).
 shaper_select = on
@@ -53,7 +63,7 @@ server_flags =
 // manifest is the build the setup expects (nil: build 854); the tests set a synthetic one.
 var manifest *archive.Manifest
 
-var serverKeys = []string{"address", "shaper_select", "folder", "zip", "server_flags"}
+var serverKeys = []string{"address", "bind", RiskAckKey, "shaper_select", "folder", "zip", "server_flags"}
 
 // IO is where a launcher talks: the console normally, buffers in tests.
 type IO struct {
@@ -113,6 +123,7 @@ func RunServer(args []string, o IO) int {
 	seconds := fs.Int("seconds", 0, "stop the server after N seconds (tests)")
 	hostDir := fs.String("host-files", "", `the folder with dgsim.dll and lua\ (default: host\ next to this program)`)
 	zipFlag := fs.String("zip", "", "Dawngate.zip (instead of the config file's zip)")
+	riskFlag := fs.Bool(RiskAckFlag, false, "accept the risk of a server on a public address (needed to start one)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -139,6 +150,17 @@ func RunServer(args []string, o IO) int {
 	if address == "" {
 		address = setup.Local
 	}
+	bindAddr := cfg["bind"]
+	if bindAddr == "" {
+		bindAddr = address
+	} else if _, err := setup.ClientOptions(bindAddr); err != nil {
+		return o.fail("%s: bind = %s: %v", path, bindAddr, err)
+	}
+	riskOK, err := cfg.Bool(RiskAckKey, false)
+	if err != nil {
+		return o.fail("%s: %v", path, err)
+	}
+	riskOK = riskOK || *riskFlag
 	shaperSelect, err := cfg.Bool("shaper_select", true)
 	if err != nil {
 		return o.fail("%s: %v", path, err)
@@ -155,10 +177,19 @@ func RunServer(args []string, o IO) int {
 	if _, err := setup.ClientOptions(address); err != nil {
 		return o.fail("%s: address = %s: %v", path, address, err)
 	}
+	public := IsPublicAddress(address)
+	if public {
+		ServerRiskNotice(o.Out, address)
+		if !riskOK && !*check && !*setupOnly {
+			ServerRiskRefusal(o.Out, path)
+			return o.fail("%s: address = %s is a public address and the risk is not accepted.", path, address)
+		}
+	}
 	if !*check {
-		if err := thisMachine(address); err != nil {
-			return o.fail("%s: address = %s is not an address of this PC (%v): use 127.0.0.1, or this PC's LAN "+
-				"address (ipconfig shows it as IPv4 Address)", path, address, err)
+		if err := thisMachine(bindAddr); err != nil {
+			return o.fail("%s: %s is not an address of this PC (%v): use 127.0.0.1, or this PC's LAN address "+
+				"(ipconfig shows it as IPv4 Address). Behind a router with a public address, set address to the "+
+				"public one and bind to this PC's LAN address.", path, bindAddr, err)
 		}
 	}
 	hostFiles := *hostDir
@@ -172,7 +203,7 @@ func RunServer(args []string, o IO) int {
 	}
 
 	if !*check && !*setupOnly { // before the setup: a second Start-Server must not touch the copies of a running one
-		held := HeldPorts(address, ServerPorts[:len(ServerPorts)-1])
+		held := HeldPorts(bindAddr, ServerPorts[:len(ServerPorts)-1])
 		held = append(held, HeldPorts(ControlBind(address), ServerPorts[len(ServerPorts)-1:])...)
 		if len(held) > 0 {
 			return o.fail("Another program holds the server's ports on %s:\n  %s\nIs a server already running (another "+
@@ -183,6 +214,9 @@ func RunServer(args []string, o IO) int {
 	where := "this PC only"
 	if !net.ParseIP(address).IsLoopback() {
 		where = "players on your network connect to it"
+		if public {
+			where = "PUBLIC: players on the internet connect to it, at your own risk"
+		}
 	}
 	fmt.Fprintf(o.Out, "  folder   %s\n  address  %s (%s)\n\n", root, address, where)
 	if *check {
@@ -220,6 +254,9 @@ func RunServer(args []string, o IO) int {
 	}
 
 	flags := ServerFlags(l, address, shaperSelect, SplitFlags(cfg["server_flags"]))
+	if bindAddr != address {
+		flags = append(flags, "--bind", bindAddr) // later wins: listen on this PC's address, announce the public one
+	}
 	if *seconds > 0 {
 		flags = append(flags, fmt.Sprintf("--seconds=%d", *seconds))
 	}
@@ -232,7 +269,12 @@ func RunServer(args []string, o IO) int {
 		} else {
 			fmt.Fprintf(o.Out, "  Players start Start-Client.exe %s (you too, on this PC: just Start-Client.exe).\n", address)
 			fmt.Fprintf(o.Out, "  The first time, they are shown the server's fingerprint: it must be %s.\n", info.CAFingerprint)
-			fmt.Fprintln(o.Out, "  If Windows asks whether the server may use the network, allow it for private networks.")
+			if public {
+				fmt.Fprintln(o.Out, "  If Windows asks whether the server may use the network, allow it, and forward the ports listed")
+				fmt.Fprintln(o.Out, "  above on your router. Your use is at your own risk.")
+			} else {
+				fmt.Fprintln(o.Out, "  If Windows asks whether the server may use the network, allow it for private networks.")
+			}
 		}
 		fmt.Fprintf(o.Out, "  Log in with any e-mail and password (the first login creates the account).\n")
 		fmt.Fprintf(o.Out, "  Logs: %s\n", l.Logs())

@@ -62,6 +62,14 @@ struct Options {
   int potions = 2;
   bool fireTracker = true;
   bool fixups = true;
+  bool parasiteGuard = true;  // BOTPARA: dgsim_bots_api.lua's fourth fix-up (the parasite missions)
+  bool composition = true;    // BOTCOMP: the preferred 5v5 setup (2 Gladiators, Tactician, Predator, Hunter); 0 = Tuning.BotPlan's fill
+  std::string compositionDrop = "predator,hunter,tactician,gladiator";  // BOTCOMP: the roles' order of giving up a seat
+  int harassStartWorkers = 4; // BOTCOMP: a well's workers above which the Predator may harass it (the script's HarassWell: 16)
+  int harassEndWorkers = 2;   // BOTCOMP: ... and below which the harass ends (the script's 4)
+  int hunterGatherAllies = 3; // BOTCOMP: other allied shapers at the rally point before the Hunter joins the parasite
+  int hunterGank = 0;         // BOTCOMP: 1 keeps the Hunter's Gank plan (a trap: it never leaves it)
+  int campRadius = 9;         // BOTIDLE: dgsim_bots_api.lua's fifth fix-up: IsNearNextCreepCamp's radius (the script's 5; 0 = keep it)
 };
 
 void Configure(const Options& o);
@@ -80,6 +88,7 @@ struct Human {
   int index = -1;
   int team = 0;
   void* noun = nullptr;
+  int role = -1;  // BOTCOMP: its mRole when it has picked (shaper select), else -1 (unknown)
 };
 
 struct Bot {

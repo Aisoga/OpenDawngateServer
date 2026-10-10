@@ -37,6 +37,7 @@
 #include "banter.h"
 #include "bots.h"
 #include "components.h"
+#include "volumes.h"
 #include "crowd.h"
 #include "damage.h"
 #include "death.h"
@@ -524,6 +525,7 @@ void StepCreate() {
   death::SetSim(s);
   regen::SetSim(s);
   components::SetSim(s);  // D1j
+  volumes::SetSim(s);     // D12c
   Log("create: simulator %p constructed, object manager %p (vtable %08X); running Init with it bound", s, om, Field<unsigned>(om, 0));
   g_prevSim = GetCurrentSim();
   SetCurrentSim(s);
@@ -592,6 +594,7 @@ void CountLua() { g_luaThreads = CountLuaThreads(); }
 void TickLocomotion() { LocomotionTick(0, 0); }
 void TickProjectiles() { ProjectileTick(); }
 void TickWorld() {
+  volumes::Tick();  // D12c: attached trigger volumes follow their owners before the world's trigger step
   void* world = static_cast<char*>(g_sim) + sim::kWorld;
   WorldTickFn fn = reinterpret_cast<WorldTickFn>((*static_cast<void***>(world))[3]);
   fn(world, GetDt(g_sim));
@@ -720,6 +723,11 @@ void Stats(unsigned now, bool histo) {
     char pa[200];
     passives::FormatStats(pa, sizeof pa);  // D6c
     Log("stats passives: %s", pa);
+  }
+  if (volumes::Installed() && histo) {  // D12c
+    char vs[300];
+    volumes::FormatStats(vs, sizeof vs);
+    Log("stats volumes: %s", vs);
   }
   if (components::Installed() && histo) {  // D1j: the ability data containers and every server pool
     char cs[600];
@@ -911,7 +919,16 @@ void ReadConfig() {
     ao.keepNodeTimers = HostOptionInt("brain_node_timers", 1) != 0;  // D6c
     ao.respectCanInterrupt = HostOptionInt("brain_can_interrupt", 1) != 0;  // D6c
     ao.botPursuePoint = HostOptionInt("bot_pursue_point", 1) != 0;  // D6d
-    ao.objectiveOnSight = HostOptionInt("objective_aggro_on_sight", 0) != 0;  // D14: the parasite
+    {  // BOTIDLE: [host] bot_idle_fixes=0 or bot_fixups=0 turns the three off, each has its own key too
+      const int all = HostOptionInt("bot_idle_fixes", 1) != 0 && HostOptionInt("bot_fixups", 1) != 0 ? 1 : 0;
+      ao.botGambitFallthrough = all != 0 && HostOptionInt("bot_gambit_fallthrough", 1) != 0;
+      ao.botPursueStuckMs = all != 0 ? HostOptionInt("bot_pursue_stuck_ms", ao.botPursueStuckMs) : 0;
+      ao.botIdleFallbackMs = all != 0 ? HostOptionInt("bot_idle_fallback_ms", ao.botIdleFallbackMs) : 0;
+    }
+    ao.objectiveOnSight = HostOptionInt("objective_aggro_on_sight", 1) != 0;  // D14: the parasite (default 1 since 2026-10-10, the user's call)
+    ao.minionTarget = HostOptionInt("minion_target_priority", 1) != 0;  // MINTARGET
+    ao.minionLeash = static_cast<float>(HostOptionInt("minion_leash_range", static_cast<int>(ao.minionLeash)));
+    ao.minionDefendMs = HostOptionInt("minion_defend_ms", ao.minionDefendMs);
     agents::Install(ao);
   } else {
     Log("agent step off (tick_agents / [host] agents = 0)");
@@ -926,6 +943,7 @@ void ReadConfig() {
     mo.lua = HostOptionInt("match_lua", 1) != 0;
     mo.endOnHp = HostOptionInt("match_end_hp", 1) != 0;
     mo.endHpGraceMs = HostOptionInt("match_end_hp_grace_ms", mo.endHpGraceMs);
+    mo.minionRangedPursue = HostOptionInt("minion_ranged_pursue", 1) != 0;  // MINRANGE2
     mo.guardianShield = HostOptionInt("guardian_shield", 1) != 0;  // D14: invincible while a core lives
     mo.descriptors = static_cast<unsigned>(HostOptionInt("match_descriptors", 0x50C));
     mo.gameId = static_cast<unsigned>(HostOptionInt("match_game_id", 0));
@@ -1297,6 +1315,12 @@ void ExperimentInstall(const char* gameDir, unsigned long mainThreadId) {
     o.poolStats = opt("pool_stats", 1) != 0;
     o.logLimit = opt("container_log_limit", o.logLimit);
     components::Install(o);
+  }
+  {  // D12c: attached trigger volumes follow their objects (volumes.h)
+    volumes::Options o;
+    o.follow = opt("volume_follow", 1) != 0;
+    o.logLimit = opt("volume_log_limit", o.logLimit);
+    volumes::Install(o);
   }
   {  // D1i: health and resource regeneration (regen.h)
     regen::Options o;

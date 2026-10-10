@@ -5,9 +5,10 @@ An unofficial fan project to play the 2014 MOBA Dawngate again. It is not affili
 Electronic Arts or Waystone Games; Dawngate is a trademark of its owners. This release contains no game file:
 every player needs their own Dawngate.zip from archive.org.
 
-WARNING - NOT FOR THE OPEN INTERNET. The server accepts any login (any e-mail and password open or create an
-account), keeps the accounts in a plain file and isn't hardened against hostile clients or traffic. Run it for
-yourself or for a group you trust, on your home network, never as a public server.
+WARNING - NO REAL SECURITY. The server accepts any login (any e-mail and password open or create an
+account), keeps the accounts in a plain file, logs passwords as typed and isn't hardened against hostile
+clients or traffic. Run it for yourself or for a group you trust, best on your home network. A server on a
+public internet address is possible (see "Hosting on the internet") but entirely at your own risk.
 
 
 What you need
@@ -44,6 +45,7 @@ On the PC that runs the server:
        address = 192.168.1.20
    save it and start Start-Server.exe again. Its window shows the server's fingerprint, e.g. 3ff46759dcb1ea30.
 3. If Windows asks whether the programs may use the network, allow them for private networks only.
+   (A public address: README section "Hosting on the internet" below; the risk applies.)
 On every other player's PC:
 1. Unpack this release and put that player's own Dawngate.zip next to it.
 2. Double-click Start-Client.exe and type the server's address when asked (it is remembered in
@@ -55,11 +57,27 @@ On every other player's PC:
 The server's owner plays with Start-Client.exe on the server PC too.
 
 
+Hosting on the internet (use at your own risk)
+----------------------------------------------
+Start-Server.exe also accepts a public address (not 127.0.0.1, not a home-network address) in Start-Server.ini.
+This was a deliberate choice, and it comes with no protection:
+- Anyone who reaches the server can log in with any e-mail and password; the first login creates the account.
+- The game's Blaze connection is plain TCP, not encrypted, and passwords are written to the logs as typed.
+- The TLS parts are TLS 1.1 with MD5-signed RSA-1024 certificates, which the 2014 game needs: no real protection.
+- Nothing limits connections or login attempts.
+- Players must trust your server with a password. Tell them to use one they use nowhere else.
+Start-Server.exe prints this notice and only starts after you accept it: start it as
+   Start-Server.exe --i-accept-the-risk
+or put   i_accept_the_risk = yes   in Start-Server.ini. If the PC is behind a router, set address to the public
+address and   bind = <this PC's LAN address>   and forward the ports below to that PC yourself; Start-Server.exe
+never opens ports and never uses UPnP. Start-Client.exe shows a short notice when the address is public.
+
 Ports
 -----
 The server listens on TCP 42127, 10041, 17502, 18080 and 9988 and on UDP 17502; each running match uses one UDP
-port of 10042-10051 (the match host). Other machines must reach them only for LAN play. Never forward them from
-the internet.
+port of 10042-10051 (the match host). Other machines must reach them for LAN play. Forward them from the
+internet only if you chose to host publicly (above); the match hosts' control port (TCP 10040) stays on
+127.0.0.1 and must never be forwarded.
 
 
 Windows warnings

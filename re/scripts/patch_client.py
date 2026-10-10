@@ -69,7 +69,7 @@ Profiles (roadmap A5, docs/RUNNING_THE_CLIENT.md "Playing across machines (A5)")
            A6b)*) is this profile with 127.0.0.2 and --data-suffix B, lanes c and d (A6b) with 127.0.0.3 / C
            and 127.0.0.4 / D (re/scripts/setup_lane.py).
   lan      for a server on another machine (or on this one's LAN address): the redirector host is
-           --server-host (an IPv4 address that isn't loopback, wildcard or public). The loopback patch
+           --server-host (an IPv4 address that isn't loopback or wildcard; public ones too). The loopback patch
            is left out, so the client's sockets bind 0.0.0.0 as shipped, unless --client-bind <IPv4>
            narrows them to that address of this machine instead (then also raknet-lan). ca, ca-flag, noupnp
            and upnp-disc stay.
@@ -184,8 +184,8 @@ class PatchError(Exception):
 
 
 def lan_address(text, what):
-    """An IPv4 address of our own network: not loopback, wildcard, multicast or public (A5 covers only
-    our own machines)."""
+    """The IPv4 address of a server on another machine: not loopback, wildcard, multicast or reserved. A public
+    address is accepted too (the operator's own risk, docs/OPERATORS.md)."""
     try:
         ip = ipaddress.IPv4Address(text)
     except ValueError:
@@ -194,8 +194,6 @@ def lan_address(text, what):
         raise PatchError(f"{what} {ip} is loopback; that is the local profile")
     if ip.is_unspecified or ip.is_multicast or ip.is_reserved:
         raise PatchError(f"{what} {ip} is not a host address")
-    if ip.is_global:
-        raise PatchError(f"{what} {ip} is a public address; the lan profile is for our own machines only")
     return str(ip)
 
 

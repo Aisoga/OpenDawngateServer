@@ -179,8 +179,6 @@ class PatchClientTest(unittest.TestCase):
             ("lan", {}),
             ("lan", {"server_host": "127.0.0.1"}),
             ("lan", {"server_host": "0.0.0.0"}),
-            ("lan", {"server_host": "8.8.8.8"}),
-            ("lan", {"server_host": "159.153.51.18"}),
             ("lan", {"server_host": "224.0.0.251"}),
             ("lan", {"server_host": "myserver.lan"}),
             ("lan", {"server_host": "192.168.1.20", "client_bind": "127.0.0.1"}),
@@ -234,9 +232,10 @@ class RefusalWithoutExeTest(unittest.TestCase):
 
 class EgressAllowHostTest(unittest.TestCase):
     def test_only_our_own_network_can_be_allowed(self):
-        for ok in ["192.168.1.20", "10.0.0.2", "172.16.5.4", "169.254.10.1", "100.64.0.7"]:
+        for ok in ["192.168.1.20", "10.0.0.2", "172.16.5.4", "169.254.10.1", "100.64.0.7",
+                   "8.8.8.8"]:  # a public server is allowed too (at the operator's own risk)
             self.assertEqual(egress_report.lan_host(ok), ok)
-        for bad in ["127.0.0.1", "0.0.0.0", "8.8.8.8", "159.153.51.18", "224.0.0.251", "255.255.255.255",
+        for bad in ["127.0.0.1", "0.0.0.0", "224.0.0.251", "255.255.255.255",
                     "gosredirector.ea.com", "192.168.1"]:
             with self.assertRaises(Exception, msg=bad):
                 egress_report.lan_host(bad)

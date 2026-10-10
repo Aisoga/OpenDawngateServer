@@ -1604,6 +1604,24 @@ inline FreeFn Free = At<FreeFn>(0x006A9B30);
 constexpr std::uintptr_t kOnObjectDestroyed = 0x008E4F40;
 constexpr unsigned char kOnObjectDestroyedBytes[] = {0x51, 0x55, 0x56, 0x8B, 0x74, 0x24, 0x10};
 using OnObjectDestroyedFn = void(__thiscall*)(void* objectManager, void* object);
+// D12c: trigger volumes attached to an object (nTriggerVolumeUtils.AttachToObject_Sphere = nObjectManager_AttachTriggerVolume
+// 0x009364B0: FUN_009541E0 makes the volume (cTriggerVolume pool hash 0x869DA269, element +0 = its handle, +4 = the physics
+// shape, +0x54 = the attachment record) as a free kinematic shape at the owner's position, then AttachmentData_Create
+// (0x008D6E70, cdecl (object*, kind 0 object / 1 volume, attached handle, transform*) -> the record's handle in pool hash
+// 0xFFDE3EAE, +4 the owner's id, +0x40 kind, +0x44 the attached handle). Nothing in the build reads a kind-1 record to move
+// the shape, so it stays where it was made. TriggerVolume_SetPose (0x00951FB0, cdecl (volume handle, const f32 pos[3],
+// const f32 orientation[4])) moves its shape through the world's vtable slot 0xA4 (a kinematic actor's moveGlobalPose).
+// Prologue of 0x008D6E70: push esi; push edi; push 0xFFDE3EAE.
+namespace attach {
+constexpr std::uintptr_t kCreate = 0x008D6E70;
+constexpr unsigned char kCreateBytes[] = {0x56, 0x57, 0x68, 0xAE, 0x3E, 0xDE, 0xFF};
+using CreateFn = int(__cdecl*)(void* object, int kind, std::uint32_t attached, const void* transform);
+constexpr std::uint32_t kRecordPoolHash = 0xFFDE3EAE;
+constexpr std::uintptr_t kRecordOwner = 0x04, kRecordKind = 0x40, kRecordAttached = 0x44;
+constexpr std::uintptr_t kVolumeSetPose = 0x00951FB0;
+using SetPoseFn = void(__cdecl*)(std::uint32_t volume, const float* position, const float* orientation);
+inline SetPoseFn VolumeSetPose = At<SetPoseFn>(kVolumeSetPose);
+}  // namespace attach
 // nAbilityFns indices (GlobalDefinitions.lua); a static ability has handler i when byte static +0x14 + i is set.
 namespace fns {
 constexpr int kAbsorbDamage = 14, kAbsorbMagical = 15, kAbsorbPhysical = 16, kAbsorbAvailable = 17,
@@ -1704,6 +1722,9 @@ constexpr unsigned char kAddCreepsBytes[] = {0x8B, 0x44, 0x24, 0x04, 0x85, 0xC0,
 // credits of the last 10 s on to the caster, a debuff credits the caster). Both skip their writes while it is null.
 namespace sim {
 constexpr std::uintptr_t kAssistTracker = 0xCD84;
+// The ground-height provider (nLocomotion.GetTerrainHeightAtPosition 0x009275C0 reads it from the current simulator
+// through 0x008EE4D0): its vtable slot 1 is thiscall (const f32 position[3]) -> f32 (x87), the terrain's height there.
+constexpr std::uintptr_t kGround = 0xD8;
 }  // namespace sim
 // Tuning holders read through GetTuningAsset (thiscall 0x006C19A0 = the holder's first word): asset, data at +0x68.
 // BattlegroundsGameplayTuning: Damage_ReportHpChange reads killStreakStart (+0x10); multiKillTimeoutMs is an i64 at +0x8.

@@ -183,5 +183,56 @@ inline GambitAim AimGambit(std::uint32_t conditionTarget, std::uint32_t mTarget,
 // Whether a request's result starts (or keeps) the pursuit of its point: out of range (5) at a point alone.
 inline bool PursuesPoint(const GambitAim& a, int result) { return a.atPoint && result == 5; }
 
+// ---- BOTIDLE: bots that stand still --------------------------------------------------------
+// The host's bot brain took the first gambit of a prioritized list whose conditions pass and, when the engine refused its
+// request (the ability on cooldown, no resource, the script's CanUse false, a disabled caster), did nothing that think -
+// and at the next one, and so on until the refusal ended: every gambit below it starved. In the Hunter's ClearCamp phase
+// the W (cooldown 8+ s) sits above the Q and the basic attack, all with the same condition (an enemy creep within 30), so
+// the Hunter stood at the camp on IdleDefault while the creeps killed it (in a test run: HP 700 -> 215 in 120 s).
+// LabsAbilities_ValidateRequest (0x009053C0) results [code]: 1/2 accepted, 5 out of range (pursue), 3 the cooldown ends
+// within the command queue window, 4 queued, -0x270F on cooldown, -0x270D resource, -0x2704 CanUse/CanActivate false,
+// -0x2708 invalid target, -0x2709 disabled (silence/disarm attributes), -0x2706 other attribute, -0x270C out of range
+// without pursuit, -0x270B the same ability still holds the agent, -0x2707 the caster is dead, -0x2703 unknown ability,
+// -0x270A bad slot. The host's own: -0x7FFE an item refused, -0x7FFF an exception.
+constexpr int kResultCooldown = -0x270F;
+constexpr int kResultHoldsAgent = -0x270B;
+constexpr int kResultDead = -0x2707;
+constexpr int kResultItemRefused = -0x7FFE;
+constexpr int kResultException = -0x7FFF;
+
+// Whether a refused request leaves the gambit "not usable now", so the prioritized list goes on with the next one whose
+// conditions pass [assumed: the original's brain skipped unusable gambits; the stripped update is not in the client].
+// Kept as before (the bot waits for the next think): an accepted or pending request (1, 2, 3, 4), the pursuit (5), an
+// ability still holding the agent (-0x270B: a cast or swing in progress), a dead caster, an exception, and a basic attack
+// on cooldown (the swing interval: the bot stays and swings again rather than walking off to a lower gambit's cast).
+inline bool GambitRefusalSkips(int result, int slot) {
+  if (result >= 0) return false;
+  if (result == kResultHoldsAgent || result == kResultDead || result == kResultException) return false;
+  if (slot == kSlotBasic && result == kResultCooldown) return false;
+  return true;
+}
+
+// A pursuit (request result 5, the Pursue leaf follows the target) that makes no progress: `startDistance` when the
+// window began, `nowDistance` now, after `seconds`. Stuck when the window is `limitSeconds` old and the bot got closer
+// by less than `minProgress` (a target behind a wall NavPower cannot path to, a creep that is leashing home, an enemy
+// that runs away at the bot's speed). The gambit is then left out for a few seconds.
+inline bool PursuitStuck(double seconds, float startDistance, float nowDistance, double limitSeconds, float minProgress) {
+  return seconds >= limitSeconds && startDistance - nowDistance < minProgress;
+}
+
+// Who may be answered when a bot idles under attack: players and the mobile NPC types (nNPCType: lane minions 0-2, creeps
+// 3, objectives 6-8, pets 11, followers 12), not structures (Tower 9, Guardian 13, Nub 14, Locus 15, Ward 16), mines,
+// destructibles or interactables.
+inline bool FallbackAttackerType(int npcType, bool isPlayer) {
+  if (isPlayer) return true;
+  return (npcType >= 0 && npcType <= 3) || (npcType >= 6 && npcType <= 8) || npcType == 11 || npcType == 12;
+}
+
+// The idle fallback is due when the bot has stood without an acting gambit for `idleMs` and something hit it within
+// `hitWindowMs` (both measured by the caller); a bot nobody attacks may stand in its phase as the scripts say.
+inline bool IdleFallbackDue(long long idleForMs, long long sinceHitMs, long long idleMs, long long hitWindowMs) {
+  return idleMs > 0 && idleForMs >= idleMs && sinceHitMs >= 0 && sinceHitMs <= hitWindowMs;
+}
+
 }  // namespace agents
 }  // namespace gms

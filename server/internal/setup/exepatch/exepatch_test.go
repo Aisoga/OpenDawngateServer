@@ -356,8 +356,8 @@ func TestLANAddress(t *testing.T) {
 		"192.168.1.20": "", "10.0.0.2": "", "172.16.0.1": "", "100.64.1.2": "", "169.254.1.1": "", "192.0.0.8": "",
 		"192.0.0.170": "", "192.0.0.171": "", "192.0.0.172": "", "0.1.2.3": "", "198.18.0.1": "", "192.0.2.1": "",
 		"198.51.100.7": "", "203.0.113.9": "",
-		"172.32.0.1": "public", "100.128.0.1": "public", "8.8.8.8": "public", "192.0.0.9": "public",
-		"192.0.0.10": "public", "198.20.0.1": "public", "159.153.51.18": "public",
+		"172.32.0.1": "", "100.128.0.1": "", "8.8.8.8": "", "192.0.0.9": "", // public
+		"192.0.0.10": "", "198.20.0.1": "", "159.153.51.18": "",
 		"255.255.255.255": "host", "240.0.0.1": "host", "0.0.0.0": "host", "224.0.0.251": "host",
 		"239.255.255.255": "host",
 		"127.0.0.1":       "loopback", "127.100.100.100": "loopback",
@@ -366,7 +366,6 @@ func TestLANAddress(t *testing.T) {
 		"١.2.3.4": "ipv4",
 	}
 	tails := map[string]string{
-		"public":   "is a public address; the lan profile is for our own machines only",
 		"host":     "is not a host address",
 		"loopback": "is loopback; that is the local profile",
 		"ipv4":     "must be an IPv4 address, got",
@@ -378,6 +377,15 @@ func TestLANAddress(t *testing.T) {
 			t.Errorf("%q: %q %v", addr, got, err)
 		case want != "" && (err == nil || !strings.Contains(err.Error(), tails[want])):
 			t.Errorf("%q: %v, want %q", addr, err, tails[want])
+		}
+	}
+}
+
+func TestIsPublic(t *testing.T) {
+	for addr, want := range map[string]bool{"8.8.8.8": true, "172.32.0.1": true, "192.168.1.20": false, "10.0.0.2": false,
+		"100.64.1.2": false, "169.254.1.1": false, "127.0.0.1": false, "0.0.0.0": false, "224.0.0.1": false, "x": false} {
+		if IsPublic(addr) != want {
+			t.Errorf("IsPublic(%s) = %v", addr, !want)
 		}
 	}
 }
@@ -453,8 +461,8 @@ func TestPatchFileAndState(t *testing.T) {
 		t.Errorf("a foreign .orig: %v", err)
 	}
 	// option errors come before any write; the pristine extraction is never touched
-	if _, err := PatchFile(exe, modA, FileOptions{Options: Options{ServerHost: "8.8.8.8"}, BaseSHA256: base}); err == nil {
-		t.Error("a public server host accepted")
+	if _, err := PatchFile(exe, modA, FileOptions{Options: Options{ServerHost: "224.0.0.9"}, BaseSHA256: base}); err == nil {
+		t.Error("a multicast server host accepted")
 	}
 	pristine := filepath.Join(t.TempDir(), "client", "ia_Dawngate", "Dawngate", "game", "Dawngate.exe")
 	if _, err := PatchFile(pristine, modA, fo); err == nil || !strings.Contains(err.Error(), "pristine") {

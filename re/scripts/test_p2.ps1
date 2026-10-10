@@ -273,10 +273,10 @@ try {
             'Get-CheckResult'))) {
         . ([scriptblock]::Create($text))
     }
-    foreach ($a in @('192.168.1.20', '10.0.0.5', '172.16.0.1', '172.31.255.254', '169.254.10.1', '100.64.0.9', '192.168.20.40')) {
+    foreach ($a in @('192.168.1.20', '10.0.0.5', '172.16.0.1', '172.31.255.254', '169.254.10.1', '100.64.0.9', '192.168.20.40', '8.8.8.8', '172.32.0.1')) {
         Check 'b1' "Test-LanAddress accepts $a" (-not (Test-LanAddress $a)) "$(Test-LanAddress $a)"
     }
-    foreach ($a in @('127.0.0.1', '127.0.0.4', '0.0.0.0', '8.8.8.8', '172.32.0.1', '224.0.0.251', '255.255.255.255', '192.169.1.1', '1', '1.2.3', 'abc', '', '192.168.1.300')) {
+    foreach ($a in @('127.0.0.1', '127.0.0.4', '0.0.0.0', '240.0.0.1', '224.0.0.251', '255.255.255.255', '1', '1.2.3', 'abc', '', '192.168.1.300')) {
         Check 'b2' "Test-LanAddress refuses '$a'" ([bool](Test-LanAddress $a))
     }
     $lanShow = ConvertFrom-ShowLines @('redirector=192.168.1.20', 'bind=as-shipped', 'appdata=DawngateData', 'documents=Dawngate', 'raknet_loopback=127.0.0.1', 'ca_sha256=0123456789abcdef', 'ca_flag=0')
@@ -411,9 +411,9 @@ try {
     $pristine = Join-Path $MainRoot 'client\ia_Dawngate\Dawngate\game'
     $havePristine = -not $NoPristine -and (Test-Path (Join-Path $pristine 'Dawngate.exe'))
     # cases that need no copy
-    Expect 'c1' '-Server 127.0.0.1 is refused' (Invoke-Child $PlayLan @('-StateRoot', "`"$root`"", '-DryRun', '-Server', '127.0.0.1')) 2 @('not an address of our own network')
-    Expect 'c1' '-Server 8.8.8.8 is refused' (Invoke-Child $PlayLan @('-StateRoot', "`"$root`"", '-DryRun', '-Server', '8.8.8.8')) 2 @('not an address of our own network')
-    Expect 'c2' '-AllowHost 8.8.8.8 is refused' (Invoke-Child $PlayLan @('-StateRoot', "`"$root`"", '-DryRun', '-Server', $S, '-AllowHost', '8.8.8.8')) 2 @('-AllowHost')
+    Expect 'c1' '-Server 127.0.0.1 is refused' (Invoke-Child $PlayLan @('-StateRoot', "`"$root`"", '-DryRun', '-Server', '127.0.0.1')) 2 @('not a host address of another machine')
+    Expect 'c1' '-Server 8.8.8.8 is refused' (Invoke-Child $PlayLan @('-StateRoot', "`"$root`"", '-DryRun', '-Server', '224.0.0.9')) 2 @('not a host address of another machine')
+    Expect 'c2' '-AllowHost 224.0.0.9 is refused' (Invoke-Child $PlayLan @('-StateRoot', "`"$root`"", '-DryRun', '-Server', $S, '-AllowHost', '224.0.0.9')) 2 @('-AllowHost')
     Expect 'c3' 'a bad -Name is refused' (Invoke-Child $PlayLan @('-StateRoot', "`"$root`"", '-DryRun', '-Server', $S, '-Name', '"a b"')) 2 @('invalid -Name')
     Expect 'c4' '-Check -NoCapture is refused' (Invoke-Child $PlayLan @('-StateRoot', "`"$root`"", '-DryRun', '-Server', $S, '-Check', '-NoCapture')) 2 @('-Check always runs with the capture')
     Expect 'c5' 'no copy: the setup command' (Invoke-Child $PlayLan @('-StateRoot', "`"$root`"", '-DryRun', '-Server', $S)) 2 @('MISSING  the lan copy', "setup_all.py --player --server-host $S")
@@ -483,12 +483,12 @@ try {
 
     # ---- 1d: play.ps1 -Server ----
     Write-Host 'part 1d: play.ps1 -Server passes on to play_lan.ps1 (refusals only: no copy is read)' -ForegroundColor Cyan
-    Expect 'd1' 'play.ps1 -Server 127.0.0.1 reaches play_lan.ps1''s check' (Invoke-Child $PlayPs @('-Server', '127.0.0.1', '-SetupOnly')) 2 @('-Server: 127.0.0.1 is not an address of our own network') @('checking the setup')
+    Expect 'd1' 'play.ps1 -Server 127.0.0.1 reaches play_lan.ps1''s check' (Invoke-Child $PlayPs @('-Server', '127.0.0.1', '-SetupOnly')) 2 @('-Server: 127.0.0.1 is not a host address of another machine') @('checking the setup')
     Expect 'd2' 'play.ps1 -Server with -ShaperSelect' (Invoke-Child $PlayPs @('-Server', $S, '-ShaperSelect')) 2 @('server operator') @('checking the setup')
     Expect 'd3' 'play.ps1 -Server with -HostOptions' (Invoke-Child $PlayPs @('-Server', $S, '-HostOptions', 'bots=0')) 2 @('server operator')
     Expect 'd4' 'play.ps1 -Server passes -Name' (Invoke-Child $PlayPs @('-Server', $S, '-Name', '"a b"')) 2 @('invalid -Name') @('checking the setup')
     Expect 'd5' 'play.ps1 -Server passes -Check with -NoCapture' (Invoke-Child $PlayPs @('-Server', $S, '-Check', '-NoCapture')) 2 @('-Check always runs with the capture')
-    Expect 'd6' 'play.ps1 -Server passes -AllowHost' (Invoke-Child $PlayPs @('-Server', $S, '-AllowHost', '192.168.1.30,8.8.8.8')) 2 @('-AllowHost: 8.8.8.8 is not an address of our own network')
+    Expect 'd6' 'play.ps1 -Server passes -AllowHost' (Invoke-Child $PlayPs @('-Server', $S, '-AllowHost', '192.168.1.30,224.0.0.9')) 2 @('-AllowHost: 224.0.0.9 is not a host address of another machine')
     Expect 'd7' 'play.ps1 -AllowHost without -Server' (Invoke-Child $PlayPs @('-AllowHost', '192.168.1.30')) 2 @('-AllowHost is for -Server') @('checking the setup')
 } finally {
     if ($helper -and -not $helper.HasExited) { Stop-Process -Id $helper.Id -Force -ErrorAction SilentlyContinue }

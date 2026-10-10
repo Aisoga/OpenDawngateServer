@@ -13,10 +13,10 @@ flagged another program's IPv6 TCP connection whose local port number the client
 Unflagged outbound lines are other processes as far as we can tell; read them anyway.
 
 LAN tests (roadmap A5, docs/RUNNING_THE_CLIENT.md "Playing across machines (A5)"): --allow-host <IPv4>
-names one of our own machines in the test (repeatable): the server's LAN address on a client machine, a
-client's address on the server machine. Flows from Dawngate.exe ports to such an address are listed with
-"(allowed: our LAN machine)" instead of being flagged. Only addresses of our own network are accepted
-(not loopback, wildcard, multicast or public), and the EA rules still apply to them, so nothing else
+names the machine in the test (repeatable): the server's address on a client machine (a LAN address, or since
+a public one the player chose), a client's address on the server machine. Flows from Dawngate.exe ports to
+such an address are listed with "(allowed: our LAN machine)" instead of being flagged. Only host addresses of
+another machine are accepted (not loopback, wildcard or multicast), and the EA rules still apply to them, so nothing else
 changes: a Dawngate.exe flow to any other address, and anything EA-related, is still flagged.
 
 A capture whose last packet was cut short (P1's play mode stops dumpcap at the end of a session) is read anyway,
@@ -128,13 +128,13 @@ def cross_lane(proto, src, sport, dst, game_eps, lane):
 
 
 def lan_host(text):
-    """argparse type for --allow-host: an IPv4 address of our own network (A5)."""
+    """argparse type for --allow-host: the IPv4 address of the chosen server (a public one too)."""
     try:
         ip = ipaddress.IPv4Address(text)
     except ValueError:
         raise argparse.ArgumentTypeError(f"not an IPv4 address: {text!r}") from None
-    if ip.is_loopback or ip.is_unspecified or ip.is_multicast or ip.is_reserved or ip.is_global:
-        raise argparse.ArgumentTypeError(f"{ip} is not an address of our own network (LAN machines only)")
+    if ip.is_loopback or ip.is_unspecified or ip.is_multicast or ip.is_reserved:
+        raise argparse.ArgumentTypeError(f"{ip} is not a host address of another machine")
     return str(ip)
 
 

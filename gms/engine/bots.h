@@ -67,8 +67,10 @@ struct Options {
   std::string compositionDrop = "predator,hunter,tactician,gladiator";  // BOTCOMP: the roles' order of giving up a seat
   int harassStartWorkers = 4; // BOTCOMP: a well's workers above which the Predator may harass it (the script's HarassWell: 16)
   int harassEndWorkers = 2;   // BOTCOMP: ... and below which the harass ends (the script's 4)
-  int hunterGatherAllies = 3; // BOTCOMP: other allied shapers at the rally point before the Hunter joins the parasite
+  bool team = true;           // BOTTEAM: the team layer (one call per team: farm, parasite, contest, well, push, defend)
+  bool teamPings = true;      // BOTTEAM: the bots ping their team's calls to the human teammates (MiniMapPing)
   int hunterGank = 0;         // BOTCOMP: 1 keeps the Hunter's Gank plan (a trap: it never leaves it)
+  bool laneFixes = true;      // BOTLANE: Gladiators stay in lane, towers get finished, the opened lane is sieged
   int campRadius = 9;         // BOTIDLE: dgsim_bots_api.lua's fifth fix-up: IsNearNextCreepCamp's radius (the script's 5; 0 = keep it)
 };
 
@@ -111,6 +113,9 @@ struct Bot {
 const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& humans, const std::vector<Human>& waiting);
 const std::vector<Bot>& Players();
 bool IsBotIndex(int index);
+// Shaper select moved a bot to another role (its mRole is written by the host's pick write; this keeps our list, which
+// the Lua shims' BotRole answers from, in step).
+void SetRole(int index, int role);
 
 // Deploys every bot's creature once (the replication must be initialized: repl::Init). Returns how many were deployed
 // by this call. Bound inside.

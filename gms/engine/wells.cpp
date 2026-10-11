@@ -61,6 +61,7 @@ struct Worker {
   bool checked = false;
 };
 std::map<std::uint32_t, Worker> g_workers;
+std::map<int, double> g_workerHitAt;  // BOTREFLEX: well index -> match seconds of the last enemy hit on one of its workers
 
 double g_lastSecond = -1.0, g_lastTrace = -1.0;
 double g_vim[10];          // VimPer5 accrual per player (gold not yet paid)
@@ -981,6 +982,10 @@ void OnDamaged(void* target, void* attacker, float dealt) {
   std::uint32_t targetId = 0, attackerId = 0;
   char noun[64];
   if (!SehHit(target, attacker, dealt, &h, &targetId, &attackerId, noun, sizeof noun)) return;
+  {  // BOTREFLEX: an enemy hit on a well's worker (the bots defend the well)
+    auto w = g_workers.find(targetId);
+    if (w != g_workers.end() && h.attacker && !h.sameTeam && !h.self) g_workerHitAt[w->second.well] = g_now;
+  }
   auto seen = g_shapers.find(targetId);
   if (seen == g_shapers.end()) return;  // not a player's creature
   ++g_st.hits;
@@ -1013,6 +1018,22 @@ void OnDamaged(void* target, void* attacker, float dealt) {
               : "not a player's hit: no pause");
     break;
   }
+}
+
+int Threats(int team, Threat* out, int max) {
+  if (!g_ready || !out || max <= 0) return 0;
+  int n = 0;
+  for (int i = 0; i < g_core.Count() && n < max; ++i) {
+    if (g_core.Owner(i) != team || g_core.IsLocked(i) || static_cast<size_t>(i) >= g_info.size()) continue;
+    const auto hit = g_workerHitAt.find(i);
+    const bool attacked = hit != g_workerHitAt.end() && g_now - hit->second <= 5.0;
+    const bool captured = g_core.SecondsToCapture(i) >= 0.0;
+    if (!attacked && !captured) continue;
+    out[n].object = g_info[static_cast<size_t>(i)].object;
+    for (int k = 0; k < 3; ++k) out[n].pos[k] = g_info[static_cast<size_t>(i)].pos[k];
+    ++n;
+  }
+  return n;
 }
 
 void OnObjectDied(std::uint32_t id) {

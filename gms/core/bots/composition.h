@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <random>
 #include <set>
 #include <string>
 #include <vector>
@@ -78,6 +79,14 @@ inline std::vector<ClassChoice> ClassPreference(int role) {
     case kRolePredator: return {{"PC_Warden", true}};
   }
   return {};
+}
+
+// The roles (bit per role) a BotClass may play besides its seat's, when the human teammates fill the seat's role: the
+// label (mRole: role passive, gold/XP modifiers, the Predator's well harassing) changes, the class's AI does not, so
+// only a class whose AI fits the other role is allowed one: PC_Warden plays both the Tactician and the Predator.
+inline unsigned AltRoles(const std::string& botClass) {
+  if (botClass == "PC_Warden") return (1u << kRoleTactician) | (1u << kRolePredator);
+  return 0;
 }
 
 // A planned seat.
@@ -138,8 +147,11 @@ inline std::vector<WantedSeat> WantedSeats(int botSeats, const std::vector<int>&
 // Seats are served Predator, Hunter, Gladiator, Tactician (so the Predator gets PC_Warden before the Tacticians'
 // list reaches it); a role whose preferred classes are all used or missing takes any unused available class from
 // `anyClass` (fallback = true), or stays empty. Output order = wanted order.
+// `seed` != 0 shuffles each role's preference list first (varied teams from game to game: which Gladiator takes the top
+// lane, which Tactician comes); 0 keeps the fixed order.
 inline std::vector<ComposedSeat> ComposeTeam(const std::vector<WantedSeat>& wanted, const std::set<std::string>& available,
-                                             const std::vector<std::string>& anyClass) {
+                                             const std::vector<std::string>& anyClass, unsigned seed = 0) {
+  std::mt19937 rng(seed);
   std::vector<ComposedSeat> out(wanted.size());
   std::set<std::string> used;
   for (size_t i = 0; i < wanted.size(); ++i) {
@@ -149,7 +161,9 @@ inline std::vector<ComposedSeat> ComposeTeam(const std::vector<WantedSeat>& want
   for (int role : {kRolePredator, kRoleHunter, kRoleGladiator, kRoleTactician}) {
     for (size_t i = 0; i < wanted.size(); ++i) {
       if (wanted[i].role != role) continue;
-      for (const ClassChoice& c : ClassPreference(role)) {
+      std::vector<ClassChoice> prefs = ClassPreference(role);
+      if (seed != 0) std::shuffle(prefs.begin(), prefs.end(), rng);
+      for (const ClassChoice& c : prefs) {
         if (available.count(c.botClass) && !used.count(c.botClass)) {
           out[i].botClass = c.botClass;
           out[i].roleOverride = c.roleOverride;
@@ -169,6 +183,70 @@ inline std::vector<ComposedSeat> ComposeTeam(const std::vector<WantedSeat>& want
         break;
       }
   }
+  return out;
+}
+
+// BOTVARY (free draw, seed != 0): every team gets exactly 2 Gladiators (both Gladiator classes, one per lane), 1 Hunter
+// (PC_Artificer) and 2 flex seats, each a Tactician or a Predator (the user's rule, 2026-10-11): the flex seats draw two
+// distinct classes of the 5 with the Tactician AI (Guardian, Artist, TidalQueen, Sculptor, Warden); PC_Warden is the
+// Predator (mRole 3 on its Tactician AI) or, by a coin flip, a Tactician, so a team has 0 or 1 Predator. Lanes as the
+// default setup: Gladiator + flex on top, Gladiator + flex + Hunter at the bottom (the Hunter's lane only matters until it
+// leaves for the camps); which Gladiator takes the top lane is drawn. A human of known role (`humanRoles`, the team's
+// humans' mRole, -1 unknown) takes that role's seat; with still fewer seats the flex seats go first, then the Hunter,
+// then the second Gladiator. Output order = top Gladiator, top flex, bottom Gladiator, bottom flex, Hunter.
+inline std::vector<ComposedSeat> ComposeTeamFree(int seats, const std::set<std::string>& available, unsigned seed,
+                                                 const std::vector<int>& humanRoles = {}) {
+  std::mt19937 rng(seed);
+  std::vector<std::string> glad = {"PC_HighHuntress", "PC_Creature"};
+  std::vector<std::string> flex = {"PC_Guardian", "PC_Artist", "PC_TidalQueen", "PC_Sculptor", "PC_Warden"};
+  std::shuffle(glad.begin(), glad.end(), rng);
+  std::shuffle(flex.begin(), flex.end(), rng);
+  auto have = [&](const std::string& c) { return available.count(c) != 0; };
+  auto seat = [&](const std::string& cls, int role, int lane) {
+    ComposedSeat s;
+    s.botClass = cls;
+    s.role = role;
+    s.lane = lane;
+    return s;
+  };
+  std::vector<ComposedSeat> g, f, h;
+  for (size_t i = 0; i < glad.size(); ++i)
+    if (have(glad[i])) g.push_back(seat(glad[i], kRoleGladiator, i == 0 ? kLaneTop : kLaneBottom));
+  for (const std::string& c : flex) {
+    if (f.size() >= 2) break;
+    if (!have(c)) continue;
+    ComposedSeat s = seat(c, kRoleTactician, f.empty() ? kLaneTop : kLaneBottom);
+    if (c == "PC_Warden" && (rng() & 1u)) {
+      s.role = kRolePredator;
+      s.roleOverride = true;
+    }
+    f.push_back(s);
+  }
+  if (have("PC_Artificer")) h.push_back(seat("PC_Artificer", kRoleHunter, kLaneBottom));
+  // BOTTEAM: a human of known role takes that role's seat (a human Hunter: no bot Hunter; a human Gladiator: the bottom
+  // Gladiator's seat; a human Tactician or Predator: a flex seat), as WantedSeats does for the fixed setup
+  for (int role : humanRoles) {
+    if (role == kRoleHunter && !h.empty()) h.pop_back();
+    else if (role == kRoleGladiator && g.size() > 1) g.pop_back();
+    else if (role == kRolePredator && !f.empty()) {
+      // the bot Predator's seat if there is one (a team has at most one Predator), else a flex seat
+      auto it = std::find_if(f.begin(), f.end(), [](const ComposedSeat& s) { return s.role == kRolePredator; });
+      f.erase(it != f.end() ? it : f.end() - 1);
+    } else if (role == kRoleTactician && !f.empty()) {
+      f.pop_back();
+    }
+  }
+  // fewer seats than that (humans of unknown role): the flex seats go first, then the Hunter, then the second Gladiator
+  while (static_cast<int>(g.size() + f.size() + h.size()) > seats) {
+    if (!f.empty()) f.pop_back();
+    else if (!h.empty()) h.pop_back();
+    else if (g.size() > 1) g.pop_back();
+    else break;
+  }
+  std::vector<ComposedSeat> out;
+  auto add = [&](const std::vector<ComposedSeat>& v, size_t i) { if (i < v.size()) out.push_back(v[i]); };
+  add(g, 0); add(f, 0); add(g, 1); add(f, 1); add(h, 0);
+  if (static_cast<int>(out.size()) > seats) out.resize(static_cast<size_t>(seats));
   return out;
 }
 

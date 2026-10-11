@@ -1277,6 +1277,24 @@ void RankWatch(void* sim) {
 
 }  // namespace
 
+unsigned SendTeamPing(void* sim, unsigned team, std::uint32_t pinger, std::uint32_t target, const float* pos,
+                      std::uint8_t pingType, const char* why) {
+  std::uint16_t mask = 0;
+  for (unsigned j = 0; j < kMaxPlayers; ++j) {
+    PlayerInfo pj;
+    if (SehReadPlayer(sim, j, &pj) && pj.team == team) mask = static_cast<std::uint16_t>(mask | (1u << j));
+  }
+  if (!mask || !pos) return 0;
+  gms::Vec3 v;
+  v.x = pos[0];
+  v.y = pos[1];
+  v.z = pos[2];
+  ++g_st.pings;
+  Push(mask, gms::BuildMiniMapPing(pinger, target, v, pingType),
+       std::string("bot ping (MiniMapPing) to its team: ") + (why ? why : ""));
+  return mask;
+}
+
 unsigned SendFeedback(void* sim, const char* defName, std::uint32_t object, unsigned teamBits, unsigned uintValue,
                       std::uint32_t target, unsigned excludePlayers) {
   unsigned mask = 0;

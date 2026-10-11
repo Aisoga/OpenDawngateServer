@@ -301,13 +301,13 @@ GMS_TEST(ShaperSelectScriptBExact) {
 
   CHECK_LIST(out.To(human), {
       "c802ab4a04ef0100000000009eb0a85d010000000000271e1d7c020000000000",  // 9
-      "c80300" + Zeros(14), "c80301" + Zeros(14),                         // 10
+      "c80300" + Zeros(14), "c80301" + Zeros(8) + "01" + Zeros(5),       // 10 (the ally's record shows its planned role 1)
       "c801409c00000000000001000000",                                     // 11
-      "c803019eb0a85d9eb0a85d000000000000",                               // 12 (s+2000)
-      "c803019eb0a85d9eb0a85d000000000001",                               // 13 (s+4000)
+      "c803019eb0a85d9eb0a85d010000000000",                               // 12 (s+2000)
+      "c803019eb0a85d9eb0a85d010000000001",                               // 13 (s+4000)
       "c80300ab4a04efab4a04ef000000000000", "c804ab4a04ef01",             // 15
       "c80300ab4a04efab4a04ef000000000001", "c80b01ab4a04ef00", "c805ab4a04ef01",  // 17
-      "c801b0b300000000000002000000",                                     // 20
+      "c801b0b300000000000002000000", "c8060101",                         // 20 (+ the ally's intended role)
       "c80300ab4a04efab4a04ef000000000003", "c803019eb0a85d9eb0a85d010000000003",  // 22
       "c801487100000000000003000000",                                     // 23
       "c801587100000000000004000000",                                     // 25
@@ -1145,4 +1145,53 @@ GMS_TEST(ShaperSelectObserverStartsAGameOfBots) {
       phases.push_back(static_cast<int>(gms::GetU32LE(m.data() + 10)));
   }
   CHECK(phases == (std::vector<int>{1, 2, 3, 4}));
+}
+
+// ---- BOTROLE: a scripted player shows its role from the start, announces it, and adjusts to its human teammate ----------
+GMS_TEST(ShaperSelectScriptedRoleIsAnnouncedAndAdjusts) {
+  QuietLog log;
+  gms::ShaperSelectConfig cfg;
+  cfg.timers = Timers(30000, 30000, 10000, 16);
+  cfg.humanDefault.list = {Entry(kAlpha, 1), Entry(kArtificer, 1), Entry(kGunman, 2)};
+  gms::ShaperSelectPlayer ally = Scripted(1, 1, kArtificer, 2000, 4000, 1);  // plans the Tactician
+  ally.plan.altRoles = 1u << 3;                                               // ... and may play the Predator
+  cfg.players.push_back(ally);
+  cfg.players.push_back(Scripted(2, 1, kGunman, 2200, 4200, 0));              // a Gladiator, no alternative
+  gms::ShaperSelect ss(cfg);
+  const gms::ConnId human = 77;
+  ss.AddHuman(human, 0, 1);
+  RecordingSender out;
+  const int64_t s = 10000;
+  auto tickTo = [&](int64_t from, int64_t to) {
+    for (int64_t t = from; t <= to; t += 100) ss.Tick(t, out);
+  };
+  Msg(ss, human, Req(gms::kShaperHello), s, out);
+  ss.OnReady(human, s, out);
+  tickTo(s + 100, s + 5000);
+  Msg(ss, human, Req(gms::kShaperRequest, kAlpha), s + 5000, out);
+  Msg(ss, human, Req(gms::kShaperLockIn, kAlpha), s + 6000, out);
+  CHECK_EQ(ss.Phase(), 2);
+  // phase 2 begins: both announce their intended roles (a preferred-role toggle each)
+  bool toggled1 = false, toggled2 = false;
+  for (const Sent& x : out.sent) {
+    toggled1 = toggled1 || x.hex == "c8060101";
+    toggled2 = toggled2 || x.hex == "c8060200";
+  }
+  CHECK(toggled1 && toggled2);
+  // the human takes the Tactician; its teammate's Tactician becomes the Predator, the Gladiator stays
+  Msg(ss, human, Req(gms::kShaperLockRole, 0, 1), s + 7000, out);
+  tickTo(s + 7100, s + 7500);
+  const std::vector<gms::ShaperPick> picks = ss.Picks();
+  CHECK_EQ(picks.size(), size_t{3});
+  for (const gms::ShaperPick& p : picks) {
+    if (p.gameplayIndex == 1) CHECK_EQ(static_cast<int>(p.role), 3);
+    if (p.gameplayIndex == 2) CHECK_EQ(static_cast<int>(p.role), 0);
+  }
+  // the change is told as two toggles: the old role off, the new one on
+  bool off = false, on = false;
+  for (const Sent& x : out.sent) {
+    off = off || x.hex == "c8060101";
+    on = on || x.hex == "c8060103";
+  }
+  CHECK(off && on);
 }

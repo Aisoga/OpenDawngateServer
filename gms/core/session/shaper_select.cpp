@@ -1,6 +1,7 @@
 #include "core/session/shaper_select.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 
 #include "core/common/log.h"
@@ -62,6 +63,7 @@ ShaperSelect::ShaperSelect(const ShaperSelectConfig& config)
     p.team = sp.team;
     p.scripted = sp.scripted;
     p.plan = sp.plan;
+    if (sp.scripted && sp.plan.role < kNumRoles) p.rec.role = sp.plan.role;  // its intention shows from the start
     p.content = sp.content;
     p.rec.index = sp.gameplayIndex;
   }
@@ -314,6 +316,7 @@ void ShaperSelect::Enter(int phase, int64_t at, int64_t now, ISender& out) {
   for (const auto& kv : observers_)
     if (kv.second.Receives()) SendPhase(kv.first, false, out);
   nextRepeat_ = now + 1000;
+  if (phase == 2) AnnounceFollowerRoles(out);
 }
 
 // Phase 3 -> 4: every skin settled (last C8 0C/0D, else the saved skin if owned, else the default), C8 01 ... 04 to
@@ -345,12 +348,66 @@ void ShaperSelect::Reveal(int64_t at, int64_t now, ISender& out) {
   }
 }
 
-// Scripted players and humans without a connection lock their role (a scripted player's plan role).
+// A preferred-role toggle (C8 06) of player `index` to its team's connected clients and to the observers.
+void ShaperSelect::SendRoleToggle(uint8_t index, uint8_t role, ISender& out) {
+  const Player& p = players_.at(index);
+  for (const auto& kv : players_)
+    if (kv.second.Receives() && kv.second.team == p.team && kv.second.Knows(index))
+      out.Send(kv.second.conn, BuildRoleToggle(index, role),
+               "shaper select: preferred role " + std::to_string(role) + " of player " + std::to_string(index));
+  for (const auto& kv : observers_)  // B15b [inferred: the observer's slots show both teams]
+    if (kv.second.Receives() && kv.second.Knows(index))
+      out.Send(kv.first, BuildRoleToggle(index, role),
+               "shaper select: preferred role " + std::to_string(role) + " of player " + std::to_string(index) +
+                   " for an observer");
+}
+
+// The scripted players say which role they intend to play (the humans' teammates see it as a preferred role) when the
+// role phase begins; the humans still have everything ahead of them.
+void ShaperSelect::AnnounceFollowerRoles(ISender& out) {
+  for (auto& kv : players_) {
+    Player& p = kv.second;
+    if (!p.scripted || p.plan.role >= kNumRoles || (p.preferredRoles & (1u << p.plan.role))) continue;
+    p.preferredRoles |= static_cast<uint8_t>(1u << p.plan.role);
+    SendRoleToggle(kv.first, p.plan.role, out);
+  }
+}
+
+// How many players a team wants in a role: the 5v5 setup has two Gladiators and one of each other role.
+static int WantedInRole(int role) { return role == 0 ? 2 : 1; }
+
+// Scripted players and humans without a connection lock their role. A scripted player takes its plan role unless the
+// team (the humans' roles, as selected or locked, and the other scripted players') already has more of it than the
+// setup wants; then it takes a role from `altRoles` that the team lacks, if its class can play one, and says so with
+// a toggle of the old and the new role.
 void ShaperSelect::LockFollowerRoles(ISender& out) {
+  std::map<uint8_t, std::array<int, kNumRoles>> count;
+  for (const auto& kv : players_) {
+    const Player& p = kv.second;
+    const uint8_t role = p.scripted ? p.plan.role : p.rec.role;
+    if (role < kNumRoles) ++count[p.team][role];
+  }
   for (auto& kv : players_) {
     Player& p = kv.second;
     if (p.Acting() || (p.rec.flags & kRecordRoleLocked)) continue;
-    if (p.scripted) p.rec.role = p.plan.role;
+    if (p.scripted) {
+      p.rec.role = p.plan.role;
+      std::array<int, kNumRoles>& n = count[p.team];
+      if (p.plan.role < kNumRoles && n[p.plan.role] > WantedInRole(p.plan.role)) {
+        for (uint8_t r = 0; r < kNumRoles; ++r) {
+          if (!(p.plan.altRoles & (1u << r)) || r == p.plan.role || n[r] >= WantedInRole(r)) continue;
+          Logf("%s    shaper select: scripted player %u adjusts its role %u -> %u (its team has %d of %u, wants %d)",
+               Clock().c_str(), kv.first, p.plan.role, r, n[p.plan.role], p.plan.role, WantedInRole(p.plan.role));
+          --n[p.plan.role];
+          ++n[r];
+          p.preferredRoles = static_cast<uint8_t>((p.preferredRoles & ~(1u << p.plan.role)) | (1u << r));
+          SendRoleToggle(kv.first, p.plan.role, out);
+          SendRoleToggle(kv.first, r, out);
+          p.rec.role = r;
+          break;
+        }
+      }
+    }
     p.rec.flags |= kRecordRoleLocked;
     SendRecord(kv.first, out);
   }
@@ -509,15 +566,7 @@ void ShaperSelect::OnMessage(ConnId conn, const uint8_t* body, size_t n, int64_t
         break;
       }
       p.preferredRoles ^= static_cast<uint8_t>(1u << r.role);
-      for (const auto& kv : players_)
-        if (kv.second.Receives() && kv.second.team == p.team && kv.second.Knows(index))
-          out.Send(kv.second.conn, BuildRoleToggle(index, r.role),
-                   "shaper select: preferred role " + std::to_string(r.role) + " of player " + std::to_string(index));
-      for (const auto& kv : observers_)  // B15b [inferred: the observer's slots show both teams]
-        if (kv.second.Receives() && kv.second.Knows(index))
-          out.Send(kv.first, BuildRoleToggle(index, r.role),
-                   "shaper select: preferred role " + std::to_string(r.role) + " of player " + std::to_string(index) +
-                       " for an observer");
+      SendRoleToggle(index, r.role, out);
       break;
     case kShaperSelectRole:
       if (r.role >= kNumRoles || phase_ < 1 || phase_ > 2 || (p.rec.flags & kRecordRoleLocked)) {

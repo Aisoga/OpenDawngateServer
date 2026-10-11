@@ -133,6 +133,13 @@ class IMatch {
     (void)conn, (void)gameplayIndex, (void)members, (void)msg;
     return false;
   }
+  // BOTROLE: the client's LabsPlayer_ReflectBotData (member 15, mpBotData) overwrites mRole with the BotClass's own role,
+  // so a bot whose role differs (the Predator on the Warden's BotClass, a role shaper select adjusted) needs its role sent
+  // again after an update that carried member 15. true: `msg` is that follow-up (a role-only update).
+  virtual bool PlayerRoleFollowUp(uint8_t gameplayIndex, Bytes* msg) {
+    (void)gameplayIndex, (void)msg;
+    return false;
+  }
 
   // Text for the connection's state line (e.g. "injected 121/121"); empty for none.
   virtual std::string StateNote(ConnId conn) {

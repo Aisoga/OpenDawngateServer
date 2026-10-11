@@ -110,6 +110,12 @@ void FormatStats(char* buf, std::size_t size);
 unsigned SendFeedback(void* sim, const char* defName, std::uint32_t object, unsigned teamBits, unsigned uintValue,
                       std::uint32_t target = 0, unsigned excludePlayers = 0);
 
+// BOTTEAM: a bot's minimap ping (MiniMapPing C2: `pinger` the bot's creature, `target` an object every recipient knows or
+// 0, `pos` the place, `pingType` 0-4 as the ping wheel's: attention, retreat, danger, on my way, missing [assumed order:
+// MinimapPingData's list]) to the players of `team`, as a human's ping is relayed. Returns the player mask, 0 if nobody.
+unsigned SendTeamPing(void* sim, unsigned team, std::uint32_t pinger, std::uint32_t target, const float* pos,
+                      std::uint8_t pingType, const char* why);
+
 // D11 test aid (the commands file's "xp <amount>" lines): XP to the player with gameplay index `index` now, as
 // [host] grant_xp does once at the start (LabsPlayer_GrantXPIfValid, nXPSourceType.Cheat); logs the level and the
 // ability points before and after. False if the player is missing or the call failed.

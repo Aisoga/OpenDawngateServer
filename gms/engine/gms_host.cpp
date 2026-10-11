@@ -22,6 +22,7 @@
 
 #include "core/common/log.h"
 #include "core/net/endpoint.h"
+#include "core/bots/composition.h"
 #include "core/postgame/postgame.h"
 #include "core/protocol/messages.h"
 #include "core/protocol/wire.h"
@@ -367,9 +368,23 @@ class KindScope {
   int prev_;
 };
 
+// The server simulator's game clock in ms, 0 when it has no timer (yet).
+long long SimClockMs(void* sim) {
+  if (!sim) return 0;
+  __try {
+    return static_cast<long long>(GetTimeMs(sim));
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return 0;
+  }
+}
+
 // IMatch over the server simulator (ADR-2 decision 5's engine side; since D2f the world comes from the simulator).
 class ServerMatch final : public gms::IMatch {
  public:
+  // The ClockSync clock: the simulator's own game clock, which stamps every time the client translates (cooldowns, death
+  // timers, instance starts). The steady clock since the session start ran ~0.7 s ahead of it, so a 1.5-s cooldown
+  // reached the client with 0.8 s left. <= 0 = no game clock yet (the session falls back to its own).
+  long long ServerClockMs() const { return SimClockMs(sim_); }
   ServerMatch(void* sim, const gms::ScriptOptions& o) : sim_(sim), o_(o), inject_(o) {}
 
   gms::GameSetup Setup() override { return o_.setup; }
@@ -790,6 +805,15 @@ class ServerMatch final : public gms::IMatch {
     return ok;
   }
 
+  // BOTROLE: a bot's role again after the update that carried its bot data (the client's ReflectBotData sets mRole to the
+  // BotClass's role: the Warden's Tactician, whatever the Predator or shaper select made of it)
+  bool PlayerRoleFollowUp(uint8_t gameplayIndex, gms::Bytes* msg) override {
+    if (!bots::IsBotIndex(gameplayIndex)) return false;
+    BoundTo b(sim_);
+    if (!repl::Init()) return false;
+    return repl::PlayerUpdate(sim_, gameplayIndex, {static_cast<int>(gms::kPlayerRole)}, msg);
+  }
+
   // D3-live step 3 ([host] shaper_select=1; GMS_PROTOCOL.md *Shaper select on the match host (D3-live)*): the humans'
   // content ([host] shaper_list/skins until createGame carries it), the timers ([host] shaper_timers, else createGame's
   // timers keys, else the practice values for a practice createGame, else ShaperSelectTuning's), and the bots (D6a) as
@@ -838,6 +862,7 @@ class ServerMatch final : public gms::IMatch {
       p.plan.pickMs = botPickMs_ + k * botStepMs_;
       p.plan.lockMs = p.plan.pickMs + botLockMs_;
       p.plan.role = static_cast<uint8_t>(b.role >= 0 && b.role < gms::kNumRoles ? b.role : 0);
+      p.plan.altRoles = static_cast<uint8_t>(gms::bots::AltRoles(b.botClass));
       config->players.push_back(p);
       char buf[96];
       std::snprintf(buf, sizeof buf, " [%d: team %d, 0x%08x r%d, pick %d ms, lock %d ms]", b.index, b.team, b.noun,
@@ -867,7 +892,14 @@ class ServerMatch final : public gms::IMatch {
                   k.gameplayIndex, k.skin);
         continue;
       }
-      if (bot && bot->noun == k.skin && bot->role == k.role) continue;  // the bot's own (ReflectBotData's)
+      bool roleChanged = false;
+      if (bot && bot->role != k.role) {  // shaper select adjusted its role to its human teammates'
+        gms::Logf("%s match: bot %u (%s) takes role %d instead of %d (its human teammates fill it)", gms::Clock().c_str(),
+                  k.gameplayIndex, bot->botClass.c_str(), static_cast<int>(k.role), bot->role);
+        bots::SetRole(k.gameplayIndex, k.role);  // `bot` points into the same list: its role is the new one now
+        roleChanged = true;
+      }
+      if (bot && !roleChanged && bot->noun == k.skin && bot->role == k.role) continue;  // the bot's own (ReflectBotData's)
       void* noun = k.skin ? SehFindAssetById(k.skin) : nullptr;
       const bool ok = noun && SehWritePick(sim_, k.gameplayIndex, noun, k.role, k.page, k.pageVersion);
       gms::Logf("%s match: shaper select pick of player %u (%s, team %u): shaper 0x%08x, skin 0x%08x (asset %p), role %u, "
@@ -2384,6 +2416,7 @@ class ServerMatch final : public gms::IMatch {
     return std::chrono::duration<double>(gms::SteadyClock::now().time_since_epoch()).count();
   }
   int64_t ServerMs() const {
+    if (const long long v = SimClockMs(sim_); v > 0) return v;
     return std::chrono::duration_cast<std::chrono::milliseconds>(gms::SteadyClock::now() - sessionStart_).count();
   }
 
@@ -3358,6 +3391,7 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   g->tx.ep = &g->ep;  // Q3c: the session sends through the timed transport (perf's traffic and answers)
   g->tx.match = g->match.get();
   g->session.reset(new gms::GmsSession(g->tx, *g->match, so, g->start));
+  g->session->SetServerClock([m = g->match.get()]() -> int64_t { return m->ServerClockMs(); });
   g_gms = g;
   // the gms_script lines (run_session.ps1's 'gms probe' summary parses them)
   gms::Logf("%s RakNet %s server, RAKNET_PROTOCOL_VERSION %d, listening on %s:%u, guid %s; GMS session of the match "

@@ -1,4 +1,5 @@
 // gms/core/agents/brain.h (D1b-live step 3): gambit choice per phase type, cooldowns, condition lists, links.
+#include <cmath>
 #include <vector>
 
 #include "core/agents/brain.h"
@@ -267,4 +268,52 @@ GMS_TEST(BotIdleRules) {
   CHECK(!IdleFallbackDue(9000, 3001, 2500, 3000));
   CHECK(!IdleFallbackDue(9000, -1, 2500, 3000));
   CHECK(!IdleFallbackDue(9000, 100, 0, 3000));  // switched off
+}
+
+// ---- BOTRECALL / BOTBACK (gms/core/agents/recall.h) ------------------------------------------------------------------
+#include "core/agents/recall.h"
+
+GMS_TEST(BotRecallOnlyFromAFleeOutOfDanger) {
+  using namespace gms::agents;
+  const RecallConfig c;
+  RecallInputs in;
+  in.fleePhase = true;
+  in.baseDistance = 200.f;
+  CHECK(RecallAllowed(in, c));                    // never hit, nobody around, far from home
+  in.fleePhase = false;
+  CHECK(!RecallAllowed(in, c));                   // a lane phase's Back gambit is a step, not a recall
+  in.fleePhase = true;
+  in.sinceHitMs = 3000;
+  CHECK(!RecallAllowed(in, c));                   // hit 3 s ago: the channel would break
+  in.sinceHitMs = 4000;
+  CHECK(RecallAllowed(in, c));
+  in.nearestEnemyShaper = 40.f;
+  CHECK(!RecallAllowed(in, c));
+  in.nearestEnemyShaper = 50.f;
+  in.nearestEnemyTower = 30.f;
+  CHECK(!RecallAllowed(in, c));                   // under an enemy Binding
+  in.nearestEnemyTower = 1e9f;
+  in.nearestObjective = 20.f;
+  CHECK(!RecallAllowed(in, c));                   // on the parasite's ground
+  in.nearestObjective = 1e9f;
+  in.baseDistance = 80.f;
+  CHECK(!RecallAllowed(in, c));                   // close to home: the walk
+  in.baseDistance = -1.f;
+  CHECK(!RecallAllowed(in, c));                   // no start point known
+  // a recall that runs answers -0x270B: started, not a refusal (no fall-through to the walk)
+  CHECK_EQ(RecallRequestResult(-0x270B), 1);
+  CHECK_EQ(RecallRequestResult(2), 2);
+  CHECK_EQ(RecallRequestResult(-0x270F), -0x270F);
+}
+
+GMS_TEST(BotBackStepTowardTheStartPoint) {
+  using namespace gms::agents;
+  const RecallConfig c;
+  const float from[3] = {0.f, 0.f, 3.f};
+  const float base[3] = {-60.f, -80.f, 0.f};  // 100 away
+  float goal[3] = {};
+  CHECK(BackStepGoal(from, base, c, goal));
+  CHECK(std::fabs(goal[0] + 18.f) < 1e-3f && std::fabs(goal[1] + 24.f) < 1e-3f && goal[2] == 3.f);  // 30 toward it
+  const float close[3] = {-50.f, -60.f, 0.f};  // 22.4 away: the original short walk
+  CHECK(!BackStepGoal(close, base, c, goal));
 }

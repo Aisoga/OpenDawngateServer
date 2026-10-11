@@ -1253,7 +1253,7 @@ bool ClosestCampPosition(float x, float y, float* out) {
   float bd = 3.0e38f;
   for (int i = 0; i < static_cast<int>(g_camps.size()); ++i) {
     const Camp& c = g_camps[i];
-    if (c.parasite || !c.timer.Alive()) continue;
+    if (c.parasite || (!c.timer.Alive() && c.timer.Spawns() > 0)) continue;  // cleared, waiting for its respawn
     bool any = false;
     for (std::uint32_t id : c.members) {
       float hp = 0.f;
@@ -1262,7 +1262,9 @@ bool ClosestCampPosition(float x, float y, float* out) {
         break;
       }
     }
-    if (!any) continue;  // not spawned yet, or cleared and waiting for its respawn
+    // cleared and waiting for its respawn: no. Not spawned yet (no members at all): yes, so a Hunter walks to the nearest
+    // camp before the first spawn (90 s) and is there when it comes
+    if (!any && !c.members.empty()) continue;
     const float dx = c.pos[0] - x, dy = c.pos[1] - y;
     const float d = dx * dx + dy * dy;
     if (d < bd) {

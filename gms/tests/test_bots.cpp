@@ -719,3 +719,195 @@ GMS_TEST(BotsCompositionPlanBotPlayers) {
   bots = PlanBotPlayersComposed({h, w}, 5, {1, 2}, AllBotClasses(), PlanClassNames(), drop);
   CHECK_EQ(static_cast<int>(bots.size()), 8);
 }
+
+// ---- BOTREFLEX / variety / role adjustment ----------------------------------------------------------------------------
+#include "core/agents/reflex.h"
+
+namespace {
+gms::agents::ReflexSensors Sensors(int role = 0) {
+  gms::agents::ReflexSensors s;
+  s.role = role;
+  return s;
+}
+}  // namespace
+
+GMS_TEST(BotReflexTowerBacksOffUnlessDiving) {
+  using namespace gms::agents;
+  ReflexSensors s = Sensors(0);
+  CHECK_EQ(static_cast<int>(DecideReflex(s).kind), static_cast<int>(kReflexNone));
+  s.inTowerZone = true;  // a tower hit it a moment ago and it still stands in reach
+  CHECK_EQ(static_cast<int>(DecideReflex(s).kind), static_cast<int>(kReflexBack));
+  // diving for a weak shaper under the tower, healthy itself: it stays
+  s.targetIsShaper = true;
+  s.targetInTowerZone = true;
+  s.targetHpFrac = 0.3f;
+  s.hpFrac = 0.8f;
+  CHECK_EQ(static_cast<int>(DecideReflex(s).kind), static_cast<int>(kReflexNone));
+  s.hpFrac = 0.3f;  // too hurt to dive
+  CHECK_EQ(static_cast<int>(DecideReflex(s).kind), static_cast<int>(kReflexBack));
+  s.hpFrac = 0.8f;
+  s.targetHpFrac = 0.45f;  // not weak enough, unless its plan is EngageForKill on it
+  CHECK_EQ(static_cast<int>(DecideReflex(s).kind), static_cast<int>(kReflexBack));
+  s.engagePlan = true;
+  CHECK_EQ(static_cast<int>(DecideReflex(s).kind), static_cast<int>(kReflexNone));
+  s.targetInTowerZone = false;  // the target is out of the tower's reach: no dive, back off
+  CHECK_EQ(static_cast<int>(DecideReflex(s).kind), static_cast<int>(kReflexBack));
+  // finishing a worn-down tower: stays; a healthy tower or a hurt bot: backs off
+  s.targetIsShaper = false;
+  s.targetIsTower = true;
+  s.targetTowerHpFrac = 0.3f;
+  CHECK_EQ(static_cast<int>(DecideReflex(s).kind), static_cast<int>(kReflexNone));
+  s.targetTowerHpFrac = 0.8f;
+  CHECK_EQ(static_cast<int>(DecideReflex(s).kind), static_cast<int>(kReflexBack));
+  s.targetTowerHpFrac = 0.3f;
+  s.hpFrac = 0.4f;
+  CHECK_EQ(static_cast<int>(DecideReflex(s).kind), static_cast<int>(kReflexBack));
+}
+
+GMS_TEST(BotReflexJunglers) {
+  using namespace gms::agents;
+  // a Gladiator is left to its plan when an enemy shaper hits it or stands in the jungle
+  ReflexSensors g = Sensors(0);
+  g.shaperHitAgeMs = 500;
+  g.jungleEnemy = true;
+  g.jungleEnemyDist = 20.f;
+  CHECK_EQ(static_cast<int>(DecideReflex(g).kind), static_cast<int>(kReflexNone));
+  // a Hunter hit by a shaper fights back, even clearing a camp
+  ReflexSensors h = Sensors(kReflexRoleHunter);
+  h.shaperHitAgeMs = 500;
+  h.attackerHpFrac = 0.9f;
+  h.hpFrac = 0.9f;
+  ReflexDecision d = DecideReflex(h);
+  CHECK_EQ(static_cast<int>(d.kind), static_cast<int>(kReflexFight));
+  CHECK(d.why[0] == 'r');
+  h.shaperHitAgeMs = 4000;  // the attack is old news
+  CHECK_EQ(static_cast<int>(DecideReflex(h).kind), static_cast<int>(kReflexNone));
+  // weaker than the attacker, or outnumbered: it backs off instead
+  h.shaperHitAgeMs = 500;
+  h.hpFrac = 0.5f;
+  h.attackerHpFrac = 0.9f;
+  CHECK_EQ(static_cast<int>(DecideReflex(h).kind), static_cast<int>(kReflexBack));
+  h.hpFrac = 0.9f;
+  h.enemiesNear = 3;
+  h.alliesNear = 0;
+  CHECK_EQ(static_cast<int>(DecideReflex(h).kind), static_cast<int>(kReflexBack));
+  // an enemy shaper in the jungle: engaged at full strength, left alone (far) or fled (close) when weaker
+  ReflexSensors p = Sensors(kReflexRolePredator);
+  p.jungleEnemy = true;
+  p.jungleEnemyDist = 30.f;
+  p.jungleEnemyHpFrac = 0.8f;
+  p.hpFrac = 0.9f;
+  d = DecideReflex(p);
+  CHECK_EQ(static_cast<int>(d.kind), static_cast<int>(kReflexFight));
+  p.hpFrac = 0.5f;  // lower than the enemy's by more than the margin
+  CHECK_EQ(static_cast<int>(DecideReflex(p).kind), static_cast<int>(kReflexNone));  // 30 away: not yet a threat
+  p.jungleEnemyDist = 20.f;
+  CHECK_EQ(static_cast<int>(DecideReflex(p).kind), static_cast<int>(kReflexBack));
+  p.jungleEnemyDist = 45.f;  // beyond the engage range
+  p.hpFrac = 0.9f;
+  CHECK_EQ(static_cast<int>(DecideReflex(p).kind), static_cast<int>(kReflexNone));
+  // a threatened well of its side: defended unless the bot is nearly dead; a Gladiator ignores it
+  ReflexSensors w = Sensors(kReflexRoleHunter);
+  w.wellThreat = true;
+  CHECK_EQ(static_cast<int>(DecideReflex(w).kind), static_cast<int>(kReflexDefend));
+  w.hpFrac = 0.2f;
+  CHECK_EQ(static_cast<int>(DecideReflex(w).kind), static_cast<int>(kReflexNone));
+  w = Sensors(0);
+  w.wellThreat = true;
+  CHECK_EQ(static_cast<int>(DecideReflex(w).kind), static_cast<int>(kReflexNone));
+}
+
+GMS_TEST(BotsCompositionFreeDrawAnyClassAnySeat) {
+  std::set<std::string> seen;
+  bool predator = false, noPredator = false;
+  for (unsigned seed = 1; seed < 200; ++seed) {
+    const std::vector<ComposedSeat> t = ComposeTeamFree(5, AllBotClasses(), seed);
+    CHECK_EQ(static_cast<int>(t.size()), 5);
+    std::set<std::string> classes;
+    int top = 0, gladiators = 0, hunters = 0, predators = 0, tacticians = 0;
+    for (const ComposedSeat& s : t) {
+      CHECK(classes.insert(s.botClass).second);  // distinct within a team
+      seen.insert(s.botClass);
+      top += s.lane == kLaneTop;
+      gladiators += s.role == kRoleGladiator;
+      hunters += s.role == kRoleHunter;
+      predators += s.role == kRolePredator;
+      tacticians += s.role == kRoleTactician;
+      if (s.role == kRolePredator) CHECK(s.botClass == "PC_Warden" && s.roleOverride);
+    }
+    CHECK_EQ(top, 2);
+    CHECK_EQ(gladiators, 2);
+    CHECK_EQ(hunters, 1);
+    CHECK_EQ(predators + tacticians, 2);
+    predator = predator || predators > 0;
+    noPredator = noPredator || predators == 0;
+    // fewer seats: the flex seats go first, the Hunter and one Gladiator stay at three
+    const std::vector<ComposedSeat> small = ComposeTeamFree(3, AllBotClasses(), seed);
+    CHECK_EQ(static_cast<int>(small.size()), 3);
+    int sg = 0, sh = 0;
+    for (const ComposedSeat& s : small) { sg += s.role == kRoleGladiator; sh += s.role == kRoleHunter; }
+    CHECK(sg == 2 && sh == 1);
+  }
+  CHECK_EQ(static_cast<int>(seen.size()), 8);  // all eight classes turn up
+  CHECK(predator && noPredator);
+  // the planner uses it with a seed and keeps the old setup without one
+  HumanPlayer h;
+  h.index = 0;
+  h.team = 1;
+  const std::vector<BotPlayer> a = PlanBotPlayersComposed({h}, 5, {1, 2}, AllBotClasses(), PlanClassNames(), ParseDropOrder(""), 0, 77);
+  CHECK_EQ(static_cast<int>(a.size()), 9);
+  const std::vector<BotPlayer> b = PlanBotPlayersComposed({h}, 5, {1, 2}, AllBotClasses(), PlanClassNames(), ParseDropOrder(""), 0, 78);
+  bool differ = false;
+  for (size_t i = 0; i < a.size() && i < b.size(); ++i) differ = differ || a[i].botClass != b[i].botClass;
+  CHECK(differ);
+}
+
+GMS_TEST(BotsCompositionFreeDrawLeavesTheHumansRoles) {
+  for (unsigned seed = 1; seed < 60; ++seed) {
+    auto count = [](const std::vector<ComposedSeat>& t, int role) {
+      int n = 0;
+      for (const ComposedSeat& s : t) n += s.role == role;
+      return n;
+    };
+    // a human Hunter: four bots, no bot Hunter, both Gladiators, two flex seats
+    std::vector<ComposedSeat> t = ComposeTeamFree(4, AllBotClasses(), seed, {kRoleHunter});
+    CHECK_EQ(static_cast<int>(t.size()), 4);
+    CHECK_EQ(count(t, kRoleHunter), 0);
+    CHECK_EQ(count(t, kRoleGladiator), 2);
+    // a human Gladiator: one bot Gladiator (the top lane), the Hunter and both flex seats
+    t = ComposeTeamFree(4, AllBotClasses(), seed, {kRoleGladiator});
+    CHECK_EQ(count(t, kRoleGladiator), 1);
+    CHECK_EQ(count(t, kRoleHunter), 1);
+    CHECK(t[0].role == kRoleGladiator && t[0].lane == kLaneTop);
+    // a human Predator: no bot Predator
+    t = ComposeTeamFree(4, AllBotClasses(), seed, {kRolePredator});
+    CHECK_EQ(count(t, kRolePredator), 0);
+    CHECK_EQ(count(t, kRoleTactician), 1);
+    // unknown roles: the old trimming (flex first)
+    t = ComposeTeamFree(3, AllBotClasses(), seed, {-1, -1});
+    CHECK(count(t, kRoleGladiator) == 2 && count(t, kRoleHunter) == 1);
+  }
+}
+
+GMS_TEST(BotsCompositionShuffleVariesTheTeams) {
+  const std::vector<int> drop = ParseDropOrder("");
+  const std::vector<WantedSeat> wanted = WantedSeats(5, {}, drop);
+  // seed 0 keeps the fixed order
+  std::vector<ComposedSeat> fixed = ComposeTeam(wanted, AllBotClasses(), PlanClassNames(), 0);
+  CHECK(fixed[0].botClass == "PC_HighHuntress" && fixed[1].botClass == "PC_Guardian" && fixed[2].botClass == "PC_Creature");
+  // other seeds: every role still has a class of its own list, the Predator stays PC_Warden, and across seeds the
+  // Tactician and the Gladiators' lanes change
+  std::set<std::string> tacticians, topGladiators;
+  for (unsigned seed = 1; seed < 60; ++seed) {
+    const std::vector<ComposedSeat> t = ComposeTeam(wanted, AllBotClasses(), PlanClassNames(), seed);
+    CHECK(t[0].role == kRoleGladiator && (t[0].botClass == "PC_HighHuntress" || t[0].botClass == "PC_Creature"));
+    CHECK(t[2].role == kRoleGladiator && t[2].botClass != t[0].botClass);
+    CHECK(t[3].botClass == "PC_Warden" && t[3].roleOverride);
+    CHECK(t[4].botClass == "PC_Artificer");
+    CHECK(t[1].botClass != "PC_Warden");
+    tacticians.insert(t[1].botClass);
+    topGladiators.insert(t[0].botClass);
+  }
+  CHECK(tacticians.size() >= 3);
+  CHECK_EQ(static_cast<int>(topGladiators.size()), 2);
+}

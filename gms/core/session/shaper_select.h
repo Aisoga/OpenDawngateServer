@@ -54,7 +54,9 @@ struct ShaperPickPlan {
                        // kNounRandom = random at the lock
   int pickMs = 2000;
   int lockMs = 4000;   // locked at max(pickMs, lockMs)
-  uint8_t role = 0;    // set and locked once every connected human has locked its role, or at the phase-2 timer
+  uint8_t role = 0;    // its intention: shown from the start (record, and a preferred-role toggle when phase 2 begins);
+                       // locked once every connected human has locked its role, or at the phase-2 timer
+  uint8_t altRoles = 0;  // roles (bit per role) it may take instead when its teammates already fill `role`
 };
 
 struct PerkPage {
@@ -216,6 +218,8 @@ class ShaperSelect {
   void Enter(int phase, int64_t at, int64_t now, ISender& out);
   void Reveal(int64_t at, int64_t now, ISender& out);
   void LockFollowerRoles(ISender& out);
+  void AnnounceFollowerRoles(ISender& out);
+  void SendRoleToggle(uint8_t index, uint8_t role, ISender& out);
   void Advance(int64_t now, ISender& out);
   void Refuse(uint8_t index, const char* what, const char* why) const;
 

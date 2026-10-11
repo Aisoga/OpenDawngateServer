@@ -762,7 +762,7 @@ namespace {
 
 // an empty 15-byte record (nothing picked) for players 0 and 1
 const char* const kRecordEmpty0 = "c80300" "00000000" "00000000" "00" "00000000" "00";
-const char* const kRecordEmpty1 = "c80301" "00000000" "00000000" "00" "00000000" "00";
+const char* const kRecordEmpty1 = "c80301" "00000000" "00000000" "01" "00000000" "00";
 
 gms::ScriptOptions ShaperOptions(const char* list, const char* timers, const char* ally) {
   gms::ScriptOptions mo;
@@ -818,11 +818,11 @@ GMS_TEST(SessionShaperSelectScriptBOverRakNet) {
       "c802ab4a04ef0100000000009eb0a85d010000000000271e1d7c020000000000",  // 9
       kRecordEmpty0, kRecordEmpty1,                              // 10
       "c801:p1",                                                 // 11
-      "c803019eb0a85d9eb0a85d000000000000",                      // 12: the ally picks
-      "c803019eb0a85d9eb0a85d000000000001",                      // 13: the ally locks
+      "c803019eb0a85d9eb0a85d010000000000",                      // 12: the ally picks
+      "c803019eb0a85d9eb0a85d010000000001",                      // 13: the ally locks
       "c80300ab4a04efab4a04ef000000000000", "c804ab4a04ef01",    // 15
       "c80300ab4a04efab4a04ef000000000001", "c80b01ab4a04ef00", "c805ab4a04ef01",  // 17
-      "c801:p2",                                                 // 20
+      "c801:p2", "c8060101",                                     // 20 (+ the ally's intended role)
       "c80300ab4a04efab4a04ef000000000003", "c803019eb0a85d9eb0a85d010000000003",  // 22
       "c801:p3",                                                 // 23
       "c801:p4",                                                 // 25

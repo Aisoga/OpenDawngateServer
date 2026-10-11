@@ -210,7 +210,8 @@ inline std::vector<BotPlayer> PlanBotPlayers(const std::vector<Slot>& slots, con
 inline std::vector<BotPlayer> PlanBotPlayersComposed(const std::vector<HumanPlayer>& humans, int teamSize,
                                                      const std::vector<int>& teams, const std::set<std::string>& available,
                                                      const std::vector<std::string>& anyClass,
-                                                     const std::vector<int>& dropOrder, unsigned reserved = 0) {
+                                                     const std::vector<int>& dropOrder, unsigned reserved = 0,
+                                                     unsigned seed = 0) {
   unsigned taken = reserved;
   for (const HumanPlayer& h : humans)
     if (h.index >= 0 && h.index < kMaxPlayerIndexes) taken |= 1u << h.index;
@@ -223,7 +224,10 @@ inline std::vector<BotPlayer> PlanBotPlayersComposed(const std::vector<HumanPlay
         roles.push_back(h.role);
         ++mineCount;
       }
-    const std::vector<ComposedSeat> seats = ComposeTeam(WantedSeats(teamSize - mineCount, roles, dropOrder), available, anyClass);
+    // seed != 0: the free draw (any class in any seat, ComposeTeamFree); 0: the fixed setup
+    const std::vector<ComposedSeat> seats =
+        seed ? ComposeTeamFree(teamSize - mineCount, available, seed + static_cast<unsigned>(team) * 7919u, roles)
+             : ComposeTeam(WantedSeats(teamSize - mineCount, roles, dropOrder), available, anyClass, 0u);
     int slot = 0;
     for (const ComposedSeat& s : seats) {
       const int seatSlot = slot++;

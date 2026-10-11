@@ -14,9 +14,14 @@
 #include "core/agents/aggro.h"
 #include "core/agents/brain.h"
 #include "core/agents/minion_target.h"
+#include "core/agents/recall.h"
+#include "core/agents/reflex.h"
+#include "core/bots/lanes.h"
 #include "bots.h"
+#include "director.h"
 #include "game.h"
 #include "log.h"
+#include "wells.h"
 
 using namespace game;
 
@@ -149,6 +154,11 @@ struct AgentState {
   std::uint32_t pwTarget = 0;
   float pwDist = 0.f;
   int skipGambit = -1, skipResult = 0, fallbackResult = 0x7FFFFFFF;
+  // BOTREFLEX: the last tower that hit the bot and the last enemy shaper that did (OnDamaged), and the reflex now active
+  std::uint32_t lastTowerId = 0, lastShaperAttacker = 0;
+  unsigned long long lastTowerHitMs = 0, lastShaperHitMs = 0;
+  int reflexKind = 0;
+  unsigned long long reflexLogMs = 0;
 };
 std::unordered_map<std::uint32_t, AgentState> g_agents;  // by object id
 
@@ -378,6 +388,25 @@ struct AgentInfo {
   int timer = 0;  // +0x0C
 };
 
+// RANGES: the NPC class data is shared by every object of the class, so it is tuned once in place: the parasite's
+// (type 8) drop range and tether at least parasiteReach, so the list keeps a ranged attacker (its ranged attack reaches 30) instead of pruning
+// it beyond 27.05 and leaving the parasite without a target.
+std::vector<char*> g_tunedRanges;
+void TuneRanges(char* d) {
+  for (char* t : g_tunedRanges)
+    if (t == d) return;
+  g_tunedRanges.push_back(d);
+  const int type = Field<int>(d, npc::kType);
+  if (type == 8 && g_opt.parasiteReach > 0.f) {
+    float& drop = Field<float>(d, npc::kDropAggroRange);
+    float& tether = Field<float>(d, npc::kTetherRange);
+    if (drop < g_opt.parasiteReach) drop = g_opt.parasiteReach;
+    if (tether < g_opt.parasiteReach) tether = g_opt.parasiteReach;
+    Log("agents: RANGES: parasite class data %p: aggro %.1f, drop %.1f, tether %.1f", static_cast<void*>(d),
+        static_cast<double>(Field<float>(d, npc::kAggroRange)), static_cast<double>(drop), static_cast<double>(tether));
+  }
+}
+
 bool SehAgentInfo(void* o, AgentInfo* out) {
   __try {
     out->agent = Field<void*>(o, agent::kOfObject);
@@ -387,6 +416,7 @@ bool SehAgentInfo(void* o, AgentInfo* out) {
     char* d = npcAsset ? Field<char*>(npcAsset, noun::kData) : nullptr;
     out->hasNpc = d != nullptr;
     if (d) {
+      TuneRanges(d);
       out->aggro = Field<float>(d, npc::kAggroRange);
       out->help = Field<float>(d, npc::kCallForHelpRange);
       out->drop = Field<float>(d, npc::kDropAggroRange);
@@ -1549,6 +1579,8 @@ struct BotStats {
   unsigned pointLeafRestarts = 0;  // a running Pursue leaf restarted (request 0x400) to take the point
   // BOTIDLE: refusals that let the next gambit try (and the ones that then started or pursued), pursuits dropped as stuck,
   // the idle fallback (tries, requests that started or pursued)
+  unsigned backSteps = 0;  // BOTBACK: Back gambits that stepped toward the base instead of walking home
+  unsigned recalls = 0;  // BOTRECALL: Back gambits that cast Return to Base instead of walking
   unsigned skipped = 0, skippedThenActed = 0, pursuitStuck = 0, fallbackTries = 0, fallbackActed = 0;
 };
 BotStats g_bot;
@@ -1711,6 +1743,288 @@ constexpr float kStuckProgress = 3.f;
 constexpr unsigned long long kStuckHoldMs = 4000;
 constexpr long long kFallbackHitWindowMs = 3000;
 constexpr float kFallbackReach = 30.f;
+
+// ---- BOTREFLEX (gms/core/agents/reflex.h) ------------------------------------------------------------------------------
+// A layer above the plan's gambits: a bot hit by a tower backs off, a Hunter or Predator fights back, engages shapers in
+// the jungle and defends its wells. The snapshots below are taken once per frame (Tick) from the objects the agent loop
+// already collected.
+constexpr std::uint32_t kAbilityBotBack = 0xE695B80B;          // ability_Bot_Back (GUID in its script header)
+constexpr std::uint32_t kAbilityBotMoveToTarget = 0x2378FAE9;  // ability_Bot_MoveToTarget
+constexpr int kNpcObjective = 8;                               // nNPCType: the parasite
+constexpr int kNpcTower = 9;                                   // nNPCType.Tower
+constexpr float kNearShapers = 35.f;                           // shapers counted for "outnumbered"
+constexpr float kAttackerReach = 45.f;                         // an attacker farther than this no longer counts
+constexpr float kWellSideReach = 220.f;                        // wells farther than this are not "on its side"
+// A retreat or a walk to a well is made in steps: ability_Bot_MoveToTarget holds the agent until it arrives and the
+// brain does not think meanwhile (BotBrainStep returns on the AbilityHoldsAgent leaf), so a long walk would blind the
+// bot to the next attack. ability_Bot_Back walks to the base: not used.
+constexpr float kRetreatStep = 30.f;
+constexpr float kWellStep = 25.f;
+
+struct Snap {
+  void* obj = nullptr;
+  std::uint32_t id = 0;
+  int team = 0;
+  float pos[3] = {};
+  float hp = 0.f, maxHp = 1.f;
+  float HpFrac() const { return maxHp > 0.f ? hp / maxHp : 1.f; }
+};
+std::vector<Snap> g_snapPlayers, g_snapTowers, g_snapObjectives;  // objectives: NPC type 8 (the parasite)
+
+float SehMaxHp(void* o) {
+  __try {
+    return MaxHitPoints(o);
+  } __except (SehNote(GetExceptionInformation(), "max hit points")) {
+    return 0.f;
+  }
+}
+
+bool SehVisible(void* viewer, void* target) {
+  __try {
+    return IsVisibleTo(viewer, target);
+  } __except (SehNote(GetExceptionInformation(), "Agent_IsVisibleTo")) {
+    return false;
+  }
+}
+
+const Snap* FindSnap(const std::vector<Snap>& v, std::uint32_t id) {
+  for (const Snap& s : v)
+    if (s.id == id) return &s;
+  return nullptr;
+}
+
+float Dist2(const float* a, const float* b) {
+  return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]));
+}
+
+int BotRoleOf(std::uint32_t creature) {
+  for (const bots::Bot& b : bots::Players())
+    if (b.creature == creature) return b.role;
+  return -1;
+}
+
+// The bot attacks `tgt`: its Q, W, E (as far as ranked), else its basic attack; 1 started, 5 out of range (the Pursue
+// leaf follows mTarget), 0 nothing worked.
+int ReflexAttack(void* o, const ObjInfo& self, const BotPlayerView& pv, std::uint32_t mtarget, const Snap& tgt) {
+  if (tgt.id != mtarget && SehHostile(self.team, tgt.id)) SehSetTarget(o, tgt.id);
+  static const int kSlots[] = {gms::agents::kSlotQ, gms::agents::kSlotQ + 1, gms::agents::kSlotQ + 2,
+                               gms::agents::kSlotBasic};
+  for (int slot : kSlots) {
+    const bool ranked = slot >= gms::agents::kSlotQ;
+    if (ranked && pv.ranks[slot] <= 0) continue;
+    const int res = SehBotRequest(0, slot, self.id, tgt.id, tgt.pos, ranked ? pv.ranks[slot] : 1);
+    if (res == 1 || res == 2) return 1;
+    if (res == 5) return 5;
+    if (res == gms::agents::kResultHoldsAgent) return 1;
+  }
+  return 0;
+}
+
+// The point `step` units from `from` away from (or toward) `other` in 2-D; a degenerate pair gives the direction toward
+// the bot's own base corner (team 1 at the map's low corner, team 2 at the high one).
+void StepPoint(const float* from, const float* other, float step, bool toward, int team, float* out) {
+  float dx = other[0] - from[0], dy = other[1] - from[1];
+  float len = std::sqrt(dx * dx + dy * dy);
+  if (len < 0.5f) {
+    dx = team == 1 ? -1.f : 1.f;
+    dy = dx;
+    len = std::sqrt(2.f);
+    toward = true;
+  }
+  const float k = (toward ? 1.f : -1.f) * (len > 0.f ? step / len : 0.f);
+  out[0] = from[0] + dx * k;
+  out[1] = from[1] + dy * k;
+  out[2] = from[2];
+}
+
+// BOTRECALL / BOTBACK (gms/core/agents/recall.h): a Flee phase's walk home becomes the shop's Return to Base once the
+// bot is out of immediate danger; a lane phase's Back gambit is a short step toward the start point.
+constexpr std::uint32_t kAbilityReturnToBase = 0x96B845C6;  // SPID("ability_returntobase") (GameplayControls_ReturnToBase)
+const gms::agents::RecallConfig kRecall;
+
+// BOTBACK: the start point of the bot's player (where ability_Bot_Back walks to), false when there is none.
+bool BotStartPoint(const ObjInfo& self, float* out) {
+  if (!g_sim) return false;
+  for (const bots::Bot& b : bots::Players()) {
+    if (b.creature != self.id) continue;
+    float pos[3] = {1e30f, 0.f, 0.f}, rot[4] = {};
+    GetPlayerStartPoint(g_sim, static_cast<unsigned>(b.team), static_cast<unsigned>(b.index), pos, rot);
+    if (pos[0] >= 1e29f) return false;
+    out[0] = pos[0];
+    out[1] = pos[1];
+    out[2] = pos[2];
+    return true;
+  }
+  return false;
+}
+
+bool InFleePhase(const char* phaseName) {
+  return phaseName && std::strstr(phaseName, "Flee") && !std::strstr(phaseName, "TowerTargeting");
+}
+
+// The recall rule's inputs from the per-frame snapshots (BOTREFLEX's: players, towers, the parasite) and OnDamaged.
+bool RecallPossible(const AgentState& st, const ObjInfo& self, const char* phaseName, unsigned long long nowMs) {
+  if (!g_opt.botRecall || !g_opt.botReflex || !g_sim) return false;
+  gms::agents::RecallInputs in;
+  in.fleePhase = InFleePhase(phaseName);
+  if (!in.fleePhase) return false;
+  // the latest hit by anything (OnDamaged: parasite, creeps, minions; shapers and towers also for BOTREFLEX)
+  for (unsigned long long at : {st.lastHitMs, st.lastShaperHitMs, st.lastTowerHitMs}) {
+    if (!at || at > nowMs) continue;
+    const long long since = static_cast<long long>(nowMs - at);
+    if (in.sinceHitMs < 0 || since < in.sinceHitMs) in.sinceHitMs = since;
+  }
+  for (const Snap& p : g_snapPlayers)
+    if (p.team != self.team) in.nearestEnemyShaper = std::min(in.nearestEnemyShaper, Dist2(p.pos, self.pos));
+  for (const Snap& t : g_snapTowers)
+    if (t.team != self.team) in.nearestEnemyTower = std::min(in.nearestEnemyTower, Dist2(t.pos, self.pos));
+  for (const Snap& ob : g_snapObjectives) in.nearestObjective = std::min(in.nearestObjective, Dist2(ob.pos, self.pos));
+  float base[3];
+  if (BotStartPoint(self, base)) in.baseDistance = Dist2(base, self.pos);
+  return gms::agents::RecallAllowed(in, kRecall);
+}
+
+// Returns true when a reflex acted this think (the plan's gambits are skipped).
+bool BotReflexStep(void* o, AgentState& st, const ObjInfo& self, const BotView& v, const BotPlayerView& pv,
+                   std::uint32_t mtarget, unsigned long long nowMs) {
+  const float maxHp = SehMaxHp(o);
+  if (!(maxHp > 0.f) || self.hp <= 0.f) return false;
+  const gms::agents::ReflexConfig cfg;
+  gms::agents::ReflexSensors s;
+  s.role = BotRoleOf(self.id);
+  s.hpFrac = self.hp / maxHp;
+  // the tower that hit it last, while it stands and the bot is still within its reach
+  const Snap* hitTower = nullptr;
+  if (st.lastTowerHitMs && nowMs - st.lastTowerHitMs <= static_cast<unsigned long long>(cfg.towerZoneMs))
+    if (const Snap* t = FindSnap(g_snapTowers, st.lastTowerId)) {
+      s.inTowerZone = Dist2(t->pos, self.pos) <= cfg.towerRange;
+      hitTower = t;
+    }
+  // its target, when it is an enemy shaper
+  if (const Snap* t = mtarget ? FindSnap(g_snapPlayers, mtarget) : nullptr) {
+    if (t->team != self.team) {
+      s.targetIsShaper = true;
+      s.targetHpFrac = t->HpFrac();
+      for (const Snap& tw : g_snapTowers)
+        if (tw.team != self.team && Dist2(tw.pos, t->pos) <= cfg.towerRange) s.targetInTowerZone = true;
+    }
+  }
+  s.engagePlan = v.requestMission && v.missionType > 0;
+  if (const Snap* t = mtarget ? FindSnap(g_snapTowers, mtarget) : nullptr)
+    if (t->team != self.team) {
+      s.targetIsTower = true;
+      s.targetTowerHpFrac = t->HpFrac();
+    }
+  // the shapers around: who counts, who attacked, who is in the jungle
+  const Snap* attacker = nullptr;
+  const Snap* jungle = nullptr;
+  float jungleDist = 3.0e38f;
+  for (const Snap& p : g_snapPlayers) {
+    if (p.id == self.id) continue;
+    const float d = Dist2(p.pos, self.pos);
+    if (p.team == self.team) {
+      if (d <= kNearShapers) ++s.alliesNear;
+      continue;
+    }
+    if (!SehVisible(o, p.obj)) continue;
+    if (d <= kNearShapers) ++s.enemiesNear;
+    if (p.id == st.lastShaperAttacker && d <= kAttackerReach) attacker = &p;
+    if (d <= cfg.jungleEngageRange && d < jungleDist) {
+      float laneDist = 0.f;
+      if (::director::NearestLane(p.pos[0], p.pos[1], &laneDist) != 0 && laneDist >= cfg.jungleLaneDistance) {
+        jungle = &p;
+        jungleDist = d;
+      }
+    }
+  }
+  if (attacker && st.lastShaperHitMs) {
+    s.shaperHitAgeMs = static_cast<long long>(nowMs - st.lastShaperHitMs);
+    s.attackerHpFrac = attacker->HpFrac();
+  }
+  if (jungle) {
+    s.jungleEnemy = true;
+    s.jungleEnemyHpFrac = jungle->HpFrac();
+    s.jungleEnemyDist = jungleDist;
+  }
+  // a well of its team on its side of the map under attack
+  ::wells::Threat wellPos;
+  bool wellThreat = false;
+  if (gms::agents::ReflexIsJungler(s.role)) {
+    ::wells::Threat th[4];
+    const int n = ::wells::Threats(self.team, th, 4);
+    float best = kWellSideReach;
+    for (int i = 0; i < n; ++i) {
+      if (gms::bots::LaneByDiagonal(th[i].pos[0], th[i].pos[1]) !=
+          gms::bots::LaneByDiagonal(self.pos[0], self.pos[1]))
+        continue;
+      const float d = Dist2(th[i].pos, self.pos);
+      if (d < best) {
+        best = d;
+        wellPos = th[i];
+        wellThreat = true;
+      }
+    }
+  }
+  s.wellThreat = wellThreat;
+
+  const gms::agents::ReflexDecision d = gms::agents::DecideReflex(s, cfg);
+  if (d.kind == gms::agents::kReflexNone) {
+    st.reflexKind = 0;
+    return false;
+  }
+  int res = 0;
+  if (d.kind == gms::agents::kReflexBack) {
+    // away from what threatens it: the tower, else the attacker, else the jungle shaper
+    const float* from = d.why[0] == 't' && hitTower ? hitTower->pos : attacker ? attacker->pos : jungle ? jungle->pos : nullptr;
+    float goal[3];
+    StepPoint(self.pos, from ? from : self.pos, kRetreatStep, false, self.team, goal);
+    res = SehBotRequest(kAbilityBotMoveToTarget, -1, self.id, 0, goal, 1);
+    if (res == gms::agents::kResultHoldsAgent) res = 1;
+  } else if (d.kind == gms::agents::kReflexFight) {
+    const Snap* tgt = d.why[0] == 'r' ? attacker : jungle;  // "retaliate" / "jungle"
+    if (tgt) res = ReflexAttack(o, self, pv, mtarget, *tgt);
+  } else {  // defend: whoever attacks the well, else walk to it
+    const Snap* tgt = nullptr;
+    float best = 30.f;
+    for (const Snap& p : g_snapPlayers) {
+      if (p.team == self.team || Dist2(p.pos, wellPos.pos) > best || !SehVisible(o, p.obj)) continue;
+      best = Dist2(p.pos, wellPos.pos);
+      tgt = &p;
+    }
+    if (tgt) {
+      res = ReflexAttack(o, self, pv, mtarget, *tgt);
+    } else {
+      float goal[3];
+      StepPoint(self.pos, wellPos.pos, kWellStep, true, self.team, goal);
+      if (Dist2(self.pos, wellPos.pos) <= kWellStep) std::memcpy(goal, wellPos.pos, sizeof goal);
+      res = SehBotRequest(kAbilityBotMoveToTarget, -1, self.id, 0, goal, 1);
+      if (res == gms::agents::kResultHoldsAgent) res = 1;
+    }
+  }
+  const bool acted = res == 1 || res == 2 || res == 5;
+  if (d.kind != st.reflexKind || nowMs - st.reflexLogMs >= 10000) {
+    st.reflexLogMs = nowMs;
+    if (IdleLogBudget())
+      Log("agents: bot %08X %s reflex %s (%s): hp %.0f%%, role %d, enemies %d allies %d, result %d%s (BOTREFLEX) "
+          "(t %.2f s)",
+          self.id, st.noun,
+          d.kind == gms::agents::kReflexBack ? "back off"
+                                             : d.kind == gms::agents::kReflexFight ? "fight" : "defend a well",
+          d.why, static_cast<double>(s.hpFrac * 100.f), s.role, s.enemiesNear, s.alliesNear, res,
+          acted ? "" : " (not taken)", static_cast<double>(nowMs) / 1000.0);
+  }
+  st.reflexKind = d.kind;
+  if (!acted) return false;
+  if (st.pointPursuit) EndPointPursuit(o, st, self, 0, nullptr, nowMs);
+  st.idleSinceMs = 0;
+  const bool pursue = res == 5;
+  if (pursue != st.pursue) {
+    st.pursue = pursue;
+    SehSetTreeFlag(o, 8, pursue);
+    ++(pursue ? g_st.pursueOn : g_st.pursueOff);
+  }
+  return true;
+}
 
 void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) {
   if (st.leaf == kLeafDeath || st.leaf == kLeafDeathAbility || st.leaf == kLeafDeathAbilityDefault ||
@@ -1881,6 +2195,8 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
   AgentInfo a;
   if (!SehAgentInfo(o, &a)) return;
   const std::uint32_t mtarget = SehBestTarget(a.agent);
+  // BOTREFLEX: danger and opportunity before the plan's own gambits
+  if (g_opt.botReflex && BotReflexStep(o, st, self, v, pv, mtarget, nowMs)) return;
   std::vector<gms::agents::GambitView> views(v.gambits.size());
   std::vector<std::uint32_t> targets(v.gambits.size(), 0);
   std::vector<float> spots(v.gambits.size() * 3, 0.f);
@@ -1922,7 +2238,29 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
       if (target && target != mtarget && SehHostile(self.team, target)) SehSetTarget(o, target);
       const int slot = g.guid ? (g.slot >= 0 ? g.slot : -1) : g.slot;
       const int rank = gms::agents::SlotIsRanked(g.slot) ? pv.ranks[g.slot] : 1;
-      res = SehBotRequest(g.guid, slot, self.id, target, pos, rank);
+      res = 0;
+      if (g.guid == kAbilityBotBack) {
+        const bool flee = InFleePhase(v.phaseName);
+        float base[3], goal[3];
+        // BOTBACK: outside a Flee phase the Back gambit (an enemy shaper or a pile of minions close) is a step back, not
+        // the walk home that nothing ends
+        if (!flee && g_opt.botBackStep && BotStartPoint(self, base) &&
+            gms::agents::BackStepGoal(self.pos, base, kRecall, goal)) {
+          res = SehBotRequest(kAbilityBotMoveToTarget, -1, self.id, 0, goal, 1);
+          if (res == gms::agents::kResultHoldsAgent) res = 1;  // the last step still runs
+          if (res == 1 || res == 2) ++g_bot.backSteps;
+        }
+        // BOTRECALL: a Flee phase's walk home is a recall once the bot is out of immediate danger; a recall that runs
+        // already (ours or the data's own Flee gambit) answers -0x270B and counts as started, never as a refusal that
+        // falls through to the walk (the walk would abort it)
+        if (flee && g_opt.botRecall && RecallPossible(st, self, v.phaseName, nowMs)) {
+          static const float kZero3[3] = {};
+          const int raw = SehBotRequest(kAbilityReturnToBase, -1, self.id, 0, kZero3, 1);
+          res = gms::agents::RecallRequestResult(raw);
+          if (raw == 1 || raw == 2) ++g_bot.recalls;
+        }
+      }
+      if (res != 1 && res != 2) res = SehBotRequest(g.guid, slot, self.id, target, pos, rank);
     }
     if (res == 1 || res == 2) {
       ++g_bot.started;
@@ -2192,6 +2530,27 @@ void Tick(void* sim, float dt) {
   const unsigned before = g_st.ticks;
   const bool blackboard = g_opt.blackboard && g_blackboardOk;
   const bool brain = g_opt.brain && g_brainOk && blackboard;  // the brain reads the best target the update keeps
+  g_snapPlayers.clear();
+  g_snapTowers.clear();
+  g_snapObjectives.clear();
+  if (g_opt.botReflex && g_opt.botBrain) {  // BOTREFLEX: the players' creatures and the standing towers, once per frame
+    for (void* o : objs) {
+      ObjInfo i;
+      if (!SehObjInfo(o, &i) || !i.hasHp || i.hp <= 0.f) continue;
+      const int npcType = i.player ? -1 : SehNpcType(o);
+      const bool tower = npcType == kNpcTower;
+      if (!i.player && !tower && npcType != kNpcObjective) continue;
+      Snap sn;
+      sn.obj = o;
+      sn.id = i.id;
+      sn.team = i.team;
+      std::memcpy(sn.pos, i.pos, sizeof sn.pos);
+      sn.hp = i.hp;
+      sn.maxHp = SehMaxHp(o);
+      if (!(sn.maxHp > 0.f)) sn.maxHp = i.hp;
+      (tower ? g_snapTowers : npcType == kNpcObjective ? g_snapObjectives : g_snapPlayers).push_back(sn);
+    }
+  }
   for (void* o : objs) {
     std::uint32_t id = 0;
     if (!SehLiveId(o, &id)) continue;  // marked for delete during this loop
@@ -2244,11 +2603,23 @@ void OnDamaged(void* victim, void* attacker, unsigned descLo, unsigned descHi, b
   if (!g_installed || !g_opt.blackboard || !g_blackboardOk || !victim || !attacker || victim == attacker) return;
   ObjInfo v, at;
   if (!SehObjInfo(victim, &v) || !SehObjInfo(attacker, &at) || v.team == at.team) return;
-  if (g_opt.botIdleFallbackMs > 0 && v.player && g_sim) {  // BOTIDLE: who hit a bot last, and when
+  if ((g_opt.botIdleFallbackMs > 0 || g_opt.botRecall) && v.player && g_sim) {  // BOTIDLE/BOTRECALL: who hit a bot last, and when
     auto it = g_agents.find(v.id);
     if (it != g_agents.end() && it->second.isBot == 1) {
       it->second.lastAttacker = at.id;
       it->second.lastHitMs = NowMs(g_sim);
+    }
+  }
+  if (g_opt.botReflex && v.player && g_sim) {  // BOTREFLEX: who hit a bot last, a tower or an enemy shaper
+    auto it = g_agents.find(v.id);
+    if (it != g_agents.end() && it->second.isBot == 1) {
+      if (at.player) {
+        it->second.lastShaperAttacker = at.id;
+        it->second.lastShaperHitMs = NowMs(g_sim);
+      } else if (SehNpcType(attacker) == kNpcTower) {
+        it->second.lastTowerId = at.id;
+        it->second.lastTowerHitMs = NowMs(g_sim);
+      }
     }
   }
   AgentInfo a;
@@ -2390,8 +2761,9 @@ void FormatStats(char* buf, std::size_t size) {
   if (len > 0 && static_cast<std::size_t>(len) < size)
     std::snprintf(buf + len, size - len,
                   "; bot idle fixes (BOTIDLE): refusals passed to the next gambit %u (then acted %u), pursuits dropped "
-                  "as stuck %u, idle fallback tries %u (acted %u)",
-                  g_bot.skipped, g_bot.skippedThenActed, g_bot.pursuitStuck, g_bot.fallbackTries, g_bot.fallbackActed);
+                  "as stuck %u, idle fallback tries %u (acted %u); recalls instead of walking home (BOTRECALL) %u, short steps instead of the walk (BOTBACK) %u",
+                  g_bot.skipped, g_bot.skippedThenActed, g_bot.pursuitStuck, g_bot.fallbackTries, g_bot.fallbackActed,
+                  g_bot.recalls, g_bot.backSteps);
 }
 
 }  // namespace agents

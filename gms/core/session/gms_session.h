@@ -80,6 +80,7 @@
 // thread).
 #pragma once
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -141,6 +142,10 @@ class GmsSession final : public ISender {
   // `serverStart` is the zero of the ClockSync server clock.
   GmsSession(ITransport& net, IMatch& match, const SessionOptions& options, SteadyClock::time_point serverStart);
   ~GmsSession();
+  // The ClockSync server clock. Everything the match stamps with its simulator's game clock (cooldown starts and ends,
+  // death timers, ...) goes through the client's TimeTranslator, which maps the ClockSync clock to its own, so the
+  // answers must carry that same clock. A non-positive value falls back to ms since `serverStart` + 1000.
+  void SetServerClock(std::function<int64_t()> clock) { serverClock_ = std::move(clock); }
 
   void OnConnected(ConnId conn, const std::string& addr);
   void OnDisconnected(ConnId conn);
@@ -234,6 +239,7 @@ class GmsSession final : public ISender {
   IMatch& match_;
   const SessionOptions o_;
   SteadyClock::time_point serverStart_;
+  std::function<int64_t()> serverClock_;
   SteadyClock::time_point nextReport_{};
   std::map<ConnId, std::unique_ptr<Conn>> conns_;
   // D3-core: match-wide

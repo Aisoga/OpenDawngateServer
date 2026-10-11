@@ -91,6 +91,10 @@ GmsSession::GmsSession(ITransport& net, IMatch& match, const SessionOptions& opt
 GmsSession::~GmsSession() = default;
 
 int64_t GmsSession::ServerMs() const {
+  if (serverClock_) {
+    const int64_t v = serverClock_();
+    if (v > 0) return v;
+  }
   return 1000 + std::chrono::duration_cast<std::chrono::milliseconds>(SteadyClock::now() - serverStart_).count();
 }
 
@@ -377,6 +381,11 @@ void GmsSession::SendPlayerUpdateFor(Conn& to, ConnId owner, uint8_t index, cons
   if (match_.PlayerUpdate(owner, index, members, &m) && !m.empty()) {
     SendRaw(to, m, what + (m == own ? "; from the match (= the session's bytes)"
                                     : "; from the match (the session's: " + Hex(own, 64) + ")"));
+    Bytes follow;
+    // (the host adds member 15, mpBotData, to a bot's update itself, so `members` does not show it: ask for every
+    // player without a connection; the host answers only for bots)
+    if (owner == kNoConn && match_.PlayerRoleFollowUp(index, &follow) && !follow.empty())
+      SendRaw(to, follow, what + "; the bot's role again after its bot data (ReflectBotData resets it)");
     return;
   }
   SendRaw(to, own, what);

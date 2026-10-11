@@ -94,6 +94,14 @@ void OnDamaged(void* target, void* attacker, float dealt);
 // The death processing saw `id` die: a worker frees its slot.
 void OnObjectDied(std::uint32_t id);
 
+// BOTREFLEX: a well `team` owns that an enemy captures (the capture moved forward in the last tick) or whose worker an
+// enemy hit within the last 5 match seconds (the bots' Hunters and Predators go and defend it).
+struct Threat {
+  std::uint32_t object = 0;
+  float pos[3] = {};
+};
+int Threats(int team, Threat* out, int max);
+
 void FormatStats(char* buf, std::size_t size);
 
 }  // namespace wells

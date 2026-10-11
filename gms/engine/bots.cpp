@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <random>
 #include <set>
 #include <string>
 #include <vector>
@@ -1142,6 +1143,72 @@ int __cdecl LuaIsPositionSafe(void* L) {
   return 1;
 }
 
+// ---- BOTTEAM: the team layer's host functions ----
+
+// nBotHost.RespawnIn(playerIndex) -> seconds until the player's respawn (mRespawnTime - now, D1g), 0 when alive or unknown.
+float SehRespawnIn(void* sim, int index) {
+  __try {
+    void* pl = GetPlayerByIndex(sim, static_cast<unsigned>(index));
+    if (!pl) return 0.f;
+    const unsigned long long respawn = Field<unsigned long long>(pl, player::kRespawnTime);
+    const unsigned long long now = GetTimeMs(sim);
+    return respawn > now ? static_cast<float>(respawn - now) / 1000.f : 0.f;
+  } __except (SehNote(GetExceptionInformation(), "mRespawnTime")) {
+    return 0.f;
+  }
+}
+int __cdecl LuaRespawnIn(void* L) {
+  float s = 0.f;
+  if (Ours()) {
+    const int index = static_cast<int>(SehArgNumber(L, 1));
+    if (index >= 0 && index < gb::kMaxPlayerIndexes) s = SehRespawnIn(g_sim, index);
+  }
+  SehPushNumber(L, s);
+  return 1;
+}
+
+// nBotHost.TeamPing(creature, target, x, y, z, pingType, why) -> bool: a bot's minimap ping to its team (BOTTEAM's calls:
+// the human teammates see where the bots go). Only for a creature of one of our bots.
+unsigned g_teamPings = 0;
+int __cdecl LuaTeamPing(void* L) {
+  bool sent = false;
+  if (Ours() && g_opt.teamPings) {
+    const std::uint32_t creature = SehArgId(L, 1);
+    const Bot* b = BotByCreature(creature);
+    if (b) {
+      const float pos[3] = {SehArgNumber(L, 3), SehArgNumber(L, 4), SehArgNumber(L, 5)};
+      const int type = static_cast<int>(SehArgNumber(L, 6));
+      const char* why = nullptr;
+      __try {
+        why = LuaToString(L, 7, nullptr);
+      } __except (SehNote(GetExceptionInformation(), "lua_tolstring")) {
+      }
+      sent = cmds::SendTeamPing(g_sim, static_cast<unsigned>(b->team), creature, SehArgId(L, 2), pos,
+                                static_cast<std::uint8_t>(type >= 0 && type <= 4 ? type : 0), why) != 0;
+      if (sent) ++g_teamPings;
+    }
+  }
+  SehPushBoolean(L, sent);
+  return 1;
+}
+
+// nBotHost.Log(text): one "bots: team:" line in the host log (the team layer's calls; budgeted like the other bot lines,
+// but a call change is rare: a few per minute).
+unsigned g_teamLogLines = 0;
+int __cdecl LuaLog(void* L) {
+  if (Ours()) {
+    const char* text = nullptr;
+    __try {
+      text = LuaToString(L, 1, nullptr);
+    } __except (SehNote(GetExceptionInformation(), "lua_tolstring")) {
+    }
+    ++g_teamLogLines;
+    if (text && (g_teamLogLines <= 2000 || g_teamLogLines % 100 == 0))
+      Log("bots: team: %s (match %.1f s)", text, MissionNow());
+  }
+  return 0;
+}
+
 const LuaReg kBotHostRegs[] = {
     {"AssignLane", &LuaAssignLane},
     {"GetLane", &LuaGetLane},
@@ -1165,6 +1232,10 @@ const LuaReg kBotHostRegs[] = {
     {"CanBuyPotion", &LuaCanBuyPotion},
     {"PurchasePotions", &LuaPurchasePotions},
     {"IsPositionSafe", &LuaIsPositionSafe},
+    // BOTTEAM
+    {"RespawnIn", &LuaRespawnIn},
+    {"TeamPing", &LuaTeamPing},
+    {"Log", &LuaLog},
 };
 
 void* SehLuaState(void* sim) {
@@ -1222,10 +1293,11 @@ void LoadApi(void* sim) {
                           (g_opt.fixups ? "true" : "false") +
                           " dgsim_bots.parasiteWanted = " + (g_opt.parasiteGuard ? "true" : "false") +
                           " dgsim_bots.campRadius = " + std::to_string(g_opt.campRadius) +
+                          " dgsim_bots.laneWanted = " + (g_opt.laneFixes ? "true" : "false") +
                           " dgsim_bots.compositionWanted = " + (g_opt.composition && g_opt.classes.empty() ? "true" : "false") +
                           " dgsim_bots.harassStartWorkers = " + std::to_string(g_opt.harassStartWorkers) +
                           " dgsim_bots.harassEndWorkers = " + std::to_string(g_opt.harassEndWorkers) +
-                          " dgsim_bots.hunterGatherAllies = " + std::to_string(g_opt.hunterGatherAllies) +
+                          " dgsim_bots.teamWanted = " + (g_opt.team && g_opt.laneFixes ? "true" : "false") +
                           " dgsim_bots.hunterGank = " + (g_opt.hunterGank ? "true" : "false") + " return 'ok'";
   SehRunLua(sim, pre.c_str(), static_cast<unsigned>(pre.size()), "dgsim_bots_pre", out, sizeof out);
   const bool ok = SehRunLua(sim, chunk.c_str(), static_cast<unsigned>(chunk.size()), "dgsim_bots_api.lua", out, sizeof out);
@@ -1296,6 +1368,7 @@ void Configure(const Options& o) {
   g_opt.fireTracker = HostOptionInt("bot_fire_tracker", o.fireTracker ? 1 : 0) != 0;
   g_opt.fixups = HostOptionInt("bot_fixups", o.fixups ? 1 : 0) != 0;
   g_opt.parasiteGuard = HostOptionInt("bot_parasite_guard", o.parasiteGuard ? 1 : 0) != 0;
+  g_opt.laneFixes = HostOptionInt("bot_lane_fixes", o.laneFixes ? 1 : 0) != 0;  // BOTLANE
   g_opt.campRadius = HostOptionInt("bot_camp_radius", o.campRadius);  // BOTIDLE: fix-up 5, 0 = the script's 5
   // BOTCOMP: the preferred 5v5 setup and the Predator's and Hunter's rules
   g_opt.composition = HostOptionInt("bot_composition", o.composition ? 1 : 0) != 0;
@@ -1306,20 +1379,21 @@ void Configure(const Options& o) {
   }
   g_opt.harassStartWorkers = HostOptionInt("bot_harass_start_workers", o.harassStartWorkers);
   g_opt.harassEndWorkers = HostOptionInt("bot_harass_end_workers", o.harassEndWorkers);
-  g_opt.hunterGatherAllies = HostOptionInt("bot_hunter_gather_allies", o.hunterGatherAllies);
+  g_opt.team = HostOptionInt("bot_team", o.team ? 1 : 0) != 0;                   // BOTTEAM
+  g_opt.teamPings = HostOptionInt("bot_team_pings", o.teamPings ? 1 : 0) != 0;  // BOTTEAM
   g_opt.hunterGank = HostOptionInt("bot_hunter_gank", o.hunterGank) != 0 ? 1 : 0;
   if (g_opt.missionMs < 100) g_opt.missionMs = 100;
   Log("bots (D6a, D6b): bots %d%s, allies %d, classes '%s', lua %d, lanes %d, ftue %d, log limit %d; missions %d (every "
       "%d ms), shopping %d (potions %d), fire tracker %d, script fix-ups %d; BOTCOMP composition %d (drop '%s'), harass "
-      "workers %d..%d, Hunter parasite allies %d, Hunter gank %d",
+      "workers %d..%d, Hunter gank %d; BOTTEAM team layer %d, pings %d",
       g_opt.teamSize,
       g_opt.teamSize < 0
           ? " (auto: createGame's fillTeams a team, else 5 a team when the game's descriptors have BotsFillTeams 0x400)"
           : "",
       g_opt.allies, g_opt.classes.c_str(), g_opt.lua, g_opt.lanes, g_opt.ftue, g_opt.logLimit, g_opt.missions,
       g_opt.missionMs, g_opt.shopping, g_opt.potions, g_opt.fireTracker, g_opt.fixups, g_opt.composition,
-      g_opt.compositionDrop.c_str(), g_opt.harassStartWorkers, g_opt.harassEndWorkers, g_opt.hunterGatherAllies,
-      g_opt.hunterGank);
+      g_opt.compositionDrop.c_str(), g_opt.harassStartWorkers, g_opt.harassEndWorkers, g_opt.hunterGank,
+      g_opt.team && g_opt.laneFixes, g_opt.teamPings);
 }
 
 void SetFillTeams(int seats) {
@@ -1416,7 +1490,13 @@ const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& human
       g_classIds[n] = SehAssetId(a);
       available.insert(n);
     }
-    plan = gb::PlanBotPlayersComposed(counted, g_teamSize, teams, available, anyClass, gb::ParseDropOrder(g_opt.compositionDrop));
+    // varied teams from game to game: [host] bot_shuffle 1 (default) draws a seed per game, bot_shuffle N > 1 fixes it
+    // (N is the seed, to reproduce a team), 0 keeps composition.h's fixed order
+    const int shuffleOpt = HostOptionInt("bot_shuffle", 1);
+    const unsigned seed = shuffleOpt == 0 ? 0u : shuffleOpt > 1 ? static_cast<unsigned>(shuffleOpt) : (std::random_device{}() | 1u);
+    Log("bots: BOTCOMP: class shuffle seed %u ([host] bot_shuffle %d)", seed, shuffleOpt);
+    plan = gb::PlanBotPlayersComposed(counted, g_teamSize, teams, available, anyClass, gb::ParseDropOrder(g_opt.compositionDrop),
+                                      0, seed);
     for (const gb::HumanPlayer& h : counted)
       Log("bots: BOTCOMP: human index %d team %d: role %s", h.index, h.team, gb::RoleName(h.role));
   } else {
@@ -1455,6 +1535,11 @@ const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& human
 }
 
 const std::vector<Bot>& Players() { return g_bots; }
+
+void SetRole(int index, int role) {
+  for (Bot& b : g_bots)
+    if (b.index == index) b.role = role;
+}
 
 bool IsBotIndex(int index) {
   for (const Bot& b : g_bots)

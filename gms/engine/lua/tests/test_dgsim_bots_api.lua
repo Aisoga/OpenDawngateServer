@@ -684,34 +684,6 @@ test('composition: pure rules', function()
   local B = dgsim_bots
   check(B.OutnumbersInLane(1, 0) and B.OutnumbersInLane(2, 2) and B.OutnumbersInLane(3, 1), 'allies >= enemies')
   check(not B.OutnumbersInLane(0, 0) and not B.OutnumbersInLane(1, 2), 'alone, or fewer allies than enemies: no')
-  -- the Hunter: gather, hold, give up, the time cap with its cooldown, contest
-  local cfg = B.compositionConfig
-  local st = {}
-  local function inp(t)
-    local i = { standing = true, rallyAllies = 0, paraAllies = 0, paraEnemies = 0, inCombat = false, hp = 1 }
-    for k, v in pairs(t or {}) do i[k] = v end
-    return i
-  end
-  check(not B.HunterParasiteDecision(st, inp(), 100, cfg, 3), 'nobody gathered: no')
-  check(not B.HunterParasiteDecision(st, inp({ rallyAllies = 2 }), 101, cfg, 3), '2 at the rally point are not enough')
-  check(B.HunterParasiteDecision(st, inp({ rallyAllies = 3 }), 102, cfg, 3), '3 gathered: go')
-  check(B.HunterParasiteDecision(st, inp(), 106, cfg, 3), 'held 4 s after it stopped holding')
-  check(not B.HunterParasiteDecision(st, inp(), 111, cfg, 3), 'dropped after 8 s')
-  check(B.HunterParasiteDecision(st, inp({ inCombat = true, paraAllies = 2 }), 112, cfg, 3), '2 allies fighting it: go')
-  check(not B.HunterParasiteDecision(st, inp({ standing = false, rallyAllies = 5 }), 113, cfg, 3), 'no parasite: no')
-  st = {}
-  check(B.HunterParasiteDecision(st, inp({ rallyAllies = 3 }), 200, cfg, 3), 'start')
-  check(B.HunterParasiteDecision(st, inp({ rallyAllies = 3 }), 340, cfg, 3), 'still within 150 s')
-  check(not B.HunterParasiteDecision(st, inp({ rallyAllies = 3 }), 351, cfg, 3), 'capped at 150 s')
-  check(not B.HunterParasiteDecision(st, inp({ rallyAllies = 3 }), 380, cfg, 3), 'cooldown')
-  check(B.HunterParasiteDecision(st, inp({ rallyAllies = 3 }), 412, cfg, 3), 'after the cooldown')
-  st = {}
-  check(not B.HunterParasiteDecision(st, inp({ paraEnemies = 1 }), 10, cfg, 3), 'one enemy near, parasite idle: no')
-  check(B.HunterParasiteDecision(st, inp({ paraEnemies = 1, inCombat = true }), 11, cfg, 3), 'a steal in progress: contest')
-  st = {}
-  check(not B.HunterParasiteDecision(st, inp({ paraEnemies = 4, inCombat = true }), 10, cfg, 3), 'four enemies: no')
-  check(not B.HunterParasiteDecision(st, inp({ paraEnemies = 2, hp = 0.3 }), 11, cfg, 3), 'low HP: no')
-  check(B.HunterParasiteDecision(st, inp({ paraEnemies = 2 }), 12, cfg, 3), 'two enemies at it: contest')
 end)
 
 -- a world with the setup's globals: roles by creature, the missions of a fake host board
@@ -815,7 +787,7 @@ test('composition: the Predator hits the workers of the well he harasses', funct
   W.wellOf = nil
 end)
 
-test('composition: the Hunter treats the parasite as a camp, only when allies gathered', function()
+test('composition: the Hunter treats the parasite as a camp, only in the kill phase of his team', function()
   local B = dgsim_bots
   local roles = compositionWorld()
   local hunter = shaper('hunter', 1, -100, -50, { bot = true, maxhp = 700 })
@@ -823,7 +795,16 @@ test('composition: the Hunter treats the parasite as a camp, only when allies ga
   local para = W.add({ name = 'parasite', team = 0, npc = nNPCType.ObjectiveMajor, pos = P(-3, 3), maxhp = 5000 })
   W.objectiveFor = para
   nDirector.GetParasiteID = function() return para end
+  local seenIdle
+  condition_Bot_GameStart = { [nConditionFns.Check] = function(bot, idle) seenIdle = idle return true end }
   B.ApplyFixups()
+  condition_Bot_GameStart[nConditionFns.Check](hunter, 65)
+  check(seenIdle == 40, 'the Hunter starts after 40 s, not 65 (got ' .. tostring(seenIdle) .. ')')
+  roles[hunter] = 0
+  condition_Bot_GameStart[nConditionFns.Check](hunter, 65)
+  check(seenIdle == 65, 'the others keep the plan start')
+  roles[hunter] = 2
+  condition_Bot_GameStart = nil
   local ok, x = condition_Bot_NextCreepCamp[1](hunter)
   check(ok == true and x == -59, 'nobody gathered: the next camp')
   check(condition_nearest_objective[1](hunter) == false, 'the parasite is not offered to the Hunter')
@@ -831,17 +812,22 @@ test('composition: the Hunter treats the parasite as a camp, only when allies ga
   roles[hunter] = 1
   check(condition_Bot_ShouldGank[1](hunter) == true and condition_nearest_objective[1](hunter) == true, 'other roles: the original')
   roles[hunter] = 2
-  shaper('a1', 1, -36, -6, { bot = true })
-  shaper('a2', 1, -37, -5, { bot = true })
-  check(select(2, condition_Bot_NextCreepCamp[1](hunter)) == -59, 'two at the rally point: not yet')
-  shaper('a3', 1, -35, -7, { bot = true })
+  shaper('a1', 1, -66, -10, { bot = true })
+  shaper('a2', 1, -67, -9, { bot = true })
+  shaper('a3', 1, -65, -11, { bot = true })
+  check(select(2, condition_Bot_NextCreepCamp[1](hunter)) == -59, 'three at the rally point but no team call: the camps')
+  B.teamWanted = true
+  B.TeamStateOf(1).call, B.TeamStateOf(1).phase = 'parasite', 'gather'
+  check(select(2, condition_Bot_NextCreepCamp[1](hunter)) == -59, 'the team gathers: he keeps farming')
+  B.TeamStateOf(1).phase = 'kill'
   local ok2, px, py = condition_Bot_NextCreepCamp[1](hunter)
-  check(ok2 == true and px == -3 and py == 3, 'three gathered: the parasite is his camp (' .. tostring(px) .. ', ' .. tostring(py) .. ')')
+  check(ok2 == true and px == -3 and py == 3, 'the kill phase: the parasite is his camp (' .. tostring(px) .. ', ' .. tostring(py) .. ')')
   check(condition_Bot_IsNearNextCreepCamp[1](hunter) == false, 'the near test uses the parasite too')
   check(select(1, condition_nearest_objective[1](hunter)) == true, 'on the parasite: ClearCamp may hit it')
   W.kill(para)
   W.matchTime = 130
   check(select(2, condition_Bot_NextCreepCamp[1](hunter)) == -59, 'the parasite died: back to the camps')
+  B.teamWanted = nil
   roles[hunter] = 1
   check(select(2, condition_Bot_NextCreepCamp[1](hunter)) == -59, 'a Tactician never goes (the host asks BotRole)')
 end)
@@ -866,6 +852,439 @@ test('composition: off unless the host wants it; lanes are kept', function()
   B.groupInLaneTick(p3)
   check(moved == 1, 'with the setup no lane change')
   nBot.AssignLane = assign
+end)
+
+-- ---- BOTLANE: Gladiators stay, the siege lane is the opened one, a worn tower is finished -------------------------------
+test('lane fix-up: Gladiators stay, the siege lane is the opened lane, the base radius', function()
+  local B = dgsim_bots
+  local roles, missions = compositionWorld()
+  local glad = shaper('lg', 1, 60, -60, { bot = true })
+  local hunter = shaper('lh', 1, 62, -62, { bot = true })
+  local tact = shaper('lt', 1, 64, -64, { bot = true })
+  roles[glad], roles[hunter], roles[tact] = 0, 2, 1
+  for _, t in ipairs({ 2, 3, 4, 7, 11, 13, 6, 10, 8 }) do missions[t] = 40 + t end
+  local stand = { [1] = 0, [2] = 3 }  -- the enemy's Top lane has no tower left, Bottom has all three
+  local realTowers = nBattlegrounds.GetNumTowers
+  nBattlegrounds.GetNumTowers = function(team, lane) return stand[lane] end
+  condition_Bot_TowerPush = { searchRadius = 60, [1] = function() return false end }
+  condition_Bot_AssignedToSiegeLane = { [1] = function() return nBattlegrounds.GetNumTowers(2, 1) > nBattlegrounds.GetNumTowers(2, 2) end }
+  condition_Bot_GroupedWithAllies = { [1] = function() return nBattlegrounds.GetNumTowers(2, 1) > nBattlegrounds.GetNumTowers(2, 2) end }
+  ability_Bot_AssignToSiegeLane = {}
+  local picked
+  ability_Bot_AssignToSiegeLane[nAbilityFns.Tick] = function()
+    picked = nBattlegrounds.GetNumTowers(2, 1) > nBattlegrounds.GetNumTowers(2, 2) and 1 or 2
+  end
+  condition_Bot_InEnemyBase = { defaultSearchRadius = 65 }
+  local wardAt = { 21, -38 }
+  local para = W.add({ name = 'lparasite', team = 0, npc = nNPCType.ObjectiveMajor, pos = P(-3, 3), maxhp = 5000 })
+  local victim = shaper('lv', 2, -10, 10, { maxhp = 700 })
+  local far = shaper('lf', 2, 100, 100, { maxhp = 700 })
+  local chased = victim
+  nDirector.GetParasiteID = function() return para end
+  condition_Bot_EngageForKill = { [1] = function() return true, 0, 0, 0, chased end }
+  condition_Bot_BailOnKill = { [1] = function() return false end }
+  condition_Bot_Ward = { [1] = function() return true, wardAt[1], wardAt[2], 0, kObjIDNone, true end }
+  B.fixups.lane = false
+  B.laneWanted = true
+  B.ApplyLaneFixup()
+  check(B.fixups.lane == true, 'applied')
+  for _, t in ipairs({ 2, 3, 4, 7, 11, 13, 6, 10, 8 }) do
+    check(nBot.GetAvailableMission(glad, t, 80) == 40 + t, 'without the team layer every role keeps type ' .. t)
+  end
+  check(nBattlegrounds.GetNumTowers(2, 1) == 0, 'outside the siege scripts the count is the real one')
+  check(condition_Bot_AssignedToSiegeLane[1]() == true, 'AssignedToSiegeLane: the lane with fewer towers (Top, 0) wins')
+  check(condition_Bot_GroupedWithAllies[1]() == true, 'GroupedWithAllies: same lane')
+  ability_Bot_AssignToSiegeLane[nAbilityFns.Tick]()
+  check(picked == 1, 'AssignToSiegeLane picks the opened lane')
+  check(condition_Bot_InEnemyBase.defaultSearchRadius == 85, 'the base radius')
+  check(condition_Bot_Ward[1](tact) == false, 'a Tactician is not sent to a ward spot in the middle')
+  check(condition_Bot_Ward[1](hunter) == true, 'the Hunter may')
+  wardAt = { -4, 85 }
+  check(condition_Bot_Ward[1](tact) == true, 'a ward spot at the lane is kept')
+  check(condition_Bot_Ward[1](glad) == false, 'a Gladiator places no ward: he stays in his lane')
+  condition_Bot_Ward = nil
+  check(condition_Bot_EngageForKill[1](glad) == false, 'a kill next to the parasite is not chased')
+  check(condition_Bot_EngageForKill[1](hunter) == false, 'not by the Hunter either')
+  B.teamWanted = true
+  B.TeamStateOf(1).call, B.TeamStateOf(1).phase = 'parasite', 'kill'
+  check(condition_Bot_EngageForKill[1](glad) == true, 'the team takes the parasite: the kill there is fine')
+  B.TeamStateOf(1).call, B.TeamStateOf(1).phase = 'farm', nil
+  B.teamWanted = nil
+  chased = far
+  check(condition_Bot_EngageForKill[1](glad) == true, 'a kill elsewhere is')
+  W.get(glad).target = victim
+  check(condition_Bot_BailOnKill[1](glad) == true, 'an engaged bot whose target is at the parasite bails')
+  W.get(glad).target = far
+  check(condition_Bot_BailOnKill[1](glad) == false, 'otherwise the original')
+  condition_Bot_EngageForKill, condition_Bot_BailOnKill = nil, nil
+  nBattlegrounds.GetNumTowers = realTowers
+  condition_Bot_TowerPush, condition_Bot_AssignedToSiegeLane, condition_Bot_GroupedWithAllies = nil, nil, nil
+  ability_Bot_AssignToSiegeLane, condition_Bot_InEnemyBase = nil, nil
+end)
+
+-- ---- BOTPARA: the rally points are moved out of the parasite's reach ---------------------------------------------------
+test('parasite fix-up: the rally points leave the parasite reach', function()
+  local B = dgsim_bots
+  local function stub(extra)
+    local c = { mortalRally = nVector.create(-36, -6, 0), spiritRally = nVector.create(36, 6, 0) }
+    c[nConditionFns.CheckEnd] = function() return false end
+    c[nConditionFns.Check] = function() end
+    c[1] = function() return false end
+    return c
+  end
+  condition_Mission_RallyForParasite, condition_Bot_GatherForParasite = stub(), stub()
+  condition_Mission_KillParasite, condition_Mission_RallyForParasiteContest = stub(), stub()
+  condition_Bot_GatherForParasiteContest = stub()
+  B.fixups.parasite = false
+  B.ApplyParasiteFixup()
+  for _, c in ipairs({ condition_Mission_RallyForParasite, condition_Bot_GatherForParasite }) do
+    for _, v in ipairs({ c.mortalRally, c.spiritRally }) do
+      check(math.sqrt((v.x + 3) ^ 2 + (v.y - 3) ^ 2) >= 55, 'a rally point is 55+ from the parasite')
+    end
+  end
+  check(condition_Mission_RallyForParasite.mortalRally.x == condition_Bot_GatherForParasite.mortalRally.x, 'the mission and the gather agree')
+  condition_Mission_RallyForParasite, condition_Bot_GatherForParasite, condition_Mission_KillParasite = nil, nil, nil
+  condition_Mission_RallyForParasiteContest, condition_Bot_GatherForParasiteContest = nil, nil
+end)
+
+-- ---- BOTTEAM: the team's call ------------------------------------------------------------------------------------------
+test('team: the call, pure', function()
+  local B = dgsim_bots
+  local cfg = B.teamConfig
+  local tower = W.add({ name = 'Binding_Spirit_Outer', team = 2, pos = P(116, -29), npc = nNPCType.Tower, structure = true })
+  local function snap(o)
+    local s = { t = 300, alliesAlive = 5, alliesHealthy = 5, enemiesAlive = 5, enemiesUp = 5, enemiesDown = 0, hpAvg = 0.9,
+                levelDiff = 0, buff = 0, enemyLaneOpen = false, baseThreat = false, ftue = false, bots = {}, wells = {},
+                pushLane = nLaneID.Bottom, pushTarget = tower, pushDistance = 100,
+                parasite = { stands = true, inCombat = false, alliesNear = 0, enemiesNear = 0, humanOnIt = false,
+                             seenRecently = false, gathered = 0, botDistance = 150, force = 5 } }
+    for k, v in pairs(o or {}) do
+      if k == 'parasite' then
+        for pk, pv in pairs(v) do s.parasite[pk] = pv end
+      else
+        s[k] = v
+      end
+    end
+    return s
+  end
+  local function st(o)
+    local x = { call = 'farm', since = 0, phaseSince = 0, cool = {}, assigned = {}, homeLane = {} }
+    for k, v in pairs(o or {}) do x[k] = v end
+    return x
+  end
+  check(B.TeamDecide(snap(), st(), cfg).call == 'farm', 'even, early: farm')
+  -- an opening: two of theirs on a long respawn
+  local d = B.TeamDecide(snap({ enemiesAlive = 3, enemiesUp = 3, enemiesDown = 2 }), st(), cfg)
+  check(d.call == 'push' and d.lane == nLaneID.Bottom and d.target == tower, 'two down: push the weaker lane (' .. d.call .. ')')
+  -- their dead come back in a few seconds: no opening
+  check(B.TeamDecide(snap({ enemiesAlive = 3, enemiesUp = 5 }), st(), cfg).call == 'farm', 'respawning soon: no opening')
+  -- the parasite nearer than the tower: take it instead
+  d = B.TeamDecide(snap({ enemiesAlive = 3, enemiesUp = 3, enemiesDown = 2, parasite = { botDistance = 60 } }), st(), cfg)
+  check(d.call == 'parasite' and d.phase == 'gather', 'an opening near the parasite: gather for it (' .. d.call .. ')')
+  -- the calm take: from 480 s, healthy, even, none of theirs seen near it
+  check(B.TeamDecide(snap({ t = 470 }), st(), cfg).call == 'farm', 'calm, but too early')
+  d = B.TeamDecide(snap({ t = 500 }), st(), cfg)
+  check(d.call == 'parasite' and d.phase == 'gather', 'calm after 480 s: gather')
+  check(B.TeamDecide(snap({ t = 500, parasite = { seenRecently = true } }), st(), cfg).call == 'farm', 'one of theirs seen near it: no')
+  check(B.TeamDecide(snap({ t = 500, alliesHealthy = 3 }), st(), cfg).call == 'farm', 'only 3 healthy: no')
+  check(B.TeamDecide(snap({ t = 500, parasite = { stands = false } }), st(), cfg).call == 'farm', 'no parasite (egg, dead): no')
+  check(B.TeamDecide(snap({ t = 500 }), st({ cool = { parasite = 520 } }), cfg).call == 'farm', 'cooling down: no')
+  -- a human ally on it: everyone comes
+  d = B.TeamDecide(snap({ parasite = { humanOnIt = true, inCombat = true } }), st(), cfg)
+  check(d.call == 'parasite' and d.phase == 'kill', 'a human on the parasite: straight to the kill')
+  -- the gather
+  local gathering = st({ call = 'parasite', phase = 'gather', since = 500, phaseSince = 500 })
+  check(B.TeamDecide(snap({ t = 510, parasite = { gathered = 2 } }), gathering, cfg).phase == 'gather', '2 there: wait')
+  d = B.TeamDecide(snap({ t = 512, parasite = { gathered = 3 } }), gathering, cfg)
+  check(d.call == 'parasite' and d.phase == 'kill', '3 there: the kill')
+  check(B.TeamDecide(snap({ t = 541, parasite = { gathered = 2 } }), gathering, cfg).phase == 'gather', '41 s: still waiting')
+  d = B.TeamDecide(snap({ t = 561, parasite = { gathered = 2 } }), gathering, cfg)
+  check(d.call == 'farm' and d.abort, 'the gather took 61 s: retreat')
+  d = B.TeamDecide(snap({ t = 512, alliesAlive = 2, alliesHealthy = 2, parasite = { gathered = 2 } }), gathering, cfg)
+  check(d.phase == 'kill', 'two of us alive and both there: the kill')
+  -- the kill phase
+  local killing = st({ call = 'parasite', phase = 'kill', since = 500, phaseSince = 512 })
+  check(B.TeamDecide(snap({ t = 520, parasite = { alliesNear = 4, enemiesNear = 2 } }), killing, cfg).call == 'parasite',
+        '2 of theirs against 4 of us: go on')
+  d = B.TeamDecide(snap({ t = 520, parasite = { alliesNear = 2, enemiesNear = 3 } }), killing, cfg)
+  check(d.call == 'farm' and d.abort, '3 of theirs against 2 of us: retreat')
+  check(B.TeamDecide(snap({ t = 520, parasite = { stands = false } }), killing, cfg).call == 'farm', 'it died: farm')
+  -- a contest: they are on it and we bring more
+  d = B.TeamDecide(snap({ parasite = { inCombat = true, enemiesNear = 2 } }), st(), cfg)
+  check(d.call == 'contest', 'two of theirs on it, five of us: contest')
+  check(B.TeamDecide(snap({ parasite = { inCombat = true, enemiesNear = 3, force = 3 } }), st(), cfg).call ~= 'contest',
+        'three of theirs, a force of three: no contest')
+  check(B.TeamDecide(snap({ parasite = { inCombat = true, enemiesNear = 1, enemiesKnown = 4, force = 4 } }), st(), cfg).call ~= 'contest',
+        'one seen now, four seen there a moment ago, a force of four: no contest')
+  check(B.TeamDecide(snap({ t = 500, botsFighting = 1 }), st(), cfg).call == 'farm', 'a bot in a lane fight: no calm call')
+  local contesting = st({ call = 'contest', since = 300 })
+  d = B.TeamDecide(snap({ t = 310, parasite = { inCombat = true, enemiesNear = 3, force = 2 } }), contesting, cfg)
+  check(d.call == 'farm' and d.abort, 'they are more now: retreat')
+  d = B.TeamDecide(snap({ t = 310, parasite = { inCombat = true, enemiesNear = 4, alliesNear = 2 } }), contesting, cfg)
+  check(d.call == 'farm' and d.abort, 'two of us there against four: retreat')
+  d = B.TeamDecide(snap({ t = 310, parasite = { inCombat = false, enemiesNear = 0 } }), contesting, cfg)
+  check(d.call == 'parasite' and d.phase == 'kill', 'they left: we take it')
+  -- the push's end rules
+  local pushing = st({ call = 'push', since = 300, lastAdvantage = 300, lastProgress = 300, lane = nLaneID.Bottom })
+  check(B.TeamDecide(snap({ t = 305 }), pushing, cfg).call == 'push', 'the advantage gone 5 s: go on')
+  d = B.TeamDecide(snap({ t = 307 }), pushing, cfg)
+  check(d.call == 'farm' and d.abort, 'gone 7 s: back to the lanes')
+  pushing.lastAdvantage = 370
+  d = B.TeamDecide(snap({ t = 376 }), pushing, cfg)
+  check(d.call == 'farm' and d.abort, 'no structure fell for 76 s: stalled')
+  pushing.lastProgress = 440
+  pushing.lastAdvantage = 450
+  check(B.TeamDecide(snap({ t = 451 }), pushing, cfg).call == 'farm', 'after 150 s: done')
+  check(B.TeamDecide(snap({ enemiesAlive = 3, enemiesUp = 3, enemiesDown = 2 }), st({ cool = { push = 320 } }), cfg).call == 'farm',
+        'a push cooling down')
+  -- a lane of theirs open, even numbers, healthy: siege
+  d = B.TeamDecide(snap({ t = 1300, enemyLaneOpen = true, parasite = { seenRecently = true } }), st(), cfg)
+  check(d.call == 'push', 'a lane open: siege (' .. d.call .. ')')
+  check(B.TeamDecide(snap({ t = 1300, enemyLaneOpen = true, levelDiff = -1, parasite = { seenRecently = true } }), st(), cfg).call ~= 'push',
+        'a lane open but behind in levels: no')
+  -- the base first
+  check(B.TeamDecide(snap({ baseThreat = true }), pushing, cfg).call == 'defend', 'the base is attacked: defend')
+  check(B.TeamDecide(snap({ t = 600 }), st({ call = 'defend', lastThreat = 595 }), cfg).call == 'defend', 'defend holds 8 s')
+  -- an AFK human far behind: no parasite calls (the data's CheeseDetected); 3+ humans: no gather, no push
+  check(B.TeamDecide(snap({ t = 500, cheese = true }), st(), cfg).call == 'farm', 'cheese: no calm parasite')
+  check(B.TeamDecide(snap({ cheese = true, parasite = { inCombat = true, enemiesNear = 1 } }), st(), cfg).call ~= 'contest',
+        'cheese: no contest')
+  check(B.TeamDecide(snap({ cheese = true, enemiesAlive = 3, enemiesUp = 3, enemiesDown = 2, parasite = { botDistance = 60 } }),
+                     st(), cfg).call == 'push', 'cheese: a push instead')
+  check(B.TeamDecide(snap({ manyHumans = true, enemiesAlive = 3, enemiesUp = 3, enemiesDown = 2 }), st(), cfg).call == 'farm',
+        'three humans: they lead')
+  -- FTUE: no parasite, no push
+  check(B.TeamDecide(snap({ ftue = true, t = 600, enemiesAlive = 3, enemiesUp = 3, enemiesDown = 2 }), st(), cfg).call == 'farm',
+        'against a first-time player: farm')
+  -- a well: the Predator and the nearest Tactician, never the Hunter, no Gladiator early
+  local glad = W.add({ name = 'g', team = 1, player = true, bot = true, pos = P(20, -170) })
+  local tact = W.add({ name = 't', team = 1, player = true, bot = true, pos = P(60, -150) })
+  local pred = W.add({ name = 'p', team = 1, player = true, bot = true, pos = P(-100, 0) })
+  local hunt = W.add({ name = 'h', team = 1, player = true, bot = true, pos = P(25, -175) })
+  local well = W.add({ name = 'w', team = 2, pos = P(28, -182), npc = nNPCType.GoldMine })
+  local bots = { { id = glad, role = 0, alive = true, hp = 1, pos = P(20, -170) },
+                 { id = tact, role = 1, alive = true, hp = 1, pos = P(60, -150) },
+                 { id = pred, role = 3, alive = true, hp = 1, pos = P(-100, 0) },
+                 { id = hunt, role = 2, alive = true, hp = 1, pos = P(25, -175) } }
+  d = B.TeamDecide(snap({ t = 1000, bots = bots, wells = { { id = well, pos = P(28, -182), guards = 0 } },
+                          parasite = { stands = false } }), st(), cfg)
+  check(d.call == 'well' and d.well == well and d.assigned[pred] and d.assigned[tact] and not d.assigned[glad] and
+        not d.assigned[hunt], 'a well: the Predator and the Tactician')
+  local noPred = { bots[1], bots[2], bots[4] }
+  d = B.TeamDecide(snap({ t = 1000, bots = noPred, wells = { { id = well, pos = P(28, -182), guards = 0 } },
+                          parasite = { stands = false } }), st(), cfg)
+  check(d.call == 'well' and d.assigned[tact] and d.assigned[glad] and not d.assigned[hunt],
+        'no Predator: the Tactician and a Gladiator make the pair')
+  d = B.TeamDecide(snap({ t = 1000, bots = { bots[2], bots[4] }, wells = { { id = well, pos = P(28, -182), guards = 0 } },
+                          parasite = { stands = false } }), st(), cfg)
+  check(d.call == 'farm', 'one bot alone does not go')
+  check(B.TeamDecide(snap({ t = 1000, bots = bots, wells = { { id = well, pos = P(28, -182), guards = 1 } },
+                            parasite = { stands = false } }), st(), cfg).call == 'farm', 'a guarded well: no')
+  local taking = st({ call = 'well', since = 1000, well = well, assigned = { [pred] = true, [tact] = true } })
+  check(B.TeamDecide(snap({ t = 1010, bots = bots, wells = {}, parasite = { stands = false } }), taking, cfg).call == 'farm',
+        'the well is ours: done')
+  d = B.TeamDecide(snap({ t = 1010, bots = bots, wells = { { id = well, pos = P(28, -182), guards = 3 } },
+                          parasite = { stands = false } }), taking, cfg)
+  check(d.call == 'farm' and d.abort, 'three guards against two: retreat')
+end)
+
+test('team: the calls carried out through the missions, lanes and pings', function()
+  local B = dgsim_bots
+  local roles, missions = compositionWorld()
+  local board = { open = {}, nextId = 100, ended = {}, pings = {}, logs = {}, requests = {} }
+  nBotHost.RequestMission = function(team, mtype, target, agents, timeout, guid, hasDest, dx, dy, dz)
+    for _, m in ipairs(board.open) do
+      if m.team == team and m.type == mtype and m.target == target then m.agents = agents return m.id end
+    end
+    board.nextId = board.nextId + 1
+    board.open[#board.open + 1] = { id = board.nextId, team = team, type = mtype, target = target, guid = guid,
+                                    agents = agents, dest = hasDest and { dx, dy } or nil }
+    return board.nextId
+  end
+  nBotHost.OpenMission = function(team, i)
+    local k = 0
+    for _, m in ipairs(board.open) do
+      if m.team == team then
+        k = k + 1
+        if k == i then return m.id, m.target, m.guid end
+      end
+    end
+  end
+  nBotHost.EndMission = function(id)
+    for i, m in ipairs(board.open) do
+      if m.id == id then table.remove(board.open, i) board.ended[#board.ended + 1] = m return true end
+    end
+    return false
+  end
+  nBotHost.IsMissionAvailable = function(team, mtype)
+    for _, m in ipairs(board.open) do if m.team == team and m.type == mtype then return true end end
+    return false
+  end
+  nBotHost.GetAvailableMission = function(bot, mtype)
+    for _, m in ipairs(board.open) do if m.type == mtype then return m.id end end
+    return 0
+  end
+  nBotHost.TeamPing = function(bot, target, x, y, z, ptype, why) board.pings[#board.pings + 1] = { ptype, why } return true end
+  nBotHost.Log = function(text) board.logs[#board.logs + 1] = text end
+  local respawn = {}
+  nBotHost.RespawnIn = function(i) return respawn[i] or 0 end
+  local indexOf = {}
+  nPlayer.GetPlayerIdForObject = function(c) return indexOf[c] end
+  local lanes = {}
+  nBotHost.AssignLane = function(bot, lane) lanes[bot] = lane end
+  nBotHost.GetLane = function(bot) return lanes[bot] or 0 end
+  -- the scripts' tables
+  local function cond(extra)
+    local c = extra or {}
+    c[nConditionFns.Check] = c[nConditionFns.Check] or function() return true end
+    c[nConditionFns.CheckEnd] = function() return false end
+    c[1] = c[1] or function() return true end
+    return c
+  end
+  condition_Mission_RallyForParasite = cond({ conditionGUID = 'rally', mortalRally = nVector.create(-66, -10, 0),
+                                              spiritRally = nVector.create(66, 10, 0) })
+  condition_Mission_RallyForParasiteContest = cond({ conditionGUID = 'contest', mortalRally = nVector.create(-66, -8, 0),
+                                                     spiritRally = nVector.create(66, 8, 0) })
+  condition_Mission_KillParasite = cond({ conditionGUID = 'kill' })
+  condition_Mission_KillParasite[nConditionFns.Check] = function(team)
+    nBot.RequestMission(team, nMissionType.KillParasite, nDirector.GetParasiteID(), 5, 0, 'kill')
+    return true, kObjIDNone, 0
+  end
+  condition_Mission_CaptureWell = cond({ conditionGUID = 'capture' })
+  condition_Bot_GatherForParasite = cond({ mortalRally = nVector.create(-66, -10, 0), spiritRally = nVector.create(66, 10, 0) })
+  condition_Bot_GatherForParasite[1] = function() return true, -66, -10, 0, kObjIDNone, true end
+  condition_Bot_GatherForParasiteContest = cond()
+  condition_Bot_TimeToRally = cond()
+  condition_Bot_TimeToRally[1] = function() return false end
+  condition_Bot_GroupedWithAllies = cond()
+  condition_Bot_GroupedWithAllies[1] = function() return false end
+  condition_Bot_AssignedToSiegeLane = cond()
+  ability_Bot_AssignToSiegeLane = {}
+  ability_Bot_AssignToSiegeLane[nAbilityFns.Tick] = function() end
+  condition_Bot_TowerPush = cond()
+  condition_Bot_InEnemyBase = { defaultSearchRadius = 65 }
+  local ids = v5Structures()
+  local para = W.add({ name = 'parasite', team = 0, npc = nNPCType.ObjectiveMajor, pos = P(-3, 3), maxhp = 5000 })
+  nDirector.GetParasiteID = function() return para end
+  -- team 1: two Gladiators, a Tactician, a Predator, a Hunter; team 2: five shapers
+  local g1 = shaper('g1', 1, -70, 70, { bot = true })
+  local g2 = shaper('g2', 1, 70, -70, { bot = true })
+  local tc = shaper('tc', 1, -80, 60, { bot = true })
+  local pr = shaper('pr', 1, 80, -60, { bot = true })
+  local hu = shaper('hu', 1, -150, -100, { bot = true })
+  W.get(para).untargetable = true  -- the egg: no parasite call yet
+  roles[g1], roles[g2], roles[tc], roles[pr], roles[hu] = 0, 0, 1, 3, 2
+  lanes[g1], lanes[g2], lanes[tc], lanes[pr] = nLaneID.Top, nLaneID.Bottom, nLaneID.Top, nLaneID.Bottom
+  local enemies = {}
+  for i = 1, 5 do
+    enemies[i] = shaper('e' .. i, 2, 150 + i, 150, { bot = true })
+    indexOf[enemies[i]] = 4 + i
+  end
+  B.teamWanted, B.laneWanted = true, true
+  B.fixups = { veryOutnumbered = true, groupInLane = true, bailOnKill = true, parasite = true, campRadius = true }
+  B.ApplyFixups()
+  check(B.fixups.team == true, 'applied')
+  check(condition_Mission_RallyForParasite[nConditionFns.Check](1) == false, 'the original Rally opens nothing')
+  check(condition_Mission_KillParasite[nConditionFns.Check](1) == false and #board.open == 0, 'KillParasite: not while farming')
+  check(nBot.GetAvailableMission(g1, nMissionType.DefendBase, 0) == 0, 'nothing open: 0')
+  -- farming: the offers
+  nBot.RequestMission(1, nMissionType.DefendTower, ids[4], 1, 5, 'dt')
+  check(nBot.GetAvailableMission(tc, nMissionType.DefendTower, 0) > 0, 'the Tactician answers a tower defence')
+  check(nBot.GetAvailableMission(g1, nMissionType.DefendTower, 0) == 0, 'a Gladiator stays in lane')
+  board.open = {}
+  -- two enemies dead for a while, the parasite far: a push in the bottom lane (fewer towers there? equal: most bots)
+  W.kill(enemies[1])
+  W.kill(enemies[2])
+  respawn[5], respawn[6] = 30, 25
+  W.matchTime = 400
+  B.TeamTick()
+  local st = B.TeamStateOf(1)
+  check(st.call == 'push', 'two of theirs down: push (' .. tostring(st.call) .. ')')
+  check(lanes[g1] == st.lane and lanes[tc] == st.lane and lanes[hu] == nil, 'everyone but the Hunter in the push lane')
+  check(condition_Bot_TimeToRally[1](g1) == true and condition_Bot_GroupedWithAllies[1](g1) == false, 'the siege rally runs')
+  B.inSiege = true
+  check(nBattlegrounds.GetNumTowers(2, st.lane) == 100 and nBattlegrounds.GetNumTowers(2, 3 - st.lane) == 0,
+        'the siege scripts take the push lane')
+  B.inSiege = false
+  check(board.pings[#board.pings][1] == 0, 'a ping on the target')
+  check(B.TeamStateOf(2).call == 'farm', 'the other team farms')
+  -- they come back: the advantage is gone, the push ends after 6 s, the lanes go back
+  W.get(enemies[1]).alive, W.get(enemies[1]).hp = true, 100
+  W.get(enemies[2]).alive, W.get(enemies[2]).hp = true, 100
+  W.matchTime = 403
+  B.TeamTick()
+  check(st.call == 'push', 'within the hold')
+  W.matchTime = 410
+  B.TeamTick()
+  check(st.call == 'farm' and lanes[g1] == nLaneID.Top and lanes[tc] == nLaneID.Top and lanes[g2] == nLaneID.Bottom,
+        'back to their own lanes (' .. tostring(st.call) .. ')')
+  check(board.pings[#board.pings][1] == 1, 'a retreat ping')
+  check(condition_Bot_TimeToRally[1](g1) == false and condition_Bot_GroupedWithAllies[1](g1) == true, 'no siege rally')
+  W.get(para).untargetable = false
+  -- the calm parasite at 500 s: Rally for all, KillParasite only once three are at the rally point
+  W.matchTime = 500
+  B.TeamTick()
+  check(st.call == 'parasite' and st.phase == 'gather', 'calm at 500 s: gather (' .. tostring(st.call) .. ')')
+  local rally
+  for _, m in ipairs(board.open) do if m.team == 1 and m.type == nMissionType.Rally then rally = m end end
+  check(rally ~= nil and rally.target == para and rally.dest and rally.dest[1] == -66 and rally.agents == 5,
+        'a Rally mission at the rally point for the five bots')
+  check(nBot.GetAvailableMission(g1, nMissionType.Rally, 0) == rally.id, 'a Gladiator comes too')
+  check(nBot.GetAvailableMission(g1, nMissionType.KillParasite, 0) == 0, 'no KillParasite while gathering')
+  check(select(1, condition_Bot_GatherForParasite[1](g1)) == false, 'the gather condition waits for the team')
+  check(B.HunterParasitePos(hu) == nil, 'the Hunter farms while they gather')
+  for _, b in ipairs({ g1, g2, tc }) do W.get(b).pos = P(-66, -10) end
+  W.matchTime = 510
+  B.TeamTick()
+  check(st.phase == 'kill', 'three gathered: the kill')
+  check(nBot.GetAvailableMission(tc, nMissionType.KillParasite, 0) > 0, 'KillParasite open to them')
+  check(select(1, condition_Bot_GatherForParasite[1](g1)) == true, 'the gather condition passes')
+  local hp = B.HunterParasitePos(hu)
+  check(hp ~= nil and hp.x == -3, 'the Hunter joins')
+  -- it dies: farm, the missions end
+  W.kill(para)
+  W.matchTime = 540
+  B.TeamTick()
+  check(st.call == 'farm', 'the parasite died: farm')
+  local left = 0
+  for _, m in ipairs(board.open) do if m.team == 1 and (m.type == nMissionType.Rally or m.type == nMissionType.KillParasite) then left = left + 1 end end
+  check(left == 0, 'the parasite missions ended')
+  -- the base: defend
+  nBot.RequestMission(1, nMissionType.DefendBase, W.guardians[1], 5, 5, 'dt')
+  W.matchTime = 545
+  B.TeamTick()
+  check(st.call == 'defend', 'the base is attacked: defend')
+  check(nBot.GetAvailableMission(g2, nMissionType.DefendBase, 0) > 0, 'everyone may defend')
+  board.open = {}
+  W.matchTime = 560
+  B.TeamTick()
+  check(st.call == 'farm', 'the threat is over')
+  -- a well: the Predator and the Tactician take the capture mission, anyone else gets none
+  local well = W.add({ name = 'gold', team = 2, pos = P(28, -182), npc = nNPCType.GoldMine })
+  nBotHost.MinesForTeam = function(team, onlyUnlocked) if team == 2 then return { well } end return {} end
+  nBot.RequestMission(1, nMissionType.AttackWell, well, 2, 0, 'capture')
+  W.matchTime = 1000
+  B.TeamTick()
+  check(st.call == 'well' and st.assigned[pr] and st.assigned[tc], 'a well for the Predator and the Tactician (' .. tostring(st.call) .. ')')
+  local capture = 0
+  for _, m in ipairs(board.open) do if m.type == nMissionType.AttackWell then capture = m.id end end
+  check(nBot.GetAvailableMission(tc, nMissionType.AttackWell, 80) == capture, 'the crew gets the target\'s mission at any distance')
+  check(nBot.GetAvailableMission(g1, nMissionType.AttackWell, 80) == 0, 'a Gladiator does not')
+  W.get(well).team = 1
+  nBotHost.MinesForTeam = function() return {} end
+  W.matchTime = 1010
+  B.TeamTick()
+  check(st.call == 'farm', 'the well is ours')
+  check(#board.logs >= 6 and string.find(board.logs[1], 'team 1: farm %-> push') ~= nil, 'the calls are logged: ' .. tostring(board.logs[1]))
+  B.teamWanted, B.laneWanted = nil, nil
+  for _, n in ipairs({ 'condition_Mission_RallyForParasite', 'condition_Mission_RallyForParasiteContest',
+                       'condition_Mission_KillParasite', 'condition_Mission_CaptureWell', 'condition_Bot_GatherForParasite',
+                       'condition_Bot_GatherForParasiteContest', 'condition_Bot_TimeToRally', 'condition_Bot_GroupedWithAllies',
+                       'condition_Bot_AssignedToSiegeLane', 'ability_Bot_AssignToSiegeLane', 'condition_Bot_TowerPush',
+                       'condition_Bot_InEnemyBase' }) do
+    _G[n] = nil
+  end
+  nPlayer.GetPlayerIdForObject = nil
 end)
 
 print(checks .. ' checks, ' .. failed .. ' failed')

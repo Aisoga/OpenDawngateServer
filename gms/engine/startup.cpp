@@ -13,6 +13,7 @@
 #include <cstring>
 #include <cwchar>
 
+#include "core/d3d9/stand_in.h"
 #include "game.h"
 #include "guards.h"
 #include "hook.h"
@@ -190,18 +191,95 @@ bool __fastcall PreloadFilter(void* preloader, void* edx, const char* dir) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// step 0 (with the marks): does anything create a D3D9 object? (S3: a core-only host must not)
+// D3D9 (H1d): the Direct3DCreate9 watch (every host), the RwDevice_Initialize answer and the stand-in (core_only 1,
+// d3d9 0); gms/core/d3d9/stand_in.h has the binary's side
 
 using Direct3DCreate9Fn = void*(WINAPI*)(UINT sdk);
 Direct3DCreate9Fn g_d3dCreate;
 volatile LONG g_d3dCreates;
+gms::d3d9::Plan g_d3dPlan;
+gms::d3d9::StandIn g_standIn;
+bool g_d3dWatch, g_rwAnswerInstalled, g_resolutionSkipInstalled;
+int g_rwAnswers;
 
 void* WINAPI Direct3DCreate9Hook(UINT sdk) {
   InterlockedIncrement(&g_d3dCreates);
-  Log("startup: Direct3DCreate9(%u) called (returning to %08lX)", sdk,
-      static_cast<unsigned long>(reinterpret_cast<std::uintptr_t>(_ReturnAddress())));
+  Log("startup: Direct3DCreate9(%u) called (returning to %08lX)%s", sdk,
+      static_cast<unsigned long>(reinterpret_cast<std::uintptr_t>(_ReturnAddress())),
+      g_d3dPlan.failCreate ? "; answered NULL ([host] test_no_d3d9: a machine without Direct3D 9)" : "");
   if (g_mark) g_mark("Direct3DCreate9");
+  if (g_d3dPlan.failCreate) return nullptr;
   return g_d3dCreate(sdk);
+}
+
+void StandInCall(const gms::d3d9::StandIn& self, int slot, void* ret) {
+  const long n = self.Total();
+  if (n <= 20)
+    Log("startup: D3D9 stand-in: IDirect3D9::%s called (returning to %08lX; call %ld; answered as D3D9 without an "
+        "adapter)", gms::d3d9::SlotName(slot), static_cast<unsigned long>(reinterpret_cast<std::uintptr_t>(ret)), n);
+}
+
+// Replaces RwDevice_Initialize's call in RenderManager_InitializeDevice (game.h kRwDeviceInitializeCall): what the
+// original does except Direct3D 9. The RW driver globals are reset as its first step does, g_RwD3D9 is the stand-in,
+// no adapter, the device state 1 (initialized); the FPU flags it sets (MXCSR FTZ, _DN_FLUSH) the systems set-up sets
+// again right after. Success, so RenderManager_InitializeDevice goes on as with a GPU (its timeBeginPeriod, the
+// message manager, the render manager's "initialized" byte).
+int __cdecl RwDeviceInitializeNoD3d9() {
+  ++g_rwAnswers;
+  At<int(__cdecl*)()>(kRwDriverResetGlobals)();
+  *reinterpret_cast<void**>(kRwD3D9) = &g_standIn;
+  *reinterpret_cast<std::uint32_t*>(kRwNumAdapters) = 0;
+  *reinterpret_cast<std::uint32_t*>(kRwDeviceState) = 1;
+  Log("startup: RwDevice_Initialize answered without Direct3D 9 (g_RwD3D9 = the stand-in %p, no adapter, state 1; "
+      "returning to %08lX)",
+      static_cast<void*>(&g_standIn), static_cast<unsigned long>(reinterpret_cast<std::uintptr_t>(_ReturnAddress())));
+  return 1;
+}
+
+// The `call rel32` at `site` goes to `callee` (the bytes this build has).
+bool IsCallTo(std::uintptr_t site, std::uintptr_t callee) {
+  const auto* p = reinterpret_cast<const unsigned char*>(site);
+  std::int32_t rel;
+  std::memcpy(&rel, p + 1, 4);
+  return p[0] == 0xE8 && site + 5 + static_cast<std::uintptr_t>(rel) == callee;
+}
+
+const char* D3d9PlanText(const Options& o) {
+  if (!g_d3dPlan.answerRwDevice)
+    return o.coreOnly == 1 ? "the game's own RwDevice_Initialize ([host] d3d9 = 1)"
+                           : "the game's own RwDevice_Initialize (core_only is not 1: the D3D9 device is made)";
+  if (!g_rwAnswerInstalled) return "RwDevice_Initialize's call at 0x00997195 differs: NOT answered (the game's own)";
+  if (!g_resolutionSkipInstalled)
+    return "no D3D9: RwDevice_Initialize answered by the host; the mode enumeration's call at 0x0096381B differs, NOT "
+           "skipped (it asserts numAdapters)";
+  return "no D3D9: RwDevice_Initialize's call (0x00997195) answered by the host, the config manager's mode enumeration "
+         "(0x0096381B) skipped";
+}
+
+void InstallD3d9(const Options& o) {
+  g_d3dPlan = gms::d3d9::Decide(o.coreOnly, o.d3d9, o.testNoD3d9);
+  gms::d3d9::Init(g_standIn, &StandInCall);
+  g_d3dCreate = reinterpret_cast<Direct3DCreate9Fn>(
+      HookIat(kD3d9Dll, "Direct3DCreate9", reinterpret_cast<void*>(&Direct3DCreate9Hook)));
+  g_d3dWatch = g_d3dCreate != nullptr;
+  if (g_d3dPlan.answerRwDevice) {
+    if (IsCallTo(kRwDeviceInitializeCall, kRwDeviceInitialize)) {
+      PatchCall(kRwDeviceInitializeCall, 5, reinterpret_cast<const void*>(&RwDeviceInitializeNoD3d9));
+      g_rwAnswerInstalled = true;
+    }
+    if (IsCallTo(kConfigResolutionListCall, kConfigBuildResolutionList)) {
+      auto* p = reinterpret_cast<unsigned char*>(kConfigResolutionListCall);
+      DWORD old;
+      VirtualProtect(p, 5, PAGE_EXECUTE_READWRITE, &old);
+      std::memset(p, 0x90, 5);
+      VirtualProtect(p, 5, old, &old);
+      FlushInstructionCache(GetCurrentProcess(), p, 5);
+      g_resolutionSkipInstalled = true;
+    }
+  }
+  Log("startup (H1d): d3d9 %d, test_no_d3d9 %d: Direct3DCreate9 watch %s%s; %s", o.d3d9, o.testNoD3d9 ? 1 : 0,
+      g_d3dWatch ? "installed" : "NOT installed (import not found)", g_d3dPlan.failCreate ? " (answers NULL)" : "",
+      D3d9PlanText(o));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -287,6 +365,11 @@ void __cdecl CoreInit() {
   Log("startup: core only: SporeApp_Initialize skips %08X-0x006B2D93 (%s); the simulation core instead",
       static_cast<unsigned>(g_opt.coreOnly == 2 ? kCoreJumpFromGraphics : kCoreJumpFromDevice),
       g_opt.coreOnly == 2 ? "SP_Graphics, Wwise, the UI, AppInit" : "the D3D9 device, graphics, Wwise, the UI, AppInit");
+  // H1d: everything that could reach for D3D9 at start-up (the app system's singletons and systems) has run by now
+  Log("startup: D3D9 %s at start-up (Direct3DCreate9 called %ld times%s, RwDevice_Initialize %s, stand-in calls %ld)",
+      D3d9Verdict(), g_d3dCreates, g_d3dPlan.failCreate ? ", answered NULL" : "",
+      g_rwAnswers ? "answered by the host" : (g_d3dPlan.answerRwDevice ? "NOT reached" : "the game's own"),
+      g_standIn.Total());
   // The client runs the x87 FPU at single precision and round-to-nearest (D3D9's CreateDevice sets it, and
   // AppSystem_Update asserts "GetFPUPrecision() == kFPUPrecisionSingle"); without a device a host would compute the
   // simulation's x87 floats at another precision than the clients and stage 1.
@@ -347,16 +430,14 @@ void FramePiece(int step, VoidFn fn, bool& off) {
 void Install(const Options& o, MarkFn mark) {
   g_opt = o;
   g_mark = mark;
-  Log("startup (H1-live): startup_marks %d, nobake %d, nosound %d, preload %d, core_only %d", o.marks, o.nobake, o.nosound,
-      o.preload, o.coreOnly);
+  Log("startup (H1-live): startup_marks %d, nobake %d, nosound %d, preload %d, core_only %d, d3d9 %d, test_no_d3d9 %d",
+      o.marks, o.nobake, o.nosound, o.preload, o.coreOnly, o.d3d9, o.testNoD3d9 ? 1 : 0);
   if (o.marks) {
     for (int i = 0; i < kProbeCount; ++i)
       if (InstallProbe(i)) ++g_probes;
-    g_d3dCreate = reinterpret_cast<Direct3DCreate9Fn>(
-        HookIat(kD3d9Dll, "Direct3DCreate9", reinterpret_cast<void*>(&Direct3DCreate9Hook)));
-    Log("startup: %d of %d start-up probes installed; Direct3DCreate9 watch %s", g_probes, kProbeCount,
-        g_d3dCreate ? "installed" : "NOT installed (import not found)");
+    Log("startup: %d of %d start-up probes installed", g_probes, kProbeCount);
   }
+  InstallD3d9(o);  // H1d: the Direct3DCreate9 watch in every host; no D3D9 with core_only 1 and d3d9 0
   if (o.nobake || o.nosound) {
     g_findSwitch = reinterpret_cast<FindSwitchFn>(
         HookDetour(kFindSwitch, kFindSwitchBytes, sizeof kFindSwitchBytes, reinterpret_cast<void*>(&FindSwitchHook)));
@@ -390,6 +471,8 @@ bool CoreOnly() { return g_coreOnly; }
 
 bool CoreInitOk() { return g_coreRan && g_coreOk; }
 
+const char* D3d9Verdict() { return gms::d3d9::Verdict(g_d3dCreates, g_standIn.Total()); }
+
 void CoreFrame(float dtSeconds) {
   ++g_coreFrames;
   g_frameDt = dtSeconds;
@@ -402,9 +485,10 @@ void CoreFrame(float dtSeconds) {
 
 void Describe(char* out, unsigned size) {
   std::snprintf(out, size,
-                "probes %d (%d marks, Direct3DCreate9 %ld), switches %s%s(answered %ld), preload %d (%d skipped, %d kept), "
-                "core only %s (frames %u%s%s%s%s%s)",
-                g_probes, g_probeMarks, g_d3dCreates, g_opt.nobake ? "nobake " : "", g_opt.nosound ? "nosound " : "",
+                "probes %d (%d marks), d3d9 %s (Direct3DCreate9 %ld, stand-in %ld), switches %s%s(answered %ld), "
+                "preload %d (%d skipped, %d kept), core only %s (frames %u%s%s%s%s%s)",
+                g_probes, g_probeMarks, D3d9Verdict(), g_d3dCreates, g_standIn.Total(), g_opt.nobake ? "nobake " : "",
+                g_opt.nosound ? "nosound " : "",
                 g_switchAnswers, g_opt.preload, g_preloadSkipped, g_preloadLoaded,
                 !g_coreOnly ? "off" : (!g_coreRan ? "installed, not run" : (g_coreOk ? "ok" : "FAILED")), g_coreFrames,
                 g_loaderOff ? ", loader off" : "", g_dispatchOff ? ", dispatch off" : "", g_clockOff ? ", clock off" : "",

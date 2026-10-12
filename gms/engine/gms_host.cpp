@@ -2122,6 +2122,16 @@ class ServerMatch final : public gms::IMatch {
             objs[i].name, in.revealed, was, in.revealEnded ? ", a reveal timer ran out" : "", (*ents)[i].grassConceal);
       if (in.revealed) revealedLast_[objs[i].id] = in.revealed;
       else revealedLast_.erase(objs[i].id);
+      // D3c: OnEnterGrass / OnExitGrass on the object's abilities and modifiers (fow.h FireGrassEvent)
+      if (in.grassEdge && fowOpt_.grassEvents) {
+        const bool enter = in.grassEdge > 0;
+        const bool ok = fow::FireGrassEvent(objs[i].object, enter);
+        ++(enter ? grassEnterEvents_ : grassExitEvents_);
+        if (!ok) ++grassEventFails_;
+        if (++grassEventLogged_ <= fogLogLimit_)
+          Log("grass: %08X %-30s team %u at (%.1f, %.1f): %s fired%s", objs[i].id, objs[i].name, (*ents)[i].team,
+              in.pos[0], in.pos[1], enter ? "OnEnterGrass" : "OnExitGrass", ok ? "" : " (no ability container or FAILED)");
+      }
     }
     // With the terrain, grass or stealth test: the same model without them, as evidence which teams they keep from an
     // object (logged when that set changes; counted per tick)
@@ -2311,12 +2321,12 @@ class ServerMatch final : public gms::IMatch {
           "tracked, %d sources, %d proxies, %d unscanned records; hidden by terrain/grass/stealth %zu objects now (%d "
           "object-ticks); %d in grass, %d revealed (%d ticks with a reveal), %d terrain-mask writes; pursuit: %d "
           "last-seen writes (%d new records), %zu follows now, follow object-ticks %d (%d of hidden targets, %d with a "
-          "goal at the map origin)",
+          "goal at the map origin); grass events %d OnEnterGrass, %d OnExitGrass (%d without container)",
           fogEnters_, fogExits_, fogExitBytes_, fogA3_, fogVisWrites_, fogRadiusWrites_, fogGrassWrites_, fogAdvanced_,
           fogKind3_, fogKind3Hidden_, fogLast_.tracked, fogLast_.sources, fogLast_.proxies, fogLast_.unscanned,
           terrainHidden_.size(), fogTerrainHidden_, fogLast_.inGrass, fogLast_.revealed, fogRevealTicks_,
           fogTerrainMaskWrites_, fogLastSeenWrites_, fogLastSeenFresh_, pursuits_.size(), pursuitTicks_,
-          pursuitHiddenTicks_, pursuitOriginTicks_);
+          pursuitHiddenTicks_, pursuitOriginTicks_, grassEnterEvents_, grassExitEvents_, grassEventFails_);
     // D2h: the FoW data's sends, when they changed
     const int fowDataNow = fowDataDeltas_ + fowDataFull_ + fowDataDrops_;
     if (fowDataByVision_ && fowDataNow != fowDataReported_) {
@@ -2919,6 +2929,7 @@ class ServerMatch final : public gms::IMatch {
   gms::SteadyClock::time_point visionLast_{};
   std::map<uint32_t, uint8_t> revealedLast_;  // D2g-rest: the grass reveals last tick (logged when they change)
   int fogTerrainMaskWrites_ = 0, fogRevealTicks_ = 0, fogGrassLogged_ = 0;
+  int grassEnterEvents_ = 0, grassExitEvents_ = 0, grassEventFails_ = 0, grassEventLogged_ = 0;  // D3c
   std::map<uint32_t, uint8_t> terrainHidden_;
   int fogTerrainHidden_ = 0;
   gms::vision::FogPlanner planner_;
@@ -3245,6 +3256,7 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
     po.percent = HostOptionInt("perk_percent", 1) != 0;
     po.modifiers = HostOptionInt("perk_modifiers", 1) != 0;
     po.botLoadout = HostOptionInt("bot_loadout", 1) != 0;
+    po.respawn = HostOptionInt("perk_respawn", 1) != 0;  // D3c
     perks::Configure(po);
   }
   const bool world = HostOptionInt("world", 1) != 0, deploy = HostOptionInt("deploy", 1) != 0,
@@ -3286,9 +3298,11 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   fo.stealth = HostOptionInt("fog_stealth", 1) != 0;
   fo.render = HostOptionInt("fog_render", fog ? 1 : 0) != 0;
   fo.pursuit = HostOptionInt("fog_pursuit", 1) != 0;  // D2g-pursuit: the last-seen pursuit positions (0: the old bug)
+  fo.grassEvents = HostOptionInt("grass_events", 1) != 0;  // D3c: OnEnterGrass/OnExitGrass (fow.h FireGrassEvent)
   g->match->SetFog(fog && replicate, fo, HostOptionInt("fog_log_limit", 200));
-  Log("host: fog of war (D2g-live step 2): fog %d%s, terrain %d, grass %d, stealth %d, render %d", fog,
-      fog && !replicate ? " (needs replicate: off)" : "", fo.terrain, fo.grass, fo.stealth, fo.render);
+  Log("host: fog of war (D2g-live step 2): fog %d%s, terrain %d, grass %d, stealth %d, render %d; grass events %d (D3c)",
+      fog, fog && !replicate ? " (needs replicate: off)" : "", fo.terrain, fo.grass, fo.stealth, fo.render,
+      fo.grass && fo.grassEvents);
   // D2h: a player's FoW data (AA) also to the players that see its creature, the whole struct to each new recipient
   const bool fowDataByVision = HostOptionInt("fow_data_by_vision", 1) != 0;
   g->match->SetFowDataRouting(fowDataByVision, HostOptionInt("fow_data_log_limit", 200));

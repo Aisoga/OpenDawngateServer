@@ -122,6 +122,12 @@ Bytes RevealLoadout(const ShaperPick& p);
 // those the host adds to the creature as attribute modifiers with their op [assumed: the stripped server applied them].
 constexpr uint8_t kLoadoutOpReadByPlayer = 1;  // nAttributeOp.kAdd
 std::vector<LoadoutAttribute> LoadoutCreatureModifiers(const std::vector<LoadoutAttribute>& attributes);
+// D3c: the page's modifiers a respawn activates again: those of the page
+// (in its order, each once) that the creature no longer holds. 17 of the 18 perk modifiers end OnAgentDestroyed and
+// survive a death (their own OnRevive restarts their children), so they are still `active` and stay as they are;
+// modifier_PerkHandler_ProtectDistantAllies ends OnAgentDeath (its aura stops while its holder is dead) and comes back,
+// as the host's passives do (passives.h) [assumed: the stripped player hook 0x009A3F00 that GameObject_OnRevived calls].
+std::vector<uint32_t> PageModifiersToRenew(const std::vector<uint32_t>& page, const std::vector<uint32_t>& active);
 // The reveal's LabsPlayerGlobalUpdate members for a pick: mStatus, mRole, mpNounDef, plus mLoadoutID/Version with a
 // perk page (GMS_PROTOCOL.md *Into the game*, step 1), and their values.
 std::vector<int> RevealMembers(const ShaperPick& p);

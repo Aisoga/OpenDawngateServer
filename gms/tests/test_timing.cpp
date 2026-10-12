@@ -144,6 +144,60 @@ GMS_TEST(TimingCommandLatencyAnswersAndEffects) {
   CHECK(CommandLatency::Format(5, c.Roll()).empty());
 }
 
+// Q3c-live2: a test run's outliers were matching artifacts. A seq-0 message answers only seq-0 commands; a newer move,
+// attack-move or stop supersedes the older ones without an effect; outliers come out one by one.
+GMS_TEST(TimingCommandLatencySequencesSupersedeAndOutliers) {
+  CommandLatency c(10000);
+  c.SetOutlierMs(1000);
+  // a right-click (basic attack, seq 29) that never starts, then the repeat of another attack: B4 kind 1 with seq 0
+  c.OnIntake(0, kCmdKindAbility, 29, -1, 1000);
+  CHECK(c.OnAnswer(0, 29, 0, 1030));                                 // B4 kind 2 with its sequence
+  CHECK(!c.OnAnswer(0, 0, 1u << kCmdKindAbility, 6000));             // the repeat's kind 1: not seq 29's
+  CHECK(!c.OnEffect(0, 0, 1u << kCmdKindAbility, 6000));
+  // the client's self-cast with seq 0 is still matched by kind
+  c.OnIntake(0, kCmdKindAbility, 0, -1, 6100);
+  CHECK(c.OnAnswer(0, 0, 1u << kCmdKindAbility, 6130));
+  CHECK(c.OnEffect(0, 0, 1u << kCmdKindAbility, 6131));
+  // a move given while dead (seq 147), then a move to the same point (seq 149): 147 is superseded, not credited
+  c.OnIntake(0, kCmdKindMove, 147, -1, 7000, true, -78.f, 62.f);
+  c.OnIntake(0, kCmdKindMove, 149, -1, 13800, true, -78.f, 62.f);
+  const auto moves = c.PendingMoves(0);
+  CHECK(moves.size() == 1 && moves[0].seq == 149 && !moves[0].answered);
+  CHECK(c.OnAnswer(0, 149, 0, 13830));
+  CHECK(c.PendingMoves(0).size() == 1 && c.PendingMoves(0)[0].answered);
+  CHECK(!c.OnEffect(0, 147, 0, 13831));
+  CHECK(c.OnEffect(0, 149, 0, 13831));
+  c.Expire(20000);  // seq 29's effect never came
+  const std::vector<CommandLatency::Outlier> out = c.TakeOutliers();
+  CHECK_EQ(out.size(), static_cast<size_t>(2));
+  if (out.size() == 2) {
+    CHECK_EQ(std::string(out[0].end), std::string("superseded"));
+    CHECK_EQ(static_cast<int>(out[0].seq), 147);
+    CHECK_EQ(static_cast<int>(out[0].bySeq), 149);
+    CHECK_EQ(CommandLatency::FormatOutlier(out[0]),
+             std::string("commands latency: player 0 seq 147 move (queued 0.0 ms): answer none, effect none "
+                         "(superseded by seq 149)"));
+    CHECK_EQ(std::string(out[1].end), std::string("timeout"));
+    CHECK_EQ(CommandLatency::FormatOutlier(out[1]),
+             std::string("commands latency: player 0 seq 29 ability (queued 0.0 ms): answer 30.0 ms, effect none "
+                         "(timeout)"));
+  }
+  CHECK(c.TakeOutliers().empty());
+  const CommandLatency::Row r = c.Roll();
+  CHECK_EQ(r.kinds[kCmdKindMove].superseded, 1);
+  CHECK_EQ(r.kinds[kCmdKindMove].noEffect, 0);
+  CHECK_EQ(r.kinds[kCmdKindAbility].noEffect, 1);
+  CHECK_EQ(r.kinds[kCmdKindAbility].effect.max, 31.0);
+  CHECK(Has(CommandLatency::Format(7, r), "move 2 (queued p50 0.0"));
+  CHECK(Has(CommandLatency::Format(7, r), "; superseded 1)"));
+  // a late answer (an attack-move deferred behind a fight) is an outlier although it ends normally
+  c.OnIntake(0, kCmdKindAttackMove, 68, -1, 30000, true, -66.f, 74.f);
+  CHECK(c.OnAnswer(0, 68, 0, 36005));
+  CHECK(c.OnEffect(0, 68, 0, 36010));
+  const std::vector<CommandLatency::Outlier> late = c.TakeOutliers();
+  CHECK(late.size() == 1 && std::string(late[0].end) == "done" && late[0].answerMs == 6005.0);
+}
+
 GMS_TEST(TimingCsvColumnsMatchTheHeader) {
   const std::vector<std::string> steps = {"tick.time", "tick.lua"};
   const Gauges g = {{"objects", 512}, {"id_serial", 0x7C71}, {"los_pool", 280.5}};

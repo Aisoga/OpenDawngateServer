@@ -17,6 +17,7 @@
 #include "game.h"
 #include "host/control.h"
 #include "log.h"
+#include "shop.h"
 #include "wells.h"
 
 using namespace game;
@@ -803,6 +804,7 @@ void OnSimulatorCreated(void* sim) {
       L, ok ? "ok" : "FAILED");
   director::RegisterLua(L, sim);
   if (g_opt.wells) wells::RegisterLua(L, sim);  // D9: the bots' well getters
+  shop::RegisterLua(L, sim);  // D15c: nBattlegrounds.GetItemFxProjectile/GetItemFxOnHit
 }
 
 void OnLevelStarted(void* sim) {

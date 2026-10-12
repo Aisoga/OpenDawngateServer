@@ -18,6 +18,11 @@
 //             MainLoop_RunFrame does nothing; the shipped main loop still pumps the window manager, whose PeekMessage
 //             drives the harness, and CoreFrame stands in for the per-frame engine work the server needs (the
 //             loader, the message dispatch, and the Gears module's game clock, NavPower frame and update list).
+//   d3d9      (H1d, with core_only 1 and d3d9 = 0, the default): no Direct3D 9 at all. The render manager's call of
+//             RwDevice_Initialize (0x00997195) gets the host's answer (no Direct3DCreate9; g_RwD3D9 = a stand-in that
+//             fails and logs every call, gms/core/d3d9/stand_in.h), the config manager's adapter-mode enumeration
+//             (0x0096381B) is skipped. A Direct3DCreate9 watch (IAT) counts every call in every host; test_no_d3d9
+//             makes it answer NULL (a machine without D3D9).
 #pragma once
 
 namespace startup {
@@ -28,6 +33,12 @@ struct Options {
   bool nosound = false;
   int preload = 1;  // 1 = the game's own preloader, 0 = nothing, 2 = only assetdata/binary and levels
   int coreOnly = 0;  // 0 = off, 1 = jump before the D3D9 device (0x006B26C8), 2 = before SP_Graphics (0x006B279E)
+  // H1d: 0 = with core_only 1, no D3D9 at all (RwDevice_Initialize answered by the host, no Direct3DCreate9); 1 = the
+  // game's own RwDevice_Initialize (an IDirect3D9 object at start-up, as before H1d). Stage 1 and core_only 2 need it.
+  int d3d9 = 0;
+  // H1d test aid: Direct3DCreate9 answers NULL, as on a machine without Direct3D 9 (with d3d9 = 1 or core_only 0/2
+  // the host then can't start: "Could not start the renderer", the shipped failure).
+  bool testNoD3d9 = false;
 };
 
 using MarkFn = void (*)(const char* what);
@@ -46,6 +57,8 @@ bool CoreInitOk();
 // (H5): an exception skips that frame's run of it; one that throws in every frame for [host] step_fail_s ends the
 // match (the harness switches it off).
 void CoreFrame(float dtSeconds);
+// D3D9 at start-up (H1d): "not touched" when nothing called Direct3DCreate9 or the stand-in (gms::d3d9::Verdict).
+const char* D3d9Verdict();
 // "probes 20 (40 marks), switches nobake noSound (answered 2), preload 0 (19 skipped, 0 loaded), core only ok"
 void Describe(char* out, unsigned size);
 

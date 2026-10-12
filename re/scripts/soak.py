@@ -21,7 +21,7 @@ Commands:
       (client\\run_854_b\\ by default: lane b's client; lane a's is client\\run_854\\) and writes peek_<HHMMSS>.txt
       with the wall-clock time on its first line; stops when no such process exists for 5 minutes, or after --until
       seconds.
-  edges [--end S] [--every S] [--first S] [--other-human N] [--no-xp] [--out FILE]
+  edges [--end S] [--every S] [--first S] [--other-human N] [--enemy-shaper N] [--no-xp] [--out FILE]
       (Q3c) The same match with the command edge cases in blocks of about 100 s (the first at --first, 90, then every
       --every, 300, until --end; laning pauses during a block): repeated right-clicks on one target, retargeting,
       an attack-move through the wave, a smart-cast (an aimed cast out of range with the walk-up flag) [assumed: what
@@ -31,11 +31,24 @@ Commands:
       an enemy shaper (Q ten times in a second at {creature:5}, then basic attacks), recall then actions (a move
       during the channel, Q during the next, a full recall and purchases while walking out of the shop). XP 2200 at
       the first block (all four abilities ranked; --no-xp leaves it out). --other-human N adds the same attacks and
-      spam on the other human's creature (gameplay index N; two clients, G3). Every line is commented with its case.
+      spam on the other human's creature (gameplay index N; two clients, G3) and (Q3c-live2) moves that human's shaper
+      to the top lane every 15 s ("p<N>" lines, XP 2200 with the first block); --enemy-shaper N (5) is the target of the Q spam (in a 1 v 1 without
+      bots, the other human). Every line is commented with its case.
   timing <session dir>
       (Q3c) The host's timing per match minute from host\\<n>\\host_timing.csv (perf.h): tick durations, late ticks,
       lags, the slowest step, traffic per kind, ClockSync and answer delays, the command latency per kind, the records
       and the object id counter; then what grows over the match (the first five minutes against the last five).
+  latency <session dir> [--commands FILE] [--summary]
+      (Q3c-live2) The host's per-command lines (`commands latency: player P seq S <kind> ...`, written for every command
+      answered or done after [host] latency_log_ms (1000), timed out or superseded by a newer move), each with its
+      cause read from the same log (the player's creature dead at the intake, an attack-move deferred behind a fight,
+      a walk-up, superseded, answered but never started) and its edge case from the commands file's comments; then
+      the count per kind and cause.
+  track <session dir> --peek DIR [--player N]
+      (Q3c-live2) The client's own shaper in a fast peek loop (peek --every 1; the files' names get hundredths then,
+      and every peek file its end time) against the host's 0.5-s position lines of that player, interpolated to the
+      peek's middle: the distance per peek and over the loop, and steps away from the host's goal while it moves the
+      shaper ("walking backwards").
   report <session dir> [--peek DIR] [--csv FILE]
       Reads the session's host log(s) (host\\<n>\\dgsim.log), host_samples.csv, application_log.txt (the client's
       asserts) and the peek files, and prints per minute of the match: the host's private bytes, working set and CPU,
@@ -80,6 +93,7 @@ SENTINEL_POS = (1234.5, -2345.5, 0.0)  # Q3c: a point written as one ({nearestpo
 LANE_HOME = (-85.0, 55.0)  # our side of the top lane (D10's move)
 LANE_A, LANE_B = (-78.0, 62.0), (-66.0, 74.0)  # the top lane's middle, between the outer Bindings (D1b-live's duel)
 E_AIM = (-60.0, 82.0)
+OTHER_SPOT = (-54.0, 86.0)  # Q3c-live2: where the other human waits (the top lane, beyond LANE_B)
 ENEMY_WELL_TOP = (-27.6, 182.7)  # gold_red_side (MATCH_FLOW.md R10 §4.1)
 ENEMY_WELL_BOTTOM = (182.5, -27.9)
 SLOT_Q, SLOT_W, SLOT_E, SLOT_R = 3, 4, 5, 6
@@ -124,16 +138,24 @@ class Script:
     def line(self, t, text, note):  # a commands-file line that isn't a message (xp, gold, report)
         self.lines.append((round(t, 2), text, note))
 
-    def move(self, t, pos, attack=False):
+    def move(self, t, pos, attack=False, player=None):
         self.add(t, gc.build_move((pos[0], pos[1], 0.0), seq=self._next(), obj=CASTER, attack=attack),
-                 "%s to (%g, %g)" % ("attack-move" if attack else "move", pos[0], pos[1]))
+                 "%s to (%g, %g)" % ("attack-move" if attack else "move", pos[0], pos[1]) +
+                 ("" if player is None else " (player %d)" % player))
+        if player is not None:  # Q3c-live2: another player's line ("p<index> <hex>", {caster} = its creature)
+            t_, h, note = self.lines[-1]
+            self.lines[-1] = (t_, "p%d %s" % (player, h), note)
 
     def cast(self, t, slot=-1, guid=0, aim=None, note=""):
         a = (aim[0], aim[1], 0.0) if aim else (0.0, 0.0, 0.0)
         self.add(t, gc.build_cast(slot=slot, guid=guid, aim=a, pos=a, seq=self._next(), obj=CASTER), note)
 
     def stop(self, t):
-        self.add(t, gc.build_action_command(8, self._next(), CASTER, b""), "stop")
+        # Q3c-live2: what the client's S key sends, stop moving (2) and stop (8) (D7c); a stop (8) alone doesn't end a walk-up
+        # (MoveToRange walks on: 6 s in a test run)
+        self.add(t, gc.build_action_command(2, self._next(), CASTER, struct.pack("<I3fII", 0, *SENTINEL_POS, 0, 0)),
+                 "stop moving (S)", pos_ph="{casterpos}")  # type 2 at the creature's position (RequestStop 0x006653A0)
+        self.add(t, gc.build_action_command(8, self._next(), CASTER, b""), "stop (S)")
 
     def rank(self, t, slot):
         self.add(t, bytes([gc.WIRE_ABILITY_RANK_UP]) + slot.to_bytes(4, "little"), "rank-up %s" % gc.SLOT_NAME[slot])
@@ -171,14 +193,16 @@ def edge_block(s, t0, first, xp, other_human, enemy_shaper=5):
              "edge: retarget to B (ranged)")
     s.attack(t0 + 7.2, "{nearest:Minion_Spirit_Melee}", "{nearestpos:Minion_Spirit_Melee}", "edge: retarget back to A")
     s.move(t0 + 10, (LANE_B[0] + 12, LANE_B[1] + 12), attack=True)  # through the wave
+    # Q3c-live2: the three E casts 15 s apart (Fenmore's E has a 14-s cooldown at rank 1): Q3c's 16/22/28.5 s put the
+    # zero-length aim and the "E, then a move" case on the cooldown of the smart-cast, so neither was tested in the first run
     far = (E_AIM[0] + 30, E_AIM[1] + 30)
-    s.cast_at(t0 + 16, slot=SLOT_E, aim=far, approach=1, note="edge: smart-cast E out of range (walk-up flag)")
-    s.cast_at(t0 + 22, slot=SLOT_E, pos_ph="{casterpos}", note="edge: E at the caster's own position (zero-length aim)")
+    s.cast_at(t0 + 16, slot=SLOT_E, pos_ph="{casterpos}", note="edge: E at the caster's own position (zero-length aim)")
     s.stop(t0 + 28)
-    s.cast(t0 + 28.5, slot=SLOT_E, aim=E_AIM, note="edge: E aimed ...")
-    s.move(t0 + 28.6, LANE_HOME)  # ... and a move 0.1 s later, during the cast
+    s.cast_at(t0 + 31, slot=SLOT_E, aim=far, approach=1, note="edge: smart-cast E out of range (walk-up flag)")
     s.cast(t0 + 34, slot=SLOT_R, note="edge: R ...")
     s.move(t0 + 34.2, LANE_A)  # ... and a move 0.2 s later
+    s.cast(t0 + 46.5, slot=SLOT_E, aim=E_AIM, note="edge: E aimed ...")
+    s.move(t0 + 46.6, LANE_HOME)  # ... and a move 0.1 s later, during the cast
     s.cast_at(t0 + 40, slot=SLOT_Q, target_ph=ENEMY, pos_ph=ENEMY_POS, approach=1,
               note="edge: Q on the nearest enemy minion (walk-up queued if out of range) ...")
     s.cast(t0 + 40.3, slot=SLOT_SPELL_1, aim=LANE_HOME, note="edge: ... the battle spell (Blink) 0.3 s later ...")
@@ -203,13 +227,17 @@ def edge_block(s, t0, first, xp, other_human, enemy_shaper=5):
     s.buy(t0 + 78.3, "Consumable_Potion_HealingPotion")
     s.buy(t0 + 84, "Consumable_Potion_HealingPotion")  # out of the shop's reach by then: refused
     if other_human is not None:  # G3: the other human (two clients)
+        # Q3c-live2: before the recall (at 86 s the shaper was walking back from its base, 200 units away, and every
+        # attack was replaced before it arrived in a test run), the stop 1.4 s after the Q spam
         other, other_pos = "{creature:%d}" % other_human, "{creaturepos:%d}" % other_human
         for i in range(3):
-            s.attack(t0 + 86 + 0.3 * i, other, other_pos, "edge: basic attack #%d on the other human" % (i + 1))
+            s.attack(t0 + 57 + 0.3 * i, other, other_pos, "edge: basic attack #%d on the other human" % (i + 1))
         for i in range(5):
-            s.cast_at(t0 + 88 + 0.1 * i, slot=SLOT_Q, target_ph=other, pos_ph=other_pos, approach=1,
+            s.cast_at(t0 + 59 + 0.1 * i, slot=SLOT_Q, target_ph=other, pos_ph=other_pos, approach=1,
                       note="edge: Q spam #%d on the other human" % (i + 1))
-        s.stop(t0 + 92)
+        s.stop(t0 + 60.8)
+        if first and xp:
+            s.line(t0, "p%d xp 2200" % other_human, "edge: XP for the other human too (level 6)")
 
 
 def build_script(end=1800, edges=None):
@@ -245,7 +273,7 @@ def build_script(end=1800, edges=None):
             if clash:
                 t0 = max(clash) + 5
                 continue
-            edge_block(s, t0, first, edges["xp"], edges["other_human"])
+            edge_block(s, t0, first, edges["xp"], edges["other_human"], edges.get("enemy_shaper", 5))
             busy.append((t0, t0 + EDGE_BLOCK_S))
             first = False
             t0 += edges["every"]
@@ -271,6 +299,11 @@ def build_script(end=1800, edges=None):
     order = [SLOT_R, SLOT_W, SLOT_E, SLOT_Q]
     for i, t in enumerate(range(21, end, 20)):
         s.rank(t + 0.3, order[i % 4])
+    if edges is not None and edges.get("other_human") is not None:
+        # Q3c-live2: the other human (no input of its own) walks to the top lane's enemy side and back there after
+        # each death, so the edge cases' attacks and casts at it find it near
+        for t in range(6, end, 15):  # every 15 s: back soon after a respawn (every 45 s was too rare in a test run)
+            s.move(t, OTHER_SPOT, player=edges["other_human"])
     s.other(203, 10, (9).to_bytes(4, "little"), "voice line 9 (laugh)")
     s.other(453.5, 5, b"", "dance")
     return s
@@ -278,7 +311,8 @@ def build_script(end=1800, edges=None):
 
 def cmd_commands(a):
     if a.cmd == "edges":
-        edges = {"first": a.first, "every": a.every, "xp": not a.no_xp, "other_human": a.other_human}
+        edges = {"first": a.first, "every": a.every, "xp": not a.no_xp, "other_human": a.other_human,
+                 "enemy_shaper": a.enemy_shaper}
         text = build_script(a.end, edges).text("soak.py edges (Q3c): the soak match with the command edge cases")
     else:
         text = build_script(a.end).text()
@@ -321,7 +355,8 @@ def cmd_peek(a):
         else:
             last_seen = time.time()
             now = datetime.datetime.now()
-            target = os.path.join(a.out_dir, "peek_%s.txt" % now.strftime("%H%M%S"))
+            name = now.strftime("%H%M%S") + (now.strftime("_%f")[:4] if a.every < 5 else "")  # Q3c-live2: fast loops
+            target = os.path.join(a.out_dir, "peek_%s.txt" % name)
             try:
                 r = subprocess.run([sys.executable, "-I", peek, str(pid)], capture_output=True, text=True,
                                    timeout=120)
@@ -329,7 +364,8 @@ def cmd_peek(a):
             except (OSError, subprocess.SubprocessError) as e:
                 body = "peek failed: %s\n" % e
             with open(target, "w", encoding="utf-8") as f:
-                f.write("# wall %s pid %d\n" % (now.strftime("%H:%M:%S.%f")[:-3], pid))
+                f.write("# wall %s pid %d end %s\n" % (now.strftime("%H:%M:%S.%f")[:-3], pid,
+                                                       datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]))
                 f.write(body)
         time.sleep(a.every)
     return 0
@@ -337,7 +373,7 @@ def cmd_peek(a):
 
 # ---- the report --------------------------------------------------------------------------------------------------
 KNOWN_CLIENT_ASSERTS = ("GameSimulator.cpp(7412)", "ModelAnimator.cpp(2280)")
-RE_LINE = re.compile(r"^\s*(\d+) \[\d+\] (.*)$")
+RE_LINE = re.compile(r"^\s*(\d+) \[\s*\d+\] (.*)$")  # Q3c-live2: a 4-digit thread id is padded ("[ 5508]")
 RE_WALL = re.compile(r"^(\d\d):(\d\d):(\d\d)\.(\d\d\d) ")
 
 
@@ -714,11 +750,12 @@ def timing_report(sess):
             p50s = sorted(fnum(d, k + "_answer_p50_ms", 0) for d in rows if fnum(d, k + "_n", 0) > 0)
             e50s = sorted(fnum(d, k + "_effect_p50_ms", 0) for d in rows if fnum(d, k + "_n", 0) > 0)
             out.append("  %-12s %5d  queued max %6.1f  answer p50 %6.1f max %7.1f  effect p50 %6.1f max %7.1f  "
-                       "timeouts %d" % (
+                       "timeouts %d  superseded %d" % (
                            k, n, max(fnum(d, k + "_queued_max_ms", 0) for d in rows), p50s[len(p50s) // 2],
                            max(fnum(d, k + "_answer_max_ms", 0) for d in rows), e50s[len(e50s) // 2],
                            max(fnum(d, k + "_effect_max_ms", 0) for d in rows),
-                           sum(fnum(d, k + "_timeouts", 0) for d in rows)))
+                           sum(fnum(d, k + "_timeouts", 0) for d in rows),
+                           sum(fnum(d, k + "_superseded", 0) for d in rows)))
         # what grows: the first five match minutes against the last five
         match = [d for d in rows if fnum(d, "minute", -1) >= 0]
         if len(match) >= 10:
@@ -833,6 +870,214 @@ def compare_peeks(r, peek_dir, enter):
     return out
 
 
+RX_POSLINE = re.compile(r"commands: player (\d+) creature ([0-9A-F]{8}) \(seq \d+\): position \(([-\d.]+), ([-\d.]+), "
+                        r"[-\d.]+\), locomotion goal \(([-\d.]+), ([-\d.]+), [-\d.]+\) flags 0x([0-9a-f]+)")
+
+
+def peek_wall(line0, end=False):
+    """The wall seconds of a peek file's '# wall HH:MM:SS.mmm pid N [end HH:MM:SS.mmm]' line (its start, or its end)."""
+    parts = line0.split()
+    t = parts[parts.index("end") + 1] if end and "end" in parts else parts[2]
+    hh, mm, ss = t.split(":")
+    return int(hh) * 3600 + int(mm) * 60 + float(ss)
+
+
+def track_report(sess, peek_dir, player=0):
+    """(Q3c-live2) The client's own shaper in a fast peek loop (soak.py peek --every 1) against the host's position
+    lines (`commands: player P creature X (seq S): position ..., locomotion goal ... flags ...`, every 0.5 s while the
+    player's commands are watched), interpolated to the peek's time (the middle of its read): the distance, and steps
+    that go away from the host's goal while the host moves the shaper ("backwards")."""
+    out = []
+    logs = sorted(glob.glob(os.path.join(sess, "host", "*", "dgsim.log")) +
+                  glob.glob(os.path.join(sess, "host", "dgsim.log")))
+    files = sorted(glob.glob(os.path.join(peek_dir, "peek_*.txt")), key=os.path.getmtime)
+    for lg in logs:
+        r = parse_host_log(lg)
+        creature = r["creatures"].get(str(player))
+        pos = []  # (wall s, x, y, gx, gy, flags)
+        with open(lg, encoding="utf-8", errors="replace") as f:
+            for ln in f:
+                if "commands: player %d creature" % player not in ln:
+                    continue
+                m = RX_LOG_MS.match(ln)
+                mm = RX_POSLINE.search(ln)
+                if not (m and mm):
+                    continue
+                creature = creature or mm.group(2)
+                w = ms_to_wall(r, int(m.group(1)))
+                if w is not None:
+                    pos.append((w, float(mm.group(3)), float(mm.group(4)), float(mm.group(5)), float(mm.group(6)),
+                                int(mm.group(7), 16)))
+        enter = ms_to_wall(r, r["enter_ms"]) if r["enter_ms"] is not None else None
+        out.append("%s: player %d's creature %s, %d host position lines, %d peek files" % (
+            os.path.relpath(lg, sess), player, creature, len(pos), len(files)))
+        if not creature or not pos:
+            continue
+        walls = [p[0] for p in pos]
+        dists, back, prev, prev_wall, prev_goal = [], 0, None, None, None
+        for fn in files:
+            with open(fn, encoding="utf-8", errors="replace") as f:
+                lines = f.read().splitlines()
+            if not lines or not lines[0].startswith("# wall "):
+                continue
+            w0, w1 = peek_wall(lines[0]), peek_wall(lines[0], end=True)
+            wall = (w0 + w1) / 2 if w1 > w0 else w0 + 0.3  # the objects are read near the peek's middle [assumed]
+            cpos = None
+            for line in lines[1:]:
+                mm = re.search(r"server 0x%s(?: \(UNMAPPED\))? +\S+ +pos \( *([-\d.]+), *([-\d.]+)," % creature.lower(),
+                               line)
+                if mm:
+                    cpos = (float(mm.group(1)), float(mm.group(2)))
+                    break
+            if cpos is None:
+                continue
+            i = bisect.bisect_left(walls, wall)
+            if i == 0 or i >= len(pos) or pos[i][0] - pos[i - 1][0] > 1.2:
+                hpos, note = None, "no host sample within 0.6 s"
+            else:
+                a, b = pos[i - 1], pos[i]
+                k = (wall - a[0]) / (b[0] - a[0]) if b[0] > a[0] else 0.0
+                hpos = (a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k)
+                d = ((cpos[0] - hpos[0]) ** 2 + (cpos[1] - hpos[1]) ** 2) ** 0.5
+                dists.append(d)
+                note = "distance %.2f, host goal (%.1f, %.1f) flags 0x%x" % (d, a[3], a[4], a[5])
+                # consecutive peeks of a fast loop with the same host goal at both ends (a new command between them
+                # turns the shaper legitimately)
+                if prev and wall - prev_wall <= 3.0 and a[5] & 1 and prev_goal == (a[3], a[4]):
+                    sx, sy = cpos[0] - prev[0], cpos[1] - prev[1]
+                    gx, gy = a[3] - prev[0], a[4] - prev[1]
+                    if (sx * sx + sy * sy) ** 0.5 > 0.5 and sx * gx + sy * gy < 0:
+                        back += 1
+                        note += " BACKWARDS"
+            out.append("  %s match %7.2f s: client (%8.2f, %8.2f) host %s  %s" % (
+                os.path.basename(fn), wall - enter if enter else 0.0, cpos[0], cpos[1],
+                "(%8.2f, %8.2f)" % hpos if hpos else "(   -   ,    -   )", note))
+            prev, prev_wall, prev_goal = cpos, wall, ((a[3], a[4]) if hpos else None)
+        if dists:
+            s = sorted(dists)
+            out.append("  distance client - host over %d peeks: p50 %.2f, p90 %.2f, max %.2f; steps away from the host's "
+                       "goal while it moved the shaper: %d" % (len(s), s[len(s) // 2], s[int(len(s) * 0.9)], s[-1], back))
+    return out
+
+
+RX_LOG_MS = re.compile(r"^\s*(\d+) \[")
+RX_LATENCY =re.compile(r"commands latency: player (\d+) seq (\d+) ([a-z-]+) \(queued ([\d.]+) ms\): answer (none|[\d.]+ ms), "
+                        r"effect (none|[\d.]+ ms) \((done|timeout|superseded)(?: by seq (\d+))?\); taken at host ([\d.]+) s")
+
+
+def latency_report(sess, commands_file=None, show="all"):
+    """(Q3c-live2) The host's per-command `commands latency: player ...` lines (perf.cpp: a command answered or done
+    after [host] latency_log_ms, timed out or superseded), each with its cause from the same log: the player's
+    creature dead at the intake (death -> respawn), an attack-move deferred behind a fight (the binary's step 4, D7c),
+    a walk-up (approach 1), superseded by a newer move, a cast that was answered but never started; and the edge
+    case from the commands file's comment (soak.py edges)."""
+    notes = {}
+    if commands_file:
+        for ln in open(commands_file, encoding="utf-8"):
+            if ln.startswith("#") or not ln.strip():
+                continue
+            head, _, note = ln.partition("#")
+            parts = head.split()
+            if len(parts) >= 2:  # by the message's start ("p<N>" lines: the player's), then the nearest time
+                key = parts[2][:10] if parts[1].startswith("p") and len(parts) >= 3 else parts[1][:10]
+                notes.setdefault(key, []).append((float(parts[0]), note.strip()))
+    out = []
+    logs = sorted(glob.glob(os.path.join(sess, "host", "*", "dgsim.log")) +
+                  glob.glob(os.path.join(sess, "host", "dgsim.log")))
+    for path in logs:
+        creature, deaths, open_death = {}, collections.defaultdict(list), {}
+        intakes = collections.defaultdict(list)  # (player, seq) -> [(ms, t after EnterGame or None, note, approach)]
+        deferred = collections.defaultdict(list)  # (player, seq) -> [ms]
+        entries = []
+        last_inj = None
+        enter_ms = None
+        for ln in open(path, encoding="utf-8", errors="replace"):
+            m = RX_LOG_MS.match(ln)
+            if not m:
+                continue
+            ms = int(m.group(1))
+            if "commands latency: player" in ln:
+                mm = RX_LATENCY.search(ln)
+                if mm:
+                    entries.append(mm)
+            elif "match: injected (test side)" in ln:
+                mm = re.search(r"([\d.]+) s after EnterGame for player (\d+): (\S+)", ln)
+                if mm:
+                    last_inj = (float(mm.group(1)), int(mm.group(2)), mm.group(3))
+            elif re.search(r"commands: (injected|client) player \d+: type \d+ ", ln):
+                mm = re.search(r"commands: (injected|client) player (\d+): type (\d+) [^,]*, seq (\d+)", ln)
+                if mm:
+                    pl, seq = int(mm.group(2)), int(mm.group(4))
+                    t, note = None, mm.group(1)
+                    if mm.group(1) == "injected" and last_inj and last_inj[1] == pl:
+                        t = last_inj[0]
+                        near = [x for x in notes.get(last_inj[2][:10], []) if abs(x[0] - t) <= 0.06]
+                        note = near[0][1] if near else ""  # the host logs the time with one decimal
+                    elif enter_ms is not None:
+                        t = (ms - enter_ms) / 1000.0
+                    intakes[(pl, seq)].append((ms, t, note, "approach 1" in ln))
+            elif "meets the attack-move" in ln and "deferred" in ln:
+                mm = re.search(r"player (\d+): (?:attack-)?move seq (\d+) meets", ln)
+                if mm:
+                    deferred[(int(mm.group(1)), int(mm.group(2)))].append(ms)
+            elif "LabsPlayer_DeployCharacter(player" in ln:
+                mm = re.search(r"DeployCharacter\(player (\d+),.*-> creature ([0-9A-F]{8})", ln)
+                if mm:
+                    creature[mm.group(2)] = int(mm.group(1))
+            elif "death: " in ln and " (team " in ln:
+                mm = re.search(r"death: ([0-9A-F]{8}) ", ln)
+                if mm and mm.group(1) in creature:
+                    open_death[creature[mm.group(1)]] = ms
+            elif "respawn: player " in ln and " at server " in ln:
+                mm = re.search(r"respawn: player (\d+)'s ", ln)
+                if mm and int(mm.group(1)) in open_death:
+                    pl = int(mm.group(1))
+                    deaths[pl].append((open_death.pop(pl), ms))
+            elif enter_ms is None and "match: the first EnterGame was sent" in ln:
+                enter_ms = ms
+        for pl, start in open_death.items():
+            deaths[pl].append((start, 1 << 62))
+        rows = []
+        causes = collections.Counter()
+        for mm in entries:
+            pl, seq, kind = int(mm.group(1)), int(mm.group(2)), mm.group(3)
+            ans = None if mm.group(5) == "none" else float(mm.group(5).split()[0])
+            eff = None if mm.group(6) == "none" else float(mm.group(6).split()[0])
+            end, by, taken = mm.group(7), mm.group(8), float(mm.group(9))
+            cands = [x for x in intakes.get((pl, seq), []) if x[0] <= taken * 1000 + 40]
+            ims, t, note, approach = cands[-1] if cands else (int(taken * 1000), None, "", False)
+            cause = []
+            if any(a <= ims <= b for a, b in deaths.get(pl, [])):
+                cause.append("dead")
+            if any(0 <= d - ims <= 100 for d in deferred.get((pl, seq), [])):
+                cause.append("deferred behind the fight")
+            if end == "superseded":
+                cause.append("superseded by seq %s" % by)
+            elif end == "timeout" and kind == "ability" and ans is not None:
+                cause.append("answered, never started")
+            elif end == "timeout":
+                cause.append("no %s" % ("answer or effect" if ans is None and eff is None else
+                                        "answer" if ans is None else "effect"))
+            elif approach and kind == "ability":
+                cause.append("walk-up")
+            elif end == "done":
+                cause.append("late")
+            key = (kind, re.sub(r"by seq \d+", "by a newer one", "; ".join(cause)))
+            causes[key] += 1
+            rows.append("  %8.2f  %7s  p%d seq %3d %-11s answer %8s effect %8s  %-40s %s" % (
+                taken, "%.2f" % t if t is not None else "-", pl, seq, kind,
+                "-" if ans is None else "%.0f" % ans, "-" if eff is None else "%.0f" % eff, "; ".join(cause)[:40],
+                note[:70]))
+        out.append("%s: %d per-command latency line(s) ([host] latency_log_ms; host s, s after EnterGame, ms)" % (
+            os.path.relpath(path, sess), len(entries)))
+        if show == "all":
+            out.extend(rows)
+        out.append("by kind and cause:")
+        for (kind, cause), n in sorted(causes.items(), key=lambda kv: (kv[0][0], -kv[1])):
+            out.append("  %-11s %4d  %s" % (kind, n, cause or "-"))
+    return out
+
+
 def main(argv):
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -844,10 +1089,19 @@ def main(argv):
     e.add_argument("--first", type=float, default=90)
     e.add_argument("--every", type=float, default=300)
     e.add_argument("--other-human", type=int, default=None)
+    e.add_argument("--enemy-shaper", type=int, default=5)
     e.add_argument("--no-xp", action="store_true")
     e.add_argument("--out")
     tm = sub.add_parser("timing")
     tm.add_argument("session")
+    tr = sub.add_parser("track")
+    tr.add_argument("session")
+    tr.add_argument("--peek", required=True)
+    tr.add_argument("--player", type=int, default=0)
+    la = sub.add_parser("latency")
+    la.add_argument("session")
+    la.add_argument("--commands")
+    la.add_argument("--summary", action="store_true")
     k = sub.add_parser("peek")
     k.add_argument("out_dir")
     k.add_argument("--every", type=float, default=60)
@@ -865,6 +1119,12 @@ def main(argv):
         text = "\n".join(timing_report(a.session))
         print(text)
         return 0 if text else 2
+    if a.cmd == "track":
+        print("\n".join(track_report(a.session, a.peek, a.player)))
+        return 0
+    if a.cmd == "latency":
+        print("\n".join(latency_report(a.session, a.commands, "summary" if a.summary else "all")))
+        return 0
     return report(a)
 
 

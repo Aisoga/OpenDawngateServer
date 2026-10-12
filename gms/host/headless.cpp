@@ -53,16 +53,20 @@ void HeadlessInstall() {
   // default since H1b (docs/SERVER_MODE.md *The headless host as the default (H1b)*); core_only=0 is the way back.
   o.coreOnly = HostOptionInt("core_only", 1);
   if (o.coreOnly < 0 || o.coreOnly > 2) o.coreOnly = 1;
+  // H1d: with core_only 1 no Direct3D 9 at all by default (d3d9 = 1: the game's own RwDevice_Initialize, the way back);
+  // test_no_d3d9 = 1 makes Direct3DCreate9 answer NULL, as on a machine without D3D9
+  o.d3d9 = HostOptionInt("d3d9", 0) != 0 ? 1 : 0;
+  o.testNoD3d9 = HostOptionInt("test_no_d3d9", 0) != 0;
   g_reserveWhen = HostOptionInt("laa_reserve", 0);
   g_reserveMb = g_reserveWhen ? HostOptionInt("laa_reserve_margin_mb", 32) : -1;
   SYSTEM_INFO si;
   GetSystemInfo(&si);
   g_highMemory = reinterpret_cast<std::uintptr_t>(si.lpMaximumApplicationAddress) > k2Gb;
-  g_any = o.marks || o.nobake || o.nosound || o.preload != 1 || o.coreOnly || g_reserveMb >= 0;
-  Log("host: stage 2 (H1-live): startup_marks %d, nobake %d, nosound %d, preload %d, core_only %d, laa_reserve %s; "
-      "the process addresses up to %p (%s)",
-      o.marks, o.nobake, o.nosound, o.preload, o.coreOnly, g_reserveMb >= 0 ? "on" : "off", si.lpMaximumApplicationAddress,
-      g_highMemory ? "LARGE_ADDRESS_AWARE" : "2 GB");
+  g_any = o.marks || o.nobake || o.nosound || o.preload != 1 || o.coreOnly || o.testNoD3d9 || g_reserveMb >= 0;
+  Log("host: stage 2 (H1-live): startup_marks %d, nobake %d, nosound %d, preload %d, core_only %d, d3d9 %d, "
+      "test_no_d3d9 %d, laa_reserve %s; the process addresses up to %p (%s)",
+      o.marks, o.nobake, o.nosound, o.preload, o.coreOnly, o.d3d9, o.testNoD3d9 ? 1 : 0, g_reserveMb >= 0 ? "on" : "off",
+      si.lpMaximumApplicationAddress, g_highMemory ? "LARGE_ADDRESS_AWARE" : "2 GB");
   if (g_any) startup::Install(o, &HostMark);
   if (g_reserveWhen == 2) ReserveLow("at start-up");  // before the game's main: the engine's heaps, Lua, the level
 }

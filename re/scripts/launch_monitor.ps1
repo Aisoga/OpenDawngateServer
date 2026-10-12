@@ -30,6 +30,8 @@
     '<t>:text=<chars>' (A5b) type letters, digits and _ @ . - (since D8b also /, for chat commands such as /surrender)
                       as posted WM_CHARs into whatever has the game's keyboard focus (click the text field first, e.g.
                       the PvP lobby invite dialog's name field)
+    '<t>:wheel=<delta>[x<n>]' n posted WM_MOUSEWHEELs (default 1) of <delta> (120 = one notch away from the user,
+                      -120 towards) at the window's centre, 250 ms apart: the in-game camera's zoom
     '<t>:shot'        screenshot only
     '<t>:front' / '<t>:back' (G3) bring the game window in front (on-screen and the foreground, as a focused
                       screenshot does) and keep it there until 'back' gives the foreground back, e.g. around an in-game
@@ -229,6 +231,19 @@ function HoverAt($h, $fx, $fy) {
     Start-Sleep -Milliseconds 1000
     return "($x,$y)"
 }
+function WheelAt($h, [int]$delta, [int]$n) {
+    # posted WM_MOUSEWHEELs (no real mouse): wParam's high word the delta, lParam the point in screen coordinates
+    # (the window's centre where it is now)
+    $r = New-Object W+RECT
+    [void][W]::GetWindowRect($h, [ref]$r)
+    $x = [int](($r.L + $r.R) / 2); $y = [int](($r.T + $r.B) / 2)
+    $wp = [IntPtr]([int](($delta -band 0xFFFF) -shl 16))
+    for ($i = 0; $i -lt $n; $i++) {
+        [void][W]::PostMessage($h, 0x020A, $wp, [IntPtr](($y -shl 16) -bor ($x -band 0xFFFF)))   # WM_MOUSEWHEEL
+        Start-Sleep -Milliseconds 250
+    }
+    return "($x,$y)"
+}
 function PressKey($h, [int]$vk) {
     [void][W]::PostMessage($h, 0x0100, [IntPtr]$vk, [IntPtr]1)            # WM_KEYDOWN
     Start-Sleep -Milliseconds 80
@@ -255,7 +270,7 @@ if ($Actions) {
         if ($a -notmatch '^(\d+):(.+)$') { throw "bad -Actions item '$a'" }
         $at = [int]$Matches[1]; $what = $Matches[2].Trim()
         if ($at % 2) { throw "-Actions time $at must be even" }
-        if ($what -notmatch '^([rh]?\d*\.?\d+,\d*\.?\d+|d\d*\.?\d+,\d*\.?\d+,\d*\.?\d+,\d*\.?\d+|key=\d+(\+\d+)?|keydown=\d+|keyup=\d+|text=[A-Za-z0-9_@./-]+|shot|front|back)$') { throw "bad -Actions item '$a'" }
+        if ($what -notmatch '^([rh]?\d*\.?\d+,\d*\.?\d+|d\d*\.?\d+,\d*\.?\d+,\d*\.?\d+,\d*\.?\d+|key=\d+(\+\d+)?|keydown=\d+|keyup=\d+|wheel=-?\d+(x\d+)?|text=[A-Za-z0-9_@./-]+|shot|front|back)$') { throw "bad -Actions item '$a'" }
         if (-not $ActionsAt.ContainsKey($at)) { $ActionsAt[$at] = @() }
         $ActionsAt[$at] += $what
     }
@@ -285,6 +300,10 @@ function DoActions($p, $at) {
         # G3b: a key held across screenshots (the in-game scoreboard shows while Tab is down): keydown=<vk> ... keyup=<vk>
         if ($what -match '^keydown=(\d+)$') { [void][W]::PostMessage($h, 0x0100, [IntPtr][int]$Matches[1], [IntPtr]1); Log "action t=${at}: key $($Matches[1]) down"; continue }
         if ($what -match '^keyup=(\d+)$') { [void][W]::PostMessage($h, 0x0101, [IntPtr][int]$Matches[1], [IntPtr]0xC0000001); Log "action t=${at}: key $($Matches[1]) up"; continue }
+        if ($what -match '^wheel=(-?\d+)(x(\d+))?$') {
+            $n = if ($Matches[3]) { [int]$Matches[3] } else { 1 }
+            Log "action t=${at}: wheel $($Matches[1]) x$n at $(WheelAt $h ([int]$Matches[1]) $n)"; continue
+        }
         if ($what -match '^text=(.+)$') { PostActivate $h; TypeText $h $Matches[1]; Log "action t=${at}: typed $($Matches[1].Length) chars$(if (-not $NoTypeActivate) { ' (after a posted activation)' })"; continue }
         if ($what -match '^key=(\d+)\+(\d+)$') {
             $how = [W]::PressWithModifier($h, [int]$Matches[1], [int]$Matches[2])

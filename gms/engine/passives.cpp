@@ -25,19 +25,6 @@ struct Result {
   bool had = false;
 };
 
-// The passive's static ability among the creature's modifiers (object +0x8A8: modifier ids +0x9C..+0xA0).
-bool HasInstanceOf(void* creature, void* staticAbility) {
-  char* c = Field<char*>(creature, obj::kAbilityData);
-  if (!c) return false;
-  for (const std::uint32_t* p = Field<const std::uint32_t*>(c, container::kModifiersBegin);
-       p && p != Field<const std::uint32_t*>(c, container::kModifiersEnd); ++p) {
-    void* in = GetInstance(*p);
-    if (in && Field<void*>(in, inst::kStatic) == staticAbility && !Field<unsigned char>(in, inst::kEndPending))
-      return true;
-  }
-  return false;
-}
-
 // 1 activated, 0 nothing to do (no player, creature or passive, or it has it), -1 refused, -2 exception.
 int SehActivate(void* sim, unsigned index, Result* r) {
   __try {
@@ -51,7 +38,7 @@ int SehActivate(void* sim, unsigned index, Result* r) {
     if (!st) return 0;
     const char* n = *reinterpret_cast<const char**>(st);
     if (n) r->name = n;
-    if (HasInstanceOf(creature, st)) {
+    if (CreatureHasLiveInstance(creature, st)) {
       r->had = true;
       return 0;
     }
@@ -92,7 +79,7 @@ int SehActivateRole(void* sim, unsigned index, Result* r, unsigned* role) {
     const char* n = *reinterpret_cast<const char**>(st);
     if (n) r->name = n;
     if (wanted && n && _stricmp(wanted, n) != 0) return -3;
-    if (HasInstanceOf(creature, st)) {
+    if (CreatureHasLiveInstance(creature, st)) {
       r->had = true;
       return 0;
     }
@@ -155,7 +142,7 @@ int SehRenew(void* sim, unsigned index, std::uint32_t passive, std::uint32_t* cr
       *creatureId = Field<std::uint32_t>(player, player::kCurrentCreature);
       void* creature = *creatureId ? GetObjectById(*creatureId) : nullptr;
       void* st = FindStaticAbility(e.modifier);
-      if (!creature || !st || HasInstanceOf(creature, st)) return 0;
+      if (!creature || !st || CreatureHasLiveInstance(creature, st)) return 0;
       *modifier = ActivateFromDefinition(e.modifier, *creatureId, *creatureId, 0, 1, 0.f, 0.f, 0.f, 0);
       rc = *modifier ? 1 : -1;
     }
@@ -166,6 +153,18 @@ int SehRenew(void* sim, unsigned index, std::uint32_t passive, std::uint32_t* cr
 }
 
 }  // namespace
+
+bool CreatureHasLiveInstance(void* creature, void* staticAbility) {
+  char* c = Field<char*>(creature, obj::kAbilityData);
+  if (!c) return false;
+  for (const std::uint32_t* p = Field<const std::uint32_t*>(c, container::kModifiersBegin);
+       p && p != Field<const std::uint32_t*>(c, container::kModifiersEnd); ++p) {
+    void* in = GetInstance(*p);
+    if (in && Field<void*>(in, inst::kStatic) == staticAbility && !Field<unsigned char>(in, inst::kEndPending))
+      return true;
+  }
+  return false;
+}
 
 std::uint32_t Activate(void* sim, unsigned index, const char* why) {
   ActivateRole(sim, index, why);  // D13 ([host] role_passives, on by default since D13-live)

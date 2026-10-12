@@ -28,6 +28,7 @@
 #include "log.h"
 #include "match.h"
 #include "passives.h"
+#include "perks.h"
 #include "wells.h"
 
 using namespace game;
@@ -1076,6 +1077,8 @@ void RespawnDue() {
     // D6c: the shaper's passive again (it ended at the death: OnAgentDeath), where GameObject_OnRevived calls the
     // compiled-out player hook (passives.h)
     passives::Activate(g_sim, static_cast<unsigned>(r.index), "respawn");
+    // D3c: the perk page's modifiers that ended with the death (perks.h; [host] perk_respawn)
+    perks::AtRespawn(g_sim, static_cast<unsigned>(r.index));
     if (g_opt.respawnFeedback) {
       // D11: the shaper's respawn voice line (PlayerRespawned, character channel, attached to the creature), to the
       // team as ability_returntobase sends its PlayerStartedReturnToBase [recipients assumed by that analogy]

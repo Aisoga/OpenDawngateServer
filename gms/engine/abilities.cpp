@@ -13,6 +13,7 @@
 #include "game.h"
 #include "hook.h"
 #include "log.h"
+#include "shop.h"
 
 using namespace game;
 
@@ -252,6 +253,7 @@ const char* FnName(int fn) {
       "GetLocalizedDescriptionNoObject", "OnBestTargetChanged", "OnEnterBattleReady", "OnExitBattleReady", "OnKill",
       "OnPlayerKillOrAssist"};
   if (fn == kFnEndAbility) return "EndAbility";
+  if (fn == shop::kOnItemPurchasedKey) return "onItemPurchased";  // D15c: the host's alias (shop.h)
   return fn >= 0 && fn < static_cast<int>(sizeof kNames / sizeof kNames[0]) ? kNames[fn] : "?";
 }
 

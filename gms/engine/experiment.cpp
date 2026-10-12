@@ -54,6 +54,7 @@
 #include "passives.h"
 #include "perf.h"
 #include "regen.h"
+#include "shop.h"
 
 using namespace game;
 
@@ -723,6 +724,11 @@ void Stats(unsigned now, bool histo) {
     char pa[200];
     passives::FormatStats(pa, sizeof pa);  // D6c
     Log("stats passives: %s", pa);
+  }
+  if (shop::Enabled() && histo) {  // D15c
+    char sh[300];
+    shop::FormatStats(sh, sizeof sh);
+    Log("stats shop: %s", sh);
   }
   if (volumes::Installed() && histo) {  // D12c
     char vs[300];

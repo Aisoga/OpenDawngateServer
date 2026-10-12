@@ -5,12 +5,14 @@
 #include <windows.h>
 
 #include <cstdio>
+#include <map>
 #include <string>
 
 #include "core/protocol/messages.h"
 #include "core/session/shaper_select.h"
 #include "game.h"
 #include "log.h"
+#include "passives.h"
 
 using namespace game;
 
@@ -18,6 +20,8 @@ namespace perks {
 namespace {
 
 Options g_opt;
+// D3c: each human's page modifiers as ApplyAtDeploy got them (by player index), for its respawns
+std::map<unsigned, std::vector<std::uint32_t>> g_pageModifiers;
 
 DWORD SehNote(EXCEPTION_POINTERS* ep, const char* what) {
   Log("EXCEPTION in perks (%s): code %08lX at %08lX", what, ep->ExceptionRecord->ExceptionCode,
@@ -81,6 +85,24 @@ unsigned TryActivate(std::uint32_t creature, std::uint32_t ability) {
   }
 }
 
+// D3c: the player's current creature and which of the page's modifiers it holds live. False without a creature.
+bool TryHeld(void* sim, unsigned index, const std::vector<std::uint32_t>& modifiers, std::uint32_t* creature,
+             std::vector<std::uint32_t>* held) {
+  __try {
+    void* p = GetPlayerByIndex(sim, index);
+    *creature = p ? Field<std::uint32_t>(p, player::kCurrentCreature) : 0;
+    void* o = *creature ? GetObjectById(*creature) : nullptr;
+    if (!o) return false;
+    for (std::uint32_t m : modifiers) {
+      void* st = FindStaticAbility(m);
+      if (st && passives::CreatureHasLiveInstance(o, st)) held->push_back(m);
+    }
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "held modifiers")) {
+    return false;
+  }
+}
+
 // The creature's current and max HP for the log (combatant data); false without one.
 bool TryHp(std::uint32_t creature, float* hp, float* maxHp) {
   __try {
@@ -107,9 +129,10 @@ std::string Entry(const gms::LoadoutAttribute& a) {
 void Configure(const Options& options) {
   g_opt = options;
   Log("perks: D3-perks %s (the page's Add entries via the player's loadout; percent %s, modifiers %s; bots' "
-      "modifier_Bot_DefaultLoadout %s)",
+      "modifier_Bot_DefaultLoadout %s; D3c: the page's death-ended modifiers at a respawn %s)",
       g_opt.enabled ? "on" : "OFF ([host] perks=0: only C8 09, C8 0A and C0 02)", g_opt.percent ? "on" : "off",
-      g_opt.modifiers ? "on" : "off", g_opt.botLoadout ? "on" : "off");
+      g_opt.modifiers ? "on" : "off", g_opt.botLoadout ? "on" : "off",
+      g_opt.respawn ? "activated again" : "not renewed ([host] perk_respawn=0)");
 }
 
 const Options& Settings() { return g_opt; }
@@ -149,12 +172,43 @@ void ApplyAtDeploy(void* sim, unsigned index, std::uint32_t creature, const std:
       Log("perks: player %u's creature %08X: attribute modifier %s -> handle %d, the attribute now %.3f [assumed]", index,
           creature, Entry(a).c_str(), h, after);
     }
+  if (g_opt.modifiers) g_pageModifiers[index] = modifiers;
   if (g_opt.modifiers)
     for (std::uint32_t m : modifiers) {
       const unsigned inst = TryActivate(creature, m);
       Log("perks: player %u's creature %08X: modifier %08X activated -> instance %08X%s [assumed]", index, creature, m,
           inst, inst ? "" : " (FAILED)");
     }
+}
+
+void AtRespawn(void* sim, unsigned index) {
+  if (!g_opt.enabled || !g_opt.modifiers) return;
+  auto it = g_pageModifiers.find(index);
+  if (it == g_pageModifiers.end() || it->second.empty()) return;
+  BoundTo b(sim);
+  std::uint32_t creature = 0;
+  std::vector<std::uint32_t> held;
+  if (!TryHeld(sim, index, it->second, &creature, &held)) {
+    Log("perks: player %u at the respawn: no creature; the page's modifiers not checked", index);
+    return;
+  }
+  std::string kept;
+  for (std::uint32_t m : held) {
+    char x[16];
+    std::snprintf(x, sizeof x, " %08X", m);
+    kept += x;
+  }
+  const std::vector<std::uint32_t> renew = gms::PageModifiersToRenew(it->second, held);
+  Log("perks: player %u's creature %08X at the respawn: %zu of the page's %zu modifier(s) kept through the death:%s; "
+      "%zu ended with it%s",
+      index, creature, held.size(), it->second.size(), kept.empty() ? " -" : kept.c_str(), renew.size(),
+      renew.empty() ? "" : (g_opt.respawn ? " (activated again)" : " (NOT renewed: [host] perk_respawn=0)"));
+  if (!g_opt.respawn) return;
+  for (std::uint32_t m : renew) {
+    const unsigned inst = TryActivate(creature, m);
+    Log("perks: player %u's creature %08X at the respawn: modifier %08X activated again -> instance %08X%s [assumed]",
+        index, creature, m, inst, inst ? "" : " (FAILED)");
+  }
 }
 
 void ApplyBotLoadout(void* sim, unsigned index, std::uint32_t creature) {

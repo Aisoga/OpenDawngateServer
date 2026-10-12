@@ -41,6 +41,8 @@
 #     timing/   (Q3c) per match minute: tick durations and lags, traffic per kind, command latency, the CSV (timing.cpp;
 #               built into dgsim and gms_tests directly, like matchflow/); clock.h is the one clock the endpoint shares
 #     commands/ (D7c) the server command queue's rule for a queued move and the host's takeover, header-only
+#     d3d9/     (H1d) the host without Direct3D 9: the plan from the [host] keys and the stand-in IDirect3D9,
+#               header-only (engine/startup.cpp patches the start-up with it)
 #     control/  (C1) the control-channel client and its JSON Lines codec: its own CMakeLists.txt, added below
 #   script/   gms_script.exe, a standalone scripted GMS (D2b-live's script A, D2e's injected messages); since C1b also a
 #             match host under dgserver (host mode: the control channel, script/hosted_match.cpp)
@@ -80,6 +82,7 @@ add_library(dgsim SHARED
   engine/damage.cpp            # D1f-live: the TakeDamage core (docs/DAMAGE.md)
   engine/death.cpp             # D1f-live: death processing, rewards, gold
   engine/passives.cpp          # D6c: the shapers' passives at the deploy and each respawn
+  engine/shop.cpp              # D15c: the shop's purchase effect (onItemPurchased, GetItemFx*)
   engine/volumes.cpp           # D12c: attached trigger volumes follow their objects
   engine/components.cpp        # D1j: the ability data containers' release, the server pools' census
   engine/regen.cpp             # D1i: health and resource regeneration
@@ -186,6 +189,7 @@ if(RAKNET_FOUND)
     tests/test_net.cpp          # Q3c: the endpoint's timing and network simulator against a RakNet client on loopback
     tests/test_banter.cpp       # D11b: the banter, kill, assist and presence lines, the sequential emotes
     tests/test_command_queue.cpp  # D7c: a move during an attack order (the queued-move step, the takeover)
+    tests/test_d3d9.cpp         # H1d: the host without Direct3D 9 (the plan, the verdict, the stand-in IDirect3D9)
     core/matchflow/flow.cpp
     core/watchdog/monitor.cpp
     core/timing/timing.cpp

@@ -1259,6 +1259,19 @@ constexpr std::uintptr_t kCallFunction = 0x00875330;
 constexpr unsigned char kCallFunctionBytes[] = {0x53, 0x55, 0x56, 0x57, 0x8B, 0xF9};  // push ebx/ebp/esi/edi; mov edi,ecx
 using CallFunctionFn = bool(__fastcall*)(void* thread, void* edx, const char* table, int fn, void* arg, void* key,
                                          int a5, int a6, int a7);
+// D15c: the call itself, through the address (so abilities.cpp's detour sees it). Its stack arguments as
+// LabsAbilities_CallEventFunction (0x009063F0) passes them: (table, fn, instance, params, nparams, results, nresults),
+// a parameter or result 0x10 bytes {type, value, ...}: parameter type 8 = the global table of that name (the private
+// table "_PRIVATETHREADTABLE", GearsLua 0x00873360), result type 5 = a bool (value byte at +4). It asserts unless the
+// thread's lua_State status is 0 or 1 (yielded) and sets 0 around its lua_pcall (0x00874F80).
+inline CallFunctionFn CallFunction = At<CallFunctionFn>(kCallFunction);
+struct GearsLuaArg {
+  std::uint32_t type;
+  const void* value;
+  std::uint32_t pad[2];
+};
+constexpr std::uint32_t kGearsArgGlobalTable = 8;
+constexpr std::uint32_t kGearsArgBool = 5;
 // LabsAbilities_GetInstance (0x008FF220): instance id -> instance or null (pool 0x3C41D3D8 of the
 // current simulator). LabsAbilities_EndAbility (0x00905E90): removes the instance (Deactivate, thread
 // freed, "ability ended" message) unless a synchronous Lua call holds it (+0x230 > 0); then it only
@@ -1978,9 +1991,33 @@ constexpr unsigned char kCoreJumpFromDeviceBytes[] = {0x8B, 0x4F, 0x28, 0x8B, 0x
 constexpr std::uintptr_t kCoreJumpFromGraphics = 0x006B279E;
 constexpr unsigned char kCoreJumpFromGraphicsBytes[] = {0x6A, 0x00, 0x6A, 0x00, 0x6A, 0x00};
 constexpr std::uintptr_t kCoreJumpTo = 0x006B2D93;
-// d3d9!Direct3DCreate9 (imported by name; RwDevice_Initialize 0x00B914C0 calls it): with startup_marks the host logs
-// whether anything creates a D3D9 object.
+// d3d9!Direct3DCreate9 (imported by name, the exe's only d3d9 import; RwDevice_Initialize 0x00B914C0 calls it): the
+// host's IAT watch logs and counts every call (since H1d in every host; test_no_d3d9 answers NULL).
 constexpr char kD3d9Dll[] = "d3d9.dll";
+// H1d (gms/core/d3d9/stand_in.h): the app system's
+// systems set-up (slot 5, 0x0096A7B0, called at 0x006B25F5, before the core-only jump) creates the graphics system
+// (0x00A63A20) -> GraphicsSystem_CreateRenderManager (0x00A63540) -> RenderManager_InitializeDevice (0x00997150,
+// render manager vtable 0x012A8970 slot 3), whose `call RwDevice_Initialize` at 0x00997195 is the only call of it.
+// RwDevice_Initialize: RW driver globals reset (0x00B89020, cdecl, returns 1: g_RwD3D9, the device, the present
+// parameters and the state tables zeroed), Direct3DCreate9(32) into g_RwD3D9 (0x01BCE0E0), D3DXCheckVersion(32, 43),
+// GetAdapterCount into rwg_D3D9NumAdapters (0x01BD00A4), GetDeviceCaps HAL per adapter (else REF), the display mode
+// (0x01BD007C), nine depth formats (0x0145DD34) through CheckDeviceFormat/CheckDepthStencilMatch, then MXCSR FTZ and
+// _controlfp(_DN_FLUSH, _MCW_DN) (the systems set-up sets both again right after the renderer, the call at
+// 0x0096AF5A, so the host's answer leaves them to it), the device state
+// (0x01BD00A8) = 1 and a caps refresh that fails without a device (0x00B88C40(0)). With answerRwDevice the host's
+// function replaces the call: the reset, g_RwD3D9 = the stand-in, no adapter, the state 1, success.
+constexpr std::uintptr_t kRwDeviceInitializeCall = 0x00997195;
+constexpr std::uintptr_t kRwDeviceInitialize = 0x00B914C0;
+constexpr std::uintptr_t kRwDriverResetGlobals = 0x00B89020;
+constexpr std::uintptr_t kRwD3D9 = 0x01BCE0E0;          // IDirect3D9* (rw::graphics, g_RwD3D9)
+constexpr std::uintptr_t kRwNumAdapters = 0x01BD00A4;   // rwg_D3D9NumAdapters
+constexpr std::uintptr_t kRwDeviceState = 0x01BD00A8;   // 0 cold, 1 after Initialize, 2 started (StartInternal)
+// The config manager's set-up (SPAppConfigManager, vtable 0x012A1C10 slot 3, 0x00963750, also in the systems set-up)
+// calls ConfigManager_BuildResolutionList (0x00961FA0, fastcall this) at 0x0096381B: with no adapter it asserts
+// "numAdapters" (SPAppConfigManager.cpp 1969) and returns, with adapters it enumerates their modes through g_RwD3D9.
+// With skipResolutionList the call is NOPed (the list stays empty; every reader checks its size).
+constexpr std::uintptr_t kConfigResolutionListCall = 0x0096381B;
+constexpr std::uintptr_t kConfigBuildResolutionList = 0x00961FA0;
 // Battlegrounds_AppInit's simulation half (0x0066394C-0x006639D6), every one cdecl: four type registrations without
 // arguments (string_cow 0x00950E50, 0x008F9280, asset types 0x008B57B0, SP_Simulator/CollectionData 0x0087CA90),
 // AssetCatalog_Initialize(settings*) 0x008D5010, InitializeMasterGameSimulator(1) 0x008EFCC0,

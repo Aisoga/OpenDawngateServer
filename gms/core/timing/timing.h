@@ -134,19 +134,26 @@ class CommandLatency {
 
   // A command from player `player` (gameplay index). arrivedMs = its arrival in RakNet (< 0: unknown, the intake time
   // is used); intakeMs = when the engine took it. `hasTarget`: a move's point (for the effect test).
+  // A move, attack-move or stop supersedes the player's older ones that have no effect yet (Q3c-live2: counted as
+  // `superseded`, not as a timeout, and never credited with the newer command's effect: a test run's "move effect 6.8 s"
+  // was a move given while the shaper was dead, credited with the next move to the same point).
   void OnIntake(int player, int kind, std::uint8_t seq, double arrivedMs, double intakeMs, bool hasTarget = false,
                 float targetX = 0, float targetY = 0);
   // The first message that answers a command of `player`: the oldest unanswered one with that sequence (seq != 0) or,
-  // with seq 0, of one of the kinds in `kindMask` (bit = CommandKind). False if none was pending.
+  // with seq 0, the oldest one *with sequence 0* (the client's self-casts, purchases, rank-ups) of one of the kinds in
+  // `kindMask` (bit = CommandKind). False if none was pending. (Q3c-live2: a seq-0 message never answers a command
+  // that has its own sequence: an auto-repeating basic attack's later instances come as `B4` kind 1 with sequence 0,
+  // and until then they were credited to older clicks that never started, a test run's "ability effect 9.0 s".)
   bool OnAnswer(int player, std::uint8_t seq, unsigned kindMask, double ms);
   // The command's effect, matched the same way (only answered or unanswered commands without an effect yet).
   bool OnEffect(int player, std::uint8_t seq, unsigned kindMask, double ms);
-  // The pending moves of `player` (for the engine's locomotion test): kind, target, intake time.
+  // The pending moves of `player` (for the engine's locomotion test): kind, target, intake time, answered yet.
   struct PendingMove {
     int kind;
     std::uint8_t seq;
     float x, y;
     double intakeMs;
+    bool answered;
   };
   std::vector<PendingMove> PendingMoves(int player) const;
   // Drops what is older than the timeout (counted as no answer / no effect).
@@ -158,6 +165,7 @@ class CommandLatency {
     Summary answer;               // intake -> answer
     Summary effect;               // intake -> effect
     int noAnswer = 0, noEffect = 0;  // timed out
+    int superseded = 0;              // a newer move, attack-move or stop came before its effect
   };
   struct Row {
     KindRow kinds[kNumCommandKinds];
@@ -169,6 +177,21 @@ class CommandLatency {
   // string when no command was taken and none timed out.
   static std::string Format(int minute, const Row& r);
 
+  // Q3c-live2: each command that left with its answer or effect at or after `outlierMs`, or without them (a timeout,
+  // superseded), for a line of its own in the host log (soak.py latency matches them to the edge cases).
+  struct Outlier {
+    int player = 0, kind = 0;
+    std::uint8_t seq = 0;
+    double queuedMs = 0, intakeMs = 0;   // arrival -> intake; the intake (NowMs)
+    double answerMs = -1, effectMs = -1;  // after the intake; -1 = none
+    const char* end = "done";             // "done", "timeout", "superseded"
+    std::uint8_t bySeq = 0;               // superseded: the newer command's sequence
+  };
+  void SetOutlierMs(double ms) { outlierMs_ = ms; }  // < 0: none collected (the default)
+  std::vector<Outlier> TakeOutliers();
+  // "commands latency: player 0 seq 37 attack-move (queued 0.0 ms): answer 5543.0 ms, effect none (timeout)"
+  static std::string FormatOutlier(const Outlier& o);
+
  private:
   struct Cmd {
     int player, kind;
@@ -177,13 +200,19 @@ class CommandLatency {
     bool hasTarget;
     float x, y;
     bool answered = false, effected = false;
+    double answerMs = -1, effectMs = -1;
+    const char* end = nullptr;  // "timeout", "superseded" (nullptr: answered and effected)
+    std::uint8_t bySeq = 0;
   };
   Cmd* Find(int player, std::uint8_t seq, unsigned kindMask, bool answer);
   void Done();
   double timeoutMs_;
+  double outlierMs_ = -1;
   std::deque<Cmd> pending_;
+  std::vector<Outlier> outliers_;
   std::vector<double> queued_[kNumCommandKinds], answer_[kNumCommandKinds], effect_[kNumCommandKinds];
-  int n_[kNumCommandKinds] = {}, noAnswer_[kNumCommandKinds] = {}, noEffect_[kNumCommandKinds] = {};
+  int n_[kNumCommandKinds] = {}, noAnswer_[kNumCommandKinds] = {}, noEffect_[kNumCommandKinds] = {},
+      superseded_[kNumCommandKinds] = {};
 };
 
 // ---------------------------------------------------------------------------------------------- the CSV and gauges
@@ -195,8 +224,8 @@ std::string FormatGauges(int minute, const Gauges& g);
 
 // host_timing.csv: one row per window. The header names every column; the step columns are "<step>_mean_ms" and
 // "<step>_max_ms", the traffic columns "<kind>_msgs"/"<kind>_bytes" (window totals), then the command latency per
-// kind ("<kind>_n", "<kind>_answer_p50_ms", "<kind>_answer_max_ms", "<kind>_effect_p50_ms", "<kind>_effect_max_ms"),
-// then the gauges (their names).
+// kind ("<kind>_n", "<kind>_answer_p50_ms", "<kind>_answer_max_ms", "<kind>_effect_p50_ms", "<kind>_effect_max_ms",
+// "<kind>_timeouts", since Q3c-live2 "<kind>_superseded"), then the gauges (their names).
 std::string CsvHeader(const std::vector<std::string>& stepNames, const Gauges& gauges);
 std::string CsvRow(const MinuteRow& r, const std::vector<std::string>& stepNames, const CommandLatency::Row& c,
                    const Gauges& gauges);

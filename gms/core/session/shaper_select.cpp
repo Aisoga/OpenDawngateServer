@@ -46,6 +46,17 @@ std::vector<LoadoutAttribute> LoadoutCreatureModifiers(const std::vector<Loadout
   return out;
 }
 
+std::vector<uint32_t> PageModifiersToRenew(const std::vector<uint32_t>& page, const std::vector<uint32_t>& active) {
+  std::vector<uint32_t> out;
+  for (uint32_t m : page) {
+    if (!m) continue;
+    if (std::find(active.begin(), active.end(), m) != active.end()) continue;
+    if (std::find(out.begin(), out.end(), m) != out.end()) continue;
+    out.push_back(m);
+  }
+  return out;
+}
+
 PlayerGlobalValues RevealValues(const ShaperPick& p) {
   PlayerGlobalValues v;
   v.status = p.status;

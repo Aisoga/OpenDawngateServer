@@ -3,6 +3,7 @@
 // order (D7c)*).
 #include <string>
 
+#include "core/commands/gold.h"
 #include "core/commands/queue.h"
 #include "tests/check.h"
 
@@ -154,4 +155,25 @@ GMS_TEST(CommandQueueDescribe) {
   d.queuedAbility.seq = 99;  // an invalid command's leftovers don't count
   CHECK(SameState(q, d));
   CHECK_EQ(std::string(StepName(QueuedMoveStep::kDefer)), std::string("defer"));
+}
+
+// D15b: the gold test aid in steps of at most 16 bits (CombatEvent.cpp 67).
+GMS_TEST(CommandGoldSteps) {
+  using gms::cmdgold::GoldGrantSteps;
+  CHECK(GoldGrantSteps(0).empty());
+  CHECK(GoldGrantSteps(-5).empty());
+  auto one = GoldGrantSteps(50000);
+  CHECK_EQ(one.size(), static_cast<size_t>(1));
+  CHECK_EQ(one[0], 50000.0);
+  auto big = GoldGrantSteps(250000);
+  CHECK_EQ(big.size(), static_cast<size_t>(4));
+  double sum = 0;
+  for (double v : big) {
+    CHECK(v <= gms::cmdgold::kMaxGoldDelta);
+    sum += v;
+  }
+  CHECK_EQ(sum, 250000.0);
+  CHECK_EQ(big[3], 250000.0 - 3 * 65535.0);
+  CHECK_EQ(GoldGrantSteps(65535).size(), static_cast<size_t>(1));
+  CHECK_EQ(GoldGrantSteps(65536).size(), static_cast<size_t>(2));
 }

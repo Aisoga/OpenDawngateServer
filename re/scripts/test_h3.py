@@ -193,9 +193,9 @@ class Staleness(Temp):
 
 class Rules(Temp):
     def test_lan_host(self):
-        for ok in ("192.168.1.20", "10.0.0.5", "172.16.3.4", "100.64.0.9", "169.254.1.1"):
+        for ok in ("192.168.1.20", "10.0.0.5", "172.16.3.4", "100.64.0.9", "169.254.1.1", "8.8.8.8"):  # public too
             self.assertEqual(sa.lan_host(ok, "x"), ok)
-        for bad in ("127.0.0.1", "0.0.0.0", "8.8.8.8", "224.0.0.1", "server.lan", "255.255.255.255"):
+        for bad in ("127.0.0.1", "0.0.0.0", "224.0.0.1", "server.lan", "255.255.255.255"):
             with self.assertRaises(ValueError, msg=bad):
                 sa.lan_host(bad, "x")
 

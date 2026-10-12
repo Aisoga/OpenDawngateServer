@@ -369,6 +369,7 @@ local function hit(s, kill)
   local src = (t == D.human) and D.enemies[1] or D.human
   local hp, max = nGameObject.GetHitPoints(t), nGameObject.GetMaxHitPoints(t)
   local amount = kill and (hp * 10 + 10000) or (max * (s.fraction or 0.5))
+  if s.leave ~= nil then amount = hp - s.leave end  -- D12b: leave exactly s.leave HP (a last hit for a basic attack)
   nGameObject.TakeDamage(nGameObject.GetAttributeSnapshot(src), t, amount, 0, nDescriptors.IsTrueDamage or 0, kZeroVector)
   D.p(kill and 'kill' or 'hurt', s.who, hexid(t), nGameObject.GetAssetName(t), 'hp', fmt(hp), '->',
     string.format('%.3f', nGameObject.GetHitPoints(t)), 'of', fmt(max), 'alive', tostring(nGameObject.IsAlive(t)))
@@ -396,6 +397,15 @@ local function state(s)
     end
   end
   D.p('state speeds:', table.concat(speeds, ', '))
+  if s.positions then  -- D12b: where everyone stands and whether it is alive
+    local where = {}
+    for _, e in ipairs(pool) do
+      if live(e[1]) then
+        where[#where + 1] = e[2] .. ' ' .. vec(nGameObject.GetPosition(e[1])) .. (nGameObject.IsAlive(e[1]) and '' or ' dead')
+      end
+    end
+    D.p('state positions:', table.concat(where, ', '))
+  end
   for _, name in ipairs(s.mods or {}) do
     local guid = nUtil.SPID(name)
     local on = {}
@@ -426,6 +436,79 @@ local function state(s)
   end
 end
 
+-- cooldowns (D12b): only the plan's abilities' cooldowns set to 0 (no heal, no teleport back: a case that has moved
+-- someone keeps them where they are)
+local function cooldownsOnly(s)
+  -- s.only: just these abilities (the basic attack's cooldown must stay while a reload is running: Kensu's ammo)
+  for _, n in ipairs(s.only or D.plan.abilities or {}) do nAbility.SetCooldownRemaining(D.human, 0, nUtil.SPID(n)) end
+  if s.refill and live(D.human) then
+    local max = nGameObject.GetMaxResourcePoints(D.human)
+    if max ~= nil and max > 0 then nGameObject.SetResourcePoints(D.human, max) end
+  end
+  D.p('cooldowns reset (only); now', cooldowns())
+end
+
+-- ray (D12b): the first point on each of s.dirs (degrees, 0 = +x, counter-clockwise; default 8 directions) from the
+-- human that the server's navigation mesh does not cover (nLocomotion.GetClosestPosition answers another point than the
+-- one asked: a wall, a rock, the edge of the walkable ground), by steps of 0.5 up to s.max (60) units
+local function ray(s)
+  local h = D.human
+  local pos = nGameObject.GetPosition(h)
+  local function open(x, y)
+    local ok, q = nLocomotion.GetClosestPosition(h, nVector.create(x, y, pos.z))
+    if not ok or q == nil then return false end
+    local dx, dy = q.x - x, q.y - y
+    return dx * dx + dy * dy < 0.09
+  end
+  local out = {}
+  for _, deg in ipairs(s.dirs or {0, 45, 90, 135, 180, 225, 270, 315}) do
+    local a = math.rad(deg)
+    local cx, cy = math.cos(a), math.sin(a)
+    local d, hit = 0.5, nil
+    while d <= (s.max or 60) do
+      if not open(pos.x + cx * d, pos.y + cy * d) then hit = d break end
+      d = d + 0.5
+    end
+    out[#out + 1] = string.format('%d deg: %s', deg, hit and string.format('first uncovered point at %.1f (%.1f, %.1f)', hit,
+      pos.x + cx * hit, pos.y + cy * hit) or ('open to ' .. tostring(s.max or 60)))
+  end
+  D.p('ray from', vec(pos), ':', table.concat(out, '; '))
+end
+
+-- track (D12b): every live object whose noun starts with one of s.nouns, with its position (a projectile in flight: the
+-- steps 0.1-0.2 s apart show where it ends)
+local function track(s)
+  local seen, found = {}, {}
+  for i = 0, 1023 do
+    local id = nObjectManager.GetObjectIdByIndex(i)
+    if id == nil or id == kObjIDNone then break end
+    local key = tostring(id)
+    if not seen[key] then
+      seen[key] = true
+      local name = nGameObject.GetAssetName(id) or ''
+      for _, prefix in ipairs(s.nouns or {}) do
+        if string.sub(name, 1, #prefix) == prefix then
+          found[#found + 1] = name .. ' ' .. hexid(id) .. ' ' .. vec(nGameObject.GetPosition(id))
+        end
+      end
+    end
+  end
+  D.p('track', s.note or '', ':', #found > 0 and table.concat(found, '; ') or 'none')
+end
+
+-- set (D12b): a field of one of the server Lua's global ability tables (s.table, s.field, s.value), a picture test only:
+-- e.g. ability_Shepherd_Q_Sheep.sheepSpeed 35 -> 5 makes Kel's sheep roll slowly enough for a screenshot to catch it
+local function setField(s)
+  local t = _G[s.table]
+  if type(t) ~= 'table' then
+    D.p('set', s.table, '.', s.field, ': no such table')
+    return
+  end
+  local old = t[s.field]
+  t[s.field] = s.value
+  D.p('set', s.table .. '.' .. s.field, ':', tostring(old), '->', tostring(t[s.field]))
+end
+
 function D.step()
   D.begin()
   local ok, err = pcall(function()
@@ -450,6 +533,10 @@ function D.step()
     elseif s.kind == 'kill' then hit(s, true)
     elseif s.kind == 'hurt' then hit(s, false)
     elseif s.kind == 'state' then state(s)
+    elseif s.kind == 'cooldowns' then cooldownsOnly(s)
+    elseif s.kind == 'ray' then ray(s)
+    elseif s.kind == 'set' then setField(s)
+    elseif s.kind == 'track' then track(s)
     else D.p('step', D.k, ': unknown kind', s.kind) end
     if s.passive then passive() end
   end)

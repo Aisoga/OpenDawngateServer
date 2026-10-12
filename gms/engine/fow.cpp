@@ -172,6 +172,7 @@ struct Raw {
   float radius, hysteresis, pos[3], quat[4];
   std::int32_t npcType;
   std::uint32_t owner, grassId;
+  std::int8_t grassEdge;  // D3c: +1 mbInGrass went 0 -> 1 in this call, -1 went 1 -> 0
 };
 
 // What the stripped pass did for an object's blackboard in grass (Read's comment): mbInGrass, and the reveal timers.
@@ -181,6 +182,7 @@ void GrassBlackboard(char* bb, char* t, bool inGrass, unsigned elapsedMs, Raw* r
   if (!inGrass) {
     if (flag) {  // out of the grass: every reveal ends, the concealment is the record's default again
       flag = 0;
+      r->grassEdge = -1;
       Field<std::uint8_t>(bb, kRevealedTeams) = 0;
       for (int team = 0; team < vision::kNumTeams; ++team) {
         Field<std::int32_t>(bb, kRevealTimerMs + 4 * team) = 0;
@@ -190,6 +192,7 @@ void GrassBlackboard(char* bb, char* t, bool inGrass, unsigned elapsedMs, Raw* r
     }
     return;
   }
+  if (!flag) r->grassEdge = 1;
   flag = 1;
   r->inGrass = true;
   std::uint8_t& revealed = Field<std::uint8_t>(bb, kRevealedTeams);
@@ -467,6 +470,7 @@ bool Read(void* sim, const std::vector<repl::NetObject>& objs, const Options& op
     in.grassId = r.grassId;
     in.revealed = r.revealed;
     in.revealEnded = r.revealEnded;
+    in.grassEdge = r.grassEdge;
     if (r.inGrass) ++counts->inGrass;
     if (r.inGrass && r.revealed) ++counts->revealed;
     std::memcpy(in.pos, r.pos, sizeof in.pos);
@@ -493,6 +497,17 @@ bool Read(void* sim, const std::vector<repl::NetObject>& objs, const Options& op
     else ++counts->unscanned;
   }
   return true;
+}
+
+bool FireGrassEvent(void* object, bool enter) {
+  __try {
+    void* container = object ? Field<void*>(object, obj::kAbilityData) : nullptr;
+    if (!container) return false;
+    FireEvent(container, enter ? kEventOnEnterGrass : kEventOnExitGrass, nullptr, 0);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), enter ? "OnEnterGrass" : "OnExitGrass")) {
+    return false;
+  }
 }
 
 const vision::LosMap* Terrain() { return g_haveTerrain ? &g_terrain : nullptr; }

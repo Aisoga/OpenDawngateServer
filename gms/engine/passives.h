@@ -29,6 +29,10 @@ namespace passives {
 // for the log ("deploy", "respawn"). Returns the modifier instance id, 0 if none was activated.
 std::uint32_t Activate(void* sim, unsigned index, const char* why);
 
+// Whether the creature holds a live (not ending) instance of the static ability among its modifiers (object +0x8A8:
+// modifier ids +0x9C..+0xA0); the caller binds the server simulator and catches exceptions. Also D3c's (perks.cpp).
+bool CreatureHasLiveInstance(void* creature, void* staticAbility);
+
 // One-line counters for the stats.
 void FormatStats(char* buf, std::size_t size);
 

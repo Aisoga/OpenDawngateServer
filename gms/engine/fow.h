@@ -36,6 +36,7 @@ struct Options {
   bool stealth = true;   // [host] fog_stealth: stealthed objects only to StealthDetection sources (D2g-rest)
   bool render = true;    // [host] fog_render: write mVisionRadius and the grass ids for the client's fog renderer
   bool pursuit = true;   // [host] fog_pursuit: write the records' per-team last-seen pursuit positions (D2g-pursuit)
+  bool grassEvents = true;  // [host] grass_events: OnEnterGrass/OnExitGrass at an mbInGrass change (D3c; needs grass)
 };
 
 // What the fog step needs per scanned object beside its vision::Entity.
@@ -50,7 +51,18 @@ struct ObjectInfo {
   std::uint32_t grassId = 0;
   std::uint8_t revealed = 0;  // blackboard +0x1E76: the teams the object is revealed to in grass (RevealInGrass)
   std::uint8_t revealEnded = 0;  // this call: the teams whose reveal timer ran out (concealment restored)
+  // D3c, with grass: this call set mbInGrass (+1: entered the grass) or cleared it (-1: left it), 0 = no change
+  std::int8_t grassEdge = 0;
 };
+
+// D3c: OnEnterGrass (35) / OnExitGrass (36) on the object's
+// ability instances (AbilityDataContainer_FireEvent 0x009064E0 on object +0x8A8, no records), as the stripped grass pass
+// did when an agent's mbInGrass changed: no code in the client fires them (the 14 FireEvent call sites pass 0x1A-0x3C,
+// none 0x23/0x24), and modifier_MediumPerk_BushSpeed (Adventurer) and modifier_HighHuntress_Passive (Grumbles' ward
+// in the grass) answer only them. The server simulator must be bound. False when the object has no container or the
+// call raised an exception.
+constexpr int kEventOnEnterGrass = 35, kEventOnExitGrass = 36;
+bool FireGrassEvent(void* object, bool enter);
 
 struct ReadCounts {
   int tracked = 0;   // scanned objects with a record

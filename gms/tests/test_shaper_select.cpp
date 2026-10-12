@@ -962,6 +962,17 @@ GMS_TEST(ShaperSelectContentFromCreateGame) {
 
 // D3-perks: createGame's perk pages (docs/data/host_control_examples.jsonl's D3-perks line) as shaper select keeps them,
 // C8 09 at the client's C8 02, C8 0A in phases 2-3 only and only for its own pages, and the pick's page with its stats.
+// D3c: the page's modifiers a respawn activates again: only those the creature no longer holds, each once, in the
+// page's order (vanguard's ProtectDistantAllies ends OnAgentDeath; Adventurer's BushSpeed survives the death).
+GMS_TEST(ShaperSelectPageModifiersToRenew) {
+  const uint32_t bush = 0xCAA01502u, protect = 0x11227E1Cu, other = 0x12345678u;
+  CHECK(gms::PageModifiersToRenew({bush, protect}, {bush}) == (std::vector<uint32_t>{protect}));
+  CHECK(gms::PageModifiersToRenew({bush, protect}, {bush, protect, other}).empty());
+  CHECK(gms::PageModifiersToRenew({protect, bush}, {}) == (std::vector<uint32_t>{protect, bush}));
+  CHECK(gms::PageModifiersToRenew({protect, protect, 0u}, {other}) == (std::vector<uint32_t>{protect}));
+  CHECK(gms::PageModifiersToRenew({}, {bush}).empty());
+}
+
 GMS_TEST(ShaperSelectPerkPagesFromCreateGame) {
   const std::string line =
       "{\"t\":\"createGame\",\"gameId\":4,\"level\":\"SM_Map_v5\",\"mode\":\"practice\",\"seed\":7919,\"roster\":[{\"user\":"

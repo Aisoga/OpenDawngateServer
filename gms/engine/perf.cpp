@@ -22,6 +22,8 @@ bool g_csv = false;
 double g_windowS = 60;
 double g_tickMs = 33;
 std::string g_csvPath;
+int g_latencyLogLimit = 400;  // Q3c-live2: the per-command `commands latency: player ...` lines
+int g_latencyLogged = 0;
 MinuteTimer g_timer;
 CommandLatency g_cmds;
 TickSample g_cur;
@@ -100,6 +102,12 @@ void Configure(bool hostMode, double tickMs, const char* dataDir) {
   g_windowS = HostOptionInt("timing_window_s", 60);
   if (g_windowS < 5) g_windowS = 5;
   if (g_csv) g_csvPath = std::string(dataDir) + "\\host_timing.csv";
+  const int outlierMs = HostOptionInt("latency_log_ms", 1000);
+  g_latencyLogLimit = HostOptionInt("latency_log_limit", 400);
+  g_cmds.SetOutlierMs(g_on && g_latencyLogLimit > 0 ? outlierMs : -1);
+  Log("perf (Q3c-live2): [host] latency_log_ms %d, latency_log_limit %d (a line per command answered or done after "
+      "that long, timed out or superseded)",
+      outlierMs, g_latencyLogLimit);
   Log("perf (Q3c): [host] timing %d, timing_csv %d (%s), timing_window_s %.0f; tick budget %.0f ms, spikes over %.0f ms",
       g_on, g_csv, g_csv ? g_csvPath.c_str() : "-", g_windowS, g_tickMs, g_timer.SpikeMs());
 }
@@ -137,6 +145,11 @@ void TickEnd() {
   if (g_minute == -2) g_minute = minute;
   g_timer.Add(g_cur, HostS());
   g_cmds.Expire(now);
+  for (const CommandLatency::Outlier& o : g_cmds.TakeOutliers()) {
+    if (++g_latencyLogged > g_latencyLogLimit) continue;
+    Log("%s; taken at host %.3f s%s", CommandLatency::FormatOutlier(o).c_str(), HostS() - (now - o.intakeMs) / 1000.0,
+        g_latencyLogged == g_latencyLogLimit ? " ([host] latency_log_limit reached)" : "");
+  }
   if (minute != g_minute || HostS() - g_timer.WindowStartS() >= g_windowS) {
     Roll();
     g_minute = minute;

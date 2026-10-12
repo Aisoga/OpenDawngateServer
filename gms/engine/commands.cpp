@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "core/commands/gold.h"   // D15b: the gold aid in 16-bit steps
 #include "core/commands/queue.h"  // D7c: the queued-move step and the host's takeover
 #include "core/protocol/commands.h"
 #include "core/protocol/wire.h"
@@ -24,6 +25,7 @@
 #include "log.h"
 #include "perf.h"
 #include "replicate.h"
+#include "shop.h"
 
 using namespace game;
 
@@ -703,7 +705,7 @@ void SehItemSwitch(void* player, const gms::ItemTransactionRequest& r, ItemOutco
   }
 }
 
-void OnItemTransaction(void* sim, unsigned index, const PlayerInfo& pi, const gms::ItemTransactionRequest& r,
+bool OnItemTransaction(void* sim, unsigned index, const PlayerInfo& pi, const gms::ItemTransactionRequest& r,
                        const char* source) {
   const std::string what = gms::DescribeItemTransaction(r);
   const Wallet before = SehWallet(pi.player);
@@ -753,6 +755,11 @@ void OnItemTransaction(void* sim, unsigned index, const PlayerInfo& pi, const gm
   a.msg = std::move(m);
   a.early = true;
   g_answers.push_back(std::move(a));
+  // D15c: the shop's purchase effect (modifier_Base_ShoppeArchon.onItemPurchased), after the answer is queued, for a
+  // purchase and a consume-on-purchase [the consume assumed: it is a purchase the shop UI sends as type 4]
+  if (o.success && (r.type == gms::kItemPurchase || r.type == gms::kItemConsume))
+    shop::OnItemPurchased(sim, index, pi.creature, pi.team, r.item, source);
+  return o.success;
 }
 
 // ---- emotes and voice lines (D7b) -----------------------------------------------------------------------------------
@@ -933,13 +940,17 @@ void NoteIntake(unsigned index, int kind, std::uint8_t seq, bool hasTarget = fal
 void MoveEffects(unsigned index, const MoveInfo& mv) {
   if (!perf::Enabled()) return;
   for (const gms::timing::CommandLatency::PendingMove& m : perf::Commands().PendingMoves(static_cast<int>(index))) {
+    // Q3c-live2: a stop's effect is a goal without a move (bit 0 clear: a standing shaper's flags are 0x24, an
+    // attacking one's 0x42, never 0, so a test run counted every stop as a timeout); an attack-move's "any goal" only once
+    // the queue took it (its answer, `9B`): one deferred behind a fight (the binary's step 4, D7c) has the fight's goal
+    const bool hasMove = (mv.goalFlags & 1u) != 0;
     bool done;
     if (m.kind == gms::timing::kCmdKindStop) {
-      done = mv.goalFlags == 0;
+      done = !hasMove;
     } else {
       const float gx = mv.goal[0] - m.x, gy = mv.goal[1] - m.y, px = mv.pos[0] - m.x, py = mv.pos[1] - m.y;
       done = (mv.goalFlags != 0 && gx * gx + gy * gy < 9.f) || px * px + py * py < 9.f ||
-             (m.kind == gms::timing::kCmdKindAttackMove && mv.goalFlags != 0);
+             (m.kind == gms::timing::kCmdKindAttackMove && m.answered && mv.goalFlags != 0);
     }
     if (done) perf::Commands().OnEffect(static_cast<int>(index), m.seq, 1u << m.kind, gms::timing::NowMs());
   }
@@ -1190,8 +1201,15 @@ bool OnClientMessage(void* sim, unsigned index, std::uint8_t wire, const std::ui
           gms::DescribeItemTransaction(r).c_str(),
           !g_installed ? "intake off" : !havePlayer ? "no server player" : "[host] item_transactions = 0");
     } else {
-      NoteIntake(index, gms::timing::kCmdKindItem, 0);  // Q3c: answered by C3, done by the next AA delta
-      OnItemTransaction(sim, index, pi, r, source);
+      // Q3c: answered by C3, done by the next AA delta. Not a bot's (D6b's purchases come this way): its C3 reaches
+      // only its team's humans and its AA only who sees it, so a test run's "item effect 2.0 s" and most of its item
+      // timeouts were the bots' (Q3c-live2)
+      const bool timed = std::strcmp(source, "bot") != 0;
+      if (timed) NoteIntake(index, gms::timing::kCmdKindItem, 0);
+      // Q3c-live2: a refused transaction changes nothing, so its answer (C3 success 0, this tick) is all there is:
+      // done now, not by the next unrelated AA (a test run's "item effect 1.5 s" were refusals out of the shop's reach)
+      if (!OnItemTransaction(sim, index, pi, r, source) && timed && perf::Enabled())
+        perf::Commands().OnEffect(static_cast<int>(index), 0, 1u << gms::timing::kCmdKindItem, gms::timing::NowMs());
     }
     return true;
   }
@@ -1327,12 +1345,17 @@ bool GrantGoldNow(void* sim, unsigned index, float amount, const char* source) {
     return false;
   }
   const Wallet before = SehWallet(pi.player);
-  const bool ok = death::GrantGold(static_cast<int>(index), amount, kGoldSourceCheat, false, 0, 0);
+  // D15b: in grants of at most 65,535 (CombatEvent.cpp 67 packs the delta into 16 bits and asserts above it).
+  const std::vector<double> steps = gms::cmdgold::GoldGrantSteps(amount);
+  bool ok = !steps.empty();
+  for (double step : steps)
+    ok = death::GrantGold(static_cast<int>(index), static_cast<float>(step), kGoldSourceCheat, false, 0, 0) && ok;
   const Wallet after = SehWallet(pi.player);
   if (ok) ++g_st.goldGrants;
-  Log("commands: %s player %u granted %.0f gold (nGoldSourceType.Cheat): %s; gold %.1f -> %.1f (total %.1f)", source,
-      index, amount, ok ? "done" : "FAILED (the death module's gold path is off?)", before.gold, after.gold,
-      after.total);
+  Log("commands: %s player %u granted %.0f gold (nGoldSourceType.Cheat, %zu grant(s)): %s; gold %.1f -> %.1f "
+      "(total %.1f)",
+      source, index, amount, steps.size(), ok ? "done" : "FAILED (the death module's gold path is off?)", before.gold,
+      after.gold, after.total);
   return ok;
 }
 

@@ -206,6 +206,32 @@ const char* CommandKindName(int kind) {
   return kind >= 0 && kind < kNumCommandKinds ? kNames[kind] : "?";
 }
 
+namespace {
+bool IsMoveKind(int kind) { return kind == kCmdKindMove || kind == kCmdKindAttackMove || kind == kCmdKindStop; }
+}  // namespace
+
+std::vector<CommandLatency::Outlier> CommandLatency::TakeOutliers() {
+  std::vector<Outlier> v;
+  v.swap(outliers_);
+  return v;
+}
+
+std::string CommandLatency::FormatOutlier(const Outlier& o) {
+  auto ms = [](double v) {
+    char b[32];
+    if (v < 0) return std::string("none");
+    std::snprintf(b, sizeof b, "%.1f ms", v);
+    return std::string(b);
+  };
+  char b[300];
+  std::snprintf(b, sizeof b, "commands latency: player %d seq %u %s (queued %.1f ms): answer %s, effect %s (%s",
+                o.player, static_cast<unsigned>(o.seq), CommandKindName(o.kind), o.queuedMs, ms(o.answerMs).c_str(),
+                ms(o.effectMs).c_str(), o.end);
+  std::string s = b;
+  if (std::string(o.end) == "superseded") s += " by seq " + std::to_string(o.bySeq);
+  return s + ")";
+}
+
 void CommandLatency::OnIntake(int player, int kind, std::uint8_t seq, double arrivedMs, double intakeMs,
                               bool hasTarget, float targetX, float targetY) {
   if (kind < 0 || kind >= kNumCommandKinds) kind = kCmdKindOther;
@@ -220,18 +246,43 @@ void CommandLatency::OnIntake(int player, int kind, std::uint8_t seq, double arr
   c.y = targetY;
   ++n_[kind];
   queued_[kind].push_back(c.intake - c.arrived);
+  if (IsMoveKind(kind)) {  // a newer move, attack-move or stop: the older ones without an effect are over
+    for (Cmd& o : pending_) {
+      if (o.player != player || !IsMoveKind(o.kind) || o.effected) continue;
+      ++superseded_[o.kind];
+      o.end = "superseded";
+      o.bySeq = seq;
+      o.answered = o.effected = true;
+    }
+    Done();
+  }
   pending_.push_back(c);
 }
 
 CommandLatency::Cmd* CommandLatency::Find(int player, std::uint8_t seq, unsigned kindMask, bool answer) {
   for (Cmd& c : pending_) {
     if (c.player != player || (answer ? c.answered : c.effected)) continue;
-    if (seq != 0 ? c.seq == seq : ((kindMask >> c.kind) & 1u) != 0) return &c;
+    if (seq != 0 ? c.seq == seq : (c.seq == 0 && ((kindMask >> c.kind) & 1u) != 0)) return &c;
   }
   return nullptr;
 }
 
 void CommandLatency::Done() {
+  for (const Cmd& c : pending_) {
+    if (!(c.answered && c.effected) || outlierMs_ < 0) continue;
+    if (!c.end && c.answerMs < outlierMs_ && c.effectMs < outlierMs_) continue;
+    Outlier o;
+    o.player = c.player;
+    o.kind = c.kind;
+    o.seq = c.seq;
+    o.queuedMs = c.intake - c.arrived;
+    o.intakeMs = c.intake;
+    o.answerMs = c.answerMs;
+    o.effectMs = c.effectMs;
+    o.end = c.end ? c.end : "done";
+    o.bySeq = c.bySeq;
+    if (outliers_.size() < 10000) outliers_.push_back(o);
+  }
   pending_.erase(std::remove_if(pending_.begin(), pending_.end(),
                                 [](const Cmd& c) { return c.answered && c.effected; }),
                  pending_.end());
@@ -241,7 +292,8 @@ bool CommandLatency::OnAnswer(int player, std::uint8_t seq, unsigned kindMask, d
   Cmd* c = Find(player, seq, kindMask, true);
   if (!c) return false;
   c->answered = true;
-  answer_[c->kind].push_back(ms - c->intake);
+  c->answerMs = ms - c->intake;
+  answer_[c->kind].push_back(c->answerMs);
   Done();
   return true;
 }
@@ -250,7 +302,8 @@ bool CommandLatency::OnEffect(int player, std::uint8_t seq, unsigned kindMask, d
   Cmd* c = Find(player, seq, kindMask, false);
   if (!c) return false;
   c->effected = true;
-  effect_[c->kind].push_back(ms - c->intake);
+  c->effectMs = ms - c->intake;
+  effect_[c->kind].push_back(c->effectMs);
   Done();
   return true;
 }
@@ -260,7 +313,7 @@ std::vector<CommandLatency::PendingMove> CommandLatency::PendingMoves(int player
   for (const Cmd& c : pending_)
     if (c.player == player && !c.effected &&
         (c.kind == kCmdKindMove || c.kind == kCmdKindAttackMove || c.kind == kCmdKindStop))
-      v.push_back(PendingMove{c.kind, c.seq, c.x, c.y, c.intake});
+      v.push_back(PendingMove{c.kind, c.seq, c.x, c.y, c.intake, c.answered});
   return v;
 }
 
@@ -269,6 +322,7 @@ void CommandLatency::Expire(double nowMs) {
     if (nowMs - c.intake < timeoutMs_) continue;
     if (!c.answered) ++noAnswer_[c.kind];
     if (!c.effected) ++noEffect_[c.kind];
+    c.end = "timeout";
     c.answered = c.effected = true;
   }
   Done();
@@ -284,10 +338,11 @@ CommandLatency::Row CommandLatency::Roll() {
     kr.effect = Summarize(effect_[k]);
     kr.noAnswer = noAnswer_[k];
     kr.noEffect = noEffect_[k];
+    kr.superseded = superseded_[k];
     queued_[k].clear();
     answer_[k].clear();
     effect_[k].clear();
-    n_[k] = noAnswer_[k] = noEffect_[k] = 0;
+    n_[k] = noAnswer_[k] = noEffect_[k] = superseded_[k] = 0;
   }
   r.pending = static_cast<int>(pending_.size());
   return r;
@@ -297,7 +352,7 @@ std::string CommandLatency::Format(int minute, const Row& r) {
   std::string s;
   for (int k = 0; k < kNumCommandKinds; ++k) {
     const KindRow& kr = r.kinds[k];
-    if (!kr.n && !kr.answer.n && !kr.effect.n && !kr.noAnswer && !kr.noEffect) continue;
+    if (!kr.n && !kr.answer.n && !kr.effect.n && !kr.noAnswer && !kr.noEffect && !kr.superseded) continue;
     char b[400];
     std::snprintf(b, sizeof b, "%s%s %d (queued %s; answer %s; effect %s", s.empty() ? "" : "; ", CommandKindName(k),
                   kr.n, FormatSummary(kr.queued).c_str(), FormatSummary(kr.answer).c_str(),
@@ -305,6 +360,10 @@ std::string CommandLatency::Format(int minute, const Row& r) {
     s += b;
     if (kr.noAnswer || kr.noEffect) {
       std::snprintf(b, sizeof b, "; no answer %d, no effect %d", kr.noAnswer, kr.noEffect);
+      s += b;
+    }
+    if (kr.superseded) {
+      std::snprintf(b, sizeof b, "; superseded %d", kr.superseded);
       s += b;
     }
     s += ")";
@@ -343,7 +402,7 @@ std::string CsvHeader(const std::vector<std::string>& stepNames, const Gauges& g
     std::string n = CommandKindName(k);
     std::replace(n.begin(), n.end(), '-', '_');
     h += "," + n + "_n," + n + "_queued_max_ms," + n + "_answer_p50_ms," + n + "_answer_max_ms," + n +
-         "_effect_p50_ms," + n + "_effect_max_ms," + n + "_timeouts";
+         "_effect_p50_ms," + n + "_effect_max_ms," + n + "_timeouts," + n + "_superseded";
   }
   for (const auto& kv : gauges) h += "," + kv.first;
   return h;
@@ -367,8 +426,8 @@ std::string CsvRow(const MinuteRow& r, const std::vector<std::string>& stepNames
     s += "," + std::to_string(r.msgs[k]) + "," + std::to_string(r.bytes[k]);
   for (int k = 0; k < kNumCommandKinds; ++k) {
     const CommandLatency::KindRow& kr = c.kinds[k];
-    std::snprintf(b, sizeof b, ",%d,%.1f,%.1f,%.1f,%.1f,%.1f,%d", kr.n, kr.queued.max, kr.answer.p50, kr.answer.max,
-                  kr.effect.p50, kr.effect.max, kr.noAnswer + kr.noEffect);
+    std::snprintf(b, sizeof b, ",%d,%.1f,%.1f,%.1f,%.1f,%.1f,%d,%d", kr.n, kr.queued.max, kr.answer.p50,
+                  kr.answer.max, kr.effect.p50, kr.effect.max, kr.noAnswer + kr.noEffect, kr.superseded);
     s += b;
   }
   for (const auto& kv : gauges) s += "," + Num(kv.second);

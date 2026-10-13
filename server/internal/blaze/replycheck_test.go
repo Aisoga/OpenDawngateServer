@@ -24,6 +24,9 @@ func TestRepliesMatchClientMemberTables(t *testing.T) {
 		{"Blaze::Authentication::SessionInfo", SessionInfoReply(acct, p, testKey, true, testTime)},
 		{"Blaze::UserSessionLoginInfo", UserAuthenticatedNotification(acct, p, testKey, true, testTime)},
 		{"Blaze::UserSessionExtendedDataUpdate", ExtendedDataUpdateNotification(p.ID, 0, 0)},
+		// the end of a session (kick.go)
+		{"Blaze::UserSessionDisconnectReason", UserSessionDisconnectedNotification(DisconnectDuplicateLogin)},
+		{"Blaze::UserSessionLogoutInfo", UserUnauthenticatedNotification(p.ID, LogoutTypeAccount)},
 		{"Blaze::Util::PostAuthResponse", PostAuthReply("127.0.0.1", 9988, acct.UserID)},
 		{"Blaze::Util::GetTelemetryServerResponse", TelemetryServerReply("127.0.0.1", 9988)},
 		{"Blaze::Entry::EnterServiceResponse", EnterServiceReply()},

@@ -5,11 +5,15 @@ import (
 	"io"
 
 	"dawngate/server/internal/setup/exepatch"
+	"dawngate/server/internal/tunnel"
 )
 
-// A server on a public (internet) address is allowed, at the operator's own risk. The notices say what is
-// true (docs/OPERATORS.md "What must never be exposed"); Start-Server runs on a public address only with an
-// explicit acknowledgement (--i-accept-the-risk or i_accept_the_risk = yes in Start-Server.ini).
+// A server on a public (internet) address is allowed, at the operator's own risk; Start-Server runs on a public
+// address only with an explicit acknowledgement (--i-accept-the-risk or i_accept_the_risk = yes in Start-Server.ini).
+// The release has what a public server needs (checked passwords and the sign-up modes, the tunnel, the limits, the
+// strict message check, the website with self-service and the admin page), and the public profile turns it all on; the
+// notice now says what that covers and what remains the operator's risk and duty (docs/OPERATORS.md *A public
+// server*, *What remains*).
 
 // RiskAckFlag is Start-Server's acknowledgement flag, RiskAckKey its Start-Server.ini key.
 const (
@@ -20,23 +24,66 @@ const (
 // IsPublicAddress says whether a server address is on the internet (not loopback, private, link-local or shared).
 func IsPublicAddress(address string) bool { return exepatch.IsPublic(address) }
 
-// ServerRiskNotice prints what a public server means for its operator.
-func ServerRiskNotice(w io.Writer, address string) {
+// RiskInfo is what the server notice names: the public address, the bind address (empty or the same: this PC holds
+// the public address itself), the tunnel's port (0 = the default), the sign-up mode and the website's domain.
+type RiskInfo struct {
+	Address, Bind string
+	GatewayPort   int
+	Signup        string
+	WebDomain     string
+	LogDays       int
+}
+
+// ServerRiskNotice prints what a public server means for its operator (the public profile: the tunnel is always on).
+func ServerRiskNotice(w io.Writer, r RiskInfo) {
+	gp := r.GatewayPort
+	if gp == 0 {
+		gp = tunnel.DefaultPort
+	}
+	signup := "signup = " + r.Signup + ": "
+	switch r.Signup {
+	case "open":
+		signup += "anyone who reaches the server can make accounts (at most signups_per_address a day per address);\n" +
+			"    invite or closed keeps strangers out"
+	case "closed":
+		signup += "only you make accounts"
+	default:
+		signup += "only players with an invite code you made can make accounts"
+	}
+	logs := "log_days deletes old logs"
+	if r.LogDays > 0 {
+		logs = fmt.Sprintf("log_days = %d deletes them after that many days", r.LogDays)
+	}
 	fmt.Fprintf(w, `
-==== USE AT YOUR OWN RISK: %s is a public internet address ====
-This server was built for friends on a home network and has NO real security:
-  - Anyone who can reach it can log in with any e-mail and password (the first login creates the account),
-    and can use any account that has the same e-mail.
-  - The game's Blaze connection is plain TCP, not encrypted; passwords are written to the logs as typed.
-  - The TLS parts use the game's old TLS 1.1 with MD5 and RSA-1024 certificates: that is no protection against
-    anyone who wants to listen in or pretend to be your server.
-  - The match hosts' control channel has no login (Start-Server keeps it on 127.0.0.1; never expose it).
-  - Nothing limits connections or login attempts: strangers can fill your accounts, disk and bandwidth.
-You must forward these ports on your router and firewall yourself (this program never opens ports or uses UPnP):
-  TCP 42127 (the redirector, TLS), TCP 10041 (Blaze, plain), TCP+UDP 17502 (QoS), TCP 18080 (web), TCP 9988 (telemetry),
-  UDP 10042-10051 (match hosts).
-Only run this if you accept that. Never use a password you use anywhere else. See docs/OPERATORS.md.
-`, address)
+==== A PUBLIC SERVER: %s is an internet address. You run it at your own risk. ====
+What the public profile does for you:
+  - Every player connection goes through the encrypted tunnel (TLS 1.3 and AES-GCM, TCP and UDP %d); each
+    player's Start-Client checks this server's tunnel key. Nothing else of the server needs to be reachable.
+  - Passwords are checked and kept only as hashes (never logged); %s.
+  - Limits on connections, logins, games and packets per address; the match hosts check every message a
+    client sends before the game's 2014 code sees it.
+What remains your risk and your duty:
+  - The game is 2014 code (no ASLR). The players' PCs trust the server they play on: a server that is broken
+    into or taken over could attack its players' game. Keep this PC updated and use it for nothing sensitive,
+    and keep Dawngate-Data\certs (the keys) private.
+  - Players behind one internet address (a household, a dormitory, a mobile network) share the limits: a
+    household fits, a LAN party behind one address may be slowed down.
+  - You keep personal data: login and display names, the players' addresses in the logs (%s), match
+    history. Data-protection law (e.g. the GDPR) may apply to you: say who runs the server and what it keeps
+    on the website's privacy page (Dawngate-Data\data\site\privacy.html), and answer players' requests (they
+    can download and delete their own data on the website).
+  - Back up the accounts: Dawngate-Data\data\accounts.db (OPERATORS.md, "Backups").
+  - The match hosts' control channel (TCP 10040) has no login: it stays on 127.0.0.1; never forward it.
+Forward on your router only TCP and UDP %d (the tunnel) and TCP 443 (the website%s); this program never opens
+ports and never uses UPnP.
+`, r.Address, gp, signup, logs, gp, map[bool]string{true: ", for Let's Encrypt too", false: ""}[r.WebDomain != ""])
+	if r.Bind == "" || r.Bind == r.Address {
+		fmt.Fprintf(w, `This PC holds the public address itself (no router): the server's other ports (TCP 42127, 10041, 17502,
+18080, 9988; UDP 17502, 10042-10051) listen on it too, unencrypted. Let your firewall in only TCP and UDP %d
+and TCP 443.
+`, gp)
+	}
+	fmt.Fprintln(w, "Never use a password you use anywhere else. See OPERATORS.md (\"A public server\").")
 }
 
 // ServerRiskRefusal is what Start-Server says when a public address wasn't acknowledged.
@@ -49,11 +96,18 @@ or add this line to %s:
 `, RiskAckFlag, ini, RiskAckKey)
 }
 
-// ClientRiskNotice is the short notice for a player connecting to a public address.
-func ClientRiskNotice(w io.Writer, address string) {
+// ClientRiskNotice is the short notice for a player connecting to a public address (through the tunnel or not).
+func ClientRiskNotice(w io.Writer, address string, tunnel bool) {
+	if tunnel {
+		fmt.Fprintf(w, `
+  Note: %s is a public internet address. Your connection goes through the encrypted tunnel to the server whose
+  key you confirm. The game is 2014 code: play only on a server you trust (it sees your password as you type it
+  and could, if it were taken over, attack your game), and use a password you use nowhere else.
+`, address)
+		return
+	}
 	fmt.Fprintf(w, `
-  Note: %s is a public internet address. Dawngate servers have no real security: your connection is not
-  encrypted and the server sees (and may log) your password as typed. Play only on a server you trust, and use
-  a password you use nowhere else.
+  Note: %s is a public internet address. Without the tunnel your connection is not encrypted and the server sees
+  (and may log) your password as typed. Play only on a server you trust, and use a password you use nowhere else.
 `, address)
 }

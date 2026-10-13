@@ -78,6 +78,10 @@ type HTTP struct {
 	// Extra answers are served at exactly their Path (before --www and the built-ins), e.g. the CA modulus
 	// (dgserver --serve-ca, CAModulusPath).
 	Extra []Builtin
+	// Redirects answer exactly their path (escaped, without the query) with 302 Found to the URL (since the
+	// client's login-screen links /dawngate/<page> go to the website's pages when dgserver runs one). They come
+	// before Extra.
+	Redirects map[string]string
 }
 
 // CAModulusPath is where dgserver --serve-ca serves the redirector CA's public modulus (128 bytes, ca_modulus.bin):
@@ -155,6 +159,21 @@ func (h *HTTP) ServeConn(c net.Conn) {
 	target := "/"
 	if len(parts) >= 2 {
 		target = parts[1]
+	}
+	if to, ok := h.Redirects[urlPath(target)]; ok {
+		body := []byte("See " + to + "\n")
+		head := fmt.Sprintf("HTTP/1.1 302 Found\r\nLocation: %s\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n"+
+			"Connection: close\r\n\r\n", to, len(body))
+		out := []byte(head)
+		if len(parts) == 0 || parts[0] != "HEAD" {
+			out = append(out, body...)
+		}
+		if _, err := c.Write(out); err != nil {
+			h.Log.Logf(who, "%s %s: %v", peer, logging.ErrName(err), err)
+			return
+		}
+		h.Log.Log(who, "-> 302 Found, to "+to)
+		return
 	}
 	var data []byte
 	ctype, status, source := "text/plain", "404 Not Found", ""

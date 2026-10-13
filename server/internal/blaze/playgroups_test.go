@@ -53,7 +53,7 @@ func TestB11RepliesMatchGolden(t *testing.T) {
 // loginAs logs a pipe session in with email (its persona is the email's name) and skips the two
 // notifications that follow loginPersona.
 func (ps *pipeSession) loginAs(email string, id uint32) {
-	ps.send(1, 0x28, id, tdf.NewWriter().String("MAIL", email).String("PASS", "x").String("TOKN", "").Int("TYPE", 0).Bytes())
+	ps.send(1, 0x28, id, tdf.NewWriter().String("MAIL", email).String("PASS", testPassword).String("TOKN", "").Int("TYPE", 0).Bytes())
 	ps.next("login reply")
 	ps.send(1, 0x6E, id+1, tdf.NewWriter().String("PNAM", store.PersonaName(email)).Bytes())
 	ps.next("loginPersona reply")

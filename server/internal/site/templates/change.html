@@ -1,0 +1,18 @@
+{{define "content"}}
+<form method="post" action="/account/password" autocomplete="off">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>Login name
+<input name="name" value="{{.Name}}" required maxlength="64" autocomplete="username"></label>
+<label>Current password
+<input type="password" name="password" required maxlength="{{.Rules.MaxPassword}}" autocomplete="current-password"{{if index .Fields "password"}} aria-invalid="true"{{end}}></label>
+{{with index .Fields "password"}}<p class="field-error">{{.}}</p>{{end}}
+<label>New password <small>({{.Rules.MinPassword}}–{{.Rules.MaxPassword}} characters)</small>
+<input type="password" name="new" required minlength="{{.Rules.MinPassword}}" maxlength="{{.Rules.MaxPassword}}" autocomplete="new-password"{{if index .Fields "new"}} aria-invalid="true"{{end}}></label>
+{{with index .Fields "new"}}<p class="field-error">{{.}}</p>{{end}}
+<label>The new password again
+<input type="password" name="new2" required minlength="{{.Rules.MinPassword}}" maxlength="{{.Rules.MaxPassword}}" autocomplete="new-password"></label>
+{{with index .Fields "new2"}}<p class="field-error">{{.}}</p>{{end}}
+<button type="submit">Change the password</button>
+</form>
+<p class="note">Forgot the current one? See <a href="/password">Forgot password</a>.</p>
+{{end}}

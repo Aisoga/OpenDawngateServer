@@ -343,6 +343,15 @@ func (m *messaging) newID() int64 {
 	return m.nextID
 }
 
+// OnlineUsers is how many users are logged in now (the messaging relay's online list: one per persona with a
+// connection), for the website's status page.
+func (s *Server) OnlineUsers() int {
+	m := &s.msgs
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.online)
+}
+
 // onlineConns returns every logged-in connection once (the messaging relay's, B10c).
 func (s *Server) onlineConns() []*Conn {
 	m := &s.msgs

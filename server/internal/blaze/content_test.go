@@ -135,10 +135,10 @@ func (ps *pipeSession) login(firstID uint32, extended string) {
 // replies carry it, the client's changes (settings, user info attribute, avatar) are stored, and after
 // a restart (a new server on the same file) the account comes back as it was, without a second grant.
 func TestPlayerContentSession(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "accounts.json")
+	path := filepath.Join(t.TempDir(), store.FileName)
 	c := loadFixtureContent(t)
 	setup := func(s *Server) {
-		st, err := store.Open(path)
+		st, err := openTestStore(t, path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -213,7 +213,7 @@ func TestPlayerContentSession(t *testing.T) {
 	if strings.Contains(log, "granted") || !strings.Contains(log, "(setAvatar: 0x10000001 is not a collection avatar, presumably a built-in one; stored)") {
 		t.Errorf("log:\n%s", log)
 	}
-	st, _ := store.Open(path)
+	st, _ := openTestStore(t, path)
 	if a, ok := st.Account(store.FirstUserID); !ok || a.Avatar != 0x10000001 || a.UserInfo != 1<<62 || a.EC != DefaultStartEC {
 		t.Errorf("stored account: %+v", a)
 	}
@@ -222,9 +222,9 @@ func TestPlayerContentSession(t *testing.T) {
 // An account made while the server had no content gets it at its first login with content; until
 // then the replies are B5's.
 func TestGrantAtLaterLogin(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "accounts.json")
+	path := filepath.Join(t.TempDir(), store.FileName)
 	open := func(s *Server) {
-		st, err := store.Open(path)
+		st, err := openTestStore(t, path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -311,4 +311,14 @@ func TestUserInfoAttribute(t *testing.T) {
 			t.Errorf("UserInfoAttribute(%#x, %#x, %#x) = %#x, want %#x", c.old, c.attv, c.mask, got, c.want)
 		}
 	}
+}
+
+// openTestStore is store.Open for tests: the database is closed at the test's end, since Windows can't remove the
+// temporary folder of an open database.
+func openTestStore(t *testing.T, path string) (*store.Store, error) {
+	st, err := store.Open(path)
+	if err == nil {
+		t.Cleanup(func() { st.Close() })
+	}
+	return st, err
 }

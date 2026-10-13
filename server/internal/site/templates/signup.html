@@ -1,0 +1,33 @@
+{{define "content"}}
+{{if eq .Mode "closed"}}
+<p>Only the server's operator makes accounts on this server. Ask them for one: they give you a login name and a
+password, which you can then <a href="/account/password">change here</a>.</p>
+{{else}}
+{{if not .Done}}
+{{if eq .Mode "invite"}}<p>New accounts on this server need an <b>invite code</b> from its operator.</p>{{end}}
+<form method="post" action="/signup" autocomplete="off">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>Login name <small>({{.Rules.MinName}}–{{.Rules.MaxName}} characters: letters, digits, . _ - @; you type it at the game's login, nobody else sees it)</small>
+<input name="name" value="{{.Name}}" required minlength="{{.Rules.MinName}}" maxlength="{{.Rules.MaxName}}" autocomplete="username"{{if index .Fields "name"}} aria-invalid="true"{{end}}></label>
+{{with index .Fields "name"}}<p class="field-error">{{.}}</p>{{end}}
+<label>Display name <small>({{.Rules.MinDisplay}}–{{.Rules.MaxDisplay}} characters: letters, digits, _ and -; what other players see. Empty: made from the login name)</small>
+<input name="display" value="{{.Display}}" maxlength="{{.Rules.MaxDisplay}}"{{if index .Fields "display"}} aria-invalid="true"{{end}}></label>
+{{with index .Fields "display"}}<p class="field-error">{{.}}</p>{{end}}
+<label>Password <small>({{.Rules.MinPassword}}–{{.Rules.MaxPassword}} characters)</small>
+<input type="password" name="password" required minlength="{{.Rules.MinPassword}}" maxlength="{{.Rules.MaxPassword}}" autocomplete="new-password"{{if index .Fields "password"}} aria-invalid="true"{{end}}></label>
+{{with index .Fields "password"}}<p class="field-error">{{.}}</p>{{end}}
+<label>The password again
+<input type="password" name="password2" required minlength="{{.Rules.MinPassword}}" maxlength="{{.Rules.MaxPassword}}" autocomplete="new-password"></label>
+{{with index .Fields "password2"}}<p class="field-error">{{.}}</p>{{end}}
+{{if eq .Mode "invite"}}
+<label>Invite code
+<input name="code" required maxlength="64" placeholder="XXXX-XXXX-XXXX-XXXX"{{if index .Fields "code"}} aria-invalid="true"{{end}}></label>
+{{with index .Fields "code"}}<p class="field-error">{{.}}</p>{{end}}
+{{end}}
+<p class="note">This server never sends mail. Keep your password: if you forget it, only the server's operator can
+set a new one.</p>
+<button type="submit">Make the account</button>
+</form>
+{{end}}
+{{end}}
+{{end}}

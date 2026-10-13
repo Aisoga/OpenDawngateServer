@@ -19,6 +19,9 @@ Steps, in order. Each one checks its result, is skipped when its result is curre
                  makes from the untouched exe (Dawngate.exe.orig, which must match the manifest).
   client config  re/scripts/patch_config.py --host 127.0.0.1; current means byte for byte (Config, Config_Ship,
                  Config_Pack; their .orig must match the manifest).
+  client texts   re/scripts/patch_locale.py --host 127.0.0.1 [--web-domain D]: the added locale package
+                 game/Data/Locale/en-us/AA_Server.package (the login screen's texts, its links at the server's pages),
+                 made from the copy's own Locale.package; current means byte for byte (the Go setup's are the same).
   RakNet         tools/raknet/RakNet (Source/ and the licence files) from the facebookarchive/RakNet archive of commit
                  1a169895 (--raknet-zip; SHA-256 checked). This script downloads nothing.
   gms build      gms/build (cmake -G "Visual Studio 17 2022" -A Win32 -DRAKNET_ROOT=..., Release): dgsim.dll and
@@ -36,15 +39,16 @@ Steps, in order. Each one checks its result, is skipped when its result is curre
                  silent|connected, a research tool).
   lane b, c, d   only with --lane <X>[,<Y>...] (repeatable; --lane-b = --lane b): re/scripts/setup_lane.py X for each
                  named lane (the extra test lanes; about 3 GB each).
-  copy e, f, lan only with --lane e / f / lan (A5b): setup_lane.py e, lane d's second client client/run_854_e
-                 (run_session.ps1 -SecondClient; after lane d; since G3b f, lane b's client/run_854_f, after lane b),
-                 and setup_lane.py lan --address <S>, the LAN profile's
-                 test copy client/run_854_l (run_session.ps1 -Lan; needs --lan-certs <S>, this PC's LAN address);
+  copy e, f, h, lan only with --lane e / f / h / lan (A5b): setup_lane.py e, lane d's second client client/run_854_e
+                 (run_session.ps1 -SecondClient; after lane d; since G3b f, lane b's client/run_854_f, after lane b;
+                 h, lane c's client/run_854_h, after lane c), and setup_lane.py lan --address <S>, the LAN
+                 profile's test copy client/run_854_l (run_session.ps1 -Lan; needs --lan-certs <S>, this PC's LAN address);
                  about 1.5 GB each.
 
 Player mode (--player --server-host <S>): only the archive and a client copy for a server elsewhere on our own
 network, client/run_854_lan/Dawngate, patched by patch_client.py --profile lan --server-host <S> [--client-bind <C>]
-with the server's CA modulus (--ca; default server/certs/lan/ca_modulus.bin) and by patch_config.py --host <S>. It is
+with the server's CA modulus (--ca; default server/certs/lan/ca_modulus.bin), by patch_config.py --host <S> and
+by patch_locale.py --host <S>. It is
 played with play.ps1 -Server <S> (re/scripts/play_lan.ps1, roadmap P2; -GameDir for a copy made with --client).
 
 --check only reports and writes nothing: exit 1 when something is missing or stale. Exit 2 when a step failed or a
@@ -60,8 +64,9 @@ Usage (from the repository folder):
         [--no-content] [--probe] [--lane b|c|d|e|lan[,...]] [--lane-b] [--verify] [--new-certs] [--check]
     .venv\\Scripts\\python -I re\\scripts\\setup_all.py --player --server-host <S> [--ca <ca_modulus.bin>]
         [--client-bind <C>] [--check]
-    more: --root <dir>, --build-root <dir>, --client <Dawngate dir>, --afk-minutes N [--afk-disconnect-minutes M]
-Tests: re/scripts/test_h3.py (synthetic archives, no game file).
+    more: --root <dir>, --build-root <dir>, --client <Dawngate dir>, --afk-minutes N [--afk-disconnect-minutes M],
+        --web-domain <D>
+Tests: re/scripts/test_h3.py (synthetic archives, no game file), re/scripts/test_ph2b.py (the client texts).
 """
 import argparse
 import csv
@@ -102,7 +107,7 @@ HOST_KEYS = ("redirector", "appdata", "documents")  # what a host copy's exe mus
 EXTRA_LANES = ("b", "c", "d")  # A6, A6b: the lanes setup_lane.py makes (its LANES but a; test_a6.py checks they agree)
 # A5b: further copies setup_lane.py makes: lane d's second client (its EXTRA_CLIENTS; since G3b lane b's, f) and the LAN
 # profile's test copy
-EXTRA_COPIES = ("e", "f", "lan")
+EXTRA_COPIES = ("e", "f", "h", "lan")
 GB = 1 << 30
 COPY_BYTES = int(1.6 * GB)  # one copy of the build (1.53 GB)
 MARGIN = 1 * GB
@@ -722,6 +727,39 @@ class Setup:
             return self.report(FAILED, step, f"patch_config.py didn't patch {self.show(data_dir)} as expected")
         return self.report(DONE, step, f"{self.show(data_dir)}: patched for {host} (was: {', '.join(bad)})")
 
+    def step_locale(self, step, copy, host):
+        """the player copy's added locale package game/Data/Locale/en-us/AA_Server.package (patch_locale.py:
+        the login texts, the links at the server's pages for `host` or --web-domain), made from the copy's own
+        Locale.package; current means byte for byte what patch_locale.py makes (the Go setup's localepatch, the
+        same bytes). Never a host copy: the server simulator shows no text."""
+        import patch_locale as pl
+        src = os.path.join(copy, *pl.SOURCE.split("/"))
+        added = os.path.join(copy, *pl.REL.split("/"))
+        if not os.path.isfile(src):
+            return self.report(MISSING, step, f"{self.show(src)} (the copy is incomplete)")
+        if sha256(src) != self.orig_sha(pl.SOURCE):
+            return self.report(FAILED, step, f"{self.show(src)} is not the untouched build-854 file "
+                                             "(docs/file_manifest.csv); delete the copy and run this again")
+        try:
+            want = pl.build(src, host, web_domain=self.a.web_domain)
+        except (pl.LocaleError, ValueError) as e:
+            return self.report(FAILED, step, str(e))
+        links = pl.site_base(host, web_domain=self.a.web_domain)
+        line = f"{self.show(added)}: login texts, links at {links} ({hashlib.sha256(want).hexdigest()[:16]})"
+        have = read(added) if os.path.isfile(added) else None
+        if have == want:
+            return self.report(OK, step, line)
+        why = "not there" if have is None else "another server or an older text"
+        if self.check:
+            return self.report(MISSING if have is None else STALE, step, f"{self.show(added)}: {why}")
+        self.never_pristine(added)
+        cmd = [os.path.join(copy, "game", "Data"), "--host", host] + \
+            (["--web-domain", self.a.web_domain] if self.a.web_domain else [])
+        if self.script("patch_locale.py", *cmd) or not os.path.isfile(added) or read(added) != want:
+            return self.report(FAILED, step, f"patch_locale.py didn't write the expected {self.show(added)} "
+                                             "(is the game running from this copy?)")
+        return self.report(DONE, step, f"{line} (was: {why})")
+
     # -- RakNet and the builds
     def step_raknet(self):
         step = "RakNet"
@@ -999,6 +1037,7 @@ class Setup:
             exe = self.needs("client exe", certificates=certs) and \
                 self.step_exe("client exe", self.client, os.path.join(self.certs, "ca_modulus.bin"), "local", LOCAL)
             config = self.step_config("client config", self.client, LOCAL)
+            self.step_locale("client texts", self.client, LOCAL)
             client = bool(exe and config)
         raknet = self.step_raknet()
         gms = self.step_gms(raknet)
@@ -1041,6 +1080,7 @@ class Setup:
         if self.copy_there("client copy", self.client, archive, PATCHED):
             self.step_exe("client exe", self.client, ca, "lan", host, bind)
             self.step_config("client config", self.client, host)
+            self.step_locale("client texts", self.client, host)
 
     def finish(self):
         bad = [r for r in self.results if r[0] in BAD]
@@ -1101,6 +1141,8 @@ def parse(argv):
     ap.add_argument("--ca", help="--player: the server's ca_modulus.bin (default server/certs/lan/ca_modulus.bin)")
     ap.add_argument("--client", help="the client copy's Dawngate folder (default client/run_854/Dawngate, "
                                      "--player: client/run_854_lan/Dawngate)")
+    ap.add_argument("--web-domain", metavar="D", help="the server's website: the client copy's login links go to "
+                                                       "https://<D>/<page> instead of dgserver's own pages")
     ap.add_argument("--afk-minutes", type=int, metavar="N", help="patch_config.py --afk-minutes for the client copy")
     ap.add_argument("--afk-disconnect-minutes", type=int, metavar="M", help="patch_config.py --afk-disconnect-minutes")
     ap.add_argument("--root", help="put the copies, certificates, data, RakNet and builds under this folder")
@@ -1130,6 +1172,12 @@ def parse(argv):
             a.lan_certs = lan_host(a.lan_certs, "--lan-certs")
         except ValueError as e:
             ap.error(str(e))
+    if a.web_domain:  # patch_locale.py's rule
+        import patch_locale
+        try:
+            patch_locale.check_options(LOCAL, web_domain=a.web_domain)
+        except patch_locale.LocaleError as e:
+            ap.error(f"--web-domain: {e}")
     if a.afk_disconnect_minutes is not None and a.afk_minutes is None:
         ap.error("--afk-disconnect-minutes needs --afk-minutes")
     for v in (a.afk_minutes, a.afk_disconnect_minutes):

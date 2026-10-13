@@ -63,7 +63,7 @@ struct HelloReq {
   uint64_t userId = 0;
   uint64_t playgroupId = 0;
 };
-bool ParseHelloReq(const uint8_t* body, size_t n, HelloReq* out);  // needs 8 bytes; playgroup 0 if absent
+bool ParseHelloReq(const uint8_t* body, size_t n, HelloReq* out);  // exactly 16 bytes
 
 // ClockSync (0xC7) from the client: i64 client clock in ms.
 bool ParseClockSync(const uint8_t* body, size_t n, int64_t* clientMs);

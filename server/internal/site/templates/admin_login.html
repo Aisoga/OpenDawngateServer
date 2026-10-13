@@ -1,0 +1,13 @@
+{{define "content"}}
+<p>The server's admin page: for accounts with the admin role (the operator gives it with
+<code>Start-Server.exe --make-admin &lt;login name&gt;</code>). Log in with that account's login name and password.</p>
+<form method="post" action="/admin/login" autocomplete="off">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>Login name
+<input name="name" value="{{.Name}}" required maxlength="64" autocomplete="username"></label>
+<label>Password
+<input type="password" name="password" required maxlength="{{.Rules.MaxPassword}}" autocomplete="current-password"></label>
+<button type="submit">Log in</button>
+</form>
+{{with .Admin.LoginLimits}}<p class="note">Admin logins are limited: {{.}}. Every attempt is in the audit log.</p>{{end}}
+{{end}}

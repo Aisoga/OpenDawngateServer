@@ -1,0 +1,17 @@
+{{define "content"}}
+<p>Deleting your account removes your login name, display name and password, the game's settings, your friends,
+recent players and blocked lists, your items and perk pages. Your match statistics stay on the server without your
+name (the account's number only). Other players' lists no longer name you. This can't be undone; your login name is
+free again afterwards. <a href="/account/data">Download your data</a> first if you want a copy.</p>
+<form method="post" action="/account/delete" autocomplete="off">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>Login name
+<input name="name" value="{{.Name}}" required maxlength="64" autocomplete="username"></label>
+<label>Password
+<input type="password" name="password" required maxlength="{{.Rules.MaxPassword}}" autocomplete="current-password"{{if index .Fields "password"}} aria-invalid="true"{{end}}></label>
+{{with index .Fields "password"}}<p class="field-error">{{.}}</p>{{end}}
+<label class="check"><input type="checkbox" name="confirm" value="yes" required> I want to delete my account for good.</label>
+{{with index .Fields "confirm"}}<p class="field-error">{{.}}</p>{{end}}
+<button type="submit" class="danger">Delete my account</button>
+</form>
+{{end}}

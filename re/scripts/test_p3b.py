@@ -15,10 +15,13 @@ references are computed with the Go setup's own ca_modulus.bin):
   content        with --content-ref, data\\content.json byte for byte that file (e.g. the main checkout's
                  server\\data\\content.json, made by snap.py + assetdata.py + dgserver --make-content)
   certificates   certs\\<address>: the five files, the CA modulus = the CA certificate's, CN = the address
+  client texts   the client copy's game\\Data\\Locale\\en-us\\AA_Server.package = patch_locale.build(its own
+                 Locale.package, the address [, --web-domain]); the host copy has none
 
 Usage (from the repository folder; it reads the game's files, so python -I):
     .venv\\Scripts\\python -I re\\scripts\\test_p3b.py <Dawngate-Data folder> --release <release folder>
         [--address 127.0.0.1] [--pristine client\\ia_Dawngate\\Dawngate] [--content-ref server\\data\\content.json]
+        [--web-domain <D>]
 Exit 0 when everything matches, 1 otherwise. Nothing is written.
 """
 import argparse
@@ -31,6 +34,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)  # -I drops the script folder
 import patch_client  # noqa: E402
 import patch_config  # noqa: E402
+import patch_locale  # noqa: E402
 import setup_all  # noqa: E402
 import setup_server_copy  # noqa: E402
 
@@ -78,6 +82,7 @@ def main(argv):
     ap.add_argument("--address", default=LOCAL, help="the server address the setup was made for")
     ap.add_argument("--pristine", help="client\\ia_Dawngate\\Dawngate: compare the files' times too")
     ap.add_argument("--content-ref", help="a content.json made by the Python pipeline")
+    ap.add_argument("--web-domain", help="the web domain the client copy's links were made for (default none)")
     a = ap.parse_args(argv[1:])
     if not sys.flags.isolated:
         sys.exit("run this with python -I: it reads the game's files")
@@ -123,6 +128,16 @@ def main(argv):
             r.check(got == want, f"{name} {os.path.basename(rel)} = patch_config.py --host {cfg_host}")
             print(f"{name} {os.path.basename(rel)}: {sha(got)}  ({'equal' if got == want else 'DIFFERENT'})")
 
+    print("client texts (PH2b)")
+    added = j(client, *patch_locale.REL.split("/"))
+    src = j(client, *patch_locale.SOURCE.split("/"))
+    want = patch_locale.build(src, a.address, web_domain=a.web_domain)
+    got = read(added) if os.path.isfile(added) else b""
+    r.check(got == want, f"client {patch_locale.PACKAGE} = patch_locale.py --host {a.address}",
+            f"{sha(got)[:16]} vs {sha(want)[:16]}")
+    r.check(not os.path.isfile(j(host, *patch_locale.REL.split("/"))), f"the host copy has no {patch_locale.PACKAGE}")
+    print(f"client {patch_locale.PACKAGE}: {sha(got)}  ({'equal' if got == want else 'DIFFERENT'})")
+
     print("host DLL")
     game = j(host, "game")
     dll = read(j(a.release, "host", "dgsim.dll"))
@@ -155,7 +170,8 @@ def main(argv):
             for f in fn:
                 rel = os.path.relpath(j(dp, f), copy).replace("\\", "/")
                 if rel not in untouched and not rel.endswith(".orig") and not (label == "host" and (
-                        rel.startswith("game/dgsim") or rel == "game/PhysXLoader_orig.dll")):
+                        rel.startswith("game/dgsim") or rel == "game/PhysXLoader_orig.dll")) and not (
+                        label == "client" and rel == patch_locale.REL):
                     extra.append(rel)
         r.line(f"{label}: extra files {extra[:5] if extra else 'none'}")
 

@@ -355,6 +355,18 @@ B12_CASES = {
 }
 
 
+# a logged-in account that the admin page disables, bans or deletes loses its session at once. The UserSessions
+# notifications written from the member tables (UserSessionDisconnectReason 0x01462658: SDR, only DUPLICATE_LOGIN 0;
+# UserSessionLogoutInfo 0x014625F0: BID, LOTP LOGOUT_TYPE_ACCOUNT 0) and the kick out of a hosted game (NotifyPlayerRemoved
+# REAS 8 PLAYER_KICKED). Live (test runs): UserSessionDisconnected (the client disconnects itself with
+# ERR_DUPLICATE_LOGIN and shows the login screen), UserUnauthenticated, PLAYER_KICKED (in a practice match).
+PH5B_CASES = {
+    "usersessiondisconnected_notification": lambda: bytes(tdf.Writer().int("SDR", 0)),
+    "userunauthenticated_notification": lambda: bytes(tdf.Writer().int("BID", B5_PID).int("LOTP", 0)),
+    "notifyplayerremoved_kicked_notification":
+        lambda: bytes(tdf.Writer().int("CNTX", 0).int("GID", 1).int("PID", B5_PID).int("REAS", 8)),
+}
+
 # B7a: player content. The account of the synthetic content fixture (server/testdata/assetdata: made-up
 # items, no game data) under the server's default policy: everything owned except the testing-only shaper
 # and its skin, EC 10000, PC 1000, avatar = the lowest-catalogID avatar item, FLAG bit 0 (FTUE done,
@@ -1714,6 +1726,7 @@ WRITER_CASES = {
     **B13B_CASES,
     **B14_CASES,
     **B15_CASES,
+    **PH5B_CASES,
 }
 
 

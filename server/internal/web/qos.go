@@ -14,7 +14,9 @@ import (
 	"sync"
 	"time"
 
+	"dawngate/server/internal/limits"
 	"dawngate/server/internal/logging"
+	"dawngate/server/internal/tunnel"
 )
 
 // QoS is the server side of DirtySDK's QosApi, the client's QoS check (roadmap item B2), on the
@@ -44,6 +46,8 @@ type QoS struct {
 	BandwidthWait time.Duration // after the first bandwidth probe, how long to wait for the rest
 	FiretypeWait  time.Duration // how long a firetype request waits for the firewall packets
 	Secret        func() uint32 // request secrets (tests fix them)
+	// Limits (dgserver --limits; nil = off): every UDP datagram passes AllowPacket by its source address first.
+	Limits *limits.Limiter
 
 	mu    sync.Mutex
 	next  uint32
@@ -79,7 +83,7 @@ const (
 // qosTest is a bandwidth or firewall test handed out by an HTTP reply, keyed by its requestid.
 type qosTest struct {
 	firewall bool
-	peer     string // IP of the HTTP client that asked; UDP from other addresses is ignored
+	peer     string // the HTTP client that asked (peerKey); UDP from other addresses is ignored
 	secret   uint32
 	created  time.Time
 
@@ -87,14 +91,41 @@ type qosTest struct {
 	probes, size int
 	got          int
 	first, last  time.Time
-	client       *net.UDPAddr
+	client       *udpPeer
 	clientReq    uint32 // the client's request id (word 0 of its probes)
 	timer        *time.Timer
 	done         bool
 
 	// firewall
-	from    *net.UDPAddr  // source of the first firewall packet
+	from    *udpPeer      // source of the first firewall packet
 	arrived chan struct{} // closed when it arrives
+}
+
+// udpPeer is where a datagram came from and how to answer it: a socket address (the QoS port's own socket), or
+// a game socket behind the tunnel (tunnel.Addr, answered through the gateway).
+type udpPeer struct {
+	addr net.Addr // for the log
+	ip   net.IP
+	port int
+	key  string // equal to the HTTP peer's key of the same client (peerKey)
+	send func([]byte) error
+}
+
+// peerKey names a client for the tests' address check: its IP, or for a tunnelled client its tunnel session,
+// since every tunnelled player's game has the address 127.0.0.1 (and one session is one player's PC).
+func peerKey(a net.Addr) string {
+	if t, ok := a.(*tunnel.Addr); ok {
+		return fmt.Sprintf("tunnel %d", t.Session)
+	}
+	return hostOf(a)
+}
+
+// announceHost is the address a reply names for the server: the tunnel address for a tunnelled client, else Host.
+func (q *QoS) announceHost(c net.Conn) string {
+	if a := tunnel.Local(c); a != nil {
+		return a.IP.String()
+	}
+	return q.Host
 }
 
 // NewQoS returns a QoS server with the default timings.
@@ -130,7 +161,7 @@ func (q *QoS) ServeConn(c net.Conn) {
 		return // closed without a request
 	}
 	q.Log.Log(qosWho, peer+" "+req.line)
-	status, body := q.Answer(req.line, hostOf(c.RemoteAddr()))
+	status, body := q.AnswerFor(req.line, peerKey(c.RemoteAddr()), q.announceHost(c))
 	ctype := "text/xml"
 	if body == "" {
 		ctype = "text/plain"
@@ -160,7 +191,11 @@ func hostOf(a net.Addr) string {
 
 // Answer returns the status and XML body for a request line from peer (an IP address). Bodies are
 // one line without an XML declaration; QosApiParseHttpReply needs neither.
-func (q *QoS) Answer(line, peer string) (status, body string) {
+func (q *QoS) Answer(line, peer string) (status, body string) { return q.AnswerFor(line, peer, q.Host) }
+
+// AnswerFor is Answer for a client that is told host as the server's address (a tunnelled client: its tunnel
+// address); peer is the client's peerKey.
+func (q *QoS) AnswerFor(line, peer, host string) (status, body string) {
 	parts := strings.Fields(line)
 	if len(parts) < 2 || parts[0] != "GET" {
 		return "404 Not Found", ""
@@ -179,7 +214,7 @@ func (q *QoS) Answer(line, peer string) (status, body string) {
 			return "200 OK", q.BandwidthReply(peer)
 		}
 	case "/qos/firewall":
-		return "200 OK", q.FirewallReply(peer)
+		return "200 OK", q.firewallReply(peer, host)
 	case "/qos/firetype":
 		return "200 OK", q.FiretypeReply(args)
 	}
@@ -215,10 +250,14 @@ func (q *QoS) BandwidthReply(peer string) string {
 // siblings (+0x10B4/+0x10BC: the addresses the firewall packets go to, IPv4 as a decimal integer),
 // requestid (+0x10C4, must not be 0) and reqsecret (+0x10C8). The client asks for nint=2; we have one
 // address, so we name one.
-func (q *QoS) FirewallReply(peer string) string {
+func (q *QoS) FirewallReply(peer string) string { return q.firewallReply(peer, q.Host) }
+
+// firewallReply names host as the address the firewall packets go to: Host, or a tunnelled client's tunnel address,
+// where the client side of the tunnel takes them.
+func (q *QoS) firewallReply(peer, host string) string {
 	t := &qosTest{firewall: true, peer: peer, arrived: make(chan struct{})}
 	id := q.add(t)
-	ip := net.ParseIP(q.Host).To4()
+	ip := net.ParseIP(host).To4()
 	return fmt.Sprintf("<firewall><numinterfaces>1</numinterfaces><ips><ips>%d</ips></ips><ports><ports>%d</ports></ports>"+
 		"<requestid>%d</requestid><reqsecret>%d</reqsecret></firewall>", binary.BigEndian.Uint32(ip), q.port(), id, t.secret)
 }
@@ -260,7 +299,8 @@ func (q *QoS) FiretypeReply(args url.Values) string {
 	inpt, _ := strconv.Atoi(args.Get("inpt"))
 	v := uint32(inip)
 	in := net.IPv4(byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
-	if from.Port == inpt && (from.IP.Equal(in) || from.IP.IsLoopback()) {
+	// a tunnelled client shows its own loopback address and port: OPEN, as a local client
+	if from.port == inpt && (from.ip.Equal(in) || from.ip.IsLoopback()) {
 		return reply(FiretypeOpen)
 	}
 	return reply(FiretypeModerate)
@@ -311,16 +351,34 @@ func (q *QoS) ServeUDP() error {
 			q.Log.Logf(qosWho, "udp read: %v", err)
 			continue
 		}
+		if !q.Limits.AllowPacket(from.IP.String(), n) { // over the address's datagram or byte rate
+			if q.Limits.ShouldLog("udp qos", from.IP.String()) {
+				q.Log.Logf(qosWho, "limits: udp from %s over its rate; dropped (further drops counted in the minute's limits line)",
+					from.IP)
+			}
+			continue
+		}
 		q.Packet(append([]byte(nil), buf[:n]...), from)
 	}
 }
 
 func isClosed(err error) bool { return errors.Is(err, net.ErrClosed) }
 
-// Packet handles one UDP datagram: 20 bytes is a latency probe, 8 a firewall packet, anything longer
-// a bandwidth probe.
+// Packet handles one UDP datagram from the QoS socket: 20 bytes is a latency probe, 8 a firewall packet,
+// anything longer a bandwidth probe.
 func (q *QoS) Packet(p []byte, from *net.UDPAddr) {
-	peer := logging.Peer(from)
+	q.packet(p, &udpPeer{addr: from, ip: from.IP, port: from.Port, key: from.IP.String(),
+		send: func(b []byte) error { _, err := q.UDP.WriteToUDP(b, from); return err }})
+}
+
+// TunnelPacket handles a datagram that came through the tunnel (the gateway's tunnel.PacketHandler for the
+// QoS port): from is the game socket's address on the player's PC, reply answers it through the tunnel.
+func (q *QoS) TunnelPacket(p []byte, from *tunnel.Addr, reply func([]byte) error) {
+	q.packet(p, &udpPeer{addr: from, ip: from.IP, port: from.Port, key: peerKey(from), send: reply})
+}
+
+func (q *QoS) packet(p []byte, from *udpPeer) {
+	peer := logging.Peer(from.addr)
 	switch {
 	case len(p) == 20:
 		q.latency(p, from, peer)
@@ -345,7 +403,7 @@ func (q *QoS) Packet(p []byte, from *net.UDPAddr) {
 //
 // The client takes the round trip from the echoed tick, ignores answers to request id 0, and reads a
 // 20-byte datagram as a probe to answer, so the answer must not be 20 bytes long.
-func (q *QoS) latency(p []byte, from *net.UDPAddr, peer string) {
+func (q *QoS) latency(p []byte, from *udpPeer, peer string) {
 	req := binary.BigEndian.Uint32(p)
 	if req == 0 {
 		q.Log.Logf(qosWho, "udp %s latency probe for request 0 ignored", peer)
@@ -353,24 +411,24 @@ func (q *QoS) latency(p []byte, from *net.UDPAddr, peer string) {
 	}
 	out := make([]byte, 30)
 	copy(out, p)
-	if ip := from.IP.To4(); ip != nil {
+	if ip := from.ip.To4(); ip != nil {
 		copy(out[20:24], ip)
 	}
-	binary.BigEndian.PutUint16(out[24:26], uint16(from.Port))
+	binary.BigEndian.PutUint16(out[24:26], uint16(from.port))
 	q.Log.Logf(qosWho, "udp %s latency probe: request %d, requestid %d, flags %d -> echo",
 		peer, req, binary.BigEndian.Uint32(p[4:]), binary.BigEndian.Uint32(p[12:]))
-	time.AfterFunc(q.Hold, func() { q.UDP.WriteToUDP(out, from) })
+	time.AfterFunc(q.Hold, func() { from.send(out) })
 }
 
 // bandwidth counts a bandwidth probe (QosApiSendBandwidthProbe: probesize bytes, words client request
 // id, requestid, reqsecret, probe index from 0, numprobes). When all have arrived, or BandwidthWait
 // after the first, the test answers with numprobes datagrams of probesize bytes back to back
 // (sendBandwidth).
-func (q *QoS) bandwidth(p []byte, from *net.UDPAddr, peer string) {
+func (q *QoS) bandwidth(p []byte, from *udpPeer, peer string) {
 	id, secret, index := binary.BigEndian.Uint32(p[4:]), binary.BigEndian.Uint32(p[8:]), binary.BigEndian.Uint32(p[12:])
 	q.mu.Lock()
 	t := q.tests[id]
-	if t == nil || t.firewall || t.secret != secret || t.peer != from.IP.String() || t.done {
+	if t == nil || t.firewall || t.secret != secret || t.peer != from.key || t.done {
 		q.mu.Unlock()
 		q.Log.Logf(qosWho, "udp %s %d bytes for requestid %d ignored (no open bandwidth test)", peer, len(p), id)
 		return
@@ -409,7 +467,7 @@ func (q *QoS) sendBandwidth(id uint32) {
 	q.mu.Unlock()
 	up := Rate(got, t.size, ms)
 	q.Log.Logf(qosWho, "udp %s bandwidth test %d: %d of %d probes of %d bytes in %d ms, upstream %d bit/s; sending %d back",
-		logging.Peer(t.client), id, got, t.probes, t.size, ms, up, t.probes)
+		logging.Peer(t.client.addr), id, got, t.probes, t.size, ms, up, t.probes)
 	for seq := 1; seq <= t.probes; seq++ {
 		out := make([]byte, t.size)
 		binary.BigEndian.PutUint32(out[0:], t.clientReq)
@@ -418,7 +476,7 @@ func (q *QoS) sendBandwidth(id uint32) {
 		binary.BigEndian.PutUint32(out[12:], uint32(seq))
 		binary.BigEndian.PutUint32(out[16:], uint32(t.probes))
 		binary.BigEndian.PutUint32(out[20:], up)
-		q.UDP.WriteToUDP(out, t.client)
+		t.client.send(out)
 	}
 }
 
@@ -436,12 +494,12 @@ func Rate(count, size int, ms int64) uint32 {
 // firewallPacket records the first firewall packet of a test (QosApiSendFirewallProbes: requestid and
 // reqsecret of our firewall reply, big-endian, from the client's QoS socket; five rounds while the
 // firetype request is outstanding).
-func (q *QoS) firewallPacket(p []byte, from *net.UDPAddr, peer string) {
+func (q *QoS) firewallPacket(p []byte, from *udpPeer, peer string) {
 	id, secret := binary.BigEndian.Uint32(p), binary.BigEndian.Uint32(p[4:])
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	t := q.tests[id]
-	if t == nil || !t.firewall || t.secret != secret || t.peer != from.IP.String() {
+	if t == nil || !t.firewall || t.secret != secret || t.peer != from.key {
 		q.Log.Logf(qosWho, "udp %s firewall packet for requestid %d ignored (no open firewall test)", peer, id)
 		return
 	}

@@ -10,6 +10,7 @@ import (
 
 	"dawngate/server/internal/golden"
 	"dawngate/server/internal/logging"
+	"dawngate/server/internal/tdf"
 )
 
 func loadFrames(t *testing.T) []golden.Frame {
@@ -121,5 +122,42 @@ func TestDescribe(t *testing.T) {
 		if got != w {
 			t.Errorf("line %d:\n got %q\nwant %q", i, got, w)
 		}
+	}
+}
+
+// no log holds a password. The secret members (PASS, CPWD, PSWD) are written as *** at any depth (an empty one
+// stays empty), other members as they are; a payload that doesn't decode but holds a secret's tag isn't dumped.
+func TestDescribeMasksPasswords(t *testing.T) {
+	var out bytes.Buffer
+	log := logging.New(&out)
+	login := tdf.NewWriter().String("MAIL", "player@example.com").String("PASS", "hunter2secret").String("TOKN", "").Int("TYPE", 0)
+	Describe(log, "blaze", Frame{Component: 1, Command: 0x28, Type: Request, Payload: login.Bytes()})
+	nested := tdf.NewWriter().Struct("DATA", func(w *tdf.Writer) {
+		w.String("CPWD", "oldsecret99").String("PASS", "newsecret99")
+	}).List("ROOM", tdf.TypeStruct, []*tdf.Writer{tdf.NewWriter().String("PSWD", "roomsecret")}).
+		Union("UNIO", 0, func(w *tdf.Writer) { w.String("PASS", "unionsecret") }).String("PASS", "")
+	Describe(log, "blaze", Frame{Component: 21, Command: 1, Type: Request, Payload: nested.Bytes()})
+	broken := append(login.Bytes()[:len(login.Bytes())-3], 0x99) // truncated: doesn't decode
+	Describe(log, "blaze", Frame{Component: 1, Command: 0x28, Type: Request, Payload: broken})
+	r := NewReader(bytes.NewReader(append([]byte{0, 50, 0, 1}, broken...)))
+	_, err := r.Next()
+	LogEnd(log, "blaze", r, err)
+	got := out.String()
+	for _, secret := range []string{"hunter2secret", "oldsecret99", "newsecret99", "roomsecret", "unionsecret", "hunter2"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("the log holds %q:\n%s", secret, got)
+		}
+	}
+	for _, want := range []string{"MAIL: 'player@example.com'", "PASS: '***'", "CPWD: '***'", "PSWD: '***'", "PASS: ''",
+		"bytes not dumped: they hold the tag PASS"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the log lacks %q:\n%s", want, got)
+		}
+	}
+	if n := strings.Count(got, "PASS: '***'"); n != 3 {
+		t.Errorf("%d masked PASS, want 3 (top level, nested, union):\n%s", n, got)
+	}
+	if !strings.Contains(SafeHexdump([]byte("no secrets here")), "6e 6f") {
+		t.Error("SafeHexdump withheld harmless bytes")
 	}
 }

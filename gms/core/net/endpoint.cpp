@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <atomic>
 #include <bitset>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <map>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include "GetTime.h"
@@ -21,6 +23,7 @@
 #include "RakNetVersion.h"
 #include "RakPeer.h"
 #include "RakPeerInterface.h"
+#include "core/common/log.h"
 #include "core/timing/clock.h"
 
 namespace gms {
@@ -79,8 +82,30 @@ void Prune(std::unordered_map<uint64_t, std::deque<double>>* m, double now) {
 
 }  // namespace
 
+std::string RakHardeningOptions::Describe() const {
+  char b[300];
+  std::snprintf(b, sizeof b,
+                "handshake cookies %s, no reply to a short REQUEST_1 %s, IP ban of an unverified sender's nonsense %s, "
+                "ordered messages ahead of a hole per connection %u / %u KB (0 = no limit)",
+                cookies ? "on" : "off", request1NoSmaller ? "on" : "off", nonsenseBan ? "on (stock)" : "off",
+                orderedAheadMessages, orderedAheadKb);
+  return b;
+}
+
+std::string RakHardeningTotals::Describe() const {
+  char b[300];
+  std::snprintf(b, sizeof b,
+                "cookies issued %llu, REQUEST_2 without the cookie %llu, short REQUEST_1 %llu, unverified nonsense "
+                "closed %llu (banned %llu), closed over the ordered-ahead limit %llu",
+                static_cast<unsigned long long>(cookiesIssued), static_cast<unsigned long long>(request2BadCookie),
+                static_cast<unsigned long long>(request1Short), static_cast<unsigned long long>(nonsenseClosed),
+                static_cast<unsigned long long>(nonsenseBanned), static_cast<unsigned long long>(orderedAheadClosed));
+  return b;
+}
+
 struct Endpoint::Impl {
   RakNet::RakPeerInterface* peer = nullptr;
+  RakHardeningOptions hardOpt;
   // The GUIDs as the packets carried them (with RakNet's system index), so Send addresses a connection the way
   // raknet_probe did.
   std::map<uint64_t, RakNet::RakNetGUID> guids;
@@ -90,6 +115,11 @@ struct Endpoint::Impl {
   // ---- shared with RakNet's threads (the update thread's plugin and simulator, the receive thread's handler)
   std::mutex mu;
   std::unordered_map<uint64_t, std::deque<double>> arrivals;  // GMS messages taken in, not yet polled
+  // the limits (limits.h; under mu) and the addresses the receive thread found over them, to close in Poll
+  NetLimitOptions limitOpt;
+  NetLimiter limiter;
+  bool limitsOn = false;
+  std::vector<RakNet::SystemAddress> kickAddrs;
   std::unordered_map<uint64_t, std::deque<double>> sends;     // tracked messages sent, not yet on the wire
   double lastPrune = 0;
   Stats st;
@@ -105,6 +135,9 @@ struct Endpoint::Impl {
   DelayLine outLine, inLine;
   RakNet::RakNetSocket2* socket = nullptr;
   RakNet::RNS2EventHandler* recvHandler = nullptr;  // the RakPeer, which owns the receive structs
+  // ---- the limits, the engine thread's: connections to close (with why), and the ones closed (their later loss isn't news)
+  std::deque<std::pair<uint64_t, std::string>> kickQueue;
+  std::unordered_set<uint64_t> kicked;
   bool simOn = false;
   std::atomic<bool> stopping{false};
   std::atomic<bool> bypass{false};  // the update thread is sending a due datagram itself (RakNetSendTo lets it through)
@@ -205,14 +238,31 @@ struct Endpoint::Impl {
     static std::vector<std::pair<RakNet::RakNetSocket2*, Impl*>> r;
     return r;
   }
-  // The receive thread: a datagram for a simulated endpoint goes into its in queue (or is lost) and RakNet's struct is
-  // given back here (RakPeer::OnRNS2Recv keeps a refused struct otherwise).
+  // The receive thread: the limits drop a datagram over them before RakNet parses it; a datagram for a simulated
+  // endpoint goes into its in queue (or is lost). A refused struct is given back here (RakPeer::OnRNS2Recv keeps it
+  // otherwise).
   static bool OnIncoming(RakNet::RNS2RecvStruct* s) {
     std::lock_guard<std::mutex> reg(RegistryMutex());
     Impl* impl = nullptr;
     for (const auto& kv : Registry())
       if (kv.first == s->socket) impl = kv.second;
     if (!impl || impl->stopping || s->bytesRead <= 0 || s->bytesRead > MAXIMUM_MTU_SIZE) return true;
+    if (impl->limitsOn) {
+      const uint32_t ip = ntohl(s->systemAddress.address.addr4.sin_addr.s_addr);
+      const bool offline = (static_cast<uint8_t>(s->data[0]) & 0x80) == 0;  // no BITFLAG_IS_VALID: no connection's
+      NetLimiter::Verdict v;
+      {
+        std::lock_guard<std::mutex> lock(impl->mu);
+        v = impl->limiter.OnDatagram(ip, s->systemAddress.GetPort(), static_cast<size_t>(s->bytesRead), offline,
+                                     timing::NowMs());
+        if (v == NetLimiter::kKick) impl->kickAddrs.push_back(s->systemAddress);
+      }
+      if (v != NetLimiter::kPass) {
+        impl->recvHandler->DeallocRNS2RecvStruct(s, _FILE_AND_LINE_);
+        return false;
+      }
+      if (!impl->simOn) return true;
+    }
     {
       std::lock_guard<std::mutex> lock(impl->mu);
       double due = 0;
@@ -269,6 +319,27 @@ bool Endpoint::Start(const std::string& bindIp, uint16_t port, unsigned maxConne
   m.plugin.reset(new Impl::Plugin(&m));
   m.peer->AttachPlugin(m.plugin.get());
   m.simOn = m.simOpt.Active();
+  m.limitsOn = m.limitOpt.on;
+  {
+    std::lock_guard<std::mutex> lock(m.mu);
+    m.limiter = NetLimiter(m.limitOpt);
+    m.kickAddrs.clear();
+  }
+  m.kickQueue.clear();
+  m.kicked.clear();
+#if DG_RAKNET_HARDENING
+  {  // before Startup (RakNet's threads read it without a lock)
+    RakNet::RakPeer* rp = static_cast<RakNet::RakPeer*>(m.peer);
+    RakNet::RakPeer::DgHardening h = rp->DgGetHardening();  // keeps the peer's random cookie key
+    h.handshakeCookies = m.hardOpt.cookies;
+    h.banNonsenseSenders = m.hardOpt.nonsenseBan;
+    h.request1NoSmallerThanReply = m.hardOpt.request1NoSmaller;
+    h.orderedAheadMaxMessages = m.hardOpt.orderedAheadMessages;
+    h.orderedAheadMaxBytes = m.hardOpt.orderedAheadKb * 1024u;
+    rp->DgSetHardening(h);
+  }
+#endif
+  if (m.limitsOn && !m.simOn) m.peer->SetIncomingDatagramEventHandler(&Impl::OnIncoming);
   if (m.simOn) {
     m.outLine = DelayLine(m.simOpt);
     NetSimOptions in = m.simOpt;
@@ -290,19 +361,26 @@ bool Endpoint::Start(const std::string& bindIp, uint16_t port, unsigned maxConne
     return false;
   }
   m.peer->SetMaximumIncomingConnections(static_cast<unsigned short>(maxConnections));
-  if (m.simOn) {
+  // RakNet's own (loopback exempt); not with shared IPs (the tunnel gateway's players connect from one IP)
+  if (m.limitsOn && m.limitOpt.sharedIps.empty()) m.peer->SetLimitIPConnectionFrequency(true);
+  if (m.simOn || m.limitsOn) {
     DataStructures::List<RakNet::RakNetSocket2*> sockets;
     m.peer->GetSockets(sockets);
     RakNet::RakNetSocket2* s = sockets.Size() ? sockets[0] : nullptr;
-    if (s && s->GetSocketType() == RakNet::RNS2T_WINDOWS) {
+    if (m.simOn && s && s->GetSocketType() == RakNet::RNS2T_WINDOWS) {
       m.layer.reset(new Impl::SimLayer(&m));
       static_cast<RakNet::RNS2_Windows*>(s)->SetSocketLayerOverride(m.layer.get());
       m.socket = s;
-      std::lock_guard<std::mutex> reg(Impl::RegistryMutex());
-      Impl::Registry().emplace_back(s, &m);
-    } else {
+    } else if (m.simOn) {
       m.simOn = false;  // only RNS2_Windows has the override; the simulator stays off
       if (error) *error = "network simulator: no RNS2_Windows socket; off";
+    }
+    if (s && (m.simOn || m.limitsOn)) {
+      std::lock_guard<std::mutex> reg(Impl::RegistryMutex());
+      Impl::Registry().emplace_back(s, &m);
+    } else if (m.limitsOn) {
+      m.limitsOn = false;
+      if (error) *error = "network limits: no socket; off";
     }
   }
   return true;
@@ -328,7 +406,11 @@ void Endpoint::Stop() {
   m.layer.reset();
   m.plugin.reset();
   m.guids.clear();
+  m.kickQueue.clear();
+  m.kicked.clear();
+  m.limitsOn = false;
   std::lock_guard<std::mutex> lock(m.mu);
+  m.kickAddrs.clear();
   m.outQ.clear();
   m.inQ.clear();
   m.arrivals.clear();
@@ -346,38 +428,117 @@ std::string Endpoint::GuidText() const { return impl_->peer ? impl_->peer->GetMy
 const char* Endpoint::RakNetVersion() { return RAKNET_VERSION; }
 int Endpoint::ProtocolVersion() { return RAKNET_PROTOCOL_VERSION; }
 
+namespace {
+
+// A kicked connection's event: what the session gets for a lost connection.
+void LostEvent(Endpoint::Event* e, uint64_t conn, const std::string& addr, const std::string& guid) {
+  e->kind = Endpoint::Event::kDisconnected;
+  e->conn = conn;
+  e->addr = addr;
+  e->guid = guid;
+  e->data.assign(1, static_cast<uint8_t>(ID_CONNECTION_LOST));
+  e->arrivedMs = -1;
+  e->polledMs = timing::NowMs();
+}
+
+}  // namespace
+
 bool Endpoint::Poll(Event* e) {
   Impl& m = *impl_;
   if (!m.peer) return false;
-  RakNet::Packet* p = m.peer->Receive();
-  if (!p) return false;
-  e->conn = p->guid.g;
-  e->addr = p->systemAddress.ToString(true);
-  e->guid = p->guid.ToString();
-  e->data.assign(p->data, p->data + p->length);
-  e->polledMs = timing::NowMs();
-  e->arrivedMs = -1;
-  const uint8_t id = p->length ? p->data[0] : 0;
-  if (id == ID_NEW_INCOMING_CONNECTION) {
-    e->kind = Event::kConnected;
-    m.guids[p->guid.g] = p->guid;
-  } else if (id == ID_DISCONNECTION_NOTIFICATION || id == ID_CONNECTION_LOST) {
-    e->kind = Event::kDisconnected;
-    m.guids.erase(p->guid.g);
-  } else if (id >= kFirstGmsByte) {
-    e->kind = Event::kGms;
-    std::lock_guard<std::mutex> lock(m.mu);
-    auto it = m.arrivals.find(AddressKey(p->systemAddress, p->data, p->length));
-    if (it != m.arrivals.end() && !it->second.empty()) {
-      e->arrivedMs = it->second.front();
-      it->second.pop_front();
-      if (it->second.empty()) m.arrivals.erase(it);
+  if (m.limitsOn) {  // the connections found over their limits (receive thread) or silent, closed one per call
+    std::vector<RakNet::SystemAddress> addrs;
+    std::vector<uint64_t> silent;
+    {
+      std::lock_guard<std::mutex> lock(m.mu);
+      addrs.swap(m.kickAddrs);
+      silent = m.limiter.Silent(timing::NowMs());
     }
-  } else {
-    e->kind = Event::kOther;
+    for (const RakNet::SystemAddress& a : addrs) {
+      const RakNet::RakNetGUID g = m.peer->GetGuidFromSystemAddress(a);
+      if (g != RakNet::UNASSIGNED_RAKNET_GUID && m.guids.count(g.g))
+        m.kickQueue.emplace_back(g.g, "datagrams over the limits (net_limits)");
+    }
+    for (uint64_t c : silent)
+      if (m.guids.count(c)) m.kickQueue.emplace_back(c, "no GMS message since it connected (net_limits hello timeout)");
+    while (!m.kickQueue.empty()) {
+      const std::pair<uint64_t, std::string> k = m.kickQueue.front();
+      m.kickQueue.pop_front();
+      auto it = m.guids.find(k.first);
+      if (it == m.guids.end()) continue;  // gone meanwhile
+      const RakNet::RakNetGUID guid = it->second;
+      const RakNet::SystemAddress sa = m.peer->GetSystemAddressFromGuid(guid);
+      const std::string addr = sa.ToString(true), guidText = guid.ToString();
+      m.peer->CloseConnection(guid, true);
+      m.guids.erase(it);
+      m.kicked.insert(k.first);
+      {
+        std::lock_guard<std::mutex> lock(m.mu);
+        m.limiter.OnDisconnected(k.first);
+        m.limiter.Block(NetLimiter::AddrKey(ntohl(sa.address.addr4.sin_addr.s_addr), sa.GetPort()), timing::NowMs());
+      }
+      Logf("%s net limits: closed %s (guid %s): %s", Clock().c_str(), addr.c_str(), guidText.c_str(), k.second.c_str());
+      LostEvent(e, k.first, addr, guidText);
+      return true;
+    }
   }
-  m.peer->DeallocatePacket(p);
-  return true;
+  for (;;) {
+    RakNet::Packet* p = m.peer->Receive();
+    if (!p) return false;
+    e->conn = p->guid.g;
+    e->addr = p->systemAddress.ToString(true);
+    e->guid = p->guid.ToString();
+    e->data.assign(p->data, p->data + p->length);
+    e->polledMs = timing::NowMs();
+    e->arrivedMs = -1;
+    const uint8_t id = p->length ? p->data[0] : 0;
+    bool skip = false;  // not handed out
+    if (id == ID_NEW_INCOMING_CONNECTION) {
+      e->kind = Event::kConnected;
+      bool ok = true;
+      if (m.limitsOn) {
+        std::lock_guard<std::mutex> lock(m.mu);
+        ok = m.limiter.OnConnected(p->guid.g, ntohl(p->systemAddress.address.addr4.sin_addr.s_addr),
+                                   p->systemAddress.GetPort(), e->polledMs);
+      }
+      if (ok) {
+        m.guids[p->guid.g] = p->guid;
+      } else {
+        m.peer->CloseConnection(p->guid, true);
+        m.kicked.insert(p->guid.g);
+        Logf("%s net limits: closed %s (guid %s) at once: its IP has %d connections (net_limits)", Clock().c_str(),
+             e->addr.c_str(), e->guid.c_str(), m.limitOpt.connectionsPerIp);
+        skip = true;
+      }
+    } else if (id == ID_DISCONNECTION_NOTIFICATION || id == ID_CONNECTION_LOST) {
+      e->kind = Event::kDisconnected;
+      m.guids.erase(p->guid.g);
+      if (m.limitsOn) {
+        std::lock_guard<std::mutex> lock(m.mu);
+        m.limiter.OnDisconnected(p->guid.g);
+      }
+      if (m.kicked.erase(p->guid.g)) skip = true;  // reported when it was closed
+    } else if (id >= kFirstGmsByte) {
+      e->kind = Event::kGms;
+      std::lock_guard<std::mutex> lock(m.mu);
+      auto it = m.arrivals.find(AddressKey(p->systemAddress, p->data, p->length));
+      if (it != m.arrivals.end() && !it->second.empty()) {
+        e->arrivedMs = it->second.front();
+        it->second.pop_front();
+        if (it->second.empty()) m.arrivals.erase(it);
+      }
+      if (m.limitsOn) {
+        const NetLimiter::Verdict v = m.limiter.OnMessage(p->guid.g, p->length, e->polledMs);
+        if (v != NetLimiter::kPass) skip = true;
+        if (v == NetLimiter::kKick) m.kickQueue.emplace_front(p->guid.g, "GMS messages over the limits (net_limits)");
+      }
+    } else {
+      e->kind = Event::kOther;
+    }
+    m.peer->DeallocatePacket(p);
+    if (!skip) return true;
+    if (!m.kickQueue.empty()) return Poll(e);  // the kick's event next
+  }
 }
 
 bool Endpoint::Send(ConnId conn, const Bytes& msg) {
@@ -395,7 +556,50 @@ bool Endpoint::Send(ConnId conn, const Bytes& msg) {
                       fast ? IMMEDIATE_PRIORITY : HIGH_PRIORITY, RELIABLE_ORDERED, fast ? 1 : 0, guid, false) != 0;
 }
 
+void Endpoint::Close(ConnId conn) {
+  Impl& m = *impl_;
+  if (!m.peer) return;
+  auto it = m.guids.find(conn);
+  if (it == m.guids.end()) return;
+  m.peer->CloseConnection(it->second, true);
+  m.guids.erase(it);
+}
+
 void Endpoint::SetNetSim(const NetSimOptions& o) { impl_->simOpt = o; }
+
+void Endpoint::SetLimits(const NetLimitOptions& o) { impl_->limitOpt = o; }
+const NetLimitOptions& Endpoint::Limits() const { return impl_->limitOpt; }
+
+void Endpoint::SetHardening(const RakHardeningOptions& o) { impl_->hardOpt = o; }
+const RakHardeningOptions& Endpoint::Hardening() const { return impl_->hardOpt; }
+bool Endpoint::HardeningAvailable() {
+#if DG_RAKNET_HARDENING
+  return true;
+#else
+  return false;
+#endif
+}
+
+RakHardeningTotals Endpoint::TakeHardeningTotals() {
+  RakHardeningTotals t;
+#if DG_RAKNET_HARDENING
+  if (impl_->peer) {
+    const RakNet::RakPeer::DgCounts c = static_cast<RakNet::RakPeer*>(impl_->peer)->DgTakeCounts();
+    t.cookiesIssued = c.cookiesIssued;
+    t.request1Short = c.request1Short;
+    t.request2BadCookie = c.request2BadCookie;
+    t.nonsenseClosed = c.nonsenseClosed;
+    t.nonsenseBanned = c.nonsenseBanned;
+    t.orderedAheadClosed = c.orderedAheadClosed;
+  }
+#endif
+  return t;
+}
+
+NetLimiter::Totals Endpoint::TakeLimitTotals() {
+  std::lock_guard<std::mutex> lock(impl_->mu);
+  return impl_->limiter.Take();
+}
 const NetSimOptions& Endpoint::NetSim() const { return impl_->simOpt; }
 
 void Endpoint::SetTrackedSends(const std::vector<uint8_t>& wireBytes) {

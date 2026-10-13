@@ -1,0 +1,14 @@
+{{define "content"}}
+<p>Download everything this server keeps of your account as a JSON file: login name, display names, when it was made
+and last used, level, currencies, items, settings, perk pages, statistics, match history and lists. Your password is
+not in it (the server keeps only a hash of it).</p>
+<form method="post" action="/account/data" autocomplete="off">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>Login name
+<input name="name" value="{{.Name}}" required maxlength="64" autocomplete="username"></label>
+<label>Password
+<input type="password" name="password" required maxlength="{{.Rules.MaxPassword}}" autocomplete="current-password"{{if index .Fields "password"}} aria-invalid="true"{{end}}></label>
+{{with index .Fields "password"}}<p class="field-error">{{.}}</p>{{end}}
+<button type="submit">Download</button>
+</form>
+{{end}}

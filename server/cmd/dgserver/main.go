@@ -84,7 +84,8 @@
 // the GMS port (with --gms-dir: the hosts bind the pool's ports themselves).
 //
 // Player content and persistence (roadmap B7a): accounts, personas and player content are kept in
-// <data>\accounts.json (--data "" keeps them in memory only). The game catalog comes from the content
+// the SQLite database <data>\accounts.db (--data "" keeps them in memory only); the first start imports
+// a <data>\accounts.json of the earlier builds and renames it accounts.json.imported. The game catalog comes from the content
 // file (--content, default <data>\content.json), which --make-content builds once from the user's own
 // AssetData dump (re/scripts/assetdata.py dump, docs/ASSETDATA.md) or straight from the game
 // folder (client\ia_Dawngate\Dawngate: its game\Data\AssetData.snap and Locale\en-us\Locale.package; the

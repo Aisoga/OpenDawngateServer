@@ -282,7 +282,7 @@ func registerGameManager(s *Server) {
 			return r.Server.startHostedGame(r, g, p)
 		}
 		r.Server.Log.Logf("blaze", "   game %d %q: GMS %s (HNET), player %d", g.ID, g.Name, g.GMS, p.ID)
-		r.Notify(ComponentGameManager, NotifyGameSetupID, "NotifyGameSetup", GameSetupNotification(g, p))
+		r.Notify(ComponentGameManager, NotifyGameSetupID, "NotifyGameSetup", GameSetupNotification(r.Conn.ForClient(g), p))
 		return JoinGameReply(g.ID)
 	})
 	// removePlayer (Blaze::GameManager::RemovePlayerRequest 0x01461550: GID, PID, REAS, CNTX, SCTX, BTPL)

@@ -12,7 +12,10 @@
      checkout (windows/amd64, -trimpath, GOTOOLCHAIN=local, CGO off).
   3. The folder <Out>\<Name>\: the two programs, host\dgsim.dll, host\lua\*.lua, README.txt (re\scripts\release),
      LICENSE.txt (the AGPL text: the checkout's LICENSE, else branch public's), THIRD-PARTY-NOTICES.txt (RakNet 4.081's LICENSE and PATENTS
-     from tools\raknet\RakNet, Go's LICENSE), BUILD.txt (commit, Go version, every file's SHA-256).
+     from tools\raknet\RakNet and a note on this project's RakNet patches (gms\cmake\raknet_patches),
+     Go's LICENSE and (ADR-4) the licence files of every outside Go module the two programs link, from the
+     module cache: modernc.org/sqlite and its dependencies, golang.org/x/crypto, golang.org/x/sys),
+     BUILD.txt (commit, Go version, every file's SHA-256).
   4. The check: no file of the release has the name or the SHA-256 of a file of either build in
      docs\file_manifest.csv, and only the expected kinds of files are in it; then the listing.
   5. <Out>\<Name>.zip (unless -NoZip).
@@ -71,6 +74,10 @@ try {
         & $go build -C (Join-Path $Repo 'server') -trimpath -ldflags '-s -w' -o (Join-Path $dir $p[0]) $p[1]
         if ($LASTEXITCODE -ne 0) { Fail "go build $($p[1]) failed" }
     }
+    # the outside Go modules the two programs link, for their licences below ("path version dir")
+    $modules = @(& $go list -C (Join-Path $Repo 'server') -deps -f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Version}} {{.Dir}}{{end}}{{end}}' ./cmd/start-server ./cmd/start-client |
+        Where-Object { $_ } | Sort-Object -Unique)
+    if ($LASTEXITCODE -ne 0) { Fail 'go list of the modules failed' }
 } finally {
     foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) }
 }
@@ -105,8 +112,34 @@ foreach ($part in @(@('LICENSE', '---- RakNet: PATENTS ----'), @('PATENTS', $nul
     $notices += @([IO.File]::ReadAllLines($f))
     if ($part[1]) { $notices += @('', $part[1], '') }
 }
+# The RakNet in dgsim.dll is modified by the patch set gms\cmake\raknet_patches
+$patches = @(Get-ChildItem (Join-Path $GmsRoot 'gms\cmake\raknet_patches') -Filter '*.patch' -File | Sort-Object Name | ForEach-Object { $_.Name })
+if (-not $patches.Count) { Fail "no RakNet patches in $GmsRoot\gms\cmake\raknet_patches (the build applies them; the notice names them)" }
+$notices += @('', '---- RakNet: the modifications in this release ----', '',
+    'The RakNet in host\dgsim.dll is a modified copy of 4.081: at build time this project applies its own patch set',
+    "(gms/cmake/raknet_patches in the source: $($patches -join ', ')).",
+    'The patches fix defects in the receive path (split messages, ACK/NAK ranges, RangeList and BitStream reads) and',
+    'harden the handshake and the receive path (handshake cookies with SipHash-2-4, written from its public',
+    'specification; no IP ban of unverified senders; a limit on ordered messages waiting per connection). The',
+    'defects were found by SLikeNet (MIT licence) and public reports; no SLikeNet code is used. The modified files',
+    'remain under RakNet''s licence and patent grant above; the patches themselves are this project''s code (LICENSE.txt).')
 $notices += @('', 'Start-Server.exe and Start-Client.exe contain the Go standard library and runtime.', '', '---- Go: LICENSE ----', '')
 $notices += @([IO.File]::ReadAllLines((Join-Path $goRoot 'LICENSE')))
+# ADR-4: every outside module in the programs, with each licence file at its root (LICENSE, PATENTS,
+# SQLITE-LICENSE, ...), taken from the module cache the build used
+if ($modules.Count) {
+    $notices += @('', "Start-Server.exe and Start-Client.exe also contain these $($modules.Count) Go modules (server\go.mod, pinned by server\go.sum; ADR-4):", '')
+    $notices += @($modules | ForEach-Object { '  ' + (($_ -split ' ')[0..1] -join ' ') })
+    foreach ($m in $modules) {
+        $path, $ver, $mdir = $m -split ' ', 3
+        $lic = @(Get-ChildItem -LiteralPath $mdir -File | Where-Object { $_.Name -match '(?i)(licen[cs]e|copying|notice|patents)' } | Sort-Object Name)
+        if (-not $lic.Count) { Fail "no licence file in $mdir ($path $ver): look it up before releasing" }
+        foreach ($f in $lic) {
+            $notices += @('', "---- $path ${ver}: $($f.Name) ----", '')
+            $notices += @([IO.File]::ReadAllLines($f.FullName))
+        }
+    }
+}
 $notices += @('', 'The MSVC static runtime in dgsim.dll needs no notice.')
 [IO.File]::WriteAllText((Join-Path $dir 'THIRD-PARTY-NOTICES.txt'), (($notices -join "`r`n") + "`r`n"))
 

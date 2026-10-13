@@ -107,6 +107,12 @@ func Peer(a net.Addr) string {
 		return fmt.Sprintf("('%s', %d)", t.IP.String(), t.Port)
 	case *net.UDPAddr:
 		return fmt.Sprintf("('%s', %d)", t.IP.String(), t.Port)
+	case interface {
+		IPPort() (net.IP, int)
+		TunnelSession() uint64
+	}: // a game socket behind the tunnel (tunnel.Addr)
+		ip, port := t.IPPort()
+		return fmt.Sprintf("('%s', %d, tunnel %d)", ip.String(), port, t.TunnelSession())
 	}
 	return fmt.Sprintf("('%s')", a.String())
 }

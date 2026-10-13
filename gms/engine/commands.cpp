@@ -1219,6 +1219,17 @@ bool OnClientMessage(void* sim, unsigned index, std::uint8_t wire, const std::ui
   return true;
 }
 
+bool ReadInventory(void* sim, unsigned index, std::uint32_t item[11], std::int32_t count[11]) {
+  PlayerInfo pi;
+  if (index >= kMaxPlayers || !SehReadPlayer(sim, index, &pi) || !pi.player) return false;
+  const Wallet w = SehWallet(pi.player);
+  for (unsigned s = 0; s < 11; ++s) {
+    item[s] = s < player::kItemSlots ? w.item[s] : 0;
+    count[s] = s < player::kItemSlots ? w.count[s] : 0;
+  }
+  return true;
+}
+
 void Tick(void* sim) {
   g_sim = sim;
   if (!g_installed) return;

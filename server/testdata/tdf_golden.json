@@ -650,6 +650,21 @@
    "name": "notifygamelistupdate_removed_notification",
    "hex": "92fba500019eca640001ca5b7604000101",
    "pretty": "    DONE: 1\n    GLID: 1\n    REMV: \n      - 1"
+  },
+  {
+   "name": "usersessiondisconnected_notification",
+   "hex": "ce4c800000",
+   "pretty": "    SDR: 0"
+  },
+  {
+   "name": "userunauthenticated_notification",
+   "hex": "8a99000081d0acf30eb2fd300000",
+   "pretty": "    BID: 2000000001\n    LOTP: 0"
+  },
+  {
+   "name": "notifyplayerremoved_kicked_notification",
+   "hex": "8eed3800009e99000001c299000081d0acf30eca58730008",
+   "pretty": "    CNTX: 0\n    GID: 1\n    PID: 2000000001\n    REAS: 8"
   }
  ],
  "decode": [

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{{.Title}} · Dawngate server</title>
+<link rel="stylesheet" href="/site.css">
+</head>
+<body>
+<header>
+<a class="brand" href="/">Dawngate server</a>
+{{if .Admin}}{{if .Admin.Name}}<nav class="admin">
+<a href="/admin">Admin</a>
+<a href="/admin/accounts">Accounts</a>
+<a href="/admin/invites">Invite codes</a>
+<a href="/admin/signup">Sign-up</a>
+<a href="/admin/matches">Matches</a>
+<a href="/admin/audit">Audit log</a>
+<form method="post" action="/admin/logout" class="inline"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit" class="link">Log out {{.Admin.Name}}</button></form>
+</nav>{{end}}{{else}}<nav>
+<a href="/signup">Make an account</a>
+<a href="/account/password">Change password</a>
+<a href="/password">Forgot password?</a>
+<a href="/account/data">Your data</a>
+<a href="/account/delete">Delete account</a>
+<a href="/status">Status</a>
+</nav>{{end}}
+</header>
+<main{{if .Admin}} class="wide"{{end}}>
+<h1>{{.Title}}</h1>
+{{if .Done}}<p class="done">{{.Done}}</p>{{end}}
+{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+{{template "content" .}}
+</main>
+<footer>
+<a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="/status">Status</a>
+<span class="version">Dawngate restoration server {{.Version}}</span>
+</footer>
+</body>
+</html>

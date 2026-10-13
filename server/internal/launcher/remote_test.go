@@ -87,6 +87,11 @@ func TestStartClientRemote(t *testing.T) {
 	if d, _ := exepatch.Describe(exe); d["ca_sha256"] != certs.Fingerprint(ca) || d["redirector"] != remoteAddress {
 		t.Errorf("client exe %v", d)
 	}
+	// a player copy for another machine's server links to that server's HTTP port, which redirects to its
+	// website when it has one
+	if !strings.Contains(out, "links at http://"+remoteAddress+":18080/dawngate/") {
+		t.Errorf("the player copy's links:\n%s", out)
+	}
 	code, out = run(t, RunClient, dir, "--non-interactive", "--setup-only", remoteAddress)
 	if code != 0 || strings.Contains(out, "trusting") {
 		t.Errorf("a known CA: exit %d\n%s", code, out)

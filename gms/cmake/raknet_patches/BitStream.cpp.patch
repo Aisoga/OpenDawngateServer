@@ -1,0 +1,60 @@
+# patches of RakNet 4.081's BitStream.cpp, applied by gms/cmake/raknet.cmake (dg_add_raknet, protocol 5) to the
+# copy in the build tree; tools/raknet stays untouched. Each OLD block must occur exactly once in the original
+# (CRLF read as LF) and is replaced by its NEW block. Our own code (BSD-licensed RakNet, modified here);
+# the defects were found by SLikeNet (MIT) and public reports; no SLikeNet code is used.
+@@@OLD write from bitstream
+void BitStream::Write( BitStream *bitStream, BitSize_t numberOfBits )
+{
+	AddBitsAndReallocate( numberOfBits );
+@@@NEW
+void BitStream::Write( BitStream *bitStream, BitSize_t numberOfBits )
+{
+	// never more than the source has left (the aligned memcpy below did not check)
+	if (bitStream->GetNumberOfUnreadBits() < numberOfBits)
+		numberOfBits=bitStream->GetNumberOfUnreadBits();
+	AddBitsAndReallocate( numberOfBits );
+@@@END
+@@@OLD read bytes
+		if ( readOffset + ( numberOfBytes << 3 ) > numberOfBitsUsed )
+@@@NEW
+		if ( numberOfBytes > GetNumberOfUnreadBits() / 8 )  // no overflow
+@@@END
+@@@OLD read bit
+bool BitStream::ReadBit( void )
+{
+@@@NEW
+bool BitStream::ReadBit( void )
+{
+	if ( GetNumberOfUnreadBits() < 1 )  // not past the end
+		return false;
+@@@END
+@@@OLD read aligned bytes
+	if ( readOffset + ( numberOfBytesToRead << 3 ) > numberOfBitsUsed )
+@@@NEW
+	if ( numberOfBytesToRead > GetNumberOfUnreadBits() / 8 )  // no overflow
+@@@END
+@@@OLD read bits
+	if ( readOffset + numberOfBitsToRead > numberOfBitsUsed )
+@@@NEW
+	if ( numberOfBitsToRead > GetNumberOfUnreadBits() )  // no overflow
+@@@END
+@@@OLD read compressed
+	if ( readOffset + 1 > numberOfBitsUsed )
+@@@NEW
+	if ( GetNumberOfUnreadBits() < 1 )
+@@@END
+@@@OLD read aligned var 1
+	if ( readOffset + 1*8 > numberOfBitsUsed )
+@@@NEW
+	if ( GetNumberOfUnreadBits() < 1*8 )
+@@@END
+@@@OLD read aligned var 2
+	if ( readOffset + 2*8 > numberOfBitsUsed )
+@@@NEW
+	if ( GetNumberOfUnreadBits() < 2*8 )
+@@@END
+@@@OLD read aligned var 4
+	if ( readOffset + 4*8 > numberOfBitsUsed )
+@@@NEW
+	if ( GetNumberOfUnreadBits() < 4*8 )
+@@@END

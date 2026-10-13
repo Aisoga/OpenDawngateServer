@@ -33,6 +33,9 @@ int PumpEndpoint(Endpoint& ep, GmsSession& session, SteadyClock::time_point star
     }
     const double t = std::chrono::duration<double>(SteadyClock::now() - start).count();
     const uint8_t id = e.data.empty() ? 0 : e.data[0];
+    // any other RakNet packet (a connected client's id below 0x81, an offline ID_ADVERTISE_SYSTEM, ...) goes to
+    // the strict check and is logged only within its log limit
+    if (e.kind == Endpoint::Event::kOther && !session.OnOtherPacket(e.conn, e.data.data(), e.data.size())) continue;
     Logf("%s %8.3f %02x %s (%zu B) from %s, guid %s", Clock().c_str(), t, id, RakMessageName(id), e.data.size(),
          e.addr.c_str(), e.guid.c_str());
     for (size_t off = 0; off < e.data.size(); off += 16)

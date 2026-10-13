@@ -7,8 +7,8 @@
   Start-Server.cmd) and that no other Dawngate client runs, then starts the patched working copy client\run_854
   through launch_monitor.ps1 (it creates the launcher's "Global\Dawngate L2G" event, without which Dawngate.exe
   won't start) with no time limit and no capture. The window waits until you close the game.
-  Log in with any e-mail and password (the first login with an e-mail creates that account), then PLAY and
-  PRACTICE DAWNGATE, or the VERSUS tab's QUEUE SOLO; see docs/PLAYING.md.
+  Log in with a login name and a password of 8+ characters (the first login with a new name creates that account
+  with that password), then PLAY and PRACTICE DAWNGATE, or the VERSUS tab's QUEUE SOLO; see docs/PLAYING.md.
   The client must be the patched copy: the original one talks to EA's servers (gone) and trusts only EA's
   certificates; setup_all.py (or play.ps1's setup check) makes and patches client\run_854.
   Logs: the newest re\logs\manual_*\client\ (the game's own log stays in %APPDATA%\DawngateData).

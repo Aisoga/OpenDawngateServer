@@ -1,0 +1,28 @@
+package dbpf
+
+import (
+	"encoding/hex"
+	"testing"
+)
+
+// ART3e: WritePackage makes dbpf.py's write_package bytes (hex from Python on the same entries): one string
+// table (every field constant: flags 7), and two entries with only the type shared (flags 1).
+func TestWritePackageMatchesDbpfPy(t *testing.T) {
+	for _, c := range []struct {
+		entries []NewEntry
+		want    string
+	}{
+		{[]NewEntry{{0x02FAC0B6, 0x02FABF01, 0xEE155C79, []byte("0x00000001 hi\r\n")}},
+			"444250460300000000000000000000000000000000000000000000000000000000000000010000000000000024000000000000000000000000000000030000006f00000000000000000000000000000000000000000000000000000000000000307830303030303030312068690d0a07000000b6c0fa0201bffa0200000000795c15ee600000000f0000800f00000000000100"},
+		{[]NewEntry{{1, 2, 3, []byte("ab")}, {1, 5, 7<<32 | 9, []byte("cde")}},
+			"444250460300000000000000000000000000000000000000000000000000000000000000020000000000000040000000000000000000000000000000030000006500000000000000000000000000000000000000000000000000000000000000616263646501000000010000000200000000000000030000006000000002000080020000000000010005000000070000000900000062000000030000800300000000000100"},
+	} {
+		got := WritePackage(c.entries)
+		if hex.EncodeToString(got) != c.want {
+			t.Errorf("WritePackage(%d entries) = %x, dbpf.py %s", len(c.entries), got, c.want)
+		}
+		if err := CheckRoundTrip(got, c.entries); err != nil {
+			t.Error(err)
+		}
+	}
+}

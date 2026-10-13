@@ -205,6 +205,8 @@ func (s *Server) launchHostedGame(g Game, mode string, fillTeams int, players []
 	if custom != nil {
 		hg.setup = hg.lobbySetup
 	}
+	each := hg.setup // every player's NotifyGameSetup with the GMS address its client reaches (tunnel.go)
+	hg.setup = func(g Game, hp *hostedPlayer) []byte { return each(hp.conn.ForClient(g), hp) }
 	spec := gmshost.CreateGame{GameID: g.ID, Level: HostedLevel, Mode: mode, Seed: g.Seed,
 		Descriptors: int64(g.descriptors()), // D8-live: the game's GameFlags
 		FillTeams:   fillTeams}              // B10d: a matchmade game's open seats

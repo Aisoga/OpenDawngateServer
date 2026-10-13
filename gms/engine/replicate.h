@@ -117,6 +117,9 @@ bool RemovePlayerBits(void* object, std::uint16_t bits);
 
 // The object's known & visible masks if it still exists (GetObjectById), else false.
 bool ObjectSeers(std::uint32_t id, std::uint16_t* seers);
+// the object's known (+0xE) and visible (+0x10) masks apart, if it still exists; false = no such object (or none
+// with a network component: a server-only object no client has).
+bool ObjectMasks(std::uint32_t id, std::uint16_t* known, std::uint16_t* visible);
 // LabsAbilities_GetInstance(id) != null.
 bool InstanceExists(std::uint32_t instance);
 

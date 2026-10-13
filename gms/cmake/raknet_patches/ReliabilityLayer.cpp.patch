@@ -1,0 +1,168 @@
+# patches of RakNet 4.081's ReliabilityLayer.cpp, applied by gms/cmake/raknet.cmake (dg_add_raknet, protocol 5) to the
+# copy in the build tree; tools/raknet stays untouched. Each OLD block must occur exactly once in the original
+# (CRLF read as LF) and is replaced by its NEW block. Our own code (BSD-licensed RakNet, modified here);
+# the defects were found by SLikeNet (MIT) and public reports; no SLikeNet code is used.
+@@@OLD helpers
+// DEFINE_MULTILIST_PTR_TO_MEMBER_COMPARISONS( InternalPacket, SplitPacketIndexType, splitPacketIndex )
+@@@NEW
+// ---- Dawngate restoration (gms/cmake/raknet_patches/ReliabilityLayer.cpp.patch): receive-path limits ----
+// Written for this project after the defects SLikeNet (MIT) and public reports fixed in RakNet 4.x; no SLikeNet code.
+// A split message has at most DG_MAX_SPLIT_PACKET_COUNT fragments (about 1.4 MB at the usual MTU; the Dawngate client's
+// messages are below one MTU), a connection at most DG_MAX_SPLIT_CHANNELS messages in reassembly at once.
+#define DG_MAX_SPLIT_PACKET_COUNT 1024
+#define DG_MAX_SPLIT_CHANNELS 16
+// An ACK or NAK range [lo, hi] (24-bit datagram numbers) clamped to the datagrams still in flight (the datagram
+// history: base = the first, size of them): false when nothing of it is in flight. Before, a range was walked number
+// by number (up to 16.7 million per range, about 200 ranges a datagram) and a NAK range ending at 0xFFFFFF never ended
+// (RakNet issue #102).
+static bool DgClampToHistory(uint32_t lo, uint32_t hi, uint32_t base, uint32_t size, uint32_t *first, uint32_t *count)
+{
+	const uint32_t M=0x00FFFFFF, H=0x00800000;
+	if (size==0)
+		return false;
+	uint32_t offLo=(lo-base)&M, offHi=(hi-base)&M;
+	if (offHi>=H)
+		return false;
+	if (offLo>=H)
+		offLo=0;
+	if (offLo>=size)
+		return false;
+	if (offHi>=size)
+		offHi=size-1;
+	if (offHi<offLo)
+		return false;
+	*first=(base+offLo)&M;
+	*count=offHi-offLo+1;
+	return true;
+}
+// A fragment is taken only if its message has room for it: a new message only while fewer than DG_MAX_SPLIT_CHANNELS
+// are in reassembly, a known one only with the same fragment count as its first fragment and an index not seen yet.
+// Before, a repeated index counted towards completion and fragments of one message could claim different counts.
+static bool DgSplitFragmentAcceptable(DataStructures::OrderedList<SplitPacketIdType, SplitPacketChannel*, SplitPacketChannelComp> &list, InternalPacket *p)
+{
+	bool exists=false;
+	unsigned at=list.GetIndexFromKey(p->splitPacketId, &exists);
+	if (exists==false)
+		return list.Size() < DG_MAX_SPLIT_CHANNELS;
+	SplitPacketChannel *ch=list[at];
+	if (ch->splitPacketList.Size()==0)
+		return true;
+	if (ch->splitPacketList[0]->splitPacketCount!=p->splitPacketCount)
+		return false;
+	for (unsigned j=0; j < ch->splitPacketList.Size(); j++)
+		if (ch->splitPacketList[j]->splitPacketIndex==p->splitPacketIndex)
+			return false;
+	return true;
+}
+// whether one more message `p` in the ordering heaps (ordered and sequenced messages waiting ahead of a hole, all
+// channels together) is over the connection's limits (0 = none). Before, they were buffered without a limit: a sender
+// that never fills the hole grew them by every reliable message it sent.
+template <class HeapT>
+static bool DgOrderedAheadOverLimit(HeapT *heaps, const InternalPacket *p, unsigned int maxMessages, unsigned int maxBytes)
+{
+	if (maxMessages==0 && maxBytes==0)
+		return false;
+	unsigned int n=1, bytes=(unsigned int) BITS_TO_BYTES(p->dataBitLength);
+	for (int c=0; c < NUMBER_OF_ORDERED_STREAMS; c++)
+	{
+		n+=heaps[c].Size();
+		if (maxBytes!=0)
+			for (unsigned int j=0; j < heaps[c].Size(); j++)
+				bytes+=(unsigned int) BITS_TO_BYTES(heaps[c][j]->dataBitLength);
+	}
+	return (maxMessages!=0 && n > maxMessages) || (maxBytes!=0 && bytes > maxBytes);
+}
+// ---- end of the receive-path limits ----
+// DEFINE_MULTILIST_PTR_TO_MEMBER_COMPARISONS( InternalPacket, SplitPacketIndexType, splitPacketIndex )
+@@@END
+@@@OLD ordered ahead init
+	deadConnection = cheater = false;
+@@@NEW
+	deadConnection = cheater = false;
+	dgOrderedAheadMaxMessages = dgOrderedAheadMaxBytes = 0;  // no limit until RakPeer sets one
+	dgOrderedAheadExceeded = false;
+@@@END
+@@@OLD ordered ahead limit
+						orderingHeaps[internalPacket->orderingChannel].Push(weight, internalPacket, _FILE_AND_LINE_);
+@@@NEW
+						if (DgOrderedAheadOverLimit(orderingHeaps, internalPacket, dgOrderedAheadMaxMessages, dgOrderedAheadMaxBytes))
+						{
+							// more waiting ahead of a hole than a client has in flight: the connection is closed (dropping
+							// the message alone would leave a hole for ever, it is acknowledged already)
+							FreeInternalPacketData(internalPacket, _FILE_AND_LINE_ );
+							ReleaseToInternalPacketPool( internalPacket );
+							dgOrderedAheadExceeded=true;
+							KillConnection();
+							goto CONTINUE_SOCKET_DATA_PARSE_LOOP;
+						}
+						orderingHeaps[internalPacket->orderingChannel].Push(weight, internalPacket, _FILE_AND_LINE_);
+@@@END
+@@@OLD ack range
+			for (datagramNumber=incomingAcks.ranges[i].minIndex; datagramNumber >= incomingAcks.ranges[i].minIndex && datagramNumber <= incomingAcks.ranges[i].maxIndex; datagramNumber++)
+			{
+				CCTimeType whenSent;
+@@@NEW
+			// only the datagrams still in flight (RakNet issue #102)
+			uint32_t dgFirst=0, dgCount=0;
+			if (DgClampToHistory(incomingAcks.ranges[i].minIndex.val, incomingAcks.ranges[i].maxIndex.val, datagramHistoryPopCount.val, datagramHistory.Size(), &dgFirst, &dgCount)==false)
+				continue;
+			for (uint32_t dgK=0; dgK < dgCount; dgK++)
+			{
+				datagramNumber=(dgFirst+dgK)&0x00FFFFFF;
+				CCTimeType whenSent;
+@@@END
+@@@OLD nak range
+			for (messageNumber=incomingNAKs.ranges[i].minIndex; messageNumber >= incomingNAKs.ranges[i].minIndex && messageNumber <= incomingNAKs.ranges[i].maxIndex; messageNumber++)
+			{
+				congestionManager.OnNAK(timeRead, messageNumber);
+@@@NEW
+			// only the datagrams still in flight; a range ending at 0xFFFFFF no longer loops for ever (RakNet issue #102)
+			uint32_t dgFirst=0, dgCount=0;
+			if (DgClampToHistory(incomingNAKs.ranges[i].minIndex.val, incomingNAKs.ranges[i].maxIndex.val, datagramHistoryPopCount.val, datagramHistory.Size(), &dgFirst, &dgCount)==false)
+				continue;
+			for (uint32_t dgK=0; dgK < dgCount; dgK++)
+			{
+				messageNumber=(dgFirst+dgK)&0x00FFFFFF;
+				congestionManager.OnNAK(timeRead, messageNumber);
+@@@END
+@@@OLD split count bound
+		(hasSplitPacket && (internalPacket->splitPacketIndex >= internalPacket->splitPacketCount)))
+@@@NEW
+		(hasSplitPacket && (internalPacket->splitPacketIndex >= internalPacket->splitPacketCount || internalPacket->splitPacketCount > DG_MAX_SPLIT_PACKET_COUNT)))  // bounded (RakNet issue #143)
+@@@END
+@@@OLD split fragment acceptance
+					InsertIntoSplitPacketList( internalPacket, timeRead );
+
+					internalPacket = BuildPacketFromSplitPacketList( internalPacket->splitPacketId, timeRead,
+						s, systemAddress, rnr, updateBitStream);
+@@@NEW
+					// a fragment its message has no room for is dropped (DgSplitFragmentAcceptable)
+					if (DgSplitFragmentAcceptable(splitPacketChannelList, internalPacket)==false)
+					{
+						FreeInternalPacketData(internalPacket, _FILE_AND_LINE_ );
+						ReleaseToInternalPacketPool( internalPacket );
+						goto CONTINUE_SOCKET_DATA_PARSE_LOOP;
+					}
+					InsertIntoSplitPacketList( internalPacket, timeRead );
+
+					internalPacket = BuildPacketFromSplitPacketList( internalPacket->splitPacketId, timeRead,
+						s, systemAddress, rnr, updateBitStream);
+@@@END
+@@@OLD split order
+	internalPacket = CreateInternalPacketCopy( splitPacketChannel->splitPacketList[0], 0, 0, time );
+@@@NEW
+	// the fragments in index order (they are kept in arrival order; DgSplitFragmentAcceptable lets each index in
+	// once), so a message whose fragments arrived out of order is rebuilt as it was sent
+	for (j=1; j < splitPacketChannel->splitPacketList.Size(); j++)
+	{
+		InternalPacket *dgKey=splitPacketChannel->splitPacketList[j];
+		unsigned dgI=j;
+		while (dgI>0 && splitPacketChannel->splitPacketList[dgI-1]->splitPacketIndex > dgKey->splitPacketIndex)
+		{
+			splitPacketChannel->splitPacketList[dgI]=splitPacketChannel->splitPacketList[dgI-1];
+			dgI--;
+		}
+		splitPacketChannel->splitPacketList[dgI]=dgKey;
+	}
+	internalPacket = CreateInternalPacketCopy( splitPacketChannel->splitPacketList[0], 0, 0, time );
+@@@END

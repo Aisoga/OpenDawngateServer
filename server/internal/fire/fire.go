@@ -7,6 +7,7 @@
 package fire
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -138,22 +139,102 @@ func ComponentIDs() []uint16 {
 }
 
 // Describe logs an incoming frame: a header line and its decoded TDF (or a hexdump if it doesn't
-// decode).
+// decode). the password members (SecretLabels) are written as *** (an empty one stays empty), and a
+// payload that doesn't decode but holds such a member's tag isn't dumped, so no log holds a password.
 func Describe(log *logging.Log, who string, f Frame) {
 	log.Logf(who, "<- %s(0x%04x) cmd 0x%04x %s id %d err %#x, %d bytes",
 		ComponentName(f.Component), f.Component, f.Command, f.Type, f.ID, f.Error, len(f.Payload))
 	s, err := tdf.Decode(f.Payload)
 	if err != nil {
-		log.Log(who, fmt.Sprintf("   (TDF decode failed: %v)\n", err)+logging.Hexdump(f.Payload))
+		log.Log(who, fmt.Sprintf("   (TDF decode failed: %v)\n", err)+SafeHexdump(f.Payload))
 		return
 	}
+	MaskSecrets(s)
 	log.Log(who, "   TDF:\n"+tdf.Pretty(s, 2))
+}
+
+// SecretLabels are the TDF members that hold a password (docs/data/tdf_member_tables.txt): LoginRequest,
+// CreateAccountParameters, ExpressLoginRequest and CreatePersonaRequest's PASS, UpdateAccountRequest's CPWD, the
+// Rooms' PSWD. Logs never show their values.
+var SecretLabels = []string{"PASS", "CPWD", "PSWD"}
+
+// Masked is what a non-empty secret member is logged as.
+const Masked = "***"
+
+func isSecret(label string) bool {
+	for _, l := range SecretLabels {
+		if label == l {
+			return true
+		}
+	}
+	return false
+}
+
+// MaskSecrets replaces the value of every non-empty secret member (SecretLabels) in s, at any depth, with Masked; an
+// empty one stays empty (so the log still shows the client's empty retry after a refused login).
+func MaskSecrets(s *tdf.Struct) {
+	for i := range s.Fields {
+		f := &s.Fields[i]
+		if isSecret(f.Label) {
+			switch v := f.Value.(type) {
+			case string:
+				if v != "" {
+					f.Value = Masked
+				}
+			case []byte:
+				if len(v) > 0 {
+					f.Value = Masked
+				}
+			default:
+				f.Value = Masked
+			}
+			continue
+		}
+		maskValue(f.Value)
+	}
+}
+
+func maskValue(v tdf.Value) {
+	switch x := v.(type) {
+	case *tdf.Struct:
+		MaskSecrets(x)
+	case *tdf.List:
+		for _, it := range x.Items {
+			maskValue(it)
+		}
+	case *tdf.Map:
+		for _, e := range x.Entries {
+			maskValue(e.Value)
+		}
+	case *tdf.Union:
+		if x.Field != nil { // a union member is a field of its own: mask it as a struct of one
+			one := tdf.Struct{Fields: []tdf.Field{*x.Field}}
+			MaskSecrets(&one)
+			*x.Field = one.Fields[0]
+		}
+	case *tdf.ListUnion:
+		if x.Value != nil {
+			MaskSecrets(x.Value)
+		}
+	}
+}
+
+// SafeHexdump is logging.Hexdump of bytes that may hold a request, unless they contain the wire tag of a secret
+// member (SecretLabels): then only a note, since the bytes could hold a password.
+func SafeHexdump(b []byte) string {
+	for _, l := range SecretLabels {
+		tag := tdf.EncodeLabel(l)
+		if bytes.Contains(b, tag[:]) {
+			return fmt.Sprintf("    (%d bytes not dumped: they hold the tag %s, which may carry a password)", len(b), l)
+		}
+	}
+	return logging.Hexdump(b)
 }
 
 // LogEnd logs the end of a connection: leftover bytes and a read error other than EOF, if any.
 func LogEnd(log *logging.Log, who string, r *Reader, err error) {
 	if p := r.Pending(); len(p) > 0 {
-		log.Logf(who, "connection closed with %d unparsed bytes:\n%s", len(p), logging.Hexdump(p))
+		log.Logf(who, "connection closed with %d unparsed bytes:\n%s", len(p), SafeHexdump(p))
 	}
 	if err != nil && !errors.Is(err, io.EOF) {
 		log.Logf(who, "read error: %s: %v", logging.ErrName(err), err)

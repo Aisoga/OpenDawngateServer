@@ -1,0 +1,20 @@
+{{define "content"}}
+{{if .Admin.Matches}}
+<div class="table-wrap"><table class="admin">
+<tr><th>Game</th><th>Mode / state</th><th>Started (UTC) / running</th><th>Players</th><th></th></tr>
+{{range .Admin.Matches}}
+<tr><td>{{.GameID}}<br><span class="muted">host {{.Host}}, pid {{.Pid}}</span></td>
+<td>{{.Mode}}<br>{{.State}}</td>
+<td>{{.StartedAt}}<br>{{.Duration}}</td>
+<td>{{range .Players}}{{.}}<br>{{end}}</td>
+<td>{{if $.Admin.CanEnd}}<form method="post" action="/admin/matches/end" autocomplete="off">
+<input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="game" value="{{.GameID}}">
+<input type="text" name="reason" maxlength="120" placeholder="reason (optional)" aria-label="Reason">
+<label class="check"><input type="checkbox" name="confirm" value="yes" required> sure</label>
+<button type="submit" class="small danger">End</button></form>{{end}}</td></tr>
+{{end}}
+</table></div>
+<p class="note">End sends the match host abortGame: the match ends without a result (nothing is stored for it) and its
+players go back to the main menu. Bots aren't listed.</p>
+{{else}}<p>No match is running.</p>{{end}}
+{{end}}

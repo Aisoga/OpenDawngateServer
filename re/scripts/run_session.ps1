@@ -94,9 +94,11 @@
   '--owned starter' (new accounts own only the starter items, so a post-game's loot is not a duplicate) or
   '--ftue-required' (the original's Practice-only gate for new accounts; every account is past it by default); they come after the script's own flags, so a flag
   given twice takes this value. The summary's 'server' line shows them with dgserver's accounts and content line.
+  the ports are read with them (dgserver --print-ports ... <flags>), so a port they add (--web-port 18443,
+  the website) is checked free before the start, waited for and covered by the 'cleanup' line.
   -FreshData (B7b) gives dgserver an empty accounts folder of this session's own (re\logs\<Name>\data, with the content
   file of the main checkout's server\data\content.json), so every login is a fresh account and nothing is kept in the
-  lane's accounts.json. Without it the lane's accounts persist across sessions (B7a), which a server restart test needs.
+  lane's accounts.db. Without it the lane's accounts persist across sessions (B7a), which a server restart test needs.
   The 'telemetry' line (R5-live) counts the client's decoded LABS_* events in dgserver's log, the packets it could
   not decode, and the client's telemetry asserts.
 
@@ -143,7 +145,8 @@
   same-machine traffic to the own LAN address works either way.
   -SecondClient (A5b) starts the lane's second client copy beside the first (lane d: client\run_854_e, bound to
   127.0.4.2, %APPDATA%\DawngateDataE, set up by setup_lane.py e; since G3b lane b: client\run_854_f, 127.0.2.2,
-  %APPDATA%\DawngateDataF, setup_lane.py f) with its own launch_monitor.ps1 (no capture of its own:
+  %APPDATA%\DawngateDataF, setup_lane.py f; lane c: client\run_854_h, 127.0.3.2, %APPDATA%\DawngateDataH,
+  setup_lane.py h) with its own launch_monitor.ps1 (no capture of its own:
   the first monitor's capture is system-wide), -SecondAfter s (default 24) after the first: the second game window
   activates itself when it appears, and a deactivated window takes no posted WM_CHAR (a5b_run2d: the first client's
   e-mail arrived empty with 2 s), so the first login must be done by then; -Login2, -LoginAt2 (default
@@ -156,6 +159,13 @@
   again with a new monitor (folder client2b\, -Login2 again, -Actions3 and -ShotTimes3), for the rest of the session:
   the reconnect test (docs/BLAZE.md *Rejoining a running game (G3)*). The egress check reads its monitor.log too; the
   summary gets 'client2b' and 'app log2b' lines.
+  -Tunnel puts the lane's server behind the encrypted tunnel, as on a public
+  server: dgserver binds the lane's "server machine" address 127.0.N.9 (lane a N = 1, b 2, c 3, d 4; no lane's address)
+  with --tunnel on (the gateway on 42128, TCP and UDP; its key in the lane's certificate folder), and a second
+  dgserver --tunnel-client (the player's side, Start-Client's tunnel) listens on the lane's own address, where the
+  lane's client copies connect as always; the game's TLS to the redirector ends there with the lane's certificates.
+  The match hosts bind 127.0.N.9 too. The tunnel client logs into the session's tunnel\ folder; the summary gets a
+  'tunnel' line. With -GmsHost or no host; not with -Lan, -GmsProbe or -HostDir.
 
   Usage (from anywhere):
     powershell -ExecutionPolicy Bypass -File re\scripts\run_session.ps1 [-Name a2_run1] [-Seconds 60]
@@ -167,7 +177,7 @@
         [-GmsHost client\run_854_server|gms\build\Release\gms_script.exe [-GmsHostArgs '...'] [-HostOptions '...']]
         [-HostKillAt <s>] [-ServerArgs '<dgserver flags>'] [-FreshData] [-KeepAlive <s>] [-Play [-NoCapture]]
         [-Lane a|b|c|d] [-Lan <IPv4>|auto] [-SecondClient [-SecondAfter <s>] [-Login2 'email|password' [-LoginAt2 <s>]]
-        [-Actions2 '...'] [-ShotTimes2 '...'] [-SecondRestartAt <s> [-Actions3 '...'] [-ShotTimes3 '...']]]
+        [-Actions2 '...'] [-ShotTimes2 '...'] [-SecondRestartAt <s> [-Actions3 '...'] [-ShotTimes3 '...']]] [-Tunnel]
   With -Lane b the default -GameDir is client\run_854_b\Dawngate and the host copy is client\run_854_server_b (lanes c
   and d likewise: client\run_854_c, client\run_854_server_c, ...).
   -Seconds is launch_monitor's watch time; the whole session takes about 1.15 * Seconds + 60 s.
@@ -226,7 +236,8 @@ param(
     [string]$ShotTimes2,
     [int]$SecondRestartAt = 0,
     [string]$Actions3,
-    [string]$ShotTimes3
+    [string]$ShotTimes3,
+    [switch]$Tunnel
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'gms_stale.ps1')  # G5: Get-GmsBuildStale, the gms\ build check
@@ -254,6 +265,8 @@ $LaneTable = @{
 $ExtraClients = @{
     e = @{ Lane = 'd'; Client = 'client\run_854_e\Dawngate'; Bind = '127.0.4.2'; Suffix = 'E' }
     f = @{ Lane = 'b'; Client = 'client\run_854_f\Dawngate'; Bind = '127.0.2.2'; Suffix = 'F' }
+    # lane c's second client
+    h = @{ Lane = 'c'; Client = 'client\run_854_h\Dawngate'; Bind = '127.0.3.2'; Suffix = 'H' }
 }
 # A5b: the LAN profile's test copy (setup_lane.py's LAN) and the PC-wide lock of the lan sessions
 $LanCopy = @{ Client = 'client\run_854_l\Dawngate'; Suffix = 'L'; Certs = 'server\certs\lan'; Lock = 're\logs\session_lan.lock' }
@@ -274,6 +287,17 @@ if ($Lan) {
     $LanAddr = $Lan
 }
 $ServerAddr = if ($LanAddr) { $LanAddr } else { $LaneAddr }  # where dgserver binds and what it announces
+# -Tunnel: the lane's server on its own "server machine" address 127.0.N.9 behind the gateway; the tunnel's client
+# side (dgserver --tunnel-client) on the lane's address, where the client copies connect
+$LaneNumber = @{ a = 1; b = 2; c = 3; d = 4 }
+$TunnelServerAddr = $null
+$GatewayPort = 42128  # dgserver's --gateway-port default (tunnel.DefaultPort)
+if ($Tunnel) {
+    if ($Lan) { Write-Host '-Tunnel is not for -Lan (the tunnel test runs on loopback)' -ForegroundColor Red; exit 2 }
+    if ($GmsProbe -or $HostDir) { Write-Host '-Tunnel takes -GmsHost (or no host), not -GmsProbe or -HostDir' -ForegroundColor Red; exit 2 }
+    $TunnelServerAddr = "127.0.$($LaneNumber[$Lane]).9"
+    $ServerAddr = $TunnelServerAddr
+}
 $Second = $null  # -SecondClient: the lane's extra client copy
 if ($SecondClient) {
     $Second = @($ExtraClients.Values | Where-Object { $_.Lane -eq $Lane }) | Select-Object -First 1
@@ -369,8 +393,16 @@ $GmsHostPath = $null; $GmsHostKind = $null  # -GmsHost (C1b): the resolved host 
 function Get-ServerPorts {
     # with -GmsHost --print-ports also lists the control port (10040)
     # (A6: --bind marks the call as this lane's for the other lane's leftover rule)
-    $printArgs = @('--print-ports') + $(if ($GmsHostPath) { @('--gms-dir', $GmsHostPath) } else { @() }) + $(if ($Lane -ne 'a' -or $LanAddr) { @('--bind', $ServerAddr) } else { @() })
-    $ports = @("$(& $ServerExe @printArgs)" -split '\s+' | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ })
+    # (with -Tunnel also the gateway's port)
+    # (with -ServerArgs too, after the script's own flags as at the start, so e.g. --web-port's website port is
+    # checked free before, waited for at the start and in the cleanup line; flags --print-ports can't take: without them)
+    $printArgs = @('--print-ports') + $(if ($GmsHostPath) { @('--gms-dir', $GmsHostPath) } else { @() }) + $(if ($Lane -ne 'a' -or $LanAddr -or $Tunnel) { @('--bind', $ServerAddr) } else { @() }) + $(if ($Tunnel) { @('--tunnel', 'on') } else { @() })
+    $ports = @()
+    if ($ServerArgs) {
+        $withExtra = $printArgs + @($ServerArgs -split '\s+' | Where-Object { $_ })
+        $ports = @("$(& $ServerExe @withExtra 2>$null)" -split '\s+' | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ })
+    }
+    if ($ports.Count -lt 2) { $ports = @("$(& $ServerExe @printArgs)" -split '\s+' | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ }) }
     if ($ports.Count -lt 2) { return $Ports }  # no answer: keep the A1 set
     @($ports | Sort-Object -Unique)
 }
@@ -411,13 +443,16 @@ function Get-ServerBind([string]$cmd) {
     # (test_p2.ps1's first live run, p2live_run1b) for its own and stopped it in the middle of that check's match
     if ($cmd -match '--bind[= ]+"?(\d+\.\d+\.\d+\.\d+)') { return $Matches[1] }
     if ($cmd -match '--host[= ]+"?(\d+\.\d+\.\d+\.\d+)') { return $Matches[1] }
+    # a tunnel client (dgserver --tunnel-client) listens on its --tunnel-address
+    if ($cmd -match '--tunnel-client' -and $cmd -match '--tunnel-address[= ]+"?(\d+\.\d+\.\d+\.\d+)') { return $Matches[1] }
     '127.0.0.1'
 }
 function Get-BindLane([string]$cmd) {
     # A6: the lane of a dgserver or gms_script by its listen address (Get-ServerBind; default 127.0.0.1, lane a); $null
-    # for an unknown address
+    # for an unknown address. 127.0.N.9 is lane N's tunnelled server (-Tunnel: a 1, b 2, c 3, d 4)
     $bind = Get-ServerBind $cmd
     foreach ($l in $LaneTable.Keys) { if ($LaneTable[$l].Address -eq $bind) { return $l } }
+    foreach ($l in $LaneNumber.Keys) { if ("127.0.$($LaneNumber[$l]).9" -eq $bind) { return $l } }
     $null
 }
 function Get-FolderLane([string]$cmd) {
@@ -484,6 +519,7 @@ function Stop-SessionProcesses([string]$why, [scriptblock]$filter = { $true }) {
 }
 $LaneAddrs = @($LaneAddr, '0.0.0.0', '::')  # A6: a listener on these blocks this lane's ports (the other lane's don't)
 if ($LanAddr) { $LaneAddrs = @($LanAddr) + $LaneAddrs }  # A5b: the server's ports on the LAN address, the control port on the lane's
+if ($TunnelServerAddr) { $LaneAddrs = @($TunnelServerAddr) + $LaneAddrs }  # the server's ports behind the tunnel
 function Get-LaneUdp([int]$port) { @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Where-Object { $_.LocalAddress -in $LaneAddrs }) }
 function Get-PortHolders {
     foreach ($c in @(Get-NetTCPConnection -State Listen -LocalPort $Ports -ErrorAction SilentlyContinue | Where-Object { $_.LocalAddress -in $LaneAddrs })) {
@@ -588,6 +624,8 @@ function Get-StubSummary([string]$path) {
             $pending[$who] = "$($Matches[1]) cmd $($Matches[2])" + $(if ($Matches[3] -ne 'request') { " ($($Matches[3]))" } else { '' })
         }
         elseif ($pending[$who] -and $msg -match '^-> (\w+) reply') { Count $reqs "$($pending[$who]) -> $($Matches[1])"; $pending[$who] = $null }
+        # a refused request (a wrong password's login) is an error reply, not a missing one
+        elseif ($pending[$who] -and $msg -match '^-> (\w+) error reply \(error (0x[0-9a-f]+)\)') { Count $reqs "$($pending[$who]) -> $($Matches[1]) error $($Matches[2])"; $pending[$who] = $null }
         elseif ($pending[$who] -and $msg -match 'no handler; not answered') { Count $reqs "$($pending[$who]) -> not answered"; $pending[$who] = $null }
         elseif ($who -eq 'telemetry' -and $msg -match 'closed after (\d+) bytes') { $telBytes += [int]$Matches[1] }
         elseif ($who -eq 'gms' -and $msg -match '^udp \(.*?\) (\d+) bytes: (0x[0-9A-F]{2} [A-Za-z_0-9 ()]+?)(,|$)') { Count $gms "udp $($Matches[2]) $($Matches[1]) bytes" }
@@ -985,7 +1023,7 @@ $leftoversBefore = @()
 $stoppedAfter = @()
 $playEnd = $null  # -Play: how the session ended (the game closed, Ctrl+C, the time limit)
 try {
-    Say "session $Name -> $SessionDir$(if ($Play) { ' (play mode)' }) lane $Lane ($LaneAddr$(if ($LanAddr) { "; lan profile on $LanAddr" }))$(if ($RepoRoot -ne $MainRoot) { "; code from $RepoRoot" })"
+    Say "session $Name -> $SessionDir$(if ($Play) { ' (play mode)' }) lane $Lane ($LaneAddr$(if ($LanAddr) { "; lan profile on $LanAddr" })$(if ($Tunnel) { "; the server behind the tunnel on $TunnelServerAddr" }))$(if ($RepoRoot -ne $MainRoot) { "; code from $RepoRoot" })"
     if ($Play) { Enable-CtrlCAsInput }
 
     # 1. safety: only a working copy patched by patch_client.py and patch_config.py may run
@@ -1058,12 +1096,14 @@ try {
     # (play mode without a time limit: 8 hours, like the capture's autostop)
     $stubSeconds = if ($Seconds -le 0) { 8 * 3600 + 300 } else { 2 * $Seconds + 300 }
     $stubArgs = @('--log', "`"$SessionDir`"", '--seconds', $stubSeconds)
-    if ($Lane -ne 'a' -or $LanAddr) {
+    if ($Lane -ne 'a' -or $LanAddr -or $Tunnel) {
         # A6: every listener, every address handed out, the control port and the hosts' GMS ports on the lane's address;
         # A5b: with -Lan every listener, address handed out and GMS port on this PC's LAN address, the control port
-        # (hosts on this PC only) still on the lane's loopback address
+        # (hosts on this PC only) still on the lane's loopback address. With -Tunnel: all of it on 127.0.N.9, plus the
+        # gateway (its key in the certificate folder below)
         $stubArgs += @('--bind', $ServerAddr, '--public-host', $ServerAddr)
-        if ($GmsHost) { $stubArgs += @('--gms-control-bind', $LaneAddr) }
+        if ($GmsHost) { $stubArgs += @('--gms-control-bind', $(if ($Tunnel) { $TunnelServerAddr } else { $LaneAddr })) }
+        if ($Tunnel) { $stubArgs += @('--tunnel', 'on', '--gateway-port', $GatewayPort) }
     }
     $content = Join-Path $MainRoot 'server\data\content.json'
     if ($Lane -ne 'a' -or $RepoRoot -ne $MainRoot -or $LanAddr) {
@@ -1138,6 +1178,25 @@ try {
         if ((Get-Date) -gt $deadline) { throw "dgserver.exe not listening on all ports after 20 s (listening: $($listening -join ', '))" }
     }
     Say "server listening on $($listening -join ', ') (pid $($stub.Id))"
+    if ($Tunnel) {
+        # the player's side of the tunnel on the lane's address: it pins the key the server keeps in the lane's
+        # certificate folder and ends the game's redirector TLS with that folder's set (CN = the lane's address)
+        $tunCerts = Join-Path $MainRoot $LaneCfg.Certs
+        $tunArgs = @('--tunnel-client', "${TunnelServerAddr}:$GatewayPort", '--tunnel-address', $LaneAddr, '--certs', "`"$tunCerts`"",
+            '--tunnel-pin-cert', "`"$(Join-Path $tunCerts 'gateway_cert.pem')`"", '--log', "`"$(In-Session 'tunnel')`"", '--seconds', $stubSeconds)
+        $tun = Start-Logged $ServerExe $tunArgs 'tunnel'
+        $want = @($Ports | Where-Object { $_ -in @(42127, 10041, 17502, 18080, 9988) })
+        $deadline = (Get-Date).AddSeconds(15)
+        while ($true) {
+            Start-Sleep -Milliseconds 300
+            $tl = @(Get-NetTCPConnection -State Listen -OwningProcess $tun.Id -ErrorAction SilentlyContinue | Where-Object { $_.LocalAddress -eq $LaneAddr } | ForEach-Object { [int]$_.LocalPort } | Sort-Object -Unique)
+            if ($tl.Count -ge $want.Count) { break }
+            if ($tun.HasExited) { throw "the tunnel client exited during startup (code $($tun.ExitCode)): $(Short ((Get-Content (In-Session 'tunnel.err') -Raw) -replace '\s+', ' ') 300)" }
+            if ((Get-Date) -gt $deadline) { throw "the tunnel client is not listening on $LaneAddr after 15 s (listening: $($tl -join ', '))" }
+        }
+        $tu = @(Get-NetUDPEndpoint -OwningProcess $tun.Id -ErrorAction SilentlyContinue | Where-Object { $_.LocalAddress -eq $LaneAddr } | ForEach-Object { [int]$_.LocalPort } | Sort-Object -Unique)
+        Say "tunnel: $LaneAddr TCP $($tl -join ', '), UDP $($tu -join ', ') -> gateway ${TunnelServerAddr}:$GatewayPort (pid $($tun.Id))"
+    }
 
     # 5. the game, watched by launch_monitor.ps1 (capture, screenshots, closes the game)
     # (a server-mode harness copy, D1, writes game\dgsim.log; start each session without the old one)
@@ -1416,8 +1475,19 @@ function Get-AppLogSummary([string[]]$section, [string]$tag) {
     $kick = if (($states -join ' > ') -match 'kGameStateDungeon > kGameStateLogin') { '; DUNGEON -> LOGIN (the AFK kick or a logout, B12)' } else { '' }
     "$($tag.PadRight(9)): states $(if ($states) { $states -join ' > ' } else { 'none' }); $asserts assert(s)$(if ($qos) { "; ping site latency $qos" })$(if ($netQos) { "; network QoS $netQos" })$(if ($gmsLine) { "; GMS connect $gmsLine" })$kick"
 }
-$sum += @(Get-GameSummary (In-Session 'monitor.log') $ServerAddr 'game')
+$sum += @(Get-GameSummary (In-Session 'monitor.log') $(if ($Tunnel) { $LaneAddr } else { $ServerAddr }) 'game')
 $sum += @(Get-AppLogSummary $appSection 'app log')
+if ($Tunnel) {
+    # the gateway's last counts per session (dgserver's log) and the tunnel client's (its own log)
+    $gwLines = @(Get-Content (In-Session 'stub.log') -Encoding UTF8 -ErrorAction SilentlyContinue | Where-Object { $_ -match '\[tunnel\] ' })
+    $sessions = @($gwLines | Where-Object { $_ -match '\[tunnel\] session (\d+) from .* tunnel address' } | ForEach-Object { if ($_ -match 'session (\d+) from') { $Matches[1] } } | Sort-Object -Unique)
+    $gwStats = @($sessions | ForEach-Object { $id = $_; $gwLines | Where-Object { $_ -match "\[tunnel\] (stats )?session $id (\(|ended)" } | Select-Object -Last 1 } | ForEach-Object { ($_ -replace '^.*\[tunnel\] (stats )?', '') })
+    $tunLog = Get-ChildItem (In-Session 'tunnel') -Filter '*.log' -ErrorAction SilentlyContinue | Select-Object -First 1
+    $tunText = if ($tunLog) { @(Get-Content $tunLog.FullName -Encoding UTF8 -ErrorAction SilentlyContinue) } else { @() }
+    $echo = "$($tunText | Where-Object { $_ -match 'UDP through the gateway|no keepalive echo' } | Select-Object -First 1)" -replace '^.*\[tunnel\] ', ''
+    $cl = "$($tunText | Where-Object { $_ -match '\[tunnel\] (stats: |closed after )' } | Select-Object -Last 1)" -replace '^.*\[tunnel\] ', ''
+    $sum += "tunnel   : gateway ${TunnelServerAddr}:$GatewayPort, $($sessions.Count) session(s)$(if ($gwStats) { ': ' + ($gwStats -join ' | ') }); client: $echo$(if ($cl) { "; $cl" })"
+}
 $sum += "client res: $(Get-ClientResSummary)"
 if ($Second) {
     $sum += @(Get-GameSummary (In-Session 'client2\monitor.log') $Second.Bind 'client2')

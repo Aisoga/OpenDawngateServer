@@ -1,0 +1,19 @@
+{{define "content"}}
+{{with .Admin.Counts}}
+<table class="status">
+<tr><th>Accounts</th><td>{{.Accounts}} ({{.Admins}} admin(s))</td></tr>
+{{if .Live}}<tr><th>Players online</th><td>{{.Online}}</td></tr>
+<tr><th>Matches running</th><td>{{.Matches}}</td></tr>{{end}}
+<tr><th>Sign-up</th><td>{{$.Mode}}</td></tr>
+</table>
+{{end}}
+<ul>
+<li><a href="/admin/accounts">Accounts</a>: search; disable, enable or ban; a new password; delete</li>
+<li><a href="/admin/invites">Invite codes</a>: make, list, revoke</li>
+<li><a href="/admin/signup">Sign-up mode</a>: open, invite or closed</li>
+<li><a href="/admin/matches">Running matches</a>: players, duration; end one</li>
+<li><a href="/admin/audit">Audit log</a>: every admin action and the operator's account commands</li>
+</ul>
+<p class="note">Logged in as {{.Admin.Name}}. The session ends after 30 minutes without a page, after 12 hours, at a
+server restart or when you log out.</p>
+{{end}}

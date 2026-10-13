@@ -16,20 +16,20 @@ uint32_t AssetIdOf(const std::string& name) {
 }
 
 bool ParseHelloReq(const uint8_t* body, size_t n, HelloReq* out) {
-  if (n < 8) return false;
+  if (n != 16) return false;  // exact (cClientSession::OnGmsConnected 0x00AB2A30 writes 16 bytes)
   out->userId = GetU64LE(body);
-  out->playgroupId = n >= 16 ? GetU64LE(body + 8) : 0;
+  out->playgroupId = GetU64LE(body + 8);
   return true;
 }
 
 bool ParseClockSync(const uint8_t* body, size_t n, int64_t* clientMs) {
-  if (n < 8) return false;
+  if (n != 8) return false;  // exact
   *clientMs = GetI64LE(body);
   return true;
 }
 
 bool ParsePlayerStatusUpdate(const uint8_t* body, size_t n, PlayerStatusReport* out) {
-  if (n < 8) return false;
+  if (n != 8) return false;  // exact
   out->flags = GetU32LE(body);
   out->progress = GetF32LE(body + 4);
   return true;

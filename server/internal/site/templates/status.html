@@ -1,0 +1,12 @@
+{{define "content"}}
+{{with .Status}}
+<table class="status">
+{{if .Live}}<tr><th>Players online</th><td>{{.Online}}</td></tr>
+<tr><th>Matches running</th><td>{{.Matches}}</td></tr>{{end}}
+<tr><th>Sign-up</th><td>{{.Mode}}</td></tr>
+<tr><th>Running since</th><td>{{.Since}}</td></tr>
+<tr><th>Server version</th><td>{{$.Version}}</td></tr>
+</table>
+{{end}}
+<p class="note">The same as JSON: <a href="/status.json">/status.json</a>.</p>
+{{end}}

@@ -1,0 +1,38 @@
+{{define "content"}}
+{{if .Admin.Secret}}<p>{{.Admin.SecretWhat}}:</p><p class="secret">{{.Admin.Secret}}</p>{{end}}
+<form method="get" action="/admin/accounts" class="row">
+<label>Search <small>(login name or display name, any part; or an account or persona number)</small>
+<input type="text" name="q" value="{{.Admin.Query}}" maxlength="64"></label>
+<button type="submit">Search</button>
+</form>
+{{if .Admin.Accounts}}
+<div class="table-wrap"><table class="admin">
+<tr><th>Account</th><th>Login name</th><th>Display name</th><th>Status</th><th>Created / last login (UTC)</th><th>Actions</th></tr>
+{{range .Admin.Accounts}}
+<tr>
+<td>{{.UserID}}{{if eq .Role 1}} <b>admin</b>{{end}}{{if .Self}} (you){{end}}</td>
+<td>{{.Name}}{{if not .HasHash}} <span class="muted">(no password yet)</span>{{end}}</td>
+<td>{{.Displays}}</td>
+<td>{{.Status}}</td>
+<td>{{.Created}}<br>{{.LastLogin}}</td>
+<td>{{if .Deleted}}<span class="muted">deleted</span>{{else}}
+{{if not .Self}}<form method="post" action="/admin/accounts/status">
+<input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.UserID}}"><input type="hidden" name="q" value="{{$.Admin.Query}}">
+<select name="status" aria-label="Status of account {{.UserID}}"><option value="active">active</option><option value="disabled">disabled</option><option value="banned">banned</option></select>
+<button type="submit" class="small">Set</button></form>{{end}}
+<form method="post" action="/admin/accounts/password">
+<input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.UserID}}"><input type="hidden" name="q" value="{{$.Admin.Query}}">
+<button type="submit" class="small">New password</button></form>
+{{if not .Self}}<form method="post" action="/admin/accounts/delete">
+<input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.UserID}}"><input type="hidden" name="q" value="{{$.Admin.Query}}">
+<label class="check"><input type="checkbox" name="confirm" value="yes" required> sure</label>
+<button type="submit" class="small danger">Delete</button></form>{{end}}
+{{end}}</td>
+</tr>
+{{end}}
+</table></div>
+<p class="note">At most 50 accounts, newest first. A status change acts at the account's next login (a disabled or
+banned player's client shows the game's own refusal); a player logged in keeps its session until it logs out.
+Delete removes the personal data as the player's own deletion does; the match history stays without the name.</p>
+{{else}}<p>No account matches.</p>{{end}}
+{{end}}

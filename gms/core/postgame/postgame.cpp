@@ -139,7 +139,7 @@ bool ParseClientMessage(const uint8_t* body, size_t n, ClientMessage* out) {
   out->sub = body[0];
   if (body[0] == kSubOver) return n == 1;
   if (body[0] == kSubVotes) {
-    if (n < 3) return false;
+    if (n != 3) return false;  // exact
     out->votes = static_cast<uint16_t>(body[1] | body[2] << 8);
     return true;
   }

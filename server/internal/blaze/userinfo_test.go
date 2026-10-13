@@ -25,9 +25,9 @@ func uattOf(t *testing.T, f fire.Frame) uint64 {
 // client at once as UserSessionExtendedDataUpdate, survives a restart of the store, and comes back at
 // the next login, so the client's check (bit 62 of UATT, 0x00AD9200) keeps the overlay away.
 func TestNewsOverlaySeen(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "accounts.json")
+	path := filepath.Join(t.TempDir(), store.FileName)
 	setup := func(s *Server) {
-		st, err := store.Open(path)
+		st, err := openTestStore(t, path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +60,7 @@ func TestNewsOverlaySeen(t *testing.T) {
 	}
 	// a restarted server (same file): the login's extended data carries the bit
 	ps = newPipeSessionWith(t, setup)
-	ps.send(1, 0x28, 1, tdf.NewWriter().String("MAIL", "player@example.com").String("PASS", "x").String("TOKN", "").Int("TYPE", 0).Bytes())
+	ps.send(1, 0x28, 1, tdf.NewWriter().String("MAIL", "player@example.com").String("PASS", testPassword).String("TOKN", "").Int("TYPE", 0).Bytes())
 	ps.next("login reply")
 	ps.send(1, 0x6E, 2, tdf.NewWriter().String("PNAM", store.PersonaName("player@example.com")).Bytes())
 	ps.next("loginPersona reply")
@@ -73,7 +73,7 @@ func TestNewsOverlaySeen(t *testing.T) {
 
 func mustOpen(t *testing.T, path string) *store.Store {
 	t.Helper()
-	st, err := store.Open(path)
+	st, err := openTestStore(t, path)
 	if err != nil {
 		t.Fatal(err)
 	}

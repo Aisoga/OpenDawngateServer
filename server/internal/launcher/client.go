@@ -2,6 +2,7 @@ package launcher
 
 import (
 	"bufio"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 
 	"dawngate/server/internal/setup"
 	"dawngate/server/internal/setup/certs"
+	"dawngate/server/internal/tunnel"
 )
 
 // ClientConfigName is Start-Client.exe's config file, next to it (written only when a player saves a server address).
@@ -30,9 +32,16 @@ server =
 ; The folder for the game copy (1.5 GB): relative to this program's folder, or a full path. Empty: Start-Server.ini's
 ; folder, else Dawngate-Data.
 folder =
+
+; The encrypted tunnel to the server: auto (the default) uses it for a server on a public internet address, which
+; needs it; on uses it for any server that runs it (Start-Server.ini tunnel = on); off never.
+tunnel = auto
+
+; The server's tunnel port (TCP and UDP), when its operator changed it. Empty: 42128.
+gateway_port =
 `
 
-var clientKeys = []string{"server", "folder", "zip"}
+var clientKeys = []string{"server", "folder", "zip", "tunnel", "gateway_port"}
 
 // TestParkEnv set to 1 is Start-Client's --test-park (the release's test hook; never needed by a player).
 const TestParkEnv = "DAWNGATE_TEST_PARK"
@@ -51,6 +60,10 @@ func RunClient(args []string, o IO) int {
 	fs.Bool("non-interactive", false, "never ask anything; for scripts and tests")
 	park := fs.Bool("test-park", os.Getenv(TestParkEnv) == "1", "test hook: keep the game window off the desktop and never activate it, as run_session.ps1 -Background does; also "+TestParkEnv+"=1")
 	zipFlag := fs.String("zip", "", "Dawngate.zip, when the player copy must be made or repaired")
+	tunnelFlag := fs.String("tunnel", "", "the encrypted tunnel: auto (for a public server address; the default), on, off")
+	gwPortFlag := fs.String("gateway-port", "", "the server's tunnel port (default 42128)")
+	gwPinFlag := fs.String("gateway-pin", "", "the server's tunnel key (64 hex digits), when its operator handed it out (no question)")
+	tunnelAddr := fs.String("tunnel-address", DefaultTunnelAddress, "the loopback address the tunnel listens on and the game connects to (tests)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -106,61 +119,93 @@ func RunClient(args []string, o IO) int {
 		folder = DefaultFolder
 	}
 	l := setup.Layout{Root: Resolve(o.ExeDir, folder)}
+	mode, err := tunnelMode(firstNonEmpty(*tunnelFlag, ccfg["tunnel"]))
+	if err != nil {
+		return o.fail("%v", err)
+	}
+	gwPort, err := gatewayPort(firstNonEmpty(*gwPortFlag, ccfg["gateway_port"]))
+	if err != nil {
+		return o.fail("%v", err)
+	}
+	tunnelled := tunnelFor(mode, server)
 	if IsPublicAddress(server) {
-		ClientRiskNotice(o.Out, server)
+		ClientRiskNotice(o.Out, server, tunnelled)
 	}
 	local := !remoteServer(server)
 	fmt.Fprintf(o.Out, "  server   %s\n  folder   %s\n", server, l.Root)
 
-	// the server's CA: this PC's own server's, else fetched (or handed out) and trusted on first use
 	var ca []byte
-	ownCA := filepath.Join(l.Certs(server), certs.CAModulusFile)
-	cert, answering := ServerCert(server, RedirectorPort, 5*time.Second) // the redirector, as the game reaches it
-	if b, err := os.ReadFile(ownCA); err == nil {
-		ca = b
-	} else if local {
-		return o.fail("No server is set up on this PC for %s: start Start-Server.exe first (its first start sets "+
-			"everything up), then Start-Client.exe.", server)
-	}
-	if answering != nil && !*setupOnly && !*check {
-		if local || ca != nil {
-			return o.fail("No server is running on %s: double-click Start-Server.exe first and wait until it says "+
-				"\"The server runs\", then start Start-Client.exe again.", server)
+	patchFor := server // the address the player copy is patched for
+	var gw string
+	var pin tunnel.Pin
+	var tunnelTLS *tls.Config
+	if tunnelled {
+		// the game talks to the tunnel on this PC; the tunnel's key is trusted on first use, the redirector's
+		// certificates are this PC's own (no server CA needed)
+		if ip := net.ParseIP(*tunnelAddr).To4(); ip == nil || !ip.IsLoopback() {
+			return o.fail("--tunnel-address %s: a loopback address such as 127.0.0.1", *tunnelAddr)
 		}
-		return o.fail("No server answers at %s (port %d: %v).\nIs Start-Server.exe running on that machine with "+
-			"address = %s in its Start-Server.ini, and does its firewall let the network in (README.txt)?", server,
-			RedirectorPort, answering, server)
-	}
-	if ca == nil {
-		if ca, err = remoteCA(o, in, l, server, *caFile, *trust, answering == nil); err != nil {
+		patchFor = *tunnelAddr
+		gw = gatewayAddress(server, gwPort, scfg)
+		fmt.Fprintf(o.Out, "  tunnel   %s (the game connects to %s on this PC)\n", gw, patchFor)
+		if !*check {
+			if pin, err = trustedGatewayPin(o, in, l, server, gw, *gwPinFlag, *trust); err != nil {
+				return o.fail("%v", err)
+			}
+		}
+		if ca, tunnelTLS, err = tunnelCertSet(l, patchFor, *check); err != nil {
 			return o.fail("%v", err)
 		}
-	}
-	if answering == nil {
-		if err := certs.VerifyServerCert(cert, ca, server); err != nil {
-			return o.fail("The server at %s doesn't present a certificate the game would accept: %v\n"+
-				"The game would fail with \"Unable to establish connection\". If the server was set up anew, delete "+
-				"%s and start Start-Client.exe again to confirm its new fingerprint.", server, err, l.TrustedCA(server))
+	} else {
+		// the server's CA: this PC's own server's, else fetched (or handed out) and trusted on first use
+		ownCA := filepath.Join(l.Certs(server), certs.CAModulusFile)
+		cert, answering := ServerCert(server, RedirectorPort, 5*time.Second) // the redirector, as the game reaches it
+		if b, err := os.ReadFile(ownCA); err == nil {
+			ca = b
+		} else if local {
+			return o.fail("No server is set up on this PC for %s: start Start-Server.exe first (its first start sets "+
+				"everything up), then Start-Client.exe.", server)
+		}
+		if answering != nil && !*setupOnly && !*check {
+			if local || ca != nil {
+				return o.fail("No server is running on %s: double-click Start-Server.exe first and wait until it says "+
+					"\"The server runs\", then start Start-Client.exe again.", server)
+			}
+			return o.fail("No server answers at %s (port %d: %v).\nIs Start-Server.exe running on that machine with "+
+				"address = %s in its Start-Server.ini, and does its firewall let the network in (README.txt)? A server on "+
+				"the internet is reached through its tunnel (Start-Client.exe --tunnel on).", server, RedirectorPort, answering, server)
+		}
+		if ca == nil {
+			if ca, err = remoteCA(o, in, l, server, *caFile, *trust, answering == nil); err != nil {
+				return o.fail("%v", err)
+			}
+		}
+		if answering == nil {
+			if err := certs.VerifyServerCert(cert, ca, server); err != nil {
+				return o.fail("The server at %s doesn't present a certificate the game would accept: %v\n"+
+					"The game would fail with \"Unable to establish connection\". If the server was set up anew, delete "+
+					"%s and start Start-Client.exe again to confirm its new fingerprint.", server, err, l.TrustedCA(server))
+			}
 		}
 	}
 
 	fmt.Fprintln(o.Out, "\nChecking the game copy (the first start makes it: about half a minute and 1.5 GB):")
 	s := &setup.Setup{Layout: l, Out: o.Out, Live: o.Live, Check: *check, FindZip: zipFinder(o, in, firstNonEmpty(*zipFlag, ccfg["zip"], scfg["zip"])),
-		Manifest: manifest}
+		Manifest: manifest, WebDomain: ownServerDomain(scfg, o.ExeDir, l.Root, server)}
 	var release func()
 	if !*check {
 		if release, err = setup.Lock(l.Root); err != nil {
 			return o.fail("%v", err)
 		}
 	}
-	if ClientRunning() && !*check {
+	if clientRunning() && !*check {
 		if release != nil {
 			release()
 		}
 		return o.fail("A Dawngate client is already running (only one can run at a time): close it, then start " +
 			"Start-Client.exe again.")
 	}
-	err = s.Client(server, ca)
+	err = s.Client(patchFor, ca)
 	if release != nil {
 		release()
 	}
@@ -178,13 +223,52 @@ func RunClient(args []string, o IO) int {
 	if *setupOnly {
 		return 0
 	}
+	if tunnelled {
+		_, stop, err := startTunnel(o, l, gw, pin, patchFor, tunnelTLS)
+		if err != nil {
+			return o.fail("The tunnel didn't start: %v", err)
+		}
+		defer stop()
+	}
 	return play(o, l, *park)
+}
+
+// ownServerDomain is the web domain the player copy's login links use: Start-Server.ini's web_domain when the
+// copy is this PC's own server's (the same folder) and the game plays on that server, so Start-Server and Start-Client
+// make the same added locale package and don't rewrite each other's; "" otherwise. A player copy for a server on
+// another machine keeps the links at http://<server>:18080/dawngate/<page> (sitelinks.Base without a domain), which
+// that server's HTTP port redirects to its website (through the tunnel too), so a player
+// needs to know no domain and an operator who adds or changes one re-patches nobody's copy.
+func ownServerDomain(scfg Config, exeDir, root, server string) string {
+	if scfg == nil {
+		return ""
+	}
+	folder := scfg["folder"]
+	if folder == "" {
+		folder = DefaultFolder
+	}
+	address := scfg["address"]
+	if address == "" {
+		address = setup.Local
+	}
+	if !strings.EqualFold(filepath.Clean(Resolve(exeDir, folder)), filepath.Clean(root)) || address != server {
+		return ""
+	}
+	w, err := ReadWebsite(scfg)
+	if err != nil || w.Port == 0 {
+		return ""
+	}
+	return w.Domain
 }
 
 // remoteServer says whether a server address is another machine's (its CA is fetched and trusted on first use) rather
 // than this PC's own (a loopback address: the CA is this PC's setup's). The test of the remote path sets it to use a
 // server on a loopback address.
 var remoteServer = func(address string) bool { return !net.ParseIP(address).IsLoopback() }
+
+// clientRunning is ClientRunning (the game's Global\Dawngate mutex); the tests replace it, since a test lane's client on
+// this PC holds that mutex too.
+var clientRunning = ClientRunning
 
 func firstNonEmpty(s ...string) string {
 	for _, v := range s {
@@ -263,7 +347,7 @@ func play(o IO, l setup.Layout, park bool) int {
 	}
 	defer g.Release()
 	fmt.Fprintf(o.Out, "\nThe game starts (game pid %d; its window opens in a few seconds).\n", g.Pid)
-	fmt.Fprintln(o.Out, "  Log in with any e-mail and password, then PLAY and PRACTICE DAWNGATE (README.txt).")
+	fmt.Fprintln(o.Out, "  Log in with your login name and password (with open sign-up the first login makes the account), then PLAY and PRACTICE DAWNGATE (README.txt).")
 	fmt.Fprintln(o.Out, "  This window closes when the game ends; Ctrl+C here closes the game.")
 	stop := make(chan struct{})
 	defer close(stop)

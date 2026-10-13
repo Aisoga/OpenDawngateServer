@@ -17,19 +17,25 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
+	"dawngate/server/internal/accounts"
 	"dawngate/server/internal/blaze"
 	"dawngate/server/internal/content"
 	"dawngate/server/internal/gms"
 	"dawngate/server/internal/gmshost"
+	"dawngate/server/internal/limits"
 	"dawngate/server/internal/logging"
 	"dawngate/server/internal/matchmaker"
 	"dawngate/server/internal/redirector"
+	"dawngate/server/internal/setup/exepatch"
 	"dawngate/server/internal/setup/gamecontent"
+	"dawngate/server/internal/site"
 	"dawngate/server/internal/store"
 	"dawngate/server/internal/telemetry"
+	"dawngate/server/internal/tunnel"
 	"dawngate/server/internal/web"
 )
 
@@ -54,12 +60,13 @@ type config struct {
 	// main server's control address) and the agent's name (--agent-name; "" = the computer name).
 	gmsControlBind, agentKey, agent, agentName string
 	www, certs, logDir                         string
-	// dataDir holds accounts.json ("" = accounts in memory only); contentPath is the content file
+	// dataDir holds the account database accounts.db ("" = accounts in memory only); contentPath is the content file
 	// ("" = <dataDir>\content.json; no content without a data folder).
 	dataDir, contentPath string
 	policy               blaze.Policy
 	mm                   matchmaker.Config  // B10a: the PvP matchmaker's rules
 	mmRefuse             bool               // B10b test aid: refuse every startMatchmaking
+	testLoginErrors      []uint16           // test aid: the n-th login's error reply (--test-login-errors)
 	mmBots               bool               // B10d: bots in a matchmade game's open seats (--mm-bots, on by default)
 	customBots           bool               // B15: bots in a custom game's open seats (--custom-bots)
 	shaperSelect         blaze.ShaperSelect // D3-live step 4: --shaper-select, --free-rotation, --shaper-timers
@@ -71,6 +78,24 @@ type config struct {
 	broadcastFlags           int64
 	// serve <certs>\ca_modulus.bin on the HTTP port (--serve-ca) for Start-Client.exe on other machines
 	serveCA bool
+	// the sign-up policy (--signup, --signups-per-address) and the log retention in days (--log-days; 0 = keep)
+	accounts accounts.Policy
+	logDays  int
+	// how often the running server re-reads the logged-in accounts' status (--status-check; 0 = never) and what
+	// a client hears before its session is ended (--session-end)
+	statusCheck time.Duration
+	sessionEnd  blaze.SessionEndNotice
+	// the tunnel (tunnel.go): --tunnel off|on|auto, the gateway's port and key folder ("" = --certs); the
+	// test lanes' client side (--tunnel-client <gateway host:port>, --tunnel-address, --tunnel-pin or
+	// --tunnel-pin-cert)
+	tunnel, gatewayKey                                    string
+	gatewayPort                                           int
+	tunnelClient, tunnelAddress, tunnelPin, tunnelPinCert string
+	// --limits (auto: on for a public bind or announced address) and the limits themselves (nil = Default())
+	limitsMode limits.Mode
+	limitsCfg  *limits.Config
+	// the website (website.go): --web-port, --web-domain, --web-email, --web-dir, --web-acme-url
+	web websiteConfig
 }
 
 // broadcastEvery is how often the operator's broadcast file is read (B14).
@@ -93,7 +118,8 @@ func openData(cfg config) (*store.Store, *content.Content, string, error) {
 	st := store.New()
 	if cfg.dataDir != "" {
 		var err error
-		if st, err = store.Open(filepath.Join(cfg.dataDir, "accounts.json")); err != nil {
+		// the SQLite store; its first Open imports an accounts.json of the earlier builds from the same folder
+		if st, err = store.Open(filepath.Join(cfg.dataDir, store.FileName)); err != nil {
 			return nil, nil, "", err
 		}
 	}
@@ -106,6 +132,7 @@ func openData(cfg config) (*store.Store, *content.Content, string, error) {
 		return st, nil, fmt.Sprintf("no content file %s (new accounts get no items; build it with --make-content)", file), nil
 	}
 	if err != nil {
+		st.Close()
 		return nil, nil, "", err
 	}
 	info := fmt.Sprintf("content %s: %d items, %d shapers", file, len(c.Items), len(c.Shapers))
@@ -151,13 +178,22 @@ func (c config) hostsOn() bool { return c.gmsDir != "" || c.agentKey != "" }
 // printPorts are the TCP ports --print-ports lists: ports(), plus the control port with --gms-dir or
 // --agent-key; none in agent mode (it listens on nothing).
 func (c config) printPorts() []int {
+	ps := c.ports()
 	switch {
 	case c.agent != "":
 		return nil
+	case c.tunnelClient != "": // the tunnel's client side listens on the server's ports (as the gateway names them)
+		return ps
 	case c.hostsOn():
-		return append(c.ports(), c.gmsControlPort)
+		ps = append(ps, c.gmsControlPort)
 	}
-	return c.ports()
+	if c.tunnel == TunnelOn { // and the gateway's (auto: only when the public host turns out public)
+		ps = append(ps, c.gatewayPort)
+	}
+	if c.web.port > 0 { // the website
+		ps = append(ps, c.web.port)
+	}
+	return ps
 }
 
 // prepareHosts runs once before the first host is started here (gmshost.ExecLauncher.Prepare): the
@@ -335,6 +371,21 @@ type instance struct {
 	stopWatch func()
 	// the served CA modulus's fingerprint (--serve-ca; "" without)
 	caFingerprint string
+	// the account store, closed after the listeners
+	store *store.Store
+	// stops the log pruning (--log-days; nil without)
+	stopPrune func()
+	// the tunnel's gateway (--tunnel on; nil without)
+	gateway *tunnel.Gateway
+	// the limits (nil = off) and the stop of their minute report. The tunnel gateway takes connections and
+	// datagrams through the same limiter by the player's real address: Listener's Admit per accepted
+	// connection, before the TLS handshake, AllowTunnelPacket per datagram, before the decryption.
+	limits     *limits.Limiter
+	stopLimits func()
+	// stops the status check of the logged-in accounts (--status-check; nil without)
+	stopStatus func()
+	// the website (--web-port; nil without)
+	website *website
 }
 
 // start opens the log, binds every port and starts serving.
@@ -380,23 +431,36 @@ func start(cfg config) (*instance, error) {
 		extra = append(extra, web.Builtin{Path: web.CAModulusPath, ContentType: "application/octet-stream", Body: modulus})
 		caNote = web.Fingerprint(modulus)
 	}
+	extra = append(extra, web.SitePages(cfg.accounts.Mode)...) // the login screen's links (sitelinks)
 	st, cont, contentInfo, err := openData(cfg)
 	if err != nil {
 		return nil, err
 	}
+	// the sign-up mode in force: --signup, or the admin page's choice if --signup is as at the last start; the
+	// admin page changes it while the server runs (Policy.Live, shared by Blaze and the website)
+	mode, modeNote, err := accounts.StartMode(st, cfg.accounts.Mode, time.Now())
+	if err != nil {
+		st.Close()
+		return nil, fmt.Errorf("the sign-up mode's setting: %w", err)
+	}
+	cfg.accounts.Live = accounts.NewModeSetting(mode)
 	// the log last, so a setup error leaves no open log file behind (the listener errors below close it)
 	log, err := logging.Open(cfg.logDir)
 	if err != nil {
+		st.Close()
 		return nil, err
 	}
-	in := &instance{log: log, caFingerprint: caNote}
-	for _, p := range cfg.ports() {
+	in := &instance{log: log, caFingerprint: caNote, store: st}
+	limitsNote := startLimits(&cfg, in, public)
+	for i, p := range cfg.ports() {
 		ln, err := net.Listen("tcp4", net.JoinHostPort(cfg.bind, strconv.Itoa(p)))
 		if err != nil {
 			in.close()
 			log.Close()
 			return nil, err
 		}
+		name := listenerNames[i]
+		ln = in.limits.Listener(ln, name, func(f string, a ...any) { log.Logf(name, f, a...) }) // the limits (nil: ln itself)
 		in.listeners = append(in.listeners, ln)
 		in.ports = append(in.ports, ln.Addr().(*net.TCPAddr).Port)
 	}
@@ -432,19 +496,49 @@ func start(cfg config) (*instance, error) {
 	bz.Hosts = in.hosts // nil without --gms-dir: B8's announced GMS port
 	bz.MM = matchmaker.New(cfg.mm)
 	bz.MMRefuse = cfg.mmRefuse
+	bz.TestLoginErrors = cfg.testLoginErrors
+	bz.Accounts = cfg.accounts
 	bz.MMBots = cfg.mmBots
 	bz.CustomBots = cfg.customBots
 	bz.ShaperSelect = cfg.shaperSelect
 	bz.KillSwitches = cfg.killSwitches
+	bz.Limits = in.limits
+	bz.SessionEnd = cfg.sessionEnd
+	if cfg.statusCheck > 0 && st.Path() != "" { // another process can change the database only on disk
+		in.stopStatus = bz.WatchAccountStatus(cfg.statusCheck)
+	}
 	broadcastNote := startBroadcasts(cfg, bz, in)
 	go bz.Serve(in.listeners[1])
 	qos := web.NewQoS(log, public, in.qosUDP)
+	qos.Limits = in.limits
 	go qos.Serve(in.listeners[2])
 	go qos.ServeUDP()
-	go (&web.HTTP{Log: log, WWW: www, Extra: extra}).Serve(in.listeners[3])
-	go (&telemetry.Sink{Log: log}).Serve(in.listeners[4])
+	httpSrv, tel := &web.HTTP{Log: log, WWW: www, Extra: extra}, &telemetry.Sink{Log: log}
+	if cfg.web.port > 0 { // the website, before the HTTP port serves (its redirects)
+		if in.website, err = startWebsite(cfg, log, st, in.limits, websiteStatus(bz, in.hosts), websiteAdmin(bz),
+			bz.EndAccountSessions, public,
+			publicName); err != nil {
+			in.close()
+			log.Close()
+			return nil, err
+		}
+		httpSrv.Redirects = in.website.redirects()
+	}
+	go httpSrv.Serve(in.listeners[3])
+	go tel.Serve(in.listeners[4])
 	if in.gmsUDP != nil {
 		go (&gms.Logger{Log: log, Conn: in.gmsUDP}).Serve()
+	}
+	tunnelNote := ""
+	if on, err := tunnelWanted(cfg.tunnel, public); err != nil || on {
+		if err == nil {
+			in.gateway, tunnelNote, err = startGateway(cfg, log, in, services{rd: rd, bz: bz, qos: qos, web: httpSrv, tel: tel}, gp)
+		}
+		if err != nil {
+			in.close()
+			log.Close()
+			return nil, err
+		}
 	}
 
 	serving := ""
@@ -460,9 +554,15 @@ func start(cfg config) (*instance, error) {
 	for _, note := range addressNotes(cfg.bind, public, publicName) { // A5; none in the default setup
 		log.Log("stub", note)
 	}
+	if in.gateway != nil {
+		log.Log("stub", in.gateway.Describe()+tunnelNote)
+	}
+	if in.website != nil {
+		log.Log("stub", in.website.note)
+	}
 	accounts := "accounts in memory only"
 	if st.Path() != "" {
-		accounts = "accounts in " + st.Path()
+		accounts = fmt.Sprintf("accounts in %s (%s)", st.Path(), st.Info())
 	}
 	p := cfg.policy
 	testNote := ""
@@ -482,12 +582,157 @@ func start(cfg config) (*instance, error) {
 	if cfg.mmRefuse {
 		mmNotes += "; every request refused (--mm-refuse, a test aid)"
 	}
+	if len(cfg.testLoginErrors) > 0 {
+		log.Logf("stub", "TEST: the first %d logins answered with the errors %s (--test-login-errors, a test aid)",
+			len(cfg.testLoginErrors), describeLoginErrors(cfg.testLoginErrors))
+	}
 	log.Logf("stub", "PvP matchmaking: %s%s", bz.MM.Config(), mmNotes)
 	if cfg.hostsOn() || cfg.shaperSelect.On {
 		log.Logf("stub", "shaper select (D3-live): %s", cfg.shaperSelect.Describe())
 	}
 	log.Logf("stub", "system messages (B14): kill switches %s; %s", blaze.DescribeKillSwitches(cfg.killSwitches), broadcastNote)
+	log.Logf("stub", "logins (PH2): %s%s; %s; %s", describeSignup(cfg.accounts), modeNote, startPruning(cfg, in),
+		describeSessionEnd(cfg, in.stopStatus != nil))
+	log.Logf("stub", "limits (PH6): %s", limitsNote)
 	return in, nil
+}
+
+// DefaultStatusCheck is --status-check's default.
+const DefaultStatusCheck = 5 * time.Second
+
+// describeSessionEnd is the part of the logins' start-up line.
+func describeSessionEnd(cfg config, checking bool) string {
+	s := "a disabled, banned or deleted account's game session ends at once on the admin page and the website"
+	if checking {
+		s += fmt.Sprintf(", within %s after --account-status (status check)", cfg.statusCheck)
+	} else {
+		s += ", after --account-status only at its next login (no status check)"
+	}
+	if cfg.sessionEnd != blaze.SessionEndDisconnected {
+		s += fmt.Sprintf(" (TEST: --session-end %s)", cfg.sessionEnd)
+	}
+	return s
+}
+
+// describeSignup is the sign-up policy for the start-up line.
+func describeSignup(p accounts.Policy) string {
+	s := "passwords checked (argon2id hashes); sign-up " + p.CurrentMode().String()
+	switch p.CurrentMode() {
+	case accounts.Open:
+		s += ": a new login name makes an account at its first login"
+		if p.SignupsPerAddress > 0 {
+			s += fmt.Sprintf(", at most %d a day per public address", p.SignupsPerAddress)
+		}
+		s += "; an account without a password takes its next login's"
+	case accounts.Invite:
+		s += ": new accounts only with an invite code (--make-invite), not from the game's login"
+	case accounts.Closed:
+		s += ": only the operator makes accounts (--create-account)"
+	}
+	return s
+}
+
+// startPruning applies --log-days now and every pruneEvery until the instance closes; it returns the log's note.
+func startPruning(cfg config, in *instance) string {
+	if cfg.logDays <= 0 {
+		return "logs kept (no --log-days)"
+	}
+	note := fmt.Sprintf("logs older than %d days deleted (--log-days; now: %s)", cfg.logDays,
+		describeRemoved(pruneLogs(cfg.logDir, cfg.gmsData, cfg.logDays, time.Now())))
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(pruneEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				if removed := pruneLogs(cfg.logDir, cfg.gmsData, cfg.logDays, time.Now()); len(removed) > 0 {
+					in.log.Logf("stub", "--log-days %d: %s", cfg.logDays, describeRemoved(removed))
+				}
+			}
+		}
+	}()
+	in.stopPrune = func() { close(stop); <-done }
+	return note
+}
+
+// listenerNames are cfg.ports()'s listeners in order (the log tags of their limits lines).
+var listenerNames = []string{"redirector", "blaze", "qos", "http", "telemetry"}
+
+// limitsReportEvery is how often the limits' refusals are summed up in the log.
+const limitsReportEvery = time.Minute
+
+// startLimits makes the limiter when --limits says so (auto = a public bind or announced address), asks the match
+// hosts for theirs ([host] net_limits=1, after the operator's --gms-options, which win) and starts the minute report.
+// It returns the start-up line's note.
+func startLimits(cfg *config, in *instance, public string) string {
+	if !cfg.limitsMode.Active(exepatch.IsPublic, cfg.bind, public) {
+		if cfg.limitsMode == limits.Off {
+			return "off (--limits off)"
+		}
+		return "off (loopback and LAN addresses; --limits on forces them)"
+	}
+	lc := limits.Default()
+	if cfg.limitsCfg != nil {
+		lc = *cfg.limitsCfg
+	}
+	in.limits = limits.New(lc, nil)
+	// no address of dgserver's own is exempt (an earlier build had exempted --bind as the tunnel gateway's source). A
+	// tunnelled player's streams and datagrams reach the services in process with the player's real address
+	// (tunnel.Addr.Peer, Blaze's Conn.Addr), and the gateway limits them by it before the TLS handshake and before a
+	// datagram is decrypted (startGateway). The match hosts do see every tunnelled player at --bind (the gateway's flow
+	// sockets), so they keep their per-IP rules off for it (net_limit_shared_ips).
+	if cfg.hostsOn() {
+		cfg.gmsOptions = withOption(cfg.gmsOptions, "net_limits", "1")
+		cfg.gmsOptions = withOption(cfg.gmsOptions, "net_limit_shared_ips", cfg.bind)
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		t := time.NewTicker(limitsReportEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				if r := in.limits.TakeReport(); r != "" {
+					in.log.Logf("stub", "limits: last minute %s", r)
+				}
+			}
+		}
+	}()
+	var once sync.Once
+	in.stopLimits = func() { once.Do(func() { close(stop); <-done }) }
+	why := "--limits on"
+	if cfg.limitsMode == limits.Auto {
+		why = "a public address"
+	}
+	hostNote := ""
+	if cfg.hostsOn() {
+		hostNote = "; match hosts net_limits=1, net_limit_shared_ips=" + cfg.bind + " (the tunnel gateway's flows)"
+	}
+	return fmt.Sprintf("on (%s): %s; tunnelled players by their real address (the gateway's connections, datagrams "+
+		"and sessions, Blaze's logins)%s", why, lc.Describe(), hostNote)
+}
+
+// withOption appends key=value to a "key=value;..." option string unless the key is there already (the host takes the
+// first of a key, so the operator's own value would win anyway; this keeps the start-up line honest).
+func withOption(options, key, value string) string {
+	for _, kv := range strings.Split(options, ";") {
+		if k, _, ok := strings.Cut(kv, "="); ok && strings.EqualFold(strings.TrimSpace(k), key) {
+			return options
+		}
+	}
+	if strings.TrimSpace(options) == "" {
+		return key + "=" + value
+	}
+	return strings.TrimRight(options, "; ") + ";" + key + "=" + value
 }
 
 // startBroadcasts sets up the broadcast messages (B14): the one from --broadcast and, with --broadcast-file, the
@@ -516,6 +761,21 @@ func (in *instance) close() {
 	if in.stopWatch != nil {
 		in.stopWatch()
 	}
+	if in.gateway != nil {
+		in.gateway.Close()
+	}
+	if in.website != nil {
+		in.website.close()
+	}
+	if in.stopPrune != nil {
+		in.stopPrune()
+	}
+	if in.stopLimits != nil {
+		in.stopLimits()
+	}
+	if in.stopStatus != nil {
+		in.stopStatus()
+	}
 	if in.hosts != nil {
 		in.hosts.Close() // kills running hosts
 	}
@@ -527,6 +787,9 @@ func (in *instance) close() {
 	}
 	if in.gmsUDP != nil {
 		in.gmsUDP.Close()
+	}
+	if in.store != nil {
+		in.store.Close() // a request still running gets an error from the store; nothing half-written (one transaction each)
 	}
 }
 
@@ -580,7 +843,7 @@ func Run(args []string, h Hooks) int {
 	fs.StringVar(&cfg.www, "www", "", "serve files from this directory on the HTTP port (default: built-in answers, else 404)")
 	fs.StringVar(&cfg.certs, "certs", besideBin("certs"), "folder with server_cert.pem and server_key.pem")
 	fs.StringVar(&cfg.logDir, "log", besideBin("logs"), "log folder")
-	fs.StringVar(&cfg.dataDir, "data", besideBin("data"), `data folder: accounts.json (accounts, player content) and content.json; "" = accounts in memory only`)
+	fs.StringVar(&cfg.dataDir, "data", besideBin("data"), `data folder: accounts.db (accounts, player content; an accounts.json of earlier builds is imported at the first start) and content.json; "" = accounts in memory only`)
 	fs.StringVar(&cfg.contentPath, "content", "", `content file (default <data>\content.json)`)
 	makeContentDir := fs.String("make-content", "", `build the content file from this AssetData dump folder (re/scripts/assetdata.py dump) or game folder (the one with game\Data\AssetData.snap), then exit`)
 	writeWWW := fs.String("write-www", "", "write the built-in web answers under this folder at the paths the client requests (for --www), then exit")
@@ -597,6 +860,7 @@ func Run(args []string, h Hooks) int {
 	fs.IntVar(&cfg.mm.MinPlayers, "mm-min-players", cfg.mm.MinPlayers, "PvP matchmaking: fewest players a match starts with once --mm-fill-after has passed (the empty slots get bots, --mm-bots)")
 	fs.DurationVar(&cfg.mm.FillAfter, "mm-fill-after", cfg.mm.FillAfter, "PvP matchmaking: how long the oldest player waits for full teams before a smaller match starts")
 	fs.DurationVar(&cfg.mm.MaxWait, "mm-max-wait", 0, "PvP matchmaking: the longest a player waits in the queue before it gives up (SESSION_TIMED_OUT; 0 = the client's 3 h)")
+	testLoginErrors := fs.String("test-login-errors", "", "test aid: comma-separated 16-bit error codes (hex 0x.. or decimal); the n-th login gets the n-th as its error reply (0 = answered as usual), later logins are answered as usual; e.g. 0x0C,0x4072,0")
 	fs.BoolVar(&cfg.mmRefuse, "mm-refuse", false, "PvP matchmaking test aid: refuse every startMatchmaking (GAMEMANAGER_ERR_INVALID_MATCHMAKING_CRITERIA)")
 	fs.BoolVar(&cfg.mmBots, "mm-bots", true, "PvP matchmaking with match hosts: a game that starts with open seats (after --mm-fill-after) gets bots in them, up to --mm-team-size a team (B10d); --mm-bots=false leaves them empty")
 	fs.BoolVar(&cfg.customBots, "custom-bots", false, "custom games with match hosts: bots fill the open seats when the game starts (B15; off: only the lobby's players)")
@@ -607,9 +871,39 @@ func Run(args []string, h Hooks) int {
 	fs.StringVar(&cfg.broadcast, "broadcast", "", `a broadcast message every login gets (B14; "@<flags> " in front sets its display flags)`)
 	fs.StringVar(&cfg.broadcastFile, "broadcast-file", "", `the operator's broadcast messages, one per line, read every 2 s and sent to everyone logged in when they change (B14; default <data>\broadcast.txt, "" = none)`)
 	fs.Int64Var(&cfg.broadcastFlags, "broadcast-flags", blaze.DefaultBroadcastFlags, "display flags of the broadcast messages: 4 the main menu's marquee and shaper select, 2 a System chat line (also in a match), 1 the main menu chat's notifications; added up")
+	signup := fs.String("signup", "open", "sign-up mode: open (a new login name makes an account at its first login, with the password typed), invite (new accounts only with an invite code: --make-invite; the website), closed (only the operator: --create-account)")
+	fs.IntVar(&cfg.accounts.SignupsPerAddress, "signups-per-address", accounts.DefaultSignupsPerAddress, "the most accounts one public source address may make per UTC day (loopback and LAN addresses are never counted); 0 = no cap")
+	fs.DurationVar(&cfg.statusCheck, "status-check", DefaultStatusCheck, "re-read the status of the logged-in accounts this often and end the game session of each one that isn't active any more (the operator's --account-status in another process); the admin page and the website end it at once; 0 = never")
+	sessionEnd := fs.String("session-end", blaze.SessionEndDisconnected.String(), "a test aid: what the client hears before its session is ended: disconnected (UserSessions::UserSessionDisconnected), unauthenticated (UserUnauthenticated), close (the connection closed without a word)")
+	fs.IntVar(&cfg.logDays, "log-days", 0, "delete dgserver's log files and the match hosts' folders (--gms-data) older than this many days, at the start and every 6 hours (the logs hold login names and addresses); 0 = keep everything")
+	var ac accountCommands
+	fs.BoolVar(&ac.makeInvite, "make-invite", false, "make an invite code (printed once), then exit; with --invite-uses, --invite-days, --invite-note")
+	fs.IntVar(&ac.inviteUses, "invite-uses", 1, "--make-invite: how many accounts the code may make")
+	fs.Float64Var(&ac.inviteDays, "invite-days", 14, "--make-invite: days until the code expires (0 = never)")
+	fs.StringVar(&ac.inviteNote, "invite-note", "", "--make-invite: a note kept with the code (whom it is for)")
+	fs.BoolVar(&ac.listInvites, "list-invites", false, "list the invite codes (id, uses, expiry), then exit")
+	fs.Int64Var(&ac.revokeInvite, "revoke-invite", 0, "revoke the invite code with this id, then exit")
+	fs.StringVar(&ac.createAccount, "create-account", "", "make an account with this login name and a random password (printed once), then exit (any sign-up mode)")
+	fs.StringVar(&ac.resetPassword, "reset-password", "", "give the account with this login name a new random password (printed once), then exit")
+	fs.StringVar(&ac.accountStatus, "account-status", "", "set an account's status, then exit: <login name>=active|disabled|banned|deleted")
+	fs.StringVar(&ac.makeAdmin, "make-admin", "", "give the account with this login name the admin role (the website's /admin page), then exit")
+	fs.StringVar(&ac.removeAdmin, "remove-admin", "", "take the admin role from the account with this login name, then exit")
 	seconds := fs.Int("seconds", 0, "stop after N seconds (default: run until Ctrl+C)")
 	printPorts := fs.Bool("print-ports", false, "print the TCP ports this configuration listens on, then exit")
+	limitsFlag := fs.String("limits", "auto", "rate and count limits on every listener, the logins, Blaze requests, games and queues, and the match hosts' packets (net_limits): auto = on for a public --bind or --public-host address, off on loopback and LAN; on forces them (the lanes' tests); off")
 	fs.BoolVar(&cfg.serveCA, "serve-ca", false, "serve the redirector CA's public modulus (<certs>\\ca_modulus.bin) on the HTTP port at /"+web.CAModulusPath+", for Start-Client.exe on other machines (trust on first use, the player compares its fingerprint)")
+	fs.StringVar(&cfg.tunnel, "tunnel", TunnelOff, `the encrypted tunnel's gateway: "on" serves it on --bind:--gateway-port (TCP and UDP) beside the plain ports, "auto" = on for a public --public-host, "off"`)
+	fs.IntVar(&cfg.gatewayPort, "gateway-port", tunnel.DefaultPort, "the tunnel gateway's port, TCP and UDP (the only port a public server forwards, with the website's)")
+	fs.StringVar(&cfg.gatewayKey, "gateway-key", "", `folder of the gateway's key (`+tunnel.CertFile+`, `+tunnel.KeyFile+`; made at the first start); default --certs`)
+	fs.StringVar(&cfg.tunnelClient, "tunnel-client", "", "test aid: run only the player's side of the tunnel to this gateway (host:port), listening on --tunnel-address; the game's TLS to the redirector ends here with --certs (CN = --tunnel-address)")
+	fs.StringVar(&cfg.tunnelAddress, "tunnel-address", "127.0.0.1", "--tunnel-client: the loopback address the player copy is patched for")
+	fs.StringVar(&cfg.tunnelPin, "tunnel-pin", "", "--tunnel-client: the gateway key's pin (64 hex digits)")
+	fs.StringVar(&cfg.tunnelPinCert, "tunnel-pin-cert", "", "--tunnel-client: pin the key of this gateway certificate file (the server's "+tunnel.CertFile+")")
+	fs.IntVar(&cfg.web.port, "web-port", 0, "the website's HTTPS port (registration, password change, account deletion, data download, status, privacy); 0 = no website. Start-Server.ini's web_port: 443")
+	webDomain := fs.String("web-domain", "", "the website's domain name (e.g. play.example.org, its A record at this server): a Let's Encrypt certificate by TLS-ALPN-01, so the CA must reach <domain>:443 (forwarded to --web-port); empty = a self-signed certificate for the server's addresses")
+	fs.StringVar(&cfg.web.email, "web-email", "", "--web-domain: a contact address for the CA's expiry mail (optional)")
+	fs.StringVar(&cfg.web.dir, "web-dir", "", `the website's folder: its certificates and the operator's privacy.html, terms.html, about.html (default <data>\site)`)
+	fs.StringVar(&cfg.web.acmeURL, "web-acme-url", "", "--web-domain: the ACME directory (default Let's Encrypt; "+site.LetsEncryptStagingURL+" for a first try)")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Dawngate restoration server: redirector (TLS :%d), Blaze, QoS, HTTP and telemetry.\n"+
 			"Usage: dgserver [flags]\n", redirector.Port)
@@ -654,6 +948,44 @@ func Run(args []string, h Hooks) int {
 		fmt.Fprintln(os.Stderr, "dgserver:", err)
 		return 2
 	}
+	if m, err := accounts.ParseMode(*signup); err != nil {
+		fmt.Fprintln(os.Stderr, "dgserver: --signup:", err)
+		return 2
+	} else {
+		cfg.accounts.Mode = m
+	}
+	if cfg.accounts.SignupsPerAddress < 0 || cfg.logDays < 0 || cfg.statusCheck < 0 {
+		fmt.Fprintln(os.Stderr, "dgserver: --signups-per-address, --log-days and --status-check must be 0 or more")
+		return 2
+	}
+	if n, err := blaze.ParseSessionEndNotice(*sessionEnd); err != nil {
+		fmt.Fprintln(os.Stderr, "dgserver:", err)
+		return 2
+	} else {
+		cfg.sessionEnd = n
+	}
+	if m, err := limits.ParseMode(*limitsFlag); err != nil {
+		fmt.Fprintln(os.Stderr, "dgserver:", err)
+		return 2
+	} else {
+		cfg.limitsMode = m
+	}
+	if d, err := checkWebDomain(*webDomain); err != nil {
+		fmt.Fprintln(os.Stderr, "dgserver:", err)
+		return 2
+	} else {
+		cfg.web.domain = d
+	}
+	if cfg.web.port < 0 || cfg.web.port > 65535 || (cfg.web.domain != "" && cfg.web.port == 0) {
+		fmt.Fprintln(os.Stderr, "dgserver: --web-port must be 1-65535 for a website (--web-domain needs one), 0 for none")
+		return 2
+	}
+	if codes, err := parseLoginErrors(*testLoginErrors); err != nil {
+		fmt.Fprintln(os.Stderr, "dgserver: --test-login-errors:", err)
+		return 2
+	} else {
+		cfg.testLoginErrors = codes
+	}
 
 	if *makeAgentKey != "" {
 		if err := writeAgentKey(*makeAgentKey); err != nil {
@@ -662,6 +994,9 @@ func Run(args []string, h Hooks) int {
 		}
 		fmt.Println("wrote a new agent key to", *makeAgentKey, "(copy it to every host machine; keep it private)")
 		return 0
+	}
+	if ac.any() {
+		return ac.run(cfg.dataDir, os.Stdout, os.Stderr, time.Now())
 	}
 	if *makeContentDir != "" {
 		if err := makeContent(*makeContentDir, cfg.contentFile()); err != nil {
@@ -690,6 +1025,9 @@ func Run(args []string, h Hooks) int {
 		return 0
 	}
 
+	if cfg.tunnelClient != "" {
+		return runTunnelClient(cfg, *seconds, h)
+	}
 	if cfg.agent != "" {
 		ag, err := startAgent(cfg)
 		if err != nil {
@@ -729,6 +1067,12 @@ type Info struct {
 	TCPPorts         []int  // redirector, Blaze, QoS, HTTP, telemetry (and the control port with match hosts)
 	Log              string // the log file
 	CAFingerprint    string // the CA modulus's fingerprint when --serve-ca serves it, else ""
+	// the tunnel gateway's port (TCP and UDP) and its key's fingerprint (0 and "" without --tunnel)
+	GatewayPort        int
+	GatewayFingerprint string
+	// the website's address and its self-signed certificate's SHA-256 fingerprint ("" without a website; the
+	// fingerprint "" with a domain's certificate)
+	WebURL, WebFingerprint string
 }
 
 func (in *instance) info(cfg config) Info {
@@ -740,7 +1084,16 @@ func (in *instance) info(cfg config) Info {
 	if public == "" {
 		public = cfg.bind
 	}
-	return Info{Bind: cfg.bind, PublicHost: public, TCPPorts: ports, Log: in.log.Path, CAFingerprint: in.caFingerprint}
+	info := Info{Bind: cfg.bind, PublicHost: public, TCPPorts: ports, Log: in.log.Path, CAFingerprint: in.caFingerprint}
+	if in.gateway != nil {
+		info.GatewayPort, info.GatewayFingerprint = in.gateway.Port(), in.gateway.Identity.Pin.Fingerprint()
+		info.TCPPorts = append(info.TCPPorts, info.GatewayPort)
+	}
+	if in.website != nil {
+		info.WebURL, info.WebFingerprint = in.website.url, in.website.fingerprint
+		info.TCPPorts = append(info.TCPPorts, cfg.web.port)
+	}
+	return info
 }
 
 // applySystemFlags reads B14's flags into cfg: --kill-switches, --broadcast-flags (1-7) and the default of
@@ -758,6 +1111,32 @@ func applySystemFlags(cfg *config, killSwitches string, set map[string]bool) err
 		cfg.broadcastFile = filepath.Join(cfg.dataDir, "broadcast.txt")
 	}
 	return nil
+}
+
+// parseLoginErrors reads --test-login-errors (a test aid): comma-separated 16-bit error codes, hex with 0x or
+// decimal; "" = none.
+func parseLoginErrors(s string) ([]uint16, error) {
+	if strings.TrimSpace(s) == "" {
+		return nil, nil
+	}
+	var codes []uint16
+	for _, f := range strings.Split(s, ",") {
+		v, err := strconv.ParseUint(strings.TrimSpace(f), 0, 16)
+		if err != nil {
+			return nil, fmt.Errorf("%q is not a 16-bit error code", strings.TrimSpace(f))
+		}
+		codes = append(codes, uint16(v))
+	}
+	return codes, nil
+}
+
+// describeLoginErrors writes --test-login-errors' codes for the start-up line.
+func describeLoginErrors(codes []uint16) string {
+	parts := make([]string, len(codes))
+	for i, c := range codes {
+		parts[i] = fmt.Sprintf("%#04x", c)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // waitForStop returns on Ctrl+C, when the console window is closed (Windows' CTRL_CLOSE_EVENT arrives as SIGTERM; the

@@ -470,13 +470,13 @@ func (s *Server) startCustomGame(r *Request, g Game, p Player) []byte {
 	hg := &hostedGame{s: s, game: g, mode: gmshost.ModeCustom, started: s.Now(), replied: make(chan struct{}),
 		state: GameStatePreGame, players: []*hostedPlayer{hp}, custom: lobby}
 	close(hg.replied)
-	hg.setup = hg.lobbySetup
+	hg.setup = func(g Game, hp *hostedPlayer) []byte { return hg.lobbySetup(hp.conn.ForClient(g), hp) } // the tunnel (tunnel.go)
 	lobby.ready = true
 	s.hosted.add(hg)
 	conn, id := r.Conn, p.ID
 	conn.OnSessionEnd(func() { hg.sessionEnded(conn, id) })
 	s.Log.Logf("blaze", "   game %d %q: GMS %s (HNET), no match host; player %d", g.ID, g.Name, g.GMS, p.ID)
-	r.Notify(ComponentGameManager, NotifyGameSetupID, "NotifyGameSetup", hg.lobbySetup(g, hp))
+	r.Notify(ComponentGameManager, NotifyGameSetupID, "NotifyGameSetup", hg.lobbySetup(r.Conn.ForClient(g), hp))
 	r.After(func() { s.browserChanged(hg) })
 	return JoinGameReply(g.ID)
 }
@@ -560,7 +560,7 @@ func (s *Server) joinCustomGame(r *Request, hg *hostedGame) []byte {
 	}
 	s.Log.Logf("blaze", "   game %d: player %d %s (%s, slot %d, %d players now; started %v); NotifyGameSetup names the GMS %s",
 		gid, me, what, team, hp.slot, len(players), started, g.GMS)
-	r.Notify(ComponentGameManager, NotifyGameSetupID, "NotifyGameSetup", LobbyGameSetupNotification(g, admins, players, SetupContextJoinGame))
+	r.Notify(ComponentGameManager, NotifyGameSetupID, "NotifyGameSetup", LobbyGameSetupNotification(r.Conn.ForClient(g), admins, players, SetupContextJoinGame))
 	note := LobbyPlayerJoiningNotification(gid, joining)
 	r.After(func() {
 		hg.pushExcept(me, NotifyPlayerJoiningID, "NotifyPlayerJoining", note)

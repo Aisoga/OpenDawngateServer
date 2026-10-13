@@ -539,14 +539,14 @@ func TestRecentPlayersAndListErrors(t *testing.T) {
 
 // B13b: a friendship survives a server restart (the accounts file), and the next login's getLists has it.
 func TestFriendsSurviveRestart(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "accounts.json")
-	st, err := store.Open(path)
+	path := filepath.Join(t.TempDir(), store.FileName)
+	st, err := openTestStore(t, path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	b13bAccounts(t, st, true)
 
-	reopened, err := store.Open(path)
+	reopened, err := openTestStore(t, path)
 	if err != nil {
 		t.Fatal(err)
 	}

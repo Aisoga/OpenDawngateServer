@@ -16,6 +16,7 @@
 #include <memory>
 #include <random>
 #include <set>
+#include <unordered_map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -379,7 +380,7 @@ long long SimClockMs(void* sim) {
 }
 
 // IMatch over the server simulator (ADR-2 decision 5's engine side; since D2f the world comes from the simulator).
-class ServerMatch final : public gms::IMatch {
+class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
  public:
   // The ClockSync clock: the simulator's own game clock, which stamps every time the client translates (cooldowns, death
   // timers, instance starts). The steady clock since the session start ran ~0.7 s ahead of it, so a 1.5-s cooldown
@@ -388,6 +389,63 @@ class ServerMatch final : public gms::IMatch {
   ServerMatch(void* sim, const gms::ScriptOptions& o) : sim_(sim), o_(o), inject_(o) {}
 
   gms::GameSetup Setup() override { return o_.setup; }
+
+  // ---- the strict check's world (core/protocol/check.h) ---------------------------------------------------
+  // [host] check_world (1) and check_fog_grace_ms (2000: a target the player's client lost from view this long ago is
+  // still taken, since the client's view lags the server's by the latency and its 93's way).
+  void SetCheck(bool world, int fogGraceMs) {
+    checkWorld_ = world;
+    fogGraceMs_ = fogGraceMs;
+  }
+  gms::check::IWorld* CheckWorld() override { return checkWorld_ ? this : nullptr; }
+  bool Sender(gms::ConnId conn, gms::check::SenderView* out) override {
+    auto it = players_.find(conn);
+    if (it == players_.end() || it->second.index < 0) return false;
+    out->player = !it->second.spectator;
+    out->gameplayIndex = static_cast<uint8_t>(it->second.index);
+    out->creature = it->second.creature;
+    return true;
+  }
+  gms::check::TargetView Target(gms::ConnId conn, uint32_t id) override {
+    auto it = players_.find(conn);
+    if (it == players_.end() || it->second.index < 0 || it->second.index >= 16) return gms::check::TargetView::kGone;
+    const int index = it->second.index;
+    uint16_t known = 0, visible = 0;
+    {
+      BoundTo b(sim_);
+      if (!repl::ObjectMasks(id, &known, &visible)) return gms::check::TargetView::kGone;
+    }
+    const uint16_t bit = static_cast<uint16_t>(1u << index);
+    if (!(known & bit)) return gms::check::TargetView::kUnknown;
+    if (visible & bit) return gms::check::TargetView::kVisible;
+    auto f = fogEnteredMs_.find(FogKey(index, id));
+    if (f != fogEnteredMs_.end() && gms::timing::NowMs() - f->second <= fogGraceMs_)
+      return gms::check::TargetView::kVisible;
+    return gms::check::TargetView::kHidden;
+  }
+  bool Inventory(gms::ConnId conn, gms::check::InventoryView* out) override {
+    auto it = players_.find(conn);
+    if (it == players_.end() || it->second.index < 0) return false;
+    BoundTo b(sim_);
+    return cmds::ReadInventory(sim_, static_cast<unsigned>(it->second.index), out->item, out->count);
+  }
+  static uint64_t FogKey(int index, uint32_t id) { return static_cast<uint64_t>(index) << 32 | id; }
+  // Forgets fog entries older than the grace (they answer kHidden anyway); at most once a second (Tick).
+  void PruneFogEntries() {
+    const double now = gms::timing::NowMs();
+    if (now - fogPrunedMs_ < 1000) return;
+    fogPrunedMs_ = now;
+    for (auto it = fogEnteredMs_.begin(); it != fogEnteredMs_.end();)
+      it = now - it->second > fogGraceMs_ ? fogEnteredMs_.erase(it) : std::next(it);
+  }
+  // the test side's commands (commands_file) through the same check, reported (they still run): what a normal
+  // client sending them would have had dropped
+  const gms::check::Stats& InjectedCheck() const { return injectedCheck_; }
+  gms::check::Stats TakeInjectedCheckWindow() {
+    gms::check::Stats s;
+    std::swap(s, injectedCheckWindow_);
+    return s;
+  }
 
   void OnConnected(gms::ConnId conn, const std::string& addr) override { inject_.OnConnected(conn, addr); }
 
@@ -917,7 +975,10 @@ class ServerMatch final : public gms::IMatch {
     }
   }
 
-  void Tick(gms::SteadyClock::time_point now, gms::ISender& out) override { inject_.Tick(now, out); }
+  void Tick(gms::SteadyClock::time_point now, gms::ISender& out) override {
+    inject_.Tick(now, out);
+    PruneFogEntries();
+  }
 
   // After the simulation (GmsHostFlush, ADR-2's loop steps 4-5): the replication step (D2g-live: creates, seam 1,
   // updates, modifier ends; D2f's drain alone with [host] replicate = 0), the command intake's answers, the test-side
@@ -1367,6 +1428,29 @@ class ServerMatch final : public gms::IMatch {
       if (b.index == index) return b.creature;
     return 0;
   }
+  // a test-side command through the strict check, as if the player's client had sent it (counted and logged; the
+  // command still runs, so test sessions with edge cases keep working)
+  void CheckInjected(gms::ConnId conn, const gms::Bytes& m) {
+    if (!checkWorld_ || m.empty()) return;
+    const gms::check::Bounds bounds = gms::check::BoundsForLevel(o_.setup.level);
+    gms::check::Result r = gms::check::CheckFormat(m[0], m.data() + 1, m.size() - 1, bounds);
+    if (r.ok()) r = gms::check::CheckWorld(m[0], m.data() + 1, m.size() - 1, conn, *this);
+    for (gms::check::Stats* s : {&injectedCheck_, &injectedCheckWindow_}) {
+      ++s->checked;
+      if (r.ok()) {
+        ++s->ok;
+        continue;
+      }
+      if (r.verdict == gms::check::Verdict::kMalformed) ++s->malformed;
+      else if (r.verdict == gms::check::Verdict::kInvalid) ++s->invalid;
+      else ++s->stale;
+      ++s->badByWire[m[0]];
+    }
+    if (!r.ok() && ++injectedCheckLogged_ <= 100)
+      gms::Logf("%s check: injected (test side) %02x would be %s: %s; %s", gms::Clock().c_str(), m[0],
+                gms::check::VerdictName(r.verdict), r.reason.c_str(), gms::Hex(m, 48).c_str());
+  }
+
   struct TimedCommand {
     double at = 0;    // seconds after the player's EnterGame
     int player = -1;  // G3: the gameplay index ("p<index>"); -1 = the first player in the game (before G3: always)
@@ -1576,6 +1660,7 @@ class ServerMatch final : public gms::IMatch {
                   took ? "taken by the surrender vote" : "NOT taken", surrender_.Describe().c_str());
         continue;
       }
+      CheckInjected(conn, m);  // reported, the command still runs
       BoundTo b(sim_);
       if (!cmds::OnClientMessage(sim_, static_cast<unsigned>(pl->index), m[0], m.data() + 1, m.size() - 1, "injected"))
         gms::Logf("%s match: injected %02x is no command message; ignored", gms::Clock().c_str(), m[0]);
@@ -2257,11 +2342,13 @@ class ServerMatch final : public gms::IMatch {
       const uint16_t bit = static_cast<uint16_t>(1u << a.player);
       if (a.kind == gms::vision::FogActionKind::kEnter) {
         SendTo(out, bit, gms::vision::BuildObjectEnterFoW(o.id), nullptr);
+        if (checkWorld_) fogEnteredMs_[FogKey(a.player, o.id)] = gms::timing::NowMs();  // the fog grace
         ++fogEnters_;
         if (++fogLogged_ <= fogLogLimit_)
           Log("fog: %08X %-30s team %u at (%.1f, %.1f) enters fog for player %d (team bits %u)", o.id, o.name,
               ents[i].team, info[i].pos[0], info[i].pos[1], a.player, model_.Bits(i));
       } else if (a.kind == gms::vision::FogActionKind::kExit) {
+        fogEnteredMs_.erase(FogKey(a.player, o.id));
         float euler[3];
         gms::vision::QuaternionToEuler(info[i].quat, euler);
         SendTo(out, bit, gms::vision::BuildObjectPrepareForExitFoW(o.id, info[i].pos, euler), nullptr);
@@ -2983,6 +3070,13 @@ class ServerMatch final : public gms::IMatch {
   bool surrenderDecided_ = false, surrenderOn_ = false, surrenderStopped_ = false;
   uint8_t uiAvailability_ = 0;
   int surrenderIntake_ = 0, surrenderSent_ = 0, karmaReports_ = 0;
+  // the strict check's world
+  bool checkWorld_ = true;
+  int fogGraceMs_ = 2000;
+  std::unordered_map<uint64_t, double> fogEnteredMs_;  // (player, object) -> when the object entered fog for it
+  double fogPrunedMs_ = 0;
+  gms::check::Stats injectedCheck_, injectedCheckWindow_;
+  int injectedCheckLogged_ = 0;
   std::map<gms::ConnId, uint64_t> postgameUsers_;  // the post-game's connections -> Blaze users
 };
 
@@ -2995,6 +3089,7 @@ class TimedTransport final : public gms::ITransport {
     if (match) match->OnSent(conn, msg);
     return ep->Send(conn, msg);
   }
+  void Close(gms::ConnId conn) override { ep->Close(conn); }  // the strict check's kick
 };
 
 struct GmsHost {
@@ -3010,6 +3105,7 @@ struct GmsHost {
   gms::PumpTiming pump;    // Q3c: the polls' measurements since perf's last window
   double lastSampleMs = 0; // Q3c: Endpoint::SampleConnections every 250 ms
   bool fastLane = false;
+  gms::RakHardeningTotals rakTotals;  // summed over the net: lines
 };
 // Never destroyed: the process ends with the match (ADR-2 decision 3), and RakNet must not be shut down under the
 // loader lock at DLL_PROCESS_DETACH.
@@ -3076,7 +3172,23 @@ void NetGauges(gms::timing::Gauges* g, std::string* line, int minute) {
                 st.resendBufferMsgsMax, st.packetLossMax * 100.0, st.limitedByCongestion ? ", congestion-limited" : "",
                 simText);
   *line = b;
+  // the strict check's counts in this window (the client's messages; the test side's commands apart)
+  const gms::check::Stats ck = h->session->TakeCheckWindow();
+  const gms::check::Stats inj = h->match->TakeInjectedCheckWindow();
+  *line += "; check: " + ck.Describe();
+  if (inj.checked) *line += "; test-side commands " + inj.Describe();
+  // what RakNet's hardening did in this window
+  const gms::RakHardeningTotals rh = h->ep.TakeHardeningTotals();
+  h->rakTotals.cookiesIssued += rh.cookiesIssued;
+  h->rakTotals.request1Short += rh.request1Short;
+  h->rakTotals.request2BadCookie += rh.request2BadCookie;
+  h->rakTotals.nonsenseClosed += rh.nonsenseClosed;
+  h->rakTotals.nonsenseBanned += rh.nonsenseBanned;
+  h->rakTotals.orderedAheadClosed += rh.orderedAheadClosed;
+  *line += "; raknet: " + rh.Describe();
   auto add = [g](const char* name, double v) { g->push_back({name, v}); };
+  add("check_dropped", static_cast<double>(ck.Bad()));
+  add("check_kicked", static_cast<double>(ck.kicked));
   add("clock_answer_p99_ms", clock.n ? clock.p99 : -1);
   add("clock_answer_max_ms", clock.n ? clock.max : -1);
   add("clock_wire_p99_ms", cw.n ? cw.p99 : -1);
@@ -3097,6 +3209,27 @@ void NetGauges(gms::timing::Gauges* g, std::string* line, int minute) {
 
 void ReplicationGauges(gms::timing::Gauges* g, std::string*, int) {
   if (g_gms && g_gms->match) g_gms->match->PerfGauges(g);
+}
+
+// The network limits (core/net/limits.h): the `limits:` line per match minute while the network limits are on: what came in, what
+// was dropped and closed, and the busiest address and connection (the numbers a normal client stays under).
+void LimitGauges(gms::timing::Gauges*, std::string* line, int minute) {
+  GmsHost* h = g_gms;
+  if (!h || !h->ep.Limits().on) return;
+  const gms::NetLimiter::Totals t = h->ep.TakeLimitTotals();
+  char b[700];
+  std::snprintf(b, sizeof b,
+                "limits: minute %d: %llu datagrams (%llu B) in; dropped %llu over an address's or IP's rate, %llu "
+                "offline over the IP's rate, %llu of closed addresses, %llu GMS messages over a connection's rate; "
+                "closed %llu over the limits, %llu over the IP's connections, %llu silent; busiest address %u "
+                "datagrams / %llu B in a second, busiest connection %u GMS messages in a second; %zu addresses tracked",
+                minute, static_cast<unsigned long long>(t.datagrams), static_cast<unsigned long long>(t.bytes),
+                static_cast<unsigned long long>(t.droppedRate), static_cast<unsigned long long>(t.droppedOffline),
+                static_cast<unsigned long long>(t.droppedBlocked), static_cast<unsigned long long>(t.droppedMessages),
+                static_cast<unsigned long long>(t.kickedRate), static_cast<unsigned long long>(t.kickedCap),
+                static_cast<unsigned long long>(t.kickedSilent), t.maxDatagramsPerS,
+                static_cast<unsigned long long>(t.maxBytesPerS), t.maxMessagesPerS, t.tracked);
+  *line = b;
 }
 
 }  // namespace
@@ -3185,6 +3318,11 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   so.abortAckMs = HostOptionInt("abort_ack_ms", so.abortAckMs);
   // B15b: the players' clients get the spectators too (GMS_PROTOCOL.md *Spectators on the match host (B15b)*)
   so.nameSpectators = HostOptionInt("name_spectators", 1) != 0;
+  // the strict message check (core/protocol/check.h): 1 drop (default), 2 count and log only, 0 off
+  so.check.mode = HostOptionInt("strict_check", 1);
+  so.check.kickCount = HostOptionInt("check_kick_count", so.check.kickCount);
+  so.check.kickWindowMs = HostOptionInt("check_kick_window_s", so.check.kickWindowMs / 1000) * 1000;
+  so.check.logLimit = HostOptionInt("check_log_limit", so.check.logLimit);
 
   auto* g = new GmsHost;
   // Q3c: the network simulator (delay, jitter, loss on every datagram in and out; core/net/netsim.h), the answers timed
@@ -3207,6 +3345,56 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
         net.Active() ? "ON" : "off", net.delayMs, net.jitterMs, net.lossPercent, net.seed,
         g->fastLane ? "on (net_fast_answers 1: C7 and B4 IMMEDIATE_PRIORITY on channel 1)" : "off");
   }
+  // the network limits (core/net/limits.h): [host]
+  // net_limits -1 (auto: on for a public bind address; dgserver --limits on passes 1), 1 on, 0 off
+  {
+    gms::NetLimitOptions lim;
+    const int mode = HostOptionInt("net_limits", -1);
+    lim.on = mode > 0 || (mode < 0 && gms::IsPublicIpv4(ipv4));
+    lim.datagramsPerSec = HostOptionInt("net_limit_datagrams_s", 400);
+    lim.datagramBurst = lim.datagramsPerSec * 3;
+    lim.bytesPerSec = HostOptionInt("net_limit_kb_s", 128) * 1024.0;
+    lim.byteBurst = lim.bytesPerSec * 4;
+    lim.ipFactor = HostOptionInt("net_limit_ip_factor", 6);
+    lim.offlinePerSec = HostOptionInt("net_limit_offline_s", 4);
+    lim.offlineBurst = lim.offlinePerSec * 4;
+    lim.messagesPerSec = HostOptionInt("net_limit_messages_s", 200);
+    lim.messageBurst = lim.messagesPerSec * 3;
+    lim.kickAfterS = HostOptionInt("net_limit_kick_s", 3);
+    lim.connectionsPerIp = HostOptionInt("net_limit_conns_per_ip", 8);
+    lim.helloTimeoutS = HostOptionInt("net_limit_hello_s", 30);
+    lim.blockS = HostOptionInt("net_limit_block_s", 30);
+    char shared[256];  // the tunnel gateway's IP (dgserver passes its --bind): no per-IP rule there
+    HostOptionString("net_limit_shared_ips", "", shared, sizeof shared);
+    for (char* tok = std::strtok(shared, ", "); tok; tok = std::strtok(nullptr, ", "))
+      if (const std::uint32_t sip = ParseIpv4(tok)) lim.sharedIps.push_back(sip);
+    g->ep.SetLimits(lim);
+    if (lim.on)
+      Log("host: network limits (PH6) ON (net_limits %d%s): per address %.0f datagrams/s (burst %.0f) and %.0f KB/s, "
+          "per IP x%.0f, offline %.0f/s per IP, %.0f GMS messages/s per connection; closed after %d s with drops "
+          "(blocked %d s), %d connections per IP, %d s to the first GMS message; %zu shared IP(s) without per-IP rules "
+          "(net_limit_shared_ips '%s'); RakNet's connection frequency limit %s",
+          mode, mode < 0 ? ", a public bind address" : "", lim.datagramsPerSec, lim.datagramBurst,
+          lim.bytesPerSec / 1024, lim.ipFactor, lim.offlinePerSec, lim.messagesPerSec, lim.kickAfterS, lim.blockS,
+          lim.connectionsPerIp, lim.helloTimeoutS, lim.sharedIps.size(), shared,
+          lim.sharedIps.empty() ? "on" : "off (shared IPs)");
+    else
+      Log("host: network limits (PH6) off (net_limits %d%s)", mode,
+          mode < 0 ? ": loopback or LAN bind address; dgserver --limits on passes 1" : "");
+  }
+  // RakNet's handshake and receive hardening (gms/cmake/raknet_patches),
+  // on by default, independent of the limits
+  {
+    gms::RakHardeningOptions rh;
+    rh.cookies = HostOptionInt("raknet_cookies", 1) != 0;
+    rh.nonsenseBan = HostOptionInt("raknet_nonsense_ban", 0) != 0;
+    rh.request1NoSmaller = HostOptionInt("raknet_request1_min", 1) != 0;
+    rh.orderedAheadMessages = static_cast<unsigned>(HostOptionInt("raknet_ordered_ahead", 1024));
+    rh.orderedAheadKb = static_cast<unsigned>(HostOptionInt("raknet_ordered_ahead_kb", 1024));
+    g->ep.SetHardening(rh);
+    Log("host: RakNet hardening (PH6a) %s: %s", gms::Endpoint::HardeningAvailable() ? "ON" : "UNAVAILABLE (stock RakNet build)",
+        rh.Describe().c_str());
+  }
   std::string error;
   // B15b: ten humans and five spectators, plus a rejoin's new connection before the old one's loss is noticed
   const unsigned maxConn = static_cast<unsigned>(HostOptionInt("max_connections", 16));
@@ -3218,6 +3406,7 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   if (!error.empty()) Log("host: GMS endpoint: %s", error.c_str());  // the simulator could not be installed
   perf::AddSource(NetGauges);
   perf::AddSource(ReplicationGauges);
+  perf::AddSource(LimitGauges);
   g->ip = ip;
   g->port = g->ep.BoundPort();
   g->start = gms::SteadyClock::now();
@@ -3303,6 +3492,16 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   Log("host: fog of war (D2g-live step 2): fog %d%s, terrain %d, grass %d, stealth %d, render %d; grass events %d (D3c)",
       fog, fog && !replicate ? " (needs replicate: off)" : "", fo.terrain, fo.grass, fo.stealth, fo.render,
       fo.grass && fo.grassEvents);
+  // the strict message check: the engine-free part in the session (so.check), the world's part here
+  {
+    const bool checkWorld = HostOptionInt("check_world", 1) != 0;
+    const int fogGraceMs = HostOptionInt("check_fog_grace_ms", 2000);
+    g->match->SetCheck(checkWorld, fogGraceMs);
+    Log("host: strict message check (PH7): [host] strict_check %d (%s), check_kick_count %d within check_kick_window_s "
+        "%d, check_log_limit %d, check_world %d (caster, targets, inventory), check_fog_grace_ms %d",
+        so.check.mode, so.check.mode == 1 ? "bad messages dropped" : so.check.mode == 2 ? "counted and logged only" : "off",
+        so.check.kickCount, so.check.kickWindowMs / 1000, so.check.logLimit, checkWorld ? 1 : 0, fogGraceMs);
+  }
   // D2h: a player's FoW data (AA) also to the players that see its creature, the whole struct to each new recipient
   const bool fowDataByVision = HostOptionInt("fow_data_by_vision", 1) != 0;
   g->match->SetFowDataRouting(fowDataByVision, HostOptionInt("fow_data_log_limit", 200));
@@ -3447,7 +3646,18 @@ unsigned GmsHostPort() { return g_gms ? g_gms->port : 0u; }
 int GmsHostConnections() { return g_gms ? static_cast<int>(g_gms->session->NumConnections()) : 0; }
 
 void GmsHostShutdown() {
-  if (g_gms) g_gms->session->Finish();
+  if (!g_gms) return;
+  g_gms->session->Finish();
+  // the whole match's RakNet hardening counts (the last partial minute included)
+  gms::RakHardeningTotals& t = g_gms->rakTotals;
+  const gms::RakHardeningTotals rh = g_gms->ep.TakeHardeningTotals();
+  t.cookiesIssued += rh.cookiesIssued;
+  t.request1Short += rh.request1Short;
+  t.request2BadCookie += rh.request2BadCookie;
+  t.nonsenseClosed += rh.nonsenseClosed;
+  t.nonsenseBanned += rh.nonsenseBanned;
+  t.orderedAheadClosed += rh.orderedAheadClosed;
+  Log("host: raknet totals (PH6a): %s", t.Describe().c_str());
 }
 
 bool GmsHostFormatCommandStats(char* buf, std::size_t size) {

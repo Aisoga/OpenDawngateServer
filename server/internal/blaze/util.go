@@ -19,17 +19,17 @@ func registerUtil(s *Server) {
 		return PingReply(uint32(r.Server.Now().Unix()))
 	})
 	s.Register(ComponentUtil, CmdUtilPreAuth, "preAuth", func(r *Request) []byte {
-		return PreAuthReply(r.Server.Host, r.Server.QosPort, r.Server.Service)
+		return PreAuthReply(r.Conn.Host(r.Server.Host), r.Server.QosPort, r.Server.Service)
 	})
 	s.Register(ComponentUtil, CmdUtilPostAuth, "postAuth", func(r *Request) []byte {
 		var uid int64
 		if r.Conn.Session != nil {
 			uid = r.Conn.Session.Account.UserID
 		}
-		return PostAuthReply(r.Server.Host, r.Server.TelemetryPort, uid)
+		return PostAuthReply(r.Conn.Host(r.Server.Host), r.Server.TelemetryPort, uid)
 	})
 	s.Register(ComponentUtil, CmdUtilGetTelemetryServer, "getTelemetryServer", func(r *Request) []byte {
-		return TelemetryServerReply(r.Server.Host, r.Server.TelemetryPort)
+		return TelemetryServerReply(r.Conn.Host(r.Server.Host), r.Server.TelemetryPort)
 	})
 }
 

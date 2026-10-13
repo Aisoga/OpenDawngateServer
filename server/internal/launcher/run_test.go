@@ -38,6 +38,10 @@ func writeZip(t *testing.T, dir string, files map[string]string) string {
 // Dawngate.zip next to it, and the synthetic manifest for the setup.
 func release(t *testing.T) string {
 	t.Helper()
+	// a test lane's game on this PC holds the client mutex; the tests' copies are synthetic and never collide with it
+	orig := clientRunning
+	clientRunning = func() bool { return false }
+	t.Cleanup(func() { clientRunning = orig })
 	dir := filepath.Join(t.TempDir(), "release")
 	if err := os.MkdirAll(filepath.Join(dir, "host", "lua"), 0o755); err != nil {
 		t.Fatal(err)
@@ -81,6 +85,10 @@ func TestStartServerAndClient(t *testing.T) {
 		!strings.Contains(out, "Server stopped.") {
 		t.Fatalf("Start-Server: exit %d\n%s", code, out)
 	}
+	// the website on the default port 443 of the test address, self-signed
+	if !strings.Contains(out, "The website: https://"+testAddress+"/") || !strings.Contains(out, "self-signed") {
+		t.Errorf("no website in the banner:\n%s", out)
+	}
 	for _, step := range []string{"certificates", "client copy", "client exe", "client config", "host copy", "host exe",
 		"host config", "host DLL", "content"} {
 		if !strings.Contains(out, "[done]     "+step) {
@@ -106,6 +114,9 @@ func TestStartServerAndClient(t *testing.T) {
 	if code != 0 || strings.Contains(out, "[done]") {
 		t.Errorf("second start: exit %d\n%s", code, out)
 	}
+	if !strings.Contains(out, "links at http://"+testAddress+":18080/dawngate/") {
+		t.Errorf("no website domain: the links aren't dgserver's own pages\n%s", out)
+	}
 	// Start-Client: the server address from Start-Server.ini, this PC's CA; no server running now
 	code, out = run(t, RunClient, dir, "--non-interactive")
 	if code != 1 || !strings.Contains(out, "No server is running on "+testAddress) {
@@ -114,6 +125,19 @@ func TestStartServerAndClient(t *testing.T) {
 	code, out = run(t, RunClient, dir, "--non-interactive", "--setup-only")
 	if code != 0 || !strings.Contains(out, "[ok]       client exe") || !strings.Contains(out, "server   "+testAddress) {
 		t.Errorf("Start-Client --setup-only: exit %d\n%s", code, out)
+	}
+	// web_domain goes into the client copy's links (Start-Server), and Start-Client keeps them for this PC's
+	// server (the same copy: neither rewrites the other's package)
+	if err := SetKey(filepath.Join(dir, ServerConfigName), "web_domain", "Play.Example.org"); err != nil {
+		t.Fatal(err)
+	}
+	code, out = run(t, RunServer, dir, "--non-interactive", "--setup-only")
+	if code != 0 || !strings.Contains(out, "[done]     client texts") || !strings.Contains(out, "links at https://play.example.org/") {
+		t.Errorf("Start-Server with web_domain: exit %d\n%s", code, out)
+	}
+	code, out = run(t, RunClient, dir, "--non-interactive", "--setup-only")
+	if code != 0 || !strings.Contains(out, "[ok]       client texts") || !strings.Contains(out, "links at https://play.example.org/") {
+		t.Errorf("Start-Client after web_domain: exit %d\n%s", code, out)
 	}
 	code, out = run(t, RunClient, dir, "--non-interactive", "--check", "127.0.9.2")
 	if code != 1 || !strings.Contains(out, "No server is set up on this PC for 127.0.9.2") {
@@ -128,8 +152,8 @@ func TestStartServerRefusals(t *testing.T) {
 		t.Fatal(err)
 	}
 	SetKey(cfg, "address", "8.8.8.8") // public is allowed, but only with the acknowledgement
-	if code, out := run(t, RunServer, dir, "--non-interactive"); code != 1 || !strings.Contains(out, "USE AT YOUR OWN RISK") ||
-		!strings.Contains(out, "risk is not accepted") || !strings.Contains(out, "TCP 42127") {
+	if code, out := run(t, RunServer, dir, "--non-interactive"); code != 1 || !strings.Contains(out, "A PUBLIC SERVER: 8.8.8.8") ||
+		!strings.Contains(out, "risk is not accepted") || !strings.Contains(out, "only TCP and UDP 42128 (the tunnel) and TCP 443") {
 		t.Errorf("a public address without the acknowledgement: exit %d\n%s", code, out)
 	}
 	if code, out := run(t, RunServer, dir, "--non-interactive", "--i-accept-the-risk"); code != 1 ||

@@ -4,6 +4,7 @@
 #include <cstdio>
 
 #include "core/common/log.h"
+#include "core/protocol/commands.h"
 #include "core/protocol/messages.h"
 #include "core/protocol/wire.h"
 
@@ -86,7 +87,7 @@ struct GmsSession::Conn {
 
 GmsSession::GmsSession(ITransport& net, IMatch& match, const SessionOptions& options,
                        SteadyClock::time_point serverStart)
-    : net_(net), match_(match), o_(Normalized(options)), serverStart_(serverStart) {}
+    : net_(net), match_(match), o_(Normalized(options)), serverStart_(serverStart), guard_(o_.check) {}
 
 GmsSession::~GmsSession() = default;
 
@@ -138,6 +139,7 @@ void GmsSession::OnMessage(ConnId conn, const uint8_t* data, size_t n) {
   const uint8_t b = data[0];
   const uint8_t* body = data + 1;
   const size_t nb = n - 1;
+  if (o_.check.mode && Screen(c, b, body, nb)) return;  // dropped (or the connection kicked: `c` is gone)
   ++c.total[GmsName(b)];
   LogClientMessage(c, b, body, nb);
   if (c.superseded) return;  // G3a: its user is back on another connection
@@ -995,7 +997,75 @@ void GmsSession::Tick() {
   }
 }
 
+// the strict check (core/protocol/check.h) of one client message. True = the message is not to be handled (dropped,
+// or the connection was kicked and `c` no longer exists).
+bool GmsSession::Screen(Conn& c, uint8_t b, const uint8_t* body, size_t nb) {
+  if (!boundsSet_) {
+    bounds_ = check::BoundsForLevel(match_.Setup().level);
+    boundsSet_ = true;
+  }
+  check::Result r;
+  if (b != kGmsHelloReq && c.sent < kStepHello) {
+    r.verdict = check::Verdict::kInvalid;
+    r.reason = std::string(GmsName(b)) + " before the HelloReq was answered";
+  } else {
+    r = check::CheckFormat(b, body, nb, bounds_);
+  }
+  if (r.ok() && c.sent >= kStepHello) {
+    if (check::IWorld* w = match_.CheckWorld()) r = check::CheckWorld(b, body, nb, c.id, *w);
+  }
+  const double nowMs = std::chrono::duration<double, std::milli>(SteadyClock::now() - serverStart_).count();
+  const bool kick = guard_.Note(c.id, b, r.verdict, nowMs);
+  if (r.ok()) return false;
+  const bool drop = o_.check.mode == 1;
+  if (guard_.ShouldLog())
+    Logf("%s %8.3f    check: %02x %s (%zu B) %s, %s: %s; %s", Clock().c_str(), c.Secs(), b, GmsName(b), nb,
+         check::VerdictName(r.verdict), drop ? "dropped" : "passed (strict_check 2)", r.reason.c_str(),
+         Hex(body, nb, 48).c_str());
+  if (drop && r.verdict == check::Verdict::kStale) {
+    // a normal client's race: answer it as the server's refusal would, so its client clears its pending command
+    if (b == kGmsActionCommandMsgs) {
+      ActionCommand cmd;
+      std::string error;
+      if (ParseActionCommand(body, nb, &cmd, &error) && cmd.seq)
+        net_.Send(c.id, BuildActionCommandFailed(c.slot.gameplayIndex, cmd.seq, cmd.type, cmd.guid, 0));
+    } else if (b == kGmsItemTransaction) {
+      ItemTransactionRequest t;
+      if (ParseItemTransaction(body, nb, &t))
+        net_.Send(c.id, BuildItemTransactionResult(c.slot.gameplayIndex, t.type, t.item, t.slot, false));
+    }
+  }
+  if (kick && drop) {
+    Kick(c.id, "too many bad messages");
+    return true;
+  }
+  return drop;
+}
+
+void GmsSession::Kick(ConnId conn, const char* why) {
+  auto it = conns_.find(conn);
+  if (it == conns_.end()) return;
+  Logf("%s %8.3f    check: connection %s kicked: %s (%d malformed or invalid within %d ms); %s", Clock().c_str(),
+       it->second->Secs(), it->second->addr.c_str(), why, o_.check.kickCount, o_.check.kickWindowMs,
+       guard_.Total().Describe().c_str());
+  net_.Close(conn);
+  guard_.Forget(conn);
+  OnDisconnected(conn);  // RakNet reports no disconnection for a connection closed on this side
+}
+
+bool GmsSession::OnOtherPacket(ConnId conn, const uint8_t* data, size_t n) {
+  if (!o_.check.mode) return true;
+  const uint8_t id = n ? data[0] : 0;
+  const bool known = conns_.count(conn) != 0;
+  const double nowMs = std::chrono::duration<double, std::milli>(SteadyClock::now() - serverStart_).count();
+  const bool kick = guard_.NoteOther(known ? conn : 0, id, nowMs) && known;
+  const bool log = guard_.ShouldLog();
+  if (kick && o_.check.mode == 1) Kick(conn, "too many unexpected RakNet packets");
+  return log;
+}
+
 void GmsSession::Finish() {
+  if (o_.check.mode) Logf("%s check totals: %s", Clock().c_str(), guard_.Total().Describe().c_str());  
   for (auto& kv : conns_) Report(*kv.second, true);
   conns_.clear();
 }
@@ -1046,6 +1116,13 @@ void GmsSession::LogClientMessage(Conn& c, uint8_t b, const uint8_t* body, size_
   // else: the first 3 of each distinct body; repeats are counted and reported every 5 s.
   const std::string key = Hex(&b, 1) + (b == kGmsClockSync ? std::string() : " " + Hex(body, n, 64));
   const int limit = b == kGmsClockSync ? 6 : 3;
+  // at most kMaxPrintedKeys distinct bodies are remembered per connection (a client sending ever new bodies
+  // would otherwise grow the map and the log without bound); the rest are counted under one key
+  constexpr size_t kMaxPrintedKeys = 4096;
+  if (c.printed.size() >= kMaxPrintedKeys && c.printed.find(key) == c.printed.end()) {
+    ++c.suppressed["(new bodies beyond the first 4096)"];
+    return;
+  }
   if (++c.printed[key] > limit) {
     if (b != kGmsClockSync) ++c.suppressed[key];
     return;

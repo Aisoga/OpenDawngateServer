@@ -109,7 +109,17 @@ type TrustOptions struct {
 // changed one only when the player confirms its fingerprint (trust on first use: the operator's Start-Server window
 // shows the fingerprint), then it is stored.
 func TrustCA(server string, served []byte, o TrustOptions) (Trust, error) {
-	fp := certs.Fingerprint(served)
+	return trustOnFirstUse(server, served, certs.Fingerprint, firstUse{
+		noun: "certificate fingerprint", changed: "another certificate authority", short: "CA"}, o)
+}
+
+// firstUse words trustOnFirstUse's questions and errors for one kind of key.
+type firstUse struct{ noun, changed, short string }
+
+// trustOnFirstUse is TrustCA's rule for any served key (the CA modulus; the tunnel gateway's key pin): the
+// one stored before is trusted; a first or a changed one only when the player confirms its fingerprint.
+func trustOnFirstUse(server string, served []byte, fingerprint func([]byte) string, w firstUse, o TrustOptions) (Trust, error) {
+	fp := fingerprint(served)
 	known, err := os.ReadFile(o.Store)
 	switch {
 	case err == nil && bytes.Equal(known, served):
@@ -118,29 +128,29 @@ func TrustCA(server string, served []byte, o TrustOptions) (Trust, error) {
 		return 0, err
 	}
 	changed := err == nil
-	question := fmt.Sprintf("First connection to the server %s. Its certificate fingerprint is\n\n      %s\n\n"+
+	question := fmt.Sprintf("First connection to the server %s. Its %s is\n\n      %s\n\n"+
 		"  Ask the server's operator: their Start-Server window shows its fingerprint. Only if it is the same,\n"+
-		"  answer y. Same fingerprint? [y/N]: ", server, fp)
+		"  answer y. Same fingerprint? [y/N]: ", server, w.noun, fp)
 	if changed {
-		question = fmt.Sprintf("WARNING: the server %s now has another certificate authority than the last time\n"+
+		question = fmt.Sprintf("WARNING: the server %s now has %s than the last time\n"+
 			"  (was %s, now %s). That happens when the operator set the server up anew; it could also be\n"+
 			"  someone else answering at that address. Ask the operator which fingerprint their Start-Server\n"+
-			"  window shows. Is it %s? [y/N]: ", server, certs.Fingerprint(known), fp, fp)
+			"  window shows. Is it %s? [y/N]: ", server, w.changed, fingerprint(known), fp, fp)
 	}
 	ok := o.Accept
 	if !ok {
 		if o.Ask == nil {
 			if changed {
-				return 0, fmt.Errorf("the server %s has another CA (%s) than the one trusted before (%s); start Start-Client.exe in a window to confirm it", server, fp, certs.Fingerprint(known))
+				return 0, fmt.Errorf("the server %s has another %s (%s) than the one trusted before (%s); start Start-Client.exe in a window to confirm it", server, w.short, fp, fingerprint(known))
 			}
-			return 0, fmt.Errorf("the server %s's CA (fingerprint %s) isn't trusted yet; start Start-Client.exe in a window to confirm it", server, fp)
+			return 0, fmt.Errorf("the server %s's %s (fingerprint %s) isn't trusted yet; start Start-Client.exe in a window to confirm it", server, w.short, fp)
 		}
 		if ok, err = o.Ask(question); err != nil {
 			return 0, err
 		}
 	}
 	if !ok {
-		return 0, fmt.Errorf("the CA of %s (fingerprint %s) was not confirmed; nothing was changed", server, fp)
+		return 0, fmt.Errorf("the %s of %s (fingerprint %s) was not confirmed; nothing was changed", w.short, server, fp)
 	}
 	if err := os.MkdirAll(filepath.Dir(o.Store), 0o755); err != nil {
 		return 0, err

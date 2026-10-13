@@ -13,6 +13,7 @@ import (
 	"dawngate/server/internal/golden"
 	"dawngate/server/internal/setup/gamecontent"
 	"dawngate/server/internal/setup/testgame/synthgame"
+	"dawngate/server/internal/store"
 	"dawngate/server/internal/tdf"
 )
 
@@ -42,7 +43,7 @@ func TestServerContentAndPersistence(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer bc.Close()
-		call(t, bc, 1, 0x28, 0, tdf.NewWriter().String("MAIL", "player@example.com").String("PASS", "x").Bytes())
+		call(t, bc, 1, 0x28, 0, tdf.NewWriter().String("MAIL", "player@example.com").String("PASS", testPassword).Bytes())
 		bal := call(t, bc, 0x820, 0x08, 1, nil)
 		if ec, _ := bal.Int("ECBL"); ec != blaze.DefaultStartEC {
 			t.Errorf("ECBL %d, want %d", ec, blaze.DefaultStartEC)
@@ -56,18 +57,39 @@ func TestServerContentAndPersistence(t *testing.T) {
 	}
 	session()
 	session() // the same account, not granted twice (ECBL unchanged)
-	raw, err := os.ReadFile(filepath.Join(data, "accounts.json"))
-	if err != nil || !strings.Contains(string(raw), `"email": "player@example.com"`) || strings.Count(string(raw), `"userID"`) != 1 {
-		t.Errorf("accounts.json: %v\n%s", err, raw)
+	// the account is in the database, once
+	st, err := store.Open(filepath.Join(data, store.FileName))
+	if err != nil {
+		t.Fatal(err)
 	}
+	if n, _ := st.Count(); n != 1 {
+		t.Errorf("%d accounts in the database", n)
+	}
+	if a, _, ok := st.PersonaByName("player"); !ok || a.Email != "player@example.com" || !a.Granted {
+		t.Errorf("stored account: %+v %v", a, ok)
+	}
+	st.Close()
 
-	// a broken accounts file stops the server and stays as it is
-	os.WriteFile(filepath.Join(data, "accounts.json"), []byte("{"), 0o644)
+	// a broken database stops the server and stays as it is
+	fresh := t.TempDir()
+	cfg.dataDir, cfg.contentPath = fresh, filepath.Join(data, "content.json")
+	broken := strings.Repeat("{", 2000)
+	os.WriteFile(filepath.Join(fresh, store.FileName), []byte(broken), 0o644)
+	if in, err := start(cfg); err == nil {
+		in.stop()
+		t.Error("started with a broken accounts.db")
+	}
+	if raw, _ := os.ReadFile(filepath.Join(fresh, store.FileName)); string(raw) != broken {
+		t.Errorf("accounts.db changed")
+	}
+	// and so does a broken accounts.json of an earlier build, which isn't imported then
+	os.Remove(filepath.Join(fresh, store.FileName))
+	os.WriteFile(filepath.Join(fresh, store.LegacyFile), []byte("{"), 0o644)
 	if in, err := start(cfg); err == nil {
 		in.stop()
 		t.Error("started with a broken accounts.json")
 	}
-	if raw, _ := os.ReadFile(filepath.Join(data, "accounts.json")); string(raw) != "{" {
+	if raw, _ := os.ReadFile(filepath.Join(fresh, store.LegacyFile)); string(raw) != "{" {
 		t.Errorf("accounts.json changed: %s", raw)
 	}
 }

@@ -5,11 +5,22 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+// openT is Open for tests: an error fails the test, and the database is closed at the test's end (Windows can't
+// remove the temporary folder of an open database).
+func openT(t *testing.T, path string) *Store {
+	t.Helper()
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s
+}
 
 // login is Store.Login for tests: a save error fails the test.
 func login(t *testing.T, s *Store, email string, now time.Time) (Account, bool) {
@@ -143,11 +154,8 @@ func TestUpdateAndCopies(t *testing.T) {
 
 // UpdatePair changes two accounts at once (B13b: a friendship on both sides) and saves once.
 func TestUpdatePair(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "accounts.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	path := filepath.Join(t.TempDir(), FileName)
+	s := openT(t, path)
 	t0 := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	a, _ := login(t, s, "a@example.com", t0)
 	b, _ := login(t, s, "b@example.com", t0)
@@ -162,10 +170,7 @@ func TestUpdatePair(t *testing.T) {
 		t.Fatalf("pair: %+v / %+v", ga.Lists, gb.Lists)
 	}
 	ga.Lists.Friends[0].Name = "changed"
-	r, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := openT(t, path)
 	if again, _ := r.Account(a.UserID); len(again.Lists.Friends) != 1 || again.Lists.Friends[0].Name != "b" ||
 		!again.Lists.Friends[0].Added.Equal(t0) {
 		t.Errorf("after reopening: %+v", again.Lists)
@@ -184,11 +189,8 @@ func TestUpdatePair(t *testing.T) {
 
 // Everything survives a restart: accounts, personas, id counters and player content.
 func TestPersistenceRoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "data", "accounts.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	path := filepath.Join(t.TempDir(), "data", FileName)
+	s := openT(t, path)
 	t0 := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	a, _ := login(t, s, "player@example.com", t0)
 	login(t, s, "other@example.com", t0)
@@ -231,15 +233,13 @@ func TestPersistenceRoundTrip(t *testing.T) {
 		t.Errorf("pages: %+v", want.PerkPages)
 	}
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("no file after a change: %v", err)
+		t.Fatalf("no database: %v", err)
 	}
-	if left, _ := filepath.Glob(filepath.Join(filepath.Dir(path), "*.tmp")); len(left) != 0 {
-		t.Errorf("temporary files left: %v", left)
-	}
+	s.Close()
 
-	r, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
+	r := openT(t, path)
+	if n, err := r.Count(); n != 2 || err != nil || r.Info() != fmt.Sprintf("2 accounts, schema %d", SchemaVersion()) {
+		t.Errorf("reopened: %d accounts (%v), info %q", n, err, r.Info())
 	}
 	got, ok := r.Account(a.UserID)
 	if !ok {
@@ -265,33 +265,10 @@ func TestPersistenceRoundTrip(t *testing.T) {
 	}
 }
 
-// A file that doesn't parse stops Open and stays as it is.
-func TestOpenRefusesBadFiles(t *testing.T) {
-	dir := t.TempDir()
-	for name, body := range map[string]string{
-		"broken": `{"format": "dawngate-accounts-1", "accounts": [`,
-		"format": `{"format": "other", "accounts": []}`,
-		"dup": `{"format": "dawngate-accounts-1", "accounts": [{"userID": 1, "email": "a@x"},
-			{"userID": 2, "email": "A@x"}]}`,
-	} {
-		path := filepath.Join(dir, name+".json")
-		os.WriteFile(path, []byte(body), 0o644)
-		if _, err := Open(path); err == nil {
-			t.Errorf("%s: Open accepted it", name)
-		}
-		if raw, _ := os.ReadFile(path); string(raw) != body {
-			t.Errorf("%s: file changed", name)
-		}
-	}
-}
-
 // Many connections at once: every login and update lands, and the file holds them all.
 func TestConcurrentUse(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "accounts.json")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	path := filepath.Join(t.TempDir(), FileName)
+	s := openT(t, path)
 	const n = 16
 	var wg sync.WaitGroup
 	errs := make(chan error, 2*n)
@@ -316,10 +293,8 @@ func TestConcurrentUse(t *testing.T) {
 	for err := range errs {
 		t.Error(err)
 	}
-	r, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s.Close()
+	r := openT(t, path)
 	ids := map[int64]bool{}
 	for i := 0; i < n; i++ {
 		a, first, _ := r.Login(fmt.Sprintf("P%d@example.com", i), time.Unix(0, 0))
@@ -327,10 +302,6 @@ func TestConcurrentUse(t *testing.T) {
 			t.Errorf("account %d after reopening: %+v first=%v", i, a, first)
 		}
 		ids[a.UserID] = true
-	}
-	raw, _ := os.ReadFile(path)
-	if !strings.Contains(string(raw), `"format": "dawngate-accounts-1"`) {
-		t.Errorf("file:\n%s", raw)
 	}
 }
 

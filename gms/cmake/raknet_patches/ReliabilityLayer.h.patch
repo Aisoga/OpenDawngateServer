@@ -1,0 +1,16 @@
+# patches of RakNet 4.081's ReliabilityLayer.h, applied by gms/cmake/raknet.cmake (dg_add_raknet, protocol 5) to
+# the copy in the build tree; tools/raknet stays untouched. Each OLD block must occur exactly once in the original (CRLF
+# read as LF) and is replaced by its NEW block. Our own code (BSD-licensed RakNet, modified here).
+@@@OLD members
+	/// Causes IsDeadConnection to return true
+	void KillConnection(void);
+@@@NEW
+	/// Causes IsDeadConnection to return true
+	void KillConnection(void);
+
+	// ordered and sequenced messages
+	// buffered ahead of a hole (orderingHeaps), per connection, all channels together; 0 = no limit (stock). Set by
+	// RakPeer after Reset from its DgHardening; over the limit the connection is killed and the flag set.
+	unsigned int dgOrderedAheadMaxMessages, dgOrderedAheadMaxBytes;
+	bool dgOrderedAheadExceeded;
+@@@END

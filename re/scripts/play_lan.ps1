@@ -490,7 +490,7 @@ try {
     if (-not $Check) {
         Write-Host ''
         Write-Host "Starting Dawngate for the server $Server (the window opens after about 5 s):" -ForegroundColor Cyan
-        Write-Host '  1. Log in with any e-mail and password (the first login on this server creates the account).'
+        Write-Host '  1. Log in with your login name and password (with open sign-up the first login on this server creates the account).'
         Write-Host '  2. The first time, a news overlay appears: click its right arrow twice, then OK.'
         Write-Host '  3. PLAY, then PRACTICE DAWNGATE: the server starts a match host and the game loads.'
         Write-Host '  To stop: quit the game, or press Ctrl+C here. The egress check and a summary follow.'

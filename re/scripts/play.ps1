@@ -260,7 +260,7 @@ try {
         if ($Seconds -gt 0) { $params.Seconds = $Seconds }
         Write-Host ''
         Write-Host 'Starting Dawngate (the window opens after about 5 s):' -ForegroundColor Cyan
-        Write-Host '  1. Log in with any e-mail and password (the first login creates the account).'
+        Write-Host '  1. Log in with a login name and a password (8+ characters; the first login with a new name creates the account, later logins need that password).'
         Write-Host '  2. The first time, a news overlay appears: click its right arrow twice, then OK.'
         Write-Host '  3. PLAY, then PRACTICE DAWNGATE: the match host starts and the game loads (about 30 s).'
         if ($ShaperSelect) {

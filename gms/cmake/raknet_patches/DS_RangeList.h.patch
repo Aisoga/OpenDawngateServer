@@ -1,0 +1,62 @@
+# patches of RakNet 4.081's DS_RangeList.h, applied by gms/cmake/raknet.cmake (dg_add_raknet, protocol 5) to the
+# copy in the build tree; tools/raknet stays untouched. Each OLD block must occur exactly once in the original
+# (CRLF read as LF) and is replaced by its NEW block. Our own code (BSD-licensed RakNet, modified here);
+# the defects were found by SLikeNet (MIT) and public reports; no SLikeNet code is used.
+@@@OLD deserialize
+		ranges.Clear(true, _FILE_AND_LINE_);
+		unsigned short count;
+		out->AlignReadToByteBoundary();
+		out->Read(count);
+		unsigned short i;
+		range_type min,max;
+		unsigned char maxEqualToMin=0;
+
+		for (i=0; i < count; i++)
+		{
+			out->Read(maxEqualToMin);
+			if (out->Read(min)==false)
+				return false;
+			if (maxEqualToMin==false)
+			{
+				if (out->Read(max)==false)
+					return false;
+				if (max<min)
+					return false;
+			}
+			else
+				max=min;
+
+
+			ranges.InsertAtEnd(RangeNode<range_type>(min,max), _FILE_AND_LINE_);
+@@@NEW
+		ranges.Clear(true, _FILE_AND_LINE_);
+		// every read checked, max > min when flagged so, and the ranges
+		// strictly ascending without overlap, as Serialize writes them
+		unsigned short count=0;
+		out->AlignReadToByteBoundary();
+		if (out->Read(count)==false)
+			return false;
+		unsigned short i;
+		range_type min,max;
+		unsigned char maxEqualToMin=0;
+
+		for (i=0; i < count; i++)
+		{
+			if (out->Read(maxEqualToMin)==false)
+				return false;
+			if (out->Read(min)==false)
+				return false;
+			if (maxEqualToMin==false)
+			{
+				if (out->Read(max)==false)
+					return false;
+				if ((min<max)==false)
+					return false;
+			}
+			else
+				max=min;
+			if (ranges.Size()>0 && (ranges[ranges.Size()-1].maxIndex<min)==false)
+				return false;
+
+			ranges.InsertAtEnd(RangeNode<range_type>(min,max), _FILE_AND_LINE_);
+@@@END

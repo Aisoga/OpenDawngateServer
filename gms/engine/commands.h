@@ -86,6 +86,9 @@ bool Installed();
 bool OnClientMessage(void* sim, unsigned index, std::uint8_t wire, const std::uint8_t* body, std::size_t n,
                      const char* source);
 
+// the player's inventory (asset id and count per slot) for the strict check; false without a server player.
+bool ReadInventory(void* sim, unsigned index, std::uint32_t item[11], std::int32_t count[11]);
+
 // Every server tick after the time step, before the Lua scheduler: TickPlayer and the behavior tree for every player
 // with a creature.
 void Tick(void* sim);

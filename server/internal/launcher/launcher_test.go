@@ -27,7 +27,10 @@ func TestConfigFiles(t *testing.T) {
 	if err != nil || !created {
 		t.Fatalf("LoadOrCreate: %v %v", created, err)
 	}
-	want := Config{"address": "127.0.0.1", "bind": "", "i_accept_the_risk": "no", "shaper_select": "on", "folder": "Dawngate-Data", "zip": "", "server_flags": ""}
+	want := Config{"address": "127.0.0.1", "bind": "", "i_accept_the_risk": "no", "profile": "auto", "tunnel": "auto", "gateway_port": "42128",
+		"shaper_select": "on", "signup": "open", "signups_per_address": "3", "log_days": "30", "web_port": "443", "web_domain": "",
+		"web_email": "", "folder": "Dawngate-Data",
+		"zip": "", "server_flags": ""}
 	if !reflect.DeepEqual(c, want) {
 		t.Errorf("defaults %v", c)
 	}

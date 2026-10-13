@@ -1,0 +1,223 @@
+"""Add the server's login texts and links to a working copy: game/Data/Locale/en-us/AA_Server.package.
+
+The client looks every string table up by {instance = FNV-1 of the table's name, type 0x02FAC0B6, group 0x02FABF01} in
+every *.package of game/Data/Locale/en-us/, and the package whose name sorts first wins (an added
+AA_*.package was seen winning over Locale.package live). So this script writes changed copies of three of the copy's own tables into an added package
+beside the shipped Locale.package, which stays untouched (the game's text can't ship: the package is made from the
+copy's own file at setup time):
+
+  BlazeErrors  0x1E5BC096   the login panel's texts: "login name" instead of "email" (0x000b0001, 0x000c0001,
+                            0x00160001), the name and password rules (0x00ca0001, which has no line in the build; also
+                            0x400c0000), too many sign-ups or attempts (0x40720000, no line in the build; the cap and
+                            the limits), banned / disabled / deleted without EA's help address (0x00200001,
+                            0x002b0001, 0x00650001, 0x00290001)
+  LoginScreen  0x69E51800   the field label 0x0ac5be93 "Enter Login Name", the check box 0x0ac5be95
+  URLs         0x30B0670B   the links the login screen opens in the player's browser: Forgot Password? (line 3), Sign
+                            up now! (line 6, also 4 and 5), the legal links (1, 2, 7), forum, survey and funds (0x100,
+                            0x101, 0x103), all at the server's own pages instead of EA's and Waystone's dead (and
+                            re-registrable) domains; 0x102 (Adobe's Flash download) stays
+
+The links (SITE_PAGES): without a website, http://<host>:<http port>/dawngate/<page>, which dgserver's HTTP port
+answers with a short page of its own (server/internal/web/sitepages.go: how sign-up works in its mode, ask the operator
+for a password reset); with --web-domain <D> (the website), https://<D>/<page>. The pages are "" (the start
+page), signup, password, terms and privacy. <host> is the address the copy is patched for (patch_config.py --host).
+
+The text rule (server/internal/setup/localepatch is its Go twin, byte for byte; tests: test_ph2b.py and the Go
+package's tests pin the same SHA-256s): a table is cut at "\\n"; a line whose text (after a UTF-8 BOM on the first
+line, before a final "\\r") starts with "0x", 8 hex digits and a blank gets the new text after that prefix, the line's
+ends kept; ids the table lacks are appended after the comment line ADDED_COMMENT, each as "0x<id, 8 lower-case hex
+digits> <text>\\r\\n" in id order (a table not ending in "\\n" gets "\\r\\n" first); a table missing from Locale.package
+(only in a synthetic test build) is made of those appended lines alone. The package holds the three tables in instance
+order, stored uncompressed (dbpf.py write_package).
+
+Usage:
+    .venv/Scripts/python -I re/scripts/patch_locale.py <working copy game/Data dir> [--host 127.0.0.1]
+        [--http-port 18080] [--web-domain <D>] [--check | --remove | --print]
+--check exits 1 when the package isn't what this script makes now; --remove deletes it; --print shows the lines.
+Refuses to touch the pristine extractions under client/ia_*.
+"""
+import argparse
+import hashlib
+import ipaddress
+import os
+import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import dbpf  # noqa: E402
+
+PACKAGE = "AA_Server.package"
+LOCALE_DIR = ("Locale", "en-us")
+SHIPPED = "Locale.package"
+REL = "game/Data/Locale/en-us/" + PACKAGE  # in a copy (setup_all.py, test_p3b.py)
+SOURCE = "game/Data/Locale/en-us/" + SHIPPED  # the copy's own tables it is made from
+STRING_TYPE, STRING_GROUP = 0x02FAC0B6, 0x02FABF01
+BLAZE_ERRORS, URLS, LOGIN_SCREEN = 0x1E5BC096, 0x30B0670B, 0x69E51800
+HTTP_PORT = 18080
+FALLBACK_PREFIX = "dawngate/"  # dgserver's own pages on its HTTP port (web.SitePrefix)
+ADDED_COMMENT = "# PH2b: lines the build lacks, added by the server's setup"
+
+# the pages a link opens (server/internal/sitelinks); "" is the start page
+SITE_PAGES = ("", "signup", "password", "terms", "privacy")
+
+ERROR_LINES = {
+    0x000B0001: "The login name or password you entered is incorrect.",
+    0x000C0001: "The login name or password you entered is incorrect.",
+    0x00160001: "Your login name contains invalid characters. Use letters, digits and . _ - @ only.",
+    0x00CA0001: "Too short: a login name needs at least 3 characters and a password at least 8.",
+    0x00200001: "This account has been banned. Please contact the server's operator.",
+    0x00290001: "This account has been deleted. Please contact the server's operator if this is a mistake.",
+    0x002B0001: "This account has been banned. Please contact the server's operator.",
+    0x00650001: "This account has been disabled. Please contact the server's operator.",
+    0x400C0000: "Too long: a login name may have at most 32 characters and a password at most 63.",
+    0x40720000: "Too many sign-ups or login attempts from your address. Please wait a while and try again.",
+}
+LOGIN_LINES = {
+    0x0AC5BE93: "Enter Login Name",
+    0x0AC5BE95: "Remember Login Name",
+}
+URL_PAGES = {  # line id -> page
+    0x00000001: "terms", 0x00000002: "privacy", 0x00000003: "password", 0x00000004: "signup",
+    0x00000005: "signup", 0x00000006: "signup", 0x00000007: "terms", 0x00000100: "", 0x00000101: "",
+    0x00000103: "",
+}
+
+_LINE = re.compile(rb"0[xX]([0-9A-Fa-f]{8}) ")
+_DOMAIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+"
+                     r"(?::[0-9]{1,5})?")
+
+
+class LocaleError(Exception):
+    pass
+
+
+def check_options(host, http_port=HTTP_PORT, web_domain=None):
+    """The checked (host, port, domain): host an IPv4 address, the port 1..65535, the domain a DNS name with dots
+    (ASCII letters, digits, '-'), optionally :port, lower-cased; None/'' = no website."""
+    try:
+        ipaddress.IPv4Address(host)
+    except (ipaddress.AddressValueError, ValueError):
+        raise LocaleError(f"the server address must be an IPv4 address, not {host!r}") from None
+    if not isinstance(http_port, int) or not 1 <= http_port <= 65535:
+        raise LocaleError(f"the HTTP port must be 1..65535, not {http_port!r}")
+    if web_domain:
+        if not web_domain.isascii() or not _DOMAIN.fullmatch(web_domain):
+            raise LocaleError(f"the web domain must be a DNS name such as dawngate.example.org, not {web_domain!r}")
+        _, _, port = web_domain.partition(":")
+        if port and not 1 <= int(port) <= 65535:
+            raise LocaleError(f"the web domain's port must be 1..65535, not {port}")
+        web_domain = web_domain.lower()
+    return host, http_port, web_domain or None
+
+
+def site_base(host, http_port=HTTP_PORT, web_domain=None):
+    """Where the links point: the website or dgserver's own pages on its HTTP port."""
+    host, http_port, web_domain = check_options(host, http_port, web_domain)
+    if web_domain:
+        return f"https://{web_domain}/"
+    return f"http://{host}:{http_port}/{FALLBACK_PREFIX}"
+
+
+def tables(host, http_port=HTTP_PORT, web_domain=None):
+    """{table instance: {line id: new text}}."""
+    base = site_base(host, http_port, web_domain)
+    return {BLAZE_ERRORS: dict(ERROR_LINES), URLS: {i: base + p for i, p in URL_PAGES.items()},
+            LOGIN_SCREEN: dict(LOGIN_LINES)}
+
+
+def patch_table(text, lines):
+    """The table `text` (bytes) with `lines` ({id: str}) put in (the module docstring's rule)."""
+    parts = text.split(b"\n")
+    seen = set()
+    for i, part in enumerate(parts):
+        body, cr = (part[:-1], b"\r") if part.endswith(b"\r") else (part, b"")
+        bom = b""
+        if i == 0 and body.startswith(b"\xef\xbb\xbf"):
+            bom, body = b"\xef\xbb\xbf", body[3:]
+        m = _LINE.match(body)
+        if not m:
+            continue
+        lid = int(m.group(1), 16)
+        if lid in lines:
+            seen.add(lid)
+            parts[i] = bom + body[:m.end()] + lines[lid].encode("utf-8") + cr
+    out = b"\n".join(parts)
+    missing = sorted(set(lines) - seen)
+    if missing:
+        if out and not out.endswith(b"\n"):
+            out += b"\r\n"
+        out += (ADDED_COMMENT + "\r\n").encode("utf-8")
+        for lid in missing:
+            out += f"0x{lid:08x} {lines[lid]}\r\n".encode("utf-8")
+    return out
+
+
+def find_table(pkg, instance):
+    for e in pkg.entries:
+        if e.type == STRING_TYPE and e.group == STRING_GROUP and e.instance == instance:
+            return pkg.read(e)
+    return b""
+
+
+def build(locale_path, host, http_port=HTTP_PORT, web_domain=None):
+    """The bytes of AA_Server.package made from the copy's Locale.package at `locale_path`."""
+    pkg = dbpf.Package(locale_path)
+    want = tables(host, http_port, web_domain)
+    return dbpf.write_package([(STRING_TYPE, STRING_GROUP, inst, patch_table(find_table(pkg, inst), want[inst]))
+                               for inst in sorted(want)])
+
+
+def paths(data_dir):
+    loc = os.path.join(data_dir, *LOCALE_DIR)
+    return os.path.join(loc, SHIPPED), os.path.join(loc, PACKAGE)
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("data_dir", help="working copy game/Data directory")
+    ap.add_argument("--host", default="127.0.0.1", help="the server address the copy is patched for")
+    ap.add_argument("--http-port", type=int, default=HTTP_PORT, help="dgserver's HTTP port (its fallback pages)")
+    ap.add_argument("--web-domain", help="the server's website: the links go to https://<D>/<page>")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true", help="exit 1 when the package isn't current")
+    mode.add_argument("--remove", action="store_true", help="delete the package")
+    mode.add_argument("--print", action="store_true", help="print the lines put in and where the links go")
+    a = ap.parse_args(argv[1:])
+    if not sys.flags.isolated:
+        sys.exit("run this with python -I: it reads the game's files")
+    data_dir = os.path.abspath(a.data_dir)
+    if os.sep + "ia_" in data_dir or "/ia_" in data_dir:
+        sys.exit("refusing to patch a pristine extraction (client/ia_*); use a working copy")
+    shipped, added = paths(data_dir)
+    try:
+        if a.print:
+            for inst, lines in tables(a.host, a.http_port, a.web_domain).items():
+                for lid, text in sorted(lines.items()):
+                    print(f"{inst:08X} 0x{lid:08x} {text}")
+            return 0
+        if a.remove:
+            if os.path.isfile(added):
+                os.remove(added)
+                print(f"removed {added}")
+            return 0
+        want = build(shipped, a.host, a.http_port, a.web_domain)
+    except (LocaleError, OSError, ValueError) as e:
+        sys.exit(f"patch_locale: {e}")
+    digest = hashlib.sha256(want).hexdigest()[:16]
+    have = open(added, "rb").read() if os.path.isfile(added) else None
+    if have == want:
+        print(f"{added}: current ({digest}, links {site_base(a.host, a.http_port, a.web_domain)})")
+        return 0
+    if a.check:
+        print(f"{added}: {'missing' if have is None else 'not current'} (want {digest})")
+        return 1
+    tmp = added + ".partial"
+    with open(tmp, "wb") as f:
+        f.write(want)
+    os.replace(tmp, added)
+    print(f"{added}: written ({len(want)} bytes, {digest}, links {site_base(a.host, a.http_port, a.web_domain)})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

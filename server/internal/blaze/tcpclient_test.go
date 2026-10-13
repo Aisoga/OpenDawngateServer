@@ -56,6 +56,14 @@ type tcpClient struct {
 
 func (ts *tcpServer) client(email string) *tcpClient {
 	ts.t.Helper()
+	tc := ts.dial(email)
+	tc.login(email)
+	return tc
+}
+
+// dial connects a fake client without logging it in (refused logins).
+func (ts *tcpServer) dial(email string) *tcpClient {
+	ts.t.Helper()
 	c, err := net.Dial("tcp4", ts.ln.Addr().String())
 	if err != nil {
 		ts.t.Fatal(err)
@@ -82,7 +90,6 @@ func (ts *tcpServer) client(email string) *tcpClient {
 			}
 		}
 	}()
-	tc.login(email)
 	return tc
 }
 
@@ -167,7 +174,7 @@ func (tc *tcpClient) queued() string {
 
 func (tc *tcpClient) login(email string) {
 	tc.t.Helper()
-	id := tc.send(1, 0x28, tdf.NewWriter().String("MAIL", email).String("PASS", "x").String("TOKN", "").Int("TYPE", 0).Bytes())
+	id := tc.send(1, 0x28, tdf.NewWriter().String("MAIL", email).String("PASS", testPassword).String("TOKN", "").Int("TYPE", 0).Bytes())
 	tc.reply(1, 0x28, id)
 	id = tc.send(1, 0x6E, tdf.NewWriter().String("PNAM", tc.name).Bytes())
 	f := tc.reply(1, 0x6E, id)

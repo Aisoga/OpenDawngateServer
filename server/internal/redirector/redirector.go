@@ -17,6 +17,7 @@ import (
 	"dawngate/server/internal/fire"
 	"dawngate/server/internal/logging"
 	"dawngate/server/internal/tdf"
+	"dawngate/server/internal/tunnel"
 )
 
 // Port is the redirector port compiled into the client.
@@ -85,12 +86,18 @@ func (s *Server) Serve(ln net.Listener) error {
 	}
 }
 
-// ServeConn handles one connection. c must be a *tls.Conn.
+// ServeConn handles one connection: a *tls.Conn from the redirector's port, or a tunnel stream, whose TLS
+// ended in the player's Start-Client (the bytes here are plain; the stream itself is TLS 1.3). A tunnelled client is
+// told its tunnel address as Blaze's host (the tunnel carries Blaze's port there too).
 func (s *Server) ServeConn(c net.Conn) {
 	defer c.Close()
 	const who = "redirector"
 	peer := logging.Peer(c.RemoteAddr())
-	if tc, ok := c.(*tls.Conn); ok {
+	host := s.Host
+	if a := tunnel.Local(c); a != nil {
+		host = a.IP.String()
+		s.Log.Logf(who, "connection from %s through the tunnel (its TLS ended in the player's tunnel)", peer)
+	} else if tc, ok := c.(*tls.Conn); ok {
 		tc.SetDeadline(time.Now().Add(60 * time.Second)) // asyncio's default TLS handshake timeout
 		if err := tc.Handshake(); err != nil {
 			s.Log.Logf(who, "TLS handshake with %s failed: %v", peer, err)
@@ -113,7 +120,7 @@ func (s *Server) ServeConn(c net.Conn) {
 		if f.Component != ComponentRedirector || f.Command != CmdGetServerInstance {
 			continue
 		}
-		body, err := GetServerInstanceReply(s.Host, s.BlazePort)
+		body, err := GetServerInstanceReply(host, s.BlazePort)
 		if err == nil {
 			var out []byte
 			out, err = fire.Encode(fire.Frame{Component: f.Component, Command: f.Command, Type: fire.Reply, ID: f.ID, Payload: body})
@@ -125,7 +132,7 @@ func (s *Server) ServeConn(c net.Conn) {
 			s.Log.Logf(who, "getServerInstance reply failed: %v", err)
 			break
 		}
-		s.Log.Logf(who, "-> getServerInstance reply: %s:%d, SECU=0", s.Host, s.BlazePort)
+		s.Log.Logf(who, "-> getServerInstance reply: %s:%d, SECU=0", host, s.BlazePort)
 	}
 	s.Log.Log(who, "connection closed")
 }

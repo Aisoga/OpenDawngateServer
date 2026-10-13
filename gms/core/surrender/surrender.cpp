@@ -85,7 +85,7 @@ Bytes BuildTeamResult(uint8_t result, uint8_t team, uint8_t yesPercent) {
 }
 
 bool ParseClientVote(const uint8_t* body, size_t n, bool* yes) {
-  if (n < 1 || (body[0] != kClientVoteYes && body[0] != kClientVoteNo)) return false;
+  if (n != 1 || (body[0] != kClientVoteYes && body[0] != kClientVoteNo)) return false;  // exact
   *yes = body[0] == kClientVoteYes;
   return true;
 }

@@ -1,0 +1,26 @@
+{{define "content"}}
+<p>This is a community server for <b>Dawngate</b>, the MOBA of 2014, brought back by a fan restoration project.
+Play it with the game client set up for this server (Start-Client.exe).</p>
+{{if .HTML}}<div class="operator">{{.HTML}}</div>{{end}}
+<h2>Accounts</h2>
+{{if eq .Mode "open"}}
+<p>Make an account <a href="/signup">here</a>, or simply log in to the game with a new login name and a password: the
+first login makes the account.</p>
+{{else if eq .Mode "invite"}}
+<p>New accounts need an invite code from the server's operator: with one, <a href="/signup">make your account
+here</a>.</p>
+{{else}}
+<p>Only the server's operator makes accounts here: ask them for one.</p>
+{{end}}
+<ul>
+<li><a href="/account/password">Change your password</a> (you need the current one)</li>
+<li><a href="/password">Forgot your password?</a></li>
+<li><a href="/account/data">Download your data</a></li>
+<li><a href="/account/delete">Delete your account</a></li>
+</ul>
+{{with .Status}}
+<h2>Right now</h2>
+{{if .Live}}<p>{{.Online}} player(s) online, {{.Matches}} match(es) running.</p>{{end}}
+<p><a href="/status">Server status</a></p>
+{{end}}
+{{end}}

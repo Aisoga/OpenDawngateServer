@@ -2,6 +2,7 @@
 
 Writing: `rebuild(pkg, {key: data})` returns a new package with those entries replaced (stored
 uncompressed, comp 0x0000, like most of Config_Ship.package); every other entry keeps its raw bytes.
+`write_package([(type, group, instance, data)])` returns a new package (e.g. an added string table).
 
 Usage:
     python -I re/scripts/dbpf.py list    <file.package>
@@ -164,6 +165,45 @@ def rebuild(pkg, replacements):
     header = bytearray(pkg.data[:HEADER_SIZE])
     struct.pack_into("<I", header, 0x24, len(placed))
     struct.pack_into("<I", header, 0x2C, len(index))
+    struct.pack_into("<Q", header, 0x40, HEADER_SIZE + len(body))
+    return bytes(header + body + index)
+
+
+def write_package(entries):
+    """Return the bytes of a new DBPF 3.0 package holding `entries` ([(type, group, instance, bytes)])
+    in that order, stored uncompressed (comp 0, committed 1), laid out as the shipped packages are
+    (`Locale/en-us/Locale.package`): a 0x60-byte header with only the magic, version 3.0,
+    the entry count (0x24), the index size (0x2C), the index version 3 (0x3C) and the index offset
+    (0x40) set, then the entry data, then the index; type, group and the instance's high half go
+    into the index header (flags 7) when every entry shares them, as in `Locale.package`."""
+    body = bytearray()
+    placed = []
+    for typ, group, inst, data in entries:
+        placed.append((typ, group, inst, HEADER_SIZE + len(body), len(data)))
+        body += data
+    flags = 0
+    const = {}
+    if placed:
+        for bit, pos, name in ((1, 0, "type"), (2, 1, "group"), (4, 2, "insthi")):
+            vals = {(p[pos] if name != "insthi" else p[2] >> 32) for p in placed}
+            if len(vals) == 1:
+                flags |= bit
+                const[name] = vals.pop()
+    index = bytearray(struct.pack("<I", flags))
+    for bit, name in ((1, "type"), (2, "group"), (4, "insthi")):
+        if flags & bit:
+            index += struct.pack("<I", const[name])
+    for typ, group, inst, off, size in placed:
+        for bit, val in ((1, typ), (2, group), (4, inst >> 32)):
+            if not flags & bit:
+                index += struct.pack("<I", val)
+        index += struct.pack("<IIIIHH", inst & 0xFFFFFFFF, off, size | 0x80000000, size, COMP_NONE, 1)
+    header = bytearray(HEADER_SIZE)
+    header[:4] = b"DBPF"
+    struct.pack_into("<II", header, 4, 3, 0)
+    struct.pack_into("<I", header, 0x24, len(placed))
+    struct.pack_into("<I", header, 0x2C, len(index))
+    struct.pack_into("<I", header, 0x3C, 3)
     struct.pack_into("<Q", header, 0x40, HEADER_SIZE + len(body))
     return bytes(header + body + index)
 

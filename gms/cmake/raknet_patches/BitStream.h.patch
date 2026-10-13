@@ -1,0 +1,25 @@
+# patches of RakNet 4.081's BitStream.h, applied by gms/cmake/raknet.cmake (dg_add_raknet, protocol 5) to the
+# copy in the build tree; tools/raknet stays untouched. Each OLD block must occur exactly once in the original
+# (CRLF read as LF) and is replaced by its NEW block. Our own code (BSD-licensed RakNet, modified here);
+# the defects were found by SLikeNet (MIT) and public reports; no SLikeNet code is used.
+@@@OLD unread bits
+		inline BitSize_t GetNumberOfUnreadBits( void ) const {return numberOfBitsUsed - readOffset;}
+@@@NEW
+		inline BitSize_t GetNumberOfUnreadBits( void ) const {return readOffset < numberOfBitsUsed ? numberOfBitsUsed - readOffset : 0;}  // no wrap past the end
+@@@END
+@@@OLD read bool
+inline bool BitStream::Read(bool &outTemplateVar)
+	{
+		if ( readOffset + 1 > numberOfBitsUsed )
+@@@NEW
+inline bool BitStream::Read(bool &outTemplateVar)
+	{
+		if ( GetNumberOfUnreadBits() < 1 )
+@@@END
+@@@OLD read uint24
+		AlignReadToByteBoundary();
+		if ( readOffset + 3*8 > numberOfBitsUsed )
+@@@NEW
+		AlignReadToByteBoundary();
+		if ( GetNumberOfUnreadBits() < 3*8 )
+@@@END

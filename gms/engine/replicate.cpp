@@ -866,6 +866,20 @@ bool ObjectSeers(std::uint32_t id, std::uint16_t* seers) {
   }
 }
 
+bool ObjectMasks(std::uint32_t id, std::uint16_t* known, std::uint16_t* visible) {
+  __try {
+    void* o = GetObjectById(id);
+    if (!o) return false;
+    char* nc = Field<char*>(o, gobj::kNetwork);
+    if (!nc) return false;
+    *known = Field<std::uint16_t>(nc, kNetworkKnownMask);
+    *visible = Field<std::uint16_t>(nc, kNetworkVisibleMask);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "ObjectMasks")) {
+    return false;
+  }
+}
+
 bool InstanceExists(std::uint32_t instance) {
   __try {
     return GetInstance(instance) != nullptr;

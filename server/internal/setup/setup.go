@@ -13,7 +13,7 @@
 //	                       exepatch.HostKeys as setup_all.py does), config packages for 127.0.0.1, dgsim.dll as
 //	                       PhysXLoader.dll, dgsim.ini and the Lua probes (hostcopy)
 //	certs\<address>        the redirector's certificates for that server address (CN = address), made per install
-//	data                   accounts.json (dgserver), content.json (the player content, from the client copy's game data)
+//	data                   accounts.db (dgserver), content.json (the player content, from the client copy's game data)
 //	logs                   dgserver's logs and the match hosts' folders
 //	servers\<address>      the CA modulus of another machine's server, trusted on first use (Start-Client)
 //
@@ -122,6 +122,9 @@ type Setup struct {
 	HostFiles hostcopy.Files
 	// Manifest is the build the archive must hold (nil: archive.Build854; tests use their own).
 	Manifest *archive.Manifest
+	// WebDomain is the server's website: the client copy's login links go to https://<WebDomain>/<page>; ""
+	// (the launchers today) points them at dgserver's own pages on the server's HTTP port (sitelinks).
+	WebDomain string
 
 	lines   []Line
 	zip     string
@@ -263,6 +266,7 @@ func (s *Setup) Server(o ServerOptions) error {
 			s.needs("client exe", "certificates")
 		}
 		s.stepConfig("client config", s.ClientCopy(), o.Address)
+		s.stepLocale("client texts", s.ClientCopy(), o.Address)
 	}
 	host := s.ensureCopy("host copy", s.HostCopy(), hostExempt) || (s.Check && isDir(s.HostCopy()))
 	patched := false
@@ -306,6 +310,7 @@ func (s *Setup) Client(server string, ca []byte) error {
 	if s.ensureCopy("client copy", s.ClientCopy(), clientExempt) || (s.Check && isDir(s.ClientCopy())) {
 		s.stepExe("client exe", s.ClientCopy(), ca, opts, nil)
 		s.stepConfig("client config", s.ClientCopy(), server)
+		s.stepLocale("client texts", s.ClientCopy(), server)
 	}
 	return s.result()
 }

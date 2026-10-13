@@ -142,10 +142,10 @@ func updatePageRequest(p store.PerkPage) []byte {
 // commerce profile counts it all; refusals get the client's error codes; and after a restart (a new
 // server on the same file) everything is still there.
 func TestPerkPagesAndPurchases(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "accounts.json")
+	path := filepath.Join(t.TempDir(), store.FileName)
 	c := loadFixtureContent(t)
 	setup := func(s *Server) {
-		st, err := store.Open(path)
+		st, err := openTestStore(t, path)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -272,6 +272,7 @@ func registerReconnect(s *Server) {
 		for _, id := range ids {
 			if hg := r.Server.hosted.get(id); hg != nil {
 				if b, ok := hg.browserGame(); ok {
+					b.Game = r.Conn.ForClient(b.Game) // a tunnelled client sees its tunnel address
 					games = append(games, b)
 					r.Server.Log.Logf("blaze", "   getGameDataFromId: game %d, state %#x, %d players in it, teams %v", id,
 						b.State, b.Players, b.Teams)
@@ -310,7 +311,7 @@ func registerReconnect(s *Server) {
 		conn.OnSessionEnd(func() { hg.sessionEnded(conn, me) })
 		r.Server.Log.Logf("blaze", "   game %d: player %d rejoins (team index %d asked, %d on the roster); NotifyGameSetup "+
 			"names the GMS %s again", gid, me, tidx, hp.p.Team, g.GMS)
-		r.Notify(ComponentGameManager, NotifyGameSetupID, "NotifyGameSetup", RejoinGameSetupNotification(g, players))
+		r.Notify(ComponentGameManager, NotifyGameSetupID, "NotifyGameSetup", RejoinGameSetupNotification(r.Conn.ForClient(g), players))
 		slot := int64(0)
 		for i, p := range players {
 			if p.ID == me {

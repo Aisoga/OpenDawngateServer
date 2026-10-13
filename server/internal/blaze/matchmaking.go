@@ -446,7 +446,7 @@ func (s *Server) startMatch(m matchmaker.Match) {
 	}
 	s.Log.Logf("blaze", "   game %d %q: GMS %s (HNET), players %v", g.ID, g.Name, g.GMS, playerIDs(players))
 	for _, hp := range hps {
-		hp.conn.Push(s, ComponentGameManager, NotifyGameSetupID, "NotifyGameSetup", setup(g, hp))
+		hp.conn.Push(s, ComponentGameManager, NotifyGameSetupID, "NotifyGameSetup", setup(hp.conn.ForClient(g), hp))
 	}
 }
 

@@ -25,6 +25,9 @@ import (
 	"dawngate/server/internal/tdf"
 )
 
+// testPassword is the test logins' password (a new account's password must keep the rules).
+const testPassword = "dawngate1"
+
 func testCerts(t *testing.T) string {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
@@ -322,7 +325,7 @@ func TestSystemMessages(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	send(0x28, 1, tdf.NewWriter().String("MAIL", "player@example.com").String("PASS", "x").String("TOKN", "").Int("TYPE", 0).Bytes())
+	send(0x28, 1, tdf.NewWriter().String("MAIL", "player@example.com").String("PASS", testPassword).String("TOKN", "").Int("TYPE", 0).Bytes())
 	send(0x6E, 2, tdf.NewWriter().String("PNAM", "player").Bytes())
 	var tags []string
 	for len(tags) < 3 {

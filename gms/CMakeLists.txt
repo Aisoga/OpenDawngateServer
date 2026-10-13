@@ -124,6 +124,7 @@ if(RAKNET_FOUND)
     core/protocol/wire.cpp
     core/protocol/messages.cpp
     core/protocol/commands.cpp
+    core/protocol/check.cpp           # the strict check of every client message
     core/protocol/shaper_select.cpp   # D3-core: ShaperSelectMsgs and C0 02, byte for byte
     core/session/match.cpp
     core/session/gms_session.cpp
@@ -187,9 +188,13 @@ if(RAKNET_FOUND)
     tests/test_d14.cpp          # D14: the map rules (reward buffs, aggro on sight, camp spots, the Guardian's shield)
     tests/test_timing.cpp       # Q3c: the tick, traffic and command-latency arithmetic, the CSV, the simulator's rule
     tests/test_net.cpp          # Q3c: the endpoint's timing and network simulator against a RakNet client on loopback
+    tests/test_limits.cpp       # the network limits (NetLimiter) and the endpoint with them on, on loopback
     tests/test_banter.cpp       # D11b: the banter, kill, assist and presence lines, the sequential emotes
     tests/test_command_queue.cpp  # D7c: a move during an attack order (the queued-move step, the takeover)
     tests/test_d3d9.cpp         # H1d: the host without Direct3D 9 (the plan, the verdict, the stand-in IDirect3D9)
+    tests/test_check.cpp        # the strict message check (every type's malformed inputs, the world, the guard)
+    tests/test_fuzz.cpp         # fuzzing the parsers, the session and RakNet's receive path (GMS_FUZZ_SECONDS)
+    tests/test_hardening.cpp    # RakNet's handshake cookies, no IP ban, short REQUEST_1, the ordered-ahead limit
     core/matchflow/flow.cpp
     core/watchdog/monitor.cpp
     core/timing/timing.cpp

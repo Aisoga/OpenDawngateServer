@@ -181,7 +181,7 @@ func (s *Server) browserChanged(hg *hostedGame) {
 			continue
 		}
 		l.shown[lg.Game.ID] = true
-		pushes = append(pushes, push{l.conn, GameListUpdateNotification(l.id, []ListedGame{lg}, nil)})
+		pushes = append(pushes, push{l.conn, GameListUpdateNotification(l.id, l.conn.forClientListed([]ListedGame{lg}), nil)})
 	}
 	s.browser.mu.Unlock()
 	for _, p := range pushes {
@@ -251,7 +251,7 @@ func registerGameBrowser(s *Server) {
 				ids[i] = g.Game.ID
 			}
 			r.Server.Log.Logf("blaze", "   game list %d (%q, %s, capacity %d): games %v", l.id, name, kind, capacity, ids)
-			r.Notify(ComponentGameManager, NotifyGameListUpdateID, "NotifyGameListUpdate", GameListUpdateNotification(l.id, games, nil))
+			r.Notify(ComponentGameManager, NotifyGameListUpdateID, "NotifyGameListUpdate", GameListUpdateNotification(l.id, r.Conn.forClientListed(games), nil))
 			return GameListReply(l.id, int64(len(games)))
 		}
 	}

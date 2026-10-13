@@ -90,6 +90,7 @@
 
 #include "core/common/bytes.h"
 #include "core/net/endpoint.h"
+#include "core/protocol/check.h"
 #include "core/session/match.h"
 #include "core/session/rejoin.h"
 
@@ -135,6 +136,9 @@ struct SessionOptions {
   // B15b: the players' clients get the spectators too (HelloPlayer, PlayerJoined, their statuses); a spectator's client
   // always gets every player
   bool nameSpectators = true;
+  // the strict message check (core/protocol/check.h): mode 1 drops a bad message (the default), 2 only counts and
+  // logs it, 0 is off; kickCount malformed or invalid messages within kickWindowMs close the connection
+  check::GuardOptions check;
 };
 
 class GmsSession final : public ISender {
@@ -176,6 +180,12 @@ class GmsSession final : public ISender {
   bool SendPlayerJoined(ConnId conn, uint8_t gameplayIndex);
   bool SendPlayerDeparted(ConnId conn, uint8_t gameplayIndex);
   bool Knows(ConnId conn, uint8_t gameplayIndex) const;
+  // a RakNet packet other than a GMS message, a connection or a disconnection (PumpEndpoint's kOther): counted as
+  // bad (a connected client's towards its kick). True if it is to be logged (the check's log limit).
+  bool OnOtherPacket(ConnId conn, const uint8_t* data, size_t n);
+  // the check's counts since the start, and since the last TakeCheckWindow (the host's `net:` line)
+  const check::Stats& CheckTotals() const { return guard_.Total(); }
+  check::Stats TakeCheckWindow() { return guard_.TakeWindow(); }
   // G3a: every user's slot, for a rejoin.
   const RejoinMap& Seats() const { return seats_; }
 
@@ -230,6 +240,8 @@ class GmsSession final : public ISender {
   void CheckAbortAcks(SteadyClock::time_point now);
   Conn* ConnOfIndex(uint8_t gameplayIndex);
   void LogClientMessage(Conn& c, uint8_t b, const uint8_t* body, size_t n);
+  bool Screen(Conn& c, uint8_t b, const uint8_t* body, size_t nb);
+  void Kick(ConnId conn, const char* why);
   void ReportSuppressed(Conn& c);
   void Report(Conn& c, bool force);
   std::string StateOf(const Conn& c) const;
@@ -261,6 +273,10 @@ class GmsSession final : public ISender {
   SteadyClock::time_point abortedAt_{};
   std::vector<uint64_t> abortCulprits_;
   std::string abortWhy_;
+  // the strict check
+  check::Guard guard_;
+  check::Bounds bounds_;
+  bool boundsSet_ = false;
 
  public:
   // G3b: the game was aborted at the match-found prompt (no connection gets EnterPreGameFlow any more).

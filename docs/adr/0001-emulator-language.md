@@ -2,6 +2,7 @@
 
 - **Status:** accepted, 2026-10-07 (start of M3); revised the same day for the user's preference for Go. Revisit only on the triggers under *Consequences*. ADR-2 (2026-10-08) confirms the in-process C++ match host, so the clean-room language question is closed. It replaces decision 3's default transport: the host links RakNet 4.081 built for protocol 5 instead of driving the client's own RakNet.
 - **Amended by [ADR-3](0003-player-setup-in-go.md)** (2026-10-09): the player and operator setup (the patchers, the certificate generation, the archive check, the host install) is ported to Go in `server/internal/setup/`; the Python scripts stay the reference and the research and test tools.
+- **Amended by [ADR-4](0004-outside-go-modules.md)** (2026-10-13): `server/` may use pinned outside Go modules named one by one in ADR-4 (`modernc.org/sqlite` for the account store, `golang.org/x/crypto` for the password hashes and the website's certificates), pure Go only, their licences in the release; "stdlib only" below means "stdlib plus ADR-4's list".
 - **Decision in one sentence:**
   - The emulator's network services are written in **Go** (stdlib only) in a new top-level `server/`, ported from the Python stubs in `re/stubs/`.
   - The match host is **C++** (MSVC x86) in `gms/`, once D1 confirms that the client's own simulation can run in server mode.
@@ -112,7 +113,7 @@ Two kinds of evidence here:
    - Tests may read `docs/data/` (member tables).
    - Each handler's comment names its client evidence (member table, function address).
    - `gofmt`, `go vet ./...` and `go test ./...` must pass.
-   - Third-party Go modules only with a recorded reason.
+   - Third-party Go modules only with a recorded reason (since ADR-4: only those ADR-4 names).
    - The binary is built by `go build -o server\bin\dgserver.exe .\cmd\dgserver` (or by `run_session.ps1`).
 
 ## Consequences

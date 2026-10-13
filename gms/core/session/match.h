@@ -19,6 +19,7 @@
 
 #include "core/common/bytes.h"
 #include "core/net/endpoint.h"
+#include "core/protocol/check.h"
 #include "core/protocol/messages.h"
 #include "core/session/shaper_select.h"
 
@@ -165,6 +166,11 @@ class IMatch {
   // 0x4 (kStatusGone) and 0x100. Called once more, with every pick, if a player shaper select didn't have at the reveal
   // joins after it (its pick is made at its join).
   virtual void OnShaperPicks(const std::vector<ShaperPick>& picks) { (void)picks; }
+
+  // ---- the strict message check --------------------------------------------------------------------------
+  // What the check asks of the match about a sender and its world (the caster, targets, the inventory); nullptr (the
+  // default) = only the engine-free part (check::CheckFormat) runs.
+  virtual check::IWorld* CheckWorld() { return nullptr; }
 };
 
 // The connection id the session passes to PlayerUpdate for a player without a connection (OtherPlayer).

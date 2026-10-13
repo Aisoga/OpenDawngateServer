@@ -14,18 +14,22 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"dawngate/server/internal/accounts"
 	"dawngate/server/internal/content"
 	"dawngate/server/internal/fire"
 	"dawngate/server/internal/gmshost"
+	"dawngate/server/internal/limits"
 	"dawngate/server/internal/logging"
 	"dawngate/server/internal/matchmaker"
 	"dawngate/server/internal/progress"
 	"dawngate/server/internal/store"
 	"dawngate/server/internal/tdf"
+	"dawngate/server/internal/tunnel"
 )
 
 // Server holds the handler table and what handlers need to know about this server.
@@ -58,6 +62,15 @@ type Server struct {
 	// GAMEMANAGER_ERR_INVALID_MATCHMAKING_CRITERIA, as a party larger than a team does, so one client can
 	// see the client's error dialog.
 	MMRefuse bool
+	// TestLoginErrors is a test aid (dgserver --test-login-errors): the server's n-th Authentication::login
+	// (counted from 0 over all connections) gets the error reply TestLoginErrors[n] (the 16-bit error code of the
+	// Fire header; the client adds the component); 0 or past the list's end = the login is answered as usual. So
+	// one session sees the client's popup for each code, then logs in. Not for real servers.
+	TestLoginErrors []uint16
+	testLoginTries  atomic.Int64
+	// Accounts is the login check's sign-up policy (dgserver --signup, --signups-per-address; internal/accounts):
+	// the zero value is open sign-up without a cap. Every login's password is checked against the account's hash.
+	Accounts accounts.Policy
 	// MMBots fills the open seats of a matchmade game with bots (B10d, dgserver --mm-bots, on by default there):
 	// a match that formed with open seats (matchmaker.Match.Full false, after FillAfter) asks its host for bots
 	// up to the team size (createGame's fillTeams). Off = the open seats stay empty (B10b's 1 v 0).
@@ -75,6 +88,11 @@ type Server struct {
 	// [assumed: their create dialog has no bot option]. A practice group's game (GameFlags 0x412: BotsFillTeams) gets
 	// its bots from the host's auto rule either way.
 	CustomBots bool
+	// Limits are the rate and count limits (dgserver --limits; limits.go): nil = off.
+	Limits *limits.Limiter
+	// SessionEnd is what a client hears before EndAccountSessions closes its connection (dgserver --session-end;
+	// kick.go): the zero value, SessionEndDisconnected, is UserSessions::UserSessionDisconnected.
+	SessionEnd SessionEndNotice
 
 	gameIDs atomic.Int64 // game ids, from 1
 	hosted  hostedGames  // games with a match host (C1)
@@ -89,6 +107,8 @@ type Server struct {
 	sys systemMessages
 	// B15: the game browser's lists (customgames.go)
 	browser gameBrowser
+	// the logged-in connections by account (kick.go)
+	live liveSessions
 
 	handlers map[key]Handler
 }
@@ -147,6 +167,40 @@ type Conn struct {
 	kmu      sync.Mutex
 	known    map[int64]bool
 	statusOf int64
+
+	// the tunnel address of a client that came through the tunnel (tunnel.go), nil for a direct one
+	tun *tunnel.Addr
+
+	// ending is set once EndAccountSessions ends this connection's session (so it is ended once); gone
+	// is closed when ServeConn returns. Requests are answered as usual until the connection closes: the client's own
+	// leave of a match it was kicked from (updateMeshConnection, leavePlaygroup) goes through (seen in a test run).
+	ending atomic.Bool
+	gone   chan struct{}
+}
+
+// closeNow closes the connection from another goroutine (an ended session); ServeConn then returns and runs
+// the session-end hooks.
+func (c *Conn) closeNow() {
+	if c.nc != nil {
+		c.nc.Close()
+	}
+}
+
+// Addr is the client's address (the login check's source address, sign-ups per address). The zero Addr when the
+// connection has none (a test's pipe). For a client that came through the tunnel it is the player's real
+// address as the gateway saw it, not the loopback address the game's socket has on the player's PC.
+func (c *Conn) Addr() netip.Addr {
+	if t := c.TunnelAddr(); t != nil {
+		return t.Peer
+	}
+	if c.nc == nil {
+		return netip.Addr{}
+	}
+	ap, err := netip.ParseAddrPort(c.nc.RemoteAddr().String())
+	if err != nil {
+		return netip.Addr{}
+	}
+	return ap.Addr().Unmap()
 }
 
 // firstSight reports whether the connection's client hasn't been told about user id yet, and marks it told.
@@ -268,6 +322,7 @@ func NewServer(log *logging.Log, host string, qosPort int) *Server {
 	registerGameManager(s)
 	registerReconnect(s) // G3: getGameDataFromId, joinGame
 	registerPlaygroups(s)
+	applyLimits(s) // login, game starts and queues (limits.go)
 	return s
 }
 
@@ -301,13 +356,18 @@ func (s *Server) ServeConn(c net.Conn) {
 	defer c.Close()
 	const who = "blaze"
 	s.Log.Log(who, "connection from "+logging.Peer(c.RemoteAddr()))
-	conn := &Conn{nc: c}
+	conn := &Conn{nc: c, tun: tunnel.Local(c), gone: make(chan struct{})}
+	defer close(conn.gone)
 	defer conn.endSession(true)
 	r := fire.NewReader(c)
+	gate := s.requestGate(conn) // requests per connection
 	for {
 		f, err := r.Next()
 		if err != nil {
 			fire.LogEnd(s.Log, who, r, err)
+			break
+		}
+		if !gate() {
 			break
 		}
 		fire.Describe(s.Log, who, f)

@@ -5,10 +5,9 @@ An unofficial fan project to play the 2014 MOBA Dawngate again. It is not affili
 Electronic Arts or Waystone Games; Dawngate is a trademark of its owners. This release contains no game file:
 every player needs their own Dawngate.zip from archive.org.
 
-WARNING - NO REAL SECURITY. The server accepts any login (any e-mail and password open or create an
-account), keeps the accounts in a plain file, logs passwords as typed and isn't hardened against hostile
-clients or traffic. Run it for yourself or for a group you trust, best on your home network. A server on a
-public internet address is possible (see "Hosting on the internet") but entirely at your own risk.
+A WORD ON SAFETY. The game is 2014 code. At home nothing leaves your network; a public server (see "Hosting on
+the internet") gets checked passwords, an encrypted tunnel, limits and a website for accounts, and is still
+run at the operator's own risk. Players: play only on servers you trust, with a password you use nowhere else.
 
 
 What you need
@@ -24,10 +23,12 @@ Playing on this PC (a practice match against bots)
 --------------------------------------------------
 1. Unpack this release into a folder of its own, e.g. C:\Games\Dawngate.
 2. Put Dawngate.zip into the same folder, next to Start-Server.exe.
-3. Double-click Start-Server.exe. Its first start sets everything up in the folder Dawngate-Data (about a
-   minute), then the server runs. Leave its window open.
+3. Double-click Start-Server.exe. Its first start asks who will play on the server: press Enter for "only this
+   PC". Then it sets everything up in the folder Dawngate-Data (about a minute) and the server runs. Leave its
+   window open.
 4. Double-click Start-Client.exe. The game starts.
-5. Log in with any e-mail and password (the first login creates the account), then PLAY and
+5. Log in with a login name (3-32 letters, digits and . _ - @, e.g. an e-mail address) and a password of
+   8 or more characters: the first login with a new name creates the account with that password. Then PLAY and
    PRACTICE DAWNGATE. Pick your shaper (click a card, then Choose), a role (then Finalize) and a skin;
    then a match with bots begins. (shaper_select = off in Start-Server.ini skips this: everyone plays
    Fenmore.)
@@ -39,11 +40,11 @@ choose it); it also looks in your Downloads folder.
 Playing over your home network (LAN)
 ------------------------------------
 On the PC that runs the server:
-1. Find its address in your network: in a command prompt, "ipconfig" shows it as "IPv4 Address",
-   e.g. 192.168.1.20.
-2. Open Start-Server.ini (next to Start-Server.exe, written by its first start), set
-       address = 192.168.1.20
-   save it and start Start-Server.exe again. Its window shows the server's fingerprint, e.g. 3ff46759dcb1ea30.
+1. At Start-Server.exe's first start, answer 2 ("your home network") and pick this PC's address in your
+   network (the one marked "the one your router connects"; "ipconfig" shows it as "IPv4 Address", e.g.
+   192.168.1.20). Later: Start-Server.exe --configure asks again, or set   address = 192.168.1.20   in
+   Start-Server.ini and start Start-Server.exe again.
+2. Its window shows the server's fingerprint, e.g. 3ff46759dcb1ea30.
 3. If Windows asks whether the programs may use the network, allow them for private networks only.
    (A public address: README section "Hosting on the internet" below; the risk applies.)
 On every other player's PC:
@@ -59,24 +60,48 @@ The server's owner plays with Start-Client.exe on the server PC too.
 
 Hosting on the internet (use at your own risk)
 ----------------------------------------------
-Start-Server.exe also accepts a public address (not 127.0.0.1, not a home-network address) in Start-Server.ini.
-This was a deliberate choice, and it comes with no protection:
-- Anyone who reaches the server can log in with any e-mail and password; the first login creates the account.
-- The game's Blaze connection is plain TCP, not encrypted, and passwords are written to the logs as typed.
-- The TLS parts are TLS 1.1 with MD5-signed RSA-1024 certificates, which the 2014 game needs: no real protection.
-- Nothing limits connections or login attempts.
-- Players must trust your server with a password. Tell them to use one they use nowhere else.
-Start-Server.exe prints this notice and only starts after you accept it: start it as
-   Start-Server.exe --i-accept-the-risk
-or put   i_accept_the_risk = yes   in Start-Server.ini. If the PC is behind a router, set address to the public
-address and   bind = <this PC's LAN address>   and forward the ports below to that PC yourself; Start-Server.exe
-never opens ports and never uses UPnP. Start-Client.exe shows a short notice when the address is public.
+At Start-Server.exe's first start (or with Start-Server.exe --configure) answer 3 ("the internet"). It asks:
+- your internet address (your router shows it as its internet or WAN address) and, when this PC is behind a
+  router, which of its home-network addresses the router forwards to (Start-Server.ini: address, bind);
+- who may make accounts: invite (players register on the server's website with an invite code you make; the
+  default), closed (only you make accounts) or open (anyone; at most 3 a day per internet address);
+- a domain name for the website (optional: with one whose DNS A record points at your internet address the
+  server gets a free certificate from Let's Encrypt by itself; without, browsers warn once about its own
+  certificate);
+- an admin account for the website's admin page (it prints its password once);
+- whether you accept the risk notice it prints (i_accept_the_risk = yes; without it a public server doesn't
+  start).
+This is the public profile (profile = public): every player connection goes through the encrypted tunnel (TLS
+1.3 and AES-GCM on TCP and UDP 42128; Start-Client.exe uses it by itself for a public address), limits on
+connections, logins, games and packets are on, and the match hosts check everything a client sends.
+On your router forward only TCP and UDP 42128 (the tunnel) and TCP 443 (the website) to that PC; nothing else,
+and never TCP 10040. Start-Server.exe never opens ports and never uses UPnP. If the PC holds the internet
+address itself (no router), let its firewall in only those ports.
+Its window shows the tunnel key's fingerprint: the first time, Start-Client.exe shows it to each player, who
+answers y only if it is the same. What remains your risk and duty (the notice says it in full): the players'
+PCs trust your server, so keep it updated and private; players behind one address share the limits; you keep
+personal data (names, addresses in the logs: publish a privacy page in Dawngate-Data\data\site\privacy.html
+and answer players' requests); back up the accounts (below).
+
+Accounts and the website
+------------------------
+- The website (https://<server address>/, port web_port = 443): players register there (under signup =
+  invite with your code), change their password, delete their account or download their data; /status shows
+  the players online and the matches. The game's "Sign up now!" and "Forgot Password?" links lead there.
+- The admin page (https://<server address>/admin) for accounts with the admin role
+  (Start-Server.exe --make-admin <login name>): accounts (search, disable, ban, a new password, delete),
+  invite codes (make, list, revoke), the sign-up mode, the running matches (end one) and the audit log.
+- The server sends no mail: a player who forgot the password asks you; Start-Server.exe --reset-password
+  <login name> (or the admin page) prints a new one.
+- Backups: the accounts are Dawngate-Data\data\accounts.db (with accounts.db-wal and accounts.db-shm). Stop the
+  server and copy those three files (or the whole Dawngate-Data\data folder) somewhere safe, e.g. daily.
 
 Ports
 -----
 The server listens on TCP 42127, 10041, 17502, 18080 and 9988 and on UDP 17502; each running match uses one UDP
-port of 10042-10051 (the match host). Other machines must reach them for LAN play. Forward them from the
-internet only if you chose to host publicly (above); the match hosts' control port (TCP 10040) stays on
+port of 10042-10051 (the match host). Other machines in your home network reach them for LAN play. The website
+uses TCP 443 (web_port). With the tunnel (the public profile, or tunnel = on) it also listens on TCP and UDP
+42128: from the internet forward only that port and 443. The match hosts' control port (TCP 10040) stays on
 127.0.0.1 and must never be forwarded.
 
 
@@ -92,11 +117,23 @@ Windows warnings
 
 Options
 -------
-Start-Server.ini   address, shaper_select (on/off), folder (where Dawngate-Data goes), zip, server_flags (more
-                   server options, e.g.  --owned starter  or  --mm-team-size 1 --mm-fill-after 5s).
+Start-Server.ini   address, bind, profile (auto/home/public: public = the tunnel required and the limits on),
+                   shaper_select (on/off), signup (open, invite, closed: who can make accounts),
+                   signups_per_address, log_days (logs are deleted after so many days), tunnel (auto/on/off:
+                   auto = on for the public profile), gateway_port (42128), web_port (443; 0 = no website),
+                   web_domain, web_email, folder (where Dawngate-Data goes), zip, server_flags (more server
+                   options, e.g.  --owned starter  or  --mm-team-size 1 --mm-fill-after 5s).
+                   Start-Server.exe --configure asks the first start's questions again.
+Accounts           Start-Server.exe --create-account <name>   makes an account and prints its password;
+                   --reset-password <name>   prints a new password for a player who forgot it (the server
+                   sends no mail); --account-status <name>=disabled (or banned, active) locks one out;
+                   --make-invite [--invite-uses 5] [--invite-days 14]   prints an invite code (signup = invite;
+                   players type it on the website's sign-up page), --list-invites, --revoke-invite <id>,
+                   --make-admin <name> / --remove-admin <name>   (the website's admin page).
 Start-Server.exe --check     only reports what is missing; --setup-only sets up without starting the server.
 Start-Client.exe --check     only reports; --setup-only prepares the game copy without starting the game.
-Start-Client.ini   server (the address to play on), folder.
+Start-Client.ini   server (the address to play on), folder, tunnel (auto/on/off: auto = for a public address;
+                   on for a LAN server with tunnel = on), gateway_port.
 Logs: Dawngate-Data\logs (the server, and one folder per match under hosts). The game's own log is in
 %APPDATA%\DawngateData.
 
@@ -118,11 +155,13 @@ Start-Client.exe          starts the game (Go)
 host\dgsim.dll            the match host, loaded by the game's copy in Dawngate-Data\host (C++, links RakNet)
 host\lua\                 the match host's Lua scripts
 LICENSE.txt               GNU Affero General Public License v3: this project's code
-THIRD-PARTY-NOTICES.txt   RakNet 4.081 (BSD and its patent grant), Go (BSD)
+THIRD-PARTY-NOTICES.txt   RakNet 4.081 (BSD and its patent grant; with this project's patches), Go (BSD), the
+                          Go modules the programs link (SQLite in Go, golang.org/x/crypto, ...: BSD and MIT)
 BUILD.txt                 the source commit and the files' SHA-256
 Dawngate-Data\            made by the first start: the game copies, certificates, accounts, logs. Back up
-                          Dawngate-Data\data to keep the accounts. Never share the game copies (they are the
-                          game's files), the certificates' *_key.pem files or the logs (they hold logins as typed).
+                          Dawngate-Data\data to keep the accounts (with the server stopped). Never share the
+                          game copies (they are the game's files), the certificates' *_key.pem files or the
+                          logs (they hold login names and addresses).
 
 Copyright (C) 2026 the Dawngate Restoration contributors. This project's code is licensed under the GNU AGPL v3
 (LICENSE.txt); the source of this release is the project's repository at the commit in BUILD.txt. The game, its

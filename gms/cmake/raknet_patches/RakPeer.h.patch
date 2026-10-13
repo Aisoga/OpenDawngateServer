@@ -1,0 +1,53 @@
+# patches of RakNet 4.081's RakPeer.h, applied by gms/cmake/raknet.cmake (dg_add_raknet, protocol 5) to the copy
+# in the build tree; tools/raknet stays untouched. Each OLD block must occur exactly once in the original (CRLF read as
+# LF) and is replaced by its NEW block. Our own code (BSD-licensed RakNet, modified here). The settings default to stock behaviour; gms/core/net/endpoint.cpp turns them on for
+# the match host's server peer.
+@@@OLD include
+#include "DS_Queue.h"
+@@@NEW
+#include "DS_Queue.h"
+#include <atomic>
+@@@END
+@@@OLD members
+	///Constructor
+	RakPeer();
+@@@NEW
+	///Constructor
+	RakPeer();
+
+	// ---- Dawngate restoration (gms/cmake/raknet_patches/RakPeer.h.patch): handshake and receive hardening ----
+	// Set before Startup: the network threads read them without a lock. The constructor sets stock behaviour.
+	struct DgHardening
+	{
+		// ID_OPEN_CONNECTION_REPLY_1 carries a cookie (a keyed hash of the sender's address and port and the time),
+		// and ID_OPEN_CONNECTION_REQUEST_2 must echo it: only a sender that receives at its source address gets a
+		// connection slot (and the reliable, resent ID_CONNECTION_REQUEST_ACCEPTED). RakNet's own non-LIBCAT client
+		// path, and the Dawngate client's, echo it with "no challenge".
+		bool handshakeCookies;
+		// Stock: an unverified sender whose first message isn't ID_CONNECTION_REQUEST bans its IP for the timeout.
+		bool banNonsenseSenders;
+		// ID_OPEN_CONNECTION_REQUEST_1 shorter than its reply gets none (no reflection gain; real ones are MTU-padded).
+		bool request1NoSmallerThanReply;
+		// Per connection: ordered and sequenced messages buffered ahead of a hole (0 = no limit); beyond, the
+		// connection is closed (ID_CONNECTION_LOST).
+		unsigned int orderedAheadMaxMessages;
+		unsigned int orderedAheadMaxBytes;
+		unsigned char cookieKey[16];
+	};
+	struct DgCounts
+	{
+		unsigned int request1Short;      // REQUEST_1 too short to answer
+		unsigned int request2BadCookie;  // REQUEST_2 without our cookie (or with a challenge)
+		unsigned int nonsenseClosed;     // unverified senders closed for a first message other than CONNECTION_REQUEST
+		unsigned int nonsenseBanned;     // ... of which their IP banned (stock)
+		unsigned int orderedAheadClosed; // connections closed over the ordered-ahead limit
+		unsigned int cookiesIssued;      // REPLY_1 sent with a cookie
+	};
+	void DgSetHardening(const DgHardening &h);
+	DgHardening DgGetHardening(void) const;
+	DgCounts DgTakeCounts(void);  // since the last call
+	DgHardening dgHardening;
+	std::atomic<unsigned int> dgRequest1Short, dgRequest2BadCookie, dgNonsenseClosed, dgNonsenseBanned,
+		dgOrderedAheadClosed, dgCookiesIssued;
+	// ---- end of the handshake and receive hardening ----
+@@@END

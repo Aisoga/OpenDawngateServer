@@ -13,12 +13,14 @@ in docs/RUNNING_THE_CLIENT.md *How to start it*, or by setup_all.py); this scrip
               patch_client.py for 127.0.0.N (redirector host, every wildcard bind narrowed to 127.0.0.N, RakNet's
               loopback literal, --data-suffix <X upper case>: %APPDATA%\\DawngateDataX, Documents\\DawngateX; since
               Q3b LARGE_ADDRESS_AWARE) with the lane's CA, and by patch_config.py --host 127.0.0.N (CDN, telemetry and crash hosts). It runs with
-              -multipleInstances, since lane a's client holds the Global\\Dawngate mutex.
+              -multipleInstances, since lane a's client holds the Global\\Dawngate mutex. also
+              patch_locale.py --host 127.0.0.N (game/Data/Locale/en-us/AA_Server.package: the login texts, the
+              links at the lane's dgserver pages; also in the copies e, f and lan below).
   certs       server/certs/lane_X (make_certs.py, CN=127.0.0.N: the client checks the CN against the redirector
               host it connected to).
   host copy   client/run_854_server/Dawngate's twin client/run_854_server_X/Dawngate (setup_server_copy.py from
               the lane's client copy, with the dgsim.dll of the checkout that tests on that lane).
-  accounts    server/data/lane_X (its own accounts.json; content from server/data/content.json). Made here;
+  accounts    server/data/lane_X (its own accounts.db; content from server/data/content.json). Made here;
               dgserver would make it at its first save too.
   server      run_session.ps1 -Lane X builds server/bin/lane_X/dgserver.exe in the checkout it runs from (a running
               server locks its binary).
@@ -41,6 +43,8 @@ across machines (A5)*):
               with it, %APPDATA%\\DawngateDataE; no host copy (run_session.ps1 -Lane d -SecondClient).
   f           since G3b lane b's second client client/run_854_f/Dawngate, the same with lane b's redirector
               (127.0.0.2) and CA, bound to 127.0.2.2, %APPDATA%\\DawngateDataF (run_session.ps1 -Lane b -SecondClient).
+  h           lane c's second client client/run_854_h/Dawngate, the same with lane c's redirector
+              (127.0.0.3) and CA, bound to 127.0.3.2, %APPDATA%\\DawngateDataH (run_session.ps1 -Lane c -SecondClient).
   lan         the LAN profile's test copy client/run_854_l/Dawngate (LAN): patch_client.py --profile lan with this PC's
               LAN address as server and bind address (RakNet's start-up send test pointed at it), %APPDATA%\\
               DawngateDataL, patch_config.py --host <address>, and server/certs/lan with CN = the address
@@ -54,6 +58,7 @@ Usage:
     .venv/Scripts/python -I re/scripts/setup_lane.py --print c      # the lane's settings as key=value lines
     .venv/Scripts/python -I re/scripts/setup_lane.py e [--check]    # A5b: lane d's second client
     .venv/Scripts/python -I re/scripts/setup_lane.py f [--check]    # G3b: lane b's second client
+    .venv/Scripts/python -I re/scripts/setup_lane.py h [--check]    # lane c's second client
     .venv/Scripts/python -I re/scripts/setup_lane.py lan --address <IPv4>|auto [--check] [--new-certs]  # A5b
 re/scripts/setup_all.py --lane <X>[,<Y>...] (or --lane-b) runs this script after the rest of the setup (--lane e,
 --lane lan with --lan-certs <S> since A5b).
@@ -68,6 +73,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)  # -I drops the script folder
 import patch_client  # noqa: E402
+import patch_locale  # noqa: E402
 
 # One entry per lane; run_session.ps1 has the same table ($LaneTable; test_a6.py checks they agree).
 LANES = {
@@ -98,6 +104,8 @@ EXTRA_CLIENTS = {
     "e": {"lane": "d", "client": "client/run_854_e/Dawngate", "bind": "127.0.4.2", "suffix": "E"},
     # G3b: lane b's second client, built like e (lane d stays busy with long packages, G3b needs two clients)
     "f": {"lane": "b", "client": "client/run_854_f/Dawngate", "bind": "127.0.2.2", "suffix": "F"},
+    # lane c's second client ('g' stays test_a6.py's letter nobody uses)
+    "h": {"lane": "c", "client": "client/run_854_h/Dawngate", "bind": "127.0.3.2", "suffix": "H"},
 }
 # A5b: the LAN profile's test copy on this PC (run_session.ps1 -Lan): lan profile, server = this PC's LAN address, the
 # sockets narrowed to it; certificates with that CN; one lan session at a time on the PC (its own lock, whatever lane)
@@ -176,6 +184,21 @@ def config_patched(data_dir, address):
         return f"http://{address}:18080".encode() in f.read()
 
 
+def locale_step(data_dir, address, check_only, missing):
+    """the client copy's added locale package (patch_locale.py --host <address>: the login texts, the links at
+    the lane's dgserver pages), byte for byte what patch_locale.py makes from the copy's own Locale.package."""
+    shipped, added = patch_locale.paths(data_dir)
+    want = patch_locale.build(shipped, address)
+    if os.path.isfile(added):
+        with open(added, "rb") as f:
+            if f.read() == want:
+                return
+    if check_only:
+        missing.append(f"{added} (patch_locale.py --host {address})")
+        return
+    run([sys.executable, "-I", os.path.join(HERE, "patch_locale.py"), data_dir, "--host", address])
+
+
 def run(cmd):
     print("  $ " + " ".join(cmd))
     r = subprocess.run(cmd)
@@ -246,6 +269,7 @@ def setup(lane, dll, with_host, check_only, root=None):
                 missing.append(f"config packages in {data_dir} (patch_config.py --host {cfg['address']})")
             else:
                 run([py, "-I", os.path.join(HERE, "patch_config.py"), data_dir, "--host", cfg["address"]])
+        locale_step(data_dir, cfg["address"], check_only, missing)
     # 4. the match-host copy with the harness (setup_server_copy.py copies the lane's client copy once)
     host_keys = HOST_KEYS if lane == "a" else None
     if with_host:
@@ -402,6 +426,7 @@ def setup_extra(name, check_only, root=None):
                 missing.append(f"config packages in {data_dir} (patch_config.py --host {lane['address']})")
             else:
                 run([py, "-I", os.path.join(HERE, "patch_config.py"), data_dir, "--host", lane["address"]])
+        locale_step(data_dir, lane["address"], check_only, missing)
     return finish(f"copy {name}", missing, check_only)
 
 
@@ -455,6 +480,7 @@ def setup_lan(address, check_only, new_certs=False, root=None):
                 missing.append(f"config packages in {data_dir} (patch_config.py --host {address})")
             else:
                 run([py, "-I", os.path.join(HERE, "patch_config.py"), data_dir, "--host", address])
+        locale_step(data_dir, address, check_only, missing)
     return finish("lan copy", missing, check_only)
 
 

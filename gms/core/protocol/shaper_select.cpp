@@ -145,7 +145,7 @@ int RequestSize(uint8_t sub) {
 bool ParseShaperSelectRequest(const uint8_t* body, size_t n, ShaperSelectRequest* out) {
   if (n < 1) return false;
   const int size = RequestSize(body[0]);
-  if (size < 0 || n < 1 + static_cast<size_t>(size)) return false;
+  if (size < 0 || n != 1 + static_cast<size_t>(size)) return false;  // exact
   ShaperSelectRequest r;
   r.sub = body[0];
   if (size == 1) r.role = body[1];

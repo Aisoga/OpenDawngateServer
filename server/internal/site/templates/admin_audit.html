@@ -1,0 +1,13 @@
+{{define "content"}}
+{{if .Admin.Audit}}
+<div class="table-wrap"><table class="admin">
+<tr><th>Time (UTC)</th><th>Who</th><th>From</th><th>Action</th><th>On</th><th>Detail</th></tr>
+{{range .Admin.Audit}}
+<tr><td>{{.Time.UTC.Format "2006-01-02 15:04:05"}}</td><td>{{.Actor}}</td><td>{{.Source}}</td><td>{{.Action}}</td><td>{{.Target}}</td><td>{{.Detail}}</td></tr>
+{{end}}
+</table></div>
+{{with .Admin.Older}}<p><a href="/admin/audit?before={{.}}">Older entries</a></p>{{end}}
+{{else}}<p>The audit log is empty.</p>{{end}}
+<p class="note">Every admin action, every admin login (also the refused ones) and every account command of the
+operator (Start-Server.exe / dgserver) is here. It never holds a password or an invite code.</p>
+{{end}}

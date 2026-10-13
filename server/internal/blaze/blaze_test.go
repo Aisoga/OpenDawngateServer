@@ -38,6 +38,9 @@ func TestPingReplyMatchesPythonStub(t *testing.T) {
 const (
 	testKey  = "0123456789abcdef0123456789abcdef"
 	testTime = 1791405059
+	// testPassword is the test clients' password (a new account's password must keep the rules; the golden
+	// login_request carries the same, dawngate1)
+	testPassword = "dawngate1"
 )
 
 func testAccount() (store.Account, store.Persona) {

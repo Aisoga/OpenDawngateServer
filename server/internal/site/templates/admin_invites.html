@@ -1,0 +1,26 @@
+{{define "content"}}
+{{if .Admin.Secret}}<p>{{.Admin.SecretWhat}}:</p><p class="secret">{{.Admin.Secret}}</p>{{end}}
+<h2>Make an invite code</h2>
+<form method="post" action="/admin/invites" class="row" autocomplete="off">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>Accounts it may make
+<input type="number" name="uses" value="1" min="1" max="1000" required></label>
+<label>Days valid <small>(0 = never expires)</small>
+<input type="number" name="days" value="14" min="0" max="3650" step="any" required></label>
+<label>Note <small>(whom it is for)</small>
+<input type="text" name="note" maxlength="100"></label>
+<button type="submit">Make the code</button>
+</form>
+<h2>Invite codes</h2>
+{{if .Admin.Invites}}
+<div class="table-wrap"><table class="admin">
+<tr><th>Code</th><th>Made (UTC)</th><th>Expires (UTC)</th><th>Used</th><th>State</th><th>Note</th><th></th></tr>
+{{range .Admin.Invites}}
+<tr><td>{{.ID}}</td><td>{{.Created}}</td><td>{{.Expiry}}</td><td>{{.Used}} of {{.Uses}}</td><td>{{.State}}</td><td>{{.Note}}</td>
+<td>{{if .Active}}<form method="post" action="/admin/invites/revoke"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit" class="small danger">Revoke</button></form>{{end}}</td></tr>
+{{end}}
+</table></div>
+{{else}}<p>No invite codes yet.</p>{{end}}
+<p class="note">The server keeps only a code's hash: a code is shown once, when it is made. Players type it on the
+<a href="/signup">sign-up page</a>.</p>
+{{end}}

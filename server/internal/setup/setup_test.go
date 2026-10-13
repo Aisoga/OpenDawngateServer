@@ -2,6 +2,8 @@ package setup
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -15,6 +17,7 @@ import (
 	"dawngate/server/internal/setup/certs"
 	"dawngate/server/internal/setup/exepatch"
 	"dawngate/server/internal/setup/hostcopy"
+	"dawngate/server/internal/setup/localepatch"
 	"dawngate/server/internal/setup/synthzip"
 )
 
@@ -64,11 +67,26 @@ func expect(t *testing.T, s *Setup, want map[string]Status) {
 }
 
 func again(s *Setup) *Setup {
-	return &Setup{Layout: s.Layout, Out: &bytes.Buffer{}, Manifest: s.Manifest, FindZip: s.FindZip, HostFiles: s.HostFiles}
+	return &Setup{Layout: s.Layout, Out: &bytes.Buffer{}, Manifest: s.Manifest, FindZip: s.FindZip, HostFiles: s.HostFiles,
+		WebDomain: s.WebDomain}
 }
 
-var allSteps = []string{"certificates", "client copy", "client exe", "client config", "host copy", "host exe",
-	"host config", "host DLL", "content"}
+var allSteps = []string{"certificates", "client copy", "client exe", "client config", "client texts", "host copy",
+	"host exe", "host config", "host DLL", "content"}
+
+// synthLocal is the client copy's AA_Server.package for 127.0.0.1 from the synthetic archive's Locale.package: what
+// re/scripts/patch_locale.py makes from the same file (test_ph2b.py and localepatch_test.go pin the same SHA-256).
+const synthLocal = "3e9e97561e8fe6287e28ba3e8a568d8abc560f119f3cf8c4bfacf8ca7755c2b6"
+
+func localeSHA(t *testing.T, copy string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(copy, filepath.FromSlash(localepatch.Rel)))
+	if err != nil {
+		return err.Error()
+	}
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
+}
 
 func every(st Status) map[string]Status {
 	m := map[string]Status{}
@@ -118,6 +136,12 @@ func TestServerSetupAndRerun(t *testing.T) {
 		if !isFile(filepath.Join(game, f)) {
 			t.Errorf("host copy: no %s", f)
 		}
+	}
+	if got := localeSHA(t, s.ClientCopy()); got != synthLocal {
+		t.Errorf("client texts: %s, patch_locale.py's %s", got, synthLocal)
+	}
+	if isFile(filepath.Join(s.HostCopy(), filepath.FromSlash(localepatch.Rel))) {
+		t.Error("the host copy got the client texts")
 	}
 	if c, err := content.Load(s.Content()); err != nil || c.Format != content.Format {
 		t.Errorf("content: %v", err)
@@ -224,8 +248,8 @@ func TestAddressChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	// a set of its own; the client copy patched for it, the host copy kept (only its redirector and data folders count)
-	expect(t, s2, map[string]Status{"certificates": Done, "client exe": Done, "client config": Done, "host exe": OK,
-		"host config": OK})
+	expect(t, s2, map[string]Status{"certificates": Done, "client exe": Done, "client config": Done, "client texts": Done,
+		"host exe": OK, "host config": OK})
 	exe, _ := os.ReadFile(filepath.Join(s.ClientCopy(), "game", "Dawngate.exe"))
 	d, err := exepatch.Describe(exe)
 	if err != nil || d["redirector"] != "127.0.9.1" || d["bind"] != "127.0.9.1" {
@@ -237,7 +261,10 @@ func TestAddressChange(t *testing.T) {
 	// and back: the first set is still there, the copy is patched for it again
 	s3 := again(s)
 	s3.Server(ServerOptions{Address: Local})
-	expect(t, s3, map[string]Status{"certificates": OK, "client exe": Done, "client config": Done})
+	expect(t, s3, map[string]Status{"certificates": OK, "client exe": Done, "client config": Done, "client texts": Done})
+	if got := localeSHA(t, s.ClientCopy()); got != synthLocal {
+		t.Errorf("client texts back for %s: %s", Local, got)
+	}
 }
 
 func TestClientForAnotherServer(t *testing.T) {
@@ -249,7 +276,11 @@ func TestClientForAnotherServer(t *testing.T) {
 	if err := s.Client("192.168.1.20", set.CAModulus); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, s, map[string]Status{"client copy": Done, "client exe": Done, "client config": Done})
+	expect(t, s, map[string]Status{"client copy": Done, "client exe": Done, "client config": Done, "client texts": Done})
+	if b, _ := os.ReadFile(filepath.Join(s.ClientCopy(), filepath.FromSlash(localepatch.Rel))); !bytes.Contains(b,
+		[]byte("0x00000003 http://192.168.1.20:18080/dawngate/password\r\n")) {
+		t.Error("client texts: Forgot Password? doesn't link to the server's page")
+	}
 	exe, _ := os.ReadFile(filepath.Join(s.ClientCopy(), "game", "Dawngate.exe"))
 	d, _ := exepatch.Describe(exe)
 	if d["redirector"] != "192.168.1.20" || d["bind"] != "as-shipped" || d["ca_sha256"] != certs.Fingerprint(set.CAModulus) {
@@ -266,7 +297,18 @@ func TestClientForAnotherServer(t *testing.T) {
 	if err := s2.Client("192.168.1.20", set.CAModulus); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, s2, map[string]Status{"client copy": OK, "client exe": OK, "client config": OK})
+	expect(t, s2, map[string]Status{"client copy": OK, "client exe": OK, "client config": OK, "client texts": OK})
+	// the website: the links go there
+	s4 := again(s)
+	s4.WebDomain = "Dawngate.Example.org"
+	if err := s4.Client("192.168.1.20", set.CAModulus); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, s4, map[string]Status{"client exe": OK, "client texts": Done})
+	if b, _ := os.ReadFile(filepath.Join(s.ClientCopy(), filepath.FromSlash(localepatch.Rel))); !bytes.Contains(b,
+		[]byte("0x00000006 https://dawngate.example.org/signup\r\n")) {
+		t.Error("client texts: Sign up now! doesn't link to the website")
+	}
 	s3 := again(s)
 	if s3.Client("192.168.1.20", set.CAModulus[:100]); !s3.Failed() {
 		t.Error("a short CA passed")

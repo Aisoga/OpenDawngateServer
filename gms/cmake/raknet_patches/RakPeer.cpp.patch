@@ -1,0 +1,221 @@
+# patches of RakNet 4.081's RakPeer.cpp, applied by gms/cmake/raknet.cmake (dg_add_raknet, protocol 5) to the
+# copy in the build tree; tools/raknet stays untouched. Each OLD block must occur exactly once in the original (CRLF
+# read as LF) and is replaced by its NEW block. Our own code (BSD-licensed RakNet, modified here); SipHash-2-4 is
+# written from its public specification (Aumasson and Bernstein, 2012).
+@@@OLD includes
+#include "WSAStartupSingleton.h"
+@@@NEW
+#include "WSAStartupSingleton.h"
+#include <random>  // the cookie key
+@@@END
+@@@OLD constructor
+	StringCompressor::AddReference();
+	RakNet::StringTable::AddReference();
+	WSAStartupSingleton::AddRef();
+@@@NEW
+	StringCompressor::AddReference();
+	RakNet::StringTable::AddReference();
+	WSAStartupSingleton::AddRef();
+
+	// stock behaviour until DgSetHardening; a random cookie key per peer
+	memset(&dgHardening, 0, sizeof(dgHardening));
+	dgHardening.banNonsenseSenders=true;
+	{
+		std::random_device rd;
+		for (int i=0; i < 16; i+=4)
+		{
+			unsigned int r=rd();
+			memcpy(dgHardening.cookieKey+i, &r, 4);
+		}
+	}
+	dgRequest1Short=0;
+	dgRequest2BadCookie=0;
+	dgNonsenseClosed=0;
+	dgNonsenseBanned=0;
+	dgOrderedAheadClosed=0;
+	dgCookiesIssued=0;
+@@@END
+@@@OLD reliability layer limits
+			remoteSystem->reliabilityLayer.Reset(true, remoteSystem->MTUSize, useSecurity);
+@@@NEW
+			remoteSystem->reliabilityLayer.Reset(true, remoteSystem->MTUSize, useSecurity);
+			// this peer's limit of ordered messages buffered ahead of a hole
+			remoteSystem->reliabilityLayer.dgOrderedAheadMaxMessages=dgHardening.orderedAheadMaxMessages;
+			remoteSystem->reliabilityLayer.dgOrderedAheadMaxBytes=dgHardening.orderedAheadMaxBytes;
+@@@END
+@@@OLD helpers
+namespace RakNet {
+bool ProcessOfflineNetworkPacket( SystemAddress systemAddress, const char *data, const int length, RakPeer *rakPeer, RakNetSocket2* rakNetSocket, bool *isOfflineMessage, RakNet::TimeUS timeRead )
+{
+@@@NEW
+namespace RakNet {
+// ---- Dawngate restoration (gms/cmake/raknet_patches/RakPeer.cpp.patch): handshake hardening ----
+void RakPeer::DgSetHardening(const DgHardening &h)
+{
+	dgHardening=h;
+}
+RakPeer::DgHardening RakPeer::DgGetHardening(void) const
+{
+	return dgHardening;
+}
+RakPeer::DgCounts RakPeer::DgTakeCounts(void)
+{
+	DgCounts c;
+	c.request1Short=dgRequest1Short.exchange(0);
+	c.request2BadCookie=dgRequest2BadCookie.exchange(0);
+	c.nonsenseClosed=dgNonsenseClosed.exchange(0);
+	c.nonsenseBanned=dgNonsenseBanned.exchange(0);
+	c.orderedAheadClosed=dgOrderedAheadClosed.exchange(0);
+	c.cookiesIssued=dgCookiesIssued.exchange(0);
+	return c;
+}
+static uint64_t DgRotl(uint64_t x, int b)
+{
+	return (x << b) | (x >> (64 - b));
+}
+// SipHash-2-4 of m (a 128-bit key, a 64-bit tag), from the public specification
+static uint64_t DgSipHash24(const unsigned char k[16], const unsigned char *m, size_t len)
+{
+	uint64_t k0=0, k1=0;
+	for (int i=0; i < 8; i++)
+	{
+		k0|=(uint64_t)k[i] << (8*i);
+		k1|=(uint64_t)k[8+i] << (8*i);
+	}
+	uint64_t v0=0x736f6d6570736575ULL^k0, v1=0x646f72616e646f6dULL^k1, v2=0x6c7967656e657261ULL^k0, v3=0x7465646279746573ULL^k1;
+#define DG_SIPROUND do { v0+=v1; v1=DgRotl(v1,13); v1^=v0; v0=DgRotl(v0,32); v2+=v3; v3=DgRotl(v3,16); v3^=v2; \
+	v0+=v3; v3=DgRotl(v3,21); v3^=v0; v2+=v1; v1=DgRotl(v1,17); v1^=v2; v2=DgRotl(v2,32); } while (0)
+	size_t i=0;
+	for (; i+8 <= len; i+=8)
+	{
+		uint64_t mi=0;
+		for (int j=0; j < 8; j++)
+			mi|=(uint64_t)m[i+j] << (8*j);
+		v3^=mi;
+		DG_SIPROUND;
+		DG_SIPROUND;
+		v0^=mi;
+	}
+	uint64_t b=((uint64_t)len) << 56;
+	for (size_t j=0; i+j < len; j++)
+		b|=(uint64_t)m[i+j] << (8*j);
+	v3^=b;
+	DG_SIPROUND;
+	DG_SIPROUND;
+	v0^=b;
+	v2^=0xff;
+	DG_SIPROUND;
+	DG_SIPROUND;
+	DG_SIPROUND;
+	DG_SIPROUND;
+#undef DG_SIPROUND
+	return v0^v1^v2^v3;
+}
+// The cookie for a sender's IPv4 address and port in one 10-s period; REQUEST_2 may echo this period's or the last's
+static uint32_t DgCookie(const RakPeer *rakPeer, const SystemAddress &sa, uint32_t period)
+{
+	unsigned char m[10];
+	memcpy(m, &sa.address.addr4.sin_addr.s_addr, 4);
+	memcpy(m+4, &sa.address.addr4.sin_port, 2);
+	m[6]=(unsigned char)period;
+	m[7]=(unsigned char)(period >> 8);
+	m[8]=(unsigned char)(period >> 16);
+	m[9]=(unsigned char)(period >> 24);
+	return (uint32_t)DgSipHash24(rakPeer->dgHardening.cookieKey, m, sizeof(m));
+}
+static uint32_t DgCookiePeriod(void)
+{
+	return (uint32_t)(RakNet::GetTimeMS() / 10000);
+}
+static bool DgCookieValid(const RakPeer *rakPeer, const SystemAddress &sa, uint32_t cookie)
+{
+	const uint32_t p=DgCookiePeriod();
+	return cookie==DgCookie(rakPeer, sa, p) || cookie==DgCookie(rakPeer, sa, p-1);
+}
+// REQUEST_1 is answered only when it is at least as long as REPLY_1 (with the cookie) and the incompatible-version
+// reply: a spoofed request gains nothing by reflection. The real client pads it to its MTU probe (548 bytes or more).
+static bool DgRequest1Acceptable(RakPeer *rakPeer, int length)
+{
+	if (rakPeer->dgHardening.request1NoSmallerThanReply==false)
+		return true;
+	const int reply=(int)(sizeof(MessageID)+sizeof(OFFLINE_MESSAGE_DATA_ID)+RakNetGUID::size()+1+(rakPeer->dgHardening.handshakeCookies ? 4 : 0)+2);
+	if (length >= reply)
+		return true;
+	rakPeer->dgRequest1Short++;
+	return false;
+}
+// ---- end of the handshake hardening ----
+bool ProcessOfflineNetworkPacket( SystemAddress systemAddress, const char *data, const int length, RakPeer *rakPeer, RakNetSocket2* rakNetSocket, bool *isOfflineMessage, RakNet::TimeUS timeRead )
+{
+@@@END
+@@@OLD request 1 length
+		else if ((unsigned char)(data)[0] == ID_OPEN_CONNECTION_REQUEST_1 && length > (int) (1+sizeof(OFFLINE_MESSAGE_DATA_ID)))
+		{/*
+@@@NEW
+		else if ((unsigned char)(data)[0] == ID_OPEN_CONNECTION_REQUEST_1 && length > (int) (1+sizeof(OFFLINE_MESSAGE_DATA_ID))
+			&& DgRequest1Acceptable(rakPeer, length))
+		{/*
+@@@END
+@@@OLD reply 1 cookie
+				bsOut.Write((unsigned char) 0);  // HasCookie oN
+@@@NEW
+			{
+				if (rakPeer->dgHardening.handshakeCookies)
+				{
+					// HasCookie yes and the cookie, no public key: a client without LIBCAT security (RakNet's own,
+					// the Dawngate client's) reads the cookie and echoes it in REQUEST_2 with "no challenge"
+					bsOut.Write((unsigned char) 1);
+					bsOut.Write(DgCookie(rakPeer, systemAddress, DgCookiePeriod()));
+					rakPeer->dgCookiesIssued++;
+				}
+				else
+					bsOut.Write((unsigned char) 0);  // HasCookie oN
+			}
+@@@END
+@@@OLD request 2 cookie
+			bs.Read(bindingAddress);
+			uint16_t mtu;
+@@@NEW
+			if (rakPeer->dgHardening.handshakeCookies)
+			{
+				// our cookie for this address (this period's or the last's), then the client's "no challenge" byte;
+				// anything else gets no answer and no connection slot
+				uint32_t dgCookie=0;
+				unsigned char dgChallenge=1;
+				if (bs.Read(dgCookie)==false || bs.Read(dgChallenge)==false || dgChallenge!=0 ||
+					DgCookieValid(rakPeer, systemAddress, dgCookie)==false)
+				{
+					rakPeer->dgRequest2BadCookie++;
+					return true;
+				}
+			}
+			bs.Read(bindingAddress);
+			uint16_t mtu;
+@@@END
+@@@OLD nonsense ban
+						char str1[64];
+						systemAddress.ToString(false, str1);
+						AddToBanList(str1, remoteSystem->reliabilityLayer.GetTimeoutTime());
+@@@NEW
+						// the connection is closed above; the stock IP ban (for the connection's timeout) is optional,
+						// since players behind one NAT or one tunnel gateway share an IP
+						dgNonsenseClosed++;
+						if (dgHardening.banNonsenseSenders)
+						{
+							char str1[64];
+							systemAddress.ToString(false, str1);
+							AddToBanList(str1, remoteSystem->reliabilityLayer.GetTimeoutTime());
+							dgNonsenseBanned++;
+						}
+@@@END
+@@@OLD ordered ahead count
+				// Failed.  Inform the user?
+@@@NEW
+				// closed by the ordered-ahead limit (ReliabilityLayer.cpp.patch)?
+				if (remoteSystem->reliabilityLayer.dgOrderedAheadExceeded)
+				{
+					remoteSystem->reliabilityLayer.dgOrderedAheadExceeded=false;
+					dgOrderedAheadClosed++;
+				}
+				// Failed.  Inform the user?
+@@@END

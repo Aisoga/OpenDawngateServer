@@ -1,6 +1,10 @@
 package blaze
 
 import (
+	"net/netip"
+	"time"
+
+	"dawngate/server/internal/accounts"
 	"dawngate/server/internal/progress"
 	"dawngate/server/internal/store"
 	"dawngate/server/internal/tdf"
@@ -55,21 +59,45 @@ func handleLogout(r *Request) []byte {
 	return nil
 }
 
-// handleLogin answers Authentication::login (LoginRequest MAIL/PASS/TOKN/TYPE, member table
-// 0x01462A70) for any credentials: the store creates the account and its persona on first use, and
-// the account gets the new-account content once (B7a, Server.grant).
+// handleLogin answers Authentication::login (LoginRequest MAIL/PASS/TOKN/TYPE, member table 0x01462A70). The
+// the password is checked (Server.authenticate, internal/accounts): MAIL is the login name, PASS the password as typed
+// (the client sends both as typed, unchecked; an empty PASS when LOGIN is pressed again after a refusal). A
+// refusal is the error reply of its code, which the client shows in its LOGIN ERROR panel on the same connection
+// (SnLobbyLogin_OnLoginFailure 0x00AC9750); the connection
+// stays open for the next try. A login that passes gets the account (made by it under open sign-up, with the
+// new-account content once: B7a, Server.grant).
 func handleLogin(r *Request) []byte {
 	now := r.Server.Now()
 	mail, _ := r.Body.Str("MAIL")
-	acct, first, err := r.Server.Store.Login(mail, now)
-	if err != nil {
-		r.Server.Log.Logf("blaze", "   (%v)", err)
+	pass, _ := r.Body.Str("PASS")
+	if codes := r.Server.TestLoginErrors; len(codes) > 0 { // test aid (--test-login-errors)
+		if n := r.Server.testLoginTries.Add(1) - 1; n < int64(len(codes)) && codes[n] != 0 {
+			r.Server.Log.Logf("blaze", "   (test --test-login-errors: login %d refused with error %#04x)", n+1, codes[n])
+			r.Fail(codes[n])
+			return nil
+		}
 	}
-	acct = r.Server.grant(acct)
+	res := r.Server.authenticate(mail, pass, r.Conn.Addr(), now)
+	if res.Code != 0 {
+		r.Server.Log.Logf("blaze", "   login refused (error %#04x): %s", res.Code, res.Note)
+		r.Fail(res.Code)
+		return nil
+	}
+	r.Server.Log.Logf("blaze", "   %s", res.Note)
+	acct := r.Server.grant(res.Account)
 	acct = r.Server.ensurePages(acct) // B7c: a perk page per loadout page owned
-	sess := &Session{Account: acct, Key: r.Server.NewKey(), First: first}
+	sess := &Session{Account: acct, Key: r.Server.NewKey(), First: res.First}
 	r.Conn.Session = sess
+	r.Server.sessionStarted(r.Conn, acct.UserID) // a status change can end it (kick.go)
 	return LoginReply(acct, sess.Key, uint32(now.Unix()))
+}
+
+// authenticate is the login check of one Authentication::login: the login name and password from the client's
+// address at now, under the server's sign-up policy (accounts.Policy.Login: the hash, the rules, the account's status,
+// the sign-up mode, the per-address cap). It changes nothing on the connection, so a limiter (attempts per
+// address and per account) can sit around it.
+func (s *Server) authenticate(name, password string, from netip.Addr, now time.Time) accounts.Result {
+	return s.Accounts.Login(s.Store, name, password, from, now)
 }
 
 // LoginReply is Authentication::login -> Blaze::Authentication::LoginResponse (member table
@@ -122,6 +150,8 @@ func handleLoginPersona(r *Request) []byte {
 	sess.Persona = p
 	r.Server.messagingOnline(r.Conn, p) // B10c: messages to p reach this connection
 	r.Server.friendsLogin(r, p)         // B13b: p's friends hear it is online (and offline at the session's end)
+	// the persona of the session that a status change ends (UserUnauthenticated's BID)
+	r.Server.sessionPersona(r.Conn, acct.UserID, p.ID)
 	now := uint32(r.Server.Now().Unix())
 	r.Notify(ComponentUserSessions, NotifyUserAuthenticated, "UserAuthenticated",
 		UserAuthenticatedNotification(acct, p, sess.Key, sess.First, now))

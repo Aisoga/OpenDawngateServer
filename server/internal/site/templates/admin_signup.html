@@ -1,0 +1,18 @@
+{{define "content"}}
+<p>Sign-up is <b>{{.Mode}}</b>{{with .Admin.ModeSince}} (set {{.}}){{end}}.</p>
+<ul>
+<li><b>open</b>: the first game login with a new login name makes the account (and the <a href="/signup">sign-up page</a> works without a code);</li>
+<li><b>invite</b>: new accounts only on the sign-up page with an <a href="/admin/invites">invite code</a>;</li>
+<li><b>closed</b>: only the operator makes accounts (<code>--create-account</code>).</li>
+</ul>
+{{if .Admin.CanSetMode}}
+<form method="post" action="/admin/signup" class="row">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>New mode
+<select name="mode">{{range .Admin.Modes}}<option value="{{.}}"{{if eq . $.Mode}} selected{{end}}>{{.}}</option>{{end}}</select></label>
+<button type="submit">Set</button>
+</form>
+<p class="note">A change acts at once and stays after a restart, until Start-Server.ini's <code>signup</code>
+(dgserver's <code>--signup</code>) is changed: the most recent change wins.</p>
+{{else}}<p class="note">This server's mode can only be changed with <code>--signup</code>.</p>{{end}}
+{{end}}

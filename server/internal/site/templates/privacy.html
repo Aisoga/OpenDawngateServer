@@ -1,0 +1,18 @@
+{{define "content"}}
+{{if .HTML}}<div class="operator">{{.HTML}}</div>{{else}}
+<p>The operator of this server has not published a privacy notice yet{{if .Pages}} (they put it into
+<code>privacy.html</code> in the server's site folder){{end}}. Ask them who runs the server and how long they keep
+your data.</p>
+<h2>What the server software keeps</h2>
+<ul>
+<li>Your account: login name, display name, a hash of your password (never the password itself), when it was made and
+last used, your game data (level, currencies, items, settings, perk pages), your statistics and match history, your
+friends, recent players and blocked lists.</li>
+<li>Logs of the connections: your internet address, your login name and what the game asked for (no password), kept
+as long as the operator sets (30 days by default).</li>
+<li>For the cap on new accounts: how many accounts each internet address made today (no names).</li>
+</ul>
+<p>You can <a href="/account/data">download your data</a> or <a href="/account/delete">delete your account</a> on
+this site. The site sets one cookie, only to protect its forms; it has no tracking and no script.</p>
+{{end}}
+{{end}}

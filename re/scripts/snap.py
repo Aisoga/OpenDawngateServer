@@ -18,11 +18,15 @@ Usage:
     python -I re/scripts/snap.py verify  <file.snap|dir> [...]
     python -I re/scripts/snap.py extract <file.snap|dir> [...] <out_dir>
     python -I re/scripts/snap.py diff    <old.snap> <new.snap>
+    python -I re/scripts/snap.py pack    <out.snap> <dir> [--raw] [--stored-ext .ogg,.wem] [--base <archive path prefix>]
 
 `summary` reads only the index. `verify` decompresses every entry and checks the size. `extract`
 writes <out_dir>/<archive name>/<entry path> for each archive and prints ok/failed counts. A
 directory argument means every *.snap in it (not recursive). `diff` compares two archives entry by
-entry (by decompressed content).
+entry (by decompressed content). `pack` writes every file below <dir> as an entry named by
+its path relative to <dir> (with '/', in sorted order, optionally under --base), Snappy-compressed
+(or stored raw with --raw or for the --stored-ext extensions), in the layout above; the result
+reads back with `verify`.
 """
 import hashlib
 import os
@@ -92,6 +96,120 @@ def snappy_decompress(src, expected=None):
     if len(out) != usize:
         raise SnapError(f"decompressed {len(out)} bytes, header says {usize}")
     return bytes(out)
+
+
+def snappy_compress(src):
+    """One raw Snappy block: greedy LZ77 with a 4-byte hash table (64 KB windows like the
+    reference encoder, so every copy offset fits a 2-byte copy tag)."""
+    n = len(src)
+    out = bytearray()
+    v = n
+    while True:
+        b = v & 0x7F
+        v >>= 7
+        out.append(b | (0x80 if v else 0))
+        if not v:
+            break
+
+    def literal(a, b):
+        while a < b:
+            ln = min(b - a, 1 << 16)
+            k = ln - 1
+            if k < 60:
+                out.append(k << 2)
+            elif k < 256:
+                out.extend((60 << 2, k))
+            else:
+                out.extend((61 << 2, k & 0xFF, k >> 8))
+            out.extend(src[a:a + ln])
+            a += ln
+
+    def copy(off, ln):
+        while ln > 0:
+            k = min(ln, 64)
+            if ln - k < 4 and ln > 64:  # leave at least 4 for the last copy
+                k = ln - 4
+            if 4 <= k <= 11 and off < 2048:
+                out.extend((1 | ((k - 4) << 2) | ((off >> 8) << 5), off & 0xFF))
+            else:
+                out.extend((2 | ((k - 1) << 2), off & 0xFF, off >> 8))
+            ln -= k
+
+    for block in range(0, n, 1 << 16):
+        end = min(n, block + (1 << 16))
+        table = {}
+        i = block
+        lit = block
+        while i + 4 <= end:
+            key = src[i:i + 4]
+            cand = table.get(key)
+            table[key] = i
+            if cand is not None and i - cand < 65536:
+                ln = 4
+                while i + ln < end and src[cand + ln] == src[i + ln]:
+                    ln += 1
+                literal(lit, i)
+                copy(i - cand, ln)
+                i += ln
+                lit = i
+                continue
+            i += 1
+        literal(lit, end)
+    return bytes(out)
+
+
+def pack(out_path, files, raw=False, stored_ext=()):
+    """files: [(archive name, bytes)] in index order."""
+    data = bytearray()
+    index = bytearray()
+    names = bytearray()
+    for name, blob in files:
+        stored = raw or name.lower().endswith(tuple(stored_ext))
+        payload = blob if stored else snappy_compress(blob)
+        index += struct.pack("<8I", len(names), len(blob), len(payload), 0, 0, 0,
+                             HEADER_SIZE + len(data), FLAG_STORED if stored else 0)
+        names += name.encode("utf-8") + b"\0"
+        data += payload
+    head = MAGIC + struct.pack("<HHII", 0x200, 1, len(files), len(names)) + b"\0" * 16
+    with open(out_path, "wb") as f:
+        f.write(head + data + index + names)
+
+
+def cmd_pack(argv):
+    args = list(argv)
+    raw = "--raw" in args
+    if raw:
+        args.remove("--raw")
+    stored_ext, base = (), ""
+    if "--stored-ext" in args:
+        i = args.index("--stored-ext")
+        stored_ext = tuple(x.strip().lower() for x in args[i + 1].split(",") if x.strip())
+        del args[i:i + 2]
+    if "--base" in args:
+        i = args.index("--base")
+        base = args[i + 1].strip("/") + "/"
+        del args[i:i + 2]
+    out_path, root = args
+    files = []
+    for dp, dn, fn in os.walk(root):
+        for f in fn:
+            full = os.path.join(dp, f)
+            name = base + os.path.relpath(full, root).replace(os.sep, "/")
+            safe_join(root, name[len(base):])
+            files.append((name, full))
+    files.sort(key=lambda x: x[0])
+    names = Counter(n.lower() for n, _ in files)
+    if any(c > 1 for c in names.values()):
+        raise SnapError("duplicate names (case-insensitive)")
+    pack(out_path, [(n, open(p, "rb").read()) for n, p in files], raw, stored_ext)
+    s = Snap(out_path)
+    for e, (n, p) in zip(s.entries, files):
+        if s.read(e) != open(p, "rb").read():
+            raise SnapError(f"{n}: does not read back")
+    notes = s.layout_notes()
+    print(f"wrote {out_path}: {len(files)} entries, {os.path.getsize(out_path)} bytes"
+          + (f"; NOTES: {notes}" if notes else "; layout as shipped, every entry reads back"))
+    return 0
 
 
 class Entry:
@@ -321,6 +439,8 @@ def main(argv):
         return run_all(argv[2:])
     elif cmd == "extract" and len(argv) >= 4:
         return run_all(argv[2:-1], argv[-1])
+    elif cmd == "pack" and len(argv) >= 4:
+        return cmd_pack(argv[2:])
     elif cmd == "diff" and len(argv) == 4:
         cmd_diff(argv[2], argv[3])
     else:

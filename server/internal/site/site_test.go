@@ -491,9 +491,9 @@ func TestLimits(t *testing.T) {
 
 func TestOperatorPages(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "privacy.html"), []byte("<p>Run by <b>Marc</b>; logs kept 30 days.</p>"), 0o644)
+	os.WriteFile(filepath.Join(dir, "privacy.html"), []byte("<p>Run by <b>Alex</b>; logs kept 30 days.</p>"), 0o644)
 	f := newFixture(t, accounts.Open, func(c *Config) { c.Pages = dir })
-	if _, body, _ := f.get(f.c, "/privacy"); !strings.Contains(body, "<p>Run by <b>Marc</b>; logs kept 30 days.</p>") {
+	if _, body, _ := f.get(f.c, "/privacy"); !strings.Contains(body, "<p>Run by <b>Alex</b>; logs kept 30 days.</p>") {
 		t.Errorf("privacy:\n%s", body)
 	}
 	if _, body, _ := f.get(f.c, "/terms"); !strings.Contains(body, "terms.html") {

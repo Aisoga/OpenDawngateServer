@@ -1,0 +1,154 @@
+# Builds and tests everything that runs without the game, and builds the release zip.
+# A successful build of main replaces the rolling "nightly" pre-release (never marked Latest).
+# Nothing here needs the game's files: tests that read them skip themselves.
+name: build
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 3 * * 1' # Mondays 03:00 UTC: catches changes in the runner's toolchain
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+  RAKNET_COMMIT: 1a169895a900c9fc4841c556e16514182b75faf8
+  RAKNET_SHA256: 60b53557aa084fb5455c8e2e7efe309738dabe7f9db5c0bc103cf41c8f97c0e0
+  LUAJ_SHA256: 02464b0a6cf90fa404d0b62ebb587b96a38e118420a7adc467c1550f889fa41b
+
+jobs:
+  build:
+    # only in the public repository (a private copy of this file runs nothing)
+    if: github.repository == 'Aisoga/OpenDawngateServer'
+    runs-on: windows-2022 # Visual Studio 2022 with its x86 compiler and CMake
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: RakNet 4.081 (cache)
+        id: raknet-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: tools/raknet/RakNet
+          key: raknet-${{ env.RAKNET_COMMIT }}
+
+      - name: RakNet 4.081 (download, check, unpack)
+        if: steps.raknet-cache.outputs.cache-hit != 'true'
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $zip = Join-Path $env:RUNNER_TEMP 'raknet.zip'
+          Invoke-WebRequest "https://github.com/facebookarchive/RakNet/archive/$env:RAKNET_COMMIT.zip" -OutFile $zip
+          $got = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($got -ne $env:RAKNET_SHA256) { throw "RakNet archive SHA-256 $got, expected $env:RAKNET_SHA256" }
+          $tmp = Join-Path $env:RUNNER_TEMP 'raknet'
+          Expand-Archive $zip -DestinationPath $tmp
+          New-Item -ItemType Directory -Force tools/raknet | Out-Null
+          Move-Item (Join-Path $tmp "RakNet-$env:RAKNET_COMMIT") tools/raknet/RakNet
+
+      - name: Go (format, vet, tests)
+        working-directory: server
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $unformatted = gofmt -l .
+          if ($unformatted) { $unformatted; throw 'gofmt: the files above are not formatted' }
+          go vet ./...
+          go test ./...
+
+      - name: Match host (build)
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          cmake -S gms -B gms/build -G "Visual Studio 17 2022" -A Win32 "-DRAKNET_ROOT=$env:GITHUB_WORKSPACE/tools/raknet/RakNet"
+          cmake --build gms/build --config Release
+
+      - name: Match host (tests)
+        run: |
+          # The RakNet loopback session tests fail now and then on a busy machine (about 1 run in 8):
+          # one retry, flagged in the run's summary, so a single slow run doesn't turn the build red.
+          gms/build/Release/gms_tests.exe
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output '::warning title=gms_tests::gms_tests failed once and is run again (a known flaky loopback test)'
+            gms/build/Release/gms_tests.exe
+            if ($LASTEXITCODE -ne 0) { throw 'gms_tests failed twice' }
+          }
+          $PSNativeCommandUseErrorActionPreference = $true
+          gms/build/core/control/Release/dg_control_tests.exe
+
+      - name: Match host Lua (LuaJ check)
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          New-Item -ItemType Directory -Force tools/luaj | Out-Null
+          $jar = 'tools/luaj/luaj-jse-2.0.3.jar'
+          Invoke-WebRequest 'https://repo1.maven.org/maven2/org/luaj/luaj-jse/2.0.3/luaj-jse-2.0.3.jar' -OutFile $jar
+          $got = (Get-FileHash $jar -Algorithm SHA256).Hash.ToLower()
+          if ($got -ne $env:LUAJ_SHA256) { throw "LuaJ SHA-256 $got, expected $env:LUAJ_SHA256" }
+          python -I re/scripts/bots_lua_check.py --java "$env:JAVA_HOME_21_X64\bin\java.exe" --luaj $jar
+
+      - name: Release zip
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          powershell -NoProfile -ExecutionPolicy Bypass -File re/scripts/make_release.ps1
+          $zip = @(Get-ChildItem re/out/release -Filter '*.zip')
+          if ($zip.Count -ne 1) { throw "expected one release zip, found $($zip.Count)" }
+          "RELEASE_ZIP=$($zip[0].FullName)" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: ${{ env.RELEASE_ZIP }}
+          if-no-files-found: error
+          retention-days: 14
+
+  nightly:
+    # a build of main (a push or the weekly run) replaces the rolling pre-release
+    needs: build
+    if: github.repository == 'Aisoga/OpenDawngateServer' && github.ref == 'refs/heads/main' && github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: release
+
+      - name: Replace the nightly pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          zip=$(ls release/*.zip)
+          gh release delete nightly --repo "$REPO" --cleanup-tag --yes || true
+          cat > notes.md <<EOF
+          An automatic build of commit ${SHA}, made by this repository's build workflow.
+
+          - Unsigned and not tested in the game: the stable versions are the numbered releases.
+          - Like every release it contains no game file: put your own \`Dawngate.zip\` (archive.org) next to \`Start-Server.exe\`.
+          - \`BUILD.txt\` in the zip names the commit it was built from (the source, AGPL-3.0).
+
+          This pre-release is replaced by the next build.
+          EOF
+          gh release create nightly "$zip" --repo "$REPO" --target "$SHA" --prerelease --latest=false \
+            --title "Nightly build $(date -u +%Y-%m-%d) (${SHA:0:10})" --notes-file notes.md

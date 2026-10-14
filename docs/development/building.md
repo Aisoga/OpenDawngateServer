@@ -6,6 +6,7 @@
 - [The same steps by hand](#the-same-steps-by-hand)
 - [Building the release](#building-the-release)
 - [Running the tests](#running-the-tests)
+- [Continuous integration](#continuous-integration)
 
 ## Tools
 
@@ -103,3 +104,15 @@ A release is a binary distribution under the AGPL: whoever hands it out also off
 | A live check | `play.ps1 -Check` (see [running-from-source.md](running-from-source.md#the-check-mode)) |
 
 Before submitting Go changes, also run `gofmt -l .` and `go vet ./...` in `server\`.
+
+## Continuous integration
+
+The public repository builds itself with GitHub Actions (`.github/workflows/build.yml`) on every push to `main`, every Monday, and on demand from the *Actions* tab. On a Windows runner it:
+
+1. downloads RakNet 4.081 and LuaJ and checks their SHA-256;
+2. runs `gofmt`, `go vet` and `go test` in `server/`;
+3. builds the match host and runs `gms_tests` and `dg_control_tests`;
+4. runs the Lua check;
+5. builds the release zip with `make_release.ps1`.
+
+A successful build of `main` replaces the **`nightly`** pre-release on the *Releases* page with its zip. It is a convenience for testers: unsigned, and not tested in the game, because CI has no game files. Tests that need them skip themselves there. The numbered releases stay the stable ones.

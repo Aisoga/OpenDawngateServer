@@ -1,5 +1,7 @@
 # Dawngate Restoration
 
+[![build](https://github.com/Aisoga/OpenDawngateServer/actions/workflows/build.yml/badge.svg)](https://github.com/Aisoga/OpenDawngateServer/actions/workflows/build.yml)
+
 Play **Dawngate** again. Dawngate was a MOBA by Waystone Games and Electronic Arts. It was in beta in 2014 and shut down in 2015. This project is a replacement server: it lets the original 2014 game client log in, open its menus and play full matches again, on your own PC, on your home network or on a server on the internet.
 
 > **Unofficial fan project.** It is not affiliated with, endorsed by or sponsored by Electronic Arts or Waystone Games. Dawngate is a trademark of its respective owners. This repository and its releases contain **no game files**. Every player downloads the game client from archive.org.
@@ -20,7 +22,7 @@ See [What you can do in a match](docs/playing.md#whats-in-a-match) for details a
 You need Windows 10 or 11 (64-bit), a graphics card that runs DirectX 9 games and about 5 GB of free disk space.
 
 1. Download **`Dawngate.zip`** (1.3 GB, build 1.0.903.854) from <https://archive.org/details/Dawngate>.
-2. Download the latest **release zip** from this repository's *Releases* page and unpack it into a folder of its own, for example `C:\Games\Dawngate`.
+2. Download the latest **release zip** from this repository's *Releases* page and unpack it into a folder of its own, for example `C:\Games\Dawngate`. (The `nightly` pre-release there is an automatic, untested build of the latest code; take a numbered release to play.)
 3. Put `Dawngate.zip` into that folder, next to `Start-Server.exe`.
 4. Double-click **`Start-Server.exe`**. It asks who will play: press **Enter** for "only this PC". It then sets everything up (under a minute) and starts the server. Leave its window open.
 5. Double-click **`Start-Client.exe`**. Log in with any login name and a password of 8 or more characters. Your first login creates the account.

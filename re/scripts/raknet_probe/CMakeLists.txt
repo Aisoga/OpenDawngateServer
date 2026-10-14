@@ -1,4 +1,4 @@
-# D2a: RakNet 4.081 (BSD, github.com/facebookarchive/RakNet, unpacked to tools/raknet/RakNet, see docs/SETUP.md)
+# D2a: RakNet 4.081 (BSD, github.com/facebookarchive/RakNet, unpacked to tools/raknet/RakNet, see docs/development/building.md)
 # as static libraries, plus raknet_probe, which replays the Dawngate client's captured RakNet handshake against them
 # and serves the GMS port for B9's --listen/--connected. Findings: docs/GMS_PROTOCOL.md "RakNet 4.081 vs. the client".
 # A research tool: the match host's own build of RakNet and the GMS session are in gms/ (ADR-2, roadmap G1), and the
@@ -9,7 +9,7 @@
 #              the build tree with that one line replaced; tools/raknet stays untouched)
 #   raknet_probe_p6 / raknet_probe_p5  raknet_probe.cpp linked against each library.
 #
-# Build (VS 2022 x86, MSVC 14.44; CMake bundled with VS, see docs/SETUP.md). The build tree's source must be the main
+# Build (VS 2022 x86, MSVC 14.44; CMake bundled with VS, see docs/development/building.md). The build tree's source must be the main
 # checkout's re/scripts/raknet_probe:
 #   cmake -S re/scripts/raknet_probe -B tools/raknet/build -A Win32 [-DRAKNET_ROOT=<path to tools/raknet/RakNet>]
 #   cmake --build tools/raknet/build --config Release

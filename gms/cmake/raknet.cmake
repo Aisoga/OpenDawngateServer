@@ -4,7 +4,7 @@
 # (raknet_p5 and raknet_p6), so the recipe exists once.
 #
 # The RakNet source is a download, not in git: github.com/facebookarchive/RakNet unpacked to tools/raknet/RakNet
-# (docs/SETUP.md). Binary distributions carry RakNet's BSD notice.
+# (docs/development/building.md). Binary distributions carry RakNet's BSD notice.
 #
 #   dg_find_raknet(<default root>)  sets the cache path RAKNET_ROOT (default: the argument), and RAKNET_FOUND,
 #                                   RAKNET_SRC_DIR or RAKNET_ERROR in the caller's scope; checks for version 4.081
@@ -32,7 +32,7 @@ function(dg_find_raknet default_root)
   set(_src "${_root}/Source")
   set(RAKNET_FOUND FALSE PARENT_SCOPE)
   if(NOT EXISTS "${_src}/RakNetVersion.h")
-    set(RAKNET_ERROR "RakNet not found at ${_root}; download it as docs/SETUP.md describes or set -DRAKNET_ROOT=<path>"
+    set(RAKNET_ERROR "RakNet not found at ${_root}; download it as docs/development/building.md describes or set -DRAKNET_ROOT=<path>"
         PARENT_SCOPE)
     return()
   endif()

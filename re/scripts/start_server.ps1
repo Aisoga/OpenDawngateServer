@@ -69,7 +69,7 @@ if ($go) {
     & $go build -C server -o bin\dgserver.exe .\cmd\dgserver
     if ($LASTEXITCODE -ne 0) { Write-Host 'The server did not build (see above).' -ForegroundColor Red; exit 1 }
 } elseif (-not (Test-Path $exe)) {
-    Write-Host 'No Go and no server\bin\dgserver.exe: install Go (docs/SETUP.md).' -ForegroundColor Red; exit 1
+    Write-Host 'No Go and no server\bin\dgserver.exe: install Go (docs/development/building.md).' -ForegroundColor Red; exit 1
 }
 
 $dir = Join-Path $Repo ("re\logs\manual_" + (Get-Date -Format 'yyyyMMdd-HHmmss'))

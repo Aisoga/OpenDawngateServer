@@ -1,4 +1,4 @@
-// Package limits holds dgserver's rate and count limits (docs/OPERATORS.md
+// Package limits holds dgserver's rate and count limits (docs/reference.md
 // *Limits*): per client address the new and the open TCP connections of every listener together (redirector,
 // Blaze, QoS, web, telemetry and the tunnel gateway), UDP datagrams and bytes (QoS, the gateway's
 // channel), login attempts with a backoff per address and per account, Blaze requests per connection, and per user

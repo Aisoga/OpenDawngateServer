@@ -586,7 +586,7 @@ func ServerFlags(l setup.Layout, address string, shaperSelect bool, extra []stri
 
 // ControlBind is where the match hosts' control port binds: the server's own address when it is a loopback one (so a
 // server on another loopback address, e.g. a test on 127.0.9.1, keeps off 127.0.0.1:10040), else 127.0.0.1 (a LAN
-// address there would expose it, which dgserver allows only with agents, OPERATORS.md).
+// address there would expose it, which dgserver allows only with agents, docs/reference.md *Ports*).
 func ControlBind(address string) string {
 	if ip := net.ParseIP(address); ip != nil && ip.IsLoopback() {
 		return address

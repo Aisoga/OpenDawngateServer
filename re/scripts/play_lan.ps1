@@ -1,6 +1,6 @@
 <#
-  Play Dawngate on a server on another machine of your network (roadmap P2; the manual is docs/PLAYING.md *Playing on a
-  server on another machine*). The player's side of the LAN setup: no local server and no match host, only the client.
+  Play Dawngate on a server on another machine of your network (the manual is docs/development/running-from-source.md *Playing on a
+  server on another PC*). The player's side of the LAN setup: no local server and no match host, only the client.
   play.ps1 -Server <S> runs this script.
 
   One command: checks the lan copy that setup_all.py --player made (client\run_854_lan\Dawngate: patched, the lan
@@ -44,7 +44,7 @@
     powershell -ExecutionPolicy Bypass -File re\scripts\play_lan.ps1 -SetupOnly [-Server <S>]   # only the checks
     powershell -ExecutionPolicy Bypass -File re\scripts\play_lan.ps1 -DryRun [...]   # the checks and the plan
   -AllowHost: further machines of our own network the game may talk to, i.e. the operator's match-host machines when
-  the server runs hosts on other machines (agent mode, docs/OPERATORS.md *Extra host machines*): the client connects to
+  the server runs hosts on other machines (agent mode, docs/development/running-from-source.md *Extra host machines*): the client connects to
   the GMS address in NotifyGameSetup's HNET, which is then that machine, not <S>. -KeepAlive (B12) posts a key-up of
   VK_F24 every 60 s against the client's idle kick. -Seconds N ends the session after N s the way Ctrl+C does.
   -DryRun runs the checks, then prints the lock it would take, the leftovers it would stop, the monitor's and the egress
@@ -310,7 +310,7 @@ if (Test-Path $Python) { Ok '.venv (Python)' }
 else { Missing 'the Python environment .venv' @('python -m venv .venv', '.venv\Scripts\pip install pefile cryptography') }
 if ($NoCapture) { Info 'no capture and no egress check (-NoCapture)' }
 elseif ((Test-Path "$Wireshark\dumpcap.exe") -and (Test-Path "$Wireshark\tshark.exe")) { Ok 'Wireshark (capture and egress check)' }
-else { Missing "Wireshark in $Wireshark with Npcap (loopback traffic capture on)" @('see docs/SETUP.md *Wireshark and Npcap*; or play without the capture and the egress check: -NoCapture') }
+else { Missing "Wireshark in $Wireshark with Npcap (loopback traffic capture on)" @('see docs/development/building.md *Tools*; or play without the capture and the egress check: -NoCapture') }
 
 if (-not (Test-Path (Join-Path $GameDir 'game\Dawngate.exe'))) {
     Missing "the lan copy $GameDir" @($setupCmd)
@@ -346,7 +346,7 @@ if ($kind -and -not $kind.Multi) {
 
 if ($missing.Count) {
     Write-Host ''
-    Write-Host "Setup incomplete ($($missing.Count) item(s) above). Run the yellow commands from the repository folder, then start this again (docs/PLAYING.md *Playing on a server on another machine*)." -ForegroundColor Red
+    Write-Host "Setup incomplete ($($missing.Count) item(s) above). Run the yellow commands from the repository folder, then start this again (docs/development/running-from-source.md *Playing on a server on another PC*)." -ForegroundColor Red
     exit 2
 }
 if ($SetupOnly) { Write-Host "Setup complete: the lan copy is ready for $Server." -ForegroundColor Green; exit 0 }

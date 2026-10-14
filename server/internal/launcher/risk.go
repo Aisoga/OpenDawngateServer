@@ -12,8 +12,8 @@ import (
 // address only with an explicit acknowledgement (--i-accept-the-risk or i_accept_the_risk = yes in Start-Server.ini).
 // The release has what a public server needs (checked passwords and the sign-up modes, the tunnel, the limits, the
 // strict message check, the website with self-service and the admin page), and the public profile turns it all on; the
-// notice now says what that covers and what remains the operator's risk and duty (docs/OPERATORS.md *A public
-// server*, *What remains*).
+// notice now says what that covers and what remains the operator's risk and duty (docs/hosting.md *Hosting on the
+// internet*, *Security*).
 
 // RiskAckFlag is Start-Server's acknowledgement flag, RiskAckKey its Start-Server.ini key.
 const (
@@ -72,7 +72,7 @@ What remains your risk and your duty:
     history. Data-protection law (e.g. the GDPR) may apply to you: say who runs the server and what it keeps
     on the website's privacy page (Dawngate-Data\data\site\privacy.html), and answer players' requests (they
     can download and delete their own data on the website).
-  - Back up the accounts: Dawngate-Data\data\accounts.db (OPERATORS.md, "Backups").
+  - Back up the accounts: Dawngate-Data\data\accounts.db (README.txt, "Accounts and the website").
   - The match hosts' control channel (TCP 10040) has no login: it stays on 127.0.0.1; never forward it.
 Forward on your router only TCP and UDP %d (the tunnel) and TCP 443 (the website%s); this program never opens
 ports and never uses UPnP.
@@ -83,7 +83,7 @@ ports and never uses UPnP.
 and TCP 443.
 `, gp)
 	}
-	fmt.Fprintln(w, "Never use a password you use anywhere else. See OPERATORS.md (\"A public server\").")
+	fmt.Fprintln(w, "Never use a password you use anywhere else. See README.txt (\"Hosting on the internet\").")
 }
 
 // ServerRiskRefusal is what Start-Server says when a public address wasn't acknowledged.

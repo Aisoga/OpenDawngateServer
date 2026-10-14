@@ -6,7 +6,7 @@ import (
 	"dawngate/server/internal/limits"
 )
 
-// The limits (docs/OPERATORS.md *Limits*): Server.Limits (nil = off) wraps three handlers here, so the handlers
+// The limits (docs/reference.md *Limits*): Server.Limits (nil = off) wraps three handlers here, so the handlers
 // themselves stay as they are: Authentication::login (attempts per address, the backoff per address and per
 // account), GameManager::resetDedicatedServer (games a user starts, and is in at once) and startMatchmaking (queues
 // a user joins). ServeConn applies the per-connection request rate (requestGate).

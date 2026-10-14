@@ -183,7 +183,7 @@ func ResolveProfile(o Options) (server, caveAddress string, err error) {
 }
 
 // LANAddress checks the IPv4 address of a server on another machine: not loopback, wildcard, multicast or reserved.
-// A public address is accepted (the operator's own risk, docs/OPERATORS.md); IsPublic tells them apart.
+// A public address is accepted (the operator's own risk, docs/hosting.md); IsPublic tells them apart.
 // patch_client.py's lan_address, with Python 3.12's ipaddress rules. It returns the address as written.
 func LANAddress(text, what string) (string, error) {
 	ip, err := parseIPv4(text)

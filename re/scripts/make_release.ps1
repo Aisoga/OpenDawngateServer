@@ -61,7 +61,7 @@ if (-not $lua.Count) { Fail "no Lua scripts in $GmsRoot\gms\engine\lua" }
 # 2. the programs
 $go = (Get-Command go -ErrorAction SilentlyContinue).Source
 if (-not $go -and (Test-Path 'C:\Program Files\Go\bin\go.exe')) { $go = 'C:\Program Files\Go\bin\go.exe' }
-if (-not $go) { Fail 'Go is needed to build the release (docs/SETUP.md)' }
+if (-not $go) { Fail 'Go is needed to build the release (docs/development/building.md)' }
 $dir = Join-Path $Out $Name
 if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
 New-Item -ItemType Directory -Force (Join-Path $dir 'host\lua') | Out-Null

@@ -1,4 +1,4 @@
-# Dawngate match host (ADR-1: C++17, MSVC x86, CMake; layout: ADR-2 decision 5, docs/adr/0002-match-host.md).
+# Dawngate match host (ADR-1: C++17, MSVC x86, CMake; layout: ADR-2, docs/development/decisions/).
 #
 #   dgsim.dll, D1's server-mode harness and the match host: the game loads it from a separate working copy
 #   (client/run_854_server) in place of PhysXLoader.dll. It forwards PhysXLoader's ten exports to the renamed original
@@ -55,7 +55,7 @@
 # Output (gitignored): gms/build/Release/dgsim.dll (install it with re/scripts/setup_server_copy.py),
 # gms_script.exe (run_session.ps1 -GmsProbe session runs it) and gms_tests.exe; dgsim.dll.stamp and gms_script.exe.stamp
 # after each successful build of those two (G5: what run_session.ps1 and play.ps1 check them against; cmake/stamp.cmake).
-# Without RakNet (tools/raknet/RakNet, docs/SETUP.md) only the harness is built.
+# Without RakNet (tools/raknet/RakNet, docs/development/building.md) only the harness is built.
 # Never name a folder under gms/ "tools": the root .gitignore hides every folder of that name.
 cmake_minimum_required(VERSION 3.20)
 project(dawngate_gms LANGUAGES CXX)

@@ -102,7 +102,7 @@
   The 'telemetry' line (R5-live) counts the client's decoded LABS_* events in dgserver's log, the packets it could
   not decode, and the client's telemetry asserts.
 
-  -Play (P1, docs/PLAYING.md; normally started through re\scripts\play.ps1) is a session for playing by hand: it needs
+  -Play (docs/development/running-from-source.md; normally started through re\scripts\play.ps1) is a session for playing by hand: it needs
   -GmsHost (dgserver starts the match host at PRACTICE), and -Seconds defaults to 0 = no time limit: the monitor watches
   the game until it exits and never closes it (launch_monitor.ps1 -Seconds 0), takes no timed screenshots and keeps
   256 bytes per packet in the capture (enough for the egress check; a long session's capture stays small). The session

@@ -18,7 +18,7 @@ import (
 // server for strangers and turns on what it needs: the tunnel is required (tunnel = off is refused), the
 // limits are on (dgserver --limits on, also on a LAN address), and the first start asks for the sign-up mode, the
 // website's domain and an admin account. A public address always takes the public profile (profile = auto, the
-// default). docs/OPERATORS.md *A public server*.
+// default). docs/hosting.md *Hosting on the internet*.
 
 // The profiles in Start-Server.ini (profile =).
 const (

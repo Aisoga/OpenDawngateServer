@@ -1,5 +1,5 @@
 <#
-  Play Dawngate yourself (roadmap P1; the manual is docs/PLAYING.md).
+  Play Dawngate yourself (the manual is docs/development/running-from-source.md).
 
   One command: checks the setup (and builds or installs what is missing where that is safe and quick, otherwise prints
   the exact command), starts our server so that PLAY -> PRACTICE DAWNGATE starts a match host, starts the client in a
@@ -44,8 +44,8 @@
   -Server <S> (P2) plays on a server on another machine of your network instead: none of the checks above, no local
   server and no match host; it runs re\scripts\play_lan.ps1 -Server <S> with -AllowHost, -Check, -Seconds, -Name,
   -NoCapture, -KeepAlive and -SetupOnly passed on (the lan copy setup_all.py --player made, the capture and the egress check with
-  egress_report.py --allow-host <S>, Ctrl+C and the game's end as here; docs/PLAYING.md *Playing on a server on
-  another machine*). -HostOptions and -ShaperSelect are the server operator's then (dgserver's --gms-options,
+  egress_report.py --allow-host <S>, Ctrl+C and the game's end as here; docs/development/running-from-source.md *Playing on a server on
+  another PC*). -HostOptions and -ShaperSelect are the server operator's then (dgserver's --gms-options,
   --shaper-select). -AllowHost (only with -Server): the operator's match-host machines (agent mode), which the egress
   check then allows besides <S>.
   Exit code: 0 ok; 1 egress flagged (stop and read egress.txt); 2 setup missing or the session failed;
@@ -148,10 +148,10 @@ try {
     else { Missing 'the Python environment .venv' @('python -m venv .venv', '.venv\Scripts\pip install pefile cryptography') }
     $go = Get-Command go.exe -ErrorAction SilentlyContinue
     if ($go -or (Test-Path 'C:\Program Files\Go\bin\go.exe')) { Ok 'Go (builds the server)' }
-    else { Missing 'Go 1.24 (the server is built at every start)' @('install it from https://go.dev/dl/ (docs/SETUP.md)') }
+    else { Missing 'Go 1.24 (the server is built at every start)' @('install it from https://go.dev/dl/ (docs/development/building.md)') }
     if ($NoCapture) { Info 'no capture and no egress check (-NoCapture)' }
     elseif ((Test-Path "$Wireshark\dumpcap.exe") -and (Test-Path "$Wireshark\tshark.exe")) { Ok 'Wireshark (capture and egress check)' }
-    else { Missing "Wireshark in $Wireshark with Npcap (loopback capture on)" @('see docs/SETUP.md *Wireshark and Npcap*; or play without the capture: play.ps1 -NoCapture') }
+    else { Missing "Wireshark in $Wireshark with Npcap (loopback capture on)" @('see docs/development/building.md *Tools*; or play without the capture: play.ps1 -NoCapture') }
 
     # ---- certificates (server\certs; the client copy carries their CA)
     $certFiles = @('server_cert.pem', 'server_key.pem', 'ca_modulus.bin')
@@ -203,7 +203,7 @@ try {
         } else {
             $c = if ($cmake) { "`"$cmake`"" } else { 'cmake' }
             Missing "gms\ is not built ($stale) and gms\build is not configured" @(
-                "$c -S gms -B gms\build -G `"Visual Studio 17 2022`" -A Win32   (needs RakNet in tools\raknet\RakNet: docs/SETUP.md)",
+                "$c -S gms -B gms\build -G `"Visual Studio 17 2022`" -A Win32   (needs RakNet in tools\raknet\RakNet: docs/development/building.md)",
                 "$c --build gms\build --config Release")
         }
     } else { Ok 'gms\ build (dgsim.dll is current)' }
@@ -229,11 +229,11 @@ try {
 
     # ---- optional: the player content (owned items, store) for new accounts
     if (Test-Path (Join-Path $RepoRoot 'server\data\content.json')) { Ok 'player content (server\data\content.json)' }
-    else { Info 'no server\data\content.json: new accounts own no items (optional; docs/PLAYING.md *One-time setup*)' }
+    else { Info 'no server\data\content.json: new accounts own no items (optional; docs/development/building.md *The setup command*)' }
 
     if ($missing.Count) {
         Write-Host ''
-        Write-Host "Setup incomplete ($($missing.Count) item(s) above). Run the yellow commands from $RepoRoot, then start play.ps1 again (docs/PLAYING.md *One-time setup*)." -ForegroundColor Red
+        Write-Host "Setup incomplete ($($missing.Count) item(s) above). Run the yellow commands from $RepoRoot, then start play.ps1 again (docs/development/building.md *The setup command*)." -ForegroundColor Red
         Write-Host "Or let one command do all of it (H3): .venv\Scripts\python -I re\scripts\setup_all.py   (--check only reports)" -ForegroundColor Yellow
         exit 2
     }
@@ -267,7 +267,7 @@ try {
             Write-Host '     Shaper select: click a shaper and its Choose button, then a role and Finalize, then a skin.'
         }
         Write-Host '  To stop: quit the game, or press Ctrl+C here. Cleanup, the egress check and a summary follow.'
-        Write-Host '  More in docs\PLAYING.md (what works in a match, troubleshooting).'
+        Write-Host '  More in docs\playing.md (what works in a match) and docs\troubleshooting.md.'
         Write-Host ''
     }
     & (Join-Path $PSScriptRoot 'run_session.ps1') @params

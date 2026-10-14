@@ -2,7 +2,7 @@
 *.zip
 client/
 
-# Third-party tools (Ghidra, JDK, x64dbg, ProcMon, downloads) - reinstall per docs/SETUP.md
+# Third-party tools (Ghidra, JDK, x64dbg, ProcMon, downloads) - reinstall per docs/development/building.md
 tools/
 
 # Python environment

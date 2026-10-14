@@ -1,5 +1,5 @@
 """Set up everything the test sessions and play.ps1 need, from the archive.org download, in one idempotent command
-(roadmap H3; the guides are docs/PLAYING.md and docs/OPERATORS.md).
+(the guide is docs/development/building.md).
 
 Steps, in order. Each one checks its result, is skipped when its result is current already, and prints one line:
   tools          Python with pefile and cryptography (this script runs under .venv's python -I), Git for Windows'
@@ -461,7 +461,7 @@ class Setup:
         if not t["pefile"]:
             self.report(FAILED, "tools", "this script needs pefile: python -m venv .venv; "
                                          ".venv\\Scripts\\pip install pefile cryptography; then run it with "
-                                         ".venv\\Scripts\\python -I (docs/PLAYING.md *One-time setup*)")
+                                         ".venv\\Scripts\\python -I (docs/development/building.md *The setup command*)")
             return False
         if not self.a.player:
             t["openssl"] = os.path.isfile(OPENSSL)
@@ -1109,10 +1109,10 @@ class Setup:
                     (f' -GameDir "{shown}"' if " " in shown else f" -GameDir {shown}")
                 print(f"  play        powershell -ExecutionPolicy Bypass -File re\\scripts\\"
                       f"{'play.ps1' if not gamedir else 'play_lan.ps1'} -Server {self.a.server_host}{gamedir}")
-                print("              (docs/PLAYING.md *Playing on a server on another machine*)")
+                print("              (docs/development/running-from-source.md *Playing on a server on another PC*)")
             elif self.root == self.build == self.code:
-                print("  play        powershell -ExecutionPolicy Bypass -File re\\scripts\\play.ps1   (docs/PLAYING.md)")
-                print("  serve       server\\bin\\dgserver.exe --gms-dir client\\run_854_server   (docs/OPERATORS.md)")
+                print("  play        powershell -ExecutionPolicy Bypass -File re\\scripts\\play.ps1   (docs/development/running-from-source.md)")
+                print("  serve       server\\bin\\dgserver.exe --gms-dir client\\run_854_server   (docs/development/running-from-source.md)")
         if failed:
             return 2
         if bad:

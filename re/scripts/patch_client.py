@@ -185,7 +185,7 @@ class PatchError(Exception):
 
 def lan_address(text, what):
     """The IPv4 address of a server on another machine: not loopback, wildcard, multicast or reserved. A public
-    address is accepted too (the operator's own risk, docs/OPERATORS.md)."""
+    address is accepted too (the operator's own risk, docs/hosting.md)."""
     try:
         ip = ipaddress.IPv4Address(text)
     except ValueError:

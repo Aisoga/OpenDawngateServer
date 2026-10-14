@@ -135,7 +135,7 @@ def main():
     ap.add_argument("--callers", help="the decompiled scripts (re/out/serverdata_lua/lua) for the caller smoke test")
     args = ap.parse_args()
     if not args.luaj:
-        sys.exit("LuaJ not found (tools/luaj/luaj-jse-2.0.3.jar, docs/SETUP.md); pass --luaj")
+        sys.exit("LuaJ not found (tools/luaj/luaj-jse-2.0.3.jar, docs/development/building.md); pass --luaj")
     ok = True
 
     errors = compile_all(args.java, args.luaj, FILES)

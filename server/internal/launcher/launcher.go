@@ -267,8 +267,8 @@ type Port struct {
 	What   string
 }
 
-// ServerPorts are the ports dgserver binds with match hosts on its default port numbers (OPERATORS.md *Ports and the
-// firewall*; the hosts' UDP ports are taken from a pool when a match starts).
+// ServerPorts are the ports dgserver binds with match hosts on its default port numbers (docs/reference.md *Ports*;
+// the hosts' UDP ports are taken from a pool when a match starts).
 var ServerPorts = []Port{{42127, false, "the redirector"}, {10041, false, "Blaze"}, {17502, false, "QoS"},
 	{17502, true, "QoS"}, {18080, false, "HTTP"}, {9988, false, "telemetry"}, {10040, false, "the match hosts' control channel"}}
 

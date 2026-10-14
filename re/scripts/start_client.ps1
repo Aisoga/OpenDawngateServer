@@ -8,7 +8,7 @@
   through launch_monitor.ps1 (it creates the launcher's "Global\Dawngate L2G" event, without which Dawngate.exe
   won't start) with no time limit and no capture. The window waits until you close the game.
   Log in with a login name and a password of 8+ characters (the first login with a new name creates that account
-  with that password), then PLAY and PRACTICE DAWNGATE, or the VERSUS tab's QUEUE SOLO; see docs/PLAYING.md.
+  with that password), then PLAY and PRACTICE DAWNGATE, or the VERSUS tab's QUEUE SOLO; see docs/playing.md.
   The client must be the patched copy: the original one talks to EA's servers (gone) and trusts only EA's
   certificates; setup_all.py (or play.ps1's setup check) makes and patches client\run_854.
   Logs: the newest re\logs\manual_*\client\ (the game's own log stays in %APPDATA%\DawngateData).
@@ -19,7 +19,7 @@ Set-Location $Repo
 $gameDir = Join-Path $Repo 'client\run_854\Dawngate'
 
 if (-not (Test-Path (Join-Path $gameDir 'game\Dawngate.exe'))) {
-    Write-Host "No client copy in $($gameDir): run setup_all.py first (docs/PLAYING.md *One-time setup*)." -ForegroundColor Red; exit 1
+    Write-Host "No client copy in $($gameDir): run setup_all.py first (docs/development/building.md *The setup command*)." -ForegroundColor Red; exit 1
 }
 $srv = @(Get-NetTCPConnection -State Listen -LocalPort 42127 -ErrorAction SilentlyContinue | Where-Object { $_.LocalAddress -in @('127.0.0.1', '0.0.0.0') })
 if (-not $srv.Count) {

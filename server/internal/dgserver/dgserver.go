@@ -91,6 +91,9 @@ type config struct {
 	tunnel, gatewayKey                                    string
 	gatewayPort                                           int
 	tunnelClient, tunnelAddress, tunnelPin, tunnelPinCert string
+	// --tunnel-front <folder> (with --tunnel-client): Start-Client's picker front instead of one tunnel, its server
+	// list and trusted keys in <folder>, the login screen's list written into --front-copy
+	tunnelFront, frontCopy string
 	// --limits (auto: on for a public bind or announced address) and the limits themselves (nil = Default())
 	limitsMode limits.Mode
 	limitsCfg  *limits.Config
@@ -923,6 +926,8 @@ func Run(args []string, h Hooks) int {
 	fs.StringVar(&cfg.tunnelAddress, "tunnel-address", "127.0.0.1", "--tunnel-client: the loopback address the player copy is patched for")
 	fs.StringVar(&cfg.tunnelPin, "tunnel-pin", "", "--tunnel-client: the gateway key's pin (64 hex digits)")
 	fs.StringVar(&cfg.tunnelPinCert, "tunnel-pin-cert", "", "--tunnel-client: pin the key of this gateway certificate file (the server's "+tunnel.CertFile+")")
+	fs.StringVar(&cfg.tunnelFront, "tunnel-front", "", "--tunnel-client: test aid: run Start-Client's server picker front instead of one tunnel, with the server list and trusted keys in this folder (servers\\bookmarks.json; the --tunnel-client gateway is added, its key trusted, and preselected)")
+	fs.StringVar(&cfg.frontCopy, "front-copy", "", "--tunnel-front: the player copy (the folder with game\\Data) the login screen's server list is written into")
 	fs.IntVar(&cfg.web.port, "web-port", 0, "the website's HTTPS port (registration, password change, account deletion, data download, status, privacy); 0 = no website. Start-Server.ini's web_port: 443")
 	webDomain := fs.String("web-domain", "", "the website's domain name (e.g. play.example.org, its A record at this server): a Let's Encrypt certificate by TLS-ALPN-01, so the CA must reach <domain>:443 (forwarded to --web-port); empty = a self-signed certificate for the server's addresses")
 	fs.StringVar(&cfg.web.email, "web-email", "", "--web-domain: a contact address for the CA's expiry mail (optional)")

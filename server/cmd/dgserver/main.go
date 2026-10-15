@@ -109,6 +109,7 @@ import (
 	"os"
 
 	"dawngate/server/internal/dgserver"
+	_ "dawngate/server/internal/launcher" // --tunnel-front: Start-Client's front (dgserver.RunFront)
 )
 
 // The server's code is in internal/dgserver, so that Start-Server.exe runs the same server.

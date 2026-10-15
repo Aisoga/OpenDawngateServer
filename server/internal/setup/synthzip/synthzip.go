@@ -54,6 +54,7 @@ func Files(t testing.TB) map[string][]byte {
 		"game/Data/Config_Ship.package":         textPackage("property NewTelemetryServerIP 0x2 string8 159.153.235.32\r\n"),
 		"game/Data/Config_Pack.package":         textPackage("property X 0x3 string8 http://cdn.strategy.ea.com/a\r\n"),
 		"game/Data/AssetData.snap":              read("game/Data/AssetData.snap"),
+		"game/Data/LoginScreen.snap":            read("game/Data/LoginScreen.snap"),
 		"game/Data/Locale/en-us/Locale.package": read("game/Data/Locale/en-us/Locale.package"),
 		"game/readme.txt":                       []byte("synthetic Dawngate for tests\r\n"),
 	}

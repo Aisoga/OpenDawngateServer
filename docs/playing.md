@@ -177,25 +177,73 @@ Everyone on a server needs their own account. The ways to play together:
 
 ### Playing on someone else's server
 
-Ask the server's operator for its address. Then start the client with it:
+Ask the server's operator for its address. You don't need to run `Start-Server.exe`.
+
+**A server on the internet** is reached through its encrypted tunnel, and you pick it on the game's login screen:
+
+1. Start the client with the server's address once:
+
+   ```
+   Start-Client.exe 203.0.113.5
+   ```
+
+   The address goes into your server list. From then on, just start `Start-Client.exe`: the login screen opens with the server you played on last.
+2. On the login screen, **SERVER** above the login panel shows the server you are about to log in to. Click it to open the list (**SELECT A SERVER**), click a server, then **DONE**.
+3. Log in as usual.
+
+The same goes for a server on your home network whose operator turned its tunnel on: start `Start-Client.exe <address> --tunnel on` once.
+
+- You'll need an account first. Most public servers use invite codes: get one from the operator, then register on the server's website at `https://<server address>/signup`. The login screen's *Sign up now!* link opens the same page.
+- On the website you can also change your password, download your data or delete your account.
+- If you forget your password, ask the operator: the server doesn't send e-mail.
+
+#### The server list
+
+Each row shows a server's name, its address and its status. The status is checked again every few seconds while the login screen is open, so a server that goes down or comes back shows without a restart.
+
+| Status | Meaning |
+|---|---|
+| **online, 23 ms** (green) | The server answers with the key you trusted, in that many milliseconds. |
+| **online, new key** | The server answers, and you haven't logged in there yet. Its key is trusted at your first login. |
+| **KEY CHANGED** (red) | The server shows another key than the one you trusted. Logins are refused: see [troubleshooting.md](troubleshooting.md#logging-in). |
+| **offline** (red) | Nothing answers: the server is down, or its address is wrong. |
+| **no tunnel** | Something answers at that address, but not a Dawngate server with its tunnel on. |
+| **added at login** | A server you just added. It is checked when you log in. |
+| **not checked** | Not checked yet. |
+
+The sentence under the list says more about the selected server. For an online server it names the server's key, a fingerprint of 16 hex digits such as `25edc74b8876bbbc`. For a new server, compare that fingerprint with the one its operator publishes before your first login: that login trusts the key, and every later login checks it. For a changed key, the sentence names both the key you trusted and the one the server shows now.
+
+**Adding a server:** open the list, click **ADD SERVER**, type the address (an IPv4 address such as `203.0.113.5` or a host name, with `:<port>` if the operator's tunnel port isn't 42128) and, if you like, a name, then click **ADD**. The server is added at your next login: **LOGIN** checks it, trusts its key and logs you in there. If it doesn't answer, the login is refused with *The server you picked doesn't answer* and nothing is added. `Start-Client.exe <address>` adds a server too.
+
+**Removing a server:** select it in the list and click **REMOVE**. The login screen confirms with *The server was removed from your list.* Its key stays remembered, so a server you add again is still checked against it.
+
+**Typing it instead:** the list puts the pick into your login name, and you can type it yourself. Each server has a tag (`a`, `b`, …; `Start-Client.exe` lists them in its window):
+
+| Login name | Effect |
+|---|---|
+| `alex#b` | Log in as `alex` on the server with tag `b`. |
+| `alex#+203.0.113.5` | Add that server (optionally `alex#+203.0.113.5=Friends` with a name) and log in there. |
+| `alex#-b` | Remove the server with tag `b`. |
+
+The server only ever sees `alex`.
+
+**The list works with the mouse.** Tab moves between the login name and the password as usual, but doesn't reach **SERVER**: Shift+Tab from the login name goes to the game's **EXIT** button (Enter there asks whether to quit). Escape doesn't close the list; use **DONE**. With the list open, the arrow keys move the selection.
+
+**Switching servers:** log out, or wait for the game's idle logout. You are back at the login screen with the list, and you can pick another server.
+
+**A server on your home network without the tunnel** is played on directly, as before the list existed:
 
 ```
 Start-Client.exe 192.168.1.20
 ```
 
-You can also start `Start-Client.exe` without an address and type it in when asked. The address is remembered in `Start-Client.ini`. You don't need to run `Start-Server.exe`.
+You can also start `Start-Client.exe` without an address and type it in when asked; a home-network address is remembered in `Start-Client.ini`. The login screen then has no server list: `Start-Client.exe` says so in its window.
 
-**The fingerprint question.** The first time you connect to a server, `Start-Client.exe` shows the server's fingerprint and asks whether it's the same as the one the operator has.
+**The fingerprint question.** The first time you connect to such a server, `Start-Client.exe` shows the server's fingerprint and asks whether it's the same as the one the operator has.
 
-- Answer `y` only if it matches: on a home network, compare it with the one in the server's window; on a public server, with the one the operator published.
+- Answer `y` only if it matches the one in the server's window.
 - This check makes sure you are talking to that server and not to someone else at the same address.
 - If a server's fingerprint changes later, you get a warning and the question again.
-
-**A server on the internet** works the same way, through the server's encrypted tunnel. You don't need to configure anything.
-
-- You'll need an account first. Most public servers use invite codes: get one from the operator, then register on the server's website at `https://<server address>/signup`. The login screen's *Sign up now!* link opens the same page.
-- On the website you can also change your password, download your data or delete your account.
-- If you forget your password, ask the operator: the server doesn't send e-mail.
 
 ## Known limitations
 

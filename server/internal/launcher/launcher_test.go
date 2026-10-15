@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"crypto/tls"
 	"errors"
+	"flag"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -246,3 +248,26 @@ func TestHeldPorts(t *testing.T) {
 }
 
 func exists(p string) bool { _, err := os.Stat(p); return !errors.Is(err, os.ErrNotExist) }
+
+func TestParseInterspersed(t *testing.T) {
+	for _, c := range []struct {
+		args, pos []string
+		ca        string
+		setup     bool
+	}{
+		{[]string{"192.168.1.20", "--ca", "x.bin"}, []string{"192.168.1.20"}, "x.bin", false},
+		{[]string{"--setup-only", "192.168.1.20", "--ca", "x.bin"}, []string{"192.168.1.20"}, "x.bin", true},
+		{[]string{"192.168.1.20"}, []string{"192.168.1.20"}, "", false},
+		{[]string{"--ca", "x.bin", "--", "--setup-only"}, []string{"--setup-only"}, "x.bin", false},
+		{[]string{"a", "--setup-only", "b"}, []string{"a", "b"}, "", true},
+		{nil, nil, "", false},
+	} {
+		fs := flag.NewFlagSet("t", flag.ContinueOnError)
+		ca := fs.String("ca", "", "")
+		setupOnly := fs.Bool("setup-only", false, "")
+		pos, err := parseInterspersed(fs, c.args)
+		if err != nil || !slices.Equal(pos, c.pos) || *ca != c.ca || *setupOnly != c.setup {
+			t.Errorf("%q: %q ca %q setup %v, %v", c.args, pos, *ca, *setupOnly, err)
+		}
+	}
+}

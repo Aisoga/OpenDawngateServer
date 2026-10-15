@@ -166,6 +166,10 @@
   lane's client copies connect as always; the game's TLS to the redirector ends there with the lane's certificates.
   The match hosts bind 127.0.N.9 too. The tunnel client logs into the session's tunnel\ folder; the summary gets a
   'tunnel' line. With -GmsHost or no host; not with -Lan, -GmsProbe or -HostDir.
+  -TunnelClientArgs '<dgserver flags>' (with -Tunnel) adds flags to the tunnel client, split at blanks (so no paths
+  with blanks), e.g. '--tunnel-front <folder> --front-copy client\run_854_b\Dawngate': Start-Client's server picker
+  front instead of one tunnel (its server list and trusted keys in <folder>, the lane's server added and preselected,
+  the login screen's list written into the copy before the game starts).
 
   Usage (from anywhere):
     powershell -ExecutionPolicy Bypass -File re\scripts\run_session.ps1 [-Name a2_run1] [-Seconds 60]
@@ -177,7 +181,8 @@
         [-GmsHost client\run_854_server|gms\build\Release\gms_script.exe [-GmsHostArgs '...'] [-HostOptions '...']]
         [-HostKillAt <s>] [-ServerArgs '<dgserver flags>'] [-FreshData] [-KeepAlive <s>] [-Play [-NoCapture]]
         [-Lane a|b|c|d] [-Lan <IPv4>|auto] [-SecondClient [-SecondAfter <s>] [-Login2 'email|password' [-LoginAt2 <s>]]
-        [-Actions2 '...'] [-ShotTimes2 '...'] [-SecondRestartAt <s> [-Actions3 '...'] [-ShotTimes3 '...']]] [-Tunnel]
+        [-Actions2 '...'] [-ShotTimes2 '...'] [-SecondRestartAt <s> [-Actions3 '...'] [-ShotTimes3 '...']]]
+        [-Tunnel [-TunnelClientArgs '...']]
   With -Lane b the default -GameDir is client\run_854_b\Dawngate and the host copy is client\run_854_server_b (lanes c
   and d likewise: client\run_854_c, client\run_854_server_c, ...).
   -Seconds is launch_monitor's watch time; the whole session takes about 1.15 * Seconds + 60 s.
@@ -237,7 +242,8 @@ param(
     [int]$SecondRestartAt = 0,
     [string]$Actions3,
     [string]$ShotTimes3,
-    [switch]$Tunnel
+    [switch]$Tunnel,
+    [string]$TunnelClientArgs = ''
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'gms_stale.ps1')  # G5: Get-GmsBuildStale, the gms\ build check
@@ -1184,6 +1190,10 @@ try {
         $tunCerts = Join-Path $MainRoot $LaneCfg.Certs
         $tunArgs = @('--tunnel-client', "${TunnelServerAddr}:$GatewayPort", '--tunnel-address', $LaneAddr, '--certs', "`"$tunCerts`"",
             '--tunnel-pin-cert', "`"$(Join-Path $tunCerts 'gateway_cert.pem')`"", '--log', "`"$(In-Session 'tunnel')`"", '--seconds', $stubSeconds)
+        if ($TunnelClientArgs) {
+            $tunArgs += @($TunnelClientArgs -split '\s+' | Where-Object { $_ })
+            Say "tunnel client extra flags (-TunnelClientArgs): $TunnelClientArgs"
+        }
         $tun = Start-Logged $ServerExe $tunArgs 'tunnel'
         $want = @($Ports | Where-Object { $_ -in @(42127, 10041, 17502, 18080, 9988) })
         $deadline = (Get-Date).AddSeconds(15)

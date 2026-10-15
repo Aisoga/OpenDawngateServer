@@ -56,6 +56,10 @@ func KindName(kind uint32) string {
 // errNotPacket is returned for a header whose length is impossible.
 var errNotPacket = errors.New("not a ProtoAries packet")
 
+// CutPacket takes the first packet off buf (a relay forwards packet by packet: Start-Client's front). ok is false
+// while the packet is incomplete; an error says buf holds no packet framing.
+func CutPacket(buf []byte) (p Packet, rest []byte, ok bool, err error) { return cutPacket(buf) }
+
 // cutPacket takes the first packet off buf. ok is false while the packet is incomplete.
 func cutPacket(buf []byte) (p Packet, rest []byte, ok bool, err error) {
 	if len(buf) < HeaderSize {

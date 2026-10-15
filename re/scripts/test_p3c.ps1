@@ -30,7 +30,8 @@
                           checked on it too, re\logs\session_lan.lock is held beside lane a's, and the egress check
                           gets --allow-host <it>.
     -Ini 'k=v;k=v'        more Start-Server.ini keys before the first start (e.g. 'profile=public;signup=invite').
-    -ClientArgs '...'     more Start-Client.exe arguments (e.g. '--tunnel on --trust': its own tunnel to the gateway).
+    -ClientArgs '...'     more Start-Client.exe arguments (e.g. '--tunnel on --picker off --trust': its own tunnel to
+                          the gateway; the tunnel turns the server picker on unless --picker off).
     -Website              the website and the admin page: before the server starts an admin account (Start-Server.exe
                           --create-account siteadmin, --make-admin), once it runs an invite code made on the admin page
                           and -Login's name registered with it on /signup (re\scripts\admin_page.py; the site's
@@ -486,7 +487,7 @@ if ($Website) {
     if (-not $MenuOnly -and $siteMatch -notmatch '\(account \d+, team \d, in the match\)') { $fail += "the admin page's matches did not list the player in the match ($siteMatch)" }
     if ($mail -notmatch [regex]::Escape("MAIL: '$LoginName'")) { $fail += "the game did not log in as $LoginName ($mail)" }
 }
-if ($ClientArgs -match '--tunnel\s+on' -and -not $tunnelLine) { $fail += "Start-Client's tunnel did not start (client.txt)" }
+if ($ClientArgs -match '--tunnel\s+on' -and $ClientArgs -match '--picker\s+off' -and -not $tunnelLine) { $fail += "Start-Client's tunnel did not start (client.txt)" }
 if ($tunnelLine -and $tcCode -ne 0) { $fail += "tunnel_capture.py: $tcTotal (tunnel_capture.txt)" }
 if ($fgGame -ne 0) { $fail += "the game window had the foreground ($focusSum)" }
 if ($clean -like 'NOT CLEAN*') { $fail += $clean }

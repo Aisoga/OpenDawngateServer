@@ -15,7 +15,9 @@
      from tools\raknet\RakNet and a note on this project's RakNet patches (gms\cmake\raknet_patches),
      Go's LICENSE and (ADR-4) the licence files of every outside Go module the two programs link, from the
      module cache: modernc.org/sqlite and its dependencies, golang.org/x/crypto, golang.org/x/sys),
-     BUILD.txt (commit, Go version, every file's SHA-256).
+     BUILD.txt (commit, Go version, every file's SHA-256). The server picker's compiled class is checked to be in
+     the SWF tags Start-Client.exe embeds (picker_tags.hex), and those in the built Start-Client.exe; the notices name
+     its AGPL source and the development-only tools (the Flex SDK compiler, FFDec), which aren't shipped.
   4. The check: no file of the release has the name or the SHA-256 of a file of either build in
      docs\file_manifest.csv, and only the expected kinds of files are in it; then the listing.
   5. <Out>\<Name>.zip (unless -NoZip).
@@ -83,6 +85,29 @@ try {
 }
 $goVersion = "$(& $go version)".Trim()
 
+# the server picker: its compiled class (client_ui\serverpicker\ServerPicker.abc.hex) must be inside the four SWF tags
+# that Start-Client.exe embeds (server\internal\setup\moviepatch\picker_tags.hex, go:embed), and those tags' text
+# must be in the built Start-Client.exe (the release ships no other picker file)
+function Read-HexFile([string]$path) {
+    $t = ([IO.File]::ReadAllText($path)) -replace '\s', ''
+    $b = New-Object byte[] ($t.Length / 2)
+    for ($i = 0; $i -lt $b.Length; $i++) { $b[$i] = [Convert]::ToByte($t.Substring(2 * $i, 2), 16) }
+    , $b
+}
+$tagsHex = Join-Path $Repo 'server\internal\setup\moviepatch\picker_tags.hex'
+$abcHex = Join-Path $Repo 'client_ui\serverpicker\ServerPicker.abc.hex'
+foreach ($f in @($tagsHex, $abcHex, (Join-Path $Repo 'client_ui\serverpicker\ServerPicker.as'))) { if (-not (Test-Path $f)) { Fail "the server picker: no $f" } }
+$latin1 = [Text.Encoding]::GetEncoding(28591)
+$tagsBytes = Read-HexFile $tagsHex; $abcBytes = Read-HexFile $abcHex
+if (-not $latin1.GetString($tagsBytes).Contains($latin1.GetString($abcBytes))) {
+    Fail "the server picker: picker_tags.hex doesn't hold ServerPicker.abc.hex's class (rebuild both with re\scripts\build_picker.py build)"
+}
+$firstLine = ([IO.File]::ReadAllLines($tagsHex) | Where-Object { $_.Trim() } | Select-Object -First 1).Trim()
+if (-not ([IO.File]::ReadAllText((Join-Path $dir 'Start-Client.exe'), $latin1)).Contains($firstLine)) {
+    Fail 'the server picker: Start-Client.exe does not embed picker_tags.hex'
+}
+Write-Host "the server picker: its class ($($abcBytes.Length) bytes) in the tags ($($tagsBytes.Length) bytes), embedded in Start-Client.exe" -ForegroundColor Green
+
 # 3. the files
 Copy-Item $dll (Join-Path $dir 'host\dgsim.dll')
 foreach ($f in $lua) { Copy-Item $f.FullName (Join-Path $dir "host\lua\$($f.Name)") }
@@ -141,6 +166,14 @@ if ($modules.Count) {
     }
 }
 $notices += @('', 'The MSVC static runtime in dgsim.dll needs no notice.')
+$notices += @('', '---- The server picker on the login screen ----', '',
+    "Start-Client.exe embeds the compiled ActionScript 3 class of the server picker (four SWF tags, $([int][Math]::Ceiling($tagsBytes.Length / 1024)) KB). It is",
+    "this project's own code under the GNU AGPL v3 (LICENSE.txt); its source is client_ui/serverpicker/ServerPicker.as",
+    'in the source repository, published with the rest of the code. On the player''s PC, Start-Client adds these tags to',
+    'a copy of the login screen''s movie taken from the player''s own game files; no file of the game is in this release.',
+    'Two tools are used only during development, to compile and inspect that class; nothing of them is in this release',
+    'and none of their code is in the compiled class: the Apache Flex SDK compiler (mxmlc, Apache License 2.0) and',
+    'JPEXS Free Flash Decompiler (FFDec, GNU GPL v3).')
 [IO.File]::WriteAllText((Join-Path $dir 'THIRD-PARTY-NOTICES.txt'), (($notices -join "`r`n") + "`r`n"))
 
 # 4. no game file: neither a name nor a SHA-256 of either build's files (docs\file_manifest.csv)

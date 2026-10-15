@@ -27,12 +27,25 @@
                       thread's key state only (AttachThreadInput + SetKeyboardState), never on the real keyboard
     '<t>:keydown=<vk>' / '<t>:keyup=<vk>' (G3b) a key held from one t to a later one (WM_KEYDOWN, then WM_KEYUP), e.g.
                       Tab for the in-game scoreboard with a screenshot in between (the shot at a t comes before its actions)
-    '<t>:text=<chars>' (A5b) type letters, digits and _ @ . - (since D8b also /, for chat commands such as /surrender)
-                      as posted WM_CHARs into whatever has the game's keyboard focus (click the text field first, e.g.
-                      the PvP lobby invite dialog's name field)
+    '<t>:text=<chars>' (A5b) type letters, digits and _ @ . - (since D8b also /, for chat commands such as /surrender;
+                      since SP1-live also #, since SP3 also +) as posted WM_CHARs into whatever has the game's keyboard focus (click the
+                      text field first, e.g. the PvP lobby invite dialog's name field)
+    '<t>:login=<name>|<password>' (SP1-live) -Login's form once more, e.g. on the login screen again after a logout or
+                      a kick: each field clicked, emptied (End, then 40 backspaces) and typed, then LOGIN clicked; the
+                      name may hold a server tag (alex#b, the server picker; since SP3 also + for an add, alex#+host)
     '<t>:wheel=<delta>[x<n>]' n posted WM_MOUSEWHEELs (default 1) of <delta> (120 = one notch away from the user,
                       -120 towards) at the window's centre, 250 ms apart: the in-game camera's zoom
     '<t>:shot'        screenshot only
+    '<t>:fshot'       (SP1-live) a focused screenshot f<t>.png, as -ShotFocus on takes them, also when the session's
+                      other shots aren't focused: one picture of a parked window without taking the focus for the rest
+    '<t>:pshot'       (SP4) a placed screenshot p<t>.png without the focus: the parked window is moved on-screen at the
+                      bottom of the z-order without activation, captured with PrintWindow and parked again; the
+                      foreground stays the user's (a focused shot gives the game the right to take the foreground
+                      later). A picture that comes back only as a screen copy is deleted (it would show
+                      the user's windows)
+    '<t>:lockfg=<s>'  (SP4, with -Background) hold the foreground lock (LockSetForegroundWindow) for <s> wall seconds,
+                      e.g. from PRACTICE DAWNGATE's click over the match load, when the game takes the foreground even
+                      while the user types; the user's own click or Alt still switches windows
     '<t>:front' / '<t>:back' (G3) bring the game window in front (on-screen and the foreground, as a focused
                       screenshot does) and keep it there until 'back' gives the foreground back, e.g. around an in-game
                       chat line (key=13, text=..., key=13); the user allowed test sessions to take the focus (2026-10-08)
@@ -270,7 +283,7 @@ if ($Actions) {
         if ($a -notmatch '^(\d+):(.+)$') { throw "bad -Actions item '$a'" }
         $at = [int]$Matches[1]; $what = $Matches[2].Trim()
         if ($at % 2) { throw "-Actions time $at must be even" }
-        if ($what -notmatch '^([rh]?\d*\.?\d+,\d*\.?\d+|d\d*\.?\d+,\d*\.?\d+,\d*\.?\d+,\d*\.?\d+|key=\d+(\+\d+)?|keydown=\d+|keyup=\d+|wheel=-?\d+(x\d+)?|text=[A-Za-z0-9_@./-]+|shot|front|back)$') { throw "bad -Actions item '$a'" }
+        if ($what -notmatch '^([rh]?\d*\.?\d+,\d*\.?\d+|d\d*\.?\d+,\d*\.?\d+,\d*\.?\d+,\d*\.?\d+|key=\d+(\+\d+)?|keydown=\d+|keyup=\d+|wheel=-?\d+(x\d+)?|text=[A-Za-z0-9_@./#+-]+|login=[A-Za-z0-9_@.#+-]+\|[^|]+|shot|fshot|pshot|lockfg=\d+|front|back)$') { throw "bad -Actions item '$($a -replace '\|.*$', '|...')'" }
         if (-not $ActionsAt.ContainsKey($at)) { $ActionsAt[$at] = @() }
         $ActionsAt[$at] += $what
     }
@@ -282,6 +295,12 @@ function DoActions($p, $at) {
     Shot $p "a$at"
     foreach ($what in $ActionsAt[$at]) {
         if ($what -eq 'shot') { continue }
+        if ($what -eq 'fshot') {
+            if ($script:FgLocked) { [void][W]::LockSetForegroundWindow(2); $script:FgLocked = $false; Log 'background: foreground lock released for a focused shot' }
+            $saved = $script:FocusShots; $script:FocusShots = $true; Shot $p "f$at"; $script:FocusShots = $saved; continue
+        }
+        if ($what -eq 'pshot') { PlacedShot $p "p$at"; continue }
+        if ($what -match '^lockfg=(\d+)$') { $script:LockUntil = (Get-Date).AddSeconds([int]$Matches[1]); GuardForeground $p; continue }
         if ($what -eq 'front') {
             # G3: the window in front (on-screen, the foreground) until 'back', e.g. while a chat line is typed: a
             # deactivated window takes no posted WM_CHAR (V1). No mouse move, no real key (window_shot.cs's switch).
@@ -304,6 +323,7 @@ function DoActions($p, $at) {
             $n = if ($Matches[3]) { [int]$Matches[3] } else { 1 }
             Log "action t=${at}: wheel $($Matches[1]) x$n at $(WheelAt $h ([int]$Matches[1]) $n)"; continue
         }
+        if ($what -match '^login=([^|]+)\|(.+)$') { RefillLogin $h $Matches[1] $Matches[2] $at; continue }
         if ($what -match '^text=(.+)$') { PostActivate $h; TypeText $h $Matches[1]; Log "action t=${at}: typed $($Matches[1].Length) chars$(if (-not $NoTypeActivate) { ' (after a posted activation)' })"; continue }
         if ($what -match '^key=(\d+)\+(\d+)$') {
             $how = [W]::PressWithModifier($h, [int]$Matches[1], [int]$Matches[2])
@@ -370,6 +390,27 @@ function DoLogin($p, $cred) {
     Log "login: clicked LOGIN at $at"
     if ($FocusShots) { Log "login: back=$([WindowShot]::Restore($h, $moved, $prev))" }
 }
+function ClearField($h) {
+    # the caret to the end, then backspaces (a field the client filled in itself, e.g. a remembered login name)
+    PressKey $h 35   # VK_END
+    for ($i = 0; $i -lt 40; $i++) {
+        [void][W]::PostMessage($h, 0x0100, [IntPtr]8, [IntPtr]1)            # WM_KEYDOWN VK_BACK
+        [void][W]::PostMessage($h, 0x0101, [IntPtr]8, [IntPtr]0xC0000001)   # WM_KEYUP
+        Start-Sleep -Milliseconds 25
+    }
+    Start-Sleep -Milliseconds 200
+}
+function RefillLogin($h, $name, $pass, $at) {
+    # SP1-live: the login form again (action login=): no focused window here (-Login's -ShotFocus on path isn't needed:
+    # the typing is preceded by the posted activation)
+    PostActivate $h
+    $pos = ClickAt $h $LoginFields.email[0] $LoginFields.email[1]; ClearField $h; TypeText $h $name
+    Log "action t=${at}: login form: clicked the name field at $pos, emptied it, typed $($name.Length) chars"
+    $pos = ClickAt $h $LoginFields.password[0] $LoginFields.password[1]; ClearField $h; TypeText $h $pass
+    Log "action t=${at}: login form: clicked the password field at $pos, emptied it, typed $($pass.Length) chars"
+    $pos = ClickAt $h $LoginFields.button[0] $LoginFields.button[1]
+    Log "action t=${at}: login form: clicked LOGIN at $pos"
+}
 $BackgroundMoves = 0
 function KeepInBackground($p) {
     if (-not $Background) { return }
@@ -399,11 +440,18 @@ function KeepInBackground($p) {
 # (LockSetForegroundWindow; with it every try of the game was refused, its taskbar button flashed instead), released as
 # soon as the user is back; and a game window that has the foreground anyway gets it taken back for the window that had
 # it before (once per take). The release's Start-Client.exe --test-park does the same every 50 ms.
-$FgPrev = [IntPtr]::Zero; $FgTried = $false; $FgLocked = $false; $FgBacks = 0
+$FgPrev = [IntPtr]::Zero; $FgTried = $false; $FgLocked = $false; $FgBacks = 0; $FgRetries = 0; $FgTriedAt = [datetime]::MinValue
+$LockUntil = [datetime]::MinValue
 function GuardForeground($p) {
     if (-not $Background -or $FocusShots -or $script:InFront) { return }
     $timeout = [W]::LockTimeoutMs()
-    if ($timeout -gt 0 -and [W]::IdleMs() -ge $timeout) {
+    if ((Get-Date) -lt $script:LockUntil) {
+        # SP4: the action lockfg=<s> (around a match load: the game took the foreground 3-5 s after PRACTICE DAWNGATE
+        # even while the user typed): the lock again on every pass, since the user's own click or Alt
+        # undoes it (and should)
+        $ok = [WindowShot]::LockForeground(1)
+        if (-not $script:FgLocked) { $script:FgLocked = $true; Log "background: foreground locked until $($script:LockUntil.ToString('HH:mm:ss')) (lockfg; $ok)" }
+    } elseif ($timeout -gt 0 -and [W]::IdleMs() -ge $timeout) {
         if (-not $script:FgLocked -and [W]::LockSetForegroundWindow(1)) { $script:FgLocked = $true; Log 'background: the user is idle past ForegroundLockTimeout: foreground locked' }
     } elseif ($script:FgLocked) {
         [void][W]::LockSetForegroundWindow(2); $script:FgLocked = $false; Log 'background: the user is back: foreground lock released'
@@ -411,10 +459,43 @@ function GuardForeground($p) {
     $fg = [W]::GetForegroundWindow()
     if ($fg -eq [IntPtr]::Zero) { return }
     $fpid = [uint32]0; [void][W]::GetWindowThreadProcessId($fg, [ref]$fpid)
-    if ($fpid -ne $p.Id) { $script:FgPrev = $fg; $script:FgTried = $false; return }
-    if ($script:FgTried -or $script:FgPrev -eq [IntPtr]::Zero -or -not [W]::IsWindow($script:FgPrev)) { return }
-    $ok = [W]::SetForegroundWindow($script:FgPrev); $script:FgTried = $true; $script:FgBacks++
-    if ($script:FgBacks -le 10) { Log "background: the game took the foreground (#$($script:FgBacks)); given back to the window that had it: $ok" }
+    if ($fpid -ne $p.Id) { $script:FgPrev = $fg; $script:FgTried = $false; $script:FgRetries = 0; return }
+    if ($script:FgPrev -eq [IntPtr]::Zero -or -not [W]::IsWindow($script:FgPrev)) {
+        # SP4: the game took the foreground before the monitor saw another window (its splash at its start): the desktop
+        $script:FgPrev = [WindowShot]::ShellWindow()
+        if ($script:FgPrev -eq [IntPtr]::Zero) { return }
+    }
+    # SP4: a failed give-back is tried again every 3 s while the game keeps the foreground (after one failed try the
+    # game had kept it for 10 minutes)
+    if ($script:FgTried -and ((Get-Date) - $script:FgTriedAt).TotalSeconds -lt 3) { return }
+    # SP4: a plain SetForegroundWindow from here was refused ("False" in several runs: the game kept the foreground for
+    # up to 50 s and took the user's keystrokes); attached to the game's input queue (WindowShot's BringToFront without
+    # the Alt fallback) the foreground goes back. Our own foreground lock (idle or lockfg) refuses our own
+    # SetForegroundWindow too ("False (failed)"), so it is released around the give-back.
+    if ($script:FgLocked) { [void][W]::LockSetForegroundWindow(2) }
+    $how = [WindowShot]::BringToFront($script:FgPrev, $false); $ok = $how -ne 'failed'
+    if ($script:FgLocked) { [void][WindowShot]::LockForeground(1) }
+    $first = -not $script:FgTried
+    $script:FgTried = $true; $script:FgTriedAt = Get-Date
+    if ($first) { $script:FgBacks++ } else { $script:FgRetries++ }
+    if ($first -and $script:FgBacks -le 10) { Log "background: the game took the foreground (#$($script:FgBacks)); given back to the window that had it: $ok ($how)" }
+    elseif (-not $first -and $script:FgRetries -le 5) { Log "background: the game still has the foreground (#$($script:FgBacks), try $($script:FgRetries + 1)): given back $ok ($how)" }
+}
+function PlacedShot($p, $name) {
+    # SP4: the action pshot: on-screen without activation (WindowShot.Place), PrintWindow, parked again
+    $p.Refresh()
+    $h = $p.MainWindowHandle
+    if ($h -eq [IntPtr]::Zero) { Log "screenshot ${name}: no main window"; return }
+    $moved = $false
+    $placed = [WindowShot]::Place($h, $script:HomeX, $script:HomeY, [ref]$moved)
+    Start-Sleep -Milliseconds $ShotFocusMs
+    $fg = [WindowShot]::IsForeground($h)
+    $file = Join-Path $OutDir "$name.png"
+    $w = 0; $hgt = 0
+    try { $how = [WindowShot]::Save($h, $file, 1280, [ref]$w, [ref]$hgt) } catch { $how = "failed: $($_.Exception.Message)" }
+    $back = [WindowShot]::Restore($h, $moved, [IntPtr]::Zero)
+    if ($how -eq 'screen' -and -not $fg) { Remove-Item $file -Force -ErrorAction SilentlyContinue; $how = 'screen copy deleted (it would show other windows)' }
+    Log "screenshot ${name}: ${w}x${hgt} ($how) $placed$(if ($moved) { ",on-screen$([WindowShot]::LastPlaced)" }) foreground=$(if ($fg) { 'GAME' } else { 'not the game' }) back=$back -> $file"
 }
 function Shot($p, $name) {
     $p.Refresh()
@@ -502,11 +583,14 @@ function PollEndpoints($t) {
 if ($Seconds -le 0) { Log "no time limit (-Seconds 0): watching until the game exits" }
 for ($t = 0; $Seconds -le 0 -or $t -le $Seconds; $t += 2) {
     if ($p.HasExited) { Log "game exited at t=${t}s code=$($p.ExitCode)"; break }
-    PollEndpoints $t
-    foreach ($ch in Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.Id)" -ErrorAction SilentlyContinue) {
-        $k = "child $($ch.ProcessId) $($ch.Name) $($ch.CommandLine)"
-        if (-not $seen[$k]) { $seen[$k] = 1; Log "t=${t}s $k" }
+    if ((Get-Date) -ge $script:LockUntil) {  # SP4: within lockfg nothing slow between the guard's passes
+        PollEndpoints $t
+        foreach ($ch in Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.Id)" -ErrorAction SilentlyContinue) {
+            $k = "child $($ch.ProcessId) $($ch.Name) $($ch.CommandLine)"
+            if (-not $seen[$k]) { $seen[$k] = 1; Log "t=${t}s $k" }
+        }
     }
+    GuardForeground $p
     if (-not $l2gSeen -and $l2g -and $l2g.WaitOne(0)) { $l2gSeen = $true; Log "t=${t}s game signalled Global\Dawngate L2G" }
     $p.Refresh()
     $k = "window '$($p.MainWindowTitle)' responding=$($p.Responding)"
@@ -518,7 +602,12 @@ for ($t = 0; $Seconds -le 0 -or $t -le $Seconds; $t += 2) {
     # poll the game's endpoints several times per step so short-lived connections are caught too
     # (an HTTP request to a local stub can still finish between two polls; the capture has those)
     $stepEnd = (Get-Date).AddSeconds(2)
-    while ((Get-Date) -lt $stepEnd -and -not $p.HasExited) { PollEndpoints $t; KeepInBackground $p; GuardForeground $p; Start-Sleep -Milliseconds 200 }
+    while ((Get-Date) -lt $stepEnd -and -not $p.HasExited) {
+        # SP4: within lockfg=<s> the guard every 40 ms and no endpoint poll (a poll takes long enough that the game
+        # kept a foreground it took at a match load for 2 s)
+        if ((Get-Date) -lt $script:LockUntil) { KeepInBackground $p; GuardForeground $p; Start-Sleep -Milliseconds 40; continue }
+        PollEndpoints $t; KeepInBackground $p; GuardForeground $p; Start-Sleep -Milliseconds 200
+    }
 }
 if ($KeepAlive -gt 0) { Log "keepalive: $KeepAlivePosts key-up(s) posted (every $KeepAlive s)" }
 if ($FgLocked) { [void][W]::LockSetForegroundWindow(2); Log 'background: foreground lock released (end)' }

@@ -17,11 +17,14 @@ references are computed with the Go setup's own ca_modulus.bin):
   certificates   certs\\<address>: the five files, the CA modulus = the CA certificate's, CN = the address
   client texts   the client copy's game\\Data\\Locale\\en-us\\AA_Server.package = patch_locale.build(its own
                  Locale.package, the address [, --web-domain]); the host copy has none
+  server picker  the client copy's game\\Data\\zz_ServerPicker.snap (Start-Client's picker mode) =
+                 patch_login_movie.build(its own LoginScreen.snap), when it is there or with --picker; the server
+                 list's archive zz_ServerList.snap (written by Start-Client before each game start) isn't compared
 
 Usage (from the repository folder; it reads the game's files, so python -I):
     .venv\\Scripts\\python -I re\\scripts\\test_p3b.py <Dawngate-Data folder> --release <release folder>
         [--address 127.0.0.1] [--pristine client\\ia_Dawngate\\Dawngate] [--content-ref server\\data\\content.json]
-        [--web-domain <D>]
+        [--web-domain <D>] [--picker]
 Exit 0 when everything matches, 1 otherwise. Nothing is written.
 """
 import argparse
@@ -35,6 +38,7 @@ sys.path.insert(0, HERE)  # -I drops the script folder
 import patch_client  # noqa: E402
 import patch_config  # noqa: E402
 import patch_locale  # noqa: E402
+import patch_login_movie  # noqa: E402
 import setup_all  # noqa: E402
 import setup_server_copy  # noqa: E402
 
@@ -42,6 +46,7 @@ LOCAL = "127.0.0.1"
 EXE = "game/Dawngate.exe"
 CONFIGS = ("game/Data/Config.package", "game/Data/Config_Ship.package", "game/Data/Config_Pack.package")
 LOADER = "game/PhysXLoader.dll"
+LIST_ARCHIVE = "game/Data/zz_ServerList.snap"  # the server picker's list (Start-Client writes it before each start)
 
 
 def sha(b):
@@ -83,6 +88,8 @@ def main(argv):
     ap.add_argument("--pristine", help="client\\ia_Dawngate\\Dawngate: compare the files' times too")
     ap.add_argument("--content-ref", help="a content.json made by the Python pipeline")
     ap.add_argument("--web-domain", help="the web domain the client copy's links were made for (default none)")
+    ap.add_argument("--picker", action="store_true", help="the client copy was set up in picker mode (Start-Client "
+                    "--picker on): its server picker must be there and its exe uses certs\\tunnel-<address>'s CA")
     a = ap.parse_args(argv[1:])
     if not sys.flags.isolated:
         sys.exit("run this with python -I: it reads the game's files")
@@ -109,8 +116,11 @@ def main(argv):
     orig_exe = read(j(client, EXE + ".orig"))
     r.check(sha(orig_exe) == untouched[EXE][1], "client Dawngate.exe.orig is the untouched exe")
     profile = "lan" if lan else "local"
-    for name, copy, prof, srv_host in (("client exe", client, profile, a.address), ("host exe", host, "local", LOCAL)):
-        want, _ = patch_client.patch_bytes(orig_exe, modulus, prof, None, srv_host, None)
+    # picker mode patches the client copy for the tunnel address with Start-Client's own certificate set
+    client_ca = read(j(a.root, "certs", "tunnel-" + a.address, "ca_modulus.bin")) if a.picker else modulus
+    for name, copy, prof, srv_host, ca_mod in (("client exe", client, profile, a.address, client_ca),
+                                               ("host exe", host, "local", LOCAL, modulus)):
+        want, _ = patch_client.patch_bytes(orig_exe, ca_mod, prof, None, srv_host, None)
         got = read(j(copy, EXE))
         r.check(got == want, f"{name} = patch_client.py {prof} {srv_host}", f"{sha(got)[:16]} vs {sha(want)[:16]}")
         print(f"{name}: {sha(got)}  ({'equal' if got == want else 'DIFFERENT'})")
@@ -137,6 +147,17 @@ def main(argv):
             f"{sha(got)[:16]} vs {sha(want)[:16]}")
     r.check(not os.path.isfile(j(host, *patch_locale.REL.split("/"))), f"the host copy has no {patch_locale.PACKAGE}")
     print(f"client {patch_locale.PACKAGE}: {sha(got)}  ({'equal' if got == want else 'DIFFERENT'})")
+
+    print("server picker")
+    picker = j(client, *patch_login_movie.REL.split("/"))
+    if os.path.isfile(picker) or a.picker:
+        want = patch_login_movie.build(j(client, *patch_login_movie.SOURCE.split("/")))
+        got = read(picker) if os.path.isfile(picker) else b""
+        r.check(got == want, "client zz_ServerPicker.snap = patch_login_movie.py", f"{sha(got)[:16]} vs {sha(want)[:16]}")
+        r.check(not os.path.isfile(j(host, *patch_login_movie.REL.split("/"))), "the host copy has no server picker")
+        print(f"client zz_ServerPicker.snap: {sha(got)}  ({'equal' if got == want else 'DIFFERENT'})")
+    else:
+        r.line("client: no server picker (not set up in picker mode)")
 
     print("host DLL")
     game = j(host, "game")
@@ -171,7 +192,7 @@ def main(argv):
                 rel = os.path.relpath(j(dp, f), copy).replace("\\", "/")
                 if rel not in untouched and not rel.endswith(".orig") and not (label == "host" and (
                         rel.startswith("game/dgsim") or rel == "game/PhysXLoader_orig.dll")) and not (
-                        label == "client" and rel == patch_locale.REL):
+                        label == "client" and rel in (patch_locale.REL, patch_login_movie.REL, LIST_ARCHIVE)):
                     extra.append(rel)
         r.line(f"{label}: extra files {extra[:5] if extra else 'none'}")
 

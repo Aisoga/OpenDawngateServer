@@ -1,6 +1,7 @@
 package dgserver
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -122,6 +123,25 @@ func runTunnelClient(cfg config, seconds int, h Hooks) int {
 		return 1
 	}
 	defer log.Close()
+	if cfg.tunnelFront != "" {
+		if RunFront == nil {
+			fmt.Fprintln(os.Stderr, "dgserver: --tunnel-front: this build has no front (cmd/dgserver sets it)")
+			return 2
+		}
+		stop, ports, err := RunFront(FrontConfig{Folder: cfg.tunnelFront, Gateway: cfg.tunnelClient, Pin: pin,
+			TunnelAddress: cfg.tunnelAddress, RedirectorTLS: tlsCfg, Log: log, Copy: cfg.frontCopy})
+		if err != nil {
+			log.Logf("front", "the front didn't start: %v", err)
+			fmt.Fprintln(os.Stderr, "dgserver:", err)
+			return 1
+		}
+		if h.Started != nil {
+			h.Started(Info{Bind: cfg.tunnelAddress, TCPPorts: ports, Log: log.Path})
+		}
+		waitForStop(seconds, h.Stop)
+		stop()
+		return 0
+	}
 	c := &tunnel.Client{Log: log, Gateway: cfg.tunnelClient, Pin: pin, TunnelIP: net.ParseIP(cfg.tunnelAddress), RedirectorTLS: tlsCfg}
 	if err := c.Start(); err != nil {
 		log.Logf("tunnel", "the tunnel didn't start: %v", err)
@@ -141,6 +161,21 @@ func runTunnelClient(cfg config, seconds int, h Hooks) int {
 	c.Close()
 	return 0
 }
+
+// FrontConfig is what dgserver --tunnel-front hands RunFront.
+type FrontConfig struct {
+	Folder        string     // the front's server list and trusted keys (a Start-Client Dawngate-Data folder's layout)
+	Gateway       string     // the --tunnel-client gateway (host:port): added to the list, trusted with Pin, preselected
+	Pin           tunnel.Pin // its key
+	TunnelAddress string     // the loopback address the player copy is patched for
+	RedirectorTLS *tls.Config
+	Log           *logging.Log
+	Copy          string // the player copy the login screen's list goes into ("" = none)
+}
+
+// RunFront starts Start-Client's front for dgserver --tunnel-front (the launcher sets it: dgserver can't import the
+// launcher, which imports dgserver); it returns its stop function and its TCP ports.
+var RunFront func(FrontConfig) (stop func(), tcpPorts []int, err error)
 
 // clientPin is --tunnel-pin (64 hex digits) or the pin of --tunnel-pin-cert (the gateway's certificate file).
 func clientPin(cfg config) (tunnel.Pin, error) {

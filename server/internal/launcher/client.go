@@ -25,8 +25,9 @@ const ClientConfigName = "Start-Client.ini"
 // ClientConfigText is the head of Start-Client.ini when Start-Client.exe writes it.
 const ClientConfigText = `; Start-Client.ini: the options of Start-Client.exe. Lines that start with ; are comments.
 
-; The server to play on: its address, e.g. 192.168.1.20. Empty: the server of Start-Server.exe on this PC
-; (its Start-Server.ini), else 127.0.0.1. "Start-Client.exe <address>" overrides it.
+; The server to play on: its address, e.g. 192.168.1.20. Empty: the server picker's list (below) when it has
+; servers, else the server of Start-Server.exe on this PC (its Start-Server.ini), else 127.0.0.1.
+; "Start-Client.exe <address>" overrides it.
 server =
 
 ; The folder for the game copy (1.5 GB): relative to this program's folder, or a full path. Empty: Start-Server.ini's
@@ -39,9 +40,17 @@ tunnel = auto
 
 ; The server's tunnel port (TCP and UDP), when its operator changed it. Empty: 42128.
 gateway_port =
+
+; The server picker on the game's login screen: SERVER above the login lists your servers (the list is
+; Dawngate-Data\servers\bookmarks.json), and you add or remove servers there. auto (the default) uses it whenever
+; the tunnel is used: for a server on the internet, with tunnel = on, or when the list has servers and no server
+; is set above. on always (it needs the tunnel), off never: the game then plays on one server.
+; "Start-Client.exe <address>" adds a server to the list and preselects it. A server without the tunnel (on a home
+; network) can't be picked: Start-Client then plays on it directly.
+picker = auto
 `
 
-var clientKeys = []string{"server", "folder", "zip", "tunnel", "gateway_port"}
+var clientKeys = []string{"server", "folder", "zip", "tunnel", "gateway_port", "picker"}
 
 // TestParkEnv set to 1 is Start-Client's --test-park (the release's test hook; never needed by a player).
 const TestParkEnv = "DAWNGATE_TEST_PARK"
@@ -52,7 +61,8 @@ const TestParkEnv = "DAWNGATE_TEST_PARK"
 func RunClient(args []string, o IO) int {
 	fs := flag.NewFlagSet("Start-Client", flag.ContinueOnError)
 	fs.SetOutput(o.Out)
-	serverFlag := fs.String("server", "", "the server's address (also the first argument; default: Start-Client.ini, then this PC's Start-Server)")
+	serverFlag := fs.String("server", "", "the server: its address, or the tag or name of a server in the picker's list (also the first "+
+		"argument; default: Start-Client.ini, then the picker's list, then this PC's Start-Server)")
 	caFile := fs.String("ca", "", "the server's ca_modulus.bin, when its operator handed it out (instead of fetching it)")
 	trust := fs.Bool("trust", false, "trust a new server CA without asking (scripts and tests; players confirm the fingerprint)")
 	setupOnly := fs.Bool("setup-only", false, "set up the player copy for the server, then exit without starting the game")
@@ -64,11 +74,24 @@ func RunClient(args []string, o IO) int {
 	gwPortFlag := fs.String("gateway-port", "", "the server's tunnel port (default 42128)")
 	gwPinFlag := fs.String("gateway-pin", "", "the server's tunnel key (64 hex digits), when its operator handed it out (no question)")
 	tunnelAddr := fs.String("tunnel-address", DefaultTunnelAddress, "the loopback address the tunnel listens on and the game connects to (tests)")
-	if err := fs.Parse(args); err != nil {
+	pickerFlag := fs.String("picker", "", "the server picker on the login screen (the list in "+`Dawngate-Data\servers\`+BookmarksFile+
+		"): auto (the default) whenever the tunnel is used, on always (needs the tunnel), off plays on one server")
+	lane := fs.String("test-lane", "", `test hook: one letter X; the game copy gets per-user folders of its own (%APPDATA%\DawngateDataX, `+
+		`Documents\DawngateX) and the game runs with -multipleInstances, beside another client on this PC`)
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 2
+	}
+	if len(positional) > 1 {
+		fmt.Fprintf(o.Out, "Start-Client takes one server address, not %q\n", positional)
+		return 2
+	}
+	*lane = strings.ToUpper(*lane)
+	if *lane != "" && (len(*lane) != 1 || (*lane)[0] < 'A' || (*lane)[0] > 'Z') {
+		return o.fail("--test-lane %s: one letter", *lane)
 	}
 	in := bufio.NewReader(o.In)
 	fmt.Fprintln(o.Out, "Dawngate Restoration: Start-Client")
@@ -82,34 +105,17 @@ func RunClient(args []string, o IO) int {
 		fmt.Fprintf(o.Out, "  note: %s: unknown option %q (ignored)\n", clientIni, k)
 	}
 	scfg, _ := ReadConfig(filepath.Join(o.ExeDir, ServerConfigName)) // this PC's server, when there is one
-	server := *serverFlag
-	if server == "" && fs.NArg() > 0 {
-		server = fs.Arg(0)
+	pickerSet, err := pickerSetting(firstNonEmpty(*pickerFlag, ccfg["picker"]))
+	if err != nil {
+		return o.fail("%v", err)
 	}
-	if server == "" {
-		server = ccfg["server"]
+	mode, err := tunnelMode(firstNonEmpty(*tunnelFlag, ccfg["tunnel"]))
+	if err != nil {
+		return o.fail("%v", err)
 	}
-	if server == "" && scfg != nil {
-		server = scfg["address"]
-	}
-	if server == "" && o.Interactive {
-		answer, err := Prompt(in, o.Out, "\nWhich server do you want to play on? Type its address (e.g. 192.168.1.20),\n"+
-			"or just press Enter for a server on this PC: ")
-		if err != nil {
-			return o.fail("%v", err)
-		}
-		server = answer
-		if answer != "" {
-			if err := setClientKey(clientIni, "server", answer); err == nil {
-				fmt.Fprintf(o.Out, "  saved in %s (edit or delete it to play on another server)\n", clientIni)
-			}
-		}
-	}
-	if server == "" {
-		server = setup.Local
-	}
-	if _, err := setup.ClientOptions(server); err != nil {
-		return o.fail("The server address %q: %v", server, err)
+	gwPort, err := gatewayPort(firstNonEmpty(*gwPortFlag, ccfg["gateway_port"]))
+	if err != nil {
+		return o.fail("%v", err)
 	}
 	folder := ccfg["folder"]
 	if folder == "" && scfg != nil {
@@ -119,26 +125,35 @@ func RunClient(args []string, o IO) int {
 		folder = DefaultFolder
 	}
 	l := setup.Layout{Root: Resolve(o.ExeDir, folder)}
-	mode, err := tunnelMode(firstNonEmpty(*tunnelFlag, ccfg["tunnel"]))
+	named := *serverFlag
+	if named == "" && len(positional) > 0 {
+		named = positional[0]
+	}
+	choice, err := chooseServer(o, in, clientIni, l, ccfg, scfg, named, pickerSet, mode, gwPort)
 	if err != nil {
 		return o.fail("%v", err)
 	}
-	gwPort, err := gatewayPort(firstNonEmpty(*gwPortFlag, ccfg["gateway_port"]))
-	if err != nil {
-		return o.fail("%v", err)
+	picker, server := choice.picker, choice.server
+	if _, err := setup.ClientOptions(server); err != nil && !picker {
+		return o.fail("The server address %q: %v", server, err)
 	}
-	tunnelled := tunnelFor(mode, server)
+	tunnelled := picker || tunnelFor(mode, server) // in picker mode every server of the list is reached through its tunnel
 	if IsPublicAddress(server) {
 		ClientRiskNotice(o.Out, server, tunnelled)
 	}
 	local := !remoteServer(server)
-	fmt.Fprintf(o.Out, "  server   %s\n  folder   %s\n", server, l.Root)
+	if !picker {
+		fmt.Fprintf(o.Out, "  server   %s\n", server)
+	}
+	fmt.Fprintf(o.Out, "  folder   %s\n", l.Root)
 
 	var ca []byte
 	patchFor := server // the address the player copy is patched for
 	var gw string
 	var pin tunnel.Pin
 	var tunnelTLS *tls.Config
+	var bookmarks *Bookmarks
+	preselect := ""
 	if tunnelled {
 		// the game talks to the tunnel on this PC; the tunnel's key is trusted on first use, the redirector's
 		// certificates are this PC's own (no server CA needed)
@@ -146,11 +161,18 @@ func RunClient(args []string, o IO) int {
 			return o.fail("--tunnel-address %s: a loopback address such as 127.0.0.1", *tunnelAddr)
 		}
 		patchFor = *tunnelAddr
-		gw = gatewayAddress(server, gwPort, scfg)
-		fmt.Fprintf(o.Out, "  tunnel   %s (the game connects to %s on this PC)\n", gw, patchFor)
-		if !*check {
-			if pin, err = trustedGatewayPin(o, in, l, server, gw, *gwPinFlag, *trust); err != nil {
+		if picker {
+			bookmarks = choice.bm
+			if preselect, err = pickerBookmarks(o, l, choice, *gwPinFlag, *check); err != nil {
 				return o.fail("%v", err)
+			}
+		} else {
+			gw = gatewayAddress(server, gwPort, scfg)
+			fmt.Fprintf(o.Out, "  tunnel   %s (the game connects to %s on this PC)\n", gw, patchFor)
+			if !*check {
+				if pin, err = trustedGatewayPin(o, in, l, server, gw, *gwPinFlag, *trust); err != nil {
+					return o.fail("%v", err)
+				}
 			}
 		}
 		if ca, tunnelTLS, err = tunnelCertSet(l, patchFor, *check); err != nil {
@@ -191,14 +213,14 @@ func RunClient(args []string, o IO) int {
 
 	fmt.Fprintln(o.Out, "\nChecking the game copy (the first start makes it: about half a minute and 1.5 GB):")
 	s := &setup.Setup{Layout: l, Out: o.Out, Live: o.Live, Check: *check, FindZip: zipFinder(o, in, firstNonEmpty(*zipFlag, ccfg["zip"], scfg["zip"])),
-		Manifest: manifest, WebDomain: ownServerDomain(scfg, o.ExeDir, l.Root, server)}
+		Manifest: manifest, WebDomain: ownServerDomain(scfg, o.ExeDir, l.Root, server), DataSuffix: *lane, Picker: picker}
 	var release func()
 	if !*check {
 		if release, err = setup.Lock(l.Root); err != nil {
 			return o.fail("%v", err)
 		}
 	}
-	if clientRunning() && !*check {
+	if *lane == "" && clientRunning() && !*check { // a test lane's game runs beside the others (-multipleInstances)
 		if release != nil {
 			release()
 		}
@@ -223,14 +245,29 @@ func RunClient(args []string, o IO) int {
 	if *setupOnly {
 		return 0
 	}
-	if tunnelled {
+	if !picker {
+		if err := RemoveServerList(l.ClientCopy()); err != nil {
+			return o.fail("The server list of an earlier start can't be removed: %v (is the game running?)", err)
+		}
+	}
+	if picker {
+		stop, err := startFront(o, l, bookmarks, patchFor, tunnelTLS, preselect)
+		if err != nil {
+			return o.fail("The server picker didn't start: %v", err)
+		}
+		defer stop()
+	} else if tunnelled {
 		_, stop, err := startTunnel(o, l, gw, pin, patchFor, tunnelTLS)
 		if err != nil {
 			return o.fail("The tunnel didn't start: %v", err)
 		}
 		defer stop()
 	}
-	return play(o, l, *park)
+	gameArgs := ""
+	if *lane != "" {
+		gameArgs = "-multipleInstances"
+	}
+	return play(o, l, *park, gameArgs)
 }
 
 // ownServerDomain is the web domain the player copy's login links use: Start-Server.ini's web_domain when the
@@ -269,6 +306,27 @@ var remoteServer = func(address string) bool { return !net.ParseIP(address).IsLo
 // clientRunning is ClientRunning (the game's Global\Dawngate mutex); the tests replace it, since a test lane's client on
 // this PC holds that mutex too.
 var clientRunning = ClientRunning
+
+// parseInterspersed parses flags before and after the arguments that aren't flags (Start-Client.exe <address>
+// --ca <file>, as the messages tell players to type; the flag package alone stops at the address and leaves every
+// later flag unread). "--" ends the flags.
+func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positional []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			return positional, nil
+		}
+		if len(args) > len(rest) && args[len(args)-len(rest)-1] == "--" {
+			return append(positional, rest...), nil
+		}
+		positional = append(positional, rest[0])
+		args = rest[1:]
+	}
+}
 
 func firstNonEmpty(s ...string) string {
 	for _, v := range s {
@@ -339,9 +397,9 @@ func remoteCA(o IO, in *bufio.Reader, l setup.Layout, server, caFile string, tru
 }
 
 // play starts the game and waits for it; Ctrl+C or closing the window closes the game.
-func play(o IO, l setup.Layout, park bool) int {
+func play(o IO, l setup.Layout, park bool, args string) int {
 	prev := ForegroundWindow() // the test hook gives the foreground back to it (Park)
-	g, err := StartGame(l.ClientCopy(), StartOptions{NoActivate: park})
+	g, err := StartGame(l.ClientCopy(), StartOptions{Args: args, NoActivate: park})
 	if err != nil {
 		return o.fail("The game didn't start: %v", err)
 	}

@@ -46,12 +46,49 @@ var ErrorLines = map[uint32]string{
 	0x00650001: "This account has been disabled. Please contact the server's operator.",
 	0x400C0000: "Too long: a login name may have at most 32 characters and a password at most 63.",
 	0x40720000: "Too many sign-ups or login attempts from your address. Please wait a while and try again.",
+	// Start-Client's server picker (launcher.FrontErr*): the login refused before it reached a server.
+	0x00E00001: "That server isn't in your list. Pick one with SERVER above the login, or add it there.",
+	0x00E10001: "The server you picked doesn't answer. It may be offline, or its address may be wrong. Try again later.",
+	0x00E20001: "The server's key has changed since you last played, so the login was refused. Ask its operator: see the troubleshooting guide.",
+	0x00E30001: "Something answers at that address, but no Dawngate server with the tunnel on. Ask its operator.",
+	0x00E40001: "The server you picked answered, but couldn't take the login. Try again in a moment.",
+	0x00E50001: "The server was removed from your list.",
+	0x00E60001: "That isn't a server address. Use an IPv4 address such as 203.0.113.5, or a host name.",
 }
 
-// LoginLines are LoginScreen's: the account field's label and the check box beside it.
+// LoginLines are LoginScreen's: the account field's label and the check box beside it, and the server picker's
+// texts (client_ui/serverpicker/ServerPicker.as reads 0x5E70A1xx through Global.ForceTranslateString, its English
+// fallbacks the same; {1} is a ping, {2} the key a server shows, {3} the trusted key).
 var LoginLines = map[uint32]string{
 	0x0AC5BE93: "Enter Login Name",
 	0x0AC5BE95: "Remember Login Name",
+	0x5E70A101: "SERVER",
+	0x5E70A102: "SELECT A SERVER",
+	0x5E70A103: "ADD SERVER",
+	0x5E70A104: "REMOVE",
+	0x5E70A105: "DONE",
+	0x5E70A106: "ADD",
+	0x5E70A107: "CANCEL",
+	0x5E70A108: "Server address",
+	0x5E70A109: "Name (optional)",
+	0x5E70A10A: "Added at your next login, which checks the server and trusts its key.",
+	0x5E70A10B: "Type the server's address: an IPv4 address such as 203.0.113.5, or a host name.",
+	0x5E70A10C: "No servers yet: add one.",
+	0x5E70A10D: "none: add a server",
+	0x5E70A10E: "pick a server",
+	0x5E70A110: "online, {1} ms",
+	0x5E70A111: "online, new key",
+	0x5E70A112: "KEY CHANGED",
+	0x5E70A113: "offline",
+	0x5E70A114: "no tunnel",
+	0x5E70A115: "added at login",
+	0x5E70A116: "not checked",
+	0x5E70A120: "Online, {1} ms. Its key: {2}.",
+	0x5E70A121: "New server: its key {2} will be trusted at your first login. Compare it with the fingerprint its operator gives you.",
+	0x5E70A122: "KEY CHANGED: you trusted {3}, the server now shows {2}. Don't log in until its operator confirms the new key: see the troubleshooting guide.",
+	0x5E70A123: "No answer from this server. It may be offline, or its address may be wrong.",
+	0x5E70A124: "Something answers at this address, but no Dawngate server with the tunnel on.",
+	0x5E70A125: "Not checked yet.",
 }
 
 // URLPages are the URL table's lines that link to the server's pages (sitelinks): the legal links 1, 2, 7, Forgot

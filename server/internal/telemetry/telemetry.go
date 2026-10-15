@@ -93,6 +93,10 @@ func (s *Sink) dump(peer, what string, b []byte) {
 	s.Log.Logf(who, "%s %s%s:\n%s", peer, what, more, logging.Hexdump(b[:min(len(b), logging.MaxDump)]))
 }
 
+// LogPacket logs one packet and its events as ServeConn does (a packet that a relay doesn't pass on: Start-Client's
+// front before a login); it returns the number of events.
+func (s *Sink) LogPacket(peer string, p Packet) int { return s.logPacket(peer, p) }
+
 // logPacket logs one packet and its events; it returns the number of events.
 func (s *Sink) logPacket(peer string, p Packet) int {
 	if p.Kind != KindLogin {

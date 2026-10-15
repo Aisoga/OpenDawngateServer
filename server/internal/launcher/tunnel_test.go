@@ -66,7 +66,7 @@ func TestStartClientTunnel(t *testing.T) {
 	}
 	dir := release(t)
 	args := func(port int, extra ...string) []string {
-		return append([]string{"--non-interactive", "--setup-only", "--tunnel", "on", "--tunnel-address", tunnelLocal,
+		return append([]string{"--non-interactive", "--setup-only", "--tunnel", "on", "--picker", "off", "--tunnel-address", tunnelLocal,
 			"--gateway-port", strconv.Itoa(port)}, append(extra, tunnelServer)...)
 	}
 	code, out := run(t, RunClient, dir, args(tunnel.DefaultPort)...)

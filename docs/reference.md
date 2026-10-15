@@ -60,21 +60,67 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 ## Start-Client.exe and Start-Client.ini
 
 ```
-Start-Client.exe [<server address>] [options]
+Start-Client.exe [<server address or tag>] [options]
 ```
 
 | Option | Effect |
 |---|---|
-| `<server address>` or `--server <address>` | The server to play on. Without an address, the program uses the one in `Start-Client.ini`, or a server on this PC, or asks. |
-| `--ca <file>` | Use the `ca_modulus.bin` the operator handed out instead of asking about the fingerprint. |
+| `<server>` or `--server <server>` | The server to play on: an address, or the tag or name of a server in the server list. A server reached through its tunnel is added to the list if it's missing, and preselected on the login screen. Without it, the program uses `server` in `Start-Client.ini`, else the server list if it has servers, else a server on this PC, else asks. |
+| `--picker auto\|on\|off` | The server list on the login screen. `auto` (the default) shows it whenever the tunnel is used: for a public address, with `--tunnel on`, for a server of the list, or for the list itself when no server is named. `on` always (it needs the tunnel), `off` never: the game plays on one server. A server without the tunnel is always played on directly, and the program says so. |
+| `--ca <file>` | Use the `ca_modulus.bin` the operator handed out instead of asking about the fingerprint (servers without the tunnel). |
 | `--tunnel auto\|on\|off` | The encrypted tunnel. `auto` (the default) uses it for public addresses. Use `on` for a home server whose operator set `tunnel = on`. |
-| `--gateway-pin <64 hex digits>` | The server's tunnel key, if the operator handed it out (then there's no fingerprint question). |
+| `--gateway-pin <64 hex digits>` | The server's tunnel key, if the operator handed it out: it is trusted without a question, and the server list checks it. |
 | `--gateway-port <port>` | The server's tunnel port, if it's not 42128. |
+| `--trust` | Trust a new fingerprint without asking (scripts; with `--picker off`). |
 | `--zip <file>` | Use this `Dawngate.zip` to set up or repair the game copy. |
 | `--check` | Only report what is missing. |
 | `--setup-only` | Prepare the game copy for the server without starting the game. |
 
-`Start-Client.ini` remembers `server`, `folder`, `tunnel` and `gateway_port`.
+`Start-Client.ini` has the keys `server` (empty: the server list), `folder`, `tunnel`, `gateway_port` and `picker` (`auto`, `on`, `off`). An older `Start-Client.ini` keeps working: its `server` becomes the first server of a new list when it is reached through the tunnel.
+
+### The server list
+
+The servers on the login screen are kept in `Dawngate-Data\servers\bookmarks.json`, written by `Start-Client.exe` (and by the list's ADD SERVER and REMOVE at the next login):
+
+```json
+{
+  "servers": [
+    { "tag": "a", "name": "Alex's server", "address": "203.0.113.5", "gateway_port": 42128, "last_used": "2026-10-15T12:00:00Z" },
+    { "tag": "b", "name": "play.example.org", "address": "play.example.org", "gateway_port": 42128 }
+  ]
+}
+```
+
+| Field | Rule |
+|---|---|
+| `tag` | 1–16 of `a`–`z`, `0`–`9`, `_` and `-`, not starting with `-`; unique. A server added without one gets the next free letter. |
+| `name` | Shown in the list; the address when empty. |
+| `address` | An IPv4 address or a host name; unique. |
+| `gateway_port` | The server's tunnel port; 0 or missing means 42128. |
+| `last_used` | When a login last went there (UTC). The login screen preselects the server used last. |
+
+You may edit the file while the game isn't running. A file that doesn't follow these rules stops `Start-Client.exe` with its name: fix or delete it. Each server's trusted key is kept apart from the list, in `Dawngate-Data\servers\<address>\gateway.pin`, and stays when the server is removed from the list. `Start-Client.exe` writes the list into the game copy before each start, with each server's status (`game\Data\zz_ServerList.snap`, which the login screen reads; don't edit it).
+
+The login name carries the pick ([playing.md](playing.md#the-server-list)):
+
+| Login name | Effect |
+|---|---|
+| `<name>` | Log in on the server selected on the login screen, else the one used last. |
+| `<name>#<tag>` | Log in on that server (a tag, address or name of the list). |
+| `<name>#+<address>[:<port>][=<display name>]` | Add the server once it answers, then log in there. |
+| `<name>#-<tag>` | Remove the server from the list (the login is then refused with a confirmation). |
+
+The refusals the list can show at LOGIN, besides the server's own:
+
+| Code | Text |
+|---|---|
+| `00E00001` | That server isn't in your list. |
+| `00E10001` | The server you picked doesn't answer. |
+| `00E20001` | The server's key has changed since you last played, so the login was refused. |
+| `00E30001` | Something answers at that address, but no Dawngate server with the tunnel on. |
+| `00E40001` | The server you picked answered, but couldn't take the login. |
+| `00E50001` | The server was removed from your list. |
+| `00E60001` | That isn't a server address. |
 
 ## Extra server options (server_flags)
 
@@ -107,7 +153,8 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 | `data\` | `accounts.db` (with `-wal` and `-shm`), `content.json` (what accounts can own, built from your game files), `broadcast.txt`, and `site\` (the website's certificates and your own pages). **Back this up.** |
 | `certs\<address>\` | The server's certificates and the tunnel key. Keep private. Only `ca_modulus.bin` may be handed out. |
 | `logs\` | The server's logs, and `hosts\<match>\` for each match. They contain login names and addresses. |
-| `client\` | The game copy for playing, patched for your server. |
+| `client\` | The game copy for playing, patched for your server (or, with the server list, for the tunnel on this PC). |
+| `servers\` | `Start-Client.exe`'s server list `bookmarks.json`, and per server `<address>\` the trusted tunnel key `gateway.pin` or the trusted certificate authority. |
 | `host\` | The game copy the match hosts run, with `dgsim.dll`. |
 
 Never share the game copies: they are the game's files.

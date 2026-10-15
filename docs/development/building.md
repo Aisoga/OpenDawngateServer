@@ -20,6 +20,7 @@ Windows 10 or 11, x64, with about 6 GB of free disk space for the setup.
 | Git for Windows | any | Its `openssl.exe` signs the developers' certificates with MD5, which Python's `cryptography` refuses. |
 | Wireshark with Npcap | optional | Captures each play session so the egress check can prove nothing left the PC. Install Npcap with **"Support loopback traffic capture"**. Without it, play with `-NoCapture`. |
 | LuaJ 2.0.3 and a JDK | optional | Only for `re\scripts\bots_lua_check.py`, which compiles the match host's Lua files and runs their tests. Put `luaj-jse-2.0.3.jar` ([download](https://repo1.maven.org/maven2/org/luaj/luaj-jse/2.0.3/luaj-jse-2.0.3.jar), SHA-256 `02464b0a6cf90fa404d0b62ebb587b96a38e118420a7adc467c1550f889fa41b`) into `tools\luaj\`. |
+| Apache Flex SDK 4.16.1, a `playerglobal.swc` for Flash Player 11.1 and a JDK | optional | Only to change the login screen's server picker (`client_ui\serverpicker\ServerPicker.as`). Its compiled bytes are committed, so nothing else needs them. `re\scripts\build_picker.py build` compiles it and writes `client_ui\serverpicker\ServerPicker.abc.hex` and `server\internal\setup\moviepatch\picker_tags.hex`; `check` tells whether they match the source. It looks in `tools\` (`flex_sdk_4.16.1`, `ffdec_26.3.0\flashlib\playerglobal32_0.swc`, `jdk-21.0.12.1+1`), or set `FLEX_SDK`, `PLAYERGLOBAL` and `JAVA`. |
 
 The game brings its own DirectX 9 and Visual C++ 2010 runtimes, so nothing else needs to be installed for it.
 
@@ -100,7 +101,7 @@ A release is a binary distribution under the AGPL: whoever hands it out also off
 | Match host (C++) | `gms\build\Release\gms_tests.exe` and `gms\build\core\control\Release\dg_control_tests.exe`, after the build |
 | Host Lua scripts | `.venv\Scripts\python -I re\scripts\bots_lua_check.py` (needs LuaJ and a JDK) |
 | Setup and scripts | `re\scripts\test_*.py` with `.venv\Scripts\python -I`, and `test_*.ps1` with `powershell -ExecutionPolicy Bypass -File` |
-| Release setup against the Python setup | `re\scripts\test_p3b.py` compares a release install with the developers' setup, file by file |
+| Release setup against the Python setup | `re\scripts\test_p3b.py` compares a release install with the developers' setup, file by file; with `--picker` also the server picker that `Start-Client.exe --picker on` adds to the login screen (`re\scripts\patch_login_movie.py` makes the reference) |
 | A live check | `play.ps1 -Check` (see [running-from-source.md](running-from-source.md#the-check-mode)) |
 
 Before submitting Go changes, also run `gofmt -l .` and `go vet ./...` in `server\`.

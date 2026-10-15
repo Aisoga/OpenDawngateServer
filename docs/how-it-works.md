@@ -52,6 +52,14 @@ Because the game's own code and data run the match, every shaper, ability and it
 
 **The tunnel** is used for servers on the internet. `Start-Client.exe` runs a small relay on the player's PC. The game connects to that relay, and the relay carries everything to the server over one encrypted port (TLS 1.3 for TCP, AES-GCM for UDP). The game's own 2014 security never crosses the internet.
 
+**The server list on the login screen** works without any change to how the game talks to a server:
+
+- Since the game only ever talks to the relay on its own PC, one game copy serves every tunnelled server. What differs per server is only where the relay connects to.
+- The relay has a **front**: it answers the game's first requests itself (where to log in, the pre-login handshake, the connection-quality test), so the login screen appears before any server is chosen.
+- The login screen's movie gets a small addition of this project's own, written in ActionScript and compiled into `Start-Client.exe`. `Start-Client.exe` adds it to a copy of the player's own movie. It shows the list, and at LOGIN it adds the pick to the login name (`alex#b`). The game sends the login name as typed, so the pick reaches the front.
+- At the login, the front opens the tunnel to the picked server, checks the server's key against the one trusted before (or trusts it on the first login), replays the game's two pre-login requests there so the server sees an ordinary connection, and passes the login on with the pick removed. From then on the connection belongs to that server.
+- After a logout the game asks the front again where to log in, so the player is back at the list. Additions and removals also travel in the login name (`alex#+<address>`, `alex#-b`), because the movie has no other way to reach `Start-Client.exe`; the front keeps the list and writes it into the game copy for the next time the login screen loads.
+
 ## Why three languages
 
 - **Go** for the server and the release's two programs: a single program file with no installation, modern TLS, and enough flexibility to also speak the client's old TLS 1.1 handshake.

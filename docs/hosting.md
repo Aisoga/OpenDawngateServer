@@ -51,7 +51,7 @@ You can play on the same PC that runs the server: just start `Start-Client.exe` 
 1. Choose **2** at the first question, or set `address = <this PC's LAN address>` in `Start-Server.ini`, for example `address = 192.168.1.20`.
 2. The server window shows the server's **fingerprint**, for example `3ff46759dcb1ea30`. Give your players the address, and tell them the fingerprint or show them your window.
 3. If Windows asks whether `Start-Server.exe` or the game copy in `Dawngate-Data\host` may use the network, allow **private networks** only.
-4. Each player unpacks the release with their own `Dawngate.zip` and starts `Start-Client.exe <address>`. The first time, they compare the fingerprint and answer `y`.
+4. Each player unpacks the release with their own `Dawngate.zip` and starts `Start-Client.exe <address>`. The first time, they compare the fingerprint and answer `y`. A home server without the tunnel isn't in the players' server lists on the login screen: `Start-Client.exe` plays on it directly. With `tunnel = on` in `Start-Server.ini` it is, and players start `Start-Client.exe <address> --tunnel on` once.
 
 **Instead of comparing fingerprints**, you can hand out the file `Dawngate-Data\certs\<address>\ca_modulus.bin`. It's public and contains no key. Players then start `Start-Client.exe <address> --ca ca_modulus.bin`. Never hand out any other file from `certs`.
 
@@ -94,11 +94,15 @@ Forward nothing else. **Never forward TCP 10040**, the channel between the serve
 
 If the PC holds the public address itself, with no router in between (a rented server, for example), its other ports listen on that address too. In that case, let the firewall in only TCP and UDP 42128 and TCP 443.
 
+### Your server in the players' server lists
+
+Players pick a server on the game's login screen, from a list that each player keeps on their own PC ([playing.md](playing.md#the-server-list)). A server appears in that list only with its tunnel on, which a public server always has. Players add yours with `Start-Client.exe <your address>` or with **ADD SERVER** on the login screen. If your tunnel port isn't 42128, give them the address as `<address>:<port>`.
+
 ### The tunnel's fingerprint
 
-The server window shows the **tunnel key's fingerprint**. Publish it where your players can check it, for example in your community's channel. Each player's `Start-Client.exe` shows it the first time they connect, and they answer `y` only if it matches.
+The server window shows the **tunnel key's fingerprint**, 16 hex digits. Publish it where your players can check it, for example in your community's channel. A player's server list shows the key of a new server, and its first login there trusts it. Every later login checks it.
 
-The key is in `Dawngate-Data\certs\<address>\`. Keep it private, and keep it: a new key means every player has to confirm a new fingerprint.
+The key is in `Dawngate-Data\certs\<address>\`. Keep it private, and keep it. If the key changes, for example because `Dawngate-Data\certs` was lost or made anew, every player's list shows **KEY CHANGED** with the old and the new fingerprint, and their logins are refused. Each player then has to confirm the new fingerprint with you and delete their old copy of the key ([troubleshooting.md](troubleshooting.md#logging-in)). That is what protects them from a stranger at your address, so tell them in advance if you ever change it.
 
 ## Accounts
 
@@ -201,4 +205,4 @@ Accounts live in one database, `Dawngate-Data\data\accounts.db`, with `accounts.
 - **Backups** are up to you (see [Backups](#backups)).
 - **The control port, TCP 10040, has no login.** Never forward it.
 
-**On a home network without the tunnel**, the game's own traffic isn't encrypted, including the password typed at login. That's fine on a network you trust. If you want encryption there too, set `tunnel = on`; your players then start `Start-Client.exe <address> --tunnel on`.
+**On a home network without the tunnel**, the game's own traffic isn't encrypted, including the password typed at login. That's fine on a network you trust. If you want encryption there too, set `tunnel = on`; your players then start `Start-Client.exe <address> --tunnel on` once, and pick your server from their list on the login screen.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -42,6 +43,13 @@ type Client struct {
 	RedirectorTLS *tls.Config
 	// RedirectorPort is the port whose TLS ends here (0: RedirectorPort, the client's compiled-in 42127).
 	RedirectorPort int
+	// External leaves the game's sockets to the caller (Start-Client's front, which keeps them while it switches
+	// between servers): Start opens the session and the UDP channel but listens nowhere; the caller opens streams
+	// with OpenStream and sends datagrams with SendDatagram, and Deliver gets the gateway's datagrams.
+	External bool
+	// Deliver takes a datagram from the gateway in External mode: port is the server port it comes from, dst the
+	// game socket on this PC it is for (always a loopback address).
+	Deliver func(port int, dst *net.UDPAddr, payload []byte)
 
 	HeartbeatEvery, HeartbeatTimeout, Keepalive, DialTimeout time.Duration
 
@@ -143,13 +151,19 @@ func (c *Client) Start() error {
 		s.ctrl.Close()
 		return err
 	}
-	if err := c.listen(); err != nil {
+	if c.External {
+		c.tcpLns, c.udpLns = map[int]net.Listener{}, map[int]*net.UDPConn{}
+	} else if err := c.listen(); err != nil {
 		c.closeSockets()
 		s.ctrl.Close()
 		return err
 	}
 	c.setSession(s)
-	c.logf("session %d to %s (key %s): listening on %s, TCP %s, UDP %s", s.id, c.Gateway, c.Pin.Fingerprint(), c.TunnelIP,
+	where := "listening on " + c.TunnelIP.String()
+	if c.External {
+		where = "for the game's sockets on " + c.TunnelIP.String()
+	}
+	c.logf("session %d to %s (key %s): %s, TCP %s, UDP %s", s.id, c.Gateway, c.Pin.Fingerprint(), where,
 		intList(c.tcp), intList(c.udpP))
 	c.wg.Add(2)
 	go c.controlLoop(s)
@@ -467,7 +481,7 @@ func (c *Client) gatewayLoop() {
 			continue
 		}
 		ln := c.udpLns[int(in.Port)]
-		if ln == nil {
+		if ln == nil && !(c.External && slices.Contains(c.udpP, int(in.Port))) {
 			c.dropPort.Add(1)
 			continue
 		}
@@ -478,6 +492,12 @@ func (c *Client) gatewayLoop() {
 		}
 		c.downN.Add(1)
 		c.downBytes.Add(uint64(len(payload)))
+		if c.External {
+			if c.Deliver != nil {
+				c.Deliver(int(in.Port), dst, payload)
+			}
+			continue
+		}
 		ln.WriteToUDP(payload, dst)
 	}
 }
@@ -499,27 +519,42 @@ func (c *Client) udpListenerLoop(port int, ln *net.UDPConn) {
 			}
 			continue
 		}
-		data := buf[:n]
-		if n > MaxPayload {
-			var ok bool
-			if data, ok = TrimMTUProbe(data); !ok {
-				c.dropBig.Add(1)
-				continue
-			}
-			c.trimmed.Add(1) // RakNet's 1492-byte MTU probe, cut to 1200's (raknet.go)
-		}
-		s := c.session(0)
-		if s == nil {
-			continue
-		}
-		pkt, err := s.up.Seal(InnerFor(KindData, port, src), data)
-		if err != nil {
-			continue
-		}
-		c.upN.Add(1)
-		c.upBytes.Add(uint64(len(data)))
-		c.udp.WriteToUDP(pkt, c.gwUDP)
+		c.SendDatagram(port, src, buf[:n])
 	}
+}
+
+// SendDatagram carries one of the game's datagrams to a server port through the channel: src is the game socket
+// it came from. A datagram over MaxPayload is dropped, except RakNet's MTU probe, which is cut to 1200's
+// (TrimMTUProbe); so is one while the control connection is being made again. It says whether it was sent.
+func (c *Client) SendDatagram(port int, src *net.UDPAddr, data []byte) bool {
+	if len(data) > MaxPayload {
+		var ok bool
+		if data, ok = TrimMTUProbe(data); !ok {
+			c.dropBig.Add(1)
+			return false
+		}
+		c.trimmed.Add(1) // RakNet's 1492-byte MTU probe, cut to 1200's (raknet.go)
+	}
+	s := c.session(0)
+	if s == nil {
+		return false
+	}
+	pkt, err := s.up.Seal(InnerFor(KindData, port, src), data)
+	if err != nil {
+		return false
+	}
+	c.upN.Add(1)
+	c.upBytes.Add(uint64(len(data)))
+	_, err = c.udp.WriteToUDP(pkt, c.gwUDP)
+	return err == nil
+}
+
+// Up says whether the client has a session (false while the control connection is being made again, and after
+// Close).
+func (c *Client) Up() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.closed && c.sess != nil
 }
 
 func (c *Client) acceptLoop(port int, ln net.Listener) {
@@ -571,43 +606,12 @@ func (c *Client) track(conn net.Conn, add bool) bool {
 // serveStream carries one of the game's TCP connections as a stream.
 func (c *Client) serveStream(port int, lc net.Conn) {
 	src, _ := lc.RemoteAddr().(*net.TCPAddr)
-	s := c.session(10 * time.Second)
-	if s == nil || src == nil {
-		lc.Close()
-		c.streamFails.Add(1)
-		return
-	}
-	gc, err := c.dial("tcp4", c.Gateway)
+	gc, err := c.OpenStream(port, src)
 	if err != nil {
-		c.logf("stream to port %d: %v", port, err)
-		lc.Close()
-		c.streamFails.Add(1)
-		return
-	}
-	gc.SetDeadline(time.Now().Add(c.DialTimeout))
-	h := streamHello{session: s.id, token: s.token, port: uint16(port), clientIP: ip4(src.IP), clientPort: uint16(src.Port)}
-	var st [1]byte
-	if _, err = gc.Write(h.encode()); err == nil {
-		_, err = io.ReadFull(gc, st[:])
-	}
-	if err != nil || st[0] != StatusOK {
-		if err == nil {
-			err = errors.New(StatusText(st[0]))
-		}
-		c.logf("stream to port %d refused: %v", port, err)
-		gc.Close()
-		lc.Close()
-		c.streamFails.Add(1)
-		return
-	}
-	gc.SetDeadline(time.Time{})
-	if !c.track(gc, true) {
-		gc.Close()
 		lc.Close()
 		return
 	}
-	defer c.track(gc, false)
-	c.streams.Add(1)
+	defer gc.Close()
 	var local net.Conn = lc
 	if port == c.RedirectorPort && c.RedirectorTLS != nil {
 		tl := tls.Server(lc, c.RedirectorTLS)
@@ -622,6 +626,64 @@ func (c *Client) serveStream(port int, lc net.Conn) {
 		local = tl
 	}
 	Pipe(local, gc)
+}
+
+// errClosed: the client is closed.
+var errClosed = errors.New("the tunnel is closed")
+
+// OpenStream opens a stream to a server port for a game socket (src, its address on this PC), waiting up to 10 s
+// for a session while the control connection is being made again; the stream's bytes are the port's. Close closes
+// it; so does the client's Close.
+func (c *Client) OpenStream(port int, src *net.TCPAddr) (net.Conn, error) {
+	s := c.session(10 * time.Second)
+	if s == nil || src == nil {
+		c.streamFails.Add(1)
+		if src == nil {
+			return nil, errors.New("no game socket address")
+		}
+		return nil, errors.New("no tunnel session")
+	}
+	gc, err := c.dial("tcp4", c.Gateway)
+	if err != nil {
+		c.logf("stream to port %d: %v", port, err)
+		c.streamFails.Add(1)
+		return nil, err
+	}
+	gc.SetDeadline(time.Now().Add(c.DialTimeout))
+	h := streamHello{session: s.id, token: s.token, port: uint16(port), clientIP: ip4(src.IP), clientPort: uint16(src.Port)}
+	var st [1]byte
+	if _, err = gc.Write(h.encode()); err == nil {
+		_, err = io.ReadFull(gc, st[:])
+	}
+	if err != nil || st[0] != StatusOK {
+		if err == nil {
+			err = errors.New(StatusText(st[0]))
+		}
+		c.logf("stream to port %d refused: %v", port, err)
+		gc.Close()
+		c.streamFails.Add(1)
+		return nil, err
+	}
+	gc.SetDeadline(time.Time{})
+	if !c.track(gc, true) {
+		gc.Close()
+		return nil, errClosed
+	}
+	c.streams.Add(1)
+	return &trackedConn{Conn: gc, c: c}, nil
+}
+
+// trackedConn is a stream OpenStream handed out: its Close also removes it from the sockets the client's Close
+// closes. CloseWrite passes a half close on (Pipe).
+type trackedConn struct {
+	*tls.Conn
+	c    *Client
+	once sync.Once
+}
+
+func (t *trackedConn) Close() error {
+	t.once.Do(func() { t.c.track(t.Conn, false) })
+	return t.Conn.Close()
 }
 
 // Pipe copies both ways between a and b, passes a half close on (a TCP FIN or a TLS close_notify) and closes both when
@@ -646,12 +708,9 @@ func Pipe(a, b net.Conn) {
 }
 
 func closeWrite(c net.Conn) {
-	switch t := c.(type) {
-	case *tls.Conn:
+	if t, ok := c.(interface{ CloseWrite() error }); ok { // *net.TCPConn, *tls.Conn, a stream of OpenStream
 		t.CloseWrite()
-	case *net.TCPConn:
-		t.CloseWrite()
-	default:
-		c.Close()
+		return
 	}
+	c.Close()
 }

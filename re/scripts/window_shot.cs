@@ -127,6 +127,44 @@ public static class WindowShot {
         return BringToFront(h, allowAlt);
     }
 
+    // LockSetForegroundWindow(code) attached to the foreground thread's input (SP4: launch_monitor.ps1's lockfg): a
+    // process that isn't the foreground one gets false from a plain call, and the game then took
+    // the foreground at a match load.
+    [DllImport("user32.dll")] static extern bool LockSetForegroundWindow(uint code);
+    [DllImport("user32.dll")] static extern IntPtr GetShellWindow();
+    // The desktop's shell window: where launch_monitor.ps1 gives the foreground back when the game took it before any
+    // other window was seen (its splash at its start, the user away).
+    public static IntPtr ShellWindow() { return GetShellWindow(); }
+    public static bool LockForeground(uint code) {
+        IsGUIThread(true);
+        uint pid;
+        IntPtr fg = GetForegroundWindow();
+        uint fgThread = fg != IntPtr.Zero ? GetWindowThreadProcessId(fg, out pid) : 0;
+        uint me = GetCurrentThreadId();
+        bool attached = fgThread != 0 && fgThread != me && AttachThreadInput(me, fgThread, true);
+        bool ok = LockSetForegroundWindow(code);
+        if (attached) { AttachThreadInput(me, fgThread, false); }
+        return ok;
+    }
+
+    // Before an unfocused shot (SP4: pshot): moves h on-screen as Prepare does, but at the bottom of the z-order and
+    // without activating it, so the foreground (and the user's typing) stays where it is; PrintWindow gets new frames
+    // wherever the window lies on a monitor, covered or not (V1-live). Restore parks it again.
+    public static string Place(IntPtr h, int homeX, int homeY, out bool moved) {
+        moved = false;
+        LastPlaced = "";
+        if (h == IntPtr.Zero || !IsWindow(h)) { return "failed"; }
+        RECT r = Rect(h);
+        if (r.L <= OffDesktop) {
+            int x, y;
+            FitOnMonitor(homeX, homeY, r.R - r.L, r.B - r.T, out x, out y);
+            SetWindowPos(h, new IntPtr(1), x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+            moved = true;
+            LastPlaced = "(" + x + "," + y + ")";
+        }
+        return "placed";
+    }
+
     // After a shot: parks h off the desktop again if Prepare moved it (bottom of the z-order, not activated), and gives
     // the foreground back to previous (no Alt fallback here). Returns parked/-, then the foreground result.
     public static string Restore(IntPtr h, bool moved, IntPtr previous) {

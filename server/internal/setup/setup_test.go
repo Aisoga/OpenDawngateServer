@@ -18,6 +18,7 @@ import (
 	"dawngate/server/internal/setup/exepatch"
 	"dawngate/server/internal/setup/hostcopy"
 	"dawngate/server/internal/setup/localepatch"
+	"dawngate/server/internal/setup/moviepatch"
 	"dawngate/server/internal/setup/synthzip"
 )
 
@@ -76,7 +77,7 @@ var allSteps = []string{"certificates", "client copy", "client exe", "client con
 
 // synthLocal is the client copy's AA_Server.package for 127.0.0.1 from the synthetic archive's Locale.package: what
 // re/scripts/patch_locale.py makes from the same file (test_ph2b.py and localepatch_test.go pin the same SHA-256).
-const synthLocal = "3e9e97561e8fe6287e28ba3e8a568d8abc560f119f3cf8c4bfacf8ca7755c2b6"
+const synthLocal = "631c6c0aea76850472d9cc258171be511e338a67b043a79475cf93160e1b5494"
 
 func localeSHA(t *testing.T, copy string) string {
 	t.Helper()
@@ -312,6 +313,25 @@ func TestClientForAnotherServer(t *testing.T) {
 	s3 := again(s)
 	if s3.Client("192.168.1.20", set.CAModulus[:100]); !s3.Failed() {
 		t.Error("a short CA passed")
+	}
+	// picker mode: the login screen's server picker is added, current the next time, removed without picker mode
+	picker := filepath.Join(s.ClientCopy(), filepath.FromSlash(moviepatch.Rel))
+	for i, c := range []struct {
+		picker, check bool
+		want          Status
+		there         bool
+	}{{true, true, Missing, false}, {true, false, Done, true}, {true, false, OK, true}, {false, true, Stale, true},
+		{false, false, Done, false}, {false, false, OK, false}} {
+		sp := again(s)
+		sp.Picker, sp.Check = c.picker, c.check
+		sp.Client("192.168.1.20", set.CAModulus)
+		got, ok := status(sp)["server picker"]
+		if !ok && c.want == OK && !c.picker {
+			got = OK // nothing to remove: no line
+		}
+		if got != c.want || exists(picker) != c.there {
+			t.Errorf("picker step %d: %v, the archive there %v; want %v, %v\n%v", i, got, exists(picker), c.want, c.there, sp.Lines())
+		}
 	}
 }
 

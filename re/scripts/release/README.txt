@@ -58,6 +58,27 @@ On every other player's PC:
 The server's owner plays with Start-Client.exe on the server PC too.
 
 
+Playing on servers on the internet: the server list on the login screen
+------------------------------------------------------------------------
+Servers on the internet (and any server whose operator set tunnel = on) are reached through their encrypted
+tunnel, and for them the login screen has a server list:
+1. Start Start-Client.exe with the server's address once, e.g.   Start-Client.exe 203.0.113.5
+   (or with --tunnel on for a home server with the tunnel on). The address goes into your list.
+2. On the login screen, SERVER above the login shows the server you log in to. Click it to open the list
+   (SELECT A SERVER): each server with its status (online and its ping, offline, a new key, KEY CHANGED,
+   no tunnel) and a sentence about the selected one. Click a server, then DONE, and log in as usual.
+3. ADD SERVER in the list adds another server (its address, and a name if you like); the next login goes to
+   it and adds it once it answers. REMOVE takes the selected server out of the list.
+4. After a logout (or after the game logs you out when you are idle) the login screen and the list come back,
+   and you can pick another server.
+From then on just double-click Start-Client.exe: the list opens with the server you used last. The selector
+works with the mouse (not with Tab or Escape). A server's tunnel key is trusted at your first login there and
+checked at every later one: KEY CHANGED means it isn't the same server any more, so don't log in, and ask its
+operator (see "When something goes wrong"). The list is the file Dawngate-Data\servers\bookmarks.json.
+A server on a home network without the tunnel isn't in the list: Start-Client.exe <address> plays on it
+directly, as above (it says so in its window).
+
+
 Hosting on the internet (use at your own risk)
 ----------------------------------------------
 At Start-Server.exe's first start (or with Start-Server.exe --configure) answer 3 ("the internet"). It asks:
@@ -77,8 +98,10 @@ connections, logins, games and packets are on, and the match hosts check everyth
 On your router forward only TCP and UDP 42128 (the tunnel) and TCP 443 (the website) to that PC; nothing else,
 and never TCP 10040. Start-Server.exe never opens ports and never uses UPnP. If the PC holds the internet
 address itself (no router), let its firewall in only those ports.
-Its window shows the tunnel key's fingerprint: the first time, Start-Client.exe shows it to each player, who
-answers y only if it is the same. What remains your risk and duty (the notice says it in full): the players'
+Its window shows the tunnel key's fingerprint: players see it in the server list on the login screen (the
+key is trusted at their first login there) and compare it with the one you publish. If the key ever changes
+(a new Dawngate-Data\certs folder), every player's list shows KEY CHANGED and their logins are refused until
+they delete the old key (Dawngate-Data\servers\<address>\gateway.pin). What remains your risk and duty (the notice says it in full): the players'
 PCs trust your server, so keep it updated and private; players behind one address share the limits; you keep
 personal data (names, addresses in the logs: publish a privacy page in Dawngate-Data\data\site\privacy.html
 and answer players' requests); back up the accounts (below).
@@ -132,8 +155,10 @@ Accounts           Start-Server.exe --create-account <name>   makes an account a
                    --make-admin <name> / --remove-admin <name>   (the website's admin page).
 Start-Server.exe --check     only reports what is missing; --setup-only sets up without starting the server.
 Start-Client.exe --check     only reports; --setup-only prepares the game copy without starting the game.
-Start-Client.ini   server (the address to play on), folder, tunnel (auto/on/off: auto = for a public address;
-                   on for a LAN server with tunnel = on), gateway_port.
+Start-Client.ini   server (the address to play on; empty: the server list), folder, tunnel (auto/on/off:
+                   auto = for a public address; on for a LAN server with tunnel = on), gateway_port,
+                   picker (auto/on/off: auto = the server list on the login screen whenever the tunnel is
+                   used; off = one server). Start-Client.exe <address or tag> preselects a server of the list.
 Logs: Dawngate-Data\logs (the server, and one folder per match under hosts). The game's own log is in
 %APPDATA%\DawngateData.
 
@@ -146,12 +171,17 @@ When something goes wrong
   the folder the message names inside Dawngate-Data; it is made anew.
 - "is not the Dawngate.zip of archive.org": download it again; the setup checks every file against build
   1.0.903.854.
+- In the server list: "offline" (or "The server you picked doesn't answer" at LOGIN): the server is down or
+  its address is wrong; the list checks again every few seconds. "no tunnel": ask its operator for
+  tunnel = on. "KEY CHANGED": ask the operator which fingerprint the server shows; only if it is the new one,
+  delete Dawngate-Data\servers\<address>\gateway.pin and log in again.
 
 
 Files
 -----
 Start-Server.exe          the server and the setup (Go)
-Start-Client.exe          starts the game (Go)
+Start-Client.exe          starts the game, with the server list on the login screen (Go; it embeds the list's
+                          compiled ActionScript class, this project's code)
 host\dgsim.dll            the match host, loaded by the game's copy in Dawngate-Data\host (C++, links RakNet)
 host\lua\                 the match host's Lua scripts
 LICENSE.txt               GNU Affero General Public License v3: this project's code

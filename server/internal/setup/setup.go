@@ -125,6 +125,13 @@ type Setup struct {
 	// WebDomain is the server's website: the client copy's login links go to https://<WebDomain>/<page>; ""
 	// (the launchers today) points them at dgserver's own pages on the server's HTTP port (sitelinks).
 	WebDomain string
+	// Picker gives the client copy the login screen's server picker (Start-Client's picker mode: stepPicker); without
+	// it Client removes one an earlier start installed.
+	Picker bool
+	// DataSuffix (tests only) gives the client copy per-user folders of its own, %APPDATA%\DawngateData<X> and
+	// Documents\Dawngate<X> (exepatch.Options.DataSuffix), so it can run beside another client on the same PC; ""
+	// keeps the shipped names, as for every player.
+	DataSuffix string
 
 	lines   []Line
 	zip     string
@@ -302,6 +309,11 @@ func (s *Setup) Client(server string, ca []byte) error {
 		s.report(Failed, "address", err.Error())
 		return s.result()
 	}
+	if err := exepatch.CheckDataSuffix(s.DataSuffix); err != nil {
+		s.report(Failed, "data folders", err.Error())
+		return s.result()
+	}
+	opts.DataSuffix = s.DataSuffix
 	if len(ca) != 128 {
 		s.report(Failed, "server CA", fmt.Sprintf("a CA modulus has 128 bytes, this one %d", len(ca)))
 		return s.result()
@@ -311,6 +323,11 @@ func (s *Setup) Client(server string, ca []byte) error {
 		s.stepExe("client exe", s.ClientCopy(), ca, opts, nil)
 		s.stepConfig("client config", s.ClientCopy(), server)
 		s.stepLocale("client texts", s.ClientCopy(), server)
+		if s.Picker {
+			s.stepPicker("server picker", s.ClientCopy())
+		} else {
+			s.removePicker("server picker", s.ClientCopy())
+		}
 	}
 	return s.result()
 }

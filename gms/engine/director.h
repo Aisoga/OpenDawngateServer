@@ -24,7 +24,8 @@
 // wave_spawners ("" = all; e.g. "Mortal_Top"),
 // formation_spacing (2.5), director_trace_s (5), director_log_limit (400); D1k: wave_spawn_interval_ms (500; 0 = the
 // whole wave at once in D1c-live's formation), wave_shape_trace_s (1; 0 = off), wave_shape_waves (2), wave_shape_for_s
-// (40): the "wave shape" lines (length, width, closest pair of the first waves' minions per spawner).
+// (40): the "wave shape" lines (length, width, closest pair of the first waves' minions per spawner); PARAMAP:
+// camp_icons (1: the parasite's minimap icon while it is alive and born, 8D mCampVisibleToTeam; 2 every camp; 0 off).
 #pragma once
 
 #include <cstddef>
@@ -52,6 +53,9 @@ struct Options {
   int shapeWaves = 2;            // D1k: trace the first N waves of every spawner
   double shapeForS = 40.0;       // D1k: for N s after the wave's first minion
   bool campMajorSpot = true;     // D14: a buff camp's major on its scale-2.0 marker (gms::flow::AssignCampSpots)
+  int campIcons = 1;             // PARAMAP: the camps' minimap icons (gms::flow::CampIconBits): 0 off (the director's
+                                 // NPC bit), 1 the parasite's camp while the parasite is alive and born, 2 every camp
+                                 // while a member lives [assumed]
 };
 
 void Configure(const Options& o);
@@ -72,6 +76,10 @@ void Tick(void* sim, double t);
 
 // The game is over: no more spawns.
 void Stop();
+
+// PARAMAP: the camp markers whose minimap icons [host] camp_icons covers (the parasite's camp; every camp with 2);
+// their spawn point objects are created for the players (replicate.h Replicated), after OnLevelStarted.
+std::vector<std::uint32_t> IconCampMarkers();
 
 // When the first wave is due (match seconds; < 0 = no waves).
 double FirstWaveTime();

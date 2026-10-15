@@ -277,6 +277,7 @@ struct Camp {
   SpawnDef def;
   bool markerTiming = false;
   bool parasite = false;
+  int iconBits = -1;  // PARAMAP: what UpdateCampIcons last wrote into the camp's UI entry (-1 = nothing yet)
   float pos[3] = {};
   float rot[3] = {};
   std::vector<MarkerPos> spots;  // the creature markers, in marker order
@@ -297,6 +298,7 @@ flow::WaveSchedule g_waves;
 Tuning g_tuning;
 int g_camp_parasite = -1;
 std::uint32_t g_parasite = 0;
+bool g_parasiteBorn = false;  // PARAMAP: the parasite was seen born (HideHealthBar 0) once
 double g_lastSecond = -1.0;
 double g_lastTrace = -1.0;
 std::vector<std::uint32_t> g_traced;  // the first wave's minions (one per spawner), followed in the lane trace
@@ -816,7 +818,9 @@ void SpawnCamp(Camp& c, double t) {
       if (!c.def.creeps[k]) continue;
       const float* pos = c.pos;
       const float* rot = c.rot;
-      if (!c.parasite && i < static_cast<int>(spot.size()) && spot[i] >= 0) {
+      // the parasite too: its creature marker (4043388100, the map's origin, rot -92.15) is a placed marker like every
+      // camp's, not a zero (until 2026-10-15 it spawned on the camp marker (-3.4, 3.2), off the pit's centre)
+      if (i < static_cast<int>(spot.size()) && spot[i] >= 0) {
         pos = c.spots[spot[i]].pos;
         rot = c.spots[spot[i]].rot;
       }
@@ -894,6 +898,82 @@ void FollowParasite(double t) {
     g_parasite = next;
     SehSetParasiteId(next);
     ++g_st.parasiteStages;
+  }
+}
+
+// PARAMAP: writes `bits` into the server's UI camp entry whose mSpawnMarkerId is `marker` (cBattlegroundsUICampData
+// +0 mCampVisibleToTeam); the UI pass (gms_host.cpp) sends the change as an 8D delta. The old value, or -1 if the
+// camp has no entry.
+int SehSetCampIcon(void* sim, std::uint32_t marker, std::uint8_t bits) {
+  __try {
+    char* uiData = static_cast<char*>(sim) + matchsim::kUIData;
+    char* list = Field<char*>(uiData, ui::kCampList);
+    const int n = Field<int>(uiData, ui::kCampCapacity);
+    if (!list) return -1;
+    for (int i = 0; i < n && i < 64; ++i) {
+      char* e = list + i * kCampSize;
+      if (Field<std::uint32_t>(e, camp::kSpawnMarkerId) != marker) continue;
+      const int old = Field<std::uint8_t>(e, 0);
+      Field<std::uint8_t>(e, 0) = bits;
+      return old;
+    }
+    return -1;
+  } __except (SehNote(GetExceptionInformation(), "SetCampIcon")) {
+    return -1;
+  }
+}
+
+// The object's HideHealthBar attribute (71; the unborn parasite has it from RankUpTimer until its 300-s birth).
+float SehHideHealthBar(std::uint32_t id) {
+  __try {
+    void* o = GetObjectById(id);
+    void* ad = o ? Field<void*>(o, gobj::kAttributes) : nullptr;
+    return ad ? GetAttribute(ad, 71, 1) : 0.f;
+  } __except (SehNote(GetExceptionInformation(), "HideHealthBar")) {
+    return 0.f;
+  }
+}
+
+// PARAMAP: the camps' minimap icons (gms::flow::CampIconBits, [host] camp_icons): the parasite's camp shows its icon
+// while the parasite is alive and born (back at its resurrect; a new stage is followed by FollowParasite), the other
+// camps with camp_icons=2 while a member lives. Once a second, after FollowParasite.
+void UpdateCampIcons(double t) {
+  if (!g_sim || g_opt.campIcons <= 0) return;
+  for (Camp& c : g_camps) {
+    bool up = false;
+    const char* why = "no living member";
+    if (c.parasite) {
+      float hp = 0.f;
+      const int st = g_parasite ? SehMemberState(g_parasite, &hp, nullptr, nullptr) : -1;
+      if (st != 1) {
+        why = st == 0 ? "the parasite is dead" : "no parasite";
+      } else if (!g_parasiteBorn && SehHideHealthBar(g_parasite) > 0.f) {
+        why = "the parasite is not born yet (HideHealthBar)";
+      } else {
+        // born once, born for the match: a new stage starts with HideHealthBar for about a second (seen at the 900-s
+        // stage-up), which would blink the icon off at every stage-up
+        g_parasiteBorn = true;
+        up = true;
+        why = "the parasite is alive";
+      }
+    } else if (g_opt.campIcons >= 2) {
+      for (std::uint32_t id : c.members) {
+        float hp = 0.f;
+        if (SehMemberState(id, &hp, nullptr, nullptr) == 1) {
+          up = true;
+          why = "a member lives";
+          break;
+        }
+      }
+    } else {
+      continue;  // mode 1: the jungle camps keep the director's value
+    }
+    const int bits = flow::CampIconBits(g_opt.campIcons, c.parasite, up);
+    if (bits == c.iconBits) continue;
+    const int old = SehSetCampIcon(g_sim, c.marker, static_cast<std::uint8_t>(bits));
+    c.iconBits = bits;
+    Log("director: camp icon %s (marker %u) at match %.2f s: mCampVisibleToTeam 0x%02X -> 0x%02X (%s)%s",
+        c.name.c_str(), c.marker, t, old & 0xFF, bits, why, old < 0 ? "; NO UI CAMP ENTRY" : "");
   }
 }
 
@@ -1196,6 +1276,7 @@ void Tick(void* sim, double t) {
     g_lastSecond = std::floor(t);
     CheckCamps(t);
     FollowParasite(t);
+    UpdateCampIcons(t);
   }
   Trace(t);
 }
@@ -1208,6 +1289,14 @@ void Stop() {
   }
   g_groups.clear();
   g_stopped = true;
+}
+
+std::vector<std::uint32_t> IconCampMarkers() {
+  std::vector<std::uint32_t> out;
+  if (g_opt.campIcons <= 0) return out;
+  for (const Camp& c : g_camps)
+    if (c.parasite || g_opt.campIcons >= 2) out.push_back(c.marker);
+  return out;
 }
 
 double FirstWaveTime() {

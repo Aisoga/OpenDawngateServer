@@ -67,6 +67,8 @@ struct NetObject {
   float pos[3] = {};
   float hp = -1.f;  // -1 without combatant data
   std::uint32_t owner = 0;  // object +0x48 (mOwnerID): BuildWorld creates an owner first (D9b, core/replication/create_order.h)
+  std::uint32_t markerId = 0;  // object +0x84 (sourceMarkerKey.markerId): a spawn point's camp marker (PARAMAP)
+  std::uint32_t parent = 0;  // cLocomotionData +8 (attach parent, follow target): created first too (FARISW)
 };
 
 // The live networked objects (network component, not pending delete), in the object manager's order. -1 on an
@@ -77,6 +79,12 @@ int Scan(void* sim, std::vector<NetObject>* out);
 // points: the 23 networked spawn points are invisible and Base_Health_Regen_* load on both sides), else D2f's (Tower,
 // creature, interactable).
 bool Replicated(std::int32_t nounType, bool all);
+// PARAMAP: the same for one object, except that a spawn point whose marker id is in SetIconSpawnPoints' set is created
+// too: the client draws a camp's minimap icon on the camp's own spawn point object (GGMinimap_UpdateObjectIcon
+// 0x005801F0: noun type "spawnpoint", its minimapDefinition, the camp entry's mCampVisibleToTeam found by the object's
+// marker id +0x84), and those spawn points are networked, so the client has them only from the server.
+bool Replicated(const NetObject& o, bool all);
+void SetIconSpawnPoints(const std::vector<std::uint32_t>& markerIds);
 const char* NounTypeName(std::int32_t nounType);
 
 // The create messages of one object (8E, 9D, 9C, 9F, A0, A2, A1, 8F + `modifierRecords`), full state. With

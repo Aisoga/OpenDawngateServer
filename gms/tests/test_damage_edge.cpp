@@ -637,3 +637,36 @@ GMS_TEST(DamageEdgeDeadAttacker) {
   // after the death)
   CHECK(FiresDamageEvents(kBasic | kIsProjectile));
 }
+
+// FARISW: Faris's ranged W (ability_Golem_W_Ranged_Sentinel: ten cone ticks of 12 + 0.07 Power, magical, AoE, DoT) with
+// Mastery 20 overloads 10 % of each tick, about 0.8 HP after the warden's magic resist: a combat event for it would
+// make the client print a second damage number "0" (it shows integerHpChange). Only a hit that lowers the integer HP,
+// or a killing blow, is reported (the heal core's rule).
+GMS_TEST(DamageEdgeSubIntegerHit) {
+  const unsigned w = kIsMagical | kIsAoE | kIsDoT;
+  World world;
+  world.mitigation = 0.6579f;  // the warden's magic resist at level 6
+  // the tick itself: 7.9 HP, reported
+  HitResult tick = RunHit(Hit(12.f, w, 2085.8f), world);  // 2085.80 -> 2077.91
+  CHECK(Near(tick.dealt, 7.895, 1e-3));
+  CHECK(ReportsHit(tick.intChange, tick.lethal));
+  // its overload: 12 x (20 / 2) % = 1.2 before mitigation, 0.79 after
+  const float pct = OverloadPercent(20.f, 2.f, 0.f);
+  const float d2 = OverloadDamage(12.f, pct, 0, false, tick.dealt, w, true);
+  CHECK(Near(d2, 1.2, 1e-5));
+  HitResult over = RunHit(Hit(d2, w | kIsSpellOverload | kNoDamageCallbacks, tick.hpAfter), world);
+  CHECK(Near(over.dealt, 0.789, 1e-3));
+  CHECK_EQ(over.intChange, 0);  // 2077.91 -> 2077.12
+  CHECK(!ReportsHit(over.intChange, over.lethal));
+  // the same overload across an integer boundary lowers the integer HP by one: reported, the client shows "1"
+  HitResult across = RunHit(Hit(d2, w | kIsSpellOverload | kNoDamageCallbacks, 2078.5f), world);  // -> 2077.71
+  CHECK_EQ(across.intChange, 1);
+  CHECK(ReportsHit(across.intChange, across.lethal));
+  // a killing blow below one HP is always reported (its event carries the kill)
+  HitResult kill = RunHit(Hit(d2, w | kIsSpellOverload | kNoDamageCallbacks, 0.5f), world);
+  CHECK(kill.lethal);
+  CHECK_EQ(kill.intChange, 0);
+  CHECK(ReportsHit(kill.intChange, kill.lethal));
+  // a hit a shield took whole changes nothing: no event (its OnTookDamage still fires, FiresDamageEvents)
+  CHECK(!ReportsHit(0, false));
+}

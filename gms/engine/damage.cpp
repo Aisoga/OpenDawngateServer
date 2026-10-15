@@ -32,6 +32,7 @@ struct Stats {
   unsigned calls, foreign, applied, kills, noCombatant, deadTarget, immune, crits, absorbedHits, lifedrains, overloads,
       reports, events, exceptions, shieldWrites, shieldObjects;
   unsigned noSnapshot, deadAttackerHits, lifedrainsDead;  // D13
+  unsigned unreported, unreportedOverloads;                // FARISW: hits below one integer HP, no combat event
   double total, absorbed;
 } g_st;
 unsigned g_logs;
@@ -515,9 +516,17 @@ bool Core(void* target, void* snapshot, float damage, float coef, unsigned lo, u
   // and multi-kill count, and takes the victim's streak, the killer's previous one and FirstKill as arguments)
   death::KillReport kr;
   if (t.lethal) kr = death::BeforeKillingBlowReport(target);
-  if (SehReport(target, snapshot, dealt, t.crit, t.lethal, dir, kr.extraFlags, lo, hi, t.intChange, &t.queued, t.hex,
-                sizeof t.hex, kr.victimKillStreak, kr.killerPrevKillStreak))
-    ++g_st.reports;
+  // FARISW: only a hit that lowered the integer HP, or a killing blow (pipeline.h ReportsHit; the heal core's rule):
+  // the client printed a hit below one HP, a small overload, as a second damage number "0"
+  if (g_opt.reportZero || dmg::ReportsHit(t.intChange, t.lethal)) {
+    if (SehReport(target, snapshot, dealt, t.crit, t.lethal, dir, kr.extraFlags, lo, hi, t.intChange, &t.queued, t.hex,
+                  sizeof t.hex, kr.victimKillStreak, kr.killerPrevKillStreak))
+      ++g_st.reports;
+  } else {
+    ++g_st.unreported;
+    if (depth) ++g_st.unreportedOverloads;
+    std::snprintf(t.hex, sizeof t.hex, "none: integer HP unchanged");
+  }
   // 12. the agent AI's hook, then the damage events. D1i: the hook first, so the attacker is on the victim's aggro list
   // when OnTookDamage runs: modifier_Jungle_Creep_Regen and modifier_Jungle_Buff_Regen_* drop their HealthRegen 2000
   // only if nAgent.HasTargetsOnAggroList is true in OnTookDamage; with the old order the first hit found the list empty
@@ -641,9 +650,9 @@ bool DamageInstall(const DamageOptions& options) {
       HookDetour(kTakeDamage, kTakeDamageBytes, sizeof kTakeDamageBytes, reinterpret_cast<void*>(&TakeDamageHook)));
   g_installed = g_orig != nullptr;
   Log("damage (D1f-live): TakeDamage core %s; absorb %d, extra reductions %d, lifedrain %d, overload %d, shield totals %d, "
-      "log limit %d",
+      "log limit %d, report zero hits %d",
       g_installed ? "installed" : "FAILED", g_opt.absorb, g_opt.reductions, g_opt.lifedrain, g_opt.overload, g_opt.shields,
-      g_opt.logLimit);
+      g_opt.logLimit, g_opt.reportZero);
   return g_installed;
 }
 
@@ -664,9 +673,10 @@ void DamageFormatStats(char* buf, std::size_t size) {
                 "damage calls %u (other sims %u), applied %u (total %.0f), kills %u, no combatant %u, dead target %u, "
                 "immune %u, crits %u, absorbed %u hits (%.0f), lifedrains %u, overloads %u, reports %u, event pairs %u, "
                 "shield writes %u (objects with shields %u), exceptions %u; D13: without snapshot %u, hits by a dead "
-                "attacker %u, lifedrains skipped (attacker dead) %u",
+                "attacker %u, lifedrains skipped (attacker dead) %u; FARISW: no combat event (integer HP unchanged) %u "
+                "(overloads %u)",
                 g_st.calls, g_st.foreign, g_st.applied, g_st.total, g_st.kills, g_st.noCombatant, g_st.deadTarget,
                 g_st.immune, g_st.crits, g_st.absorbedHits, g_st.absorbed, g_st.lifedrains, g_st.overloads, g_st.reports,
                 g_st.events, g_st.shieldWrites, g_st.shieldObjects, g_st.exceptions, g_st.noSnapshot,
-                g_st.deadAttackerHits, g_st.lifedrainsDead);
+                g_st.deadAttackerHits, g_st.lifedrainsDead, g_st.unreported, g_st.unreportedOverloads);
 }

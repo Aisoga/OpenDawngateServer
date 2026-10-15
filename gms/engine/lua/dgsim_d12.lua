@@ -498,6 +498,20 @@ end
 
 -- set (D12b): a field of one of the server Lua's global ability tables (s.table, s.field, s.value), a picture test only:
 -- e.g. ability_Shepherd_Q_Sheep.sheepSpeed 35 -> 5 makes Kel's sheep roll slowly enough for a screenshot to catch it
+-- attr: an attribute modifier on the human (s.attr = an nAttributeType name, s.value, kAdd), e.g. Mastery for the
+-- spell overload (FARISW); logs the attribute before and after
+local function addAttr(s)
+  local h = D.human
+  local at = nAttributeType[s.attr]
+  if at == nil or not live(h) then
+    D.p('attr', tostring(s.attr), ': no such attribute or no human')
+    return
+  end
+  local before = nAttribute.GetAttributeValue(h, at)
+  nAttribute.AddAttributeModifier(h, at, s.value or 0, nAttributeOp.kAdd)
+  D.p('attr', s.attr, fmt(before), '->', fmt(nAttribute.GetAttributeValue(h, at)), 'on', hexid(h))
+end
+
 local function setField(s)
   local t = _G[s.table]
   if type(t) ~= 'table' then
@@ -536,6 +550,7 @@ function D.step()
     elseif s.kind == 'cooldowns' then cooldownsOnly(s)
     elseif s.kind == 'ray' then ray(s)
     elseif s.kind == 'set' then setField(s)
+    elseif s.kind == 'attr' then addAttr(s)
     elseif s.kind == 'track' then track(s)
     else D.p('step', D.k, ': unknown kind', s.kind) end
     if s.passive then passive() end

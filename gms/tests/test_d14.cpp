@@ -88,3 +88,14 @@ GMS_TEST(D14GuardianShield) {
   CHECK_EQ(GuardianShieldStep(false, 5, false), 0);  // a dead Guardian: nothing
   CHECK_EQ(GuardianShieldStep(true, 0, false), 0);
 }
+
+// PARAMAP: the camp icon's team bits (8D mCampVisibleToTeam): the parasite's camp while it is up, by default.
+GMS_TEST(ParamapCampIconBits) {
+  using gms::flow::CampIconBits;
+  CHECK_EQ(CampIconBits(1, true, true), 0x07);    // the parasite born and alive: both teams see the icon
+  CHECK_EQ(CampIconBits(1, true, false), 0x01);   // unborn, dead or between its death and resurrect: the NPC bit only
+  CHECK_EQ(CampIconBits(1, false, true), 0x01);   // a jungle camp: as the director wrote it
+  CHECK_EQ(CampIconBits(2, false, true), 0x07);   // mode 2: every camp while up
+  CHECK_EQ(CampIconBits(2, false, false), 0x01);
+  CHECK_EQ(CampIconBits(0, true, true), 0x01);    // off
+}

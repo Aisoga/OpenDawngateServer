@@ -74,7 +74,13 @@ struct Options {
   int hunterGank = 0;         // BOTCOMP: 1 keeps the Hunter's Gank plan (a trap: it never leaves it)
   bool laneFixes = true;      // BOTLANE: Gladiators stay in lane, towers get finished, the opened lane is sieged
   int campRadius = 9;         // BOTIDLE: dgsim_bots_api.lua's fifth fix-up: IsNearNextCreepCamp's radius (the script's 5; 0 = keep it)
+  bool jungle = true;         // BOTJUNGLE: the Hunter takes part (ganks, defends, pushes, wells, the parasite gather)
+  bool pingFollow = true;     // BOTJUNGLE: the bots follow their human teammates' minimap pings
 };
+
+// BOTJUNGLE: a human's minimap ping (the command intake's ping relay, commands.cpp): kept (the last 32) for
+// nBotHost.HumanPing(team, afterSeq), so the bots of the pinger's team can follow it.
+void OnHumanPing(int team, std::uint32_t pinger, std::uint32_t target, const float* pos, int type);
 
 void Configure(const Options& o);
 

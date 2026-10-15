@@ -17,6 +17,7 @@
 #include "game.h"
 #include "host/control.h"
 #include "log.h"
+#include "replicate.h"
 #include "shop.h"
 #include "wells.h"
 
@@ -818,6 +819,13 @@ void OnLevelStarted(void* sim) {
         r == 1 ? "ok" : "FAILED");
   }
   director::OnLevelStarted(sim);
+  {
+    // PARAMAP: the camps' spawn point objects that carry a minimap icon go to the players (8D's camp entry decides
+    // when the client draws it: director.cpp UpdateCampIcons)
+    const std::vector<std::uint32_t> icons = director::IconCampMarkers();
+    repl::SetIconSpawnPoints(icons);
+    Log("match: %zu camp spawn point(s) replicated for their minimap icons ([host] camp_icons)", icons.size());
+  }
   crowd::OnLevelStarted(sim);  // D1k: the server space's constraint solver (minions push each other)
   // the Guardians (MATCH_FLOW §3.1)
   if (g_opt.guardians)

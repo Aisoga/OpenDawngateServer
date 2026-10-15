@@ -147,6 +147,46 @@ GMS_TEST(MinionTargetShaperAllowed) {
   CHECK(ShaperAllowed(o, false, 40.f, true, false));   // the old behaviour
 }
 
+GMS_TEST(MinionChaseLaneLeash) {
+  using namespace gms::agents;
+  MinionChaseOptions o;
+  MinionChase s;
+  const float p[2] = {0.f, 0.f};
+  CHECK(ShaperChaseCheck(o, s, 5, false, false, true, 19.f, p, 0) == kChaseKeep);
+  CHECK(ShaperChaseCheck(o, s, 5, false, false, true, 21.f, p, 0) == kChaseLaneLeash);
+  CHECK(ShaperChaseCheck(o, s, 5, false, true, true, 21.f, p, 0) == kChaseLaneLeash);  // the lane comes first
+  CHECK(ShaperChaseCheck(o, s, 5, true, false, true, 40.f, p, 0) == kChaseKeep);       // a taunt holds
+  CHECK(ShaperChaseCheck(o, s, 5, false, false, false, 60.f, p, 0) == kChaseKeep);     // lane done: no band
+  o.enabled = false;
+  CHECK(ShaperChaseCheck(o, s, 5, false, false, true, 60.f, p, 0) == kChaseKeep);
+}
+
+GMS_TEST(MinionChaseDistanceTimeAndIgnore) {
+  using namespace gms::agents;
+  MinionChaseOptions o;
+  MinionChase s;
+  // from a: 2.0 (fighting on the spot), 7.1 (following), 21.2 (beyond the chase distance)
+  const float a[2] = {10.f, 10.f}, still[2] = {12.f, 10.f}, follow[2] = {15.f, 15.f}, far[2] = {25.f, 25.f};
+  UpdateChase(&s, 5, true, a, 1000);  // shaper 5 the best target from 1 s, at a
+  CHECK(s.target == 5 && s.sinceMs == 1000 && s.start[0] == 10.f);
+  UpdateChase(&s, 5, true, follow, 2500);  // the chase keeps its start
+  CHECK(s.sinceMs == 1000 && s.start[0] == 10.f);
+  CHECK(ShaperChaseCheck(o, s, 5, false, false, true, 5.f, follow, 3999) == kChaseKeep);
+  CHECK(ShaperChaseCheck(o, s, 5, false, false, true, 5.f, follow, 4000) == kChaseTime);
+  CHECK(ShaperChaseCheck(o, s, 5, false, false, true, 5.f, still, 9000) == kChaseKeep);  // it stands and fights
+  CHECK(ShaperChaseCheck(o, s, 5, false, false, true, 5.f, far, 2000) == kChaseDistance);
+  CHECK(ShaperChaseCheck(o, s, 6, false, false, true, 5.f, far, 9000) == kChaseKeep);  // another shaper
+  NoteChaseDrop(o, &s, 5, 4000);
+  CHECK(s.target == 0 && s.sinceMs == -1);
+  CHECK(ShaperChaseCheck(o, s, 5, false, false, true, 5.f, a, 7999) == kChaseIgnored);
+  CHECK(ShaperChaseCheck(o, s, 5, false, true, true, 5.f, a, 7999) == kChaseKeep);  // it hits an own shaper
+  CHECK(ShaperChaseCheck(o, s, 5, false, false, true, 5.f, a, 8000) == kChaseKeep);  // ignore over
+  UpdateChase(&s, 5, true, far, 9000);
+  CHECK(s.sinceMs == 9000 && s.start[0] == 25.f);
+  UpdateChase(&s, 7, false, far, 9700);  // a minion as the best target: the chase ends
+  CHECK(s.target == 0 && s.sinceMs == -1);
+}
+
 GMS_TEST(MinionTargetShaperHitLog) {
   gms::agents::ShaperHitLog log;
   log.Record(7, 9, 1000);

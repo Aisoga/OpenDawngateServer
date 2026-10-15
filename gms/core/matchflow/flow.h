@@ -116,6 +116,21 @@ inline int GuardianShieldStep(bool shielded, int livingCores, bool guardianAlive
   return 0;
 }
 
+// PARAMAP: a camp's minimap icon. The client draws a camp spawn point's icon (its noun's minimapDefinition: the
+// parasite's SpawnPoint_Objective_Titan is Creep_Major, objective_major.tga) only while the camp's UI entry
+// (cBattlegroundsUICampData +0 mCampVisibleToTeam, sent in 8D) has the local team's bit, 1 << team
+// (GGMinimap_UpdateObjectIcon 0x005801F0); the director's own value is the NPC bit 1 alone. The original's writer
+// was stripped. The rule: the user's memory of the original (2026-10-15: "when Parasite is up/spawns there was an
+// icon of him in the middle of the minimap, removed when he was killed", like Baron) for the parasite; the other
+// camps by the same rule only on request [assumed]. `mode`: 0 off, 1 the parasite's camp, 2 every camp. `up`: the
+// camp has a living, born member (the parasite: alive and its HideHealthBar gone, i.e. after its 300-s birth).
+constexpr uint8_t kCampIconNpcBit = 0x01;
+constexpr uint8_t kCampIconPlayerBits = 0x06;  // Mortal (team 1) and Spirit (team 2)
+inline uint8_t CampIconBits(int mode, bool parasiteCamp, bool up) {
+  const bool chosen = mode == 2 || (mode == 1 && parasiteCamp);
+  return static_cast<uint8_t>(kCampIconNpcBit | (chosen && up ? kCampIconPlayerBits : 0));
+}
+
 struct Point {
   float x = 0.f, y = 0.f, z = 0.f;
 };

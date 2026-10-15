@@ -1209,6 +1209,43 @@ int __cdecl LuaLog(void* L) {
   return 0;
 }
 
+// ---- BOTJUNGLE: the humans' pings ----
+// Every human minimap ping the command intake relays (commands.cpp, kCmdPing) is kept here, the last kHumanPings;
+// nBotHost.HumanPing(team, afterSeq) -> seq, pinger, target, x, y, z, type, match time of the team's first ping after
+// `afterSeq` (nothing when there is none). The team layer polls it once a second (dgsim_bots_api.lua, *BOTJUNGLE*).
+struct HumanPingRec {
+  unsigned seq = 0;
+  int team = 0;
+  std::uint32_t pinger = 0, target = 0;
+  float pos[3] = {};
+  int type = 0;
+  double t = 0.0;
+};
+constexpr std::size_t kHumanPings = 32;
+HumanPingRec g_humanPings[kHumanPings];
+unsigned g_humanPingSeq = 0;
+unsigned g_humanPingsRead = 0;
+
+int __cdecl LuaHumanPing(void* L) {
+  if (!Ours() || !g_opt.pingFollow) return 0;
+  const int team = static_cast<int>(SehArgNumber(L, 1));
+  const unsigned after = static_cast<unsigned>(SehArgNumber(L, 2));
+  const HumanPingRec* best = nullptr;
+  for (const HumanPingRec& p : g_humanPings)
+    if (p.seq > after && p.team == team && (!best || p.seq < best->seq)) best = &p;
+  if (!best) return 0;
+  ++g_humanPingsRead;
+  SehPushNumber(L, static_cast<float>(best->seq));
+  SehPushId(L, best->pinger);
+  SehPushId(L, best->target);
+  SehPushNumber(L, best->pos[0]);
+  SehPushNumber(L, best->pos[1]);
+  SehPushNumber(L, best->pos[2]);
+  SehPushNumber(L, static_cast<float>(best->type));
+  SehPushNumber(L, static_cast<float>(best->t));
+  return 8;
+}
+
 const LuaReg kBotHostRegs[] = {
     {"AssignLane", &LuaAssignLane},
     {"GetLane", &LuaGetLane},
@@ -1236,6 +1273,8 @@ const LuaReg kBotHostRegs[] = {
     {"RespawnIn", &LuaRespawnIn},
     {"TeamPing", &LuaTeamPing},
     {"Log", &LuaLog},
+    // BOTJUNGLE
+    {"HumanPing", &LuaHumanPing},
 };
 
 void* SehLuaState(void* sim) {
@@ -1300,7 +1339,9 @@ void LoadApi(void* sim) {
                           " dgsim_bots.teamWanted = " + (g_opt.team && g_opt.laneFixes ? "true" : "false") +
                           " dgsim_bots.tempoWanted = " + (g_opt.tempo ? "true" : "false") +
                           " dgsim_bots.teamStatusEvery = " + std::to_string(g_opt.teamStatusS) +
-                          " dgsim_bots.hunterGank = " + (g_opt.hunterGank ? "true" : "false") + " return 'ok'";
+                          " dgsim_bots.hunterGank = " + (g_opt.hunterGank ? "true" : "false") +
+                          " dgsim_bots.jungleWanted = " + (g_opt.jungle ? "true" : "false") +
+                          " dgsim_bots.pingWanted = " + (g_opt.pingFollow ? "true" : "false") + " return 'ok'";
   SehRunLua(sim, pre.c_str(), static_cast<unsigned>(pre.size()), "dgsim_bots_pre", out, sizeof out);
   const bool ok = SehRunLua(sim, chunk.c_str(), static_cast<unsigned>(chunk.size()), "dgsim_bots_api.lua", out, sizeof out);
   Log("bots: dgsim_bots_api.lua (%zu bytes) on the server's lua_State: %s %s", chunk.size(), ok ? "ok" : "FAILED", out);
@@ -1386,11 +1427,14 @@ void Configure(const Options& o) {
   g_opt.hunterGank = HostOptionInt("bot_hunter_gank", o.hunterGank) != 0 ? 1 : 0;
   g_opt.tempo = HostOptionInt("bot_tempo", o.tempo ? 1 : 0) != 0;                 // BOTTEMPO
   g_opt.teamStatusS = HostOptionInt("bot_team_status_s", o.teamStatusS);         // BOTTEMPO
+  g_opt.jungle = HostOptionInt("bot_jungle", o.jungle ? 1 : 0) != 0;             // BOTJUNGLE
+  g_opt.pingFollow = HostOptionInt("bot_ping_follow", o.pingFollow ? 1 : 0) != 0;  // BOTJUNGLE
   if (g_opt.teamStatusS < 0) g_opt.teamStatusS = 0;
   if (g_opt.missionMs < 100) g_opt.missionMs = 100;
   Log("bots (D6a, D6b): bots %d%s, allies %d, classes '%s', lua %d, lanes %d, ftue %d, log limit %d; missions %d (every "
       "%d ms), shopping %d (potions %d), fire tracker %d, script fix-ups %d; BOTCOMP composition %d (drop '%s'), harass "
-      "workers %d..%d, Hunter gank %d; BOTTEAM team layer %d, pings %d; BOTTEMPO %d, team status every %d s",
+      "workers %d..%d, Hunter gank %d; BOTTEAM team layer %d, pings %d; BOTTEMPO %d, team status every %d s; "
+      "BOTJUNGLE jungler %d, ping following %d",
       g_opt.teamSize,
       g_opt.teamSize < 0
           ? " (auto: createGame's fillTeams a team, else 5 a team when the game's descriptors have BotsFillTeams 0x400)"
@@ -1398,7 +1442,23 @@ void Configure(const Options& o) {
       g_opt.allies, g_opt.classes.c_str(), g_opt.lua, g_opt.lanes, g_opt.ftue, g_opt.logLimit, g_opt.missions,
       g_opt.missionMs, g_opt.shopping, g_opt.potions, g_opt.fireTracker, g_opt.fixups, g_opt.composition,
       g_opt.compositionDrop.c_str(), g_opt.harassStartWorkers, g_opt.harassEndWorkers, g_opt.hunterGank,
-      g_opt.team && g_opt.laneFixes, g_opt.teamPings, g_opt.tempo, g_opt.teamStatusS);
+      g_opt.team && g_opt.laneFixes, g_opt.teamPings, g_opt.tempo, g_opt.teamStatusS, g_opt.jungle, g_opt.pingFollow);
+}
+
+void OnHumanPing(int team, std::uint32_t pinger, std::uint32_t target, const float* pos, int type) {
+  if (!pos) return;
+  HumanPingRec& r = g_humanPings[g_humanPingSeq % kHumanPings];
+  r.seq = ++g_humanPingSeq;
+  r.team = team;
+  r.pinger = pinger;
+  r.target = target;
+  std::memcpy(r.pos, pos, sizeof r.pos);
+  r.type = type;
+  r.t = MissionNow();
+  if (LogBudget())
+    Log("bots: human ping %u (team %d, pinger %08X, target %08X, at (%.1f, %.1f), type %d) at %.1f s: for the bots "
+        "(BOTJUNGLE)",
+        r.seq, team, pinger, target, static_cast<double>(pos[0]), static_cast<double>(pos[1]), type, r.t);
 }
 
 void SetFillTeams(int seats) {

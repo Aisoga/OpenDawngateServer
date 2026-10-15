@@ -38,6 +38,7 @@ struct DamageOptions {
   bool lifedrain = true;    // step 13
   bool overload = true;     // step 14
   bool shields = true;      // the shield totals
+  bool reportZero = false;  // FARISW: a combat event also for a hit that left the integer HP unchanged (before: true)
 };
 
 // One named field for an instance's private table (_PRIVATETHREADTABLE of its GearsLua thread), set the way

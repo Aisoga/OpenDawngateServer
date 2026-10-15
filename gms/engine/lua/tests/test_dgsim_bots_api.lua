@@ -1382,5 +1382,341 @@ test('team: the calls carried out through the missions, lanes and pings', functi
   nPlayer.GetPlayerIdForObject = nil
 end)
 
+-- ---- BOTJUNGLE: the Hunter takes part, the bots follow the humans' pings ------------------------------------------------
+test('jungle: the gank opening, pure', function()
+  local B = dgsim_bots
+  local cfg = B.jungleConfig
+  local function c(hp, allies, enemies, extra)
+    local x = { hp = hp, allies = allies, enemies = enemies, underTower = false, dist = 80, visible = true }
+    for k, v in pairs(extra or {}) do x[k] = v end
+    return x
+  end
+  check(B.GankOpening(c(0.9, 1, 1), cfg), 'an ally fights him there: go')
+  check(B.GankOpening(c(0.4, 0, 1), cfg), 'alone but low: go')
+  check(not B.GankOpening(c(0.9, 0, 1), cfg), 'alone and healthy: no')
+  check(not B.GankOpening(c(0.4, 1, 3), cfg), 'three of theirs against two of us: no')
+  check(not B.GankOpening(c(0.9, 1, 2), cfg), 'two against two with the Hunter: no')
+  check(B.GankOpening(c(0.9, 2, 2), cfg), 'three against two: go')
+  check(not B.GankOpening(c(0.9, 1, 1, { levelGap = 2 }), cfg), 'two levels above him: no')
+  check(not B.GankOpening(c(0.3, 1, 1, { underTower = true }), cfg), 'under their tower: no')
+  check(not B.GankOpening(c(0.3, 1, 1, { visible = false }), cfg), 'not seen: no')
+  check(not B.GankOpening(c(0.3, 1, 1, { dist = 200 }), cfg), 'too far: no')
+end)
+
+-- the team world of the BOTTEAM test, with the jungle and the ping layer on and a host ping queue
+local function jungleWorld()
+  local B = dgsim_bots
+  local roles = compositionWorld()
+  local board = { open = {}, nextId = 100, ended = {}, pings = {}, logs = {}, human = {} }
+  nBotHost.RequestMission = function(team, mtype, target, agents, timeout, guid)
+    for _, m in ipairs(board.open) do
+      if m.team == team and m.type == mtype and m.target == target then m.agents = agents return m.id end
+    end
+    board.nextId = board.nextId + 1
+    board.open[#board.open + 1] = { id = board.nextId, team = team, type = mtype, target = target, guid = guid,
+                                    agents = agents, timeout = timeout }
+    return board.nextId
+  end
+  nBotHost.OpenMission = function(team, i)
+    local k = 0
+    for _, m in ipairs(board.open) do
+      if m.team == team then
+        k = k + 1
+        if k == i then return m.id, m.target, m.guid end
+      end
+    end
+  end
+  nBotHost.EndMission = function(id)
+    for i, m in ipairs(board.open) do if m.id == id then table.remove(board.open, i) return true end end
+    return false
+  end
+  nBotHost.IsMissionAvailable = function(team, mtype)
+    for _, m in ipairs(board.open) do if m.team == team and m.type == mtype then return true end end
+    return false
+  end
+  nBotHost.GetAvailableMission = function(bot, mtype)
+    for _, m in ipairs(board.open) do if m.type == mtype then return m.id end end
+    return 0
+  end
+  nBotHost.TeamPing = function(bot, target, x, y, z, ptype, why)
+    board.pings[#board.pings + 1] = { bot = bot, type = ptype, why = why, x = x, y = y }
+    return true
+  end
+  nBotHost.Log = function(text) board.logs[#board.logs + 1] = text end
+  nBotHost.RespawnIn = function() return 0 end
+  local lanes = {}
+  nBotHost.AssignLane = function(bot, lane) lanes[bot] = lane end
+  nBotHost.GetLane = function(bot) return lanes[bot] or 0 end
+  -- the humans' pings: { seq, team, pinger, target, x, y, z, type }
+  nBotHost.HumanPing = function(team, after)
+    for _, p in ipairs(board.human) do
+      if p.seq > after and p.team == team then return p.seq, p.pinger, p.target or kObjIDNone, p.x, p.y, 0, p.type, 0 end
+    end
+  end
+  local function cond(extra)
+    local c = extra or {}
+    c[nConditionFns.Check] = c[nConditionFns.Check] or function() return true end
+    c[nConditionFns.CheckEnd] = function() return false end
+    c[1] = c[1] or function() return true end
+    return c
+  end
+  condition_Mission_RallyForParasite = cond({ conditionGUID = 'rally' })
+  condition_Mission_RallyForParasiteContest = cond({ conditionGUID = 'contest' })
+  condition_Mission_KillParasite = cond({ conditionGUID = 'kill' })
+  condition_Mission_CaptureWell = cond({ conditionGUID = 'capture' })
+  condition_Bot_GatherForParasite = cond({ mortalRally = nVector.create(-66, -10, 0), spiritRally = nVector.create(66, 10, 0) })
+  condition_Bot_TimeToRally = cond()
+  condition_Bot_GroupedWithAllies = cond()
+  condition_Bot_AssignedToSiegeLane = cond()
+  ability_Bot_AssignToSiegeLane = {}
+  ability_Bot_AssignToSiegeLane[nAbilityFns.Tick] = function() end
+  condition_Bot_TowerPush = cond()
+  condition_Bot_InEnemyBase = { defaultSearchRadius = 65 }
+  -- ClearCamp's condition: the creeps (none here)
+  condition_nearest_creep = { [1] = function() return false end }
+  local ids = v5Structures()
+  local para = W.add({ name = 'parasite', team = 0, npc = nNPCType.ObjectiveMajor, pos = P(-3, 3), maxhp = 5000,
+                       untargetable = true })
+  nDirector.GetParasiteID = function() return para end
+  B.teamWanted, B.laneWanted, B.jungleWanted, B.pingWanted = true, true, true, true
+  B.fixups = { veryOutnumbered = true, groupInLane = true, bailOnKill = true, parasite = true, campRadius = true }
+  return roles, board, ids, para, lanes
+end
+
+-- the Hunter's camp answer: the point (x, y) itself, or a step of 40 from him toward it
+local function campToward(hu, x, y)
+  local ok, cx, cy = condition_Bot_NextCreepCamp[1](hu)
+  if ok ~= true then return false end
+  local p = W.get(hu).pos
+  local d = math.sqrt((x - p.x) ^ 2 + (y - p.y) ^ 2)
+  if d <= 40 then return math.abs(cx - x) < 0.01 and math.abs(cy - y) < 0.01 end
+  local ex, ey = p.x + (x - p.x) * 40 / d, p.y + (y - p.y) * 40 / d
+  return math.abs(cx - ex) < 0.01 and math.abs(cy - ey) < 0.01
+end
+
+local function cleanJungle()
+  local B = dgsim_bots
+  B.teamWanted, B.laneWanted, B.jungleWanted, B.pingWanted = nil, nil, nil, nil
+  for _, n in ipairs({ 'condition_Mission_RallyForParasite', 'condition_Mission_RallyForParasiteContest',
+                       'condition_Mission_KillParasite', 'condition_Mission_CaptureWell', 'condition_Bot_GatherForParasite',
+                       'condition_Bot_TimeToRally', 'condition_Bot_GroupedWithAllies', 'condition_Bot_AssignedToSiegeLane',
+                       'ability_Bot_AssignToSiegeLane', 'condition_Bot_TowerPush', 'condition_Bot_InEnemyBase',
+                       'condition_nearest_creep' }) do
+    _G[n] = nil
+  end
+end
+
+test('jungle: the Hunter ganks a lane with an opening, then farms again', function()
+  local B = dgsim_bots
+  local roles, board = jungleWorld()
+  local hu = shaper('hu', 1, -150, -40, { bot = true, maxhp = 700 })
+  local g1 = shaper('g1', 1, -95, 40, { bot = true })      -- the top lane, fighting
+  local tc = shaper('tc', 1, -80, -120, { bot = true })
+  roles[hu], roles[g1], roles[tc] = 2, 0, 1
+  local e1 = shaper('e1', 2, -90, 45, { bot = true, hp = 60 })  -- next to g1, off their towers
+  for i = 2, 5 do shaper('e' .. i, 2, 150 + i, 150, { bot = true }) end  -- the rest at home: no push for team 1
+  local s = B.ApplyFixups()
+  check(B.fixups.jungle == true and string.find(s, 'Jungle true') ~= nil, 'applied: ' .. s)
+  -- before gankFrom: farm
+  W.matchTime = 120
+  B.TeamTick()
+  check(B.hunterTasks[hu] == nil, 'no gank before 150 s')
+  check(select(2, condition_Bot_NextCreepCamp[1](hu)) == -59, 'the camps')
+  W.matchTime = 200
+  B.TeamTick()
+  local tk = B.hunterTasks[hu]
+  check(tk ~= nil and tk.kind == 'gank' and tk.target == e1, 'a gank on e1 (' .. tostring(tk and tk.kind) .. ')')
+  local ok, x, y = condition_Bot_NextCreepCamp[1](hu)
+  check(ok == true and campToward(hu, -90, 45), 'his camp is a step toward the target (' .. tostring(x) .. ', ' .. tostring(y) .. ')')
+  check(condition_Bot_IsNearNextCreepCamp[1](hu) == false, 'not there yet')
+  check(condition_nearest_creep[1](hu) == false, 'too far to fight: the original')
+  -- he arrives: ClearCamp, his gambits hit e1
+  W.get(hu).pos = P(-100, 35)
+  check(condition_Bot_IsNearNextCreepCamp[1](hu) == true, 'there (within the gank radius)')
+  local ok2, _, _, _, tgt = condition_nearest_creep[1](hu)
+  check(ok2 == true and tgt == e1, 'ClearCamp hits e1')
+  -- e1 dies: the gank ends with a kill, the cooldown holds the next one
+  W.kill(e1)
+  W.matchTime = 205
+  B.TeamTick()
+  check(B.hunterTasks[hu] == nil, 'farm again')
+  check(B.jungleStats.ganks == 1 and B.jungleStats.gankKills == 1, 'one gank, one kill')
+  local line
+  for _, l in ipairs(board.logs) do if string.find(l, 'the gank ended: the target died', 1, true) then line = l end end
+  check(line ~= nil, 'the end is logged')
+  local e3 = shaper('e3', 2, -98, 42, { bot = true, hp = 30 })
+  W.matchTime = 230
+  B.TeamTick()
+  check(B.hunterTasks[hu] == nil, 'cooling down')
+  W.matchTime = 266
+  B.TeamTick()
+  check(B.hunterTasks[hu] ~= nil and B.hunterTasks[hu].target == e3, 'after the cooldown: the next one')
+  -- e3 walks under its tower: the gank ends
+  W.get(e3).pos = P(-30, 110)
+  W.matchTime = 267
+  B.TeamTick()
+  check(B.hunterTasks[hu] == nil, 'under their tower: over')
+  -- low HP: no gank
+  W.get(e3).pos = P(-98, 42)
+  W.get(hu).hp = 300
+  W.matchTime = 400
+  B.TeamTick()
+  check(B.hunterTasks[hu] == nil, 'below 60 % HP: no gank')
+  cleanJungle()
+end)
+
+test('jungle: the Hunter answers the team calls', function()
+  local B = dgsim_bots
+  local roles, board, ids, para = jungleWorld()
+  local hu = shaper('hu', 1, -150, -40, { bot = true, maxhp = 700 })
+  local g1 = shaper('g1', 1, -70, 70, { bot = true })
+  local g2 = shaper('g2', 1, 70, -70, { bot = true })
+  local tc = shaper('tc', 1, -80, 60, { bot = true })
+  roles[hu], roles[g1], roles[g2], roles[tc] = 2, 0, 0, 1
+  local enemies = {}
+  for i = 1, 4 do enemies[i] = shaper('e' .. i, 2, 200 + i, 200, { bot = true }) end
+  B.ApplyFixups()
+  -- the base is attacked: he defends it
+  W.matchTime = 300
+  nBot.RequestMission(1, nMissionType.DefendBase, W.guardians[1], 5, 5, 'dt')
+  B.TeamTick()
+  local tk = B.hunterTasks[hu]
+  check(B.TeamStateOf(1).call == 'defend' and tk ~= nil and tk.kind == 'defend', 'defend (' .. tostring(tk and tk.kind) .. ')')
+  check(campToward(hu, -182, -182), 'to the Guardian')
+  board.open = {}
+  W.matchTime = 320
+  B.TeamTick()
+  check(B.hunterTasks[hu] == nil, 'the threat is over: farm')
+  -- the parasite: the gather takes him to the rally point, the kill to the parasite
+  W.get(para).untargetable = false
+  local st = B.TeamStateOf(1)
+  st.call, st.phase, st.since, st.phaseSince = 'parasite', 'gather', 700, 700
+  W.matchTime = 701
+  B.TeamTick()
+  tk = B.hunterTasks[hu]
+  check(tk ~= nil and tk.kind == 'gather', 'the gather (' .. tostring(tk and tk.kind) .. ')')
+  check(campToward(hu, -66, -10), 'to the rally point')
+  st.phase = 'kill'
+  W.matchTime = 702
+  B.TeamTick()
+  check(B.hunterTasks[hu] ~= nil and B.hunterTasks[hu].kind == 'parasite', 'the kill: the parasite')
+  check(select(2, condition_Bot_NextCreepCamp[1](hu)) == -3, 'to the parasite')
+  -- a push: he joins, standing off the target toward his base
+  W.kill(para)
+  st.call, st.phase, st.target, st.lane, st.since, st.lastAdvantage, st.lastProgress = 'push', nil, ids[10], nLaneID.Bottom, 800, 800, 800
+  W.kill(enemies[1])
+  W.kill(enemies[2])
+  W.matchTime = 801
+  B.TeamTick()
+  check(B.hunterTasks[hu] == nil, 'a push far from him (a tower): he keeps his camps')
+  W.get(hu).pos = P(40, -60)
+  W.matchTime = 802
+  B.TeamTick()
+  tk = B.hunterTasks[hu]
+  check(tk ~= nil and tk.kind == 'push' and tk.target == ids[10], 'the push near him (' .. tostring(tk and tk.kind) .. ')')
+  local sx, sy = select(2, condition_Bot_NextCreepCamp[1](hu))
+  check(sx ~= nil and B.dist(P(sx, sy), P(40, -60)) <= 40.01, 'walked in steps of 40')
+  check(tk ~= nil and B.dist(tk.pos, W.get(ids[10]).pos) > 20, 'short of the tower')
+  -- the status line names his task
+  B.nextTeamStatus = 0
+  B.TeamTick()
+  local status
+  for _, l in ipairs(board.logs) do if string.find(l, '^team 1 status') then status = l end end
+  check(status ~= nil and string.find(status, 'hunter push', 1, true) ~= nil, 'status: ' .. tostring(status))
+  local summary
+  for _, l in ipairs(board.logs) do if string.find(l, '^jungle: ') then summary = l end end
+  check(summary ~= nil and string.find(summary, 'defend=1', 1, true) ~= nil, 'the jungle line: ' .. tostring(summary))
+  cleanJungle()
+end)
+
+test('jungle: the bots follow the humans pings', function()
+  local B = dgsim_bots
+  local roles, board, ids, para, lanes = jungleWorld()
+  local hu = shaper('hu', 1, -150, -40, { bot = true, maxhp = 700 })
+  local g1 = shaper('g1', 1, -70, 70, { bot = true })
+  local g2 = shaper('g2', 1, 70, -70, { bot = true })
+  local tc = shaper('tc', 1, -80, 60, { bot = true })
+  local me = shaper('me', 1, -180, -180, {})  -- the human
+  roles[hu], roles[g1], roles[g2], roles[tc] = 2, 0, 0, 1
+  lanes[g1], lanes[g2], lanes[tc] = nLaneID.Top, nLaneID.Bottom, nLaneID.Top
+  local enemies = {}
+  for i = 1, 5 do enemies[i] = shaper('e' .. i, 2, 200 + i, 200, { bot = true }) end
+  B.ApplyFixups()
+  local seq = 0
+  local function ping(ptype, target, x, y)
+    seq = seq + 1
+    board.human[#board.human + 1] = { seq = seq, team = 1, pinger = me, target = target, x = x, y = y, type = ptype }
+  end
+  -- attention on their bottom outer tower: the team pushes that lane
+  ping(0, ids[10], 116, -29)
+  W.matchTime = 300
+  B.TeamTick()
+  local st = B.TeamStateOf(1)
+  check(st.call == 'push' and st.lane == nLaneID.Bottom and st.target == ids[10], 'a push on the pinged tower (' .. tostring(st.call) .. ')')
+  check(lanes[g1] == nLaneID.Bottom and lanes[tc] == nLaneID.Bottom, 'the lanes go to the push')
+  check(B.jungleStats.ordersTaken == 1, 'taken')
+  -- retreat: the push is called off, the lanes go back
+  ping(1, kObjIDNone, 100, -40)
+  W.matchTime = 302
+  B.TeamTick()
+  check(st.call == 'farm' and lanes[g1] == nLaneID.Top, 'a retreat ping calls it off (' .. tostring(st.call) .. ')')
+  -- attention on our own top outer tower: a DefendTower mission and the Hunter, who answers "on my way"
+  ping(0, ids[1], -116, 29)
+  W.matchTime = 304
+  B.TeamTick()
+  local protect
+  for _, m in ipairs(board.open) do if m.type == nMissionType.DefendTower and m.target == ids[1] then protect = m end end
+  check(protect ~= nil and protect.guid == B.pingGuids.protect, 'a DefendTower mission on it')
+  local tk = B.hunterTasks[hu]
+  check(tk ~= nil and tk.kind == 'ping' and campToward(hu, -116.3, 28.9), 'the Hunter goes (' .. tostring(tk and tk.kind) .. ')')
+  local ack = board.pings[#board.pings]
+  check(ack ~= nil and ack.bot == hu and ack.type == 3, 'he answers on my way')
+  -- an enemy shaper near our top lane: KillShaper and the Hunter goes for him
+  local e = enemies[3]
+  W.get(e).pos = P(-90, 60)
+  ping(0, e, -90, 60)
+  W.matchTime = 306
+  B.TeamTick()
+  local kill
+  for _, m in ipairs(board.open) do if m.type == nMissionType.KillShaper and m.target == e then kill = m end end
+  check(kill ~= nil, 'a KillShaper mission')
+  tk = B.hunterTasks[hu]
+  check(tk ~= nil and tk.kind == 'ping' and tk.target == e, 'the Hunter goes for him')
+  W.get(hu).pos = P(-95, 55)
+  local ok, _, _, _, tgt = condition_nearest_creep[1](hu)
+  check(ok == true and tgt == e, 'and hits him there')
+  -- he dies: the ping order ends
+  W.kill(e)
+  W.matchTime = 307
+  B.TeamTick()
+  check(B.hunterTasks[hu] == nil or B.hunterTasks[hu].kind ~= 'ping', 'the pinged shaper died: the order ends')
+  -- the parasite pinged before it is targetable: declined; after: a gather
+  ping(0, para, -3, 3)
+  W.matchTime = 400
+  B.TeamTick()
+  check(st.call ~= 'parasite' and B.jungleStats.ordersDeclined >= 1, 'not targetable yet: declined')
+  W.get(para).untargetable = false
+  ping(0, kObjIDNone, -5, 5)
+  W.matchTime = 402
+  B.TeamTick()
+  check(st.call == 'parasite' and st.phase == 'gather', 'a ping at the parasite: gather (' .. tostring(st.call) .. ')')
+  check(B.hunterTasks[hu] ~= nil and B.hunterTasks[hu].kind == 'gather', 'the Hunter gathers too')
+  -- a warning ping does nothing
+  ping(2, kObjIDNone, 0, 0)
+  W.matchTime = 404
+  B.TeamTick()
+  check(st.call == 'parasite', 'danger: nothing')
+  local said
+  for _, l in ipairs(board.logs) do if string.find(l, 'human ping', 1, true) then said = l end end
+  check(said ~= nil, 'the pings are logged: ' .. tostring(said))
+  -- without the switch the pings stay unread
+  B.pingWanted = nil
+  ping(1, kObjIDNone, 0, 0)
+  W.matchTime = 406
+  B.TeamTick()
+  check(st.call == 'parasite', 'bot_ping_follow=0: not read')
+  cleanJungle()
+end)
+
 print(checks .. ' checks, ' .. failed .. ' failed')
 if failed > 0 then error('dgsim_bots_api tests failed') end

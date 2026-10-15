@@ -711,9 +711,10 @@ void Stats(unsigned now, bool histo) {
     char ag[2400];
     agents::FormatStats(ag, sizeof ag);
     Log("stats agents: %s", ag);
+    if (agents::FormatMinionStats(ag, sizeof ag)) Log("stats minions: %s", ag);  // MINJUNGLE
   }
   if (g_damage && histo) {
-    char dm[400];
+    char dm[640];
     DamageFormatStats(dm, sizeof dm);
     Log("stats damage: %s", dm);
   }
@@ -938,10 +939,24 @@ void ReadConfig() {
     if (ao.botHoldStuckMs < 0) ao.botHoldStuckMs = 0;
     ao.botStaleTarget = HostOptionInt("bot_stale_target", 1) != 0;  // BOTTEMPO
     ao.botBackStep = HostOptionInt("bot_back_step", 1) != 0 && ao.botReflex;  // BOTBACK
-    ao.objectiveOnSight = HostOptionInt("objective_aggro_on_sight", 1) != 0;  // D14: the parasite (default 1 since 2026-10-10, the user's call)
+    ao.objectiveOnSight = HostOptionInt("objective_aggro_on_sight", 0) != 0;  // D14: the parasite fights only its attackers (1 from 2026-10-10 to 2026-10-15)
     ao.minionTarget = HostOptionInt("minion_target_priority", 1) != 0;  // MINTARGET
     ao.minionLeash = static_cast<float>(HostOptionInt("minion_leash_range", static_cast<int>(ao.minionLeash)));
     ao.minionDefendMs = HostOptionInt("minion_defend_ms", ao.minionDefendMs);
+    ao.minionWatchMs = HostOptionInt("minion_watch_ms", ao.minionWatchMs);  // MINJUNGLE
+    ao.minionIdleMs = HostOptionInt("minion_idle_ms", ao.minionIdleMs);
+    ao.minionOffLane = static_cast<float>(HostOptionInt("minion_off_lane", static_cast<int>(ao.minionOffLane)));
+    ao.minionWatchLogLimit = HostOptionInt("minion_watch_log_limit", ao.minionWatchLogLimit);
+    ao.minionUnstick = HostOptionInt("minion_unstick", 1) != 0;
+    ao.minionChase.enabled = HostOptionInt("minion_chase", 1) != 0;  // MINJUNGLE
+    ao.minionChase.laneLeash =
+        static_cast<float>(HostOptionInt("minion_lane_leash", static_cast<int>(ao.minionChase.laneLeash)));
+    ao.minionChase.chaseMs = HostOptionInt("minion_chase_ms", static_cast<int>(ao.minionChase.chaseMs));
+    ao.minionChase.chaseMinMove =
+        static_cast<float>(HostOptionInt("minion_chase_min_move", static_cast<int>(ao.minionChase.chaseMinMove)));
+    ao.minionChase.chaseDistance =
+        static_cast<float>(HostOptionInt("minion_chase_distance", static_cast<int>(ao.minionChase.chaseDistance)));
+    ao.minionChase.ignoreMs = HostOptionInt("minion_chase_ignore_ms", static_cast<int>(ao.minionChase.ignoreMs));
     agents::Install(ao);
   } else {
     Log("agent step off (tick_agents / [host] agents = 0)");
@@ -997,6 +1012,7 @@ void ReadConfig() {
     HostOptionString("wave_shape_for_s", "40", v, sizeof v);
     mo.director.shapeForS = std::atof(v);
     mo.director.campMajorSpot = HostOptionInt("camp_major_spot", 1) != 0;  // D14: a buff major on its scale-2.0 marker
+    mo.director.campIcons = HostOptionInt("camp_icons", 1);  // PARAMAP: the parasite's minimap icon (2: every camp)
     crowd::Options co;  // D1k: NavPower's constraint solver for the server space
     co.constraintSolver = HostOptionInt("navpower_constraint_solver", 1) != 0;
     crowd::Configure(co);
@@ -1296,6 +1312,7 @@ void ExperimentInstall(const char* gameDir, unsigned long mainThreadId) {
     d.lifedrain = opt("damage_lifedrain", 1) != 0;
     d.overload = opt("damage_overload", 1) != 0;
     d.shields = opt("damage_shields", 1) != 0;
+    d.reportZero = opt("damage_report_zero", 0) != 0;
     g_damage = DamageInstall(d);
   } else {
     Log("damage hook off (damage = 0)");

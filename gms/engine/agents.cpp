@@ -163,6 +163,20 @@ struct AgentState {
   unsigned holdInst = 0;
   unsigned long long holdSinceMs = 0;
   float holdPos[2] = {};
+  // MINJUNGLE: the minion watch (a lane minion standing still away from its lane): the aggro type (-99 not read yet),
+  // where it stood since when, the next check, whether it is counted as idle off its lane now
+  int watchAggroType = -99;
+  float watchAnchor[2] = {};
+  unsigned long long watchSinceMs = 0, watchNextMs = 0;
+  bool watchIdle = false;
+  unsigned long long watchResetMs = 0;  // the unstick's last default-behavior restart in this episode (0: none)
+  // MINJUNGLE: the chase rule's state (gms/core/agents/minion_target.h) and the chase log (a shaper as the best target:
+  // since when, the minion's lane distance then and its largest since, why it ended)
+  gms::agents::MinionChase chase;
+  std::uint32_t chaseLogTarget = 0;
+  unsigned long long chaseLogSinceMs = 0;
+  float chaseStartLane = 0.f, chaseMaxLane = 0.f, chaseStartPos[2] = {};
+  const char* chaseEndWhy = nullptr;
 };
 std::unordered_map<std::uint32_t, AgentState> g_agents;  // by object id
 
@@ -186,6 +200,12 @@ struct Stats {
   // D5: nBattlegrounds.AddBaseStructuresToAggroList
   unsigned baseCalls = 0, baseAdded = 0, baseMarked = 0, baseSkipped = 0, baseKeptBeyondRange = 0;
   unsigned minShaperDropped = 0, minShaperLeash = 0, minShaperDefend = 0;  // MINTARGET
+  // MINJUNGLE: the minion watch
+  unsigned watchEpisodes = 0, watchRecovered = 0, watchDiedIdle = 0, watchMaxNow = 0, watchLogged = 0, watchResets = 0;
+  // MINJUNGLE: the chase rule's drops and the chases of shapers (a shaper as a lane minion's best target)
+  unsigned chaseDropLane = 0, chaseDropTime = 0, chaseDropDistance = 0, chaseIgnored = 0, chases = 0;
+  unsigned chaseLogged = 0;
+  double chaseSecondsSum = 0, chaseSecondsMax = 0, chaseLaneSum = 0, chaseLaneMax = 0;
 };
 Stats g_st;
 unsigned g_logLines;
@@ -596,6 +616,62 @@ std::string Hex8(std::uint32_t v) {
 
 // The blackboard update of one agent (AGENT_AI.md §5 step 5.1): perception list, aggro list (prune, add, order),
 // flags, events, timer.
+// MINJUNGLE: whether a minion still walks its lane (locomotion +0x134, the spline id; 0 once it reached the lane's
+// end). False if unreadable.
+bool SehOnLane(void* o, bool* onLane) {
+  __try {
+    void* lo = Field<void*>(o, loco::kOfObject);
+    *onLane = lo && Field<std::uint32_t>(lo, loco::kSplineId) != 0;
+    return lo != nullptr;
+  } __except (SehNote(GetExceptionInformation(), "on lane")) {
+    return false;
+  }
+}
+
+// MINJUNGLE: after a lane minion's aggro update: the chase rule's pursuit clock, and the chase log (a shaper as the
+// best target: how long, how far from the lane, why it ended).
+void MinionChaseAfterUpdate(void* o, AgentState& st, const AgentInfo& a,
+                            const std::vector<gms::agents::AggroCandidate>& cands, std::uint32_t best,
+                            unsigned long long nowMs) {
+  bool bestIsShaper = false;
+  for (const auto& c : cands)
+    if (c.id == best) bestIsShaper = c.isPlayer;
+  gms::agents::UpdateChase(&st.chase, best, bestIsShaper, a.self.pos, static_cast<std::int64_t>(nowMs));
+  float lane = 0.f;
+  if (::director::NearestLane(a.self.pos[0], a.self.pos[1], &lane) == 0) lane = 0.f;
+  if (st.chaseLogTarget && lane > st.chaseMaxLane) st.chaseMaxLane = lane;
+  if (st.chaseLogTarget && best != st.chaseLogTarget) {  // a chase ended
+    const double secs = static_cast<double>(nowMs - st.chaseLogSinceMs) / 1000.0;
+    const float dx = a.self.pos[0] - st.chaseStartPos[0], dy = a.self.pos[1] - st.chaseStartPos[1];
+    ++g_st.chases;
+    g_st.chaseSecondsSum += secs;
+    if (secs > g_st.chaseSecondsMax) g_st.chaseSecondsMax = secs;
+    g_st.chaseLaneSum += st.chaseMaxLane;
+    if (st.chaseMaxLane > g_st.chaseLaneMax) g_st.chaseLaneMax = st.chaseMaxLane;
+    if (g_st.chaseLogged < static_cast<unsigned>(g_opt.minionWatchLogLimit)) {
+      ++g_st.chaseLogged;
+      Log("minions: chase: %08X %s chased shaper %08X %.1f s (t %.1f-%.1f s), from %.1f to %.1f units from its lane "
+          "(%.1f at most), %.1f units from where it began; ended: %s%s",
+          a.self.id, st.noun, st.chaseLogTarget, secs, static_cast<double>(st.chaseLogSinceMs) / 1000.0,
+          static_cast<double>(nowMs) / 1000.0, static_cast<double>(st.chaseStartLane), static_cast<double>(lane),
+          static_cast<double>(st.chaseMaxLane), static_cast<double>(std::sqrt(dx * dx + dy * dy)),
+          st.chaseEndWhy ? st.chaseEndWhy : (best ? "another best target" : "list empty"),
+          a.self.hasHp && a.self.hp <= 0.f ? " (the minion died)" : "");
+    }
+    st.chaseLogTarget = 0;
+  }
+  if (best && bestIsShaper && st.chaseLogTarget != best) {  // a chase began
+    st.chaseLogTarget = best;
+    st.chaseLogSinceMs = nowMs;
+    st.chaseStartLane = st.chaseMaxLane = lane;
+    st.chaseStartPos[0] = a.self.pos[0];
+    st.chaseStartPos[1] = a.self.pos[1];
+  }
+  if (st.chaseLogTarget && lane > st.chaseMaxLane) st.chaseMaxLane = lane;
+  st.chaseEndWhy = nullptr;
+  (void)o;
+}
+
 void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long nowMs) {
   AgentInfo a;
   if (!SehAgentInfo(o, &a) || !SehObjInfo(o, &a.self)) return;
@@ -684,6 +760,11 @@ void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long now
       if (why) {
         ++g_st.removed;
         ++g_st.removedBy[why - 1];
+        if (e.Id() == st.chaseLogTarget) {
+          static const char* const kWhy[] = {"gone or dead", "invalid", "untargetable", "invisible", "beyond the drop range",
+                                             "outside the tether"};
+          st.chaseEndWhy = kWhy[why - 1];
+        }
         continue;
       }
       gms::agents::AggroCandidate c;
@@ -735,6 +816,11 @@ void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long now
       mo.defendWindowMs = g_opt.minionDefendMs;
       bool otherInRange = false;
       for (const auto& c : cands) otherInRange = otherInRange || (!c.isPlayer && c.distance <= a.aggro);
+      // MINJUNGLE: the minion's own distance from its lane, and whether it still walks one (a spline id)
+      bool onLane = false;
+      float laneDistance = 0.f;
+      const bool laneKnown = SehOnLane(o, &onLane) &&
+                             ::director::NearestLane(a.self.pos[0], a.self.pos[1], &laneDistance) != 0;
       for (auto& c : cands) {
         if (!c.isPlayer) continue;
         bool defends = false;
@@ -747,11 +833,32 @@ void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long now
         }
         const bool taunting = c.taunting;
         if (gms::agents::ShaperAllowed(mo, taunting, c.distance, otherInRange, defends)) {
+          // MINJUNGLE: the lane leash, the chase time, a dropped shaper ignored on sight for a while
+          const int chase = gms::agents::ShaperChaseCheck(g_opt.minionChase, st.chase, c.id, taunting, defends,
+                                                          laneKnown && onLane, laneDistance, a.self.pos,
+                                                          static_cast<std::int64_t>(nowMs));
+          if (chase != gms::agents::kChaseKeep) {
+            dropped.push_back(c.id);
+            if (chase == gms::agents::kChaseIgnored) {
+              ++g_st.chaseIgnored;
+            } else {
+              ++(chase == gms::agents::kChaseLaneLeash ? g_st.chaseDropLane
+                 : chase == gms::agents::kChaseTime     ? g_st.chaseDropTime
+                                                        : g_st.chaseDropDistance);
+              gms::agents::NoteChaseDrop(g_opt.minionChase, &st.chase, c.id, static_cast<std::int64_t>(nowMs));
+            }
+            if (c.id == st.chaseLogTarget && chase != gms::agents::kChaseIgnored)
+              st.chaseEndWhy = chase == gms::agents::kChaseLaneLeash ? "lane leash"
+                               : chase == gms::agents::kChaseTime     ? "chase time"
+                                                                      : "chase distance";
+            continue;
+          }
           c.defend = defends && !taunting;
           if (c.defend) ++g_st.minShaperDefend;
         } else {
           dropped.push_back(c.id);
           if (c.distance > mo.leashRange) ++g_st.minShaperLeash;
+          if (c.id == st.chaseLogTarget) st.chaseEndWhy = c.distance > mo.leashRange ? "MINTARGET leash" : "other target in range";
         }
       }
       if (!dropped.empty()) {
@@ -793,6 +900,7 @@ void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long now
       }
     }
     best = SehBestTarget(a.agent);
+    if (a.aggroType == gms::agents::kAggroMinion) MinionChaseAfterUpdate(o, st, a, cands, best, nowMs);
     // the list after the update, logged when it changes
     std::string sig;
     for (const auto& c : cands) sig += (sig.empty() ? "" : " ") + Hex8(c.id);
@@ -2545,6 +2653,190 @@ bool SehIsBot(void* o) {
   }
 }
 
+// ---- MINJUNGLE: the minion watch ----------------------------------------------------------------------------------
+
+int SehAggroTypeOf(void* o) {
+  __try {
+    if (!Field<void*>(o, obj::kBrain) || !Field<void*>(o, agent::kOfObject)) return -1;
+    return GetAggroType(o);
+  } __except (SehNote(GetExceptionInformation(), "aggro type")) {
+    return -1;
+  }
+}
+
+// What a standing minion's engine state says: tree flags and leaf, the lane (spline id, index), the tether, the
+// blackboard flags, the locomotion goal and the Lua thread's wait condition (GearsLua thread: +0x5C the wait function,
+// +0x60 its object, +0x64 the goal, +0x70 the distance squared).
+struct MinionDetail {
+  unsigned treeFlags = 0;
+  std::uintptr_t leaf = 0;
+  std::uint32_t splineId = 0, splineIndex = 0;
+  int tetherOff = -1, engaged = -1, inCombat = -1;
+  unsigned goalFlags = 0;
+  float goal[3] = {};
+  std::uintptr_t waitFn = 0;
+  std::uint32_t waitObj = 0;
+  float waitGoal[3] = {}, waitDist2 = 0.f;
+  std::uint32_t target = 0;
+  float targetPos[3] = {};
+};
+
+bool SehMinionDetail(void* o, MinionDetail* d) {
+  __try {
+    void* btd = Field<void*>(o, obj::kBehaviorTree);
+    if (btd) {
+      d->treeFlags = Field<unsigned>(btd, bt::kFlags);
+      d->leaf = Field<std::uintptr_t>(btd, bt::kActiveLeaf);
+    }
+    char* lo = Field<char*>(o, loco::kOfObject);
+    if (lo) {
+      d->splineId = Field<std::uint32_t>(lo, loco::kSplineId);
+      d->splineIndex = Field<std::uint32_t>(lo, loco::kSplineIndex);
+      d->goalFlags = Field<unsigned>(lo, loco::kGoalFlags);
+      std::memcpy(d->goal, lo + loco::kGoal, sizeof d->goal);
+    }
+    char* ag = Field<char*>(o, agent::kOfObject);
+    if (ag) {
+      d->tetherOff = Field<unsigned char>(ag, agent::kTetherDisabled);
+      d->engaged = Field<unsigned char>(ag, agent::kEngaged);
+      d->inCombat = Field<unsigned char>(ag, agent::kInCombat);
+      d->target = Field<std::uint32_t>(ag, agent::kTarget);
+      std::memcpy(d->targetPos, ag + agent::kTargetPosition, sizeof d->targetPos);
+    }
+    const unsigned tid = Field<unsigned>(o, obj::kLuaThread);  // mLuaThreadID (BehaviorTree_StartLuaBehavior 0x008B0980)
+    char* th = tid && g_sim ? static_cast<char*>(GetThread(static_cast<char*>(g_sim) + sim::kLua, tid)) : nullptr;
+    if (th) {
+      d->waitFn = Field<std::uintptr_t>(th, 0x5C);
+      d->waitObj = Field<std::uint32_t>(th, 0x60);
+      std::memcpy(d->waitGoal, th + 0x64, sizeof d->waitGoal);
+      d->waitDist2 = Field<float>(th, 0x70);
+    }
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "minion detail")) {
+    return false;
+  }
+}
+
+// 1/0 whether `t` is visible to `o` (targetable: targetable and attackable), -1 on an exception.
+int SehVisibleTargetable(void* o, void* t, bool targetable) {
+  __try {
+    if (targetable) return IsTargetable(t) && IsAttackable(t) ? 1 : 0;
+    return IsVisibleTo(o, t) ? 1 : 0;
+  } __except (SehNote(GetExceptionInformation(), "visible/targetable")) {
+    return -1;
+  }
+}
+
+void LogIdleMinion(void* o,const AgentState& st, const ObjInfo& self, float laneDist, int lane, double stillS,
+                   double now) {
+  MinionDetail d;
+  SehMinionDetail(o, &d);
+  AgentInfo a;
+  std::string list;
+  std::uint32_t best = 0;
+  if (SehAgentInfo(o, &a)) {
+    std::vector<AggroEntry> entries;
+    if (SehReadAggro(a.agent, &entries)) {
+      for (const AggroEntry& e : entries) {
+        void* t = SehFind(e.Id());
+        ObjInfo ti;
+        char b[160];
+        if (t && SehObjInfo(t, &ti)) {
+          const float dx = ti.pos[0] - self.pos[0], dy = ti.pos[1] - self.pos[1];
+          std::snprintf(b, sizeof b, " %08X %s d %.1f hp %.0f flag %u vis %d tgt %d;", e.Id(), SehNounName(t),
+                        static_cast<double>(std::sqrt(dx * dx + dy * dy)), static_cast<double>(ti.hp),
+                        static_cast<unsigned>(e.raw[agent::kAggroEntryFlag]), SehVisibleTargetable(o, t, false),
+                        SehVisibleTargetable(o, t, true));
+        } else {
+          std::snprintf(b, sizeof b, " %08X gone;", e.Id());
+        }
+        list += b;
+      }
+    }
+    best = SehBestTarget(a.agent);
+  }
+  Log("minions: idle off lane: %08X %s team %d at (%.1f, %.1f), %.1f from lane %d, still %.1f s (t %.1f s): leaf %s, "
+      "tree flags %X, spline %08X index %u, tether off %d, engaged %d, in combat %d, best %08X, mTarget %08X, target "
+      "pos (%.1f, %.1f); locomotion goal flags %X goal (%.1f, %.1f); Lua wait fn %08X obj %08X goal (%.1f, %.1f) dist "
+      "%.1f; aggro list [%s]",
+      self.id, st.noun, self.team, static_cast<double>(self.pos[0]), static_cast<double>(self.pos[1]),
+      static_cast<double>(laneDist), lane, stillS, now, LeafName(d.leaf), d.treeFlags, d.splineId, d.splineIndex,
+      d.tetherOff, d.engaged, d.inCombat, best, d.target, static_cast<double>(d.targetPos[0]),
+      static_cast<double>(d.targetPos[1]), d.goalFlags, static_cast<double>(d.goal[0]), static_cast<double>(d.goal[1]),
+      static_cast<unsigned>(d.waitFn), d.waitObj, static_cast<double>(d.waitGoal[0]), static_cast<double>(d.waitGoal[1]),
+      static_cast<double>(d.waitDist2 > 0.f ? std::sqrt(d.waitDist2) : 0.f), list.c_str());
+}
+
+// Once every minionWatchMs per agent: is this lane minion standing still away from its lane?
+void MinionWatch(void* o, AgentState& st, unsigned long long nowMs) {
+  if (g_opt.minionWatchMs <= 0 || nowMs < st.watchNextMs) return;
+  st.watchNextMs = nowMs + static_cast<unsigned long long>(g_opt.minionWatchMs);
+  if (st.watchAggroType == -99) st.watchAggroType = SehAggroTypeOf(o);
+  if (st.watchAggroType != gms::agents::kAggroMinion) return;
+  ObjInfo self;
+  if (!SehObjInfo(o, &self) || self.player) return;
+  if (self.hasHp && self.hp <= 0.f) {
+    if (st.watchIdle) {
+      st.watchIdle = false;
+      ++g_st.watchDiedIdle;
+      if (g_st.watchLogged < static_cast<unsigned>(g_opt.minionWatchLogLimit))
+        Log("minions: %08X %s died while idle off its lane (t %.1f s)", self.id, st.noun,
+            static_cast<double>(nowMs) / 1000.0);
+    }
+    return;
+  }
+  const float dx = self.pos[0] - st.watchAnchor[0], dy = self.pos[1] - st.watchAnchor[1];
+  if (st.watchSinceMs == 0 || dx * dx + dy * dy > 1.f) {
+    if (st.watchIdle) {
+      st.watchIdle = false;
+      ++g_st.watchRecovered;
+      if (g_st.watchLogged < static_cast<unsigned>(g_opt.minionWatchLogLimit))
+        Log("minions: %08X %s moves again after %.1f s off its lane (t %.1f s, at (%.1f, %.1f))", self.id, st.noun,
+            static_cast<double>(nowMs - st.watchSinceMs) / 1000.0, static_cast<double>(nowMs) / 1000.0,
+            static_cast<double>(self.pos[0]), static_cast<double>(self.pos[1]));
+    }
+    st.watchAnchor[0] = self.pos[0];
+    st.watchAnchor[1] = self.pos[1];
+    st.watchSinceMs = nowMs;
+    return;
+  }
+  const unsigned long long idleMs = static_cast<unsigned long long>(g_opt.minionIdleMs);
+  if (st.watchIdle) {
+    // the unstick: an idle minion that still stands one more idle period after its last restart gets another
+    if (g_opt.minionUnstick && st.watchResetMs && nowMs - st.watchResetMs >= idleMs) {
+      MinionDetail d;
+      if (SehMinionDetail(o, &d) && d.engaged != 1 && SehResetDefaultBehavior(o)) {
+        st.watchResetMs = nowMs;
+        ++g_st.watchResets;
+      }
+    }
+    return;
+  }
+  if (nowMs - st.watchSinceMs < idleMs) return;
+  float laneDist = 0.f;
+  const int lane = ::director::NearestLane(self.pos[0], self.pos[1], &laneDist);
+  if (lane == 0 || laneDist <= g_opt.minionOffLane) return;
+  // a minion that stands while it fights (a caster shooting) is busy, not idle: only a long stand counts then
+  MinionDetail d;
+  const bool engaged = SehMinionDetail(o, &d) && d.engaged == 1;
+  if (engaged && nowMs - st.watchSinceMs < 4ull * idleMs) return;
+  st.watchIdle = true;
+  st.watchResetMs = 0;
+  ++g_st.watchEpisodes;
+  if (g_st.watchLogged < static_cast<unsigned>(g_opt.minionWatchLogLimit)) {
+    ++g_st.watchLogged;
+    LogIdleMinion(o, st, self, laneDist, lane, static_cast<double>(nowMs - st.watchSinceMs) / 1000.0,
+                  static_cast<double>(nowMs) / 1000.0);
+  }
+  // MINJUNGLE's unstick: a minion that stands away from its lane with nothing to fight gets its default behavior
+  // restarted (request 0x400, nAgent.ResetDefaultBehavior's): nBehavior_Assault starts over from the nearest knot and
+  // plans its walk anew
+  if (g_opt.minionUnstick && !engaged && SehResetDefaultBehavior(o)) {
+    st.watchResetMs = nowMs;
+    ++g_st.watchResets;
+  }
+}
+
 }  // namespace
 
 bool Install(const Options& options) {
@@ -2667,6 +2959,12 @@ void Tick(void* sim, float dt) {
       else TickTree(o, dt);
     }
     Observe(o, now);
+    MinionWatch(o, st, nowMs);
+  }
+  if (g_opt.minionWatchMs > 0) {  // MINJUNGLE: the most minions idle off their lanes at once
+    unsigned idleNow = 0;
+    for (const auto& kv : g_agents) idleNow += kv.second.watchIdle ? 1u : 0u;
+    if (idleNow > g_st.watchMaxNow) g_st.watchMaxNow = idleNow;
   }
   g_st.agentsLastFrame = static_cast<unsigned>(objs.size());
   g_st.ticksLastFrame = g_st.ticks - before;
@@ -2869,6 +3167,24 @@ void FormatStats(char* buf, std::size_t size) {
                   "BOTTEMPO: holds ended on one spot %u, stale targets dropped %u",
                   g_bot.skipped, g_bot.skippedThenActed, g_bot.pursuitStuck, g_bot.fallbackTries, g_bot.fallbackActed,
                   g_bot.recalls, g_bot.backSteps, g_bot.holdStuck, g_bot.staleTargets);
+}
+
+bool FormatMinionStats(char* buf, std::size_t size) {
+  if (!g_installed || g_opt.minionWatchMs <= 0 || !size) return false;
+  unsigned idleNow = 0;
+  for (const auto& kv : g_agents) idleNow += kv.second.watchIdle ? 1u : 0u;
+  std::snprintf(buf, size,
+                "idle off lane now %u (most at once %u), episodes %u, moved again %u, died idle %u, unstick restarts "
+                "%u; MINTARGET shapers "
+                "dropped %u (beyond the leash %u), defended %u; chase rule %s: drops by the lane leash %u, by the chase "
+                "time %u, by the chase distance %u, ignored on sight %u; chases of shapers %u (mean %.1f s, longest %.1f s; farthest from the "
+                "lane: mean %.1f, max %.1f)",
+                idleNow, g_st.watchMaxNow, g_st.watchEpisodes, g_st.watchRecovered, g_st.watchDiedIdle,
+                g_st.watchResets, g_st.minShaperDropped, g_st.minShaperLeash, g_st.minShaperDefend, g_opt.minionChase.enabled ? "on" : "off",
+                g_st.chaseDropLane, g_st.chaseDropTime, g_st.chaseDropDistance, g_st.chaseIgnored, g_st.chases,
+                g_st.chases ? g_st.chaseSecondsSum / g_st.chases : 0.0, g_st.chaseSecondsMax,
+                g_st.chases ? g_st.chaseLaneSum / g_st.chases : 0.0, g_st.chaseLaneMax);
+  return true;
 }
 
 }  // namespace agents

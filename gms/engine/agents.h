@@ -59,6 +59,8 @@
 #include <cstdint>
 #include <string>
 
+#include "core/agents/minion_target.h"
+
 namespace agents {
 
 struct Options {
@@ -94,6 +96,18 @@ struct Options {
   // RANGES: the parasite keeps an attacker on its list out to this distance ([host] parasite_reach, 0 = the data's
   // 27.05; it only lets the list keep an attacker, the on-sight range stays 27)
   float parasiteReach = 40.f;
+  // MINJUNGLE: the minion watch: a lane minion (aggro type minion) that has stood within 1 unit for minionIdleMs while
+  // more than minionOffLane units from every lane spline gets a "minions: idle off lane" line with its state (leaf,
+  // spline id and index, tether, flags, aggro list, Lua wait, locomotion goal) and counts in the stats
+  int minionWatchMs = 1000;     // [host] minion_watch_ms: how often (0 = off)
+  int minionIdleMs = 8000;      // [host] minion_idle_ms
+  float minionOffLane = 12.f;   // [host] minion_off_lane
+  bool minionUnstick = true;     // [host] minion_unstick: an idle minion (not engaged) gets its default behavior restarted
+  int minionWatchLogLimit = 300;  // [host] minion_watch_log_limit (also the "minions: chase:" lines)
+  // MINJUNGLE: how long a lane minion chases a shaper away from its lane (gms/core/agents/minion_target.h): [host]
+  // minion_chase (1; 0 = MINTARGET's rules only), minion_chase_distance (20), minion_chase_ms (3000),
+  // minion_chase_min_move (6), minion_lane_leash (20), minion_chase_ignore_ms (4000)
+  gms::agents::MinionChaseOptions minionChase;
 };
 
 // Checks the prologues of the client functions it calls. False (logged) if AgentBehaviorTree_Tick differs; then nothing
@@ -129,5 +143,8 @@ std::string DescribeBot(std::uint32_t objectId);
 
 // "agents N (trees ticked N this frame), ticks N, ..., leaves: PassiveIdle=3 Idle=30 ..." for the stats lines.
 void FormatStats(char* buf, std::size_t size);
+// MINJUNGLE: "idle off lane now N (most at once N), episodes N, ..." for the "stats minions:" line; false when the
+// watch is off.
+bool FormatMinionStats(char* buf, std::size_t size);
 
 }  // namespace agents

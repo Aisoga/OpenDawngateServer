@@ -26,7 +26,7 @@
 
 dgsim_bots = dgsim_bots or {}
 local B = dgsim_bots
-B.version = '8'  -- 8: BOTTEAM's team calls; 7: BOTCOMP's composition rules (Predator harass, Hunter parasite, lane lock); 2: D6b's script fix-ups; 3: D6c's BailOnKill fix-up; 4: D6e's GetClosestCampPosition; 5: BOTPARA's parasite fix-up; 6: BOTIDLE's camp radius
+B.version = '9'  -- 9: BOTJUNGLE's Hunter tasks and ping following; 8: BOTTEAM's team calls; 7: BOTCOMP's composition rules (Predator harass, Hunter parasite, lane lock); 2: D6b's script fix-ups; 3: D6c's BailOnKill fix-up; 4: D6e's GetClosestCampPosition; 5: BOTPARA's parasite fix-up; 6: BOTIDLE's camp radius
 B.config = B.config or {
   scanSeconds = 5,            -- game seconds between walks of the object pool (structures, wells)
   scanLimit = 4096,           -- pool slots walked at most
@@ -946,10 +946,12 @@ function B.ApplyFixups()
   if not f.composition then B.ApplyCompositionFixup() end
   if not f.lane then B.ApplyLaneFixup() end
   if f.lane and not f.team and type(B.ApplyTeamFixup) == 'function' then B.ApplyTeamFixup() end
+  if f.team and f.composition and not f.jungle and type(B.ApplyJungleFixup) == 'function' then B.ApplyJungleFixup() end
   return 'fix-ups: VeryOutnumbered ' .. tostring(f.veryOutnumbered) .. ', GroupInLane ' .. tostring(f.groupInLane) ..
          ', BailOnKill ' .. tostring(f.bailOnKill == true) .. ', Parasite ' .. tostring(f.parasite == true) ..
          ', CampRadius ' .. tostring(f.campRadius == true) .. ', Composition ' .. tostring(f.composition == true) ..
-         ', Lane ' .. tostring(f.lane == true) .. ', Team ' .. tostring(f.team == true)
+         ', Lane ' .. tostring(f.lane == true) .. ', Team ' .. tostring(f.team == true) ..
+         ', Jungle ' .. tostring(f.jungle == true)
 end
 
 
@@ -1310,7 +1312,9 @@ function B.ApplyCompositionFixup()
     nDirector.GetClosestCampPosition = function(team, pos, ignoreFoW)
       local bot = B.campAsker
       if bot ~= nil then
+        -- the parasite (the team's kill phase), else BOTJUNGLE's task (a gank, a defence, a push, a ping, ...)
         local p = B.HunterParasitePos(bot)
+        if p == nil and type(B.HunterTaskPos) == 'function' then p = B.HunterTaskPos(bot) end
         if p ~= nil then
           -- condition_Bot_NextCreepCamp treats a zero coordinate as "no camp"
           return vec(p.x ~= 0 and p.x or 0.01, p.y ~= 0 and p.y or 0.01, p.z ~= 0 and p.z or 0.01)
@@ -2171,7 +2175,18 @@ function B.TeamTickOne(team)
   local st = teamState(team)
   local s = B.TeamSnapshot(team)
   upkeep(team, s, st)
-  local d = B.TeamDecide(s, st, B.teamConfig)
+  -- BOTJUNGLE: the humans' pings first (an order is taken or declined this tick); the base's defence comes before it
+  if type(B.ReadPings) == 'function' then B.ReadPings(team, s, st) end
+  local d
+  if st.order ~= nil then
+    local why
+    if not s.baseThreat and st.call ~= 'defend' then d, why = B.OrderDecision(s, st, B.teamConfig) end
+    teamLog(string.format('team %d: a human\'s ping (%s) %s', team, st.order.what or st.order.kind,
+                          d and ('taken: ' .. callName(d.call, d.phase)) or ('not taken: ' .. tostring(why or 'the base comes first'))))
+    B.JungleStat(d and 'ordersTaken' or 'ordersDeclined')
+    st.order = nil
+  end
+  d = d or B.TeamDecide(s, st, B.teamConfig)
   local prev, prevPhase = st.call, st.phase
   local after = ''
   if prev == 'push' and d.call ~= prev then
@@ -2186,6 +2201,7 @@ function B.TeamTickOne(team)
       if c then teamPing(s, st, c, kObjIDNone, PING_RETREAT, 'retreat: ' .. tostring(d.reason), true) end
     end
     st.call, st.since = d.call, s.t
+    st.fromOrder = d.fromOrder == true  -- BOTJUNGLE: a human's ping started it
     st.lane, st.target, st.well = d.lane, d.target, d.well
     st.assigned = d.assigned or {}
     st.phase, st.phaseSince = d.phase, s.t
@@ -2201,6 +2217,8 @@ function B.TeamTickOne(team)
       'level %+.1f, hp %.2f%s', team, callName(prev, prevPhase), callName(d.call, d.phase), tostring(d.reason),
       s.alliesAlive, s.alliesHealthy, #s.bots, s.enemiesUp, s.enemiesDown, s.levelDiff, s.hpAvg, after))
   end
+  -- BOTJUNGLE: the Hunter's task under the (new) call
+  if type(B.HunterTick) == 'function' then B.HunterTick(team, s, st) end
   return d
 end
 
@@ -2234,9 +2252,14 @@ function B.TeamStatus(team)
   local t = matchTime()
   local players = nPlayer.GetPlayerControlledObjects()
   local alive, n, inPushLane = 0, 0, 0
+  local hunters = ''
   if type(players) == 'table' then
     for _, c in ipairs(players) do
       if exists(c) and nGameObject.GetTeam(c) == team and nPlayer.IsBot(c) == true then
+        if B.jungleWanted == true and roleOf(c) == ROLE_HUNTER then
+          local tk = B.hunterTasks[c]
+          hunters = hunters .. string.format('; hunter %s', tk and tk.kind or (B.HunterParasitePos(c) and 'parasite' or 'farm'))
+        end
         n = n + 1
         if nGameObject.IsAlive(c) == true then
           alive = alive + 1
@@ -2247,10 +2270,10 @@ function B.TeamStatus(team)
       end
     end
   end
-  return string.format('team %d status at %.0f s: %s for %.0f s%s; bots %d/%d alive%s; enemy %s; own %s', team, t,
+  return string.format('team %d status at %.0f s: %s for %.0f s%s; bots %d/%d alive%s%s; enemy %s; own %s', team, t,
                        callName(st.call or 'farm', st.phase), t - (st.since or 0),
                        st.call == 'push' and string.format(' (lane %s)', tostring(st.lane)) or '', alive, n,
-                       st.call == 'push' and string.format(', %d in the push lane', inPushLane) or '',
+                       st.call == 'push' and string.format(', %d in the push lane', inPushLane) or '', hunters,
                        B.StructureStatus(enemyOf(team)), B.StructureStatus(team))
 end
 
@@ -2268,6 +2291,10 @@ function B.TeamTick()
     for _, team in ipairs({ nTeamID.Mortal, nTeamID.Spirit }) do
       local ok, line = pcall(B.TeamStatus, team)
       if ok then teamLog(line) else noteError('TeamStatus: ' .. tostring(line)) end
+    end
+    if B.jungleWanted == true or B.pingWanted == true then
+      local ok, line = pcall(B.JungleSummary)
+      if ok then teamLog(line) end
     end
   end
   return 0
@@ -2310,6 +2337,553 @@ function B.TeamOffer(bot, missionType, role, st, team)
     return call == 'farm' and role == ROLE_PREDATOR  -- BOTCOMP turns it into his harass while he outnumbers
   end
   return true
+end
+
+-- ---- BOTJUNGLE: the Hunter takes part, the bots follow their humans' pings ([host] bot_jungle, bot_ping_follow) -------
+-- The user (2026-10-15): "the bot that plays jungle ignores most of the things happening in the game, they rarely
+-- follow pings or do anything but clearing camps". The Hunter's AI (BOT_Artificer_Hunter: Idle -> Farm, Shop, Flee and a
+-- Gank plan that never returns to Farm, off since BOTCOMP) has no mission plans, so BOTTEAM's calls reached him only at
+-- the parasite's kill phase; human pings were relayed to the team (C2) but nothing read them. Here:
+--   * The Hunter's task (B.HunterDecide, once a second per team after the call): the team's defend call (to the
+--     attacked base structure), the parasite's gather (the rally point; the kill phase is HunterParasitePos), a contest
+--     (the contest point until two allies are at the parasite), a human's ping for him (an enemy shaper, a spot, a
+--     structure or well of ours), the team's push (the push target), a well call near him, else a gank: a visible enemy
+--     shaper within gankRange, off its towers, that his arrival makes a fight we outnumber, low on HP or fought by an
+--     ally (B.GankOpening). Farming is the rest.
+--   * Carried out through his own Farm plan: nDirector.GetClosestCampPosition answers the task's point (the camp trick
+--     of the parasite), condition_Bot_IsNearNextCreepCamp counts him there within the task's radius (then ClearCamp
+--     runs), and condition_nearest_creep (ClearCamp's W, Q and basic attack) answers the task's fight target: the gank's
+--     shaper, a visible enemy shaper near him off their towers, else a minion or a worker near him.
+--   * The humans' pings (nBotHost.HumanPing, from the command intake's ping relay): retreat calls the team's push,
+--     parasite, contest or well off; the parasite, an enemy structure (push its lane) and an enemy well (take it) become
+--     the team's call when it can (B.OrderDecision); a structure or well of ours opens a DefendTower/DefendWell mission
+--     (Tacticians and Predators answer it) and sends the Hunter; an enemy shaper opens a KillShaper mission (the bots
+--     near it may answer) and sends the Hunter, as does a spot on the ground. The Hunter answers "on my way" (ping 3).
+-- All thresholds are [assumed].
+B.jungleConfig = B.jungleConfig or {
+  gankFrom = 180,          -- no gank before this match second (the lanes' first levels; the data's Gank link: 300)
+  gankRange = 110,         -- a gank target this far from the Hunter at most (about 9 s of walking)
+  gankHp = 0.7,            -- the Hunter's HP fraction to start a gank
+  gankTargetHp = 0.4,      -- a target at or below this HP fraction may be ganked without an ally on it
+  gankAllyRange = 30,      -- allies (on the target: a lane fight) and enemies counted around the target
+  gankLevelGap = 1,        -- the Hunter at most this many levels below the target
+  gankMax = 25, gankLostS = 4, gankCooldown = 60,
+  towerSafe = 30,          -- a shaper within this of a standing enemy tower is under it
+  leaveHp = 0.35,          -- every task ends below this (the Flee plan takes over)
+  joinHp = 0.5,            -- the push and the well only at this or more
+  pushJoinRange = 170,     -- a push's target this far at most (a siege of their base and a pinged push: any distance)
+  wellRange = 180,         -- a well call's well this far from the Hunter at most
+  pingHold = 30, pingDone = 8, pingNear = 30, pingRange = 400,
+  fightTarget = 45, fightShaper = 35, fightNpc = 30,
+  nearGank = 22, nearTask = 15, nearPush = 30, nearDefend = 25,
+  stepLen = 40,            -- the walk to a task's point in steps of this (re-aimed at each step)
+  pushStandOff = 25,       -- the Hunter's point before the push target (toward his base)
+  orderLife = 3,
+}
+B.hunterTasks = B.hunterTasks or {}  -- Hunter creature -> its task { kind, pos, target, near, since, ... } (the conditions)
+
+local function jungleOn() return teamOn() and B.jungleWanted == true end
+local function pingOn() return teamOn() and B.pingWanted == true end
+B.jungleStats = B.jungleStats or { tasks = {}, time = {}, pings = {}, ganks = 0, gankKills = 0, ordersTaken = 0,
+                                   ordersDeclined = 0, fightTargets = 0, acks = 0 }
+function B.JungleStat(name, n)
+  local s = B.jungleStats
+  s[name] = (s[name] or 0) + (n or 1)
+end
+
+local function dist2(a, b)
+  local dx, dy = a.x - b.x, a.y - b.y
+  return math.sqrt(dx * dx + dy * dy)
+end
+
+-- Enemy towers (Bindings) of `team`'s enemy standing within r of pos.
+local function underEnemyTower(team, pos, r)
+  local enemy = enemyOf(team)
+  for _, x in ipairs(B.Scan().structures) do
+    if x.npc == nNPCType.Tower and nGameObject.GetTeam(x.id) == enemy and standing(x.id) and
+        dist2(nGameObject.GetPosition(x.id), pos) <= r then
+      return true
+    end
+  end
+  return false
+end
+
+local function isPlayerCreature(id)
+  local players = nPlayer.GetPlayerControlledObjects()
+  if type(players) ~= 'table' or isNone(id) then return false end
+  for _, c in ipairs(players) do if c == id then return true end end
+  return false
+end
+
+-- A gank's opening, pure: `c` = { hp (the target's HP fraction), allies (ours within gankAllyRange of it, the Hunter
+-- not counted), enemies (theirs seen there, the target counted), underTower, dist (from the Hunter), visible,
+-- levelGap (the target's level minus the Hunter's) }. With the Hunter we must be more than they are there (at even
+-- numbers only a low target), and an ally must be on the target or it must be low.
+function B.GankOpening(c, cfg)
+  if not c.visible or c.underTower or c.dist > cfg.gankRange then return false end
+  if (c.levelGap or 0) > (cfg.gankLevelGap or 99) then return false end
+  if c.enemies > c.allies + 1 then return false end
+  if c.enemies == c.allies + 1 then return c.hp <= cfg.gankTargetHp end  -- even: only on a low target
+  return c.allies >= 1 or c.hp <= cfg.gankTargetHp
+end
+
+-- The gank candidates for Hunter `h` (an s.bots entry): visible living enemy shapers with an opening, best first.
+function B.GankCandidates(s, h, cfg)
+  local out = {}
+  local players = nPlayer.GetPlayerControlledObjects()
+  if type(players) ~= 'table' then return out end
+  for _, c in ipairs(players) do
+    if exists(c) and nGameObject.GetTeam(c) == s.enemy and nGameObject.IsAlive(c) == true and
+        nGameObject.IsVisibleToTeam(c, s.team) and nBot.ValidateHostileBotTarget(s.team, c, false, true) then
+      local pos = nGameObject.GetPosition(c)
+      local cand = { id = c, pos = pos, hp = hpFraction(c), visible = true, dist = dist2(pos, h.pos),
+                     allies = 0, enemies = 0, underTower = underEnemyTower(s.team, pos, cfg.towerSafe),
+                     levelGap = num(nGameObject.GetPlayerLevel(c), 1) - num(nGameObject.GetPlayerLevel(h.id), 1) }
+      for _, o in ipairs(players) do
+        if exists(o) and o ~= h.id and nGameObject.IsAlive(o) == true and dist2(nGameObject.GetPosition(o), pos) <= cfg.gankAllyRange then
+          local ot = nGameObject.GetTeam(o)
+          if ot == s.team then
+            cand.allies = cand.allies + 1
+          elseif ot == s.enemy and (o == c or nGameObject.IsVisibleToTeam(o, s.team)) then
+            cand.enemies = cand.enemies + 1
+          end
+        end
+      end
+      if B.GankOpening(cand, cfg) then
+        cand.score = cand.dist + 100 * cand.hp - 30 * cand.allies
+        out[#out + 1] = cand
+      end
+    end
+  end
+  table.sort(out, function(a, b) return a.score < b.score end)
+  return out
+end
+
+-- The attacked structure of the base: the own Nub or Guardian standing with the lowest HP (a hit one), else the
+-- Guardian.
+local function defendPoint(team)
+  local best, bestHp
+  for _, x in ipairs(B.Scan().structures) do
+    if (x.npc == nNPCType.Nub or x.npc == nNPCType.Guardian) and nGameObject.GetTeam(x.id) == team and standing(x.id) then
+      local hp = hpFraction(x.id)
+      if best == nil or hp < bestHp or (hp == bestHp and x.npc == nNPCType.Guardian) then best, bestHp = x.id, hp end
+    end
+  end
+  if best == nil then return nil end
+  return nGameObject.GetPosition(best), best
+end
+
+-- The Hunter's point before a push target: pushStandOff units from it toward his own Guardian.
+local function standOff(team, target, by)
+  local tp = nGameObject.GetPosition(target)
+  local g = nBattlegrounds.GetGuardianOnTeam and nBattlegrounds.GetGuardianOnTeam(team)
+  if not exists(g) then return tp end
+  local gp = nGameObject.GetPosition(g)
+  local d = dist2(tp, gp)
+  if d < 1 then return tp end
+  return vec(tp.x + (gp.x - tp.x) * by / d, tp.y + (gp.y - tp.y) * by / d, tp.z)
+end
+
+-- The Hunter `h`'s task now (nil = farm). `hs` his state { task, cool, order }; `s`, `st` the team's snapshot and state.
+function B.HunterDecide(s, st, h, hs, cfg)
+  local t = s.t
+  if not h.alive or h.hp < cfg.leaveHp then return nil, 'low' end
+  local call, phase = st.call or 'farm', st.phase
+  local cur = hs.task
+  local function task(kind, pos, near, target, why) return { kind = kind, pos = pos, near = near, target = target, why = why } end
+  -- 1. the base
+  if call == 'defend' then
+    local p = defendPoint(s.team)
+    if p then return task('defend', p, cfg.nearDefend, nil, 'the base is attacked') end
+  end
+  -- 2. the parasite: the gather, a contest's approach (the kill phase and a contest with allies at it: HunterParasitePos)
+  local p = s.parasite or {}
+  if p.stands and B.HunterParasitePos(h.id) ~= nil then
+    return task('parasite', p.pos, cfg.nearTask, p.id, 'the team takes the parasite')
+  end
+  if call == 'parasite' and phase == 'gather' and p.rally then
+    return task('gather', p.rally, cfg.nearTask, nil, 'the team gathers for the parasite')
+  end
+  if call == 'contest' and p.stands and not B.TeamWantsHunterOnParasite(s.team, p.id) then
+    return task('contest', contestPoint(s.team), cfg.nearTask, nil, 'the team contests the parasite')
+  end
+  -- 3. a human's ping for him
+  local o = hs.order
+  local orderDone
+  if o ~= nil and t <= o.untilT then
+    if o.target ~= nil and not isNone(o.target) and not standing(o.target) then
+      hs.order, orderDone = nil, 'the pinged target is down'
+    else
+      local pos = o.pos
+      if o.target ~= nil and exists(o.target) and (o.kind ~= 'kill' or nGameObject.IsVisibleToTeam(o.target, s.team)) then
+        pos = nGameObject.GetPosition(o.target)
+      end
+      -- arrived and nothing to fight there for pingDone s: done
+      if dist2(h.pos, pos) <= cfg.nearGank and B.HunterFightTarget(h.id, { kind = 'ping', target = o.target }) == nil then
+        o.quietSince = o.quietSince or t
+        if t - o.quietSince >= cfg.pingDone then hs.order, orderDone = nil, 'the ping is answered' end
+      else
+        o.quietSince = nil
+      end
+      if hs.order ~= nil then
+        return task('ping', pos, o.kind == 'kill' and cfg.nearGank or cfg.nearTask, o.target, 'a human pinged ' .. o.what)
+      end
+    end
+  elseif o ~= nil then
+    hs.order = nil
+  end
+  -- 4. the team's push and a well call near him
+  -- (joining needs joinHp, staying only leaveHp)
+  local function hpFor(kind) if cur ~= nil and cur.kind == kind then return cfg.leaveHp end return cfg.joinHp end
+  if call == 'push' and h.hp >= hpFor('push') and exists(st.target) and
+      (st.fromOrder or nGameObject.GetNPCType(st.target) ~= nNPCType.Tower or
+       dist2(nGameObject.GetPosition(st.target), h.pos) <= cfg.pushJoinRange or (cur ~= nil and cur.kind == 'push')) then
+    return task('push', standOff(s.team, st.target, cfg.pushStandOff), cfg.nearPush, st.target, 'the team pushes')
+  end
+  if call == 'well' and h.hp >= hpFor('well') then
+    for _, w in ipairs(s.wells or {}) do
+      if w.id == st.well and dist2(w.pos, h.pos) <= cfg.wellRange then
+        return task('well', w.pos, cfg.nearTask, w.id, 'the team takes a well')
+      end
+    end
+  end
+  -- 5. a gank: the one under way while it holds, else a new one
+  if s.ftue then return nil, 'a first-time player' end
+  if cur ~= nil and cur.kind == 'gank' then
+    local g = cur.target
+    if not standing(g) or not nBot.ValidateHostileBotTarget(s.team, g, false, true) then return nil, 'the target is down' end
+    if t - cur.since > cfg.gankMax then return nil, 'the gank took too long' end
+    local visible = nGameObject.IsVisibleToTeam(g, s.team)
+    if visible then cur.seen = t end
+    local gp = nGameObject.GetPosition(g)
+    if t - (cur.seen or cur.since) > cfg.gankLostS then return nil, 'the target is out of sight' end
+    if underEnemyTower(s.team, gp, cfg.towerSafe) then return nil, 'the target is under its Binding' end
+    local keep = task('gank', visible and gp or cur.pos, cfg.nearGank, g, cur.why)
+    keep.seen = cur.seen
+    return keep
+  end
+  if t < cfg.gankFrom or t < (hs.cool or 0) or h.hp < cfg.gankHp then return nil, orderDone end
+  local c = B.GankCandidates(s, h, cfg)[1]
+  if c ~= nil then
+    local g = task('gank', c.pos, cfg.nearGank, c.id, string.format('%s at %.0f %% HP, %d of ours and %d of theirs there, %.0f away',
+      tostring(nGameObject.GetAssetName(c.id)), c.hp * 100, c.allies, c.enemies, c.dist))
+    g.seen = t
+    return g
+  end
+  return nil, orderDone
+end
+
+-- What the Hunter `bot` hits while on his task (ClearCamp's gambits through condition_nearest_creep), nil = the
+-- original (the camps' creeps). The gank's or ping's shaper, a visible enemy shaper near him off their towers (under
+-- one only in a push), else an enemy minion or worker near him.
+function B.HunterFightTarget(bot, tk)
+  tk = tk or B.hunterTasks[bot]
+  if tk == nil or not exists(bot) then return nil end
+  local cfg = B.jungleConfig
+  local team = nGameObject.GetTeam(bot)
+  local pos = nGameObject.GetPosition(bot)
+  local g = tk.target
+  if g ~= nil and not isNone(g) and standing(g) and nGameObject.GetTeam(g) == enemyOf(team) and isPlayerCreature(g) and
+      nGameObject.IsVisibleToTeam(g, team) and nBot.ValidateHostileBotTarget(team, g, false, true) and
+      dist2(nGameObject.GetPosition(g), pos) <= cfg.fightTarget then
+    return g
+  end
+  for _, o in ipairs(nBot.GetEnemyPlayersNearPosition(team, pos, cfg.fightShaper, 0, true)) do
+    if nGameObject.IsAlive(o) == true and nBot.ValidateHostileBotTarget(team, o, false, true) and
+        (tk.kind == 'push' or not underEnemyTower(team, nGameObject.GetPosition(o), cfg.towerSafe)) then
+      return o
+    end
+  end
+  for _, o in ipairs(query(pos, cfg.fightNpc, nGetObjectsSortType.Distance, nTargetType.EnemyNPCs, team, bot, 0)) do
+    local npc = nGameObject.GetNPCType(o)
+    if (npc == nNPCType.MeleeMinion or npc == nNPCType.RangedMinion or npc == nNPCType.SuperMinion or
+        npc == nNPCType.Follower) and nGameObject.GetTeam(o) == enemyOf(team) and
+        nBot.ValidateHostileBotTarget(team, o, false, true) then
+      return o
+    end
+  end
+  return nil
+end
+
+-- The task's point for the camp conditions (nil = the camps): a step of at most stepLen toward it, so the walk
+-- (ability_Bot_MoveToTarget, which holds him until he arrives) is asked again with the point of the moment (a gank's
+-- target walks; one long walk ends where the target had been).
+function B.HunterTaskPos(bot)
+  if not jungleOn() then return nil end
+  local tk = B.hunterTasks[bot]
+  if tk == nil or tk.pos == nil then return nil end
+  local step = B.jungleConfig.stepLen
+  if step == nil or step <= 0 or not exists(bot) then return tk.pos end
+  local p = nGameObject.GetPosition(bot)
+  local d = dist2(p, tk.pos)
+  if d <= step then return tk.pos end
+  return vec(p.x + (tk.pos.x - p.x) * step / d, p.y + (tk.pos.y - p.y) * step / d, tk.pos.z)
+end
+
+local function hunterPing(bot, pos, target, ptype, why)
+  local f = hostfn('TeamPing')
+  if not f or pos == nil then return false end
+  if f(bot, target or kObjIDNone, pos.x, pos.y, pos.z or 0, ptype, why) then
+    B.stats.team.pings = B.stats.team.pings + 1
+    B.JungleStat('acks')
+    return true
+  end
+  return false
+end
+
+local function taskName(tk) return tk and tk.kind or 'farm' end
+
+-- Once a second per team, after the call: each bot Hunter's task, logged on a change; time per task counted.
+function B.HunterTick(team, s, st)
+  if not jungleOn() then return end
+  local cfg = B.jungleConfig
+  st.hunters = st.hunters or {}
+  for _, h in ipairs(s.bots) do
+    if h.role == ROLE_HUNTER then
+      local hs = st.hunters[h.id]
+      if hs == nil then hs = {} st.hunters[h.id] = hs end
+      if hs.pendingOrder ~= nil then hs.order, hs.pendingOrder = hs.pendingOrder, nil end
+      local prev = hs.task
+      local tk, why = B.HunterDecide(s, st, h, hs, cfg)
+      local same = tk ~= nil and prev ~= nil and tk.kind == prev.kind and tk.target == prev.target
+      if tk ~= nil then tk.since = same and prev.since or s.t end
+      if not same and (tk ~= nil or prev ~= nil) then
+        -- the end of a gank: its outcome, the cooldown
+        if prev ~= nil and prev.kind == 'gank' then
+          local killed = not isNone(prev.target) and exists(prev.target) and nGameObject.IsAlive(prev.target) ~= true
+          if killed then B.JungleStat('gankKills') end
+          hs.cool = s.t + cfg.gankCooldown
+          prev.outcome = killed and 'the target died' or tostring(why or 'another task')
+        end
+        if tk ~= nil then
+          B.jungleStats.tasks[tk.kind] = (B.jungleStats.tasks[tk.kind] or 0) + 1
+          if tk.kind == 'gank' then B.JungleStat('ganks') end
+        end
+        teamLog(string.format('team %d: hunter %s: %s -> %s (%s)%s; hp %.0f %%, at (%.0f, %.0f)', team,
+          tostring(nGameObject.GetAssetName(h.id)), taskName(prev), taskName(tk), tostring(tk and tk.why or why or 'farm'),
+          prev ~= nil and prev.outcome and ('; the gank ended: ' .. prev.outcome) or '', h.hp * 100, h.pos.x, h.pos.y))
+      end
+      -- a human's ping taken: "on my way" once
+      if tk ~= nil and tk.kind == 'ping' and hs.order ~= nil and not hs.order.acked then
+        hs.order.acked = true
+        hunterPing(h.id, tk.pos, kObjIDNone, PING_ONMYWAY, 'on my way: ' .. tostring(hs.order.what))
+      end
+      hs.task = tk
+      B.hunterTasks[h.id] = tk
+      local k = taskName(tk)
+      B.jungleStats.time[k] = (B.jungleStats.time[k] or 0) + 1
+    end
+  end
+end
+
+-- ---- the humans' pings ----
+
+local PING_KILL_GUID = spid('dgsim_ping_kill')
+local PING_PROTECT_GUID = spid('dgsim_ping_protect')
+B.pingGuids = { kill = PING_KILL_GUID, protect = PING_PROTECT_GUID }
+
+-- What a human's ping asks for, pure over the world: { kind = retreat | parasite | push | well | protect | kill | goto |
+-- none, pos, target, lane, well, what }.
+function B.ClassifyPing(team, ping)
+  local cfg = B.jungleConfig
+  local enemy = enemyOf(team)
+  local what = function(text) return text end
+  if ping.type == PING_RETREAT then return { kind = 'retreat', pos = ping.pos, what = what('retreat') } end
+  if ping.type ~= PING_ATTENTION and ping.type ~= PING_ONMYWAY then
+    return { kind = 'none', pos = ping.pos, what = 'a warning (type ' .. tostring(ping.type) .. ')' }
+  end
+  local tgt = ping.target
+  if isNone(tgt) or not exists(tgt) then tgt = nil end
+  local pos = ping.pos
+  if tgt ~= nil then pos = nGameObject.GetPosition(tgt) end
+  local para = parasiteId()
+  if exists(para) and (tgt == para or (tgt == nil and dist2(pos, nGameObject.GetPosition(para)) <= cfg.pingNear)) then
+    return { kind = 'parasite', pos = nGameObject.GetPosition(para), target = para, what = 'the parasite' }
+  end
+  -- a structure (the pinged one, else the nearest standing one at the spot)
+  local sx, sd
+  for _, x in ipairs(B.Scan().structures) do
+    if standing(x.id) then
+      local d = dist2(nGameObject.GetPosition(x.id), pos)
+      if x.id == tgt then sx, sd = x, -1 break end
+      if tgt == nil and d <= cfg.pingNear and (sd == nil or d < sd) then sx, sd = x, d end
+    end
+  end
+  if sx ~= nil then
+    local sp = nGameObject.GetPosition(sx.id)
+    if nGameObject.GetTeam(sx.id) == enemy then
+      local lane = sx.lane
+      if lane ~= nLaneID.Top and lane ~= nLaneID.Bottom then lane = laneOfPoint(sp) end
+      return { kind = 'push', pos = sp, target = sx.id, lane = lane, what = 'their ' .. tostring(sx.name) }
+    end
+    return { kind = 'protect', pos = sp, target = sx.id, structure = true, what = 'our ' .. tostring(sx.name) }
+  end
+  for _, w in ipairs(B.Scan().wells) do
+    if exists(w) and (w == tgt or (tgt == nil and dist2(nGameObject.GetPosition(w), pos) <= cfg.pingNear)) then
+      if nGameObject.GetTeam(w) == enemy then
+        return { kind = 'well', pos = nGameObject.GetPosition(w), target = w, well = w, what = 'their well' }
+      end
+      return { kind = 'protect', pos = nGameObject.GetPosition(w), target = w, well = w, what = 'our well' }
+    end
+  end
+  if tgt ~= nil and nGameObject.GetTeam(tgt) == enemy and isPlayerCreature(tgt) then
+    return { kind = 'kill', pos = pos, target = tgt, what = 'their ' .. tostring(nGameObject.GetAssetName(tgt)) }
+  end
+  return { kind = 'goto', pos = pos, what = string.format('the spot (%.0f, %.0f)', pos.x, pos.y) }
+end
+
+-- The team's call a human's order asks for, when it can be taken; else nil and why not. Pure over s/st.
+function B.OrderDecision(s, st, cfg)
+  local o = st.order
+  if o == nil then return nil, 'no order' end
+  if s.t > (o.untilT or 0) then return nil, 'too old' end
+  local cur = st.call or 'farm'
+  local p = s.parasite or {}
+  local numbers = s.alliesAlive - s.enemiesUp
+  local function take(d) d.fromOrder = true return d end
+  if o.kind == 'retreat' then
+    if cur == 'push' or cur == 'parasite' or cur == 'contest' or cur == 'well' then
+      return take({ call = 'farm', reason = 'a human pinged retreat', abort = true })
+    end
+    return nil, 'nothing to call off'
+  elseif o.kind == 'parasite' then
+    if cur == 'parasite' or cur == 'contest' then return nil, 'already at the parasite' end
+    if s.ftue or s.cheese or s.manyHumans then return nil, 'the data\'s veto' end
+    if not p.stands then return nil, 'the parasite does not stand or is not targetable yet' end
+    if s.alliesHealthy < 2 or numbers < 0 then return nil, 'too few of us' end
+    if p.humanOnIt or (p.alliesNear or 0) >= 2 then
+      return take({ call = 'parasite', phase = 'kill', reason = 'a human pinged the parasite (allies on it)' })
+    end
+    return take({ call = 'parasite', phase = 'gather', reason = 'a human pinged the parasite' })
+  elseif o.kind == 'push' then
+    if cur == 'push' then return nil, 'a push is under way' end
+    if s.ftue or s.manyHumans then return nil, 'the data\'s veto' end
+    if not exists(o.target) or not standing(o.target) then return nil, 'the structure is down' end
+    if s.alliesAlive < cfg.pushMinAllies or numbers < 0 then return nil, 'too few of us' end
+    return take({ call = 'push', lane = o.lane, target = o.target, reason = 'a human pinged ' .. tostring(o.what) })
+  elseif o.kind == 'well' then
+    if cur == 'well' then return nil, 'a well is under way' end
+    local w
+    for _, x in ipairs(s.wells or {}) do if x.id == o.well then w = x end end
+    if w == nil then return nil, 'the well is locked or ours' end
+    local crew, n = wellCrew(s, w, { healthy = cfg.healthy, wellGladiatorsFrom = 0, wellBots = cfg.wellBots })
+    if n < 1 or w.guards > n then return nil, 'no crew for it' end
+    return take({ call = 'well', well = w.id, assigned = crew, reason = 'a human pinged their well' })
+  end
+  return nil, 'not a team call'
+end
+
+-- Once a second per team, before the call: the team's new human pings. A team call (retreat, parasite, push, well)
+-- becomes st.order for this tick's B.OrderDecision; the others open their mission and go to the Hunter.
+function B.ReadPings(team, s, st)
+  if not pingOn() then return end
+  local f = hostfn('HumanPing')
+  if not f then return end
+  local cfg = B.jungleConfig
+  for _ = 1, 8 do
+    local seq, pinger, target, x, y, z, ptype = f(team, st.pingSeq or 0)
+    if seq == nil then break end
+    st.pingSeq = seq
+    local ok, o = pcall(B.ClassifyPing, team, { pinger = pinger, target = target, pos = vec(x, y, z), type = num(ptype, 0) })
+    if not ok then
+      noteError('ClassifyPing: ' .. tostring(o))
+    else
+      B.jungleStats.pings[o.kind] = (B.jungleStats.pings[o.kind] or 0) + 1
+      local response
+      if o.kind == 'retreat' or o.kind == 'parasite' or o.kind == 'push' or o.kind == 'well' then
+        o.untilT = s.t + cfg.orderLife
+        st.order = o
+        response = 'for the team'
+        if o.kind == 'retreat' and st.hunters then
+          for _, hs in pairs(st.hunters) do
+            hs.order, hs.pendingOrder = nil, nil
+            hs.cool = math.max(hs.cool or 0, s.t + 20)
+            if hs.task ~= nil and hs.task.kind == 'gank' then hs.task = nil end
+          end
+          local drop = {}
+          for bot in pairs(B.hunterTasks) do
+            if exists(bot) and nGameObject.GetTeam(bot) == team then drop[#drop + 1] = bot end
+          end
+          for _, bot in ipairs(drop) do B.hunterTasks[bot] = nil end
+        end
+      elseif o.kind == 'protect' or o.kind == 'kill' or o.kind == 'goto' then
+        if o.kind == 'protect' then
+          local mt = o.well and nMissionType.DefendWell or nMissionType.DefendTower
+          if o.well or nGameObject.GetNPCType(o.target) == nNPCType.Tower then
+            nBot.RequestMission(team, mt, o.target, 2, cfg.pingHold, PING_PROTECT_GUID)
+          end
+        elseif o.kind == 'kill' then
+          nBot.RequestMission(team, nMissionType.KillShaper, o.target, 2, 15, PING_KILL_GUID)
+        end
+        -- the nearest Hunter of the team within pingRange
+        local best, bestD
+        for _, b in ipairs(s.bots) do
+          if b.role == ROLE_HUNTER and b.alive and b.hp >= cfg.leaveHp then
+            local d = dist2(b.pos, o.pos)
+            if d <= cfg.pingRange and (bestD == nil or d < bestD) then best, bestD = b, d end
+          end
+        end
+        if best ~= nil and jungleOn() then
+          st.hunters = st.hunters or {}
+          local hs = st.hunters[best.id]
+          if hs == nil then hs = {} st.hunters[best.id] = hs end
+          hs.pendingOrder = { kind = o.kind, pos = o.pos, target = o.target, what = o.what, untilT = s.t + cfg.pingHold }
+          response = string.format('the Hunter %s goes (%.0f away)', tostring(nGameObject.GetAssetName(best.id)), bestD)
+        else
+          response = o.kind == 'goto' and 'no Hunter to send' or 'a mission for the bots near it'
+        end
+      else
+        response = 'nothing to do'
+      end
+      teamLog(string.format('team %d: human ping %d: %s at (%.0f, %.0f) -> %s', team, seq, tostring(o.what),
+                            o.pos and o.pos.x or 0, o.pos and o.pos.y or 0, response))
+    end
+  end
+end
+
+-- The jungle line of `dgsim_bots.Report()` and the status: tasks started, seconds per task, pings by kind.
+function B.JungleSummary()
+  local js = B.jungleStats
+  local function list(t)
+    local out = {}
+    for k, v in pairs(t) do out[#out + 1] = k .. '=' .. v end
+    table.sort(out)
+    return #out > 0 and table.concat(out, ' ') or 'none'
+  end
+  return string.format('jungle: tasks %s; seconds %s; ganks %d (%d with the target dead); human pings %s; orders %d taken, '
+    .. '%d declined; acks %d', list(js.tasks), list(js.time), js.ganks or 0, js.gankKills or 0, list(js.pings),
+    js.ordersTaken or 0, js.ordersDeclined or 0, js.acks or 0)
+end
+
+function B.ApplyJungleFixup()
+  local f = B.fixups
+  if f.jungle then return end
+  if not jungleOn() then
+    f.jungle = true
+    return
+  end
+  local nc, near = global('condition_nearest_creep'), global('condition_Bot_IsNearNextCreepCamp')
+  if type(nc) ~= 'table' or type(nc[1]) ~= 'function' or type(near) ~= 'table' or type(near[1]) ~= 'function' then return end
+  local nearest = nc[1]
+  nc[1] = function(bot, ...)
+    if exists(bot) and B.hunterTasks[bot] ~= nil and B.HunterParasitePos(bot) == nil then
+      local tgt = B.HunterFightTarget(bot)
+      if tgt ~= nil then
+        B.JungleStat('fightTargets')
+        return true, 0, 0, 0, tgt
+      end
+    end
+    return nearest(bot, ...)
+  end
+  local isNear = near[1]
+  near[1] = function(bot, ...)
+    if exists(bot) and B.HunterParasitePos(bot) == nil then
+      local tk = B.hunterTasks[bot]
+      if tk ~= nil and tk.pos ~= nil then return dist2(nGameObject.GetPosition(bot), tk.pos) < (tk.near or 9) end
+    end
+    return isNear(bot, ...)
+  end
+  f.jungle = true
 end
 
 function B.ApplyTeamFixup()

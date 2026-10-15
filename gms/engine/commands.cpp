@@ -1110,6 +1110,11 @@ bool OnClientMessage(void* sim, unsigned index, std::uint8_t wire, const std::ui
              "ping relay (MiniMapPing) to the pinger's team");
         Log("commands: %s player %u: %s -> MiniMapPing to players 0x%04x (team %u)", source, index, what.c_str(), team,
             pi.team);
+        {
+          // BOTJUNGLE: the bots of the pinger's team read it (nBotHost.HumanPing) and may follow it
+          const float at[3] = {c.pos.x, c.pos.y, c.pos.z};
+          bots::OnHumanPing(static_cast<int>(pi.team), c.caster, c.target, at, static_cast<int>(c.value));
+        }
         return true;
       }
       case gms::kCmdDance: {

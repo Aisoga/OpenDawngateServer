@@ -283,6 +283,8 @@ int ScanRaw(void* sim, NetObject* out, int max) {
       std::memcpy(i.pos, static_cast<char*>(o) + gobj::kPosition, sizeof i.pos);
       i.hp = i.data[kPartCombatant] ? Field<float>(i.data[kPartCombatant], combatant::kHitPoints) : -1.f;
       i.owner = Field<std::uint32_t>(o, gobj::kOwner);
+      i.markerId = Field<std::uint32_t>(o, gobj::kMarkerId);
+      if (i.data[kPartLocomotion]) i.parent = Field<std::uint32_t>(i.data[kPartLocomotion], loco::kParent);
     }
     return n;
   } __except (SehNote(GetExceptionInformation(), "Scan")) {
@@ -585,6 +587,19 @@ int Scan(void* sim, std::vector<NetObject>* out) {
 bool Replicated(std::int32_t t, bool all) {
   if (all) return t != noun::kTypeSpawnPoint;
   return t == noun::kTypeTower || t == noun::kTypeCreature || t == noun::kTypeInteractable;
+}
+
+namespace {
+std::vector<std::uint32_t> g_iconSpawnPoints;  // PARAMAP: the camp markers whose spawn point objects are created
+}  // namespace
+
+void SetIconSpawnPoints(const std::vector<std::uint32_t>& markerIds) { g_iconSpawnPoints = markerIds; }
+
+bool Replicated(const NetObject& o, bool all) {
+  if (o.nounType == noun::kTypeSpawnPoint && o.markerId)
+    for (std::uint32_t m : g_iconSpawnPoints)
+      if (m == o.markerId) return true;
+  return Replicated(o.nounType, all);
 }
 
 const char* NounTypeName(std::int32_t t) {
@@ -900,10 +915,10 @@ void BuildWorld(void* sim, unsigned index, bool all, RecordsFn records, void* ct
   // D9b: every object after its owner (the client maps the full state's mOwnerID through its id map, an unknown id
   // becomes 0); otherwise the object manager's order
   std::vector<gms::CreateOrderItem> items(objs.size());
-  for (size_t k = 0; k < objs.size(); ++k) items[k] = gms::CreateOrderItem{objs[k].id, objs[k].owner};
+  for (size_t k = 0; k < objs.size(); ++k) items[k] = gms::CreateOrderItem{objs[k].id, objs[k].owner, objs[k].parent};
   for (const size_t k : gms::CreateOrder(items)) {
     const NetObject& o = objs[k];
-    if (!Replicated(o.nounType, all)) {
+    if (!Replicated(o, all)) {
       ++counts->skipped;
       Log("replication: %08X %-30s %-14s not sent (not a replicated noun type) pos (%.2f, %.2f, %.2f)", o.id, o.name,
           NounTypeName(o.nounType), o.pos[0], o.pos[1], o.pos[2]);

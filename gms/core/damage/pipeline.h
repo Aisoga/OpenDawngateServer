@@ -208,6 +208,13 @@ inline HitResult RunHit(const HitInput& in, HitHooks& h) {
 inline bool RecordsAttacker(bool snapshot, float dealt, std::uint32_t attackerId, std::uint32_t targetId, bool sameTeam) {
   return snapshot && dealt > 0.f && attackerId != 0 && attackerId != targetId && !sameTeam;
 }
+// Step 10: the combat event only for a hit that lowered the integer HP, or a killing blow. The client draws a damage
+// number for every event with deltaHealth > 0 and prints its integerHpChange (CombatEvent_DamageAbsorb), so a hit
+// below one HP (a 10 % spell overload of a 12-damage cone tick) showed as a second number "0". The heal core, which
+// the client still has, reports only when the integer HP rose (GameObject_HealDamage 0x008E0720: the report is behind
+// `0 < (int)newHP - (int)oldHP`) [code]; the damage core is taken to do the same [assumed], and a killing blow is
+// always reported, since its event carries the kill (flags, streaks, the killing-blow feedback).
+inline bool ReportsHit(int intChange, bool lethal) { return intChange > 0 || lethal; }
 // Step 12: OnTookDamage / OnDealtDamage fire for every applied hit unless DoesNotGenerateDamageCallbacks, also one a
 // shield took whole (dealt 0) [assumed]: so on-hit scripts (Finesse's stacks, Resonance's zap, Discipline, the MR
 // steal) still proc against a shield, and a recall's own OnTookDamage (ability_returntobase returns false) ends it.

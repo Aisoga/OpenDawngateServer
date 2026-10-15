@@ -27,6 +27,7 @@
 #include "core/postgame/postgame.h"
 #include "core/protocol/messages.h"
 #include "core/protocol/wire.h"
+#include "core/replication/create_order.h"
 #include "core/replication/fow_data.h"
 #include "core/replication/modifiers.h"
 #include "core/replication/outgoing.h"
@@ -1135,6 +1136,8 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   }
   // X2a: [host] ui_before_entergame (1: the full UI data at the `done` point; 0 = after EnterGame, D1c-live's order)
   void SetUiBeforeEnterGame(bool on) { uiBeforeEnterGame_ = on; }
+  // FARISW: [host] create_order_parents (1: a step's creates after their owners and locomotion parents; 0 = pool order)
+  void SetCreateOrderParents(bool on) { createOrderParents_ = on; }
   // D14a-live: [host] answers_first (1: every command answer before the tick's replicated messages, the original's
   // order; 0 = only the item transactions' answers first, the others after the replication step, D7-live's order)
   void SetAnswersFirst(bool on) { answersFirst_ = on; }
@@ -2125,9 +2128,15 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     std::vector<uint16_t> createdNow(objs.size(), 0);
     int known = 0;
     KindScope traffic(gms::timing::kTrafficCreates);  // Q3c: then forwarded (DrainStep), deltas, players, fog
-    for (size_t i = 0; i < objs.size(); ++i) {
+    // FARISW: every create after its owner's and its locomotion parent's (core/replication/create_order.h): the client
+    // maps a tObjID it doesn't know yet to 0, and a hologram created before the projectile it rides on stayed behind
+    std::vector<gms::CreateOrderItem> order(objs.size());
+    for (size_t k = 0; k < objs.size(); ++k)
+      order[k] = createOrderParents_ ? gms::CreateOrderItem{objs[k].id, objs[k].owner, objs[k].parent}
+                                     : gms::CreateOrderItem{objs[k].id, 0, 0};
+    for (const size_t i : gms::CreateOrder(order)) {
       const repl::NetObject& o = objs[i];
-      if (!repl::Replicated(o.nounType, allTypes_)) continue;
+      if (!repl::Replicated(o, allTypes_)) continue;
       const uint16_t missing = static_cast<uint16_t>(world & ~o.known);
       if (o.known) ++known;
       if (!missing || failedCreates_.count(o.id)) continue;
@@ -2149,7 +2158,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       const repl::NetObject& o = objs[i];
       const uint16_t knownHere = static_cast<uint16_t>(o.known & world & ~createdNow[i]);
       const uint16_t to = static_cast<uint16_t>(knownHere & o.visible);
-      if (!knownHere || !repl::Replicated(o.nounType, allTypes_)) continue;
+      if (!knownHere || !repl::Replicated(o, allTypes_)) continue;
       for (int p = 0; p < repl::kNumParts; ++p) {
         gms::Bytes m;
         if (repl::BuildDelta(o, p, &m) > 0) {
@@ -2167,7 +2176,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     for (size_t i = 0; i < objs.size(); ++i) {
       const repl::NetObject& o = objs[i];
       const uint16_t knownAll = static_cast<uint16_t>((o.known | createdNow[i]) & world);
-      if (!knownAll || !repl::Replicated(o.nounType, allTypes_)) continue;
+      if (!knownAll || !repl::Replicated(o, allTypes_)) continue;
       AnimShadow& sh = animShadow_[o.id];
       gms::Bytes m;
       if (repl::AnimationOverrideDelta(o, sh.overrides, &sh.seeded, &m) > 0) {
@@ -2386,7 +2395,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     fos.reserve(objs.size());
     for (size_t i = 0; i < objs.size() && i < ents.size(); ++i) {
       const repl::NetObject& o = objs[i];
-      if (!ents[i].id || !repl::Replicated(o.nounType, allTypes_)) continue;
+      if (!ents[i].id || !repl::Replicated(o, allTypes_)) continue;
       const uint16_t known = static_cast<uint16_t>(o.known | createdNow[i]);
       if (!(known & world)) continue;
       gms::vision::FogObject f;
@@ -3049,6 +3058,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   bool allTypes_ = true;
   bool networkRate_ = true;
   int logFirst_ = 3;
+  bool createOrderParents_ = true;
   bool uiBeforeEnterGame_ = true;  // X2a
   bool answersFirst_ = true;       // D14a-live
   bool vanityPicks_ = true;        // WARDSKIN
@@ -3528,6 +3538,11 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
              networkRate = HostOptionInt("network_rate", 1) != 0;
   const int logFirst = HostOptionInt("log_first", 3);
   g->match->SetLiveReplication(replicate, allTypes, networkRate, logFirst);
+  const bool createOrderParents = HostOptionInt("create_order_parents", 1) != 0;
+  g->match->SetCreateOrderParents(createOrderParents);
+  Log("host: a step's creates %s", createOrderParents
+          ? "after their owners and locomotion parents ([host] create_order_parents 1, FARISW)"
+          : "in pool order ([host] create_order_parents 0: an attached object can lose its parent on the client)");
   const bool uiBefore = HostOptionInt("ui_before_entergame", 1) != 0;
   g->match->SetUiBeforeEnterGame(uiBefore);
   Log("host: the full UI data (8B/8C/8D) %s (X2a: the client's tower graphics read mNumTowersPerLane at EnterGame)",

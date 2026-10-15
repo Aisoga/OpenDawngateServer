@@ -581,6 +581,8 @@ using SendActionCommandFailedFn = void(__cdecl*)(unsigned unused, unsigned playe
 // client reads), +0x11C mTargetPosition.
 namespace loco {
 constexpr std::uintptr_t kOfObject = 0x8A0;
+// tObjID: the parent of nLocomotion.AttachObject (0x0091C2E0), the target of Locomotion_FollowObject (0x0088FD50)
+constexpr std::uintptr_t kParent = 0x08;
 constexpr std::uintptr_t kGoalFlags = 0xB8;
 constexpr std::uintptr_t kGoal = 0xC8;
 constexpr std::uintptr_t kClientPathBlock = 0xE0;

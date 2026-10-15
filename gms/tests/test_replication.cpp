@@ -189,6 +189,27 @@ GMS_TEST(CreateOrderOwnersFirst) {
   CHECK(gms::CreateOrder({}).empty());
 }
 
+// FARISW: the locomotion's +8 (an attach parent, a follow target) is a dependency too. Faris's melee W creates its
+// hologram, then the projectile the hologram is attached to; in a step whose pool order has the hologram first, the
+// projectile now goes out before it, so the hologram's 9C names a parent the client knows.
+GMS_TEST(CreateOrderParentsFirst) {
+  using gms::CreateOrderItem;
+  const std::vector<CreateOrderItem> items = {
+      {0x125, 0, 0x127},     // 0 the hologram, attached to the projectile
+      {0x127, 0x2E, 0},      // 1 the projectile, owned by Faris (known already: not among the items)
+      {0x130, 0, 0},         // 2 a minion
+      {0x131, 0x140, 0x132}, // 3 owned by 0x140 and attached to 0x132: the owner first, then the parent
+      {0x132, 0, 0},         // 4
+      {0x140, 0, 0},         // 5
+      {0x150, 0, 0x151},     // 6 a follow cycle with 7
+      {0x151, 0, 0x150},     // 7
+  };
+  const std::vector<size_t> order = gms::CreateOrder(items);
+  const std::vector<size_t> expect = {1, 0, 2, 5, 4, 3, 7, 6};
+  CHECK_EQ(order.size(), expect.size());
+  for (size_t k = 0; k < order.size() && k < expect.size(); ++k) CHECK_EQ(order[k], expect[k]);
+}
+
 // D2h: a player's labsPlayerFowData (AA) goes to its team and the spectators always, and to the players that see its
 // creature (gms/core/replication/fow_data.h); without byVision to the team only (D2g-live's rule).
 GMS_TEST(FowDataRecipientsTeamAndSeers) {

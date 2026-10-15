@@ -73,6 +73,7 @@ The match runs as in the original game. The server uses the game's own data and 
 **The map.** There is one map, with two lanes and a jungle.
 
 - **Minion waves** appear every 30 seconds from 1:00. Six minions spawn one after another and walk their lane in a line.
+- **Minions fight minions and towers first.** They attack a shaper only when nothing else is near them, or when that shaper hits a shaper of their team. They follow a shaper who walks away only a short way (about 20 units, or 3 seconds of chasing), never far into the jungle, then return to their lane and leave that shaper alone for a few seconds.
 - **Towers (Bindings)** shoot minions first. They switch to an enemy shaper who attacks you near them.
 - The **Locus** (the big tower) guards each base.
 - Units collide and push each other a little. The item *Fluidity* lets you walk through them.
@@ -82,7 +83,7 @@ The match runs as in the original game. The server uses the game's own data and 
 - A destroyed core makes your minions stronger.
 - A core grows back after eight minutes, and the Guardian's shield comes back with it.
 
-**Bots.** The bots take their lanes after about a minute. They last-hit minions, cast their abilities, buy items, drink potions, place wards, push towers and fight. They also play as a team: they defend towers, gather for the parasite, capture and defend spirit wells, and join an ally going for a kill. When they have the advantage, after won fights or with the parasite's buff, they group up in one lane and push with their minions until they lose the fight; from about 20 minutes, and whenever enemy cores are down, they siege the enemy base to end the match. In a practice match they go easier on you, as the original's first-time rules did.
+**Bots.** The bots take their lanes after about a minute. They last-hit minions, cast their abilities, buy items, drink potions, place wards, push towers and fight. They also play as a team: they defend towers, gather for the parasite, capture and defend spirit wells, and join an ally going for a kill. When they have the advantage, after won fights or with the parasite's buff, they group up in one lane and push with their minions until they lose the fight; from about 20 minutes, and whenever enemy cores are down, they siege the enemy base to end the match. Their jungler leaves its camps to gank a lane where an ally is fighting, to defend the base, and to join pushes, well captures and the parasite near it. The bots follow your minimap pings: ping an enemy Binding to push its lane, the parasite to take it together, an enemy spirit well to capture it, or "retreat" to call a push or an objective off; ping one of your own Bindings or wells, an enemy shaper or a spot on the map and the jungler comes, answering with an "on my way" ping. In a practice match they go easier on you, as the original's first-time rules did.
 
 **Gold and experience.** You start with 500 gold and earn 100 gold a minute from 1:00. Last hits and kills give gold and experience. Each level gives you an ability point to spend with Ctrl + Q/W/E/R:
 
@@ -104,7 +105,7 @@ The match runs as in the original game. The server uses the game's own data and 
 **Jungle.** Creep camps respawn after you clear them.
 
 - Killing the big creature of a buff camp gives you its buff for 150 seconds: Green for Power, Blue for Haste or Orange for armor.
-- The **parasite** in the middle of the map becomes attackable at 5:00 and only fights players who attack it.
+- The **parasite** in the middle of the map becomes attackable at 5:00 and only fights players who attack it. While it lives, its red mark shows in the middle of the minimap.
 - Killing the parasite pays your team. A kill at its later stages gives your team a big buff and strong Strider minions in your waves for a few minutes.
 
 **Fog of war.** You see what your team's units, towers and wards see.
@@ -239,7 +240,7 @@ The server only ever sees `alex`.
 
 - The loot bag click after a win hasn't been confirmed in a real game yet. If you don't click the bag, the game returns to the main menu about 105 seconds after the end anyway.
 - Pause isn't available. Surrender isn't available in practice matches.
-- The minimap doesn't show jungle camp icons.
+- The minimap doesn't show jungle camp icons (only the parasite's).
 - The bots follow rules partly reconstructed from the game's data, so their exact behaviour may differ from the original.
 - Some details of the original server had to be guessed. If something works differently from how you remember it, a report helps, especially with a video of the original.
 

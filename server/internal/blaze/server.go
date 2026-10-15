@@ -46,6 +46,9 @@ type Server struct {
 	// GMSPort is the port of the match server (GMS) address on Host that NotifyGameSetup announces
 	// (B8). Nothing answers there yet; dgserver only logs what arrives.
 	GMSPort int
+	// GMSHost is the host of that address when it isn't Host ("" = Host): dgserver --gms-bind, the match hosts' own
+	// address, which the tunnel gateway routes a tunnelled client's GMS datagrams to (Conn.ForClient).
+	GMSHost string
 	// Content is the game's catalog (B7a, dgserver --content); nil or empty = none: new accounts get
 	// no items and the store is empty, as before B7a.
 	Content *content.Content

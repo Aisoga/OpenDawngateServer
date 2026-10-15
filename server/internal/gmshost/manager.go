@@ -44,9 +44,14 @@ type Config struct {
 	// ports. A nil Launcher means no hosts here: every match goes to an agent (H2).
 	Launcher Launcher
 	Pool     *Pool
-	// BindHost is the host part of DGGMS_BIND: the address the GMS port binds (dgserver --bind). What
-	// the server announces in HNET is its public host (--public-host, blaze.Server.Host; A5).
+	// BindHost is the host part of DGGMS_BIND: the address the GMS port binds (dgserver --bind, or
+	// --gms-bind). What the server announces in HNET is its public host (--public-host, blaze.Server.Host;
+	// A5), or GMSHost when set.
 	BindHost string
+	// GMSHost is the address announced in HNET for this machine's hosts ("" = the server's own public host):
+	// dgserver --gms-bind sets it to the hosts' own address, which the tunnel gateway then routes a session's
+	// datagrams to (a tunnelled client is told its tunnel address instead, blaze.Conn.ForClient).
+	GMSHost string
 	// AgentKey lets agents register (remote host machines, H2: dgserver --agent with the same key; see
 	// remote.go). Empty: agents are refused.
 	AgentKey []byte
@@ -160,7 +165,7 @@ func NewManager(cfg Config) *Manager {
 			first, last, _ := ParsePorts(DefaultPorts)
 			m.cfg.Pool = NewPool(first, last)
 		}
-		m.sites = []*site{{name: LocalSite, launcher: cfg.Launcher, pool: m.cfg.Pool, bindHost: cfg.BindHost}}
+		m.sites = []*site{{name: LocalSite, launcher: cfg.Launcher, pool: m.cfg.Pool, bindHost: cfg.BindHost, gmsHost: cfg.GMSHost}}
 	}
 	return m
 }

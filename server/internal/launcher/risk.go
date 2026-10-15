@@ -58,7 +58,7 @@ func ServerRiskNotice(w io.Writer, r RiskInfo) {
 ==== A PUBLIC SERVER: %s is an internet address. You run it at your own risk. ====
 What the public profile does for you:
   - Every player connection goes through the encrypted tunnel (TLS 1.3 and AES-GCM, TCP and UDP %d); each
-    player's Start-Client checks this server's tunnel key. Nothing else of the server needs to be reachable.
+    player's Start-Client checks this server's key. The server has no other port for players.
   - Passwords are checked and kept only as hashes (never logged); %s.
   - Limits on connections, logins, games and packets per address; the match hosts check every message a
     client sends before the game's 2014 code sees it.
@@ -78,10 +78,9 @@ Forward on your router only TCP and UDP %d (the tunnel) and TCP 443 (the website
 ports and never uses UPnP.
 `, r.Address, gp, signup, logs, gp, map[bool]string{true: ", for Let's Encrypt too", false: ""}[r.WebDomain != ""])
 	if r.Bind == "" || r.Bind == r.Address {
-		fmt.Fprintf(w, `This PC holds the public address itself (no router): the server's other ports (TCP 42127, 10041, 17502,
-18080, 9988; UDP 17502, 10042-10051) listen on it too, unencrypted. Let your firewall in only TCP and UDP %d
-and TCP 443.
-`, gp)
+		fmt.Fprintf(w, `This PC holds the public address itself (no router): only the tunnel's port and the website listen on it
+(the match hosts listen on %s, a loopback address). Let your firewall in only TCP and UDP %d and TCP 443.
+`, HostsAddress(r.Address), gp)
 	}
 	fmt.Fprintln(w, "Never use a password you use anywhere else. See README.txt (\"Hosting on the internet\").")
 }

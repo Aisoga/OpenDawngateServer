@@ -19,10 +19,13 @@ import (
 	"dawngate/server/internal/tunnel"
 )
 
-// the encrypted tunnel. Start-Server runs the gateway (tunnel = auto: on for a public address);
-// Start-Client tunnels to it (tunnel = auto: for a public server address): the player copy is patched for the tunnel
-// address (127.0.0.1, the local profile) with a certificate set of this PC's own (the game's TLS to the redirector
-// ends in Start-Client), and the gateway's key is trusted on first use like a server's CA.
+// the encrypted tunnel, on by default for every server (tunnel = auto). Start-Server runs the gateway and no
+// plain listener of the services (dgserver --plain off), its match hosts on a loopback address of their own
+// (HostsAddress); Start-Client tunnels to it: the player copy is patched for the tunnel address (127.0.0.1, the local
+// profile) with a certificate set of this PC's own (the game's TLS to the redirector ends in Start-Client), and the
+// gateway's key is pinned: given by the operator (--gateway-pin), this PC's own server's (read from its folder), or
+// confirmed by the player (the front's confirm once: front.go trustKey). tunnel = off keeps the direct path (the
+// developers' option: the lanes, captures, research).
 
 // The tunnel's modes in Start-Server.ini and Start-Client.ini (and --tunnel).
 const (
@@ -52,10 +55,26 @@ func tunnelMode(v string) (string, error) {
 	return "", fmt.Errorf("tunnel = %s: use auto, on or off", v)
 }
 
-// tunnelFor says whether a server address takes the tunnel in a mode: on always, off never, auto for a public
-// address (required there: its other ports aren't forwarded), not on loopback or a LAN.
+// tunnelFor says whether a server address takes the tunnel in a mode: auto and on always (every profile, every
+// address: this PC's own server too), off never (the developers' option: a direct path with the plain ports).
 func tunnelFor(mode, address string) bool {
-	return mode == TunnelOn || (mode == TunnelAuto && IsPublicAddress(address))
+	return mode != TunnelOff
+}
+
+// HostsAddress is the loopback address a Start-Server with the tunnel runs its match hosts' GMS ports on (dgserver
+// --gms-bind): never the address a Start-Client's front uses on this PC (127.0.0.N, its game ports 10042-10051 among
+// them), so a Start-Server and a Start-Client run side by side on one PC. A server on 127.0.0.N takes 127.0.N.10 (on
+// 127.0.0.1: 127.0.1.10), one on another loopback address (a test's) that address itself, and one on a LAN or public
+// address 127.0.1.10: the hosts are reached only through the gateway, so they listen on no network address.
+func HostsAddress(bind string) string {
+	ip := net.ParseIP(bind).To4()
+	switch {
+	case ip == nil || !ip.IsLoopback():
+		return "127.0.1.10"
+	case ip[1] == 0 && ip[2] == 0:
+		return fmt.Sprintf("127.0.%d.10", ip[3])
+	}
+	return ip.String()
 }
 
 // gatewayPort reads a gateway_port = value ("" = tunnel.DefaultPort).

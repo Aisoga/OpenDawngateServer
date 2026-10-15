@@ -45,6 +45,15 @@ func (c *Conn) ForClient(g Game) Game {
 	return g
 }
 
+// gmsHost is the host of the GMS address a new game gets: GMSHost (the match hosts' own address, dgserver
+// --gms-bind) or Host.
+func (s *Server) gmsHost() string {
+	if s.GMSHost != "" {
+		return s.GMSHost
+	}
+	return s.Host
+}
+
 // forClientListed is ForClient for a game browser list.
 func (c *Conn) forClientListed(games []ListedGame) []ListedGame {
 	if c.TunnelAddr() == nil {

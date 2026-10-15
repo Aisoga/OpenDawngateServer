@@ -145,6 +145,57 @@ func SetKey(path, key, value string) error {
 	return os.WriteFile(path, []byte(strings.Join(lines, "\r\n")), 0o644)
 }
 
+// commentOf is the comment block right above a key's line in a config text (its ; lines up to the blank line before
+// them), as written in that text.
+func commentOf(text, key string) []string {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	for i, l := range lines {
+		if k, _, ok := strings.Cut(l, "="); ok && !strings.HasPrefix(l, ";") && strings.TrimSpace(k) == key {
+			j := i
+			for j > 0 && strings.HasPrefix(lines[j-1], ";") {
+				j--
+			}
+			return lines[j:i]
+		}
+	}
+	return nil
+}
+
+// migrateComment replaces a key's comment block in the config file at path when it is one an earlier release wrote
+// (olds, line by line, blanks at the ends ignored) with the current text's (cur). The key's value and every other line
+// stay. It reports whether it changed the file; a file without one of the old blocks is left alone.
+func migrateComment(path string, olds [][]string, cur []string) (bool, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	lines := strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n")
+	same := func(at int, block []string) bool {
+		if at+len(block) > len(lines) {
+			return false
+		}
+		for k, l := range block {
+			if strings.TrimSpace(strings.TrimPrefix(lines[at+k], bom)) != strings.TrimSpace(l) {
+				return false
+			}
+		}
+		return true
+	}
+	for _, old := range olds {
+		if len(old) == 0 {
+			continue
+		}
+		for i := range lines {
+			if !same(i, old) {
+				continue
+			}
+			out := append(append(append([]string(nil), lines[:i]...), cur...), lines[i+len(old):]...)
+			return true, os.WriteFile(path, []byte(strings.Join(out, "\r\n")), 0o644)
+		}
+	}
+	return false, nil
+}
+
 // SplitFlags splits extra dgserver flags at blanks; a value in double quotes may contain blanks.
 func SplitFlags(s string) []string {
 	var out []string
@@ -271,6 +322,15 @@ type Port struct {
 // the hosts' UDP ports are taken from a pool when a match starts).
 var ServerPorts = []Port{{42127, false, "the redirector"}, {10041, false, "Blaze"}, {17502, false, "QoS"},
 	{17502, true, "QoS"}, {18080, false, "HTTP"}, {9988, false, "telemetry"}, {10040, false, "the match hosts' control channel"}}
+
+// HostPorts are the match hosts' GMS ports (dgserver's --gms-ports default), on HostsAddress with the tunnel.
+var HostPorts = func() []Port {
+	var ps []Port
+	for p := 10042; p <= 10051; p++ {
+		ps = append(ps, Port{p, true, "a match host"})
+	}
+	return ps
+}()
 
 // HeldPorts tries to bind each port on address and lists those another program holds, worded for the player.
 func HeldPorts(address string, ports []Port) []string {

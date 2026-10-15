@@ -61,6 +61,13 @@ func (l *Log) Log(who, msg string) {
 	}
 }
 
+// SetConsole changes where the lines go besides the file (Open: stdout; nil: the file only).
+func (l *Log) SetConsole(w io.Writer) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.out = w
+}
+
 // Logf formats a message.
 func (l *Log) Logf(who, format string, args ...any) { l.Log(who, fmt.Sprintf(format, args...)) }
 

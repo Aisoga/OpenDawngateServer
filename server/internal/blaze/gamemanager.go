@@ -265,7 +265,7 @@ func registerGameManager(s *Server) {
 			r.Drop("resetDedicatedServer before login")
 			return nil
 		}
-		gms, ok := ParseAddr(r.Server.Host, r.Server.GMSPort)
+		gms, ok := ParseAddr(r.Server.gmsHost(), r.Server.GMSPort)
 		if !ok {
 			r.Drop("no IPv4 GMS address")
 			return nil

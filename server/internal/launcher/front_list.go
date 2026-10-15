@@ -28,11 +28,13 @@ import (
 //	dawngate-servers	1
 //	preselect	<tag>     the server Start-Client was started for (empty: none)
 //	last	<tag>          the server a login went to last (empty: none yet)
-//	server	<tag>	<name>	<address>	<gateway port>	<status>	<ping ms>	<key>	<trusted key>
+//	server	<tag>	<name>	<address>	<gateway port>	<status>	<ping ms>	<key>	<trusted key>[	fixed]
 //	end
 //
 // status is ok, new (it answers, no key trusted yet: trusted at the first login), changed (another key than the
-// trusted one: a login is refused), unreachable, no_gateway (something answers, but no Dawngate tunnel) or unknown.
+// trusted one: a login is refused), unreachable, no_gateway (something answers, but no Dawngate tunnel) or unknown;
+// for This PC (tag pc, the tenth field fixed: the first line, never removed) while nothing answers there also local
+// (it starts at the login), setup (its first setup runs; the ping field holds the percentage), starting or failed.
 // key is the fingerprint of the key the server showed (empty when it wasn't reached), trusted the one trusted for it
 // (empty: none yet). The last line, end, tells the picker that it read the whole list: the front writes the list
 // again while the login screen shows (refreshLoop), and the picker reads it again every few seconds.
@@ -42,6 +44,7 @@ const (
 	ListArchive = "game/Data/zz_ServerList.snap"
 	ListPath    = "UI/Scaleform/LoginScreen/dgservers.json"
 	listMagic   = "dawngate-servers\t1"
+	listFixed   = "fixed"
 )
 
 // serverStatus is a server with its probe's result.
@@ -54,11 +57,15 @@ type serverStatus struct {
 	Problem string // unreachable, no_gateway
 	// Served and Trusted are the fingerprints of the key the gateway showed and of the trusted one ("": none).
 	Served, Trusted string
+	// Local is This PC's state while no server answers there (local, setup, starting, failed; thispc.go): no probe
+	Local string
 }
 
 // status is the list's word for a server's state.
 func (s serverStatus) status() string {
 	switch {
+	case s.Local != "":
+		return s.Local
 	case s.Reachable:
 		return s.Key
 	case s.Problem != "":
@@ -131,10 +138,19 @@ func problemName(code uint16) string {
 
 // statuses probes every server of the list at once.
 func (f *Front) statuses() []serverStatus {
+	if f.ThisPC != nil {
+		f.ThisPC.refresh() // This PC: this folder's Start-Server while it runs, else Start-Client's own
+	}
 	bms := f.Bookmarks.List()
 	out := make([]serverStatus, len(bms))
 	var wg sync.WaitGroup
 	for i, b := range bms {
+		if b.Tag == ThisPCTag && f.ThisPC != nil {
+			if st, pct := f.ThisPC.status(); st != "" { // nothing answers there yet: no probe
+				out[i] = serverStatus{Bookmark: b, Local: st, PingMS: int64(pct), Key: "unknown"}
+				continue
+			}
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -169,8 +185,12 @@ func (f *Front) ServerList() []byte {
 	}
 	fmt.Fprintf(&sb, "preselect\t%s\nlast\t%s\n", pre, last)
 	for _, s := range f.statuses() {
-		fmt.Fprintf(&sb, "server\t%s\t%s\t%s\t%d\t%s\t%d\t%s\t%s\n", s.Tag, listField(s.Name), s.Address, s.GatewayPort,
+		fmt.Fprintf(&sb, "server\t%s\t%s\t%s\t%d\t%s\t%d\t%s\t%s", s.Tag, listField(s.Name), s.Address, s.GatewayPort,
 			s.status(), s.PingMS, s.Served, s.Trusted)
+		if s.Tag == ThisPCTag && f.ThisPC != nil {
+			sb.WriteString("\t" + listFixed)
+		}
+		sb.WriteString("\n")
 	}
 	sb.WriteString("end\n")
 	return []byte(sb.String())
@@ -260,6 +280,9 @@ func listSummary(text []byte, pings bool) string {
 			s := f[1] + " " + f[5]
 			if pings && (f[5] == "ok" || f[5] == "new" || f[5] == "changed") {
 				s += " " + f[6] + "ms"
+			}
+			if pings && f[5] == thisPCSetup {
+				s += " " + f[6] + "%"
 			}
 			out = append(out, s)
 		}
@@ -381,8 +404,8 @@ func parseAdd(spec string) (Bookmark, error) {
 	return checkBookmark(b)
 }
 
-// addFromLogin adds the server an add pick names once its gateway answers a probe (its key is then trusted by the
-// session, on first use); a server in the list already is that server.
+// addFromLogin adds the server an add pick names once its gateway answers a probe (its key is then checked by the
+// session: a new one confirmed once); a server in the list already is that server.
 func (f *Front) addFromLogin(spec string) (Bookmark, error) {
 	b, err := parseAdd(spec)
 	if err != nil {
@@ -410,6 +433,9 @@ func (f *Front) addFromLogin(spec string) (Bookmark, error) {
 // removeFromLogin removes the server a remove pick names.
 func (f *Front) removeFromLogin(key string) *frontError {
 	b, err := f.Bookmarks.Remove(key)
+	if errors.Is(err, ErrFixed) {
+		return frontErr(FrontErrFixed, "remove %q: This PC is always in the list", key)
+	}
 	if errors.Is(err, ErrNoBookmark) {
 		return frontErr(FrontErrUnknownServer, "remove %q: no such server in the list (tags: %s)", key, strings.Join(f.Bookmarks.sortedTags(), ", "))
 	}

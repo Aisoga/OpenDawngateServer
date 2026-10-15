@@ -39,6 +39,8 @@ type blazeConn struct {
 	// preAuth and ping are the client's own first requests on this connection, as sent: a login replays them to
 	// the server (msgIds 0 and 1), so the server sees the connection the client opened and the ids stay aligned
 	preAuth, ping []byte
+	// held are the other requests before a login, as sent: passed to the server right after the login (answer)
+	held [][]byte
 
 	umu    sync.Mutex
 	up     net.Conn      // the server's Blaze (nil: the front answers)
@@ -165,8 +167,23 @@ func (bc *blazeConn) answer(fr fire.Frame, raw []byte) {
 		f.logf("Blaze %s: resumeSession passed to %s (%s)", bc.peer, s.b.Tag, s.b.Gateway())
 		return
 	}
-	f.logf("Blaze %s: (not answered before a login)", bc.peer)
+	if fr.Type != fire.Request {
+		f.logf("Blaze %s: (not answered before a login)", bc.peer)
+		return
+	}
+	// held for the server: the client sends a few requests between a logout and the next login (after a kick:
+	// UserSessions::updateNetworkInfo, BGEcommerce 0x06 and 0x08) and waits for their replies; left unanswered
+	// they stayed outstanding on the connection the login hands to the server, the client sent no keep-alive ping
+	// while they did, and 90 s without a frame from the server ended its Blaze connection (ERR_TIMEOUT) in a match
+	if len(bc.held) >= maxHeld {
+		bc.held = bc.held[1:]
+	}
+	bc.held = append(bc.held, raw)
+	f.logf("Blaze %s: (held: passed to the server after the login)", bc.peer)
 }
+
+// maxHeld bounds the requests a connection holds for the server before its login.
+const maxHeld = 32
 
 // login handles Authentication::login: the server switch. The pick comes off MAIL: a tag (the login goes to that
 // server), +<address>[=<name>] (the server added first, front_list.go) or -<tag> (the server removed, the login
@@ -195,8 +212,18 @@ func (bc *blazeConn) login(fr fire.Frame, raw []byte) {
 		bc.errorReply(fr, asFrontError(err))
 		return
 	}
+	if b.Tag == ThisPCTag && f.ThisPC != nil { // the server on this PC: started now when it doesn't run (thispc.go)
+		t0 := time.Now()
+		if b, err = f.ThisPC.Ensure(f.ThisPCWait); err != nil {
+			bc.errorReply(fr, asFrontError(err))
+			return
+		}
+		if d := time.Since(t0); d > time.Second {
+			f.logf("Blaze %s: This PC answers at %s after %s", bc.peer, b.Gateway(), d.Round(100*time.Millisecond))
+		}
+	}
 	f.logf("Blaze %s: login as %q (typed %q) to %s (%s)", bc.peer, name, mail, b.Tag, b.Gateway())
-	if up, s := bc.upstreamOf(); up != nil && s == f.current() && s.b.Tag == b.Tag {
+	if up, s := bc.upstreamOf(); up != nil && s == f.current() && s.b.Tag == b.Tag && s.b.Gateway() == b.Gateway() {
 		bc.awaitLogin(fr.ID)
 		if _, err := up.Write(out); err != nil {
 			f.logf("Blaze %s: the server's connection failed: %v", bc.peer, err)
@@ -221,6 +248,15 @@ func (bc *blazeConn) login(fr fire.Frame, raw []byte) {
 		up.Close()
 		bc.errorReply(fr, frontErr(FrontErrServer, "the login to %s: %v", b.Tag, err))
 		return
+	}
+	if n := len(bc.held); n > 0 { // the requests held since before the login, after it: the server answers them
+		for _, raw := range bc.held {
+			if _, err := up.Write(raw); err != nil {
+				break
+			}
+		}
+		bc.held = nil
+		f.logf("Blaze %s: %d request(s) held since before the login passed to %s", bc.peer, n, b.Tag)
 	}
 	bc.setUp(up, s)
 	blazePort, qosPort := s.ports()

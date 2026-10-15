@@ -41,6 +41,9 @@ type QoS struct {
 	Log  *logging.Log
 	Host string       // the IPv4 address we hand out (dgserver --public-host); the firewall reply announces it
 	UDP  *net.UDPConn // the probe socket; its port is the qosport of every reply
+	// Port is the qosport when there is no probe socket (UDP nil: a server reached only through the tunnel, whose
+	// gateway hands the probes to TunnelPacket).
+	Port int
 
 	Hold          time.Duration // how long a latency probe waits before its echo goes out
 	BandwidthWait time.Duration // after the first bandwidth probe, how long to wait for the rest
@@ -230,7 +233,12 @@ func qosXML(numprobes, probesize, port int, id, secret uint32) string {
 		"<requestid>%d</requestid><reqsecret>%d</reqsecret></qos>", numprobes, probesize, port, id, secret)
 }
 
-func (q *QoS) port() int { return q.UDP.LocalAddr().(*net.UDPAddr).Port }
+func (q *QoS) port() int {
+	if q.UDP == nil {
+		return q.Port
+	}
+	return q.UDP.LocalAddr().(*net.UDPAddr).Port
+}
 
 // LatencyReply answers qtyp=1. The client then sends LNP probes (preAuth's QOSS.LNP, 10) to our UDP
 // port and takes the median round trip; numprobes and probesize only matter for qtyp=2.
@@ -339,6 +347,9 @@ func (q *QoS) add(t *qosTest) uint32 {
 
 // ServeUDP answers the probes until the socket is closed.
 func (q *QoS) ServeUDP() error {
+	if q.UDP == nil { // only tunnelled probes (TunnelPacket)
+		return nil
+	}
 	buf := make([]byte, 2048)
 	for {
 		n, from, err := q.UDP.ReadFromUDP(buf)

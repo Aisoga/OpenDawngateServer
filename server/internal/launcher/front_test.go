@@ -115,18 +115,26 @@ func waitLog(t *testing.T, dir, want string, n int) string {
 	}
 }
 
-// fakeGame is the game's side of the front: its connections from the tunnel address.
+// fakeGame is the game's side of the front: its connections from the tunnel address (ip; "" = frontLocal).
 type fakeGame struct {
-	t *testing.T
+	t  *testing.T
+	ip string
+}
+
+func (g fakeGame) local() string {
+	if g.ip != "" {
+		return g.ip
+	}
+	return frontLocal
 }
 
 func (g fakeGame) dialer() *net.Dialer {
-	return &net.Dialer{Timeout: 5 * time.Second, LocalAddr: &net.TCPAddr{IP: net.ParseIP(frontLocal)}}
+	return &net.Dialer{Timeout: 5 * time.Second, LocalAddr: &net.TCPAddr{IP: net.ParseIP(g.local())}}
 }
 
 func (g fakeGame) dial(port int) net.Conn {
 	g.t.Helper()
-	c, err := g.dialer().Dial("tcp4", net.JoinHostPort(frontLocal, strconv.Itoa(port)))
+	c, err := g.dialer().Dial("tcp4", net.JoinHostPort(g.local(), strconv.Itoa(port)))
 	if err != nil {
 		g.t.Fatal(err)
 	}
@@ -136,7 +144,7 @@ func (g fakeGame) dial(port int) net.Conn {
 // redirect asks the front's redirector for the Blaze address, as the game does at its start and after a logout.
 func (g fakeGame) redirect() (string, int) {
 	g.t.Helper()
-	tc, err := tls.DialWithDialer(g.dialer(), "tcp4", net.JoinHostPort(frontLocal, strconv.Itoa(RedirectorPort)), &tls.Config{
+	tc, err := tls.DialWithDialer(g.dialer(), "tcp4", net.JoinHostPort(g.local(), strconv.Itoa(RedirectorPort)), &tls.Config{
 		InsecureSkipVerify: true, MinVersion: tls.VersionTLS10, MaxVersion: tls.VersionTLS11, CipherSuites: []uint16{tls.TLS_RSA_WITH_AES_256_CBC_SHA}})
 	if err != nil {
 		g.t.Fatal(err)
@@ -188,7 +196,7 @@ func (g fakeGame) start(c net.Conn) {
 	st, _ := tdf.Decode(pre.Payload)
 	qoss, _ := st.Sub("QOSS")
 	bw, _ := qoss.Sub("BWPS")
-	if psa, _ := bw.Str("PSA"); psa != frontLocal || pre.Type != fire.Reply {
+	if psa, _ := bw.Str("PSA"); psa != g.local() || pre.Type != fire.Reply {
 		g.t.Fatalf("the front's preAuth: ping site %q, type %v", psa, pre.Type)
 	}
 	if psp, _ := bw.Int("PSP"); psp != int64(DefaultFrontPorts.QoS) {
@@ -281,7 +289,7 @@ func TestFrontServerSwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	g := fakeGame{t}
+	g := fakeGame{t: t}
 
 	// before a login: the redirector, preAuth, ping, a keep-alive ping, telemetry and QoS are the front's
 	if host, port := g.redirect(); host != frontLocal || port != DefaultFrontPorts.Blaze {
@@ -304,8 +312,27 @@ func TestFrontServerSwitch(t *testing.T) {
 	if p := g.call(c1, 9, 2, 2, nil); p.Type != fire.Reply {
 		t.Fatal("keep-alive ping")
 	}
-	// login to A: the tag gone from MAIL, preAuth and ping replayed first
-	rep := g.call(c1, 1, 0x28, 3, loginBody("alex#a"))
+	// login to A: its key is new, so the first login stops (confirm once) and the list shows the key; nothing is
+	// trusted and nothing reaches A's Blaze yet
+	if rep := g.call(c1, 1, 0x28, 3, loginBody("alex#a")); rep.Type != fire.ErrorReply || rep.Error != FrontErrNewKey {
+		t.Fatalf("the first login to A: %v error %#x, want error %#x\n%s", rep.Type, rep.Error, FrontErrNewKey, readLogs(t, logDir))
+	}
+	if _, err := os.Stat(TrustedGateway(l, frontServerA)); err == nil {
+		t.Error("A's key trusted at the first login")
+	}
+	if strings.Contains(readLogs(t, logA), "MAIL:") {
+		t.Error("the refused first login reached A")
+	}
+	confirmCopy := t.TempDir()
+	os.MkdirAll(filepath.Join(confirmCopy, "game", "Data"), 0o755)
+	if err := f.WriteServerList(confirmCopy); err != nil {
+		t.Fatal(err)
+	}
+	if list := readList(t, confirmCopy); !strings.Contains(list, "\nserver\ta\tServer A\t"+frontServerA+"\t"+strconv.Itoa(portA)+"\tnew\t") {
+		t.Errorf("the list after the first login doesn't show A's new key:\n%s", list)
+	}
+	// the second login to A trusts the key it showed: the tag gone from MAIL, preAuth and ping replayed first
+	rep := g.call(c1, 1, 0x28, 4, loginBody("alex#a"))
 	if rep.Type != fire.Reply {
 		t.Fatalf("login to A: %v error %#x\n%s", rep.Type, rep.Error, readLogs(t, logDir))
 	}
@@ -320,7 +347,7 @@ func TestFrontServerSwitch(t *testing.T) {
 		t.Error("A's last use not recorded")
 	}
 	if pin, err := os.ReadFile(TrustedGateway(l, frontServerA)); err != nil || len(strings.TrimSpace(string(pin))) != 64 {
-		t.Errorf("A's key not trusted on first use: %q %v", pin, err)
+		t.Errorf("A's key not trusted at the second login: %q %v", pin, err)
 	}
 	// telemetry and QoS now go to A: the connection's first packet first, then the new one
 	tel.Write(telemetryPacket("T=second"))
@@ -329,7 +356,7 @@ func TestFrontServerSwitch(t *testing.T) {
 	waitLog(t, logA, "[qos] udp ('"+frontLocal, 0)
 
 	// logout: answered by A; the client closes the connection and goes through the redirector again (the front's)
-	if lo := g.call(c1, 1, 0x46, 4, nil); lo.Type != fire.Reply {
+	if lo := g.call(c1, 1, 0x46, 5, nil); lo.Type != fire.Reply {
 		t.Fatalf("logout: %v", lo.Type)
 	}
 	waitLog(t, logA, "logged out; its session ends", 1)
@@ -338,7 +365,13 @@ func TestFrontServerSwitch(t *testing.T) {
 		t.Fatalf("the redirector after the logout names %s:%d", host, port)
 	}
 
-	// login to B on a new connection
+	// login to B on a new connection: B's key handed out by its operator (Start-Client --gateway-pin), no confirmation
+	bPin, err := tunnel.ProbePin(net.JoinHostPort(frontServerB, strconv.Itoa(portB)), 3*time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Dir(TrustedGateway(l, frontServerB)), 0o755)
+	os.WriteFile(TrustedGateway(l, frontServerB), []byte(bPin.String()+"\n"), 0o644)
 	c2 := g.dial(DefaultFrontPorts.Blaze)
 	g.start(c2)
 	if rep := g.call(c2, 1, 0x28, 2, loginBody("alex#B")); rep.Type != fire.Reply {
@@ -392,7 +425,8 @@ func TestFrontServerSwitch(t *testing.T) {
 	waitLog(t, logB, "    MAIL: 'alex'\n", 2)
 	front := waitLog(t, logDir, "login refused (error 0x00e2)", 1)
 	for _, want := range []string{"login refused (error 0x00e0): no server \"zz\" in the list", "login refused (error 0x00e1)",
-		"login refused (error 0x00e3)", "the replayed preAuth (id 0) answered by a", "trusting " + frontServerA + "'s tunnel key"} {
+		"login refused (error 0x00e3)", "the replayed preAuth (id 0) answered by a", "trusting " + frontServerA + "'s tunnel key",
+		"login refused (error 0x00e7): " + net.JoinHostPort(frontServerA, strconv.Itoa(portA)) + "'s tunnel key", "(confirmed: the second login to it;"} {
 		if !strings.Contains(front, want) {
 			t.Errorf("the front's log lacks %q", want)
 		}
@@ -456,22 +490,45 @@ func TestFrontServerSwitch(t *testing.T) {
 	if len(bm.List()) != 4 {
 		t.Fatalf("a refused add changed the list: %+v", bm.List())
 	}
-	// a bare gateway answers: added (with its name; its key trusted by the session), but it has no Blaze
+	// a bare gateway answers: added (with its name), its new key shown (confirm once); the same add again is a login
+	// to it, which trusts the key, but it has no Blaze
 	third := "alex#+" + net.JoinHostPort(frontGateway, strconv.Itoa(bare.Port())) + "=Third #1"
-	if rep := g.call(c4, 1, 0x28, 20, loginBody(third)); rep.Type != fire.ErrorReply || rep.Error != FrontErrServer {
+	if rep := g.call(c4, 1, 0x28, 20, loginBody(third)); rep.Type != fire.ErrorReply || rep.Error != FrontErrNewKey {
 		t.Errorf("login %s: %v error %#x", third, rep.Type, rep.Error)
 	}
 	if c, ok := bm.Find(frontGateway); !ok || c.Tag != "c" || c.Name != "Third #1" || c.GatewayPort != bare.Port() {
 		t.Errorf("the added server: %+v", c)
 	}
-	if _, err := os.Stat(TrustedGateway(l, frontGateway)); err != nil {
-		t.Errorf("the added server's key isn't trusted: %v", err)
+	if _, err := os.Stat(TrustedGateway(l, frontGateway)); err == nil {
+		t.Error("the added server's key trusted at its first login")
 	}
-	if !strings.Contains(readList(t, copyDir), "\nserver\tc\tThird #1\t"+frontGateway+"\t") {
-		t.Errorf("the list wasn't written again after the add:\n%s", readList(t, copyDir))
+	if list := readList(t, copyDir); !strings.Contains(list, "\nserver\tc\tThird #1\t"+frontGateway+"\t"+strconv.Itoa(bare.Port())+"\tnew\t") {
+		t.Errorf("the list wasn't written again after the add, with the new key:\n%s", list)
+	}
+	if rep := g.call(c4, 1, 0x28, 21, loginBody(third)); rep.Type != fire.ErrorReply || rep.Error != FrontErrServer {
+		t.Errorf("login %s again: %v error %#x", third, rep.Type, rep.Error)
+	}
+	if _, err := os.Stat(TrustedGateway(l, frontGateway)); err != nil {
+		t.Errorf("the added server's key isn't trusted after the second login: %v", err)
+	}
+	// a key that changes between the two logins isn't trusted: the second login shows the new one instead
+	other2 := t.TempDir()
+	tunnel.WriteIdentity(other2)
+	otherPin2, _ := tunnel.PinFromCertFile(filepath.Join(other2, tunnel.CertFile))
+	if err := f.trustKey(Bookmark{Address: "127.0.9.57", GatewayPort: 42128}, otherPin); asFrontError(err).code != FrontErrNewKey {
+		t.Errorf("a new key: %v", err)
+	}
+	if err := f.trustKey(Bookmark{Address: "127.0.9.57", GatewayPort: 42128}, otherPin2); asFrontError(err).code != FrontErrNewKey {
+		t.Errorf("another key at the second login: %v", err)
+	}
+	if _, err := os.Stat(TrustedGateway(l, "127.0.9.57")); err == nil {
+		t.Error("a key that changed between the logins was trusted")
+	}
+	if err := f.trustKey(Bookmark{Address: "127.0.9.57", GatewayPort: 42128}, otherPin2); err != nil {
+		t.Errorf("the same key at the next login: %v", err)
 	}
 	// an add of a server in the list already is a login to it
-	if rep := g.call(c4, 1, 0x28, 21, loginBody("alex#+"+frontServerB+"=whatever")); rep.Type != fire.Reply {
+	if rep := g.call(c4, 1, 0x28, 22, loginBody("alex#+"+frontServerB+"=whatever")); rep.Type != fire.Reply {
 		t.Errorf("add B again: %v error %#x", rep.Type, rep.Error)
 	}
 	waitLog(t, logB, "    MAIL: 'alex'\n", 3)
@@ -616,17 +673,22 @@ func TestStartClientPickerDefault(t *testing.T) {
 		!picked(out) || !strings.Contains(out, "127.0.9.63:42128 added to the server list as b (the address given)") {
 		t.Errorf("a second server: exit %d\n%s", code, out)
 	}
-	// a server without the tunnel (loopback or a home network, tunnel = auto): played on directly, as before the
-	// picker; Start-Client says why there is no list (here no server is set up on this PC for it)
-	code, out = run(t, RunClient, dir, "--non-interactive", "--setup-only", "127.0.9.61")
-	if code != 1 || !strings.Contains(out, "picker   not used for 127.0.9.61 (the tunnel is off for it") ||
-		!strings.Contains(out, "your list's 2 server(s) aren't shown") || !strings.Contains(out, "No server is set up on this PC for 127.0.9.61") {
+	// tunnel = auto takes the tunnel for every server, a loopback or home-network one too: the picker
+	code, out = run(t, RunClient, dir, "--non-interactive", "--setup-only", "--tunnel-address", frontLocal, "127.0.9.61")
+	if code != 0 || !picked(out) || !strings.Contains(out, "127.0.9.61:42128 added to the server list as c (the address given)") {
+		t.Errorf("a loopback server with tunnel = auto: exit %d\n%s", code, out)
+	}
+	// tunnel = off (the developers' option): played on directly, as before the picker; Start-Client says why there is
+	// no list (here no server is set up on this PC for it)
+	code, out = run(t, RunClient, dir, "--non-interactive", "--setup-only", "--tunnel", "off", "127.0.9.64")
+	if code != 1 || !strings.Contains(out, "picker   not used for 127.0.9.64 (tunnel = off: the picker needs the tunnel)") ||
+		!strings.Contains(out, "your list's 3 server(s) aren't shown") || !strings.Contains(out, "No server is set up on this PC for 127.0.9.64") {
 		t.Errorf("a server without the tunnel: exit %d\n%s", code, out)
 	}
-	// Start-Client.ini's server without the tunnel wins over the list, with a pointer how to pick instead
-	os.WriteFile(filepath.Join(dir, ClientConfigName), []byte("server = 127.0.9.61\r\n"), 0o644)
+	// Start-Client.ini's tunnel = off wins over the list too
+	os.WriteFile(filepath.Join(dir, ClientConfigName), []byte("server = 127.0.9.64\r\ntunnel = off\r\n"), 0o644)
 	code, out = run(t, RunClient, dir, "--non-interactive", "--setup-only")
-	if code != 1 || !strings.Contains(out, "empty server = in "+ClientConfigName) {
+	if code != 1 || !strings.Contains(out, "picker   not used for 127.0.9.64 (tunnel = off") {
 		t.Errorf("the ini's server without the tunnel: exit %d\n%s", code, out)
 	}
 	// picker = off: one server, no note
@@ -690,7 +752,7 @@ func TestFrontRefusedLoginKeepsRefresh(t *testing.T) {
 	if list := readList(t, copyDir); !strings.Contains(list, "\nlast\t\n") {
 		t.Fatalf("the list before a login:\n%s", list)
 	}
-	g := fakeGame{t}
+	g := fakeGame{t: t}
 	atLogin := func() bool {
 		f.listMu.Lock()
 		defer f.listMu.Unlock()
@@ -702,8 +764,12 @@ func TestFrontRefusedLoginKeepsRefresh(t *testing.T) {
 	g.redirect()
 	c1 := g.dial(DefaultFrontPorts.Blaze)
 	g.start(c1)
-	if rep := login(c1, 2, "dawngate1"); rep.Type != fire.Reply || atLogin() {
-		t.Fatalf("the first login (the account made): %v %#x, at the login screen %v", rep.Type, rep.Error, atLogin())
+	// confirm once: the first login shows A's new key and the login screen stays
+	if rep := login(c1, 2, "dawngate1"); rep.Type != fire.ErrorReply || rep.Error != FrontErrNewKey || !atLogin() {
+		t.Fatalf("the first login to a new key: %v %#x, at the login screen %v", rep.Type, rep.Error, atLogin())
+	}
+	if rep := login(c1, 3, "dawngate1"); rep.Type != fire.Reply || atLogin() {
+		t.Fatalf("the second login (the account made): %v %#x, at the login screen %v", rep.Type, rep.Error, atLogin())
 	}
 	// the list file names A as the last server at once, away from the login screen: the login screen after the
 	// next logout loads it and preselects A

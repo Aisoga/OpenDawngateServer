@@ -36,7 +36,7 @@ const ServerConfigText = `; Start-Server.ini: the options of Start-Server.exe. S
 ; The address the server listens on and tells the players.
 ;   127.0.0.1      this PC only: you play here with Start-Client.exe (the default)
 ;   a LAN address  this PC's address in your home network (e.g. 192.168.1.20): players on other machines
-;                  start Start-Client.exe with that address (README.txt, "Playing over your home network").
+;                  add that address to their server list (README.txt, "Playing over your home network").
 ;   a public one   your internet address, for players anywhere: the public profile below, at your own risk
 ;                  (Start-Server prints what that means and starts only with the acknowledgement below; you
 ;                  forward the tunnel's port and 443 on your router yourself).
@@ -59,10 +59,11 @@ i_accept_the_risk = no
 profile = auto
 
 ; The encrypted tunnel for the players' connections (TLS 1.3 and AES-GCM on one port, TCP and UDP):
-;   auto  on for the public profile (players on the internet reach the server only through it: forward
-;         gateway_port, TCP and UDP, on your router, and 443 for the website), off on this PC and on a LAN
-;   on    also on a LAN address (players there use it with Start-Client.exe <address> --tunnel on)
-;   off   never (not allowed with the public profile)
+;   auto  on (the default), for every address: players reach the server only through it, on gateway_port. On the
+;         internet forward gateway_port, TCP and UDP, on your router, and 443 for the website.
+;   on    the same
+;   off   the developers' option: no tunnel, the server's plain ports instead (players need Start-Client.exe
+;         --tunnel off and confirm the server's certificate fingerprint); not allowed with the public profile
 tunnel = auto
 
 ; The tunnel's port, TCP and UDP.
@@ -114,15 +115,39 @@ folder = Dawngate-Data
 ; then in your Downloads folder; if it isn't found there, Start-Server.exe asks for it.
 zip =
 
+; A dedicated server, one that only hosts other players:
+;   no   the default. Start-Server.exe makes no player copy anyway while the tunnel is on (Start-Client.exe makes
+;        its own); with tunnel = off it also sets up the player copy (Dawngate-Data\client) for this server.
+;   yes  only the match-host copy (Dawngate-Data\host) is set up and run, never a player copy, whatever the tunnel:
+;        about 1.5 GB less, and a complete folder (host, certs, data) starts without Dawngate.zip. A player copy
+;        already in the folder is left alone. Or the flag  Start-Server.exe --dedicated
+dedicated = no
+
 ; More server options, separated by blanks, e.g.  --owned starter  or  --mm-team-size 1 --mm-fill-after 5s
 ; (README.txt lists a few; "dgserver.exe -h" in the developers' build lists all). Empty: the defaults.
 server_flags =
 `
 
+// oldServerTunnelComments are the tunnel key's comments that earlier releases wrote into Start-Server.ini, when auto
+// meant on only for a public address; a start replaces them with ServerConfigText's (the value stays: an explicit off
+// is kept, auto now means on).
+var oldServerTunnelComments = [][]string{
+	{"; The encrypted tunnel for the players' connections (TLS 1.3 and AES-GCM on one port, TCP and UDP):",
+		";   auto  on for a public address (players on the internet reach the server only through it: forward",
+		";         gateway_port, TCP and UDP, on your router, and nothing else), off on this PC and on a LAN (the default)",
+		";   on    also on a LAN address (players there use it with Start-Client.exe --tunnel on)",
+		";   off   never (a public server then needs all its ports forwarded, unencrypted)"},
+	{"; The encrypted tunnel for the players' connections (TLS 1.3 and AES-GCM on one port, TCP and UDP):",
+		";   auto  on for the public profile (players on the internet reach the server only through it: forward",
+		";         gateway_port, TCP and UDP, on your router, and 443 for the website), off on this PC and on a LAN",
+		";   on    also on a LAN address (players there use it with Start-Client.exe <address> --tunnel on)",
+		";   off   never (not allowed with the public profile)"},
+}
+
 // manifest is the build the setup expects (nil: build 854); the tests set a synthetic one.
 var manifest *archive.Manifest
 
-var serverKeys = []string{"address", "bind", RiskAckKey, "profile", "tunnel", "gateway_port", "shaper_select", "signup",
+var serverKeys = []string{"address", "bind", RiskAckKey, "profile", "tunnel", "gateway_port", "shaper_select", "dedicated", "signup",
 	"signups_per_address", "log_days", "web_port", "web_domain", "web_email", "folder", "zip", "server_flags"}
 
 // IO is where a launcher talks: the console normally, buffers in tests.
@@ -185,6 +210,7 @@ func RunServer(args []string, o IO) int {
 	hostDir := fs.String("host-files", "", `the folder with dgsim.dll and lua\ (default: host\ next to this program)`)
 	zipFlag := fs.String("zip", "", "Dawngate.zip (instead of the config file's zip)")
 	riskFlag := fs.Bool(RiskAckFlag, false, "accept the risk of a server on a public address (needed to start one)")
+	dedicatedFlag := fs.Bool("dedicated", false, "a dedicated server: set up and run only the match-host copy, never a player copy (the config file's dedicated = yes)")
 	configure := fs.Bool("configure", false, "ask the first start's questions again (who plays: this PC, a home network, the internet)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -204,6 +230,13 @@ func RunServer(args []string, o IO) int {
 	}
 	if created {
 		fmt.Fprintf(o.Out, "  wrote %s with the default options (edit it to change them)\n", path)
+	} else if !*check {
+		// an earlier release's file: tunnel = auto meant on only for a public address, now for every server
+		if changed, err := migrateComment(path, oldServerTunnelComments, commentOf(ServerConfigText, "tunnel")); err != nil {
+			fmt.Fprintf(o.Out, "  note: %s can't be updated: %v\n", path, err)
+		} else if changed {
+			fmt.Fprintf(o.Out, "  note: %s: the encrypted tunnel is now on for every server (tunnel = auto; the comment above it updated)\n", path)
+		}
 	}
 	for _, k := range cfg.Unknown(serverKeys...) {
 		fmt.Fprintf(o.Out, "  note: %s: unknown option %q (ignored)\n", path, k)
@@ -265,6 +298,11 @@ func RunServer(args []string, o IO) int {
 	if err != nil {
 		return o.fail("%s: %v", path, err)
 	}
+	dedicated, err := cfg.Bool("dedicated", false)
+	if err != nil {
+		return o.fail("%s: %v", path, err)
+	}
+	dedicated = dedicated || *dedicatedFlag
 	folder := cfg["folder"]
 	if folder == "" {
 		folder = DefaultFolder
@@ -321,12 +359,19 @@ func RunServer(args []string, o IO) int {
 			"with its host folder, next to Start-Server.exe.", hostFiles)
 	}
 
+	hostsAddr := bindAddr // the match hosts' GMS ports: with the tunnel on a loopback address of their own
+	if tunnelOn {
+		hostsAddr = HostsAddress(bindAddr)
+	}
 	if !*check && !*setupOnly { // before the setup: a second Start-Server must not touch the copies of a running one
-		held := HeldPorts(bindAddr, ServerPorts[:len(ServerPorts)-1])
-		held = append(held, HeldPorts(ControlBind(address), ServerPorts[len(ServerPorts)-1:])...)
-		if tunnelOn {
-			held = append(held, HeldPorts(bindAddr, []Port{{gwPort, false, "the tunnel"}, {gwPort, true, "the tunnel"}})...)
+		var held []string
+		if tunnelOn { // the gateway is the only port for players; the services listen inside it (dgserver --plain off)
+			held = HeldPorts(bindAddr, []Port{{gwPort, false, "the tunnel"}, {gwPort, true, "the tunnel"}})
+			held = append(held, HeldPorts(hostsAddr, HostPorts)...)
+		} else {
+			held = HeldPorts(bindAddr, ServerPorts[:len(ServerPorts)-1])
 		}
+		held = append(held, HeldPorts(ControlBind(address), ServerPorts[len(ServerPorts)-1:])...)
 		if len(held) > 0 {
 			return o.fail("Another program holds the server's ports on %s:\n  %s\nIs a server already running (another "+
 				"Start-Server window, or dgserver.exe)? Close it, then start Start-Server.exe again.", address,
@@ -345,6 +390,29 @@ func RunServer(args []string, o IO) int {
 			}
 		}
 	}
+	var runLock *setup.RunLockHandle
+	if !*check { // one server per setup folder: also not beside Start-Client's own server for This PC on it
+		gw := 0
+		if tunnelOn {
+			gw = gwPort
+		}
+		h, held, err := setup.TakeRunLock(root, setup.RunLock{Program: "Start-Server", Address: address, Dial: bindAddr,
+			GatewayPort: gw, State: setup.RunSetup})
+		if errors.Is(err, setup.ErrServerRuns) {
+			if held.Program == "Start-Client" {
+				return o.fail("This folder's server already runs inside Start-Client.exe (This PC in the game's server list, "+
+					"pid %d). A setup folder has one server: close the game (its server stops with Start-Client), then start "+
+					"Start-Server.exe again, or give Start-Server a folder of its own (folder = in %s).", held.Pid, path)
+			}
+			return o.fail("This folder's server already runs in %s (pid %d): close it first (a setup folder has one "+
+				"server), or give this Start-Server a folder of its own (folder = in %s).", held.Program, held.Pid, path)
+		}
+		if err != nil {
+			return o.fail("The folder's server lock: %v", err)
+		}
+		runLock = h
+		defer h.Release()
+	}
 	where := "this PC only"
 	if !net.ParseIP(address).IsLoopback() {
 		where = "players on your network connect to it"
@@ -355,11 +423,22 @@ func RunServer(args []string, o IO) int {
 	if publicP {
 		where += "; the public profile: the tunnel, the limits, sign-up " + loginFlags[1]
 	}
-	fmt.Fprintf(o.Out, "  folder   %s\n  address  %s (%s)\n\n", root, address, where)
+	fmt.Fprintf(o.Out, "  folder   %s\n  address  %s (%s)\n", root, address, where)
+	if dedicated {
+		fmt.Fprintln(o.Out, "  mode     dedicated server (the match-host copy only, no player copy)")
+	}
+	fmt.Fprintln(o.Out)
 	if *check {
 		fmt.Fprintln(o.Out, "Checking the setup (nothing is changed):")
 	} else {
-		fmt.Fprintln(o.Out, "Checking the setup (the first start sets everything up: about a minute and 3 GB):")
+		size := "3 GB"
+		switch {
+		case dedicated:
+			size = "1.5 GB: the match-host copy only"
+		case tunnelOn:
+			size = "1.5 GB; Start-Client.exe makes the player copy"
+		}
+		fmt.Fprintf(o.Out, "Checking the setup (the first start sets everything up: about a minute and %s):\n", size)
 	}
 	l := setup.Layout{Root: root}
 	// with a web domain the client copy's login links go to https://<domain>/<page> (sitelinks.Base)
@@ -371,7 +450,13 @@ func RunServer(args []string, o IO) int {
 			return o.fail("%v", err)
 		}
 	}
-	err = s.Server(setup.ServerOptions{Address: address})
+	// with the tunnel Start-Client makes the player copy; dedicated = yes: never one, also with tunnel = off
+	so := setup.ServerOptions{Address: address, NoClient: tunnelOn}
+	if dedicated {
+		so.NoClient = true
+		so.NoClientNote = "a dedicated server: the match-host copy only (Start-Client.exe makes its own player copy)"
+	}
+	err = s.Server(so)
 	if release != nil {
 		release()
 	}
@@ -399,42 +484,49 @@ func RunServer(args []string, o IO) int {
 	if bindAddr != address {
 		flags = append(flags, "--bind", bindAddr) // later wins: listen on this PC's address, announce the public one
 	}
-	if tunnelOn { // the gateway beside the plain ports (which a public server's router doesn't forward)
-		flags = append(flags, "--tunnel", "on", "--gateway-port", strconv.Itoa(gwPort))
+	if tunnelOn { // the gateway is the players' only port: no plain listener, the match hosts on a loopback address
+		flags = append(flags, "--tunnel", "on", "--gateway-port", strconv.Itoa(gwPort), "--plain", "off", "--gms-bind", hostsAddr)
+	} else { // tunnel = off (developers): the plain ports, and the CA for Start-Client --tunnel off on other machines
+		flags = append(flags, "--serve-ca")
 	}
 	if *seconds > 0 {
 		flags = append(flags, fmt.Sprintf("--seconds=%d", *seconds))
 	}
 	fmt.Fprintln(o.Out, "\nStarting the server ...")
 	code := dgserver.Run(flags, dgserver.Hooks{Started: func(info dgserver.Info) {
+		if err := runLock.Set(setup.RunRunning, info.GatewayPin); err != nil { // Start-Client's This PC finds it running
+			fmt.Fprintf(o.Out, "  note: the folder's server lock: %v\n", err)
+		}
 		fmt.Fprintln(o.Out, "")
 		fmt.Fprintf(o.Out, "==== The server runs on %s. ====\n", address)
 		if info.GatewayPort > 0 {
-			fmt.Fprintf(o.Out, "  The encrypted tunnel listens on %s port %d (TCP and UDP).\n", bindAddr, info.GatewayPort)
-			if public {
-				fmt.Fprintf(o.Out, "  Forward TCP and UDP %d and TCP 443 (the website) on your router to this PC, and no other port.\n", info.GatewayPort)
-				if bindAddr == address {
-					fmt.Fprintf(o.Out, "  This PC holds the public address itself: let its firewall in only TCP and UDP %d and TCP 443.\n", info.GatewayPort)
+			fmt.Fprintf(o.Out, "  Players connect through the encrypted tunnel on %s port %d (TCP and UDP), its only port for players.\n",
+				bindAddr, info.GatewayPort)
+			fmt.Fprintf(o.Out, "  The server's key fingerprint is %s.\n", info.GatewayFingerprint)
+			switch {
+			case net.ParseIP(address).IsLoopback():
+				fmt.Fprintln(o.Out, "  Now double-click Start-Client.exe to play: This PC in its server list is this server (the same folder).")
+			default:
+				if public {
+					fmt.Fprintf(o.Out, "  Forward TCP and UDP %d and TCP 443 (the website) on your router to this PC, and no other port.\n", info.GatewayPort)
+					if bindAddr == address {
+						fmt.Fprintf(o.Out, "  This PC holds the public address itself: let its firewall in only TCP and UDP %d and TCP 443.\n", info.GatewayPort)
+					}
+				} else {
+					fmt.Fprintln(o.Out, "  If Windows asks whether the server may use the network, allow it for private networks.")
 				}
-				fmt.Fprintf(o.Out, "  Players start Start-Client.exe %s.\n", address)
-			} else {
-				fmt.Fprintf(o.Out, "  Players start Start-Client.exe %s --tunnel on.\n", address)
+				fmt.Fprintf(o.Out, "  Players add %s to the server list on the game's login screen (or start Start-Client.exe %s);\n", address, address)
+				fmt.Fprintf(o.Out, "  you play here with just Start-Client.exe. At a player's first login the list shows the key\n")
+				fmt.Fprintf(o.Out, "  fingerprint, which must be %s; logging in again trusts it. Or hand out the whole key, so\n", info.GatewayFingerprint)
+				fmt.Fprintf(o.Out, "  that nobody needs to compare:  Start-Client.exe %s --gateway-pin %s\n", address, info.GatewayPin)
 			}
-			fmt.Fprintf(o.Out, "  The first time, they are shown the server's tunnel key fingerprint: it must be %s.\n", info.GatewayFingerprint)
-			if !public && info.CAFingerprint != "" && !net.ParseIP(address).IsLoopback() {
-				fmt.Fprintf(o.Out, "  (Without the tunnel they are shown the certificate fingerprint %s instead.)\n", info.CAFingerprint)
-			}
-		} else if net.ParseIP(address).IsLoopback() {
-			fmt.Fprintln(o.Out, "  Now double-click Start-Client.exe to play.")
+		} else if net.ParseIP(address).IsLoopback() { // tunnel = off: the developers' direct path
+			fmt.Fprintln(o.Out, "  Now double-click Start-Client.exe to play (without the tunnel: tunnel = off here, which it follows).")
 		} else {
-			fmt.Fprintf(o.Out, "  Players start Start-Client.exe %s (you too, on this PC: just Start-Client.exe).\n", address)
-			fmt.Fprintf(o.Out, "  The first time, they are shown the server's fingerprint: it must be %s.\n", info.CAFingerprint)
-			if public {
-				fmt.Fprintln(o.Out, "  If Windows asks whether the server may use the network, allow it, and forward the ports listed")
-				fmt.Fprintln(o.Out, "  above on your router. Your use is at your own risk.")
-			} else {
-				fmt.Fprintln(o.Out, "  If Windows asks whether the server may use the network, allow it for private networks.")
-			}
+			fmt.Fprintf(o.Out, "  tunnel = off: players start Start-Client.exe %s --tunnel off (you too, on this PC: just\n", address)
+			fmt.Fprintln(o.Out, "  Start-Client.exe, which follows this folder's tunnel = off).")
+			fmt.Fprintf(o.Out, "  The first time, they are shown the server's certificate fingerprint: it must be %s.\n", info.CAFingerprint)
+			fmt.Fprintln(o.Out, "  If Windows asks whether the server may use the network, allow it for private networks.")
 		}
 		if publicP {
 			fmt.Fprintln(o.Out, "  The public profile: players only through the tunnel, the limits on (connections, logins, games, packets).")
@@ -573,11 +665,12 @@ func SplitAccountArgs(args []string) (own, acct []string) {
 }
 
 // ServerFlags are dgserver's arguments for a setup folder (start_server.ps1's: the host copy, a host per game,
-// headless; plus the certificates, data and logs of the folder and --serve-ca for players on other machines).
+// headless; plus the certificates, data and logs of the folder). RunServer adds the tunnel's (or, with tunnel = off,
+// --serve-ca for players on other machines).
 func ServerFlags(l setup.Layout, address string, shaperSelect bool, extra []string) []string {
 	f := []string{"--bind", address, "--public-host", address, "--certs", l.Certs(address), "--data", l.Data(),
 		"--log", l.Logs(), "--gms-dir", l.HostCopy(), "--gms-args=-multipleInstances", "--gms-data",
-		filepath.Join(l.Logs(), "hosts"), "--gms-control-bind", ControlBind(address), "--serve-ca"}
+		filepath.Join(l.Logs(), "hosts"), "--gms-control-bind", ControlBind(address)}
 	if shaperSelect {
 		f = append(f, "--shaper-select")
 	}

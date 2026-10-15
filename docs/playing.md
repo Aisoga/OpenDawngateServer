@@ -17,29 +17,22 @@ This guide covers installing the game, playing your first match, and playing wit
 - Windows 10 or 11, 64-bit, with a graphics card that runs DirectX 9 games.
 - `Dawngate.zip` from <https://archive.org/details/Dawngate> (1.3 GB, build 1.0.903.854). Every player needs their own copy.
 - The release zip from this project's *Releases* page.
-- About 5 GB of free disk space: the zip, plus two copies of the game. One copy is for playing, the other is used by the server to run matches.
+- About 5 GB of free disk space: the zip, plus two copies of the game. One copy is for playing, the other is used by the server on your PC to run matches. If you only ever play on other people's servers, the second copy is never made.
 
 Nothing else needs to be installed.
 
 ## Installing
 
 1. Unpack the release zip into a folder of its own, for example `C:\Games\Dawngate`.
-2. Put `Dawngate.zip` into that folder, next to `Start-Server.exe`. If you leave it in your Downloads folder, the programs find it there too.
-3. Start **`Start-Server.exe`**. On its first start it asks:
+2. Put `Dawngate.zip` into that folder, next to `Start-Client.exe`. If you leave it in your Downloads folder, the program finds it there too.
+3. Start **`Start-Client.exe`**. Its first start checks `Dawngate.zip` against the original archive and makes your copy of the game in a folder called `Dawngate-Data` (about half a minute); then the game opens. Later starts take a few seconds.
+4. The login screen opens with **This PC** selected above the login panel: the server on your own PC. Log in (see [Your first match](#your-first-match)). Your first login to it sets up the server's copy of the game (about half a minute) and starts the server; the login waits for it, and the server list shows the progress. From then on the server starts within a second or two of your login.
 
-   ```
-   Who will play on this server?
-       1  only this PC: you play here with Start-Client.exe
-       2  your home network: also players on the other PCs at home
-       3  the internet: a public server for players anywhere (at your own risk)
-   ```
+That's all you need to play alone or against bots. The server on your PC runs inside `Start-Client.exe` and stops when you close the game. Your accounts stay in `Dawngate-Data`.
 
-   Press **Enter** to play on this PC. The program then checks `Dawngate.zip` against the original archive, sets everything up in a folder called `Dawngate-Data` and starts the server. Setup takes under a minute. Later starts take about a second. Leave the window open while you play.
-4. Start **`Start-Client.exe`**. The game opens after a few seconds.
+You don't need `Start-Server.exe` to play. It is for running a server that other people play on ([hosting.md](hosting.md)); if it runs in the same folder, **This PC** is that server. To join someone else's server, see [Playing on someone else's server](#playing-on-someone-elses-server).
 
-You only need `Start-Server.exe` if you run the server yourself. To join someone else's server, see [Playing on someone else's server](#playing-on-someone-elses-server).
-
-**Windows warnings:** SmartScreen may call the programs unrecognized, because they aren't signed. Click *More info*, then *Run anyway*. Your antivirus may scan them the first time. The setup changes a few bytes in its own copy of the game (the server's address and the server's certificate authority). It never modifies your `Dawngate.zip`.
+**Windows warnings:** SmartScreen may call the programs unrecognized, because they aren't signed. Click *More info*, then *Run anyway*. Your antivirus may scan them the first time. The setup changes a few bytes in its own copy of the game (the address the game connects to on your PC and its certificate authority). It never modifies your `Dawngate.zip`.
 
 ## Your first match
 
@@ -179,7 +172,7 @@ Everyone on a server needs their own account. The ways to play together:
 
 Ask the server's operator for its address. You don't need to run `Start-Server.exe`.
 
-**A server on the internet** is reached through its encrypted tunnel, and you pick it on the game's login screen:
+Every server, on the internet or on your home network, is reached through its encrypted tunnel, and you pick it on the game's login screen:
 
 1. Start the client with the server's address once:
 
@@ -189,9 +182,9 @@ Ask the server's operator for its address. You don't need to run `Start-Server.e
 
    The address goes into your server list. From then on, just start `Start-Client.exe`: the login screen opens with the server you played on last.
 2. On the login screen, **SERVER** above the login panel shows the server you are about to log in to. Click it to open the list (**SELECT A SERVER**), click a server, then **DONE**.
-3. Log in as usual.
+3. Log in. **The first login to a new server stops** with *New server key: check the fingerprint shown in the list, then log in again to trust it.* Click OK, open the list and compare the server's key (16 hex digits, such as `25edc74b8876bbbc`) with the one its operator gives you. Only if they match, press **LOGIN** again: that login trusts the key and logs you in, and every later login checks it.
 
-The same goes for a server on your home network whose operator turned its tunnel on: start `Start-Client.exe <address> --tunnel on` once.
+If the operator hands you the whole key (64 hex digits, shown in the server's window), start `Start-Client.exe <address> --gateway-pin <key>` once instead: the key is trusted without the question.
 
 - You'll need an account first. Most public servers use invite codes: get one from the operator, then register on the server's website at `https://<server address>/signup`. The login screen's *Sign up now!* link opens the same page.
 - On the website you can also change your password, download your data or delete your account.
@@ -201,27 +194,34 @@ The same goes for a server on your home network whose operator turned its tunnel
 
 Each row shows a server's name, its address and its status. The status is checked again every few seconds while the login screen is open, so a server that goes down or comes back shows without a restart.
 
+The first row is always **This PC**, the server on your own PC. It can't be removed. Logging in to it starts the server inside `Start-Client.exe` (or uses `Start-Server.exe`'s server when that runs in the same folder), and its key is never asked for: it is in your own folder.
+
 | Status | Meaning |
 |---|---|
+| **starts at login** (This PC) | The server on your PC isn't running yet. Your login starts it; the first time it also sets up its copy of the game. |
+| **setting up, 45 %** (This PC) | The server's copy of the game is being made. Your login waits for it. |
+| **starting** (This PC) | The server on your PC is starting. |
+| **didn't start** (This PC, red) | The server on your PC couldn't be set up or started: the `Start-Client` window says why. The next login tries again. |
 | **online, 23 ms** (green) | The server answers with the key you trusted, in that many milliseconds. |
-| **online, new key** | The server answers, and you haven't logged in there yet. Its key is trusted at your first login. |
+| **online, new key** | The server answers, and you haven't logged in there yet. Your first login shows its key, the second trusts it. |
 | **KEY CHANGED** (red) | The server shows another key than the one you trusted. Logins are refused: see [troubleshooting.md](troubleshooting.md#logging-in). |
 | **offline** (red) | Nothing answers: the server is down, or its address is wrong. |
 | **no tunnel** | Something answers at that address, but not a Dawngate server with its tunnel on. |
 | **added at login** | A server you just added. It is checked when you log in. |
 | **not checked** | Not checked yet. |
 
-The sentence under the list says more about the selected server. For an online server it names the server's key, a fingerprint of 16 hex digits such as `25edc74b8876bbbc`. For a new server, compare that fingerprint with the one its operator publishes before your first login: that login trusts the key, and every later login checks it. For a changed key, the sentence names both the key you trusted and the one the server shows now.
+The sentence under the list says more about the selected server. For an online server it names the server's key, a fingerprint of 16 hex digits such as `25edc74b8876bbbc`. For a new server, compare that fingerprint with the one its operator publishes: your first login there stops so that you can, and the next one trusts the key; every later login checks it. For a changed key, the sentence names both the key you trusted and the one the server shows now.
 
-**Adding a server:** open the list, click **ADD SERVER**, type the address (an IPv4 address such as `203.0.113.5` or a host name, with `:<port>` if the operator's tunnel port isn't 42128) and, if you like, a name, then click **ADD**. The server is added at your next login: **LOGIN** checks it, trusts its key and logs you in there. If it doesn't answer, the login is refused with *The server you picked doesn't answer* and nothing is added. `Start-Client.exe <address>` adds a server too.
+**Adding a server:** open the list, click **ADD SERVER**, type the address (an IPv4 address such as `203.0.113.5` or a host name, with `:<port>` if the operator's tunnel port isn't 42128) and, if you like, a name, then click **ADD**. The server is added at your next login: **LOGIN** checks it and adds it, then stops with *New server key* while the list shows its key; compare it, and **LOGIN** again trusts it and logs you in there. If it doesn't answer, the login is refused with *The server you picked doesn't answer* and nothing is added. `Start-Client.exe <address>` adds a server too.
 
-**Removing a server:** select it in the list and click **REMOVE**. The login screen confirms with *The server was removed from your list.* Its key stays remembered, so a server you add again is still checked against it.
+**Removing a server:** select it in the list and click **REMOVE**. The login screen confirms with *The server was removed from your list.* Its key stays remembered, so a server you add again is still checked against it. **This PC** has no **REMOVE**.
 
 **Typing it instead:** the list puts the pick into your login name, and you can type it yourself. Each server has a tag (`a`, `b`, …; `Start-Client.exe` lists them in its window):
 
 | Login name | Effect |
 |---|---|
 | `alex#b` | Log in as `alex` on the server with tag `b`. |
+| `alex#pc` | Log in as `alex` on This PC. |
 | `alex#+203.0.113.5` | Add that server (optionally `alex#+203.0.113.5=Friends` with a name) and log in there. |
 | `alex#-b` | Remove the server with tag `b`. |
 
@@ -231,19 +231,9 @@ The server only ever sees `alex`.
 
 **Switching servers:** log out, or wait for the game's idle logout. You are back at the login screen with the list, and you can pick another server.
 
-**A server on your home network without the tunnel** is played on directly, as before the list existed:
+**The key check** makes sure you are talking to that server and not to someone else at the same address. This PC needs none (`Start-Client.exe` reads its key from your own folder), nor does a server whose key you got with `--gateway-pin`.
 
-```
-Start-Client.exe 192.168.1.20
-```
-
-You can also start `Start-Client.exe` without an address and type it in when asked; a home-network address is remembered in `Start-Client.ini`. The login screen then has no server list: `Start-Client.exe` says so in its window.
-
-**The fingerprint question.** The first time you connect to such a server, `Start-Client.exe` shows the server's fingerprint and asks whether it's the same as the one the operator has.
-
-- Answer `y` only if it matches the one in the server's window.
-- This check makes sure you are talking to that server and not to someone else at the same address.
-- If a server's fingerprint changes later, you get a warning and the question again.
+**A server without the tunnel** (its operator set `tunnel = off`, an option for developers) can't be in the list: start `Start-Client.exe <address> --tunnel off`, which plays on that one server directly and asks once whether the server's certificate fingerprint matches the one in its window.
 
 ## Known limitations
 
@@ -255,8 +245,8 @@ You can also start `Start-Client.exe` without an address and type it in when ask
 
 ## Stopping and logs
 
-- **To stop:** close the game in the main menu or at the login screen. In a match the window's close button doesn't work, so leave the match first. Then press Ctrl+C in the `Start-Server` window, or close it.
+- **To stop:** close the game in the main menu or at the login screen. In a match the window's close button doesn't work, so leave the match first. `Start-Client.exe` ends with the game, and the server on your PC with it. If you run `Start-Server.exe`, press Ctrl+C in its window, or close it.
 - **The game's own log** is `%APPDATA%\DawngateData\Application.log`.
-- **The server's logs** are in `Dawngate-Data\logs`, with one folder per match under `hosts`.
+- **The server's logs** are in `Dawngate-Data\logs`, with one folder per match under `hosts`. `Start-Client.exe`'s own log is `front-<time>.log` there.
 
 If something goes wrong, see [troubleshooting.md](troubleshooting.md).

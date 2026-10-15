@@ -9,6 +9,8 @@
   won't start) with no time limit and no capture. The window waits until you close the game.
   Log in with a login name and a password of 8+ characters (the first login with a new name creates that account
   with that password), then PLAY and PRACTICE DAWNGATE, or the VERSUS tab's QUEUE SOLO; see docs/playing.md.
+  This is the checkout's direct path (no tunnel, no server list); the release's Start-Client.exe runs a server on this
+  PC by itself ("This PC" in the login screen's server list) and needs no Start-Server.
   The client must be the patched copy: the original one talks to EA's servers (gone) and trusts only EA's
   certificates; setup_all.py (or play.ps1's setup check) makes and patches client\run_854.
   Logs: the newest re\logs\manual_*\client\ (the game's own log stays in %APPDATA%\DawngateData).
@@ -23,7 +25,9 @@ if (-not (Test-Path (Join-Path $gameDir 'game\Dawngate.exe'))) {
 }
 $srv = @(Get-NetTCPConnection -State Listen -LocalPort 42127 -ErrorAction SilentlyContinue | Where-Object { $_.LocalAddress -in @('127.0.0.1', '0.0.0.0') })
 if (-not $srv.Count) {
-    Write-Host 'No server is running on 127.0.0.1: double-click Start-Server.cmd first and wait for "The server runs".' -ForegroundColor Red; exit 1
+    Write-Host 'No server is running on 127.0.0.1: double-click Start-Server.cmd first and wait for "The server runs".' -ForegroundColor Red
+    Write-Host '(Start-Client.cmd plays on Start-Server.cmd''s server directly. The release''s Start-Client.exe needs no Start-Server: it runs a server on this PC by itself, "This PC" in its server list.)' -ForegroundColor Yellow
+    exit 1
 }
 # one client at a time (the game's Global\Dawngate mutex); the match hosts run with -multipleInstances and don't count
 $clients = @(Get-CimInstance Win32_Process -Filter "Name = 'Dawngate.exe'" | Where-Object { "$($_.CommandLine)" -notmatch '-multipleInstances' })

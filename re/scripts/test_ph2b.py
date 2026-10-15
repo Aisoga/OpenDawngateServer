@@ -24,14 +24,14 @@ import dbpf  # noqa: E402
 import patch_locale as pl  # noqa: E402
 
 MADE_UP_SHA = "97766712cea3cf54c20204922cc472d86ac9d592c40e955f7c1a635e0567f25e"
-MADE_UP_LANE_B = "0e1638a4d55dc995ff5337afa0cce122292b15b6fb8607358e6c8b83db6df3c9"  # --host 127.0.0.2
-MADE_UP_WEB = "8e6f2264930201fd44cc8b635558379471cc7799cdbe8d762c70b21326333b23"  # 192.168.1.20, Play.Example.org:8443
+MADE_UP_LANE_B = "f1f97742f737eda6cc126a512e645f9adad2d5a46e06231b42a9e0b206f58dd7"  # --host 127.0.0.2
+MADE_UP_WEB = "df2b04045b36ab2fad6e668ad431a84aba3898820dbb07c0a0324274c2418e08"  # 192.168.1.20, Play.Example.org:8443
 SYNTH_LOCALE_SHA = "528ce9623b3b1542fa600b1036136a3c39e8e68bb586019fb3a6d3c2f6374832"
-SYNTH_LOCAL = "631c6c0aea76850472d9cc258171be511e338a67b043a79475cf93160e1b5494"  # the synthetic game, 127.0.0.1
+SYNTH_LOCAL = "b31b247eef4147284e49a4012fdd6520877330c87583f9504d55f834f9012a53"  # the synthetic game, 127.0.0.1
 GAME_854 = {  # build 854's Locale.package
-    ("127.0.0.1", None): "087e405fdbf9d843a2bd744c350ff76a9672406b11ece62257ec70e1e5361c46",
-    ("127.0.0.2", None): "8fa98d9ec4c12d971093455c7f4cc33805182b0ad26493b292a6d16163d39535",
-    ("203.0.113.7", "dawngate.example.org"): "0568eda4f529df47f166d300f70435d700ad87714fde3280f1a234db757da31a",
+    ("127.0.0.1", None): "2363302773e8f53e65c0d0743fc19de3cdf28e622f6c3b4249eee549a4c3e620",
+    ("127.0.0.2", None): "8c85d2a84335af6405d623cb9b3fba22427d81e3b5fdee762f5119a2cab42955",
+    ("203.0.113.7", "dawngate.example.org"): "4a4d68ee836fe1753abbfcf4cb6d21007edd9a3711397b29864e2c01ea3891be",
 }
 # synthgame.Locale() (server/internal/setup/testgame/synthgame): one RefPack-compressed table, no login table
 SYNTH_LOCALE = bytes.fromhex(

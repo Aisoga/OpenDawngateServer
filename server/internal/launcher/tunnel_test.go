@@ -163,7 +163,7 @@ func TestTunnelModes(t *testing.T) {
 		mode, address string
 		want          bool
 	}{
-		{"auto", "127.0.0.1", false}, {"auto", "192.168.1.20", false}, {"auto", "8.8.8.8", true},
+		{"auto", "127.0.0.1", true}, {"auto", "192.168.1.20", true}, {"auto", "8.8.8.8", true}, {"off", "127.0.0.1", false},
 		{"on", "127.0.0.1", true}, {"on", "192.168.1.20", true}, {"off", "8.8.8.8", false},
 	} {
 		if got := tunnelFor(c.mode, c.address); got != c.want {

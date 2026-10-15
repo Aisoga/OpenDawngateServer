@@ -46,7 +46,7 @@ func serveOn(t *testing.T, address string) []byte {
 	return set.CAModulus
 }
 
-// Start-Client against "another machine's" server: the CA fetched over HTTP, refused until trusted, trusted with
+// Start-Client with tunnel = off (the developers' direct path) against "another machine's" server: the CA fetched over HTTP, refused until trusted, trusted with
 // --trust (or the player's y), remembered, a changed CA refused again; the copy patched with the server's CA.
 func TestStartClientRemote(t *testing.T) {
 	if testing.Short() {
@@ -58,22 +58,22 @@ func TestStartClientRemote(t *testing.T) {
 	dir := release(t) // a player's release folder with Dawngate.zip; no Start-Server.ini
 	store := filepath.Join(dir, DefaultFolder, "servers", remoteAddress, certs.CAModulusFile)
 
-	code, out := run(t, RunClient, dir, "--non-interactive", remoteAddress)
+	code, out := run(t, RunClient, dir, "--non-interactive", "--tunnel", "off", remoteAddress)
 	if code != 1 || !strings.Contains(out, "No server answers at "+remoteAddress) {
 		t.Fatalf("no server: exit %d\n%s", code, out)
 	}
-	code, out = run(t, RunClient, dir, "--non-interactive", "--setup-only", remoteAddress)
+	code, out = run(t, RunClient, dir, "--non-interactive", "--tunnel", "off", "--setup-only", remoteAddress)
 	if code != 1 || !strings.Contains(out, "its CA isn't known yet") {
 		t.Fatalf("no server, --setup-only: exit %d\n%s", code, out)
 	}
 	ca := serveOn(t, remoteAddress)
-	code, out = run(t, RunClient, dir, "--non-interactive", "--setup-only", remoteAddress)
+	code, out = run(t, RunClient, dir, "--non-interactive", "--tunnel", "off", "--setup-only", remoteAddress)
 	if code != 1 || !strings.Contains(out, "isn't trusted yet") || !strings.Contains(out, certs.Fingerprint(ca)) || exists(store) {
 		t.Fatalf("an unconfirmed CA: exit %d\n%s", code, out)
 	}
 	// the player answers y (an interactive run: the question with the fingerprint)
 	var buf bytes.Buffer
-	code = RunClient([]string{"--setup-only", remoteAddress}, IO{In: strings.NewReader("y\n"), Out: &buf, ExeDir: dir, Interactive: true})
+	code = RunClient([]string{"--setup-only", "--tunnel", "off", remoteAddress}, IO{In: strings.NewReader("y\n"), Out: &buf, ExeDir: dir, Interactive: true})
 	out = buf.String()
 	if code != 0 || !strings.Contains(out, "First connection to the server "+remoteAddress) ||
 		!strings.Contains(out, "trusting the server's CA "+certs.Fingerprint(ca)) {
@@ -92,7 +92,7 @@ func TestStartClientRemote(t *testing.T) {
 	if !strings.Contains(out, "links at http://"+remoteAddress+":18080/dawngate/") {
 		t.Errorf("the player copy's links:\n%s", out)
 	}
-	code, out = run(t, RunClient, dir, "--non-interactive", "--setup-only", remoteAddress)
+	code, out = run(t, RunClient, dir, "--non-interactive", "--tunnel", "off", "--setup-only", remoteAddress)
 	if code != 0 || strings.Contains(out, "trusting") {
 		t.Errorf("a known CA: exit %d\n%s", code, out)
 	}
@@ -113,19 +113,19 @@ func TestStartClientRemoteChangedCA(t *testing.T) {
 	old := bytes.Repeat([]byte{0x5A}, 128)
 	os.WriteFile(store, old, 0o644)
 	ca := serveOn(t, remoteAddress)
-	code, out := run(t, RunClient, dir, "--non-interactive", "--setup-only", remoteAddress)
+	code, out := run(t, RunClient, dir, "--non-interactive", "--tunnel", "off", "--setup-only", remoteAddress)
 	if code != 1 || !strings.Contains(out, "has another CA") {
 		t.Fatalf("a changed CA: exit %d\n%s", code, out)
 	}
 	file := filepath.Join(t.TempDir(), "ca_modulus.bin")
 	os.WriteFile(file, ca, 0o644)
-	code, out = run(t, RunClient, dir, "--non-interactive", "--setup-only", "--ca", file, remoteAddress)
+	code, out = run(t, RunClient, dir, "--non-interactive", "--tunnel", "off", "--setup-only", "--ca", file, remoteAddress)
 	if code != 0 || !strings.Contains(out, "new CA") {
 		t.Fatalf("--ca: exit %d\n%s", code, out)
 	}
 	// a handed-out file that isn't the server's CA: the redirector's certificate doesn't verify
 	os.WriteFile(file, old, 0o644)
-	code, out = run(t, RunClient, dir, "--non-interactive", "--setup-only", "--ca", file, remoteAddress)
+	code, out = run(t, RunClient, dir, "--non-interactive", "--tunnel", "off", "--setup-only", "--ca", file, remoteAddress)
 	if code != 1 || !strings.Contains(out, "isn't signed by this CA") {
 		t.Fatalf("a wrong --ca: exit %d\n%s", code, out)
 	}

@@ -384,7 +384,7 @@ func (s *Server) startMatch(m matchmaker.Match) {
 	tickets := m.Tickets()
 	g := tickets[0].Data.(*mmSession).game
 	g.ID = s.gameIDs.Add(1)
-	g.GMS, _ = ParseAddr(s.Host, s.GMSPort)
+	g.GMS, _ = ParseAddr(s.gmsHost(), s.GMSPort)
 	g.Seed = g.ID * 7919
 	size := int64(s.MM.Config().TeamSize)
 	g.Capacity = []int64{2 * size, 0}

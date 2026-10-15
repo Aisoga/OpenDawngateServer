@@ -12,7 +12,8 @@
 //     <name>#+<address>[=<name>]        add that server (Start-Client checks it, trusts its key on first use,
 //                                       stores it) and log in on it
 // and Remove sends a login as <name>#-<tag>, which Start-Client answers by removing the server (its own error
-// code, so the game shows the login error panel). The game's handler reads the field after ours has changed
+// code, so the game shows the login error panel). The first row is This PC, the server on this PC (Start-Client
+// starts it at the login to it), which can't be removed. The game's handler reads the field after ours has changed
 // it; ours puts the typed name back right after, so the field and a remembered login name show the name only.
 //
 // The texts come from the game's LoginScreen string table (lines 0x5e70a1xx, which Start-Client's setup adds to the
@@ -64,11 +65,12 @@ package {
         private static const TX_CANCEL:Array = [0x5e70a107, "CANCEL"];
         private static const TX_ADDRESS:Array = [0x5e70a108, "Server address"];
         private static const TX_NAME:Array = [0x5e70a109, "Name (optional)"];
-        private static const TX_ADD_HINT:Array = [0x5e70a10a, "Added at your next login, which checks the server and trusts its key."];
+        private static const TX_ADD_HINT:Array = [0x5e70a10a, "Added at your next login, which checks the server and shows its key: log in again to trust it."];
         private static const TX_BAD_ADDRESS:Array = [0x5e70a10b, "Type the server's address: an IPv4 address such as 203.0.113.5, or a host name."];
         private static const TX_EMPTY:Array = [0x5e70a10c, "No servers yet: add one."];
         private static const TX_NONE:Array = [0x5e70a10d, "none: add a server"];
         private static const TX_PICK:Array = [0x5e70a10e, "pick a server"];
+        private static const TX_THIS_PC:Array = [0x5e70a10f, "This PC"];
         private static const TX_ST_OK:Array = [0x5e70a110, "online, {1} ms"];
         private static const TX_ST_NEW:Array = [0x5e70a111, "online, new key"];
         private static const TX_ST_CHANGED:Array = [0x5e70a112, "KEY CHANGED"];
@@ -76,12 +78,20 @@ package {
         private static const TX_ST_NO_TUNNEL:Array = [0x5e70a114, "no tunnel"];
         private static const TX_ST_PENDING:Array = [0x5e70a115, "added at login"];
         private static const TX_ST_UNKNOWN:Array = [0x5e70a116, "not checked"];
+        private static const TX_ST_LOCAL:Array = [0x5e70a117, "starts at login"];
+        private static const TX_ST_SETUP:Array = [0x5e70a118, "setting up, {1} %"];
+        private static const TX_ST_STARTING:Array = [0x5e70a119, "starting"];
+        private static const TX_ST_FAILED:Array = [0x5e70a11a, "didn't start"];
         private static const TX_D_OK:Array = [0x5e70a120, "Online, {1} ms. Its key: {2}."];
-        private static const TX_D_NEW:Array = [0x5e70a121, "New server: its key {2} will be trusted at your first login. Compare it with the fingerprint its operator gives you."];
+        private static const TX_D_NEW:Array = [0x5e70a121, "New server key {2}: compare it with the fingerprint its operator gives you. The first login stops here; log in again to trust it."];
         private static const TX_D_CHANGED:Array = [0x5e70a122, "KEY CHANGED: you trusted {3}, the server now shows {2}. Don't log in until its operator confirms the new key: see the troubleshooting guide."];
         private static const TX_D_OFFLINE:Array = [0x5e70a123, "No answer from this server. It may be offline, or its address may be wrong."];
         private static const TX_D_NO_TUNNEL:Array = [0x5e70a124, "Something answers at this address, but no Dawngate server with the tunnel on."];
         private static const TX_D_UNKNOWN:Array = [0x5e70a125, "Not checked yet."];
+        private static const TX_D_LOCAL:Array = [0x5e70a126, "The server on this PC. It starts when you log in; the first time it sets up its match host first (about half a minute)."];
+        private static const TX_D_SETUP:Array = [0x5e70a127, "Setting up the server on this PC: {1} %. Your login waits for it, or log in again when it says online."];
+        private static const TX_D_STARTING:Array = [0x5e70a128, "The server on this PC is starting."];
+        private static const TX_D_FAILED:Array = [0x5e70a129, "The server on this PC didn't start: Start-Client's window says why. Log in again to retry."];
 
         private static const GOLD:uint = 0xC9A865;
         private static const TEXT:uint = 0xE6DFD0;
@@ -91,7 +101,7 @@ package {
         private static const RED:uint = 0xD0473B;
         private static const GREY:uint = 0x7A7A7A;
 
-        private var servers:Array = [];   // {tag, name, address, port, status, ping, key, trusted, pending, named}
+        private var servers:Array = [];   // {tag, name, address, port, status, ping, key, trusted, pending, named, fixed}
         private var sel:int = -1;
         private var texts:Object = {};    // the looked-up texts by line id
         private var loading:Boolean = false;
@@ -176,11 +186,13 @@ package {
         //   dawngate-servers  1
         //   preselect  <tag>              the server Start-Client was started for (may be empty)
         //   last       <tag>              the server a login went to last (may be empty)
-        //   server     <tag> <name> <address> <gateway port> <status> <ping ms> [<key> <trusted key>]
+        //   server     <tag> <name> <address> <gateway port> <status> <ping ms> [<key> <trusted key> [fixed]]
         //   end                           the list is whole (Start-Client may be writing it while it is read)
         // status: ok, new (online, its key not trusted yet), changed (another key than the trusted one),
-        // unreachable, no_gateway (no Dawngate tunnel there), unknown. key: the fingerprint of the key the server
-        // showed, trusted: the one trusted for it (both may be empty).
+        // unreachable, no_gateway (no Dawngate tunnel there), unknown; for This PC (fixed: the first line, shown in
+        // the game's language, never removed) also local (starts at the login), setup (the ping field: the setup's
+        // percentage), starting, failed. key: the fingerprint of the key the server showed, trusted: the one trusted
+        // for it (both may be empty).
 
         private function load():void {
             if (loading) {
@@ -229,9 +241,10 @@ package {
                     case "end": whole = true; break;
                     case "server":
                         if (f.length >= 7) {
-                            got.push({tag: f[1], name: f[2], address: f[3], port: int(f[4]), status: f[5],
-                                      ping: int(f[6]), key: f.length > 7 ? f[7] : "", trusted: f.length > 8 ? f[8] : "",
-                                      pending: false, named: true});
+                            var fixed:Boolean = f.length > 9 && f[9] == "fixed";
+                            got.push({tag: f[1], name: f[2], address: f[3], port: int(f[4]),
+                                      status: f[5], ping: int(f[6]), key: f.length > 7 ? f[7] : "",
+                                      trusted: f.length > 8 ? f[8] : "", pending: false, named: true, fixed: fixed});
                         }
                         break;
                 }
@@ -734,6 +747,11 @@ package {
 
         // -- showing ------------------------------------------------------------------------------------------
 
+        // nameOf is a server's name as shown: This PC (the list's fixed first entry) in the game's language.
+        private function nameOf(s:Object):String {
+            return s.fixed ? tr(TX_THIS_PC) : String(s.name);
+        }
+
         // statusOf is a server's status word, its colour and the sentence under the list.
         private function statusOf(s:Object):Array {
             if (s.pending) {
@@ -746,6 +764,10 @@ package {
                 case "changed": return [tr(TX_ST_CHANGED), RED, fill(tr(TX_D_CHANGED), ping, s.key, s.trusted)];
                 case "unreachable": return [tr(TX_ST_OFFLINE), RED, tr(TX_D_OFFLINE)];
                 case "no_gateway": return [tr(TX_ST_NO_TUNNEL), RED, tr(TX_D_NO_TUNNEL)];
+                case "local": return [tr(TX_ST_LOCAL), GREEN, tr(TX_D_LOCAL)];
+                case "setup": return [fill(tr(TX_ST_SETUP), ping), AMBER, fill(tr(TX_D_SETUP), ping)];
+                case "starting": return [tr(TX_ST_STARTING), AMBER, tr(TX_D_STARTING)];
+                case "failed": return [tr(TX_ST_FAILED), RED, tr(TX_D_FAILED)];
             }
             return [tr(TX_ST_UNKNOWN), GREY, tr(TX_D_UNKNOWN)];
         }
@@ -764,7 +786,7 @@ package {
             var s:Object = current();
             if (s != null) {
                 var cur:Array = statusOf(s);
-                selName.text = s.name;
+                selName.text = nameOf(s);
                 dot(selDot, cur[1]);
                 selDot.visible = true;
                 selStatus.text = cur[0];
@@ -794,7 +816,7 @@ package {
                 }
                 var v:Object = servers[k];
                 var st:Array = statusOf(v);
-                r.name.text = v.name;
+                r.name.text = nameOf(v);
                 r.address.text = v.address;
                 r.status.text = st[0];
                 r.status.textColor = st[1];
@@ -807,7 +829,7 @@ package {
             }
             emptyText.visible = servers.length == 0 && !addBox.visible;
             if (removeBtn != null) {
-                removeBtn.visible = s != null;
+                removeBtn.visible = s != null && !s.fixed; // This PC is always in the list
             }
             tabbable(panel.visible);
         }
@@ -929,7 +951,7 @@ package {
         // Start-Client answers by removing it (and refusing the login).
         private function removeSelected():void {
             var s:Object = current();
-            if (s == null) {
+            if (s == null || s.fixed) {
                 return;
             }
             if (!s.pending && saved == null) {

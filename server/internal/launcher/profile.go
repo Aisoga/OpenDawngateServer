@@ -197,7 +197,8 @@ func AskServerProfile(in *bufio.Reader, out io.Writer, path, dataDir string) (st
 		if err := firstErr(set("profile", ProfileAuto), set("address", ip), set("bind", "")); err != nil {
 			return "", err
 		}
-		fmt.Fprintf(out, "  Home network: address = %s. Players start Start-Client.exe %s.\n", ip, ip)
+		fmt.Fprintf(out, "  Home network: address = %s. Players start Start-Client.exe %s (or add it to the server list on the\n"+
+			"  login screen); they connect through the encrypted tunnel, TCP and UDP 42128.\n", ip, ip)
 		return ProfileHome, nil
 	}
 

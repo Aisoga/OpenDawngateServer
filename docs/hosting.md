@@ -1,6 +1,6 @@
 # Hosting a server
 
-This guide is for whoever runs the server that other people play on. It uses the release's `Start-Server.exe`. To only play on your own PC, the quick start in the [README](../README.md#quick-start) is enough.
+This guide is for whoever runs the server that other people play on. It uses the release's `Start-Server.exe`. To only play on your own PC you don't need it: `Start-Client.exe` runs a server on your PC by itself (**This PC** in the login screen's server list; the quick start in the [README](../README.md#quick-start)).
 
 - [What the server is](#what-the-server-is)
 - [What you need](#what-you-need)
@@ -29,7 +29,7 @@ A match host has no window, graphics or sound. It needs about 100 MB of memory a
 
 - A Windows 10 or 11 PC, 64-bit, that stays on while people play.
 - `Dawngate.zip` from <https://archive.org/details/Dawngate> and the release zip.
-- About 5 GB of free disk space.
+- About 5 GB of free disk space (about 3 GB on a PC that only hosts, see [A server that only hosts](#a-server-that-only-hosts)).
 
 ## Setting it up
 
@@ -44,18 +44,34 @@ To change your answers later, run `Start-Server.exe --configure`, or edit `Start
 
 Every start checks the setup and repairs anything missing, which usually takes a second. `Start-Server.exe --check` only reports what's missing.
 
-You can play on the same PC that runs the server: just start `Start-Client.exe` there too.
+You can play on the same PC that runs the server: just start `Start-Client.exe` there too. **This PC**, the first row of the login screen's server list, is this server while it runs in the same folder, and `Start-Client.exe` knows its key. When `Start-Server.exe` isn't running, This PC is a server that `Start-Client.exe` runs itself on the same folder, with the same accounts and `Start-Server.ini`'s game options (`shaper_select`, `signup`, `server_flags`; never the website or the public settings), only for the player on this PC. A folder has one server at a time: `Start-Server.exe` refuses to start while `Start-Client.exe` runs the folder's server ("This folder's server already runs inside Start-Client.exe"); close the game first.
+
+**Every server uses the encrypted tunnel.** Players reach it on one port, **42128, TCP and UDP**; everything else the server runs answers inside the tunnel. Its match hosts listen on a loopback address of their own, so a server and a player's game run side by side on one PC. (`tunnel = off` in `Start-Server.ini` turns the tunnel off; that's an option for developers, and players then need `Start-Client.exe --tunnel off`.)
+
+### A server that only hosts
+
+The server itself needs only one copy of the game, `Dawngate-Data\host`, for its match hosts (about 1.5 GB). With the tunnel, `Start-Server.exe` makes no copy for playing; `Start-Client.exe` makes its own the first time someone plays on this PC.
+
+For a PC that only hosts, set `dedicated = yes` in `Start-Server.ini`, or start `Start-Server.exe --dedicated`:
+
+- `Start-Server.exe` never makes or checks a copy for playing, also with `tunnel = off`. A copy that `Start-Client.exe` made in the same folder stays as it is.
+- The window shows `mode dedicated server` at the start, and `--check` reports the copy for playing as skipped.
+- Once `Dawngate-Data` holds `host`, `certs` and `data`, the server starts without `Dawngate.zip`. You need the zip again only if the host copy has to be repaired, or on a new PC.
+
+To move a dedicated server to another PC, copy the release folder with `Start-Server.ini` and `Dawngate-Data` (the `client` folder can stay behind).
+
+If someone also plays on a dedicated server's PC with `Start-Client.exe` from the same folder, **This PC** in their list is the dedicated server while it runs; `Start-Client.exe` makes its own copy for playing in `Dawngate-Data\client` then.
 
 ## Hosting on your home network
 
 1. Choose **2** at the first question, or set `address = <this PC's LAN address>` in `Start-Server.ini`, for example `address = 192.168.1.20`.
-2. The server window shows the server's **fingerprint**, for example `3ff46759dcb1ea30`. Give your players the address, and tell them the fingerprint or show them your window.
-3. If Windows asks whether `Start-Server.exe` or the game copy in `Dawngate-Data\host` may use the network, allow **private networks** only.
-4. Each player unpacks the release with their own `Dawngate.zip` and starts `Start-Client.exe <address>`. The first time, they compare the fingerprint and answer `y`. A home server without the tunnel isn't in the players' server lists on the login screen: `Start-Client.exe` plays on it directly. With `tunnel = on` in `Start-Server.ini` it is, and players start `Start-Client.exe <address> --tunnel on` once.
+2. The server window shows the server's **key fingerprint**, for example `3ff46759dcb1ea30`, and the whole key (64 hex digits). Give your players the address, and tell them the fingerprint or show them your window.
+3. If Windows asks whether `Start-Server.exe` may use the network, allow **private networks** only.
+4. Each player unpacks the release with their own `Dawngate.zip` and starts `Start-Client.exe <address>` once (or adds the address on the login screen). Their first login stops with *New server key*, and their server list shows the key's fingerprint: they compare it with yours and log in again, which trusts it.
 
-**Instead of comparing fingerprints**, you can hand out the file `Dawngate-Data\certs\<address>\ca_modulus.bin`. It's public and contains no key. Players then start `Start-Client.exe <address> --ca ca_modulus.bin`. Never hand out any other file from `certs`.
+**Instead of comparing fingerprints**, you can hand out the whole key from your window. Players then start `Start-Client.exe <address> --gateway-pin <key>` once, and their first login goes straight through. The key is public; never hand out any file from `Dawngate-Data\certs`.
 
-If you change the server's address later, the server makes new certificates for it, and every player confirms the new fingerprint once.
+If you change the server's address later, the server makes new certificates and a new key for it (in `Dawngate-Data\certs\<new address>`), so players add the new address and confirm its key once.
 
 ## Hosting on the internet
 
@@ -65,7 +81,7 @@ A public server is reachable by anyone. Run one only if you accept the risk desc
 
 When the server's address is a public internet address, `Start-Server.exe` uses the **public profile**:
 
-- **An encrypted tunnel.** Every player connection goes through one port (42128, TCP and UDP), encrypted with TLS 1.3 and AES-GCM. `Start-Client.exe` uses the tunnel by itself for a public address, and the players' game only talks to `Start-Client.exe` on their own PC.
+- **The encrypted tunnel**, as on every server: every player connection goes through one port (42128, TCP and UDP), encrypted with TLS 1.3 and AES-GCM, and the players' game only talks to `Start-Client.exe` on their own PC. A public server refuses `tunnel = off`.
 - **Limits** on connections, logins, games and network traffic per address.
 - **Checked passwords**, stored only as hashes and never written to a log, and a sign-up mode you choose.
 - **A strict check** of everything a client sends in a match. This one is on for every server, not just public ones.
@@ -92,15 +108,15 @@ On your router, forward only these ports to the server PC:
 
 Forward nothing else. **Never forward TCP 10040**, the channel between the server and its match hosts, which has no login. `Start-Server.exe` never opens ports and never uses UPnP.
 
-If the PC holds the public address itself, with no router in between (a rented server, for example), its other ports listen on that address too. In that case, let the firewall in only TCP and UDP 42128 and TCP 443.
+If the PC holds the public address itself, with no router in between (a rented server, for example), let the firewall in only TCP and UDP 42128 and TCP 443. Nothing else of the server listens on that address: the match hosts use a loopback address and the control channel `127.0.0.1`.
 
 ### Your server in the players' server lists
 
-Players pick a server on the game's login screen, from a list that each player keeps on their own PC ([playing.md](playing.md#the-server-list)). A server appears in that list only with its tunnel on, which a public server always has. Players add yours with `Start-Client.exe <your address>` or with **ADD SERVER** on the login screen. If your tunnel port isn't 42128, give them the address as `<address>:<port>`.
+Players pick a server on the game's login screen, from a list that each player keeps on their own PC ([playing.md](playing.md#the-server-list)). Players add yours with `Start-Client.exe <your address>` or with **ADD SERVER** on the login screen. If your tunnel port isn't 42128, give them the address as `<address>:<port>`.
 
-### The tunnel's fingerprint
+### The server's key
 
-The server window shows the **tunnel key's fingerprint**, 16 hex digits. Publish it where your players can check it, for example in your community's channel. A player's server list shows the key of a new server, and its first login there trusts it. Every later login checks it.
+The server window shows the **key's fingerprint**, 16 hex digits, and the whole key, 64 hex digits. Publish the fingerprint where your players can check it, for example in your community's channel. A player's first login to a new server stops with *New server key* while their server list shows its fingerprint; once they have compared it, their next login trusts it. Every later login checks it. If you publish the whole key, players can start `Start-Client.exe <your address> --gateway-pin <key>` once instead, and nobody needs to compare.
 
 The key is in `Dawngate-Data\certs\<address>\`. Keep it private, and keep it. If the key changes, for example because `Dawngate-Data\certs` was lost or made anew, every player's list shows **KEY CHANGED** with the old and the new fingerprint, and their logins are refused. Each player then has to confirm the new fingerprint with you and delete their old copy of the key ([troubleshooting.md](troubleshooting.md#logging-in)). That is what protects them from a stranger at your address, so tell them in advance if you ever change it.
 
@@ -190,9 +206,12 @@ Accounts live in one database, `Dawngate-Data\data\accounts.db`, with `accounts.
 
 ## Security: what is protected and what isn't
 
-**Protected on a public server:**
+**Protected on every server with the tunnel (the default):**
 
 - Players' connections are encrypted end to end through the tunnel, and each player's `Start-Client.exe` checks the server's key.
+
+**Also on a public server:**
+
 - Passwords are hashed and never logged.
 - Limits slow down floods and password guessing.
 - Every message a client sends in a match is checked before the game logic sees it, and the network library is patched against known flaws.
@@ -205,4 +224,4 @@ Accounts live in one database, `Dawngate-Data\data\accounts.db`, with `accounts.
 - **Backups** are up to you (see [Backups](#backups)).
 - **The control port, TCP 10040, has no login.** Never forward it.
 
-**On a home network without the tunnel**, the game's own traffic isn't encrypted, including the password typed at login. That's fine on a network you trust. If you want encryption there too, set `tunnel = on`; your players then start `Start-Client.exe <address> --tunnel on` once, and pick your server from their list on the login screen.
+**With `tunnel = off`** (an option for developers), the game's own traffic isn't encrypted, including the password typed at login, and the server's plain ports listen on its address. Keep it to a network you trust.

@@ -13,7 +13,7 @@
 //	                       exepatch.HostKeys as setup_all.py does), config packages for 127.0.0.1, dgsim.dll as
 //	                       PhysXLoader.dll, dgsim.ini and the Lua probes (hostcopy)
 //	certs\<address>        the redirector's certificates for that server address (CN = address), made per install
-//	data                   accounts.db (dgserver), content.json (the player content, from the client copy's game data)
+//	data                   accounts.db (dgserver), content.json (the player content, from a copy's game data)
 //	logs                   dgserver's logs and the match hosts' folders
 //	servers\<address>      the CA modulus of another machine's server, trusted on first use (Start-Client)
 //
@@ -132,6 +132,10 @@ type Setup struct {
 	// Documents\Dawngate<X> (exepatch.Options.DataSuffix), so it can run beside another client on the same PC; ""
 	// keeps the shipped names, as for every player.
 	DataSuffix string
+	// Progress (optional) also gets an extraction's progress: the step ("host copy"), the archive's phase
+	// (archive.PhaseHashZip, PhaseExtract, PhaseVerify) and its percentage. Start-Client shows the setup of "This PC"
+	// in the login screen's server list with it.
+	Progress func(step, phase string, pct int)
 
 	lines   []Line
 	zip     string
@@ -253,20 +257,37 @@ var hostOptions = exepatch.Options{Profile: exepatch.ProfileLocal, ServerHost: L
 type ServerOptions struct {
 	Address   string // the server's address: Local, another loopback address, a LAN address or a public one
 	NoContent bool   // leave out the content file (new accounts then own no items)
+	// NoClient leaves the player copy to Start-Client: a server with the tunnel needs none of its own, and Start-Client
+	// patches the copy for its tunnel address (it would only undo a copy patched here for the server's address); a
+	// dedicated server (Start-Server.ini's dedicated) makes none whatever the tunnel. The player copy is then neither
+	// extracted, patched nor checked, a complete host copy needs no archive, and the content comes from the host copy.
+	NoClient bool
+	// NoClientNote is the report's reason for the skipped player copy (default: Start-Client makes it).
+	NoClientNote string
 }
 
 // Server sets up (or checks) everything Start-Server.exe runs: the certificates for the address, the player copy for
-// it, the match-host copy with dgsim.dll, and the content file, in setup_all.py's order. It returns ErrIncomplete when
-// a step is left undone (Bad lists them).
+// it (not with o.NoClient), the match-host copy with dgsim.dll, and the content file, in setup_all.py's order. It
+// returns ErrIncomplete when a step is left undone (Bad lists them).
 func (s *Setup) Server(o ServerOptions) error {
 	opts, err := ClientOptions(o.Address)
 	if err != nil {
 		s.report(Failed, "address", err.Error())
 		return s.result()
 	}
-	s.room([]string{s.ClientCopy(), s.HostCopy()})
+	copies := []string{s.ClientCopy(), s.HostCopy()}
+	if o.NoClient {
+		copies = copies[1:]
+	}
+	s.room(copies)
 	modulus := s.stepCerts(o.Address)
-	if s.ensureCopy("client copy", s.ClientCopy(), clientExempt) || (s.Check && isDir(s.ClientCopy())) {
+	if o.NoClient {
+		note := o.NoClientNote
+		if note == "" {
+			note = "Start-Client.exe makes and patches it (the server runs with the tunnel)"
+		}
+		s.report(Skipped, "client copy", note)
+	} else if s.ensureCopy("client copy", s.ClientCopy(), clientExempt) || (s.Check && isDir(s.ClientCopy())) {
 		if modulus != nil {
 			s.stepExe("client exe", s.ClientCopy(), modulus, opts, nil)
 		} else {
@@ -294,8 +315,10 @@ func (s *Setup) Server(o ServerOptions) error {
 	}
 	if o.NoContent {
 		s.report(Skipped, "content", "left out: new accounts own no items")
+	} else if o.NoClient { // the copy this setup checked; a player copy Start-Client keeps here stays untouched
+		s.stepContent(s.HostCopy(), "the match-host copy")
 	} else {
-		s.stepContent()
+		s.stepContent(s.ClientCopy(), "the player copy")
 	}
 	return s.result()
 }
@@ -444,7 +467,17 @@ func (s *Setup) extract(step, zp, dawngate string) bool {
 		}
 	}
 	s.say("extracting %s into %s (1.5 GB, about half a minute) ...", zp, s.show(dawngate))
-	res, err := archive.Extract(zp, dest, s.manifest(), s.prog.callback(s.out(), s.Live))
+	cb := s.prog.callback(s.out(), s.Live)
+	if s.Progress != nil {
+		show := cb
+		cb = func(phase string, done, total int64) {
+			show(phase, done, total)
+			if total > 0 {
+				s.Progress(step, phase, int(done*100/total))
+			}
+		}
+	}
+	res, err := archive.Extract(zp, dest, s.manifest(), cb)
 	if err != nil {
 		var ve *archive.VerifyError
 		if errors.As(err, &ve) {

@@ -50,16 +50,47 @@ func TestTunnelWanted(t *testing.T) {
 // TestTunnelThroughServer runs the whole server with --tunnel on (on 127.0.9.30, as the server's machine) and the
 // client side of the tunnel on 127.0.9.31 (the player's loopback address), then does what the game does through it:
 // the redirector over TLS 1.1 (ended in the client), Blaze's preAuth, the QoS ping site's latency probe and NAT test,
-// and a GMS datagram. Every address the server hands out is the tunnel address; the NAT type is OPEN.
+// and a GMS datagram. Every address the server hands out is the tunnel address; the NAT type is OPEN. The second run
+// is Start-Server's with the tunnel: --plain off (no listener of the services' own: the same through the gateway alone)
+// and --gms-bind (the GMS datagrams go to, and come from, the hosts' own address).
 func TestTunnelThroughServer(t *testing.T) {
-	const srvIP, tunIP = "127.0.9.30", "127.0.9.31"
+	for _, plainOff := range []bool{false, true} {
+		t.Run(map[bool]string{false: "plain", true: "tunnel only"}[plainOff], func(t *testing.T) { tunnelThroughServer(t, plainOff) })
+	}
+}
+
+func tunnelThroughServer(t *testing.T, plainOff bool) {
+	const srvIP, tunIP, hostsIP = "127.0.9.30", "127.0.9.31", "127.0.9.32"
 	logDir := t.TempDir()
 	certs := testCerts(t)
-	in, err := start(config{bind: srvIP, certs: certs, logDir: logDir, redirectorPort: redirector.Port, tunnel: TunnelOn})
+	cfg := config{bind: srvIP, certs: certs, logDir: logDir, redirectorPort: redirector.Port, tunnel: TunnelOn}
+	gmsFrom := srvIP
+	if plainOff {
+		cfg.plain, cfg.gmsBind, gmsFrom = PlainOff, hostsIP, hostsIP
+	}
+	in, err := start(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer in.stop()
+	if plainOff {
+		// nothing of the services' own on the server's address: every port free there, TCP and QoS's UDP
+		if len(in.listeners) != 0 || in.qosUDP != nil {
+			t.Errorf("--plain off bound listeners: %d, QoS UDP %v", len(in.listeners), in.qosUDP != nil)
+		}
+		if got := fmt.Sprint(in.ports); got != "[42127 10041 17502 18080 9988]" {
+			t.Errorf("the gateway's service ports: %s", got)
+		}
+		if held := heldOn(srvIP, in.ports); len(held) > 0 {
+			t.Errorf("--plain off: ports held on %s: %v", srvIP, held)
+		}
+		if info := in.info(cfg); fmt.Sprint(info.TCPPorts) != fmt.Sprint([]int{in.gateway.Port()}) {
+			t.Errorf("--plain off: Info.TCPPorts %v, want only the gateway's", info.TCPPorts)
+		}
+		if a := in.gmsUDP.LocalAddr().(*net.UDPAddr); !a.IP.Equal(net.ParseIP(hostsIP)) {
+			t.Errorf("the GMS port binds %v, not --gms-bind", a)
+		}
+	}
 	if in.gateway == nil {
 		t.Fatal("no gateway")
 	}
@@ -181,11 +212,58 @@ func TestTunnelThroughServer(t *testing.T) {
 		" through the tunnel (its TLS ended in the player's tunnel)",
 		fmt.Sprintf("[redirector] -> getServerInstance reply: %s:%d, SECU=0", tunIP, in.ports[1]),
 		"[qos] udp ('" + tunIP + "', ",
-		"[gms] udp ('" + srvIP + "', ",
+		"[gms] udp ('" + gmsFrom + "', ",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("log lacks %q:\n%s", want, text)
 		}
+	}
+	if plainOff && !strings.Contains(text, "no plain listeners (--plain off): redirector 42127, Blaze 10041, QoS 17502") {
+		t.Errorf("the start-up line doesn't say the services are only the gateway's:\n%s", text)
+	}
+}
+
+// heldOn lists the TCP ports of ps and UDP port ps[2] (QoS) something holds on address.
+func heldOn(address string, ps []int) []string {
+	var held []string
+	for i, p := range ps {
+		if ln, err := net.Listen("tcp4", net.JoinHostPort(address, strconv.Itoa(p))); err != nil {
+			held = append(held, fmt.Sprintf("TCP %d", p))
+		} else {
+			ln.Close()
+		}
+		if i == qosListener {
+			if c, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(address), Port: p}); err != nil {
+				held = append(held, fmt.Sprintf("UDP %d", p))
+			} else {
+				c.Close()
+			}
+		}
+	}
+	return held
+}
+
+// --plain off needs the tunnel, and --plain and --gms-bind take only what they should; --print-ports leaves the
+// services' ports out without plain listeners.
+func TestPlainOff(t *testing.T) {
+	if _, err := start(config{bind: "127.0.9.33", certs: testCerts(t), logDir: t.TempDir(), plain: PlainOff, tunnel: TunnelOff}); err == nil ||
+		!strings.Contains(err.Error(), "--plain off needs the tunnel") {
+		t.Errorf("--plain off without the tunnel: %v", err)
+	}
+	if _, err := start(config{bind: "127.0.9.33", certs: testCerts(t), logDir: t.TempDir(), gmsBind: "0.0.0.0", tunnel: TunnelOn}); err == nil ||
+		!strings.Contains(err.Error(), "--gms-bind") {
+		t.Errorf("--gms-bind 0.0.0.0: %v", err)
+	}
+	if code := Main([]string{"--plain", "maybe", "--print-ports"}); code != 2 {
+		t.Errorf("--plain maybe: exit %d", code)
+	}
+	c := config{redirectorPort: 1, blazePort: 2, qosPort: 3, httpPort: 4, telemetryPort: 5, gmsControlPort: 6, gatewayPort: 7,
+		tunnel: TunnelOn, gmsDir: "x", plain: PlainOff}
+	if got := fmt.Sprint(c.printPorts()); got != "[6 7]" {
+		t.Errorf("--print-ports with --plain off: %s", got)
+	}
+	if c.hostsBind() != "" || (config{bind: "127.0.9.33"}).hostsBind() != "127.0.9.33" || (config{bind: "a", gmsBind: "b"}).hostsBind() != "b" {
+		t.Error("hostsBind")
 	}
 }
 

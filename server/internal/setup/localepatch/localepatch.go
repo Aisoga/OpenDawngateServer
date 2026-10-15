@@ -54,6 +54,10 @@ var ErrorLines = map[uint32]string{
 	0x00E40001: "The server you picked answered, but couldn't take the login. Try again in a moment.",
 	0x00E50001: "The server was removed from your list.",
 	0x00E60001: "That isn't a server address. Use an IPv4 address such as 203.0.113.5, or a host name.",
+	0x00E70001: "New server key: check the fingerprint shown in the list, then log in again to trust it.",
+	0x00E80001: "This PC is always in the list: it can't be removed.",
+	0x00E90001: "The server on this PC is still being set up. Log in again when the list says online.",
+	0x00EA0001: "The server on this PC didn't start: Start-Client's window says why.",
 }
 
 // LoginLines are LoginScreen's: the account field's label and the check box beside it, and the server picker's
@@ -71,11 +75,12 @@ var LoginLines = map[uint32]string{
 	0x5E70A107: "CANCEL",
 	0x5E70A108: "Server address",
 	0x5E70A109: "Name (optional)",
-	0x5E70A10A: "Added at your next login, which checks the server and trusts its key.",
+	0x5E70A10A: "Added at your next login, which checks the server and shows its key: log in again to trust it.",
 	0x5E70A10B: "Type the server's address: an IPv4 address such as 203.0.113.5, or a host name.",
 	0x5E70A10C: "No servers yet: add one.",
 	0x5E70A10D: "none: add a server",
 	0x5E70A10E: "pick a server",
+	0x5E70A10F: "This PC",
 	0x5E70A110: "online, {1} ms",
 	0x5E70A111: "online, new key",
 	0x5E70A112: "KEY CHANGED",
@@ -83,12 +88,20 @@ var LoginLines = map[uint32]string{
 	0x5E70A114: "no tunnel",
 	0x5E70A115: "added at login",
 	0x5E70A116: "not checked",
+	0x5E70A117: "starts at login",
+	0x5E70A118: "setting up, {1} %",
+	0x5E70A119: "starting",
+	0x5E70A11A: "didn't start",
 	0x5E70A120: "Online, {1} ms. Its key: {2}.",
-	0x5E70A121: "New server: its key {2} will be trusted at your first login. Compare it with the fingerprint its operator gives you.",
+	0x5E70A121: "New server key {2}: compare it with the fingerprint its operator gives you. The first login stops here; log in again to trust it.",
 	0x5E70A122: "KEY CHANGED: you trusted {3}, the server now shows {2}. Don't log in until its operator confirms the new key: see the troubleshooting guide.",
 	0x5E70A123: "No answer from this server. It may be offline, or its address may be wrong.",
 	0x5E70A124: "Something answers at this address, but no Dawngate server with the tunnel on.",
 	0x5E70A125: "Not checked yet.",
+	0x5E70A126: "The server on this PC. It starts when you log in; the first time it sets up its match host first (about half a minute).",
+	0x5E70A127: "Setting up the server on this PC: {1} %. Your login waits for it, or log in again when it says online.",
+	0x5E70A128: "The server on this PC is starting.",
+	0x5E70A129: "The server on this PC didn't start: Start-Client's window says why. Log in again to retry.",
 }
 
 // URLPages are the URL table's lines that link to the server's pages (sitelinks): the legal links 1, 2, 7, Forgot

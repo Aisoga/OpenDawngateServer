@@ -200,8 +200,10 @@ func TestStartServerPublicProfile(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("public profile: exit %d\n%s", code, out2)
 	}
-	for _, s := range []string{"the public profile: the tunnel, the limits, sign-up invite", "The encrypted tunnel listens on " + testAddress + " port 42197",
-		"--tunnel on", "The public profile: players only through the tunnel, the limits on", "invite code"} {
+	for _, s := range []string{"the public profile: the tunnel, the limits, sign-up invite",
+		"Players connect through the encrypted tunnel on " + testAddress + " port 42197 (TCP and UDP), its only port for players",
+		"The server's key fingerprint is ", "Now double-click Start-Client.exe to play: This PC in its server list is this server",
+		"The public profile: players only through the tunnel, the limits on", "invite code"} {
 		if !strings.Contains(out2, s) {
 			t.Errorf("no %q in\n%s", s, out2)
 		}
@@ -216,7 +218,7 @@ func TestStartServerPublicProfile(t *testing.T) {
 		b, _ := os.ReadFile(f)
 		all += string(b)
 	}
-	if !strings.Contains(all, "limits on") || !strings.Contains(all, "tunnel gateway on") {
-		t.Errorf("the server log has no limits or gateway line:\n%s", all)
+	if !strings.Contains(all, "limits on") || !strings.Contains(all, "tunnel gateway on") || !strings.Contains(all, "no plain listeners (--plain off)") {
+		t.Errorf("the server log has no limits, gateway or tunnel-only line:\n%s", all)
 	}
 }

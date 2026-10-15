@@ -21,10 +21,13 @@ references are computed with the Go setup's own ca_modulus.bin):
                  patch_login_movie.build(its own LoginScreen.snap), when it is there or with --picker; the server
                  list's archive zz_ServerList.snap (written by Start-Client before each game start) isn't compared
 
+A Start-Server with the tunnel makes no client copy (Start-Client does), and a player's folder has no host copy and
+no server certificates: the checks of a copy that isn't there are left out (one of the two must be there).
+
 Usage (from the repository folder; it reads the game's files, so python -I):
     .venv\\Scripts\\python -I re\\scripts\\test_p3b.py <Dawngate-Data folder> --release <release folder>
         [--address 127.0.0.1] [--pristine client\\ia_Dawngate\\Dawngate] [--content-ref server\\data\\content.json]
-        [--web-domain <D>] [--picker]
+        [--web-domain <D>] [--picker [--tunnel-address <the client copy's tunnel address>] [--data-suffix X]]
 Exit 0 when everything matches, 1 otherwise. Nothing is written.
 """
 import argparse
@@ -90,6 +93,9 @@ def main(argv):
     ap.add_argument("--web-domain", help="the web domain the client copy's links were made for (default none)")
     ap.add_argument("--picker", action="store_true", help="the client copy was set up in picker mode (Start-Client "
                     "--picker on): its server picker must be there and its exe uses certs\\tunnel-<address>'s CA")
+    ap.add_argument("--tunnel-address", help="with --picker: the tunnel address the client copy is patched for "
+                    "(Start-Client --tunnel-address; default --address)")
+    ap.add_argument("--data-suffix", help="the client copy's per-user folder letter (Start-Client --test-lane X)")
     a = ap.parse_args(argv[1:])
     if not sys.flags.isolated:
         sys.exit("run this with python -I: it reads the game's files")
@@ -99,33 +105,56 @@ def main(argv):
     client, host = j(a.root, "client", "Dawngate"), j(a.root, "host", "Dawngate")
     certs = j(a.root, "certs", a.address)
     r = Report()
-    lan = not ipaddress.IPv4Address(a.address).is_loopback
+    # the copies there: a server with the tunnel leaves the player copy to Start-Client; a player's folder has only it
+    have_client, have_host = os.path.isdir(client), os.path.isdir(host)
+    r.check(have_client or have_host, "a client or host copy in the folder")
+    tun = a.tunnel_address or a.address
+    client_host = tun if a.picker else a.address
+    lan = not ipaddress.IPv4Address(client_host).is_loopback
 
-    print(f"certificates ({certs})")
-    from cryptography import x509
-    from cryptography.x509.oid import NameOID
-    modulus = read(j(certs, "ca_modulus.bin"))
-    ca = x509.load_pem_x509_certificate(read(j(certs, "ca_cert.pem")))
-    srv = x509.load_pem_x509_certificate(read(j(certs, "server_cert.pem")))
-    r.check(ca.public_key().public_numbers().n.to_bytes(128, "big") == modulus, "ca_modulus.bin is the CA's modulus")
-    r.check(srv.issuer == ca.subject, "server_cert.pem is issued by ca_cert.pem")
-    cn = [x.value for x in srv.subject.get_attributes_for_oid(NameOID.COMMON_NAME)]
-    r.check(cn == [a.address], "the server certificate's CN", f"{cn}")
-    r.line(f"CA {sha(modulus)[:16]}")
+    modulus = None
+    if os.path.isdir(certs):
+        print(f"certificates ({certs})")
+        from cryptography import x509
+        from cryptography.x509.oid import NameOID
+        modulus = read(j(certs, "ca_modulus.bin"))
+        ca = x509.load_pem_x509_certificate(read(j(certs, "ca_cert.pem")))
+        srv = x509.load_pem_x509_certificate(read(j(certs, "server_cert.pem")))
+        r.check(ca.public_key().public_numbers().n.to_bytes(128, "big") == modulus, "ca_modulus.bin is the CA's modulus")
+        r.check(srv.issuer == ca.subject, "server_cert.pem is issued by ca_cert.pem")
+        cn = [x.value for x in srv.subject.get_attributes_for_oid(NameOID.COMMON_NAME)]
+        r.check(cn == [a.address], "the server certificate's CN", f"{cn}")
+        r.line(f"CA {sha(modulus)[:16]}")
+    else:
+        r.check(not have_host, f"the server's certificates ({certs})", "missing beside a host copy")
+        r.line(f"no server certificates ({certs}): a player's folder")
+    if not have_client:
+        r.line("no client copy: Start-Client makes it (a server with the tunnel)")
+    if not have_host:
+        r.line("no host copy: a player's folder")
 
-    orig_exe = read(j(client, EXE + ".orig"))
-    r.check(sha(orig_exe) == untouched[EXE][1], "client Dawngate.exe.orig is the untouched exe")
+    orig_exe = read(j(client if have_client else host, EXE + ".orig"))
+    r.check(sha(orig_exe) == untouched[EXE][1], "Dawngate.exe.orig is the untouched exe")
     profile = "lan" if lan else "local"
     # picker mode patches the client copy for the tunnel address with Start-Client's own certificate set
-    client_ca = read(j(a.root, "certs", "tunnel-" + a.address, "ca_modulus.bin")) if a.picker else modulus
-    for name, copy, prof, srv_host, ca_mod in (("client exe", client, profile, a.address, client_ca),
-                                               ("host exe", host, "local", LOCAL, modulus)):
-        want, _ = patch_client.patch_bytes(orig_exe, ca_mod, prof, None, srv_host, None)
+    client_ca = read(j(a.root, "certs", "tunnel-" + tun, "ca_modulus.bin")) if a.picker else modulus
+    exes = []
+    if have_client:
+        exes.append(("client exe", client, profile, client_host, client_ca, a.data_suffix))
+    if have_host:
+        exes.append(("host exe", host, "local", LOCAL, modulus, None))
+    for name, copy, prof, srv_host, ca_mod, suffix in exes:
+        want, _ = patch_client.patch_bytes(orig_exe, ca_mod, prof, None, srv_host, None, suffix)
         got = read(j(copy, EXE))
         r.check(got == want, f"{name} = patch_client.py {prof} {srv_host}", f"{sha(got)[:16]} vs {sha(want)[:16]}")
         print(f"{name}: {sha(got)}  ({'equal' if got == want else 'DIFFERENT'})")
 
-    for name, copy, cfg_host in (("client config", client, a.address), ("host config", host, LOCAL)):
+    configs = []
+    if have_client:
+        configs.append(("client config", client, client_host))
+    if have_host:
+        configs.append(("host config", host, LOCAL))
+    for name, copy, cfg_host in configs:
         for rel in CONFIGS:
             base = j(copy, rel + ".orig")
             if not os.path.isfile(base):
@@ -140,17 +169,20 @@ def main(argv):
 
     print("client texts (PH2b)")
     added = j(client, *patch_locale.REL.split("/"))
-    src = j(client, *patch_locale.SOURCE.split("/"))
-    want = patch_locale.build(src, a.address, web_domain=a.web_domain)
-    got = read(added) if os.path.isfile(added) else b""
-    r.check(got == want, f"client {patch_locale.PACKAGE} = patch_locale.py --host {a.address}",
-            f"{sha(got)[:16]} vs {sha(want)[:16]}")
+    if have_client:
+        src = j(client, *patch_locale.SOURCE.split("/"))
+        want = patch_locale.build(src, client_host, web_domain=a.web_domain)
+        got = read(added) if os.path.isfile(added) else b""
+        r.check(got == want, f"client {patch_locale.PACKAGE} = patch_locale.py --host {client_host}",
+                f"{sha(got)[:16]} vs {sha(want)[:16]}")
+        print(f"client {patch_locale.PACKAGE}: {sha(got)}  ({'equal' if got == want else 'DIFFERENT'})")
     r.check(not os.path.isfile(j(host, *patch_locale.REL.split("/"))), f"the host copy has no {patch_locale.PACKAGE}")
-    print(f"client {patch_locale.PACKAGE}: {sha(got)}  ({'equal' if got == want else 'DIFFERENT'})")
 
     print("server picker")
     picker = j(client, *patch_login_movie.REL.split("/"))
-    if os.path.isfile(picker) or a.picker:
+    if not have_client:
+        r.line("no client copy")
+    elif os.path.isfile(picker) or a.picker:
         want = patch_login_movie.build(j(client, *patch_login_movie.SOURCE.split("/")))
         got = read(picker) if os.path.isfile(picker) else b""
         r.check(got == want, "client zz_ServerPicker.snap = patch_login_movie.py", f"{sha(got)[:16]} vs {sha(want)[:16]}")
@@ -159,21 +191,24 @@ def main(argv):
     else:
         r.line("client: no server picker (not set up in picker mode)")
 
-    print("host DLL")
-    game = j(host, "game")
-    dll = read(j(a.release, "host", "dgsim.dll"))
-    r.check(read(j(game, "PhysXLoader.dll")) == dll, "host PhysXLoader.dll = the release's dgsim.dll")
-    r.check(sha(read(j(game, "PhysXLoader_orig.dll"))) == untouched[LOADER][1], "PhysXLoader_orig.dll = the game's loader")
-    ini = setup_server_copy.DEFAULT_INI.replace("\r\n", "\n").replace("\n", "\r\n").encode("ascii")
-    r.check(read(j(game, "dgsim.ini")) == ini, "dgsim.ini = setup_server_copy.py's DEFAULT_INI")
-    lua_dir = j(a.release, "host", "lua")
-    luas = sorted(n for n in os.listdir(lua_dir) if n.endswith(".lua"))
-    lua_ok = sum(read(j(game, n)) == read(j(lua_dir, n)) for n in luas if os.path.isfile(j(game, n)))
-    r.check(lua_ok == len(luas), "the Lua scripts", f"{lua_ok} of {len(luas)} equal")
-    r.line(f"dgsim.dll {sha(dll)[:16]}, {len(luas)} Lua scripts, dgsim.ini")
+    if have_host:
+        print("host DLL")
+        game = j(host, "game")
+        dll = read(j(a.release, "host", "dgsim.dll"))
+        r.check(read(j(game, "PhysXLoader.dll")) == dll, "host PhysXLoader.dll = the release's dgsim.dll")
+        r.check(sha(read(j(game, "PhysXLoader_orig.dll"))) == untouched[LOADER][1], "PhysXLoader_orig.dll = the game's loader")
+        ini = setup_server_copy.DEFAULT_INI.replace("\r\n", "\n").replace("\n", "\r\n").encode("ascii")
+        r.check(read(j(game, "dgsim.ini")) == ini, "dgsim.ini = setup_server_copy.py's DEFAULT_INI")
+        lua_dir = j(a.release, "host", "lua")
+        luas = sorted(n for n in os.listdir(lua_dir) if n.endswith(".lua"))
+        lua_ok = sum(read(j(game, n)) == read(j(lua_dir, n)) for n in luas if os.path.isfile(j(game, n)))
+        r.check(lua_ok == len(luas), "the Lua scripts", f"{lua_ok} of {len(luas)} equal")
+        r.line(f"dgsim.dll {sha(dll)[:16]}, {len(luas)} Lua scripts, dgsim.ini")
 
-    print("the other files of build 854 in both copies")
+    print("the other files of build 854 in the copies")
     for label, copy, own in (("client", client, set(CONFIGS) | {EXE}), ("host", host, set(CONFIGS) | {EXE, LOADER})):
+        if not os.path.isdir(copy):
+            continue
         n = 0
         for rel, (size, digest) in sorted(untouched.items()):
             if rel in own:

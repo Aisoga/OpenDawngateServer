@@ -18,8 +18,8 @@ import (
 
 // Start-Client's picker mode: one player copy for every tunnelled server, the server picked at the login through
 // the front (front.go) from the bookmarks (bookmarks.go). picker = auto (the default) turns it on whenever the
-// tunnel is used; a server without the tunnel (a home network's, or tunnel = off) is played on directly, with one
-// copy patched for it, as before the picker.
+// tunnel is used, which is for every server unless tunnel = off; a server without the tunnel (tunnel = off, the
+// developers' option) is played on directly, with one copy patched for it, as before the picker.
 
 // The picker's settings in Start-Client.ini (picker =) and --picker.
 const (
@@ -60,10 +60,12 @@ type listAdd struct {
 	onlyFirst bool // only into an empty list (Start-Client.ini's server, migrated)
 }
 
-// chooseServer decides between the picker and one server. The server comes from (in this order) the address or tag
-// given, Start-Client.ini's server, the picker's list when it has servers, this PC's Start-Server, the player's
-// answer, 127.0.0.1. With picker = auto the picker is on when the tunnel is used for that server (a public address,
-// tunnel = on) or the server is in the list; picker = on always, unless tunnel = off. Without it Start-Client says
+// chooseServer decides between the picker and one server. With the picker (picker = auto or on and the tunnel, the
+// default) the list always has This PC first (thispc.go), so with no server named Start-Client goes to the login
+// screen with the list, This PC preselected until a login used another one; a server named (the address or tag given,
+// Start-Client.ini's server) is added and preselected, and a Start-Server.ini next to Start-Client with another setup
+// folder adds its address. Without the picker (tunnel = off, picker = off) the one server comes from the address or
+// tag given, Start-Client.ini's server, this PC's Start-Server, the player's answer, 127.0.0.1, and Start-Client says
 // that the login screen shows no server list, and why.
 func chooseServer(o IO, in *bufio.Reader, clientIni string, l setup.Layout, ccfg, scfg Config, named, pickerSet, mode string, gwPort int) (serverChoice, error) {
 	var c serverChoice
@@ -117,21 +119,18 @@ func chooseServer(o IO, in *bufio.Reader, clientIni string, l setup.Layout, ccfg
 		if wants(c.server) {
 			pick("", "", false) // the list decides; the ini's server is the first server of a new list (below)
 		}
-	case canPick && (inList > 0 || pickerSet == PickerOn):
-		pick("", "", false)
+	case canPick && scfg != nil && scfg["address"] != "" && !sameFolder(scfg, o.ExeDir, l):
+		// a Start-Server.ini beside this program with a setup folder of its own: its server is one more of the list
+		// (This PC is the server of Start-Client's folder)
+		source, c.server = "own", scfg["address"]
+		pick(c.server, "the Start-Server.ini beside this program", false)
+	case canPick:
+		pick("", "", false) // the list, This PC first: nothing to ask
 	case scfg != nil && scfg["address"] != "":
 		source, c.server = "own", scfg["address"]
-		if wants(c.server) {
-			pick(c.server, "this PC's Start-Server", false)
-		}
 	case o.Interactive:
 		q := "\nWhich server do you want to play on? Type its address (e.g. 192.168.1.20), or just press Enter for a\n" +
 			"server on this PC: "
-		if canPick {
-			q = "\nWhich server do you want to play on? Type its address (e.g. 192.168.1.20 at home, or a server on the\n" +
-				"internet such as 203.0.113.5), or just press Enter for a server on this PC. A server on the internet goes\n" +
-				"into the server list on the login screen (SERVER, above the login), where you add or remove more: "
-		}
 		answer, err := Prompt(in, o.Out, q)
 		if err != nil {
 			return c, err
@@ -162,7 +161,7 @@ func chooseServer(o IO, in *bufio.Reader, clientIni string, l setup.Layout, ccfg
 	if pickerSet == PickerOff {
 		return c, nil
 	}
-	why := "the tunnel is off for it: a server on a home network, reached directly"
+	why := "the tunnel is off for it: reached directly"
 	switch {
 	case mode == TunnelOff:
 		why = "tunnel = off: the picker needs the tunnel"
@@ -193,7 +192,7 @@ func ownBookmark(address string, gwPort int, scfg Config) Bookmark {
 // first server of a new list), this PC's Start-Server or the player's answer, and the address given to Start-Client
 // (preselected: a login without a pick goes there). --gateway-pin with that address stores the operator's key as
 // its trusted one. It returns the tag to preselect; check changes nothing.
-func pickerBookmarks(o IO, l setup.Layout, c serverChoice, pinFlag string, check bool) (string, error) {
+func pickerBookmarks(o IO, l setup.Layout, c serverChoice, pinFlag string, check bool, pc *thisPC) (string, error) {
 	bm := c.bm
 	if pinFlag != "" && c.server == "" {
 		return "", errors.New("--gateway-pin needs the server's address (Start-Client.exe <address> --gateway-pin <key>)")
@@ -212,7 +211,10 @@ func pickerBookmarks(o IO, l setup.Layout, c serverChoice, pinFlag string, check
 		fmt.Fprintf(o.Out, "  picker   %s added to the server list as %s (%s)\n", b.Gateway(), b.Tag, why)
 		return b, nil
 	}
-	empty := len(bm.List()) == 0
+	empty := true // no server of the player's yet (This PC doesn't count)
+	for _, b := range bm.List() {
+		empty = empty && b.Tag == ThisPCTag
+	}
 	preselect := ""
 	for _, a := range c.add {
 		if a.onlyFirst && !empty {
@@ -249,6 +251,10 @@ func pickerBookmarks(o IO, l setup.Layout, c serverChoice, pinFlag string, check
 	}
 	fmt.Fprintf(o.Out, "  servers  %d in the list (%s):\n", len(list), BookmarksPath(l))
 	for _, b := range list {
+		if b.Tag == ThisPCTag && pc != nil {
+			fmt.Fprintf(o.Out, "           #%-6s %s\n", b.Tag, pc.describe())
+			continue
+		}
 		name := ""
 		if b.Name != b.Address {
 			name = " " + b.Name
@@ -258,9 +264,69 @@ func pickerBookmarks(o IO, l setup.Layout, c serverChoice, pinFlag string, check
 	return preselect, nil
 }
 
+// ownServerKey is the gateway key of this PC's Start-Server when it shares this Start-Client's setup folder
+// (Start-Server.ini next to it, the same Dawngate-Data): its pin and the addresses a list entry for it may have
+// (address and bind). ok is false without such a server or before its first start made the key. Its key is known
+// without asking: it is in the folder the player set up.
+func ownServerKey(scfg Config, exeDir string, l setup.Layout) (addrs []string, pin tunnel.Pin, ok bool) {
+	if !sameFolder(scfg, exeDir, l) {
+		return nil, pin, false
+	}
+	address := firstNonEmpty(scfg["address"], setup.Local)
+	p, err := tunnel.PinFromCertFile(filepath.Join(l.Certs(address), tunnel.CertFile))
+	if err != nil {
+		return nil, pin, false
+	}
+	addrs = []string{address}
+	if b := scfg["bind"]; b != "" && b != address {
+		addrs = append(addrs, b)
+	}
+	return addrs, p, true
+}
+
+// sameFolder says whether a Start-Server.ini (scfg, next to the program in exeDir) uses the setup folder l.
+func sameFolder(scfg Config, exeDir string, l setup.Layout) bool {
+	if scfg == nil {
+		return false
+	}
+	folder := firstNonEmpty(scfg["folder"], DefaultFolder)
+	return strings.EqualFold(filepath.Clean(Resolve(exeDir, folder)), filepath.Clean(l.Root))
+}
+
+// pinOwnServer trusts this PC's Start-Server's key (ownServerKey) for its entries in the list: stored when missing,
+// replaced when the server was set up anew (its folder's key is the one it presents). check changes nothing.
+func pinOwnServer(o IO, l setup.Layout, bm *Bookmarks, addrs []string, pin tunnel.Pin, check bool) error {
+	for _, b := range bm.List() {
+		own := false
+		for _, a := range addrs {
+			own = own || strings.EqualFold(a, b.Address)
+		}
+		if !own {
+			continue
+		}
+		store := TrustedGateway(l, b.Address)
+		if raw, err := os.ReadFile(store); err == nil {
+			if known, err := tunnel.ParsePin(strings.TrimSpace(string(raw))); err == nil && tunnel.SamePin(known, pin) {
+				continue
+			}
+		}
+		if check {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(store), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(store, []byte(pin.String()+"\n"), 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintf(o.Out, "  picker   #%s is this PC's Start-Server: its key %s trusted (the same folder)\n", b.Tag, pin.Fingerprint())
+	}
+	return nil
+}
+
 // startFront runs the front for the game (its log in Dawngate-Data\logs\front-<time>.log) and writes the login
 // screen's server list into the player copy.
-func startFront(o IO, l setup.Layout, bm *Bookmarks, tunnelIP string, tlsCfg *tls.Config, preselect string) (func(), error) {
+func startFront(o IO, l setup.Layout, bm *Bookmarks, tunnelIP string, tlsCfg *tls.Config, preselect string, pc *thisPC) (func(), error) {
 	var log *logging.Log
 	var f *os.File
 	path := ""
@@ -270,7 +336,8 @@ func startFront(o IO, l setup.Layout, bm *Bookmarks, tunnelIP string, tlsCfg *tl
 			log = logging.New(f)
 		}
 	}
-	front := &Front{Log: log, Layout: l, Bookmarks: bm, TunnelIP: net.ParseIP(tunnelIP), RedirectorTLS: tlsCfg, Default: preselect}
+	front := &Front{Log: log, Layout: l, Bookmarks: bm, TunnelIP: net.ParseIP(tunnelIP), RedirectorTLS: tlsCfg, Default: preselect,
+		ThisPC: pc}
 	if err := front.Start(); err != nil {
 		if f != nil {
 			f.Close()
@@ -291,6 +358,9 @@ func startFront(o IO, l setup.Layout, bm *Bookmarks, tunnelIP string, tlsCfg *tl
 		firstNonEmpty(def, "none"), path)
 	return func() {
 		front.Close()
+		if pc != nil {
+			pc.Close() // Start-Client's own server for This PC ends with it, its match hosts with it
+		}
 		if f != nil {
 			f.Close()
 		}

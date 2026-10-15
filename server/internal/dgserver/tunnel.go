@@ -26,6 +26,12 @@ const (
 	TunnelAuto = "auto"
 )
 
+// --plain's values: the services' own listeners on (the default) or off (only through the tunnel's gateway).
+const (
+	PlainOn  = "on"
+	PlainOff = "off"
+)
+
 // tunnelWanted resolves --tunnel for the public host.
 func tunnelWanted(mode, public string) (bool, error) {
 	switch mode {
@@ -51,7 +57,8 @@ type services struct {
 
 // startGateway runs the tunnel's gateway (--tunnel on): TCP and UDP on --bind:--gateway-port, its key in
 // --gateway-key (made at the first start). Streams go to the services in process, QoS datagrams too, and datagrams to
-// the GMS ports go to the match hosts on --bind (or where Blaze routed the session, an agent's machine).
+// the GMS ports go to the match hosts on --gms-bind (default --bind; or where Blaze routed the session, an agent's
+// machine). With --plain off the gateway's listeners are the services' only ones.
 func startGateway(cfg config, log *logging.Log, in *instance, sv services, gmsPort int) (*tunnel.Gateway, string, error) {
 	keyDir := cfg.gatewayKey
 	if keyDir == "" {
@@ -61,7 +68,8 @@ func startGateway(cfg config, log *logging.Log, in *instance, sv services, gmsPo
 	if err != nil {
 		return nil, "", err
 	}
-	bind := net.ParseIP(cfg.bind).To4()
+	// the match hosts' address (--gms-bind, else --bind): the flows to them go there and leave from there
+	bind := net.ParseIP(cfg.hostsBind()).To4()
 	gmsPorts := map[int]bool{}
 	if cfg.gmsDir != "" || cfg.agentKey != "" {
 		first, last, err := gmshost.ParsePorts(cfg.gmsPorts)

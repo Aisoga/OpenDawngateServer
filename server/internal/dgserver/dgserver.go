@@ -42,8 +42,12 @@ import (
 type config struct {
 	// A5 (addr.go): bind is where the listeners bind (--bind; --host sets it too), publicHost what the
 	// clients are told (--public-host; "" = bind). lookup resolves a public host name (nil = DNS).
-	bind, publicHost                                            string
-	lookup                                                      lookupIP
+	bind, publicHost string
+	lookup           lookupIP
+	// plain is --plain: on (the default) binds the services' own listeners on --bind; off serves them only through
+	// the tunnel gateway's in-process listeners (needs --tunnel on). gmsBind is --gms-bind: where the match hosts' GMS
+	// ports bind and the gateway's flows go ("" = --bind; when set, also the address HNET names).
+	plain, gmsBind                                              string
 	redirectorPort, blazePort, qosPort, httpPort, telemetryPort int
 	gmsPort                                                     int  // UDP only
 	gmsExternal                                                 bool // announce gmsPort without binding it (B9)
@@ -99,6 +103,8 @@ type config struct {
 	limitsCfg  *limits.Config
 	// the website (website.go): --web-port, --web-domain, --web-email, --web-dir, --web-acme-url
 	web websiteConfig
+	// quiet writes the log to its file only, not to the console (Hooks.Quiet: Start-Client's server for This PC)
+	quiet bool
 }
 
 // broadcastEvery is how often the operator's broadcast file is read (B14).
@@ -175,6 +181,22 @@ func (c config) ports() []int {
 	return []int{c.redirectorPort, c.blazePort, c.qosPort, c.httpPort, c.telemetryPort}
 }
 
+// defaultServicePorts are ports()' defaults: a service reached only through the tunnel (--plain off) takes them for a
+// port given as 0, since its listener is the gateway's and binds nothing.
+var defaultServicePorts = []int{redirector.Port, 10041, 17502, 18080, 9988}
+
+// plainOn says whether the services bind their own listeners (--plain on, the default).
+func (c config) plainOn() bool { return c.plain != PlainOff }
+
+// hostsBind is the match hosts' GMS address (--gms-bind, else --bind): DGGMS_BIND's host, the GMS logger's, and
+// where the tunnel gateway's flows go and leave from.
+func (c config) hostsBind() string {
+	if c.gmsBind != "" {
+		return c.gmsBind
+	}
+	return c.bind
+}
+
 // hostsOn: this configuration runs the match-host manager (local hosts, agents or both).
 func (c config) hostsOn() bool { return c.gmsDir != "" || c.agentKey != "" }
 
@@ -182,6 +204,9 @@ func (c config) hostsOn() bool { return c.gmsDir != "" || c.agentKey != "" }
 // --agent-key; none in agent mode (it listens on nothing).
 func (c config) printPorts() []int {
 	ps := c.ports()
+	if !c.plainOn() && c.tunnelClient == "" { // the services listen only inside the gateway
+		ps = nil
+	}
 	switch {
 	case c.agent != "":
 		return nil
@@ -230,7 +255,7 @@ func startHosts(cfg config, log *logging.Log) (*gmshost.Manager, string, error) 
 	if err := checkControlBind(controlBind, cfg.agentKey != ""); err != nil {
 		return nil, "", err
 	}
-	mc := gmshost.Config{Log: log, BindHost: cfg.bind,
+	mc := gmshost.Config{Log: log, BindHost: cfg.hostsBind(), GMSHost: cfg.gmsBind,
 		HelloTimeout: cfg.gmsTimeouts[0], ReadyTimeout: cfg.gmsTimeouts[1], HeartbeatTimeout: cfg.gmsTimeouts[2]}
 	var notes []string
 	if cfg.gmsDir != "" {
@@ -389,6 +414,8 @@ type instance struct {
 	stopStatus func()
 	// the website (--web-port; nil without)
 	website *website
+	// the services' own listeners are bound (--plain on); false: their ports are only the gateway's (--plain off)
+	plain bool
 }
 
 // start opens the log, binds every port and starts serving.
@@ -396,12 +423,24 @@ func start(cfg config) (*instance, error) {
 	if err := checkBind(cfg.bind); err != nil {
 		return nil, err
 	}
+	if cfg.gmsBind != "" {
+		if err := checkBind(cfg.gmsBind); err != nil {
+			return nil, fmt.Errorf("--gms-bind: %w", err)
+		}
+	}
 	if cfg.publicHost == "" {
 		cfg.publicHost = cfg.bind
 	}
 	public, err := resolvePublic(cfg.publicHost, cfg.lookup)
 	if err != nil {
 		return nil, err
+	}
+	tunnelOn, err := tunnelWanted(cfg.tunnel, public)
+	if err != nil {
+		return nil, err
+	}
+	if !cfg.plainOn() && !tunnelOn {
+		return nil, errors.New("--plain off needs the tunnel (--tunnel on): without plain listeners the services are reachable only through its gateway")
 	}
 	publicName := "" // a name given as --public-host, for the log
 	if net.ParseIP(cfg.publicHost) == nil {
@@ -453,9 +492,19 @@ func start(cfg config) (*instance, error) {
 		st.Close()
 		return nil, err
 	}
-	in := &instance{log: log, caFingerprint: caNote, store: st}
+	if cfg.quiet {
+		log.SetConsole(nil)
+	}
+	in := &instance{log: log, caFingerprint: caNote, store: st, plain: cfg.plainOn()}
 	limitsNote := startLimits(&cfg, in, public)
 	for i, p := range cfg.ports() {
+		if !in.plain { // only the gateway's listener (startGateway): nothing to bind, the port is a number
+			if p == 0 {
+				p = defaultServicePorts[i]
+			}
+			in.ports = append(in.ports, p)
+			continue
+		}
 		var ln net.Listener
 		if i == qosListener {
 			// QoS serves TCP and UDP on one port
@@ -484,7 +533,7 @@ func start(cfg config) (*instance, error) {
 	} else if cfg.gmsExternal {
 		gmsNote = "external, announced only"
 	} else {
-		if in.gmsUDP, err = net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(cfg.bind), Port: gp}); err != nil {
+		if in.gmsUDP, err = net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(cfg.hostsBind()), Port: gp}); err != nil {
 			in.close()
 			log.Close()
 			return nil, err
@@ -492,10 +541,13 @@ func start(cfg config) (*instance, error) {
 		gp = in.gmsUDP.LocalAddr().(*net.UDPAddr).Port
 	}
 	rd := &redirector.Server{Log: log, Host: public, BlazePort: bp}
-	go rd.Serve(tls.NewListener(in.listeners[0], tlsCfg))
+	if in.plain {
+		go rd.Serve(tls.NewListener(in.listeners[0], tlsCfg))
+	}
 	bz := blaze.NewServer(log, public, qp)
 	bz.TelemetryPort = tp
 	bz.GMSPort = gp
+	bz.GMSHost = cfg.gmsBind // "" = the public host
 	bz.Store, bz.Content, bz.Policy = st, cont, cfg.policy
 	bz.Hosts = in.hosts // nil without --gms-dir: B8's announced GMS port
 	bz.MM = matchmaker.New(cfg.mm)
@@ -512,11 +564,14 @@ func start(cfg config) (*instance, error) {
 		in.stopStatus = bz.WatchAccountStatus(cfg.statusCheck)
 	}
 	broadcastNote := startBroadcasts(cfg, bz, in)
-	go bz.Serve(in.listeners[1])
 	qos := web.NewQoS(log, public, in.qosUDP)
+	qos.Port = qp // the qosport the replies name without a probe socket (--plain off)
 	qos.Limits = in.limits
-	go qos.Serve(in.listeners[2])
-	go qos.ServeUDP()
+	if in.plain {
+		go bz.Serve(in.listeners[1])
+		go qos.Serve(in.listeners[2])
+		go qos.ServeUDP()
+	}
 	httpSrv, tel := &web.HTTP{Log: log, WWW: www, Extra: extra}, &telemetry.Sink{Log: log}
 	if cfg.web.port > 0 { // the website, before the HTTP port serves (its redirects)
 		if in.website, err = startWebsite(cfg, log, st, in.limits, websiteStatus(bz, in.hosts), websiteAdmin(bz),
@@ -528,17 +583,16 @@ func start(cfg config) (*instance, error) {
 		}
 		httpSrv.Redirects = in.website.redirects()
 	}
-	go httpSrv.Serve(in.listeners[3])
-	go tel.Serve(in.listeners[4])
+	if in.plain {
+		go httpSrv.Serve(in.listeners[3])
+		go tel.Serve(in.listeners[4])
+	}
 	if in.gmsUDP != nil {
 		go (&gms.Logger{Log: log, Conn: in.gmsUDP}).Serve()
 	}
 	tunnelNote := ""
-	if on, err := tunnelWanted(cfg.tunnel, public); err != nil || on {
-		if err == nil {
-			in.gateway, tunnelNote, err = startGateway(cfg, log, in, services{rd: rd, bz: bz, qos: qos, web: httpSrv, tel: tel}, gp)
-		}
-		if err != nil {
+	if tunnelOn {
+		if in.gateway, tunnelNote, err = startGateway(cfg, log, in, services{rd: rd, bz: bz, qos: qos, web: httpSrv, tel: tel}, gp); err != nil {
 			in.close()
 			log.Close()
 			return nil, err
@@ -553,8 +607,14 @@ func start(cfg config) (*instance, error) {
 		serving += fmt.Sprintf(" and the CA modulus at /%s (fingerprint %s, --serve-ca)", web.CAModulusPath, caNote)
 	}
 	h := cfg.bind
-	log.Logf("stub", "redirector on %s:%d (TLS), Blaze on %s:%d, QoS on %s:%d (HTTP, UDP), HTTP (CDN/crash) on %s:%d%s, "+
-		"telemetry on %s:%d, GMS (%s) on %s:%d; log %s", h, rp, h, bp, h, qp, h, hp, serving, h, tp, gmsNote, h, gp, log.Path)
+	if in.plain {
+		log.Logf("stub", "redirector on %s:%d (TLS), Blaze on %s:%d, QoS on %s:%d (HTTP, UDP), HTTP (CDN/crash) on %s:%d%s, "+
+			"telemetry on %s:%d, GMS (%s) on %s:%d; log %s", h, rp, h, bp, h, qp, h, hp, serving, h, tp, gmsNote, cfg.hostsBind(), gp, log.Path)
+	} else {
+		log.Logf("stub", "no plain listeners (--plain off): redirector %d, Blaze %d, QoS %d (HTTP, UDP), HTTP (CDN/crash) %d%s and "+
+			"telemetry %d only through the tunnel's gateway; GMS (%s) on %s:%d; log %s", rp, bp, qp, hp, serving, tp, gmsNote,
+			cfg.hostsBind(), gp, log.Path)
+	}
 	for _, note := range addressNotes(cfg.bind, public, publicName) { // A5; none in the default setup
 		log.Log("stub", note)
 	}
@@ -715,7 +775,7 @@ func startLimits(cfg *config, in *instance, public string) string {
 	// sockets), so they keep their per-IP rules off for it (net_limit_shared_ips).
 	if cfg.hostsOn() {
 		cfg.gmsOptions = withOption(cfg.gmsOptions, "net_limits", "1")
-		cfg.gmsOptions = withOption(cfg.gmsOptions, "net_limit_shared_ips", cfg.bind)
+		cfg.gmsOptions = withOption(cfg.gmsOptions, "net_limit_shared_ips", cfg.hostsBind())
 	}
 	stop := make(chan struct{})
 	done := make(chan struct{})
@@ -742,7 +802,7 @@ func startLimits(cfg *config, in *instance, public string) string {
 	}
 	hostNote := ""
 	if cfg.hostsOn() {
-		hostNote = "; match hosts net_limits=1, net_limit_shared_ips=" + cfg.bind + " (the tunnel gateway's flows)"
+		hostNote = "; match hosts net_limits=1, net_limit_shared_ips=" + cfg.hostsBind() + " (the tunnel gateway's flows)"
 	}
 	return fmt.Sprintf("on (%s): %s; tunnelled players by their real address (the gateway's connections, datagrams "+
 		"and sessions, Blaze's logins)%s", why, lc.Describe(), hostNote)
@@ -919,6 +979,8 @@ func Run(args []string, h Hooks) int {
 	printPorts := fs.Bool("print-ports", false, "print the TCP ports this configuration listens on, then exit")
 	limitsFlag := fs.String("limits", "auto", "rate and count limits on every listener, the logins, Blaze requests, games and queues, and the match hosts' packets (net_limits): auto = on for a public --bind or --public-host address, off on loopback and LAN; on forces them (the lanes' tests); off")
 	fs.BoolVar(&cfg.serveCA, "serve-ca", false, "serve the redirector CA's public modulus (<certs>\\ca_modulus.bin) on the HTTP port at /"+web.CAModulusPath+", for Start-Client.exe on other machines (trust on first use, the player compares its fingerprint)")
+	fs.StringVar(&cfg.plain, "plain", PlainOn, `the services' own listeners on --bind (redirector, Blaze, QoS TCP and UDP, HTTP, telemetry): "on", or "off" = reachable only through the tunnel's gateway (needs --tunnel on; Start-Server with the tunnel)`)
+	fs.StringVar(&cfg.gmsBind, "gms-bind", "", "IPv4 address the match hosts' GMS ports bind (DGGMS_BIND) and HNET names, where the tunnel gateway sends their datagrams (default --bind; Start-Server with the tunnel: a loopback address of its own)")
 	fs.StringVar(&cfg.tunnel, "tunnel", TunnelOff, `the encrypted tunnel's gateway: "on" serves it on --bind:--gateway-port (TCP and UDP) beside the plain ports, "auto" = on for a public --public-host, "off"`)
 	fs.IntVar(&cfg.gatewayPort, "gateway-port", tunnel.DefaultPort, "the tunnel gateway's port, TCP and UDP (the only port a public server forwards, with the website's)")
 	fs.StringVar(&cfg.gatewayKey, "gateway-key", "", `folder of the gateway's key (`+tunnel.CertFile+`, `+tunnel.KeyFile+`; made at the first start); default --certs`)
@@ -993,6 +1055,10 @@ func Run(args []string, h Hooks) int {
 	} else {
 		cfg.sessionEnd = n
 	}
+	if cfg.plain != PlainOn && cfg.plain != PlainOff {
+		fmt.Fprintf(os.Stderr, "dgserver: --plain must be %s or %s, not %q\n", PlainOn, PlainOff, cfg.plain)
+		return 2
+	}
 	if m, err := limits.ParseMode(*limitsFlag); err != nil {
 		fmt.Fprintln(os.Stderr, "dgserver:", err)
 		return 2
@@ -1054,6 +1120,7 @@ func Run(args []string, h Hooks) int {
 		return 0
 	}
 
+	cfg.quiet = h.Quiet
 	if cfg.tunnelClient != "" {
 		return runTunnelClient(cfg, *seconds, h)
 	}
@@ -1088,6 +1155,9 @@ type Hooks struct {
 	Started     func(Info)      // the server listens (after its startup lines)
 	StartFailed func(error)     // the server didn't start (the error is also printed as dgserver prints it)
 	Stop        <-chan struct{} // closing it stops the server as Ctrl+C does
+	// Quiet writes the server's log only to its file (Start-Client runs the server for This PC beside the game: its
+	// console keeps Start-Client's own lines)
+	Quiet bool
 }
 
 // Info describes a started server.
@@ -1099,13 +1169,17 @@ type Info struct {
 	// the tunnel gateway's port (TCP and UDP) and its key's fingerprint (0 and "" without --tunnel)
 	GatewayPort        int
 	GatewayFingerprint string
+	GatewayPin         string // the whole key pin (64 hex digits), what Start-Client --gateway-pin takes
 	// the website's address and its self-signed certificate's SHA-256 fingerprint ("" without a website; the
 	// fingerprint "" with a domain's certificate)
 	WebURL, WebFingerprint string
 }
 
 func (in *instance) info(cfg config) Info {
-	ports := append([]int(nil), in.ports...)
+	var ports []int
+	if in.plain {
+		ports = append(ports, in.ports...)
+	}
 	if in.hosts != nil {
 		ports = append(ports, cfg.gmsControlPort)
 	}
@@ -1116,6 +1190,7 @@ func (in *instance) info(cfg config) Info {
 	info := Info{Bind: cfg.bind, PublicHost: public, TCPPorts: ports, Log: in.log.Path, CAFingerprint: in.caFingerprint}
 	if in.gateway != nil {
 		info.GatewayPort, info.GatewayFingerprint = in.gateway.Port(), in.gateway.Identity.Pin.Fingerprint()
+		info.GatewayPin = in.gateway.Identity.Pin.String()
 		info.TCPPorts = append(info.TCPPorts, info.GatewayPort)
 	}
 	if in.website != nil {

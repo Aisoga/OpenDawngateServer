@@ -24,7 +24,7 @@ import (
 // address (127.0.0.1) as with the tunnel, but the game talks to the front first, which answers the redirector,
 // Util::preAuth, Util::ping, QoS and the telemetry rules itself, so the login screen appears with no server
 // connected. The login name carries the picked server as <name>#<tag> ('#' is no login-name character). At
-// Authentication::login the front starts a tunnel session to that server's gateway (its key trusted on first use),
+// Authentication::login the front starts a tunnel session to that server's gateway (its key pinned; a new one confirmed once),
 // replays the client's own preAuth and ping requests to the server's Blaze (the same message ids, so the ids stay
 // aligned), drops their replies, sends the login without the tag and from then on passes the connection through.
 // The tunnel's other ports (HTTP, telemetry, QoS, the match hosts' UDP) go to the current session; before the first
@@ -58,6 +58,16 @@ const (
 	FrontErrRemoved uint16 = 0x00E5
 	// FrontErrBadAddress: a login as <name>#+<address> named no valid server address (the picker's Add).
 	FrontErrBadAddress uint16 = 0x00E6
+	// FrontErrNewKey: the server's key isn't trusted yet (confirm once): the list shows its fingerprint, and the next
+	// login to the same server and key in this run trusts it.
+	FrontErrNewKey uint16 = 0x00E7
+	// FrontErrFixed: a login as <name>#-pc: This PC is always in the list.
+	FrontErrFixed uint16 = 0x00E8
+	// FrontErrThisPCStarting: the server on this PC is still being set up or starting (longer than the login waits):
+	// the list shows its progress, and a later login goes through.
+	FrontErrThisPCStarting uint16 = 0x00E9
+	// FrontErrThisPCFailed: the server on this PC couldn't be set up or started (Start-Client's console says why).
+	FrontErrThisPCFailed uint16 = 0x00EA
 )
 
 // frontError is a refused login: its code and the log's text.
@@ -97,6 +107,10 @@ type Front struct {
 	// negative: never, only at the start and after an add, a remove or a failed connect).
 	ListRefresh time.Duration
 	Now         func() time.Time
+	// ThisPC is the list's fixed entry This PC (thispc.go; nil: none, as in the lanes' front): a login to it starts
+	// the server on this PC when needed, waiting up to ThisPCWait (0: the const ThisPCWait).
+	ThisPC     *thisPC
+	ThisPCWait time.Duration
 
 	qos       *web.QoS
 	httpLocal *web.HTTP
@@ -115,6 +129,9 @@ type Front struct {
 
 	probeMu sync.Mutex
 	probes  map[string]probeResult // the server list's recent probes, by gateway
+
+	keyMu sync.Mutex
+	shown map[string]tunnel.Pin // confirm once: a new key a login was refused for, by server address
 
 	listMu     sync.Mutex
 	listCopy   string // the player copy the server list is written into (WriteServerList)
@@ -205,6 +222,12 @@ func (f *Front) Start() error {
 	}
 	if f.ListRefresh == 0 {
 		f.ListRefresh = 15 * time.Second
+	}
+	if f.ThisPCWait == 0 {
+		f.ThisPCWait = ThisPCWait
+	}
+	if f.ThisPC != nil {
+		f.ThisPC.logf, f.ThisPC.changed = f.logf, f.wantList
 	}
 	f.done = make(chan struct{})
 	f.tcpLns, f.udpLns, f.conns, f.probes = map[int]net.Listener{}, map[int]*net.UDPConn{}, map[net.Conn]struct{}{}, map[string]probeResult{}
@@ -620,7 +643,7 @@ func (f *Front) dialerFor(address string) *net.Dialer {
 	return nil
 }
 
-// connect probes a server's gateway, checks its key (trusted on first use) and starts a session.
+// connect probes a server's gateway, checks its key (trustKey: a new one confirmed once) and starts a session.
 func (f *Front) connect(b Bookmark) (*frontSession, error) {
 	gw := b.Gateway()
 	start := time.Now()
@@ -699,8 +722,10 @@ func (f *Front) trustedPin(b Bookmark) (tunnel.Pin, bool) {
 	return known, err == nil
 }
 
-// trustKey trusts a server's key on first use (stored, as TrustGateway does) and refuses a changed one: the
-// player can't be asked during a login, so a changed key needs the old one removed by hand (its file).
+// trustKey checks a server's key against the trusted one and refuses a changed one (the player can't be asked during
+// a login, so a changed key needs the old one removed by hand: its file). A key not trusted yet is confirmed once:
+// the first login to it is refused with FrontErrNewKey while the login screen's list shows its fingerprint, and the
+// next login to the same server presenting the same key (in this run) trusts it, as the console's question did.
 func (f *Front) trustKey(b Bookmark, served tunnel.Pin) error {
 	state, known := f.pinState(b, served)
 	switch state {
@@ -710,10 +735,25 @@ func (f *Front) trustKey(b Bookmark, served tunnel.Pin) error {
 		return frontErr(FrontErrKeyChanged, "%s presents the tunnel key %s, not the one trusted before (%s; %s)", b.Gateway(),
 			served.Fingerprint(), known.Fingerprint(), TrustedGateway(f.Layout, b.Address))
 	}
+	key := strings.ToLower(b.Address)
+	f.keyMu.Lock()
+	shown, seen := f.shown[key]
+	if !seen || !tunnel.SamePin(shown, served) {
+		if f.shown == nil {
+			f.shown = map[string]tunnel.Pin{}
+		}
+		f.shown[key] = served
+		f.keyMu.Unlock()
+		return frontErr(FrontErrNewKey, "%s's tunnel key %s isn't trusted yet: the list shows its fingerprint, and the next "+
+			"login to it trusts it (confirm once)", b.Gateway(), served.Fingerprint())
+	}
+	delete(f.shown, key)
+	f.keyMu.Unlock()
 	if _, err := TrustGateway(b.Address, served, TrustOptions{Store: TrustedGateway(f.Layout, b.Address), Accept: true}); err != nil {
 		return frontErr(FrontErrServer, "storing %s's tunnel key: %v", b.Address, err)
 	}
-	f.logf("trusting %s's tunnel key %s from now on (first use; %s)", b.Address, served.Fingerprint(), TrustedGateway(f.Layout, b.Address))
+	f.logf("trusting %s's tunnel key %s from now on (confirmed: the second login to it; %s)", b.Address, served.Fingerprint(),
+		TrustedGateway(f.Layout, b.Address))
 	return nil
 }
 

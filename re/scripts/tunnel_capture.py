@@ -28,9 +28,20 @@ of its ports is the gateway's (the tunnel) or a plain service port of the server
 10041, 17502, 18080, 9988: FLAGGED, a player reached it past the tunnel); every other one is the server's own (the
 gateway's flows to the match hosts, the website's HTTPS from a test client).
 
+One PC, one address (--same-address, a Start-Server with the tunnel and a Start-Client's front on the same loopback
+address, as both use 127.0.0.1 on a player's PC): the server binds no plain listener there (only its gateway, the
+match hosts' control port and the website), its match hosts listen on their own loopback address (--hosts, 127.0.N.10).
+A packet of that address with itself is the tunnel when one of its ports is the gateway's ("crossing", checked as
+above), the server's own on the control port (10040) or the website's (443), and else the player's side (the game
+and the front, plaintext allowed: the caller checks that the server holds no other port there). A packet between that
+address and the hosts' address is FLAGGED (something reached a match host past the gateway), unless on the control
+port; the hosts' address with itself is the server's own (the gateway's flows).
+
 Usage:
     .venv/Scripts/python -I re/scripts/tunnel_capture.py <session dir | capture.pcapng> --same-host --server 192.168.20.40
         --client 127.0.0.1
+    .venv/Scripts/python -I re/scripts/tunnel_capture.py <session dir | capture.pcapng> --same-address --server 127.0.0.2
+        --client 127.0.0.2 --hosts 127.0.2.10
     .venv/Scripts/python -I re/scripts/tunnel_capture.py <session dir | capture.pcapng> --server 127.0.2.9
         --client 127.0.0.2 [--client 127.0.2.2] [--gateway-port 42128] [--server-own-port 10040] [--tshark <tshark.exe>]
 """
@@ -96,9 +107,15 @@ def main():
     ap.add_argument("--service-port", type=int, action="append", default=[],
                     help="--same-host: a plain service port of the server that no player may reach on the server "
                          "address (repeatable; default 42127, 10041, 17502, 18080, 9988)")
+    ap.add_argument("--same-address", action="store_true",
+                    help="the server and the player's front share the address (--server = --client): classify its "
+                         "own packets by port, the match hosts on --hosts")
+    ap.add_argument("--hosts", help="--same-address: the match hosts' own loopback address (127.0.N.10)")
     ap.add_argument("--tshark", default=r"C:\Program Files\Wireshark\tshark.exe")
     a = ap.parse_args()
     services = set(a.service_port or [42127, 10041, 17502, 18080, 9988])
+    if a.same_address and not a.hosts:
+        ap.error("--same-address needs --hosts")
     capture = a.session if a.session.endswith(".pcapng") else os.path.join(a.session, "capture.pcapng")
     if not os.path.isfile(capture):
         print(f"no capture: {capture}", file=sys.stderr)
@@ -114,7 +131,10 @@ def main():
     tcp_payload_bytes = 0
     marker_sides = collections.defaultdict(collections.Counter)  # marker -> side -> packets
     flagged = []
-    for r in run_tshark(a.tshark, capture, gp, sorted(clients | {server})):
+    hosts = a.hosts if a.same_address else None
+    own_ports = {10040, 443} | set(a.server_own_port)
+    hosts_seen = collections.Counter()
+    for r in run_tshark(a.tshark, capture, gp, sorted(clients | {server} | ({hosts} if hosts else set()))):
         src, dst = r["ip.src"], r["ip.dst"]
         if not src or not dst:
             continue
@@ -126,7 +146,24 @@ def main():
             payload = bytes.fromhex(hexdata)
         except ValueError:
             payload = b""
-        if a.same_host and src == server and dst == server:
+        if hosts and (src == hosts or dst == hosts):
+            if src == hosts and dst == hosts:
+                side, sport_srv = "server", None
+                hosts_seen["the hosts' address with itself (the gateway's flows)"] += 1
+            elif own_ports & {sport, dport}:
+                side, sport_srv = "server", None
+                hosts_seen["the control port"] += 1
+            else:
+                side, sport_srv = "crossing", sport if src == hosts else dport
+                hosts_seen[f"{src} -> {dst} ({proto} {sport}->{dport}): FLAGGED"] += 1
+        elif a.same_address and src == server and dst == server:
+            if gp in (sport, dport):
+                side, sport_srv = "crossing", gp
+            elif own_ports & {sport, dport}:
+                side, sport_srv = "server", None
+            else:
+                side, sport_srv = "player", None
+        elif a.same_host and src == server and dst == server:
             if gp in (sport, dport):
                 side, sport_srv = "crossing", gp
             elif dport in services or sport in services:
@@ -167,7 +204,10 @@ def main():
 
     print(f"capture {capture}")
     print(f"player side {', '.join(sorted(clients))}; server {server}; gateway port {gp}"
-          f"{'; same host: the server address by port' if a.same_host else ''}")
+          f"{'; same host: the server address by port' if a.same_host else ''}"
+          f"{f'; same address: by port, the match hosts on {hosts}' if hosts else ''}")
+    if hosts:
+        print("   the hosts' address (packets): " + (", ".join(f"{k} {v}" for k, v in sorted(hosts_seen.items())) or "none"))
     print("\n1. between player and server (protocol, server port: packets, payload bytes):")
     if not crossing:
         print("   nothing (did the session reach the server?)")

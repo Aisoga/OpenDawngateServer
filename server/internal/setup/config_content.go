@@ -60,24 +60,26 @@ func (s *Setup) stepConfig(step, copy, host string) bool {
 	return s.report(Done, step, fmt.Sprintf("%s: patched for %s (was: %s)", s.show(data), host, strings.Join(stale, ", ")))
 }
 
-// stepContent builds the content file from the player copy's game data (setup_all.py's step_content, which goes
-// through snap.py, assetdata.py and dgserver --make-content). Current means byte for byte what gamecontent makes from
-// the game data now (0.15 s for build 854; setup_all.py only checks the format and the perk stats).
-func (s *Setup) stepContent() bool {
+// stepContent builds the content file from the game data of the copy at game (setup_all.py's step_content, which goes
+// through snap.py, assetdata.py and dgserver --make-content); what names that copy in the report. Current means byte
+// for byte what gamecontent makes from the game data now (0.15 s for build 854; setup_all.py only checks the format
+// and the perk stats). Both copies hold the same untouched AssetData.snap and Locale.package (the patchers change only
+// the exe and the config packages), so a server without a player copy builds the same file from its host copy.
+func (s *Setup) stepContent(game, what string) bool {
 	const step = "content"
 	file := s.Content()
-	if !isDir(s.ClientCopy()) {
+	if !isDir(game) {
 		if s.Check {
 			st := Missing
 			if isFile(file) {
 				st = Stale
 			}
-			return s.report(st, step, s.show(file)+": not checked without the player copy (its game data)")
+			return s.report(st, step, s.show(file)+": not checked without "+what+" (its game data)")
 		}
-		return s.needs(step, "the player copy (its game data)")
+		return s.needs(step, what+" (its game data)")
 	}
 	t0 := time.Now()
-	c, err := gamecontent.Build(s.ClientCopy())
+	c, err := gamecontent.Build(game)
 	if err != nil {
 		return s.report(Failed, step, err.Error())
 	}

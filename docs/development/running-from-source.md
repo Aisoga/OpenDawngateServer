@@ -58,7 +58,7 @@ To try purchases with an account that doesn't own everything, run the session th
 `Start-Server.cmd` and `Start-Client.cmd` in the repository folder do the same as the release's programs, but for a checkout:
 
 - **Start-Server.cmd** checks and builds the setup like `play.ps1 -SetupOnly`, then runs the server in its own window with shaper select. Stop it with Ctrl+C or by closing the window.
-- **Start-Client.cmd** starts the game against it. Start the client again after a match or a crash; the server keeps running.
+- **Start-Client.cmd** starts the game against it, directly (no tunnel and no server list). Start the client again after a match or a crash; the server keeps running. Unlike the release's `Start-Client.exe`, which runs a server on the PC by itself (This PC), it needs `Start-Server.cmd` running.
 
 There's no packet capture or egress check here. Logs go to `re\logs\manual_<date>-<time>\`. `re\scripts\start_server.ps1 -NoShaperSelect` skips shaper select, and `-ServerArgs '<flags>'` passes [server options](../reference.md#extra-server-options-server_flags).
 

@@ -101,7 +101,7 @@ A release is a binary distribution under the AGPL: whoever hands it out also off
 | Match host (C++) | `gms\build\Release\gms_tests.exe` and `gms\build\core\control\Release\dg_control_tests.exe`, after the build |
 | Host Lua scripts | `.venv\Scripts\python -I re\scripts\bots_lua_check.py` (needs LuaJ and a JDK) |
 | Setup and scripts | `re\scripts\test_*.py` with `.venv\Scripts\python -I`, and `test_*.ps1` with `powershell -ExecutionPolicy Bypass -File` |
-| Release setup against the Python setup | `re\scripts\test_p3b.py` compares a release install with the developers' setup, file by file; with `--picker` also the server picker that `Start-Client.exe --picker on` adds to the login screen (`re\scripts\patch_login_movie.py` makes the reference) |
+| Release setup against the Python setup | `re\scripts\test_p3b.py` compares a release install with the developers' setup, file by file: a `Start-Server.exe` folder (with the tunnel only its host copy and certificates; `Start-Client.exe` makes the player copy), a player's folder, or both; with `--picker` (and `--tunnel-address`, `--data-suffix`) the player copy patched for the tunnel and the server picker that `Start-Client.exe` adds to the login screen (`re\scripts\patch_login_movie.py` makes the reference) |
 | A live check | `play.ps1 -Check` (see [running-from-source.md](running-from-source.md#the-check-mode)) |
 
 Before submitting Go changes, also run `gofmt -l .` and `go vet ./...` in `server\`.

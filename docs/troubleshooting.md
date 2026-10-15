@@ -12,8 +12,8 @@
 **"is not the Dawngate.zip of archive.org"**
 The setup checks every file against build 1.0.903.854. Download the zip again from <https://archive.org/details/Dawngate>; the download may be incomplete.
 
-**Start-Server can't find Dawngate.zip**
-Put the zip next to `Start-Server.exe`, or in your Downloads folder. You can also drag it onto the program's window when it asks, or set `zip = <path>` in `Start-Server.ini`.
+**Start-Server or Start-Client can't find Dawngate.zip**
+Put the zip next to the program, or in your Downloads folder. You can also drag it onto the program's window when it asks, or set `zip = <path>` in `Start-Server.ini` or `Start-Client.ini`. The server on This PC sets itself up while the game runs and asks nothing then: if its `Dawngate.zip` isn't found, its login is refused (*The server on this PC didn't start*) and `Start-Client`'s window names the places it looked. Put the zip there and log in again.
 
 **The setup stopped halfway**
 Start the program again: it continues where it stopped. If the same step fails again, delete the folder the message names inside `Dawngate-Data`, and it will be made anew.
@@ -21,8 +21,14 @@ Start the program again: it continues where it stopped. If the same step fails a
 **"Another program holds the server's ports"**
 A server is already running, probably another `Start-Server` window. Close it first. If no other server is running, some other program uses one of the [server's ports](reference.md#ports).
 
-**"No server is running"**
-`Start-Client.exe` couldn't find a server on this PC. Start `Start-Server.exe` first and wait until it says the server runs. To play on another PC's server, start `Start-Client.exe <address>`.
+**"This folder's server already runs inside Start-Client.exe"**
+`Start-Client.exe` runs the server of this folder for This PC, and a folder has one server at a time. Close the game (its server stops with it), then start `Start-Server.exe` again. To run both at once, give `Start-Server.exe` a folder of its own (`folder =` in `Start-Server.ini`).
+
+**This PC says "didn't start", or "The server on this PC didn't start"**
+The server on your PC couldn't be set up or started. `Start-Client`'s window shows why: usually `Dawngate.zip` wasn't found, the disk is full, or the release's `host` folder is missing (unpack the whole release zip). Fix that and log in again: each login tries again.
+
+**"The server on this PC is still being set up"**
+Its first setup took longer than the login waits (50 seconds), on a slow disk for example. It goes on: wait until the server list says *online*, then log in again.
 
 **The game closes right away**
 Only one Dawngate client can run at a time. Close the other one, including any that's still open from an earlier session.
@@ -44,6 +50,9 @@ Contact the server's operator.
 **A LOGIN ERROR with only a number**
 Too many login attempts from your address in a short time. Wait a minute or two and try again.
 
+**"New server key: check the fingerprint shown in the list, then log in again to trust it"**
+That's your first login to this server: its key isn't trusted yet. Click OK, open the server list (SERVER above the login panel) and compare the fingerprint in the sentence under the list with the one the server's operator gives you (their server window shows it). Only if they match, press LOGIN again: that login trusts the key. If the operator handed you the whole key, `Start-Client.exe <address> --gateway-pin <key>` trusts it without this step.
+
 **"The server's key has changed since you last played", or KEY CHANGED in the server list**
 Every server has a tunnel key, and `Start-Client.exe` remembers the key of each server you have logged in to. A different key means that the operator made new keys or moved the server, or that someone else answers at its address. Open the server list on the login screen: it shows the key you trusted and the one the server shows now. Ask the operator which fingerprint their server window shows. Only if it matches the new one, delete the file `Dawngate-Data\servers\<server address>\gateway.pin` and log in again. That login trusts the new key. If it doesn't match, don't log in to that server.
 
@@ -51,7 +60,7 @@ Every server has a tunnel key, and `Start-Client.exe` remembers the key of each 
 The server is offline, or its address in your list is wrong. The list checks every server again every few seconds while the login screen is open, so the server turns green by itself when it is back. If it stays offline, check the address with its operator. An operator of a server on the internet forwards TCP and UDP 42128 to it.
 
 **"Something answers at that address, but no Dawngate server with the tunnel on"**
-The server picker needs the server's tunnel. Ask the operator to set `tunnel = on` in `Start-Server.ini`.
+The server runs without its tunnel (`tunnel = off`, an option for developers), or it is an older release. Ask the operator to set `tunnel = auto` in `Start-Server.ini` and to use a current release; or play on it with `Start-Client.exe <address> --tunnel off`.
 
 **"That server isn't in your list"**
 The login name had a `#` with a server that isn't in your list. Type only your login name and pick the server with SERVER above the login panel.
@@ -65,8 +74,11 @@ The address typed in ADD SERVER (or after `#+` in the login name) is no IPv4 add
 **"The server was removed from your list"**
 That is REMOVE's confirmation, not an error. Click OK and pick another server.
 
+**"This PC is always in the list: it can't be removed"**
+A login typed as `<name>#-pc`. This PC is the server on your own PC and stays the first row of the list.
+
 **There is no SERVER above the login panel**
-The login screen shows the server list only for servers reached through their tunnel. A server on a home network without the tunnel is played on directly; `Start-Client.exe`'s window says so (*picker not used*). If the server has its tunnel on, start `Start-Client.exe <address> --tunnel on`. If `Start-Client.ini` has `server = <a home address>`, empty it to get the list. `picker = off` turns the list off.
+The login screen shows the server list whenever the tunnel is used, which is the default. Without it (`--tunnel off` or `tunnel = off` in `Start-Client.ini`, or a `Start-Server.ini` with `tunnel = off` in the same folder) the game plays on one server directly, and `Start-Client.exe`'s window says so (*picker not used*). `picker = off` turns the list off too.
 
 **Shift+Tab or Escape on the login screen does something else**
 The server list is used with the mouse. Shift+Tab from the login name goes to the game's EXIT button, and Enter there asks whether to quit the game. Escape doesn't close the list; click DONE.
@@ -104,10 +116,10 @@ In a match the game ignores it. Leave the match from the gear menu above the min
 **Other PCs can't reach your server**
 
 - `address` in `Start-Server.ini` must be the server PC's LAN address, not `127.0.0.1`.
-- When Windows asks whether `Start-Server.exe` and the game copy in `Dawngate-Data\host` may use the network, allow private networks. If you cancelled the question, allow them in the Windows Firewall settings.
+- When Windows asks whether `Start-Server.exe` may use the network, allow private networks. If you cancelled the question, allow it in the Windows Firewall settings: players need TCP and UDP 42128.
 
 **"The server ... has another certificate authority" or another tunnel key**
-The server's fingerprint changed since you last played. That happens when its operator changed the address or made new keys. Ask the operator which fingerprint their window shows, and answer `y` only if it matches. For a server in the login screen's list, see *The server's key has changed* under [Logging in](#logging-in).
+With `--tunnel off` or `--picker off`, `Start-Client.exe` asks in its window when a server's fingerprint changed. That happens when its operator changed the address or made new keys. Ask the operator which fingerprint their window shows, and answer `y` only if it matches. For a server in the login screen's list, see *The server's key has changed* under [Logging in](#logging-in).
 
 **"gateway unavailable"**
 The server's tunnel refused the connection, usually because too many sessions come from your address. Close other game sessions and try again.

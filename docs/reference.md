@@ -20,9 +20,10 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 | `bind` | empty | Only for a public server behind a router: this PC's LAN address, which the router forwards to. |
 | `i_accept_the_risk` | `no` | A public address starts only with `yes` (or `--i-accept-the-risk`). |
 | `profile` | `auto` | `auto` uses `public` for a public address and `home` otherwise. `public` requires the tunnel and turns on the limits. |
-| `tunnel` | `auto` | The encrypted tunnel: `auto` turns it on for the public profile, `on` turns it on always, `off` never (not allowed with `public`). |
+| `tunnel` | `auto` | The encrypted tunnel: `auto` and `on` turn it on, for every address. Players then reach the server only on `gateway_port`. `off` is an option for developers: the server's plain ports instead, and players need `Start-Client.exe --tunnel off` (not allowed with `public`). A file from an earlier release keeps its value; `auto` now means on. |
 | `gateway_port` | `42128` | The tunnel's port, TCP and UDP. |
 | `shaper_select` | `on` | `off` skips shaper select, and everyone plays Fenmore. |
+| `dedicated` | `no` | `yes` sets up and runs only the match hosts' copy `Dawngate-Data\host`, never a copy for playing, also with `tunnel = off`. A complete folder then starts without `Dawngate.zip`. See [A server that only hosts](hosting.md#a-server-that-only-hosts). |
 | `signup` | `open` | Who can make accounts: `open`, `invite` or `closed`. See [Accounts](hosting.md#accounts). |
 | `signups_per_address` | `3` | Under `open`: the most accounts one internet address may make per day. `0` means no limit. Home-network addresses never count. |
 | `log_days` | `30` | Delete logs older than this many days. `0` keeps them. |
@@ -40,6 +41,7 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 | `--configure` | Ask the first start's questions again. |
 | `--check` | Only report what is missing; change nothing. |
 | `--setup-only` | Set up or repair everything, then exit without starting the server. |
+| `--dedicated` | The same as `dedicated = yes`: only the match hosts' copy. |
 | `--zip <file>` | Use this `Dawngate.zip`. |
 | `--config <file>` | Use another config file instead of `Start-Server.ini`. |
 | `--i-accept-the-risk` | Accept the risk notice for a public address. |
@@ -65,18 +67,28 @@ Start-Client.exe [<server address or tag>] [options]
 
 | Option | Effect |
 |---|---|
-| `<server>` or `--server <server>` | The server to play on: an address, or the tag or name of a server in the server list. A server reached through its tunnel is added to the list if it's missing, and preselected on the login screen. Without it, the program uses `server` in `Start-Client.ini`, else the server list if it has servers, else a server on this PC, else asks. |
-| `--picker auto\|on\|off` | The server list on the login screen. `auto` (the default) shows it whenever the tunnel is used: for a public address, with `--tunnel on`, for a server of the list, or for the list itself when no server is named. `on` always (it needs the tunnel), `off` never: the game plays on one server. A server without the tunnel is always played on directly, and the program says so. |
-| `--ca <file>` | Use the `ca_modulus.bin` the operator handed out instead of asking about the fingerprint (servers without the tunnel). |
-| `--tunnel auto\|on\|off` | The encrypted tunnel. `auto` (the default) uses it for public addresses. Use `on` for a home server whose operator set `tunnel = on`. |
-| `--gateway-pin <64 hex digits>` | The server's tunnel key, if the operator handed it out: it is trusted without a question, and the server list checks it. |
+| `<server>` or `--server <server>` | The server to play on: an address, or the tag or name of a server in the server list. It is added to the list if it's missing, and preselected on the login screen. Without it the login screen preselects the server used last, This PC when none was used yet. |
+| `--picker auto\|on\|off` | The server list on the login screen. `auto` (the default) and `on` show it whenever the tunnel is used, which is for every server unless `--tunnel off`. `off` never: the game plays on one server through its tunnel. |
+| `--tunnel auto\|on\|off` | The encrypted tunnel. `auto` (the default) and `on` use it for every server. `off` (for a server with `tunnel = off`, an option for developers) plays on one server directly; a `Start-Server.ini` with `tunnel = off` in the same folder makes it the default. |
+| `--gateway-pin <64 hex digits>` | The server's key, if the operator handed it out (the server's window shows it): it is trusted without the confirmation, and the server list checks it. |
 | `--gateway-port <port>` | The server's tunnel port, if it's not 42128. |
-| `--trust` | Trust a new fingerprint without asking (scripts; with `--picker off`). |
+| `--ca <file>` | With `--tunnel off`: the `ca_modulus.bin` the operator handed out, instead of asking about the fingerprint. |
+| `--trust` | Trust a new key or certificate authority without asking (scripts; with `--picker off` or `--tunnel off`). |
 | `--zip <file>` | Use this `Dawngate.zip` to set up or repair the game copy. |
 | `--check` | Only report what is missing. |
 | `--setup-only` | Prepare the game copy for the server without starting the game. |
 
-`Start-Client.ini` has the keys `server` (empty: the server list), `folder`, `tunnel`, `gateway_port` and `picker` (`auto`, `on`, `off`). An older `Start-Client.ini` keeps working: its `server` becomes the first server of a new list when it is reached through the tunnel.
+`Start-Client.ini` has the keys `server` (empty: the server list), `folder`, `tunnel`, `gateway_port` and `picker` (`auto`, `on`, `off`). An older `Start-Client.ini` keeps working: its `server` becomes the first server of a new list, and its comments are updated.
+
+**This PC.** The server list's first entry, tag `pc`, is the server on this PC; it can't be removed. A login to it goes to the server of `Start-Server.exe` in the same folder while that runs (`Dawngate-Data\server.lock` says which program runs the folder's server, its address and its key). Otherwise `Start-Client.exe` runs the server itself, in its own process, until the game ends:
+
+- It starts at the first login to This PC, not at `Start-Client.exe`'s start. Its first start sets up the match-host copy `host\` (about half a minute and 1.5 GB, from `Dawngate.zip`); the login waits up to 50 seconds for it (a longer setup goes on, and the login is refused with `00E90001` until it is done), and the list shows the progress.
+- It listens on its own loopback address, `127.0.1.11` (`127.0.N.11` for a front on `127.0.0.N`): the tunnel's port 42128, the control port 10040 and its matches' UDP ports. Nothing else listens and no website runs.
+- It uses the folder's accounts (`data\accounts.db`), the same certificate set as the folder's `Start-Server.exe` (`certs\<its address>`, else `certs\127.0.1.11`), and the game options of a `Start-Server.ini` in the same folder (`shaper_select`, `signup`, `signups_per_address`, `log_days`, `server_flags`); without one, shaper select is on and sign-up is open.
+- Its log goes to `Dawngate-Data\logs`, as `Start-Server.exe`'s; the console shows its setup and one line when it runs.
+- A folder has one server at a time: `Start-Server.exe` refuses to start (or set up) while `Start-Client.exe` runs the folder's server.
+
+**The server's key.** Each server's key is pinned in `Dawngate-Data\servers\<address>\gateway.pin`. A new key is confirmed once: the first login to that server is refused with `00E70001` while the list shows the key's fingerprint, and the next login to the same server, showing the same key, trusts it. No confirmation is needed for a key given with `--gateway-pin`, nor for This PC (its key is in the folder: `Dawngate-Data\certs`, or the running `Start-Server.exe`'s from `server.lock`). A key that differs from the pinned one is refused (`00E20001`).
 
 ### The server list
 
@@ -87,13 +99,16 @@ The servers on the login screen are kept in `Dawngate-Data\servers\bookmarks.jso
   "servers": [
     { "tag": "a", "name": "Alex's server", "address": "203.0.113.5", "gateway_port": 42128, "last_used": "2026-10-15T12:00:00Z" },
     { "tag": "b", "name": "play.example.org", "address": "play.example.org", "gateway_port": 42128 }
-  ]
+  ],
+  "this_pc_last_used": "2026-10-15T13:00:00Z"
 }
 ```
 
+This PC isn't in `servers`: its address depends on which program runs it. `this_pc_last_used` is its last login, for the preselection.
+
 | Field | Rule |
 |---|---|
-| `tag` | 1–16 of `a`–`z`, `0`–`9`, `_` and `-`, not starting with `-`; unique. A server added without one gets the next free letter. |
+| `tag` | 1–16 of `a`–`z`, `0`–`9`, `_` and `-`, not starting with `-`; unique; not `pc` (This PC's; a server given it gets another). A server added without one gets the next free letter. |
 | `name` | Shown in the list; the address when empty. |
 | `address` | An IPv4 address or a host name; unique. |
 | `gateway_port` | The server's tunnel port; 0 or missing means 42128. |
@@ -109,6 +124,7 @@ The login name carries the pick ([playing.md](playing.md#the-server-list)):
 | `<name>#<tag>` | Log in on that server (a tag, address or name of the list). |
 | `<name>#+<address>[:<port>][=<display name>]` | Add the server once it answers, then log in there. |
 | `<name>#-<tag>` | Remove the server from the list (the login is then refused with a confirmation). |
+| `<name>#pc` | Log in on This PC. |
 
 The refusals the list can show at LOGIN, besides the server's own:
 
@@ -121,6 +137,10 @@ The refusals the list can show at LOGIN, besides the server's own:
 | `00E40001` | The server you picked answered, but couldn't take the login. |
 | `00E50001` | The server was removed from your list. |
 | `00E60001` | That isn't a server address. |
+| `00E70001` | New server key: check the fingerprint shown in the list, then log in again to trust it. |
+| `00E80001` | This PC is always in the list: it can't be removed. |
+| `00E90001` | The server on this PC is still being set up. Log in again when the list says online. |
+| `00EA0001` | The server on this PC didn't start: Start-Client's window says why. |
 
 ## Extra server options (server_flags)
 
@@ -151,27 +171,30 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 | Folder | Contents |
 |---|---|
 | `data\` | `accounts.db` (with `-wal` and `-shm`), `content.json` (what accounts can own, built from your game files), `broadcast.txt`, and `site\` (the website's certificates and your own pages). **Back this up.** |
-| `certs\<address>\` | The server's certificates and the tunnel key. Keep private. Only `ca_modulus.bin` may be handed out. |
+| `certs\<address>\` | The server's certificates and the tunnel key. Keep private. Hand out only the key's 64 hex digits the server's window shows (and, with `tunnel = off`, `ca_modulus.bin`). |
+| `certs\tunnel-127.0.0.1\` | `Start-Client.exe`'s own certificates for the tunnel on this PC. |
 | `logs\` | The server's logs, and `hosts\<match>\` for each match. They contain login names and addresses. |
-| `client\` | The game copy for playing, patched for your server (or, with the server list, for the tunnel on this PC). |
+| `client\` | The game copy for playing, patched for the tunnel on this PC (with `--tunnel off`, for one server). `Start-Client.exe` makes it; `Start-Server.exe` only with `tunnel = off` and `dedicated = no`. |
 | `servers\` | `Start-Client.exe`'s server list `bookmarks.json`, and per server `<address>\` the trusted tunnel key `gateway.pin` or the trusted certificate authority. |
-| `host\` | The game copy the match hosts run, with `dgsim.dll`. |
+| `host\` | The game copy the match hosts run, with `dgsim.dll`. `Start-Server.exe` makes it, or `Start-Client.exe` at the first login to This PC. |
+| `server.lock` | Which program runs the folder's server (`Start-Server.exe`, or `Start-Client.exe` for This PC), while it runs. |
 
 Never share the game copies: they are the game's files.
 
 ## Ports
 
+With the tunnel (the default) the server listens for players on one port, on its address:
+
 | Port | Protocol | What | Who needs it |
 |---|---|---|---|
-| 42127 | TCP | Redirector (the client's first contact) | LAN players |
-| 10041 | TCP | Logins, menus, matchmaking and chat | LAN players |
-| 17502 | TCP and UDP | Connection-quality test | LAN players |
-| 18080 | TCP | Web content and the login screen's links | LAN players |
-| 9988 | TCP | Game telemetry (logged only) | LAN players |
-| 10042–10051 | UDP | Matches, one port per running match | LAN players |
-| 42128 | TCP and UDP | The encrypted tunnel; everything above travels inside it | Internet players: **forward this** |
+| 42128 | TCP and UDP | The encrypted tunnel: logins, menus, matchmaking, chat, the connection-quality test, web content, telemetry and the matches all travel inside it | Every player; from the internet: **forward this** |
 | 443 | TCP | The website | Internet players and Let's Encrypt: **forward this** |
-| 10040 | TCP | The server's control channel to its match hosts | **Nobody. Never forward it.** It stays on 127.0.0.1. |
+| 10040 | TCP | The server's control channel to its match hosts | **Nobody. Never forward it.** It stays on 127.0.0.1 (on a server on a loopback address, that address). |
+| 10042–10051 | UDP | Matches, one port per running match, on a loopback address of their own: `127.0.N.10` for a server on `127.0.0.N`, else `127.0.1.10` | Nobody: the tunnel reaches them inside the PC. |
+
+Nothing else listens, so a `Start-Client.exe` on the same PC uses the game's own ports on `127.0.0.1` (TCP 42127, 10041, 17502, 18080 and 9988, UDP 17502 and 10042–10051) without a collision. The server `Start-Client.exe` runs for This PC listens on `127.0.1.11` only: TCP and UDP 42128, TCP 10040 and its matches' UDP 10042–10051.
+
+With `tunnel = off` (an option for developers) the server listens on its address on TCP 42127 (the redirector, the client's first contact), 10041 (logins, menus, matchmaking and chat), 17502 (the connection-quality test, also UDP), 18080 (web content and the login screen's links) and 9988 (game telemetry), and the matches on UDP 10042–10051 there too.
 
 ## Limits
 

@@ -25,52 +25,66 @@ const ClientConfigName = "Start-Client.ini"
 // ClientConfigText is the head of Start-Client.ini when Start-Client.exe writes it.
 const ClientConfigText = `; Start-Client.ini: the options of Start-Client.exe. Lines that start with ; are comments.
 
-; The server to play on: its address, e.g. 192.168.1.20. Empty: the server picker's list (below) when it has
-; servers, else the server of Start-Server.exe on this PC (its Start-Server.ini), else 127.0.0.1.
-; "Start-Client.exe <address>" overrides it.
+; The server to play on: its address, e.g. 192.168.1.20 (with the server picker below it goes into a new list).
+; Empty: the server picker's list, with "This PC" first (the server on this PC: Start-Client runs it itself, or uses
+; Start-Server.exe's when that runs on the same folder). "Start-Client.exe <address>" adds and preselects a server.
 server =
 
 ; The folder for the game copy (1.5 GB): relative to this program's folder, or a full path. Empty: Start-Server.ini's
 ; folder, else Dawngate-Data.
 folder =
 
-; The encrypted tunnel to the server: auto (the default) uses it for a server on a public internet address, which
-; needs it; on uses it for any server that runs it (Start-Server.ini tunnel = on); off never.
+; The encrypted tunnel to the server: auto (the default) and on use it for every server; off never (the developers'
+; option, for a server whose Start-Server.ini has tunnel = off: the game then plays on that one server directly).
 tunnel = auto
 
 ; The server's tunnel port (TCP and UDP), when its operator changed it. Empty: 42128.
 gateway_port =
 
 ; The server picker on the game's login screen: SERVER above the login lists your servers (the list is
-; Dawngate-Data\servers\bookmarks.json), and you add or remove servers there. auto (the default) uses it whenever
-; the tunnel is used: for a server on the internet, with tunnel = on, or when the list has servers and no server
-; is set above. on always (it needs the tunnel), off never: the game then plays on one server.
-; "Start-Client.exe <address>" adds a server to the list and preselects it. A server without the tunnel (on a home
-; network) can't be picked: Start-Client then plays on it directly.
+; Dawngate-Data\servers\bookmarks.json), and you add or remove servers there. auto (the default) and on use it
+; whenever the tunnel is used; off never: the game then plays on one server.
+; "Start-Client.exe <address>" adds a server to the list and preselects it. At the first login to a server the list
+; shows its key's fingerprint and the login stops; compare it with the one its operator gives you, then log in again
+; to trust it.
 picker = auto
 `
+
+// oldClientComments are the tunnel and picker keys' comments that earlier releases wrote into Start-Client.ini (when
+// tunnel = auto meant the tunnel only for a public address); a start replaces them with ClientConfigText's.
+var oldClientComments = map[string][][]string{
+	"tunnel": {{"; The encrypted tunnel to the server: auto (the default) uses it for a server on a public internet address, which",
+		"; needs it; on uses it for any server that runs it (Start-Server.ini tunnel = on); off never."}},
+	"picker": {{"; The server picker on the game's login screen: SERVER above the login lists your servers (the list is",
+		"; Dawngate-Data\\servers\\bookmarks.json), and you add or remove servers there. auto (the default) uses it whenever",
+		"; the tunnel is used: for a server on the internet, with tunnel = on, or when the list has servers and no server",
+		"; is set above. on always (it needs the tunnel), off never: the game then plays on one server.",
+		"; \"Start-Client.exe <address>\" adds a server to the list and preselects it. A server without the tunnel (on a home",
+		"; network) can't be picked: Start-Client then plays on it directly."}},
+}
 
 var clientKeys = []string{"server", "folder", "zip", "tunnel", "gateway_port", "picker"}
 
 // TestParkEnv set to 1 is Start-Client's --test-park (the release's test hook; never needed by a player).
 const TestParkEnv = "DAWNGATE_TEST_PARK"
 
-// RunClient is Start-Client.exe (cmd/start-client): it finds the server to play on, makes sure the player copy is set
-// up and patched for it (setup.Client; for a server on another machine with that server's CA, trusted on first use),
-// checks that the server answers, then starts the game and waits until it exits. It returns the exit code.
+// RunClient is Start-Client.exe (cmd/start-client): it finds the server or servers to play on, makes sure the player
+// copy is set up and patched for the tunnel address (setup.Client; with tunnel = off for one server, with that
+// server's CA, trusted on first use), starts the front (the login screen's server list; or one tunnel with
+// picker = off), then starts the game and waits until it exits. It returns the exit code.
 func RunClient(args []string, o IO) int {
 	fs := flag.NewFlagSet("Start-Client", flag.ContinueOnError)
 	fs.SetOutput(o.Out)
 	serverFlag := fs.String("server", "", "the server: its address, or the tag or name of a server in the picker's list (also the first "+
 		"argument; default: Start-Client.ini, then the picker's list, then this PC's Start-Server)")
-	caFile := fs.String("ca", "", "the server's ca_modulus.bin, when its operator handed it out (instead of fetching it)")
-	trust := fs.Bool("trust", false, "trust a new server CA without asking (scripts and tests; players confirm the fingerprint)")
+	caFile := fs.String("ca", "", "--tunnel off: the server's ca_modulus.bin, when its operator handed it out (instead of fetching it)")
+	trust := fs.Bool("trust", false, "trust a new server key without asking, with --picker off or --tunnel off (scripts and tests; players confirm the fingerprint)")
 	setupOnly := fs.Bool("setup-only", false, "set up the player copy for the server, then exit without starting the game")
 	check := fs.Bool("check", false, "only report what is missing or stale; change nothing")
 	fs.Bool("non-interactive", false, "never ask anything; for scripts and tests")
 	park := fs.Bool("test-park", os.Getenv(TestParkEnv) == "1", "test hook: keep the game window off the desktop and never activate it, as run_session.ps1 -Background does; also "+TestParkEnv+"=1")
 	zipFlag := fs.String("zip", "", "Dawngate.zip, when the player copy must be made or repaired")
-	tunnelFlag := fs.String("tunnel", "", "the encrypted tunnel: auto (for a public server address; the default), on, off")
+	tunnelFlag := fs.String("tunnel", "", "the encrypted tunnel: auto or on (every server; the default), off (a server whose Start-Server.ini has tunnel = off)")
 	gwPortFlag := fs.String("gateway-port", "", "the server's tunnel port (default 42128)")
 	gwPinFlag := fs.String("gateway-pin", "", "the server's tunnel key (64 hex digits), when its operator handed it out (no question)")
 	tunnelAddr := fs.String("tunnel-address", DefaultTunnelAddress, "the loopback address the tunnel listens on and the game connects to (tests)")
@@ -104,6 +118,16 @@ func RunClient(args []string, o IO) int {
 	for _, k := range ccfg.Unknown(clientKeys...) {
 		fmt.Fprintf(o.Out, "  note: %s: unknown option %q (ignored)\n", clientIni, k)
 	}
+	if ccfg != nil && !*check { // an earlier release's file: tunnel = auto meant the tunnel only for a public address
+		for _, k := range []string{"tunnel", "picker"} {
+			if changed, err := migrateComment(clientIni, oldClientComments[k], commentOf(ClientConfigText, k)); err != nil {
+				fmt.Fprintf(o.Out, "  note: %s can't be updated: %v\n", clientIni, err)
+				break
+			} else if changed && k == "tunnel" {
+				fmt.Fprintf(o.Out, "  note: %s: the encrypted tunnel is now used for every server (tunnel = auto; the comments updated)\n", clientIni)
+			}
+		}
+	}
 	scfg, _ := ReadConfig(filepath.Join(o.ExeDir, ServerConfigName)) // this PC's server, when there is one
 	pickerSet, err := pickerSetting(firstNonEmpty(*pickerFlag, ccfg["picker"]))
 	if err != nil {
@@ -112,6 +136,13 @@ func RunClient(args []string, o IO) int {
 	mode, err := tunnelMode(firstNonEmpty(*tunnelFlag, ccfg["tunnel"]))
 	if err != nil {
 		return o.fail("%v", err)
+	}
+	if mode == TunnelAuto && scfg != nil {
+		// this folder's Start-Server runs without the tunnel (the developers' tunnel = off): its player copy follows it
+		if sm, err := tunnelMode(scfg["tunnel"]); err == nil && sm == TunnelOff {
+			mode = TunnelOff
+			fmt.Fprintf(o.Out, "  tunnel   off (%s has tunnel = off)\n", ServerConfigName)
+		}
 	}
 	gwPort, err := gatewayPort(firstNonEmpty(*gwPortFlag, ccfg["gateway_port"]))
 	if err != nil {
@@ -153,24 +184,40 @@ func RunClient(args []string, o IO) int {
 	var pin tunnel.Pin
 	var tunnelTLS *tls.Config
 	var bookmarks *Bookmarks
+	var pc *thisPC // the list's This PC (picker mode)
 	preselect := ""
 	if tunnelled {
-		// the game talks to the tunnel on this PC; the tunnel's key is trusted on first use, the redirector's
+		// the game talks to the tunnel on this PC; the tunnel's key is pinned (confirmed once), the redirector's
 		// certificates are this PC's own (no server CA needed)
 		if ip := net.ParseIP(*tunnelAddr).To4(); ip == nil || !ip.IsLoopback() {
 			return o.fail("--tunnel-address %s: a loopback address such as 127.0.0.1", *tunnelAddr)
 		}
 		patchFor = *tunnelAddr
+		ownAddrs, ownPin, ownKey := ownServerKey(scfg, o.ExeDir, l) // this PC's Start-Server in the same folder
 		if picker {
 			bookmarks = choice.bm
-			if preselect, err = pickerBookmarks(o, l, choice, *gwPinFlag, *check); err != nil {
+			var ini Config // This PC takes the game options of this folder's Start-Server.ini
+			if sameFolder(scfg, o.ExeDir, l) {
+				ini = scfg
+			}
+			pc = newThisPC(o, l, patchFor, filepath.Join(o.ExeDir, "host"), ini, bookmarks, *check)
+			if preselect, err = pickerBookmarks(o, l, choice, *gwPinFlag, *check, pc); err != nil {
 				return o.fail("%v", err)
+			}
+			if ownKey {
+				if err := pinOwnServer(o, l, bookmarks, ownAddrs, ownPin, *check); err != nil {
+					return o.fail("%v", err)
+				}
 			}
 		} else {
 			gw = gatewayAddress(server, gwPort, scfg)
 			fmt.Fprintf(o.Out, "  tunnel   %s (the game connects to %s on this PC)\n", gw, patchFor)
+			pinFlag := *gwPinFlag
+			if ownKey && pinFlag == "" && len(ownAddrs) > 0 && ownAddrs[0] == server {
+				pinFlag = ownPin.String() // this PC's own server: its key is in the folder
+			}
 			if !*check {
-				if pin, err = trustedGatewayPin(o, in, l, server, gw, *gwPinFlag, *trust); err != nil {
+				if pin, err = trustedGatewayPin(o, in, l, server, gw, pinFlag, *trust); err != nil {
 					return o.fail("%v", err)
 				}
 			}
@@ -193,9 +240,9 @@ func RunClient(args []string, o IO) int {
 				return o.fail("No server is running on %s: double-click Start-Server.exe first and wait until it says "+
 					"\"The server runs\", then start Start-Client.exe again.", server)
 			}
-			return o.fail("No server answers at %s (port %d: %v).\nIs Start-Server.exe running on that machine with "+
-				"address = %s in its Start-Server.ini, and does its firewall let the network in (README.txt)? A server on "+
-				"the internet is reached through its tunnel (Start-Client.exe --tunnel on).", server, RedirectorPort, answering, server)
+			return o.fail("No server answers at %s (port %d: %v).\nWithout the tunnel (tunnel = off) Start-Client needs a "+
+				"Start-Server.exe with tunnel = off and address = %s in its Start-Server.ini, whose firewall lets the network "+
+				"in. A server with the tunnel (the default) is reached without --tunnel off.", server, RedirectorPort, answering, server)
 		}
 		if ca == nil {
 			if ca, err = remoteCA(o, in, l, server, *caFile, *trust, answering == nil); err != nil {
@@ -212,7 +259,31 @@ func RunClient(args []string, o IO) int {
 	}
 
 	fmt.Fprintln(o.Out, "\nChecking the game copy (the first start makes it: about half a minute and 1.5 GB):")
-	s := &setup.Setup{Layout: l, Out: o.Out, Live: o.Live, Check: *check, FindZip: zipFinder(o, in, firstNonEmpty(*zipFlag, ccfg["zip"], scfg["zip"])),
+	zipConf := firstNonEmpty(*zipFlag, ccfg["zip"], scfg["zip"])
+	zipUsed := "" // the archive this start found (This PC's setup takes it again)
+	findZip := zipFinder(o, in, zipConf)
+	if pc != nil {
+		quiet := o
+		quiet.Interactive = false // This PC is set up while the game runs: nothing is asked then
+		later := zipFinder(quiet, nil, zipConf)
+		pc.findZip = func() (string, error) {
+			if zipUsed != "" {
+				return zipUsed, nil
+			}
+			p, err := later()
+			if err != nil {
+				return "", fmt.Errorf("%v; then log in to This PC again", err)
+			}
+			return p, nil
+		}
+	}
+	s := &setup.Setup{Layout: l, Out: o.Out, Live: o.Live, Check: *check, FindZip: func() (string, error) {
+		p, err := findZip()
+		if err == nil {
+			zipUsed = p
+		}
+		return p, err
+	},
 		Manifest: manifest, WebDomain: ownServerDomain(scfg, o.ExeDir, l.Root, server), DataSuffix: *lane, Picker: picker}
 	var release func()
 	if !*check {
@@ -251,7 +322,7 @@ func RunClient(args []string, o IO) int {
 		}
 	}
 	if picker {
-		stop, err := startFront(o, l, bookmarks, patchFor, tunnelTLS, preselect)
+		stop, err := startFront(o, l, bookmarks, patchFor, tunnelTLS, preselect, pc)
 		if err != nil {
 			return o.fail("The server picker didn't start: %v", err)
 		}

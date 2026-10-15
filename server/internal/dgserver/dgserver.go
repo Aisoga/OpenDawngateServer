@@ -453,7 +453,13 @@ func start(cfg config) (*instance, error) {
 	in := &instance{log: log, caFingerprint: caNote, store: st}
 	limitsNote := startLimits(&cfg, in, public)
 	for i, p := range cfg.ports() {
-		ln, err := net.Listen("tcp4", net.JoinHostPort(cfg.bind, strconv.Itoa(p)))
+		var ln net.Listener
+		if i == qosListener {
+			// QoS serves TCP and UDP on one port
+			ln, in.qosUDP, err = listenTCPAndUDP(cfg.bind, p)
+		} else {
+			ln, err = net.Listen("tcp4", net.JoinHostPort(cfg.bind, strconv.Itoa(p)))
+		}
 		if err != nil {
 			in.close()
 			log.Close()
@@ -465,11 +471,6 @@ func start(cfg config) (*instance, error) {
 		in.ports = append(in.ports, ln.Addr().(*net.TCPAddr).Port)
 	}
 	rp, bp, qp, hp, tp := in.ports[0], in.ports[1], in.ports[2], in.ports[3], in.ports[4]
-	if in.qosUDP, err = net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(cfg.bind), Port: qp}); err != nil {
-		in.close()
-		log.Close()
-		return nil, err
-	}
 	gp, gmsNote := cfg.gmsPort, "UDP, logged"
 	if cfg.hostsOn() {
 		if in.hosts, gmsNote, err = startHosts(cfg, log); err != nil {
@@ -662,6 +663,29 @@ func startPruning(cfg config, in *instance) string {
 
 // listenerNames are cfg.ports()'s listeners in order (the log tags of their limits lines).
 var listenerNames = []string{"redirector", "blaze", "qos", "http", "telemetry"}
+
+// qosListener is QoS's index in config.ports and listenerNames.
+const qosListener = 2
+
+// listenTCPAndUDP binds TCP and UDP on one port. With port 0 (tests) the system picks the TCP port, and Windows
+// may have reserved that number for UDP (excluded port ranges, e.g. on CI runners): then another port is tried.
+func listenTCPAndUDP(bind string, port int) (net.Listener, *net.UDPConn, error) {
+	for attempt := 0; ; attempt++ {
+		ln, err := net.Listen("tcp4", net.JoinHostPort(bind, strconv.Itoa(port)))
+		if err != nil {
+			return nil, nil, err
+		}
+		p := ln.Addr().(*net.TCPAddr).Port
+		udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(bind), Port: p})
+		if err == nil {
+			return ln, udp, nil
+		}
+		ln.Close()
+		if port != 0 || attempt == 19 {
+			return nil, nil, err
+		}
+	}
+}
 
 // limitsReportEvery is how often the limits' refusals are summed up in the log.
 const limitsReportEvery = time.Minute

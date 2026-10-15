@@ -127,7 +127,18 @@ constexpr std::uintptr_t kLoadoutVersion = 0x2D0;  // mLoadoutVersion (u32)
 // (LabsPlayer_GetLoadoutAttribute 0x00914890); and the modifiers, id -> {id, ability}, which only the perk tooltips read
 constexpr std::uintptr_t kLoadoutAttributes = 0x2D4;
 constexpr std::uintptr_t kLoadoutModifiers = 0x2F4;
+// WARDSKIN: the vanity assets, 2 asset pointers (kind 0 ward skin Noun, 1 AnnouncerPack; LabsPlayer_IsValidVanityIndex
+// 0x00911360 allows 0 and 1). LabsPlayer_SetVanityAsset (0x009113F0) writes them, called only by the client's C8 0E
+// echo (ShaperSelect_HandleGmsMessage 0x00521B50) and OnLocalPlayerReconnect (0x006B6480); LabsPlayer_GetVanityAsset
+// (0x00912720) returns the slot or, when 0, the kind's default (wardskin_default.Noun, Default.AnnouncerPack). On the
+// server only nPlayer.GetWardAsset (0x00948D40) reads one: ability_Item_Ward and ability_Outlaw_Passive_Ward create the
+// ward object from it. The client reads its local player's for the HUD's ward icon (0x004060F0), the announcer's sound
+// token (ClientFeedback_ResolveSoundToken 0x006672CB) and the account settings WARD/ANNOUNCER at EnterGame.
+constexpr std::uintptr_t kVanityAssets = 0x314;
 }  // namespace player
+// WARDSKIN: LabsPlayer_GetVanityAsset (0x00912720, cdecl (player, kind)) -> the asset, or the kind's default.
+using GetVanityAssetFn = void*(__cdecl*)(void* player, unsigned kind);
+inline GetVanityAssetFn GetVanityAsset = At<GetVanityAssetFn>(0x00912720);
 // D3-perks: PerkAttributeMap_GetOrInsert (0x0047AF60, thiscall on the map, (const u32* key), ret 4): the entry for the
 // key, inserted as {NumAttributes 72, Add, 0.0} if missing; returns the entry ({u32 attribute, u32 op, f32 value}, the
 // node + 4). LoadoutManager_ReadPlayerLoadout (0x00886AC0) fills the C0 02 stats with it.

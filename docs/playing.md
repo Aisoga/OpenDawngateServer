@@ -51,7 +51,7 @@ You only need `Start-Server.exe` if you run the server yourself. To join someone
    - **Loadout and role:** pick a perk page under *Choose your Loadout* and a role card (Gladiator, Tactician, Hunter or Predator), then click **Finalize your selections!**
    - **Skin:** click one of your shaper's skins, and a ward or announcer pack if you like. This phase ends by itself after 15 seconds.
 
-   If you don't pick in time, the game picks for you. The game remembers your skin and perk page for each shaper.
+   If you don't pick in time, the game picks for you. The game remembers your skin and perk page for each shaper, and your ward and announcer pack for the next match. The ward you pick is the one you place in the match, and every ward and announcer pack is yours to pick.
 5. **Play.** The match loads after about 30 seconds. It's five against five: you and four bot teammates against five bots.
 
 ## Controls
@@ -89,7 +89,7 @@ The match runs as in the original game. The server uses the game's own data and 
 - A destroyed core makes your minions stronger.
 - A core grows back after eight minutes, and the Guardian's shield comes back with it.
 
-**Bots.** The bots take their lanes after about a minute. They last-hit minions, cast their abilities, buy items, drink potions, place wards, push towers and fight. They also play as a team: they defend towers, gather for the parasite, capture and defend spirit wells, and join an ally going for a kill. In a practice match they go easier on you, as the original's first-time rules did.
+**Bots.** The bots take their lanes after about a minute. They last-hit minions, cast their abilities, buy items, drink potions, place wards, push towers and fight. They also play as a team: they defend towers, gather for the parasite, capture and defend spirit wells, and join an ally going for a kill. When they have the advantage, after won fights or with the parasite's buff, they group up in one lane and push with their minions until they lose the fight; from about 20 minutes, and whenever enemy cores are down, they siege the enemy base to end the match. In a practice match they go easier on you, as the original's first-time rules did.
 
 **Gold and experience.** You start with 500 gold and earn 100 gold a minute from 1:00. Last hits and kills give gold and experience. Each level gives you an ability point to spend with Ctrl + Q/W/E/R:
 
@@ -169,7 +169,11 @@ Everyone on a server needs their own account. The ways to play together:
 - **If your game crashes or you close it** during a match, your shaper stays in the match. Start the game again and log in, then click **Rejoin** in the main menu.
   - **LEAVE CURRENT MATCH** in the gear menu works the same way: you can rejoin later.
   - If every player of a team stays away for 60 seconds, that team surrenders.
-- **Custom games:** under CUSTOM you can create a game with a name and an optional password, browse games, join a team or spectate. These are implemented but haven't been tried in the game yet.
+- **Custom games:** under **CUSTOM**, **CREATE GAME** makes a lobby with a name and an optional password; **BROWSE GAMES** lists the server's games (a padlock marks a password), with **JOIN GAME** and **SPECTATE GAME**.
+  - In the lobby, **Join Mortal Team**/**Join Spirit Team** and **Join as Spectator** switch your side. The game's creator (the crown) can kick a player with a right-click on their slot and starts the game with **Start Game**.
+  - If the creator leaves the lobby, the game closes for everyone.
+  - Empty seats stay empty unless the server's operator has bots fill them.
+- **Spectating:** a spectator sees both teams and the whole map, and can also join a game that is already running. If a spectator's game closes, **Rejoin** in the main menu brings them back.
 
 ### Playing on someone else's server
 
@@ -196,7 +200,6 @@ You can also start `Start-Client.exe` without an address and type it in when ask
 ## Known limitations
 
 - The loot bag click after a win hasn't been confirmed in a real game yet. If you don't click the bag, the game returns to the main menu about 105 seconds after the end anyway.
-- Custom games and spectating are implemented but haven't been tried in the game yet.
 - Pause isn't available. Surrender isn't available in practice matches.
 - The minimap doesn't show jungle camp icons.
 - The bots follow rules partly reconstructed from the game's data, so their exact behaviour may differ from the original.

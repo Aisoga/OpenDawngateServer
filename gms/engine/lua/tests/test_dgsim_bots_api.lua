@@ -1034,17 +1034,63 @@ test('team: the call, pure', function()
   check(d.call == 'farm' and d.abort, 'no structure fell for 76 s: stalled')
   pushing.lastProgress = 440
   pushing.lastAdvantage = 450
-  check(B.TeamDecide(snap({ t = 451 }), pushing, cfg).call == 'farm', 'after 150 s: done')
+  check(B.TeamDecide(snap({ t = 451 }), pushing, cfg).call == 'push', 'after 150 s: on (BOTTEMPO: 240 s)')
+  pushing.lastProgress, pushing.lastAdvantage = 535, 540
+  check(B.TeamDecide(snap({ t = 541 }), pushing, cfg).call == 'farm', 'after 240 s: done')
   check(B.TeamDecide(snap({ enemiesAlive = 3, enemiesUp = 3, enemiesDown = 2 }), st({ cool = { push = 320 } }), cfg).call == 'farm',
         'a push cooling down')
   -- a lane of theirs open, even numbers, healthy: siege
   d = B.TeamDecide(snap({ t = 1300, enemyLaneOpen = true, parasite = { seenRecently = true } }), st(), cfg)
   check(d.call == 'push', 'a lane open: siege (' .. d.call .. ')')
-  check(B.TeamDecide(snap({ t = 1300, enemyLaneOpen = true, levelDiff = -1, parasite = { seenRecently = true } }), st(), cfg).call ~= 'push',
+  check(B.TeamDecide(snap({ t = 1100, enemyLaneOpen = true, levelDiff = -1, parasite = { seenRecently = true } }), st(), cfg).call ~= 'push',
         'a lane open but behind in levels: no')
+  -- BOTTEMPO: the late game (from 1200 s): even numbers, four of us, healthy, at most a level behind: group and siege
+  local off = {}
+  for k, v in pairs(cfg) do off[k] = v end
+  off.tempo = false
+  d = B.TeamDecide(snap({ t = 1300, enemyLaneOpen = true, levelDiff = -1, parasite = { seenRecently = true } }), st(), cfg)
+  check(d.call == 'push', 'the late game: a level behind is fine (' .. d.call .. ')')
+  check(B.TeamDecide(snap({ t = 1300, enemyLaneOpen = true, levelDiff = -1, parasite = { seenRecently = true } }), st(), off).call ~= 'push',
+        'the late game, BOTTEAM rules: no')
+  check(B.TeamDecide(snap({ t = 1300, levelDiff = -2, parasite = { seenRecently = true } }), st(), cfg).call ~= 'push',
+        'the late game, two levels behind: no')
+  check(B.TeamDecide(snap({ t = 1190, parasite = { seenRecently = true } }), st(), cfg).call == 'farm', 'before 1200 s: farm')
+  d = B.TeamDecide(snap({ t = 1250, parasite = { seenRecently = true } }), st(), cfg)
+  check(d.call == 'push' and string.find(d.reason, 'late game') ~= nil, 'from 1200 s, even: the siege (' .. tostring(d.reason) .. ')')
+  check(B.TeamDecide(snap({ t = 1250, hpAvg = 0.5, parasite = { seenRecently = true } }), st(), cfg).call == 'farm', 'hurt: no siege')
+  check(B.TeamDecide(snap({ t = 1250, alliesAlive = 3, alliesHealthy = 3, enemiesUp = 3, enemiesAlive = 3,
+                            parasite = { seenRecently = true } }), st(), cfg).call == 'farm', 'three of us: no siege')
+  check(B.TeamDecide(snap({ t = 1250, enemiesUp = 6 }), st(), cfg).call ~= 'push', 'outnumbered: no siege')
+  check(B.TeamDecide(snap({ t = 1250, parasite = { seenRecently = true } }), st({ cool = { push = 1260 } }), cfg).call == 'farm',
+        'the siege cooling down')
+  -- BOTTEMPO: pushMax counts from the last structure that fell
+  local going = st({ call = 'push', since = 300, lastAdvantage = 450, lastProgress = 445, lastKill = 400, lane = nLaneID.Bottom })
+  check(B.TeamDecide(snap({ t = 451 }), going, off).call == 'farm', 'BOTTEAM rules: 150 s from the start')
+  going.lastAdvantage, going.lastProgress = 600, 600
+  check(B.TeamDecide(snap({ t = 601 }), going, cfg).call == 'push', 'a Binding fell at 400: 301 s in, go on')
+  going.lastAdvantage, going.lastProgress = 641, 641
+  check(B.TeamDecide(snap({ t = 641 }), going, cfg).call == 'farm', '241 s after the last structure: done')
   -- the base first
-  check(B.TeamDecide(snap({ baseThreat = true }), pushing, cfg).call == 'defend', 'the base is attacked: defend')
+  check(B.TeamDecide(snap({ baseThreat = true, baseAttackers = 2, homeDefenders = 0 }), pushing, cfg).call == 'defend',
+        'the base is attacked: defend')
   check(B.TeamDecide(snap({ t = 600 }), st({ call = 'defend', lastThreat = 595 }), cfg).call == 'defend', 'defend holds 8 s')
+  -- BOTTEMPO: a siege leaves for a base attack only when the shapers at our base outnumber our bots there
+  local sieging = st({ call = 'push', since = 1300, lastAdvantage = 1310, lastProgress = 1310, lane = nLaneID.Bottom })
+  check(B.TeamDecide(snap({ t = 1311, baseThreat = true, baseAttackers = 0, homeDefenders = 0 }), sieging, cfg).call == 'push',
+        'minions at our base: the siege goes on')
+  check(B.TeamDecide(snap({ t = 1311, baseThreat = true, baseAttackers = 1, homeDefenders = 1 }), sieging, cfg).call == 'push',
+        'one of theirs, one of ours at home: the siege goes on')
+  check(B.TeamDecide(snap({ t = 1311, baseThreat = true, baseAttackers = 2, homeDefenders = 1 }), sieging, cfg).call == 'defend',
+        'two of theirs against one at home: defend')
+  check(B.TeamDecide(snap({ t = 1311, baseThreat = true, baseAttackers = 0, homeDefenders = 0 }), sieging, off).call == 'defend',
+        'BOTTEAM rules: any base attack ends the push')
+  check(B.TeamDecide(snap({ t = 1311, baseThreat = true, baseAttackers = 0 }), st(), cfg).call == 'defend',
+        'farming: a base attack is defended as before')
+  -- their cores down: an opening of its own (back before they regrow)
+  d = B.TeamDecide(snap({ t = 700, enemyCoresDown = 2, parasite = { seenRecently = true } }), st(), cfg)
+  check(d.call == 'push' and string.find(d.reason, 'cores are down') ~= nil, 'their cores down: finish it (' .. tostring(d.reason) .. ')')
+  check(B.TeamDecide(snap({ t = 700, enemyCoresDown = 2, parasite = { seenRecently = true } }), st(), off).call ~= 'push',
+        'BOTTEAM rules: no')
   -- an AFK human far behind: no parasite calls (the data's CheeseDetected); 3+ humans: no gather, no push
   check(B.TeamDecide(snap({ t = 500, cheese = true }), st(), cfg).call == 'farm', 'cheese: no calm parasite')
   check(B.TeamDecide(snap({ cheese = true, parasite = { inCombat = true, enemiesNear = 1 } }), st(), cfg).call ~= 'contest',
@@ -1208,7 +1254,7 @@ test('team: the calls carried out through the missions, lanes and pings', functi
   B.inSiege = false
   check(board.pings[#board.pings][1] == 0, 'a ping on the target')
   check(B.TeamStateOf(2).call == 'farm', 'the other team farms')
-  -- they come back: the advantage is gone, the push ends after 6 s, the lanes go back
+  -- they come back: even numbers, the push goes on (BOTTEMPO); the walk there is no stall
   W.get(enemies[1]).alive, W.get(enemies[1]).hp = true, 100
   W.get(enemies[2]).alive, W.get(enemies[2]).hp = true, 100
   W.matchTime = 403
@@ -1216,15 +1262,46 @@ test('team: the calls carried out through the missions, lanes and pings', functi
   check(st.call == 'push', 'within the hold')
   W.matchTime = 410
   B.TeamTick()
+  check(st.call == 'push', 'even numbers: the push goes on (' .. tostring(st.call) .. ')')
+  W.matchTime = 480
+  B.TeamTick()
+  check(st.call == 'push' and st.pushersNear < 2, 'still on the way after 80 s: no stall (' .. tostring(st.call) .. ')')
+  -- at the target: the stall clock runs; damage on it is progress
+  local target = B.PushTargetOf(B.TeamSnapshot(1), st.lane)
+  local tp = W.get(target).pos
+  for _, b in ipairs({ g1, g2, tc }) do W.get(b).pos = P(tp.x + 20, tp.y) end
+  W.matchTime = 485
+  B.TeamTick()
+  check(st.pushersNear == 3, 'three at the target (' .. tostring(st.pushersNear) .. ')')
+  W.get(target).hp = W.get(target).maxhp * 0.9
+  W.matchTime = 550
+  B.TeamTick()
+  check(st.call == 'push' and st.lastProgress == 550, 'the tower at 90 %: progress')
+  W.matchTime = 620
+  B.TeamTick()
+  check(st.call == 'push', 'no damage for 70 s: not yet stalled')
+  -- two of ours die: outnumbered, the push ends after the hold, the lanes go back
+  W.kill(g2)
+  W.kill(pr)
+  W.matchTime = 622
+  B.TeamTick()
+  W.matchTime = 629
+  B.TeamTick()
   check(st.call == 'farm' and lanes[g1] == nLaneID.Top and lanes[tc] == nLaneID.Top and lanes[g2] == nLaneID.Bottom,
-        'back to their own lanes (' .. tostring(st.call) .. ')')
+        'outnumbered: back to their own lanes (' .. tostring(st.call) .. ')')
   check(board.pings[#board.pings][1] == 1, 'a retreat ping')
   check(condition_Bot_TimeToRally[1](g1) == false and condition_Bot_GroupedWithAllies[1](g1) == true, 'no siege rally')
+  local ended
+  for _, l in ipairs(board.logs) do if string.find(l, 'the push took 0 structure') then ended = l end end
+  check(ended ~= nil, 'the push end line says what it took')
+  W.get(target).hp = W.get(target).maxhp
+  for _, b in ipairs({ g2, pr }) do W.get(b).alive, W.get(b).hp = true, W.get(b).maxhp end
+  W.get(g1).pos, W.get(g2).pos, W.get(tc).pos = P(-70, 70), P(70, -70), P(-80, 60)
   W.get(para).untargetable = false
-  -- the calm parasite at 500 s: Rally for all, KillParasite only once three are at the rally point
-  W.matchTime = 500
+  -- the calm parasite at 700 s: Rally for all, KillParasite only once three are at the rally point
+  W.matchTime = 700
   B.TeamTick()
-  check(st.call == 'parasite' and st.phase == 'gather', 'calm at 500 s: gather (' .. tostring(st.call) .. ')')
+  check(st.call == 'parasite' and st.phase == 'gather', 'calm at 700 s: gather (' .. tostring(st.call) .. ')')
   local rally
   for _, m in ipairs(board.open) do if m.team == 1 and m.type == nMissionType.Rally then rally = m end end
   check(rally ~= nil and rally.target == para and rally.dest and rally.dest[1] == -66 and rally.agents == 5,
@@ -1234,7 +1311,7 @@ test('team: the calls carried out through the missions, lanes and pings', functi
   check(select(1, condition_Bot_GatherForParasite[1](g1)) == false, 'the gather condition waits for the team')
   check(B.HunterParasitePos(hu) == nil, 'the Hunter farms while they gather')
   for _, b in ipairs({ g1, g2, tc }) do W.get(b).pos = P(-66, -10) end
-  W.matchTime = 510
+  W.matchTime = 710
   B.TeamTick()
   check(st.phase == 'kill', 'three gathered: the kill')
   check(nBot.GetAvailableMission(tc, nMissionType.KillParasite, 0) > 0, 'KillParasite open to them')
@@ -1243,7 +1320,7 @@ test('team: the calls carried out through the missions, lanes and pings', functi
   check(hp ~= nil and hp.x == -3, 'the Hunter joins')
   -- it dies: farm, the missions end
   W.kill(para)
-  W.matchTime = 540
+  W.matchTime = 740
   B.TeamTick()
   check(st.call == 'farm', 'the parasite died: farm')
   local left = 0
@@ -1251,12 +1328,12 @@ test('team: the calls carried out through the missions, lanes and pings', functi
   check(left == 0, 'the parasite missions ended')
   -- the base: defend
   nBot.RequestMission(1, nMissionType.DefendBase, W.guardians[1], 5, 5, 'dt')
-  W.matchTime = 545
+  W.matchTime = 745
   B.TeamTick()
   check(st.call == 'defend', 'the base is attacked: defend')
   check(nBot.GetAvailableMission(g2, nMissionType.DefendBase, 0) > 0, 'everyone may defend')
   board.open = {}
-  W.matchTime = 560
+  W.matchTime = 760
   B.TeamTick()
   check(st.call == 'farm', 'the threat is over')
   -- a well: the Predator and the Tactician take the capture mission, anyone else gets none
@@ -1276,6 +1353,24 @@ test('team: the calls carried out through the missions, lanes and pings', functi
   B.TeamTick()
   check(st.call == 'farm', 'the well is ours')
   check(#board.logs >= 6 and string.find(board.logs[1], 'team 1: farm %-> push') ~= nil, 'the calls are logged: ' .. tostring(board.logs[1]))
+  -- BOTTEMPO: a parasite call given up waits parasiteRetryCooldown (150 s) before the next one
+  W.get(para).alive, W.get(para).hp = true, 5000
+  W.get(g1).pos, W.get(g2).pos, W.get(tc).pos = P(-70, 70), P(70, -70), P(-80, 60)
+  local gathering = B.TeamStateOf(1)
+  gathering.call, gathering.phase, gathering.since, gathering.phaseSince = 'parasite', 'gather', 1020, 1020
+  W.matchTime = 1090
+  B.TeamTick()
+  check(st.call == 'farm' and st.cool.parasite == 1090 + B.teamConfig.parasiteRetryCooldown,
+        'a gather given up: the parasite waits 150 s (' .. tostring(st.cool.parasite) .. ')')
+  local status
+  for _, l in ipairs(board.logs) do if string.find(l, '^team 1 status at') then status = l end end
+  check(status ~= nil and string.find(status, 'enemy top 100/100/100, bottom 100/100/100, cores 2/2, Guardian 100', 1, true) ~= nil,
+        'a status line with the enemy structures: ' .. tostring(status))
+  W.kill(ids[7])
+  W.get(ids[8]).hp = W.get(ids[8]).maxhp * 0.25
+  B.Scan(true)
+  check(B.StructureStatus(2) == 'top -/25/100, bottom 100/100/100, cores 2/2, Guardian 100',
+        'the structures: ' .. B.StructureStatus(2))
   B.teamWanted, B.laneWanted = nil, nil
   for _, n in ipairs({ 'condition_Mission_RallyForParasite', 'condition_Mission_RallyForParasiteContest',
                        'condition_Mission_KillParasite', 'condition_Mission_CaptureWell', 'condition_Bot_GatherForParasite',

@@ -220,6 +220,23 @@ inline bool PursuitStuck(double seconds, float startDistance, float nowDistance,
   return seconds >= limitSeconds && startDistance - nowDistance < minProgress;
 }
 
+// BOTTEMPO: a bot frozen under its own ability. A bot ability that holds the agent and waits for the bot to reach a
+// point (ability_Bot_MoveToTarget: MoveToPointExact + WaitForNearGoal(0), the back step's ability) never ends when the
+// point can't be reached, and while it holds the agent the phase's default behavior can't run: in a test match a
+// Gladiator stood 211 s at one spot through four plans. Stuck when the same instance has held the agent for
+// `limitSeconds` while the bot moved less than `minMove` (the caller restarts the window whenever the bot has moved
+// that far); the host then ends the instance. The recall's 8-s channel and every cast are shorter; at home (healing,
+// shopping) the host doesn't ask.
+inline bool HoldStuck(double heldSeconds, float moved, double limitSeconds, float minMove) {
+  return limitSeconds > 0 && heldSeconds >= limitSeconds && moved < minMove;
+}
+
+// BOTTEMPO: a bot's mTarget (its best target, which the Pursue leaf follows) that is no longer a valid hostile target
+// (untargetable, unattackable, dead, an ally) is dropped: in test matches Tacticians walked from their base to the
+// parasite's spot after it died (its next stage untargetable there) and stood on it for two to three minutes, the
+// Pursue leaf following the old target with no gambit to replace it.
+inline bool TargetStale(bool hasTarget, bool validHostile) { return hasTarget && !validHostile; }
+
 // Who may be answered when a bot idles under attack: players and the mobile NPC types (nNPCType: lane minions 0-2, creeps
 // 3, objectives 6-8, pets 11, followers 12), not structures (Tower 9, Guardian 13, Nub 14, Locus 15, Ward 16), mines,
 // destructibles or interactables.

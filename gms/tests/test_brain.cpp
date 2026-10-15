@@ -270,6 +270,18 @@ GMS_TEST(BotIdleRules) {
   CHECK(!IdleFallbackDue(9000, 100, 0, 3000));  // switched off
 }
 
+// BOTTEMPO: a bot frozen under its own ability; a best target that is no longer a valid hostile one
+GMS_TEST(BotTempoHoldAndTargetRules) {
+  using namespace gms::agents;
+  CHECK(!HoldStuck(14.9, 0.5f, 15.0, 3.f));   // a channel, a cast: shorter
+  CHECK(HoldStuck(15.0, 0.5f, 15.0, 3.f));    // 15 s on one spot under the same instance
+  CHECK(!HoldStuck(60.0, 3.5f, 15.0, 3.f));   // it walks (the caller restarts the window after 3 units)
+  CHECK(!HoldStuck(600.0, 0.f, 0.0, 3.f));    // switched off
+  CHECK(TargetStale(true, false));             // the parasite's untargetable next stage, a corpse, an ally
+  CHECK(!TargetStale(true, true));
+  CHECK(!TargetStale(false, false));           // no target: nothing to drop
+}
+
 // ---- BOTRECALL / BOTBACK (gms/core/agents/recall.h) ------------------------------------------------------------------
 #include "core/agents/recall.h"
 

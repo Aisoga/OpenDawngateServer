@@ -147,6 +147,7 @@ struct LiveClientModel {
   uint8_t myIndex = 0xFF;
   std::vector<uint8_t> players;
   std::map<uint8_t, uint32_t> statuses;
+  std::map<uint8_t, uint32_t> nouns;  // each player's last mpNounDef
   // D3-core: shaper select
   bool shaperSelect = false;  // B6 opens shaper select (the GMS gave no status 0x10)
   uint32_t click = 0;         // a card to click (C8 04), once player `clickAfterLockOf`'s record is locked
@@ -173,6 +174,11 @@ struct LiveClientModel {
   // role lock (ShaperSelect_LockInPerksAndRoles); the pages C8 09 listed
   uint32_t perkPage = 0;
   std::vector<uint32_t> pagesListed;
+  // WARDSKIN: the ward skin and announcer pack it reports on entering phase 3 (C8 0E kind 0/1; 0 = none sent), and its
+  // local player's vanity slots as the C8 0E echo and OnLocalPlayerReconnect (0x8A) set them
+  uint32_t ward = 0, announcer = 0;
+  uint32_t myVanity[2] = {0, 0};
+  int reconnects = 0;
   // B15b: the game state EnterGame took it to (GameClient_OnGmsEnterGame 0x006B5CD0): 5 Dungeon, 6 Spectator (its own
   // status has the observer bit 0x20), 8 GameOver; 0 before
   int state = 0;
@@ -207,11 +213,12 @@ struct LiveClientModel {
     return true;
   }
   bool Has(uint8_t index) const { return std::find(players.begin(), players.end(), index) != players.end(); }
-  void SendShaper(uint8_t sub, uint32_t id = 0, uint8_t role = 0) {
+  void SendShaper(uint8_t sub, uint32_t id = 0, uint8_t role = 0, uint8_t kind = 0) {
     gms::ShaperSelectRequest r;
     r.sub = sub;
     r.id = id;
     r.role = role;
+    r.kind = kind;
     send(gms::BuildShaperSelectRequest(r));
   }
   void LockInPerksAndRoles() {  // 0x00521140: the selected page (C8 0A) if there is one, then the role lock (C8 08)
@@ -223,6 +230,11 @@ struct LiveClientModel {
     // B15b: an observer's client sends nothing (no record of its own; 2 -> 3 is ShaperSelect_SetPhase(3) for it)
     if (p == 2 && !Observer()) SendShaper(gms::kShaperSelectRole, 0, MyRole());  // the record's role entering phase 2
     if (p == 3 && phase == 2 && !roleLocked && !Observer()) LockInPerksAndRoles();  // on 2 -> 3
+    // WARDSKIN: entering phase 3 the client reports its preselected ward (seen live: C8 0E 00 <ward>)
+    if (p == 3 && !Observer()) {
+      if (ward) SendShaper(gms::kShaperSelectVanity, ward, 0, gms::kVanityWard);
+      if (announcer) SendShaper(gms::kShaperSelectVanity, announcer, 0, gms::kVanityAnnouncer);
+    }
     phase = p;
   }
   void Click() {
@@ -275,6 +287,9 @@ struct LiveClientModel {
       case gms::kShaperRoleToggle:
         if (m.size() >= 3 && !recordsKnown.count(m[2])) ++unknownRecords;
         break;
+      case gms::kShaperVanity:  // LabsPlayer_SetVanityAsset on the local player
+        if (m.size() >= 7 && m[2] <= 1) myVanity[m[2]] = gms::GetU32LE(&m[3]);
+        break;
       case gms::kShaperPerkPages:  // ShaperSelect_ReadPerkPageIds: u8 n, n x u32
         pagesListed.clear();
         for (size_t i = 3; m.size() >= 3 && i + 4 <= m.size() && pagesListed.size() < m[2]; i += 4)
@@ -315,6 +330,11 @@ struct LiveClientModel {
         send(gms::BuildPreGame(gms::kPreGameAllLoaded));
         if (autoAccept) send(Status(0x10000, 0.0f));  // connect type 1: only once the player clicks ACCEPT (G3)
         SendClock();
+        break;
+      case gms::kGmsOnLocalPlayerReconnect:  // 0x006B6480: two u32, each non-zero one into the local player
+        ++reconnects;
+        for (int k = 0; k < 2 && m.size() >= 9; ++k)
+          if (const uint32_t id = gms::GetU32LE(&m[1 + 4 * k])) myVanity[k] = id;
         break;
       case gms::kGmsGameAborted:
         aborts.push_back(m);
@@ -374,6 +394,7 @@ struct LiveClientModel {
           break;
         }
         if (!members.empty() && members[0] == gms::kPlayerStatus) statuses[index] = v.status;
+        if (std::find(members.begin(), members.end(), gms::kPlayerNounDef) != members.end()) nouns[index] = v.noun;
         if (inShaperSelect && !picksAckSent && AllHave(gms::kStatusShaperSelectDone)) {
           picksAckSent = true;
           send(gms::BuildPreGame(gms::kPreGameAllLoaded));
@@ -1414,6 +1435,66 @@ GMS_TEST(SessionShaperSelectRejoinInEachPhase) {
   }
 }
 
+// WARDSKIN: the vanity picks reach the pick (IMatch::OnShaperPicks, which writes them into the server player) and the
+// client's local player (the C8 0E echo); a human who comes back after its pick gets them on its new client by
+// OnLocalPlayerReconnect (0x8A, before C0 01), a first connection doesn't (it had the echoes). An unowned ward is refused.
+GMS_TEST(SessionShaperSelectVanityAndItsRejoin) {
+  const uint32_t kEast = gms::AssetIdOf("wardskin_east.Noun"), kToad = gms::AssetIdOf("wardskin_toad.Noun");
+  const uint32_t kFenmore = gms::AssetIdOf("PC_Alpha.AnnouncerPack");
+  CHECK_HEX(gms::BuildLocalPlayerReconnect(0x11223344u, 0), "8a4433221100000000");
+  for (int p = 0; p <= 1; ++p) {  // 0: nobody leaves; 1: B leaves after the reveal and comes back
+    std::printf("  %s\n", p ? "rejoin after the reveal" : "no rejoin");
+    LogCapture log;
+    MultiRig rig(300);
+    rig.match.config.players[1].content.wards = {gms::AssetIdOf("wardskin_default.Noun"), kEast};
+    Human& a = rig.Connect(kUserA);
+    Human& b = rig.Connect(kUserB);
+    a.model.ward = kToad;  // A has no ownership data: any ward is taken
+    b.model.ward = kEast;
+    b.model.announcer = kFenmore;
+    CHECK(rig.RunUntil([&] { return rig.Phase() == 4; }, 5000));
+    CHECK_EQ(a.model.myVanity[0], kToad);
+    CHECK(b.model.myVanity[0] == kEast && b.model.myVanity[1] == kFenmore);
+    Human* bb = &b;
+    if (p) {
+      const bool loaded = b.Got(gms::BuildPreGame(gms::kPreGameLoad));
+      rig.End(b);
+      rig.Step();
+      Human& b2 = rig.Connect(kUserB);
+      bb = &b2;
+      if (loaded) std::printf("  (B had C0 01 before it left)\n");
+    }
+    CHECK(rig.RunUntil([&] { return a.Entered() && bb->Entered(); }, 6000));
+    const gms::ShaperPick* pa = rig.match.Pick(0);
+    const gms::ShaperPick* pb = rig.match.Pick(1);
+    CHECK(pa && pa->ward == kToad && pa->announcer == 0);
+    CHECK(pb && pb->ward == kEast && pb->announcer == kFenmore);
+    CHECK_EQ(a.model.reconnects, 0);
+    const std::string want = gms::Hex(gms::BuildLocalPlayerReconnect(kEast, kFenmore), static_cast<size_t>(-1));
+    if (p) {
+      const int at = bb->First(want), load = bb->First("c001");
+      CHECK(at >= 0 && load >= 0 && at < load);  // before C0 01 (TransitionToLoading preloads them)
+      CHECK_EQ(bb->model.reconnects, 1);
+      CHECK(bb->model.myVanity[0] == kEast && bb->model.myVanity[1] == kFenmore);
+      CHECK(log.Has("local player reconnect: player 1 ward"));
+    } else {
+      CHECK_EQ(b.model.reconnects, 0);
+    }
+  }
+  // an unowned ward is refused and not echoed: the pick keeps the default
+  LogCapture log;
+  MultiRig rig(300);
+  rig.match.config.players[0].content.wards = {kEast};
+  Human& a = rig.Connect(kUserA);
+  rig.Connect(kUserB);
+  a.model.ward = kToad;
+  CHECK(rig.RunUntil([&] { return rig.Phase() == 4; }, 5000));
+  CHECK_EQ(a.model.myVanity[0], 0u);
+  const gms::ShaperPick* pa = rig.match.Pick(0);
+  CHECK(pa && pa->ward == 0);
+  CHECK(log.Has("wrong phase or not owned"));
+}
+
 // Q2's third hole at the session: a PlayerJoined after a client's B6 gives it the player but no shaper select record,
 // so the records of that player (its picks, the timers' locks: same team) don't go to it; the reveal's update does.
 GMS_TEST(SessionShaperSelectRecordsOnlyForPlayersAtB6) {
@@ -1920,6 +2001,14 @@ GMS_TEST(SessionLateSpectatorIsNamedAfterThePlayersPreGame) {
     CHECK(!s.model.inShaperSelect && s.model.recordsKnown.empty());  // its client never opened shaper select
     CHECK_EQ(s.model.state, 6);
     CHECK(!rig.session->Shapers()->HasObserver(s.conn));
+    // its client never saw the reveal: the players' updates carry their picks (mpNounDef, mRole), or the spectator's
+    // client has a player without a shaper (its minimap's player list asserts pDefaultSkinNoun, MinimapUI.cpp 369)
+    for (const gms::ShaperPick& k : rig.session->Shapers()->Picks()) {
+      if (k.scripted) continue;
+      CHECK(k.skin != 0);
+      CHECK_EQ(s.model.nouns[k.gameplayIndex], k.skin);
+    }
+    CHECK(log.Has("player update (another human): player 0"));
   }
 }
 

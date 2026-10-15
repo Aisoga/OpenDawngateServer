@@ -52,6 +52,13 @@ Bytes BuildPlayerJoined(uint8_t gameplayIndex) { return Bytes{kGmsPlayerJoined, 
 
 Bytes BuildPlayerDeparted(uint8_t gameplayIndex) { return Bytes{kGmsPlayerDeparted, gameplayIndex}; }
 
+Bytes BuildLocalPlayerReconnect(uint32_t ward, uint32_t announcer) {
+  Bytes m{kGmsOnLocalPlayerReconnect};
+  PutU32LE(m, ward);
+  PutU32LE(m, announcer);
+  return m;
+}
+
 Bytes BuildGamePrepareForStart(const GameSetup& s) {
   Bytes m{kGmsGamePrepareForStart};
   PutU32LE(m, 0);

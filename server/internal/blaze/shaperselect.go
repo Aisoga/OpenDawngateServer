@@ -105,7 +105,15 @@ func ShaperContent(c *content.Content, a store.Account, freeRotation []string, e
 		e.Shapers = append(e.Shapers, o)
 	}
 	for _, it := range c.Items {
-		if it.TestingOnly || it.Asset == "" || !owned(a, it) {
+		if it.TestingOnly || it.Asset == "" {
+			continue
+		}
+		// WARDSKIN: every ward skin and announcer pack, owned or not. Build 854's client counts every collection type
+		// but perk shapes and gems as owned (Collection_IsOwned 0x00878840), so its
+		// ward carousel and announcer list offer them all and a click sends C8 0E for any of them
+		// (ShaperSelect_OnWardClicked 0x00515260, _OnSelectAnouncerPack 0x00512DE0); the host refuses a C8 0E outside
+		// this list, which with --owned starter left the shown pick without effect in the match.
+		if it.ItemType != content.ItemWardSkin && it.ItemType != content.ItemAnnouncerPack && !owned(a, it) {
 			continue
 		}
 		switch it.ItemType {

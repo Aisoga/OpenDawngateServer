@@ -1298,6 +1298,8 @@ void LoadApi(void* sim) {
                           " dgsim_bots.harassStartWorkers = " + std::to_string(g_opt.harassStartWorkers) +
                           " dgsim_bots.harassEndWorkers = " + std::to_string(g_opt.harassEndWorkers) +
                           " dgsim_bots.teamWanted = " + (g_opt.team && g_opt.laneFixes ? "true" : "false") +
+                          " dgsim_bots.tempoWanted = " + (g_opt.tempo ? "true" : "false") +
+                          " dgsim_bots.teamStatusEvery = " + std::to_string(g_opt.teamStatusS) +
                           " dgsim_bots.hunterGank = " + (g_opt.hunterGank ? "true" : "false") + " return 'ok'";
   SehRunLua(sim, pre.c_str(), static_cast<unsigned>(pre.size()), "dgsim_bots_pre", out, sizeof out);
   const bool ok = SehRunLua(sim, chunk.c_str(), static_cast<unsigned>(chunk.size()), "dgsim_bots_api.lua", out, sizeof out);
@@ -1382,10 +1384,13 @@ void Configure(const Options& o) {
   g_opt.team = HostOptionInt("bot_team", o.team ? 1 : 0) != 0;                   // BOTTEAM
   g_opt.teamPings = HostOptionInt("bot_team_pings", o.teamPings ? 1 : 0) != 0;  // BOTTEAM
   g_opt.hunterGank = HostOptionInt("bot_hunter_gank", o.hunterGank) != 0 ? 1 : 0;
+  g_opt.tempo = HostOptionInt("bot_tempo", o.tempo ? 1 : 0) != 0;                 // BOTTEMPO
+  g_opt.teamStatusS = HostOptionInt("bot_team_status_s", o.teamStatusS);         // BOTTEMPO
+  if (g_opt.teamStatusS < 0) g_opt.teamStatusS = 0;
   if (g_opt.missionMs < 100) g_opt.missionMs = 100;
   Log("bots (D6a, D6b): bots %d%s, allies %d, classes '%s', lua %d, lanes %d, ftue %d, log limit %d; missions %d (every "
       "%d ms), shopping %d (potions %d), fire tracker %d, script fix-ups %d; BOTCOMP composition %d (drop '%s'), harass "
-      "workers %d..%d, Hunter gank %d; BOTTEAM team layer %d, pings %d",
+      "workers %d..%d, Hunter gank %d; BOTTEAM team layer %d, pings %d; BOTTEMPO %d, team status every %d s",
       g_opt.teamSize,
       g_opt.teamSize < 0
           ? " (auto: createGame's fillTeams a team, else 5 a team when the game's descriptors have BotsFillTeams 0x400)"
@@ -1393,7 +1398,7 @@ void Configure(const Options& o) {
       g_opt.allies, g_opt.classes.c_str(), g_opt.lua, g_opt.lanes, g_opt.ftue, g_opt.logLimit, g_opt.missions,
       g_opt.missionMs, g_opt.shopping, g_opt.potions, g_opt.fireTracker, g_opt.fixups, g_opt.composition,
       g_opt.compositionDrop.c_str(), g_opt.harassStartWorkers, g_opt.harassEndWorkers, g_opt.hunterGank,
-      g_opt.team && g_opt.laneFixes, g_opt.teamPings);
+      g_opt.team && g_opt.laneFixes, g_opt.teamPings, g_opt.tempo, g_opt.teamStatusS);
 }
 
 void SetFillTeams(int seats) {

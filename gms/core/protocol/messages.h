@@ -96,6 +96,12 @@ Bytes BuildHelloPlayer(const std::vector<HelloPlayerRecord>& records);
 Bytes BuildPlayerJoined(uint8_t gameplayIndex);
 Bytes BuildPlayerDeparted(uint8_t gameplayIndex);
 
+// OnLocalPlayerReconnect (0x8A), 8 bytes: u32 ward skin asset id, u32 announcer pack asset id (the vanity kinds 0 and
+// 1 of C8 0E). GameClient_OnGmsLocalPlayerReconnect (0x006B6480) reads two u32 and gives each non-zero one, through
+// AssetCatalog_FindById, to its local player (LabsPlayer_SetVanityAsset 0x009113F0, cLabsPlayer +0x314 + 4 x kind):
+// the vanity picks of a returning player's new client, which skips shaper select's phase 3 (WARDSKIN).
+Bytes BuildLocalPlayerReconnect(uint32_t ward, uint32_t announcer);
+
 // GamePrepareForStart (0xB5), 21 bytes: u32 0, u32 flags, u32 level, u32 seed, u32 level flags, u8 0 (non-zero would
 // force connect type 4). Reader GameClient_OnGmsGamePrepareForStart (0x006B5AB0); must arrive in kGameStateLobby.
 struct GameSetup {

@@ -1497,6 +1497,20 @@ B.teamConfig = B.teamConfig or {
   pushMax = 150, pushStall = 75, pushCooldown = 45,
   pushStallCooldown = 120, -- after a stalled push (an inner Binding that does not fall: two pushes there in a test match)
   lateSiegeHp = 0.6,       -- average HP of the living for the "lane open" push
+  -- BOTTEMPO: a push lasts. Under way it holds while we are not outnumbered (pushHoldNumbers: allies alive minus
+  -- enemies up), its stall clock runs only once pushArriveBots of us stand within pushArriveRange of the target and
+  -- any damage on their structures (pushProgressHp: a sum of HP fractions) counts as progress, the push's time
+  -- (pushMaxTempo) counts from the last structure that fell; from siegeFrom (the data's late-game mark: BackToAction's
+  -- GroupInLane gambit at match 1200 s) even numbers are an opening (the late-game siege). tempo = false: BOTTEAM's
+  -- rules as they were.
+  tempo = true,
+  pushHoldNumbers = 0, pushArriveRange = 70, pushArriveBots = 2, pushProgressHp = 0.03, pushMaxTempo = 240,
+  parasiteRetryCooldown = 150,  -- after a parasite call given up (a retreat, a gather that took too long)
+  siegeFrom = 1200, siegeHp = 0.6, siegeLevelGap = 1,
+  -- the siege at their base: it holds one down (siegeHoldNumbers), leaves for a base attack only when the enemy shapers
+  -- within baseRange of our Guardian outnumber our bots there, and with their cores down comes back after
+  -- siegeReturnCooldown s ("their cores are down" is an opening of its own)
+  siegeHoldNumbers = -1, baseRange = 100, siegeReturnCooldown = 20,
   parasiteCalmFrom = 480,  -- the calm take from this match second
   parasiteCalmAllies = 4,  -- healthy allies alive for it
   parasiteSeenRange = 70, parasiteSeenWindow = 15,
@@ -1508,7 +1522,11 @@ B.teamConfig = B.teamConfig or {
   defendHold = 8,
   healthy = 0.5,           -- HP fraction of a healthy ally
   pingGap = 6,
+  statusEvery = 30,        -- a status line per team this often (s; 0 = none)
 }
+-- the host's switches ([host] bot_tempo, bot_team_status_s), set before this chunk runs
+if B.tempoWanted == false then B.teamConfig.tempo = false end
+if tonumber(B.teamStatusEvery) ~= nil then B.teamConfig.statusEvery = tonumber(B.teamStatusEvery) end
 B.teamState = B.teamState or {}  -- team -> { call, since, phase, phaseSince, lane, target, well, assigned, cool, ... }
 B.stats.team = B.stats.team or { calls = {}, aborts = 0, pings = 0, ticks = 0 }
 
@@ -1566,6 +1584,31 @@ local function meanDistance(bots, pos)
   end
   if n == 0 then return 1e6 end
   return sum / n
+end
+
+-- The structure a push in `lane` goes for: the enemy's outermost standing Binding there, else (the lane is open) the
+-- enemy base structure nearest to a living bot of the snapshot (a core, the Guardian once its shield is down).
+function B.PushTargetOf(s, lane)
+  local target = nBattlegrounds.GetOuterTower(s.enemy, lane)
+  if isNone(target) then
+    for _, b in ipairs(s.bots) do
+      if b.alive then
+        target = nBattlegrounds.GetClosestBaseStructure(b.id)
+        break
+      end
+    end
+  end
+  return target
+end
+
+-- BOTTEMPO: the living bots of a push (all but the Hunter, who keeps his camps) within `range` of `target`.
+function B.PushersNear(s, target, range)
+  if not exists(target) then return 0 end
+  local p, n = nGameObject.GetPosition(target), 0
+  for _, b in ipairs(s.bots) do
+    if b.alive and b.role ~= ROLE_HUNTER and dist(b.pos, p) <= range then n = n + 1 end
+  end
+  return n
 end
 
 -- What a team knows once a second (B.TeamDecide reads only this and its state). Who is alive and how long a dead enemy
@@ -1651,9 +1694,12 @@ function B.TeamSnapshot(team)
   local towersTop = nBattlegrounds.GetNumTowers(enemy, nLaneID.Top)
   local towersBot = nBattlegrounds.GetNumTowers(enemy, nLaneID.Bottom)
   s.enemyLaneOpen = towersTop <= 1 or towersBot <= 1
-  s.enemyStructures = 0
+  s.enemyStructures, s.enemyStructureHp = 0, 0
   for _, x in ipairs(B.Scan().structures) do
-    if nGameObject.GetTeam(x.id) == enemy and standing(x.id) then s.enemyStructures = s.enemyStructures + 1 end
+    if nGameObject.GetTeam(x.id) == enemy and standing(x.id) then
+      s.enemyStructures = s.enemyStructures + 1
+      s.enemyStructureHp = s.enemyStructureHp + hpFraction(x.id)  -- BOTTEMPO: damage on them is a push's progress
+    end
   end
   -- the push lane: the one with fewer towers of theirs; a tie goes to the lane most of our living bots are in
   local lane
@@ -1669,15 +1715,7 @@ function B.TeamSnapshot(team)
     if top > bottom then lane = nLaneID.Top else lane = nLaneID.Bottom end
   end
   s.pushLane = lane
-  s.pushTarget = nBattlegrounds.GetOuterTower(enemy, lane)
-  if isNone(s.pushTarget) then
-    for _, b in ipairs(s.bots) do
-      if b.alive then
-        s.pushTarget = nBattlegrounds.GetClosestBaseStructure(b.id)
-        break
-      end
-    end
-  end
+  s.pushTarget = B.PushTargetOf(s, lane)
   s.pushDistance = 1e6
   if exists(s.pushTarget) then s.pushDistance = meanDistance(s.bots, nGameObject.GetPosition(s.pushTarget)) end
   -- the parasite
@@ -1745,6 +1783,24 @@ function B.TeamSnapshot(team)
   -- and closes them again by itself, at 0.4-15.7 s in a test match)
   s.baseThreat = t >= 30 and (nBot.IsMissionAvailable(team, nMissionType.DefendBase) or
                               nBot.IsMissionAvailable(team, nMissionType.DefendCore))
+  -- BOTTEMPO: who attacks the base (the enemy shapers seen within baseRange of our Guardian) against who is home (our
+  -- living bots there), and the enemy's cores down (a base siege under way)
+  s.baseAttackers, s.homeDefenders, s.enemyCoresDown = 0, 0, 0
+  local g = nBattlegrounds.GetGuardianOnTeam and nBattlegrounds.GetGuardianOnTeam(team)
+  if exists(g) then
+    local gp = nGameObject.GetPosition(g)
+    for _, o in ipairs(nBot.GetEnemyPlayersNearPosition(team, gp, cfg.baseRange or 100, 0, true)) do
+      if nGameObject.IsAlive(o) == true then s.baseAttackers = s.baseAttackers + 1 end
+    end
+    for _, b in ipairs(s.bots) do
+      if b.alive and dist(b.pos, gp) <= (cfg.baseRange or 100) then s.homeDefenders = s.homeDefenders + 1 end
+    end
+  end
+  for _, x in ipairs(B.Scan().structures) do
+    if x.npc == nNPCType.Nub and nGameObject.GetTeam(x.id) == enemy and not standing(x.id) then
+      s.enemyCoresDown = s.enemyCoresDown + 1
+    end
+  end
   return s
 end
 
@@ -1760,6 +1816,14 @@ function B.TeamOpening(s, cfg)
   if s.buff >= 3 and numbers >= 0 and s.hpAvg >= 0.5 then return true, 'parasite buff on ' .. s.buff end
   if s.enemyLaneOpen and numbers >= 0 and s.alliesAlive >= 4 and s.hpAvg >= cfg.lateSiegeHp and s.levelDiff >= 0 then
     return true, 'a lane of theirs is open'
+  end
+  if cfg.tempo and (s.enemyCoresDown or 0) > 0 and numbers >= 0 and s.alliesAlive >= cfg.pushMinAllies and
+      s.hpAvg >= 0.5 then
+    return true, 'their cores are down: finish it'  -- back before the 480-s regrowth
+  end
+  if cfg.tempo and s.t >= (cfg.siegeFrom or 1e9) and numbers >= 0 and s.alliesAlive >= 4 and
+      s.hpAvg >= (cfg.siegeHp or 0.6) and s.levelDiff >= -(cfg.siegeLevelGap or 1) then
+    return true, 'the late game: group and siege'
   end
   return false
 end
@@ -1801,8 +1865,11 @@ function B.TeamDecide(s, st, cfg)
              reason = reason or 'holding' }
   end
   local function farm(reason, abort) return { call = 'farm', reason = reason, abort = abort == true } end
-  -- 1. the base
-  if s.baseThreat then return { call = 'defend', reason = 'the base is attacked' } end
+  -- 1. the base (BOTTEMPO: a push goes on unless the enemy shapers at our base outnumber our bots there)
+  if s.baseThreat then
+    local siegeOn = cfg.tempo and cur == 'push' and (s.baseAttackers or 0) <= (s.homeDefenders or 0)
+    if not siegeOn then return { call = 'defend', reason = 'the base is attacked' } end
+  end
   if cur == 'defend' then
     if t - (st.lastThreat or -1e6) < cfg.defendHold then return keep('the base was attacked') end
     cur = 'farm'
@@ -1842,7 +1909,12 @@ function B.TeamDecide(s, st, cfg)
   end
   if cur == 'push' then
     if t - (st.lastAdvantage or st.since) > cfg.pushHold then return farm('the advantage is gone', true) end
-    if t - st.since > cfg.pushMax then return farm('the push time is up') end
+    local from, max = st.since, cfg.pushMax
+    if cfg.tempo then
+      max = cfg.pushMaxTempo or max
+      if st.lastKill ~= nil and st.lastKill > from then from = st.lastKill end  -- a structure fell: go on
+    end
+    if t - from > max then return farm('the push time is up') end
     if t - (st.lastProgress or st.since) > cfg.pushStall then
       local d = farm('the push stalled', true)
       d.stalled = true
@@ -1991,9 +2063,15 @@ local function leaveCall(team, s, st, prev, nextCall, abort, stalled)
   end
   if prev ~= 'farm' and prev ~= 'defend' then st.cool[prev] = s.t + (B.teamConfig[prev .. 'Cooldown'] or 30) end
   if prev == 'push' and stalled then st.cool.push = math.max(st.cool.push or 0, s.t + B.teamConfig.pushStallCooldown) end
+  -- BOTTEMPO: with their cores down the team comes back soon, before the cores regrow (480 s)
+  if prev == 'push' and B.teamConfig.tempo and (s.enemyCoresDown or 0) > 0 then
+    st.cool.push = s.t + (B.teamConfig.siegeReturnCooldown or 20)
+  end
   -- a retreat from the parasite holds both of its calls (a test match: a kill aborted as outnumbered, a contest 1 s later)
   if abort and (prev == 'parasite' or prev == 'contest') then
-    st.cool.parasite = math.max(st.cool.parasite or 0, s.t + B.teamConfig.parasiteCooldown)
+    local wait = B.teamConfig.parasiteCooldown
+    if B.teamConfig.tempo then wait = B.teamConfig.parasiteRetryCooldown or wait end  -- BOTTEMPO: back to the lanes first
+    st.cool.parasite = math.max(st.cool.parasite or 0, s.t + wait)
     st.cool.contest = math.max(st.cool.contest or 0, s.t + B.teamConfig.contestCooldown)
   end
 end
@@ -2002,6 +2080,7 @@ local function enterCall(team, s, st, d)
   local call = d.call
   if call == 'push' then
     st.lastAdvantage, st.lastProgress, st.structures = s.t, s.t, s.enemyStructures
+    st.structureHp, st.lastKill, st.pushersNear, st.pushTaken = s.enemyStructureHp, nil, 0, 0
     for _, b in ipairs(s.bots) do
       if b.role ~= ROLE_HUNTER then
         if st.homeLane[b.id] == nil then st.homeLane[b.id] = nBot.GetLaneID(b.id) end
@@ -2040,12 +2119,45 @@ end
 local function upkeep(team, s, st)
   if s.baseThreat then st.lastThreat = s.t end
   if st.call == 'push' then
-    -- the advantage: an opening still (any of its rules), or at least one more of us up than of them
-    if B.TeamOpening(s, B.teamConfig) or (s.alliesAlive - s.enemiesUp >= 1 and s.alliesHealthy >= 2 and s.hpAvg >= 0.35) then
+    local cfg = B.teamConfig
+    -- the advantage: an opening still (any of its rules), or at least one more of us up than of them (BOTTEMPO: not
+    -- fewer of us, cfg.pushHoldNumbers 0, and at least pushMinAllies alive)
+    local need, minAlive = 1, 0
+    if cfg.tempo then
+      need, minAlive = cfg.pushHoldNumbers or 0, cfg.pushMinAllies or 3
+      -- at their base (the target a core or the Guardian and enough of us there) one death doesn't end the siege
+      local target = B.PushTargetOf(s, st.lane or s.pushLane)
+      if exists(target) and nGameObject.GetNPCType(target) ~= nNPCType.Tower and
+          B.PushersNear(s, target, cfg.pushArriveRange or 70) >= (cfg.pushArriveBots or 2) then
+        need = cfg.siegeHoldNumbers or -1
+      end
+    end
+    if B.TeamOpening(s, cfg) or (s.alliesAlive - s.enemiesUp >= need and s.alliesAlive >= minAlive and
+                                 s.alliesHealthy >= 2 and s.hpAvg >= 0.35) then
       st.lastAdvantage = s.t
     end
-    if st.structures ~= nil and s.enemyStructures < st.structures then st.lastProgress = s.t end
+    if st.structures ~= nil and s.enemyStructures < st.structures then
+      st.lastProgress, st.lastKill = s.t, s.t
+      B.stats.team.structures = (B.stats.team.structures or 0) + (st.structures - s.enemyStructures)
+      st.pushTaken = (st.pushTaken or 0) + (st.structures - s.enemyStructures)
+    end
     st.structures = s.enemyStructures
+    if cfg.tempo then
+      -- damage on their structures is progress; their HP back up (a regrowth, a heal) moves the mark up with it
+      local hp = s.enemyStructureHp or 0
+      if st.structureHp == nil or hp > st.structureHp then st.structureHp = hp end
+      if hp <= st.structureHp - (cfg.pushProgressHp or 0.03) then
+        st.lastProgress, st.structureHp = s.t, hp
+      end
+      -- the walk there is not a stall: the clock runs once enough of us stand at the target
+      local target = B.PushTargetOf(s, st.lane or s.pushLane)
+      st.pushersNear = B.PushersNear(s, target, cfg.pushArriveRange or 70)
+      if st.pushersNear < (cfg.pushArriveBots or 2) then st.lastProgress = math.max(st.lastProgress or s.t, s.t) end
+      if exists(target) and target ~= st.target then
+        if st.target ~= nil then teamPing(s, st, nGameObject.GetPosition(target), target, PING_ATTENTION, 'push on', false) end
+        st.target = target
+      end
+    end
   end
   local p = s.parasite
   if st.call == 'parasite' and p.stands then
@@ -2061,6 +2173,11 @@ function B.TeamTickOne(team)
   upkeep(team, s, st)
   local d = B.TeamDecide(s, st, B.teamConfig)
   local prev, prevPhase = st.call, st.phase
+  local after = ''
+  if prev == 'push' and d.call ~= prev then
+    after = string.format('; the push took %d structure(s) in %.0f s, %d of us at its target', st.pushTaken or 0,
+                          s.t - (st.since or s.t), st.pushersNear or 0)
+  end
   if d.call ~= prev then
     leaveCall(team, s, st, prev, d.call, d.abort, d.stalled)
     if d.abort then
@@ -2081,10 +2198,60 @@ function B.TeamTickOne(team)
   end
   if d.call ~= prev or d.phase ~= prevPhase then
     teamLog(string.format('team %d: %s -> %s (%s); allies %d alive (%d healthy, %d bots), enemies %d up, %d down, ' ..
-      'level %+.1f, hp %.2f', team, callName(prev, prevPhase), callName(d.call, d.phase), tostring(d.reason),
-      s.alliesAlive, s.alliesHealthy, #s.bots, s.enemiesUp, s.enemiesDown, s.levelDiff, s.hpAvg))
+      'level %+.1f, hp %.2f%s', team, callName(prev, prevPhase), callName(d.call, d.phase), tostring(d.reason),
+      s.alliesAlive, s.alliesHealthy, #s.bots, s.enemiesUp, s.enemiesDown, s.levelDiff, s.hpAvg, after))
   end
   return d
+end
+
+-- A team's structures as the status line shows them: per lane the Bindings Outer/Middle/Inner (HP %, '-' when down),
+-- the cores standing and the Guardian's HP %.
+function B.StructureStatus(team)
+  local lanes = { [nLaneID.Top] = { '-', '-', '-' }, [nLaneID.Bottom] = { '-', '-', '-' } }
+  local cores, coresUp, guardian = 0, 0, '-'
+  for _, x in ipairs(B.Scan().structures) do
+    if exists(x.id) and nGameObject.GetTeam(x.id) == team then
+      local up = standing(x.id)
+      local pct = up and string.format('%d', math.floor(hpFraction(x.id) * 100 + 0.5)) or '-'
+      if x.tier ~= nil and lanes[x.lane] and x.tier <= 2 then
+        lanes[x.lane][x.tier + 1] = pct
+      elseif x.npc == nNPCType.Nub then
+        cores = cores + 1
+        if up then coresUp = coresUp + 1 end
+      elseif x.npc == nNPCType.Guardian then
+        guardian = pct
+      end
+    end
+  end
+  return string.format('top %s, bottom %s, cores %d/%d, Guardian %s', table.concat(lanes[nLaneID.Top], '/'),
+                       table.concat(lanes[nLaneID.Bottom], '/'), coresUp, cores, guardian)
+end
+
+-- Once every teamConfig.statusEvery s: a status line per team (its call, the bots by what they do, the enemy's
+-- structures), for reading a long match minute by minute.
+function B.TeamStatus(team)
+  local st = teamState(team)
+  local t = matchTime()
+  local players = nPlayer.GetPlayerControlledObjects()
+  local alive, n, inPushLane = 0, 0, 0
+  if type(players) == 'table' then
+    for _, c in ipairs(players) do
+      if exists(c) and nGameObject.GetTeam(c) == team and nPlayer.IsBot(c) == true then
+        n = n + 1
+        if nGameObject.IsAlive(c) == true then
+          alive = alive + 1
+          if st.call == 'push' and st.lane ~= nil and laneOfPoint(nGameObject.GetPosition(c)) == st.lane then
+            inPushLane = inPushLane + 1
+          end
+        end
+      end
+    end
+  end
+  return string.format('team %d status at %.0f s: %s for %.0f s%s; bots %d/%d alive%s; enemy %s; own %s', team, t,
+                       callName(st.call or 'farm', st.phase), t - (st.since or 0),
+                       st.call == 'push' and string.format(' (lane %s)', tostring(st.lane)) or '', alive, n,
+                       st.call == 'push' and string.format(', %d in the push lane', inPushLane) or '',
+                       B.StructureStatus(enemyOf(team)), B.StructureStatus(team))
 end
 
 function B.TeamTick()
@@ -2093,6 +2260,15 @@ function B.TeamTick()
   for _, team in ipairs({ nTeamID.Mortal, nTeamID.Spirit }) do
     local ok, err = pcall(B.TeamTickOne, team)
     if not ok then noteError('TeamTick: ' .. tostring(err)) end
+  end
+  local every = B.teamConfig.statusEvery or 0
+  local t = matchTime()
+  if every > 0 and t >= (B.nextTeamStatus or 0) then
+    B.nextTeamStatus = t + every
+    for _, team in ipairs({ nTeamID.Mortal, nTeamID.Spirit }) do
+      local ok, line = pcall(B.TeamStatus, team)
+      if ok then teamLog(line) else noteError('TeamStatus: ' .. tostring(line)) end
+    end
   end
   return 0
 end

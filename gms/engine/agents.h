@@ -87,6 +87,10 @@ struct Options {
   bool botReflex = true;             // [host] bot_reflex
   bool botBackStep = true;           // [host] bot_back_step: the lane phases' Back gambit is a short step, not a walk home
   bool botRecall = true;             // [host] bot_recall: a bot sent home casts Return to Base when it is quiet and far away
+  // BOTTEMPO (gms/core/agents/brain.h HoldStuck, TargetStale): no bot stands for minutes under its own walk to an
+  // unreachable point or on the spot of a target that became untargetable
+  int botHoldStuckMs = 15000;        // [host] bot_hold_stuck_ms: an instance holding a bot that hasn't moved 3 units this long ends (0 = off)
+  bool botStaleTarget = true;        // [host] bot_stale_target: a bot's mTarget that is no longer a valid hostile target is dropped
   // RANGES: the parasite keeps an attacker on its list out to this distance ([host] parasite_reach, 0 = the data's
   // 27.05; it only lets the list keep an attacker, the on-sight range stays 27)
   float parasiteReach = 40.f;

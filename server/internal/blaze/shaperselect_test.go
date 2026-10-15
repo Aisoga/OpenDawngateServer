@@ -19,6 +19,10 @@ func TestShaperContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// WARDSKIN: a ward and an announcer pack nobody owns (granted after the inventory above) are listed too
+	c.Items = append(c.Items, content.Item{CatalogID: 0x10000F01, Name: "wardskin_east", ItemType: content.ItemWardSkin,
+		Status: "none", Asset: "wardskin_east.Noun"}, content.Item{CatalogID: 0x10000F02, Name: "PC_Dancer_Announcer",
+		ItemType: content.ItemAnnouncerPack, Status: "none", Asset: "PC_Dancer.AnnouncerPack"})
 	var shapers, skins []content.Item
 	wards, announcers := 0, 0
 	for _, it := range c.Items {
@@ -96,7 +100,8 @@ func TestShaperContent(t *testing.T) {
 		len(e.Wards), len(e.Announcers), e.SavedSkins)
 
 	// nothing owned: every shaper is 0 (visible under "Any" only) but the free rotation's (by item name and by
-	// PlayerClass), no skins, only the always-owned vanity items, and no saved skin (not owned)
+	// PlayerClass), no skins and no saved skin (not owned); still every ward and announcer pack (WARDSKIN: the client
+	// counts them owned and offers them all)
 	var bare gmshost.RosterEntry
 	ShaperContent(c, store.Account{Settings: a.Settings}, []string{" " + strings.ToUpper(first.Name), second.Shaper}, &bare)
 	for i, o := range bare.Shapers {
@@ -111,16 +116,9 @@ func TestShaperContent(t *testing.T) {
 	if len(bare.Skins) != 0 || len(bare.SavedSkins) != 0 {
 		t.Errorf("unowned: skins %v, saved %v", bare.Skins, bare.SavedSkins)
 	}
-	for _, w := range append(append([]string{}, bare.Wards...), bare.Announcers...) {
-		found := false
-		for _, it := range c.Items {
-			if it.Asset == w && it.Status == "alwaysOwned" {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("unowned account lists %s", w)
-		}
+	if !reflect.DeepEqual(bare.Wards, e.Wards) || !reflect.DeepEqual(bare.Announcers, e.Announcers) {
+		t.Errorf("unowned: wards %v, announcers %v; want every one: %v, %v", bare.Wards, bare.Announcers, e.Wards,
+			e.Announcers)
 	}
 
 	// no content: nothing

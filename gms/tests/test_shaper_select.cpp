@@ -788,6 +788,98 @@ GMS_TEST(ShaperSelectTwoHumansRejoinInEachPhase) {
   }
 }
 
+// The phases of the C8 01 messages (repeats included) to `conn` from position `from` on.
+std::vector<int> PhasesTo(const RecordingSender& out, gms::ConnId conn, size_t from = 0) {
+  std::vector<int> v;
+  for (size_t i = from; i < out.sent.size(); ++i)
+    if (out.sent[i].conn == conn && out.sent[i].hex.compare(0, 4, "c801") == 0)
+      v.push_back(std::stoi(out.sent[i].hex.substr(20, 2), nullptr, 16));
+  return v;
+}
+
+// A custom game's (or any game's) two humans on one team: a player whose lock-in was answered is in phase 2 on its own
+// client while the other still picks, and one that locked its role (C8 08) is in phase 3 while the other still
+// chooses. The client takes any other phase in a C8 01 as a change (ShaperSelect_HandleGmsMessage 0x00521B50, no
+// guard in ShaperSelect_SetPhase 0x005201B0), so the phase-1 repeats had reopened the locked player's shaper list (the
+// user's report: the shaper not locked in, still switchable). It gets no C8 01 of an earlier phase than its own.
+GMS_TEST(ShaperSelectLockedHumanGetsNoEarlierPhase) {
+  QuietLog log;
+  gms::ShaperSelectConfig cfg;
+  cfg.timers = Timers(60000, 60000, 60000, 16);
+  cfg.humanDefault.list = {Entry(kAlpha, 1), Entry(kArtificer, 1)};
+  const uint32_t alphaB = gms::AssetIdOf("alpha_b.Noun");
+  cfg.humanDefault.skins[kAlpha] = {alphaB};
+  gms::ShaperSelect ss(cfg);
+  const gms::ConnId a = 10, b = 11;
+  ss.AddHuman(a, 0, 1);
+  ss.AddHuman(b, 1, 1);
+  RecordingSender out;
+  int64_t t = 1000;
+  ss.OnReady(a, t, out);
+  ss.OnReady(b, t, out);
+  CHECK_EQ(ss.Phase(), 1);
+  // A picks and locks; B doesn't yet: the match stays in phase 1 for 3 s of repeats
+  Msg(ss, a, Req(gms::kShaperRequest, kAlpha), t += 100, out);
+  Msg(ss, a, Req(gms::kShaperLockIn, kAlpha), t += 100, out);
+  CHECK(ss.Record(0)->flags & gms::kRecordShaperLocked);
+  size_t mark = out.sent.size();
+  for (int i = 0; i < 30; ++i) ss.Tick(t += 100, out);
+  CHECK_EQ(ss.Phase(), 1);
+  CHECK(PhasesTo(out, a, mark).empty());                // nothing that takes A back to its list
+  CHECK(PhasesTo(out, b, mark).size() >= size_t{2});    // B keeps getting phase 1's repeats
+  for (int ph : PhasesTo(out, b, mark)) CHECK_EQ(ph, 1);
+  // A clicks a card anyway (a stale click): refused, the record stays; Choose again: the answer, no phase 1
+  Msg(ss, a, Req(gms::kShaperRequest, kArtificer), t += 100, out);
+  CHECK_EQ(ss.Record(0)->shaper, kAlpha);
+  Msg(ss, a, Req(gms::kShaperLockIn, kAlpha), t += 100, out);
+  // B locks: phase 2 to both
+  mark = out.sent.size();
+  Msg(ss, b, Req(gms::kShaperRequest, kArtificer), t += 100, out);
+  Msg(ss, b, Req(gms::kShaperLockIn, kArtificer), t += 100, out);
+  CHECK_EQ(ss.Phase(), 2);
+  CHECK(PhasesTo(out, a, mark) == std::vector<int>({2}));
+  CHECK(PhasesTo(out, b, mark) == std::vector<int>({2}));
+  // A locks its role (its client is in phase 3 now); B still chooses: A gets no phase-2 repeat
+  Msg(ss, a, Req(gms::kShaperLockRole, 0, 2), t += 100, out);
+  // A's client sends its preselected skin on entering its phase 3, and A clicks another: both taken already
+  Msg(ss, a, Req(gms::kShaperSelectSkin, kAlpha), t += 100, out);
+  Msg(ss, a, Req(gms::kShaperSelectSkin, alphaB), t += 100, out);
+  CHECK_EQ(ss.Record(0)->skin, alphaB);
+  // B's client is still in phase 2: a skin from it is refused
+  Msg(ss, b, Req(gms::kShaperSelectSkin, kArtificer), t += 100, out);
+  CHECK(log.Has("player 1: skin 0x5da8b09e ignored (not in phase 3)"));
+  mark = out.sent.size();
+  for (int i = 0; i < 30; ++i) ss.Tick(t += 100, out);
+  CHECK_EQ(ss.Phase(), 2);
+  CHECK(PhasesTo(out, a, mark).empty());
+  CHECK(PhasesTo(out, b, mark).size() >= size_t{2});
+  // B locks its role: phase 3 to both (the same phase for A's client: only its timer)
+  mark = out.sent.size();
+  Msg(ss, b, Req(gms::kShaperLockRole, 0, 0), t += 100, out);
+  CHECK_EQ(ss.Phase(), 3);
+  CHECK(PhasesTo(out, a, mark) == std::vector<int>({3}));
+  CHECK(PhasesTo(out, b, mark) == std::vector<int>({3}));
+  for (int i = 0; i < 20; ++i) ss.Tick(t += 100, out);
+  for (int ph : PhasesTo(out, a, mark)) CHECK_EQ(ph, 3);
+  // a lock-in answer is still the only C8 05 kind sent (01)
+  for (const Sent& x : out.sent) CHECK(x.hex.substr(0, 4) != "c805" || x.hex.substr(12) == "01");
+  CHECK(log.Has("player 0's client is in phase 2 by itself (its lock-in answered) while the match is in phase 1"));
+
+  // the guard off ([host] shaper_phase_guard=0): the old behaviour, phase 1's repeats to the locked player too
+  cfg.clientPhaseGuard = false;
+  gms::ShaperSelect old(cfg);
+  old.AddHuman(a, 0, 1);
+  old.AddHuman(b, 1, 1);
+  RecordingSender out2;
+  t = 1000;
+  old.OnReady(a, t, out2);
+  old.OnReady(b, t, out2);
+  Msg(old, a, Req(gms::kShaperLockIn, kAlpha), t += 100, out2);
+  mark = out2.sent.size();
+  for (int i = 0; i < 30; ++i) old.Tick(t += 100, out2);
+  CHECK(PhasesTo(out2, a, mark).size() >= size_t{2});
+}
+
 // G3a: a player that joins shaper select after phase 1 (an index without a configured player, e.g. a late spectator
 // turned player) gets the timers' picks at once, so its pick is never 0 (mpNounDef 0 asserts at C0 01).
 GMS_TEST(ShaperSelectLateNewPlayerGetsTheAutomaticPicks) {
@@ -971,6 +1063,23 @@ GMS_TEST(ShaperSelectPageModifiersToRenew) {
   CHECK(gms::PageModifiersToRenew({protect, bush}, {}) == (std::vector<uint32_t>{protect, bush}));
   CHECK(gms::PageModifiersToRenew({protect, protect, 0u}, {other}) == (std::vector<uint32_t>{protect}));
   CHECK(gms::PageModifiersToRenew({}, {bush}).empty());
+}
+
+// WARDSKIN: only a ward skin Noun goes into a server player's ward slot (ability_Item_Ward creates that object), only
+// an AnnouncerPack into its announcer slot; the names as the assets carry them, case-insensitive.
+GMS_TEST(ShaperSelectVanityAssetNameFits) {
+  CHECK(gms::VanityAssetNameFits(gms::kVanityWard, "wardskin_east.Noun"));
+  CHECK(gms::VanityAssetNameFits(gms::kVanityWard, "wardSkin_fish.Noun"));
+  CHECK(gms::VanityAssetNameFits(gms::kVanityWard, "wardskin_default.Noun"));
+  CHECK(!gms::VanityAssetNameFits(gms::kVanityWard, "guardian_spirit.Noun"));
+  CHECK(!gms::VanityAssetNameFits(gms::kVanityWard, "wardskin_east.CollectionItem"));
+  CHECK(!gms::VanityAssetNameFits(gms::kVanityWard, "PC_Alpha.AnnouncerPack"));
+  CHECK(!gms::VanityAssetNameFits(gms::kVanityWard, ""));
+  CHECK(gms::VanityAssetNameFits(gms::kVanityAnnouncer, "PC_Alpha.AnnouncerPack"));
+  CHECK(gms::VanityAssetNameFits(gms::kVanityAnnouncer, "Default.AnnouncerPack"));
+  CHECK(!gms::VanityAssetNameFits(gms::kVanityAnnouncer, "wardskin_east.Noun"));
+  CHECK(!gms::VanityAssetNameFits(gms::kVanityAnnouncer, ".AnnouncerPack"));
+  CHECK(!gms::VanityAssetNameFits(2, "wardskin_east.Noun"));
 }
 
 GMS_TEST(ShaperSelectPerkPagesFromCreateGame) {

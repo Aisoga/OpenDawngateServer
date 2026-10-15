@@ -69,6 +69,8 @@ struct Options {
   int harassEndWorkers = 2;   // BOTCOMP: ... and below which the harass ends (the script's 4)
   bool team = true;           // BOTTEAM: the team layer (one call per team: farm, parasite, contest, well, push, defend)
   bool teamPings = true;      // BOTTEAM: the bots ping their team's calls to the human teammates (MiniMapPing)
+  bool tempo = true;          // BOTTEMPO: pushes that last (the walk is no stall, damage is progress) and the late siege
+  int teamStatusS = 30;       // BOTTEMPO: a "team N status" line per team this often (0 = none)
   int hunterGank = 0;         // BOTCOMP: 1 keeps the Hunter's Gank plan (a trap: it never leaves it)
   bool laneFixes = true;      // BOTLANE: Gladiators stay in lane, towers get finished, the opened lane is sieged
   int campRadius = 9;         // BOTIDLE: dgsim_bots_api.lua's fifth fix-up: IsNearNextCreepCamp's radius (the script's 5; 0 = keep it)

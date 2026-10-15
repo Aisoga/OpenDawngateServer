@@ -274,6 +274,44 @@ bool SehWritePick(void* sim, unsigned index, void* noun, unsigned char role, std
   return TryWritePick(sim, index, noun, role, page, version);
 }
 
+// WARDSKIN: an asset's name (its first member; "" for none or no name) into `out`.
+void CopyAssetName(const void* asset, char* out, unsigned cap) {
+  const char* s = asset ? Field<const char*>(const_cast<void*>(asset), 0) : nullptr;
+  unsigned k = 0;
+  for (; s && s[k] && k + 1 < cap; ++k) out[k] = s[k];
+  out[k] = 0;
+}
+bool SehAssetName(const void* asset, char* out, unsigned cap) {
+  __try {
+    CopyAssetName(asset, out, cap);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "AssetName")) {
+    out[0] = 0;
+    return false;
+  }
+}
+
+// WARDSKIN: shaper select's vanity pick (C8 0E: kind 0 ward skin, 1 announcer pack) into the server cLabsPlayer's
+// vanity slot (+0x314 + 4 x kind, as LabsPlayer_SetVanityAsset 0x009113F0 writes it), where nPlayer.GetWardAsset reads
+// the ward ability's object; `asset` = nullptr leaves the slot. `readBack` gets the name of what
+// LabsPlayer_GetVanityAsset returns afterwards (the slot, or the kind's default when it is empty).
+bool TryWriteVanity(void* sim, unsigned index, unsigned kind, void* asset, char* readBack, unsigned readCap) {
+  __try {
+    readBack[0] = 0;
+    void* p = GetPlayerByIndex(sim, index);
+    if (!p || kind > 1) return false;
+    if (asset) Field<void*>(p, player::kVanityAssets + 4 * kind) = asset;
+    CopyAssetName(GetVanityAsset(p, kind), readBack, readCap);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "WriteVanity")) {
+    return false;
+  }
+}
+bool SehWriteVanity(void* sim, unsigned index, unsigned kind, void* asset, char* readBack, unsigned readCap) {
+  BoundTo b(sim);
+  return TryWriteVanity(sim, index, kind, asset, readBack, readCap);
+}
+
 // D2g-live test fixture: runs a Lua chunk on the server simulator's lua_State (the master state; the caller binds the
 // server simulator) under lua_pcall; `out` gets its string result (or the error). False if it failed.
 bool SehRunLua(void* sim, const char* chunk, unsigned size, const char* name, char* out, unsigned cap) {
@@ -880,6 +918,12 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     if (!shaperSelect_) return false;
     config->timers = ShaperTimers();
     config->seed = o_.setup.seed;
+    // [host] shaper_phase_guard (1): no C8 01 of an earlier phase to a client that went ahead by its own lock-in or
+    // role lock while others still choose (it would reopen that phase: a locked shaper switchable again); 0 = before
+    config->clientPhaseGuard = HostOptionInt("shaper_phase_guard", 1) != 0;
+    if (!config->clientPhaseGuard)
+      gms::Logf("%s match: shaper select: [host] shaper_phase_guard=0: every phase repeat to every client, as before",
+                gms::Clock().c_str());
     config->humanDefault = o_.shapers;
     if (config->humanDefault.list.empty()) {
       gms::ShaperListEntry e;
@@ -966,12 +1010,35 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
                 k.page, k.pageVersion, k.loadout.size(), k.modifiers.size(), k.status,
                 ok ? "written (mpNounDef, mRole, mLoadoutID/Version)" : "NOT written");
       if (ok && human) ++picksWritten_;
+      if (human && vanityPicks_) WriteVanity(k);
       // D3-perks: the page's stats into the server player's loadout before the deploy (the creature's attributes add
       // its Add entries), the rest at the deploy (SendWorld)
       if (ok && human && k.page) {
         pagePicks_[k.gameplayIndex] = k;
         perks::WritePlayerLoadout(sim_, k.gameplayIndex, k.loadout);
       }
+    }
+  }
+
+  // WARDSKIN: a human's ward skin and announcer pack from shaper select (C8 0E, echoed to its client, which shows and
+  // saves them) into its server player, which held neither: nothing in the client writes a server player's vanity
+  // slots (LabsPlayer_SetVanityAsset's two callers are the client's echo and reconnect handlers), so
+  // nPlayer.GetWardAsset gave every ward ability the default and every placed ward was The Lantern. 0 (no C8 0E) keeps
+  // the default; an asset that isn't of its kind (gms::VanityAssetNameFits) is not written.
+  void WriteVanity(const gms::ShaperPick& k) {
+    const std::uint32_t ids[2] = {k.ward, k.announcer};
+    for (unsigned kind = 0; kind < 2; ++kind) {
+      if (!ids[kind]) continue;
+      const char* what = kind == gms::kVanityWard ? "ward skin" : "announcer pack";
+      void* asset = SehFindAssetById(ids[kind]);
+      char name[96] = {}, back[96] = {};
+      if (asset) SehAssetName(asset, name, sizeof name);
+      const bool fits = asset && gms::VanityAssetNameFits(static_cast<std::uint8_t>(kind), name);
+      const bool ok = fits && SehWriteVanity(sim_, k.gameplayIndex, kind, asset, back, sizeof back);
+      gms::Logf("%s match: shaper select %s of player %u: 0x%08x (%s) -> server player %s%s%s", gms::Clock().c_str(),
+                what, k.gameplayIndex, ids[kind], asset ? name : "no such asset",
+                ok ? "written, reads back " : (asset && !fits ? "NOT written (not a " : "NOT written"),
+                ok ? back : (asset && !fits ? what : ""), ok ? "" : (asset && !fits ? ")" : ""));
     }
   }
 
@@ -1071,6 +1138,9 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   // D14a-live: [host] answers_first (1: every command answer before the tick's replicated messages, the original's
   // order; 0 = only the item transactions' answers first, the others after the replication step, D7-live's order)
   void SetAnswersFirst(bool on) { answersFirst_ = on; }
+  // WARDSKIN: [host] vanity_picks (1: shaper select's ward skin and announcer pack into the server player; 0: not, as
+  // before: nPlayer.GetWardAsset gives the default and every ward placed is The Lantern)
+  void SetVanityPicks(bool on) { vanityPicks_ = on; }
   bool NetworkRate() const { return networkRate_; }
   void OnNetworkRate(unsigned mask) {
     ++netRateTicks_;
@@ -2981,6 +3051,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   int logFirst_ = 3;
   bool uiBeforeEnterGame_ = true;  // X2a
   bool answersFirst_ = true;       // D14a-live
+  bool vanityPicks_ = true;        // WARDSKIN
   gms::ModifierRegistry mods_;
   gms::WireCounts counts_;
   gms::SteadyClock::time_point countsSince_{};
@@ -3464,6 +3535,11 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
                : "after EnterGame ([host] ui_before_entergame 0: D1c-live's order, the tower slots collide)");
   const bool answersFirst = HostOptionInt("answers_first", 1) != 0;
   g->match->SetAnswersFirst(answersFirst);
+  const bool vanityPicks = HostOptionInt("vanity_picks", 1) != 0;
+  g->match->SetVanityPicks(vanityPicks);
+  Log("host: shaper select's ward skin and announcer pack %s", vanityPicks
+          ? "go into the server player, where the ward ability reads its object ([host] vanity_picks 1)"
+          : "stay with the client: every ward placed is the default ([host] vanity_picks 0)");
   Log("host: command answers %s",
       answersFirst ? "before the tick's replicated messages, as the original's send stub ([host] answers_first 1)"
                    : "after the replication step but the item transactions' ([host] answers_first 0: D7-live's order)");

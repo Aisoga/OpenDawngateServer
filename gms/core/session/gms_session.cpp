@@ -70,6 +70,7 @@ struct GmsSession::Conn {
   SteadyClock::time_point revealAt{};
   std::set<uint8_t> known;                  // G3a: the players its client has (HelloPlayer, PlayerJoined/Departed)
   bool superseded = false;                  // G3a: its user came back on another connection
+  bool rejoined = false;                    // WARDSKIN: its user had a slot (a returning player's new client)
   bool waitB6 = false;                      // G3: its B6 waits for the other humans (waitForPlayers)
   bool b6Go = false;                        // G3: the gate let it through (also after the wait's timeout)
   SteadyClock::time_point prepareAt{};      // G3b: GamePrepareForStart sent (the match-found prompt's countdown)
@@ -457,6 +458,7 @@ void GmsSession::Rejoined(Conn& c, const RejoinMap::Admission& a) {
   Logf("%s %8.3f    user %llu rejoins as player %u (team %u); its earlier connection %s", Clock().c_str(), c.Secs(),
        static_cast<unsigned long long>(c.userId), a.slot.gameplayIndex, a.slot.team,
        old ? ("(" + old->addr + ") is superseded").c_str() : "had ended");
+  c.rejoined = true;
   match_.OnRejoin(c.id, a.previous, a.slot);
 }
 
@@ -531,6 +533,16 @@ void GmsSession::SendReveal(Conn& to, const std::vector<ShaperPick>& picks, cons
                     k.gameplayIndex, k.page, k.loadout.size(), k.modifiers.size());
       SendRaw(to, loadout, lw);
     }
+    // WARDSKIN: a returning player's new client gets the ward skin and announcer pack it picked before the reveal
+    // (OnLocalPlayerReconnect 0x8A, before C0 01, where TransitionToLoading preloads them): its own C8 0E echoes went to
+    // the earlier client, and the new one doesn't pass phase 3 (it comes in phase 4 or later) [assumed: the original's
+    // use of 0x8A; the message has no other sender's trace]
+    if (to.rejoined && k.gameplayIndex == to.slot.gameplayIndex && (k.ward || k.announcer)) {
+      char vw[96];
+      std::snprintf(vw, sizeof vw, "local player reconnect: player %u ward 0x%08x, announcer 0x%08x", k.gameplayIndex,
+                    k.ward, k.announcer);
+      SendRaw(to, BuildLocalPlayerReconnect(k.ward, k.announcer), vw);
+    }
   }
   to.revealed = true;
   to.revealAt = SteadyClock::now();
@@ -577,14 +589,25 @@ void GmsSession::NameHumans(Conn& c) {
   for (const auto& kv : departed_) {
     const Departed& d = kv.second;
     if (!d.seated || kv.first == me || !c.known.count(kv.first)) continue;
-    const uint32_t noun = ss_ ? 0 : d.slot.noun;
+    uint32_t noun = ss_ ? 0 : d.slot.noun;
+    uint8_t role = 0;
+    bool picked = false;
+    if (ss_ && ss_->Revealed())  // its pick, as for a seated player (SendHumanUpdate)
+      for (const ShaperPick& k : ss_->Picks())
+        if (k.gameplayIndex == kv.first && k.skin) {
+          noun = k.skin;
+          role = k.role;
+          picked = true;
+        }
     std::vector<int> members{kPlayerStatus, kPlayerStatusProgress, kPlayerTeam};
+    if (picked) members.push_back(kPlayerRole);
     if (noun) members.push_back(kPlayerNounDef);
     members.push_back(kPlayerOnlineId);
     PlayerGlobalValues v;
     v.status = d.status;
     v.progress = d.progress;
     v.team = d.slot.team;
+    v.role = role;
     v.noun = noun;
     v.onlineId = d.userId;
     char what[160];
@@ -661,13 +684,32 @@ void GmsSession::SpectatorGone(uint8_t gameplayIndex) {
 // select: the reveal sends the picks), mPlayerOnlineId; through seam 5, so the host writes it from its server player.
 // B15b: a spectator's without mpNounDef (its status has the observer bit).
 void GmsSession::SendHumanUpdate(Conn& to, const Conn& p, bool withStatus, const std::string& what) {
-  const uint32_t noun = p.shaperSelect || p.spectator ? 0 : p.slot.noun;
+  uint32_t noun = p.shaperSelect || p.spectator ? 0 : p.slot.noun;
+  // A player whose shaper select is revealed: its pick (role, perk page, mpNounDef = the skin), which a client that
+  // comes after the reveal without shaper select of its own (a spectator of the running game) gets nowhere else: the
+  // reveal's updates go only to clients in shaper select. Without it that client had the player without a shaper
+  // (a late spectator's minimap list asserted pDefaultSkinNoun, MinimapUI.cpp 369, and stopped).
+  const ShaperPick* pick = nullptr;
+  std::vector<ShaperPick> picks;
+  if (p.shaperSelect && !p.spectator && ss_ && ss_->Revealed()) {
+    picks = ss_->Picks();
+    for (const ShaperPick& k : picks)
+      if (k.gameplayIndex == p.slot.gameplayIndex && k.skin) pick = &k;
+  }
+  if (pick) noun = pick->skin;
   std::vector<int> members;
   if (withStatus) {
     members.push_back(kPlayerStatus);
     members.push_back(kPlayerStatusProgress);
   }
   members.push_back(kPlayerTeam);
+  if (pick) {
+    members.push_back(kPlayerRole);
+    if (pick->page) {
+      members.push_back(kPlayerLoadoutId);
+      members.push_back(kPlayerLoadoutVersion);
+    }
+  }
   if (noun) members.push_back(kPlayerNounDef);
   members.push_back(kPlayerOnlineId);
   PlayerGlobalValues v;
@@ -676,6 +718,11 @@ void GmsSession::SendHumanUpdate(Conn& to, const Conn& p, bool withStatus, const
   v.team = p.slot.team;
   v.noun = noun;
   v.onlineId = p.userId;
+  if (pick) {
+    v.role = pick->role;
+    v.loadoutId = pick->page;
+    v.loadoutVersion = pick->pageVersion;
+  }
   char buf[200];
   std::snprintf(buf, sizeof buf, "%s: player %u, status 0x%x, team %u, noun 0x%08x, online id %llu", what.c_str(),
                 p.slot.gameplayIndex, p.status, p.slot.team, noun, static_cast<unsigned long long>(p.userId));

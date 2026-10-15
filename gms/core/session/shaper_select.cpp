@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdio>
 
 #include "core/common/log.h"
@@ -57,6 +58,18 @@ std::vector<uint32_t> PageModifiersToRenew(const std::vector<uint32_t>& page, co
   return out;
 }
 
+bool VanityAssetNameFits(uint8_t kind, const std::string& name) {
+  std::string n(name);
+  for (char& ch : n) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  auto ends = [&n](const char* suffix) {
+    const std::string s(suffix);
+    return n.size() > s.size() && n.compare(n.size() - s.size(), s.size(), s) == 0;
+  };
+  if (kind == kVanityWard) return n.rfind("wardskin_", 0) == 0 && ends(".noun");
+  if (kind == kVanityAnnouncer) return ends(".announcerpack");
+  return false;
+}
+
 PlayerGlobalValues RevealValues(const ShaperPick& p) {
   PlayerGlobalValues v;
   v.status = p.status;
@@ -68,7 +81,7 @@ PlayerGlobalValues RevealValues(const ShaperPick& p) {
 }
 
 ShaperSelect::ShaperSelect(const ShaperSelectConfig& config)
-    : timers_(config.timers), humanDefault_(config.humanDefault), rng_(config.seed) {
+    : timers_(config.timers), guard_(config.clientPhaseGuard), humanDefault_(config.humanDefault), rng_(config.seed) {
   for (const ShaperSelectPlayer& sp : config.players) {
     Player& p = players_[sp.gameplayIndex];
     p.team = sp.team;
@@ -104,6 +117,7 @@ void ShaperSelect::AddHuman(ConnId conn, uint8_t gameplayIndex, uint8_t team) {
   p.gone = false;
   p.open = true;
   p.ready = false;  // a returning player's new client has no shaper select until its C8 02 (Q2)
+  p.clientPhase = 1;  // a new client starts in phase 1 and follows our C8 01
   p.knowsAll = true;  // until the session's SetKnown for the new client (G3a)
   p.knows.clear();
   if (p.content.list.empty()) {
@@ -263,6 +277,24 @@ uint32_t ShaperSelect::Resolve(uint8_t index) {
   return fallback;
 }
 
+// The client went into `phase` by itself (logged by LogClientAhead once the message is handled: often the match
+// follows at once, e.g. the last lock of a phase).
+void ShaperSelect::ClientAhead(Player& p, int phase, const char* why) {
+  if (phase <= p.clientPhase) return;
+  p.clientPhase = phase;
+  p.aheadWhy = why;
+}
+
+// After a client message: a client still ahead of the match's phase gets no message of the match's phase.
+void ShaperSelect::LogClientAhead(Player& p) {
+  if (phase_ == 0 || p.clientPhase <= phase_ || p.clientPhase == p.aheadLogged) return;
+  p.aheadLogged = p.clientPhase;
+  Logf("%s    shaper select: player %u's client is in phase %d by itself (%s) while the match is in phase %d; %s",
+       Clock().c_str(), p.rec.index, p.clientPhase, p.aheadWhy, phase_,
+       guard_ ? "no phase message behind it goes to it"
+              : "the guard is off: the phase repeats still go to it and take it back");
+}
+
 void ShaperSelect::Refuse(uint8_t index, const char* what, const char* why) const {
   Logf("%s    shaper select: player %u: %s ignored (%s)", Clock().c_str(), index, what, why);
 }
@@ -315,7 +347,9 @@ void ShaperSelect::Lock(uint8_t index, bool answer, ISender& out) {
   const std::vector<uint32_t> skins = p.content.SkinsFor(s);
   out.Send(p.conn, BuildSkins(skins),
            "shaper select: skins of " + NounText(s) + " (" + std::to_string(skins.size()) + ")");
-  if (answer) out.Send(p.conn, BuildShaperLockResult(s), "shaper select: lock answer " + NounText(s));
+  if (!answer) return;
+  out.Send(p.conn, BuildShaperLockResult(s), "shaper select: lock answer " + NounText(s));
+  ClientAhead(p, 2, "its lock-in answered");  // the answer takes the client into phase 2 by itself
 }
 
 void ShaperSelect::Enter(int phase, int64_t at, int64_t now, ISender& out) {
@@ -323,7 +357,7 @@ void ShaperSelect::Enter(int phase, int64_t at, int64_t now, ISender& out) {
   phaseStart_ = static_cast<uint64_t>(at);
   phaseEnd_ = phaseStart_ + timers_.ForPhase(phase);
   for (const auto& kv : players_)
-    if (kv.second.Receives()) SendPhase(kv.second.conn, false, out);
+    if (kv.second.TakesPhase(phase, guard_)) SendPhase(kv.second.conn, false, out);
   for (const auto& kv : observers_)
     if (kv.second.Receives()) SendPhase(kv.first, false, out);
   nextRepeat_ = now + 1000;
@@ -479,7 +513,7 @@ void ShaperSelect::Advance(int64_t now, ISender& out) {
   }
   if (now >= nextRepeat_) {
     for (const auto& kv : players_)
-      if (kv.second.Receives()) SendPhase(kv.second.conn, true, out);
+      if (kv.second.TakesPhase(phase_, guard_)) SendPhase(kv.second.conn, true, out);
     for (const auto& kv : observers_)
       if (kv.second.Receives()) SendPhase(kv.first, true, out);
     nextRepeat_ = now + 1000;
@@ -567,6 +601,7 @@ void ShaperSelect::OnMessage(ConnId conn, const uint8_t* body, size_t n, int64_t
       } else if (phase_ <= 2) {  // locked meanwhile (the timer): the UI still waits for the answer, never 00
         out.Send(conn, BuildShaperLockResult(p.rec.shaper), "shaper select: lock answer (already locked) " +
                                                                 NounText(p.rec.shaper));
+        ClientAhead(p, 2, "its lock-in answered");
       } else {
         Refuse(index, what.c_str(), "after phase 2");
       }
@@ -590,6 +625,9 @@ void ShaperSelect::OnMessage(ConnId conn, const uint8_t* body, size_t n, int64_t
       }
       break;
     case kShaperLockRole:
+      // the client entered phase 3 when it sent this from its role page (ShaperSelect_LockInPerksAndRoles 0x00521140),
+      // accepted or not
+      if (phase_ >= 2 || p.clientPhase >= 2) ClientAhead(p, 3, "its C8 08 sent");
       if (r.role >= kNumRoles || phase_ < 2 || phase_ > 3 || (p.rec.flags & kRecordRoleLocked)) {
         Refuse(index, "lock role", r.role >= kNumRoles ? "no such role" : "wrong phase or role locked");
         break;
@@ -615,8 +653,11 @@ void ShaperSelect::OnMessage(ConnId conn, const uint8_t* body, size_t n, int64_t
     }
     case kShaperSelectSkin:
     case kShaperLockSkin: {
-      if (phase_ != 3 || p.skinFinal || !Contains(p.content.SkinsFor(p.rec.shaper), r.id)) {
-        Refuse(index, what.c_str(), phase_ != 3 ? "not in phase 3" : p.skinFinal ? "skin locked" : "not in its skins");
+      // phase 3, or already its client's own phase 3 (its role locked while the others still choose theirs): the
+      // client sends its preselected skin on entering phase 3 and the player may click skins there
+      const bool skinPhase = phase_ == 3 || (phase_ == 2 && guard_ && p.clientPhase >= 3);
+      if (!skinPhase || p.skinFinal || !Contains(p.content.SkinsFor(p.rec.shaper), r.id)) {
+        Refuse(index, what.c_str(), !skinPhase ? "not in phase 3" : p.skinFinal ? "skin locked" : "not in its skins");
         break;
       }
       p.skinChosen = true;
@@ -642,6 +683,7 @@ void ShaperSelect::OnMessage(ConnId conn, const uint8_t* body, size_t n, int64_t
       break;
   }
   Advance(serverMs, out);
+  LogClientAhead(p);
 }
 
 void ShaperSelect::Tick(int64_t serverMs, ISender& out) { Advance(serverMs, out); }

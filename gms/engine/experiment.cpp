@@ -934,6 +934,9 @@ void ReadConfig() {
     ao.parasiteReach = static_cast<float>(HostOptionInt("parasite_reach", 40));
     ao.botReflex = HostOptionInt("bot_reflex", 1) != 0 && HostOptionInt("bot_fixups", 1) != 0;  // BOTREFLEX
     ao.botRecall = HostOptionInt("bot_recall", 1) != 0;  // BOTRECALL
+    ao.botHoldStuckMs = HostOptionInt("bot_hold_stuck_ms", ao.botHoldStuckMs);  // BOTTEMPO
+    if (ao.botHoldStuckMs < 0) ao.botHoldStuckMs = 0;
+    ao.botStaleTarget = HostOptionInt("bot_stale_target", 1) != 0;  // BOTTEMPO
     ao.botBackStep = HostOptionInt("bot_back_step", 1) != 0 && ao.botReflex;  // BOTBACK
     ao.objectiveOnSight = HostOptionInt("objective_aggro_on_sight", 1) != 0;  // D14: the parasite (default 1 since 2026-10-10, the user's call)
     ao.minionTarget = HostOptionInt("minion_target_priority", 1) != 0;  // MINTARGET

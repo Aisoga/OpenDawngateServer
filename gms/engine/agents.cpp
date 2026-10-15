@@ -159,6 +159,10 @@ struct AgentState {
   unsigned long long lastTowerHitMs = 0, lastShaperHitMs = 0;
   int reflexKind = 0;
   unsigned long long reflexLogMs = 0;
+  // BOTTEMPO: the hold watchdog's window (the instance holding the agent, since when, where the bot stood then)
+  unsigned holdInst = 0;
+  unsigned long long holdSinceMs = 0;
+  float holdPos[2] = {};
 };
 std::unordered_map<std::uint32_t, AgentState> g_agents;  // by object id
 
@@ -1113,6 +1117,36 @@ bool SehHeldByUninterruptible(void* o, const char** name) {
   }
 }
 
+// BOTTEMPO: the ability instance holding the bot's agent now (any kind of hold), its id and static name.
+bool SehHeldAbility(void* o, unsigned* id, const char** name) {
+  __try {
+    char* c = Field<char*>(o, obj::kAbilityData);
+    if (!c) return false;
+    unsigned i = Field<unsigned>(c, kContainerTreeAbility);
+    if (!i) i = Field<unsigned>(c, kContainerHeldAbility);
+    void* in = i ? GetInstance(i) : nullptr;
+    if (!in || Field<int>(in, inst::kType) != 0 || !Field<unsigned char>(in, inst::kHoldsAgent) ||
+        Field<unsigned char>(in, inst::kEndPending))
+      return false;
+    char* st = Field<char*>(in, inst::kStatic);
+    *id = i;
+    *name = st ? *reinterpret_cast<const char**>(st) : "?";
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "held ability (BOTTEMPO)")) {
+    return false;
+  }
+}
+
+bool SehEndAbility(unsigned id) {
+  __try {
+    if (!GetInstance(id)) return false;
+    EndAbility(id);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "EndAbility (BOTTEMPO hold watchdog)")) {
+    return false;
+  }
+}
+
 bool GameOver(void* sim) {
   __try {
     return Field<unsigned char>(sim, 0x15) != 0;  // GameSimulator_IsGameOver 0x008EFC30
@@ -1582,6 +1616,7 @@ struct BotStats {
   unsigned backSteps = 0;  // BOTBACK: Back gambits that stepped toward the base instead of walking home
   unsigned recalls = 0;  // BOTRECALL: Back gambits that cast Return to Base instead of walking
   unsigned skipped = 0, skippedThenActed = 0, pursuitStuck = 0, fallbackTries = 0, fallbackActed = 0;
+  unsigned holdStuck = 0, staleTargets = 0;  // BOTTEMPO: holds ended by the watchdog, stale mTargets dropped
 };
 BotStats g_bot;
 constexpr unsigned long long kQuickExitMs = 1000;
@@ -2172,6 +2207,60 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
   }
   if (st.gambitReadyMs.size() != v.gambits.size()) st.gambitReadyMs.assign(v.gambits.size(), 0);
 
+  // BOTTEMPO: a target that is no longer a valid hostile one is dropped (gms/core/agents/brain.h TargetStale), so the
+  // Pursue leaf doesn't keep the bot on its spot; a running Pursue leaf is restarted (request 0x400) to redecide
+  if (g_opt.botStaleTarget) {
+    const std::uint32_t raw = SehRawTarget(o);
+    if (gms::agents::TargetStale(raw != 0, raw != 0 && SehHostile(self.team, raw))) {
+      SehSetTarget(o, 0);
+      ++g_bot.staleTargets;
+      const bool restart = st.leaf == kLeafPursue && !st.pointPursuit && SehResetDefaultBehavior(o);
+      if (LogBudget()) {
+        void* tobj = SehFind(raw);
+        Log("agents: bot %08X %s phase %d (%s): mTarget %08X (%s) is no longer a valid hostile target: dropped%s "
+            "(BOTTEMPO) (t %.2f s)",
+            self.id, st.noun, st.botPhase, v.phaseName, raw, tobj ? SehNounName(tobj) : "gone",
+            restart ? ", Pursue restarted" : "", static_cast<double>(nowMs) / 1000.0);
+      }
+    }
+  }
+  // BOTTEMPO: the hold watchdog (HoldStuck): the same instance holding the agent while the bot stands still away from
+  // home for botHoldStuckMs ends
+  if (g_opt.botHoldStuckMs > 0) {
+    constexpr float kHoldMove = 3.f, kHomeRadius = 40.f;
+    unsigned hid = 0;
+    const char* hname = nullptr;
+    float base[3];
+    const bool atHome = BotStartPoint(self, base) && Distance2D(base, self.pos) <= kHomeRadius;
+    if (atHome || !SehHeldAbility(o, &hid, &hname)) {
+      st.holdInst = 0;
+    } else if (hid != st.holdInst) {
+      st.holdInst = hid;
+      st.holdSinceMs = nowMs;
+      st.holdPos[0] = self.pos[0];
+      st.holdPos[1] = self.pos[1];
+    } else {
+      const float dx = self.pos[0] - st.holdPos[0], dy = self.pos[1] - st.holdPos[1];
+      const float moved = std::sqrt(dx * dx + dy * dy);
+      if (moved >= kHoldMove) {  // it walks: a new window
+        st.holdSinceMs = nowMs;
+        st.holdPos[0] = self.pos[0];
+        st.holdPos[1] = self.pos[1];
+      } else if (gms::agents::HoldStuck(static_cast<double>(nowMs - st.holdSinceMs) / 1000.0, moved,
+                                        g_opt.botHoldStuckMs / 1000.0, kHoldMove)) {
+        const bool ended = SehEndAbility(hid);
+        ++g_bot.holdStuck;
+        if (LogBudget())
+          Log("agents: bot %08X %s phase %d (%s): %s (instance %08X) held it %.1f s on one spot at (%.1f, %.1f): %s "
+              "(BOTTEMPO) (t %.2f s)",
+              self.id, st.noun, st.botPhase, v.phaseName, hname ? hname : "?", hid,
+              static_cast<double>(nowMs - st.holdSinceMs) / 1000.0, static_cast<double>(self.pos[0]),
+              static_cast<double>(self.pos[1]), ended ? "ended" : "gone already", static_cast<double>(nowMs) / 1000.0);
+        st.holdInst = 0;
+      }
+    }
+  }
+
   // D6c: while an uninterruptible ability holds the agent (a cast before its ReleaseAgent, a dodge, a channel) the bot
   // neither requests a gambit nor restarts its default behavior: either would abort the ability (SehHeldByUninterruptible)
   const char* held = nullptr;
@@ -2711,10 +2800,25 @@ int AddBaseStructures(std::uint32_t agentId, const std::uint32_t* ids, int n, st
 std::string DescribeBot(std::uint32_t objectId) {
   auto it = g_agents.find(objectId);
   if (it == g_agents.end() || it->second.botPlan == -2) return std::string();
-  char b[96];
-  std::snprintf(b, sizeof b, "plan %d phase %d leaf %s%s%s", it->second.botPlan, it->second.botPhase,
-                LeafName(it->second.leaf), it->second.pursue ? " pursue" : "",
-                it->second.pointPursuit ? " point" : "");  // D6d: the pursuit goes to a point
+  char b[200];
+  int n = std::snprintf(b, sizeof b, "plan %d phase %d leaf %s%s%s", it->second.botPlan, it->second.botPhase,
+                        LeafName(it->second.leaf), it->second.pursue ? " pursue" : "",
+                        it->second.pointPursuit ? " point" : "");  // D6d: the pursuit goes to a point
+  // BOTTEMPO: the mTarget (its noun) and the ability holding the agent, for reading a long match
+  if (void* o = SehFind(objectId)) {
+    if (n > 0 && n < static_cast<int>(sizeof b)) {
+      const std::uint32_t tgt = SehRawTarget(o);
+      if (tgt) {
+        void* t = SehFind(tgt);
+        const int k = std::snprintf(b + n, sizeof b - n, " tgt %s", t ? SehNounName(t) : "gone");
+        if (k > 0) n += k;
+      }
+    }
+    unsigned hid = 0;
+    const char* hname = nullptr;
+    if (n > 0 && n < static_cast<int>(sizeof b) && SehHeldAbility(o, &hid, &hname))
+      std::snprintf(b + n, sizeof b - n, " held %s", hname ? hname : "?");
+  }
   return b;
 }
 
@@ -2761,9 +2865,10 @@ void FormatStats(char* buf, std::size_t size) {
   if (len > 0 && static_cast<std::size_t>(len) < size)
     std::snprintf(buf + len, size - len,
                   "; bot idle fixes (BOTIDLE): refusals passed to the next gambit %u (then acted %u), pursuits dropped "
-                  "as stuck %u, idle fallback tries %u (acted %u); recalls instead of walking home (BOTRECALL) %u, short steps instead of the walk (BOTBACK) %u",
+                  "as stuck %u, idle fallback tries %u (acted %u); recalls instead of walking home (BOTRECALL) %u, short steps instead of the walk (BOTBACK) %u; "
+                  "BOTTEMPO: holds ended on one spot %u, stale targets dropped %u",
                   g_bot.skipped, g_bot.skippedThenActed, g_bot.pursuitStuck, g_bot.fallbackTries, g_bot.fallbackActed,
-                  g_bot.recalls, g_bot.backSteps);
+                  g_bot.recalls, g_bot.backSteps, g_bot.holdStuck, g_bot.staleTargets);
 }
 
 }  // namespace agents

@@ -18,6 +18,7 @@ A read-only evidence tool for live sessions in which the GMS creates objects (do
     mDeaths/mAssists (+0x240/+0x244/+0x248, A9 members 3-5), the creep score (+0x24C, AA member 3), XP (+0xA4), total
     gold (+0xAC) and level (+0xB0); since D7b the available gold (+0xA8), spell points (+0x20) and the inventory
     (mItems[11] at +0xB4, 0x24 bytes each: asset, count +0x18), and the player creature's Power and HealthRegen;
+    since WARDSKIN the vanity slots (+0x314 ward skin, +0x318 announcer pack; 0 = the default);
     since D14b-live any object's crowd control when set ("cc imm N immNoRot N sup N": Immobilized, ImmobilizedNoRotate,
     Suppressed);
   - (D1h) the death recap the client got (DeathRecap C9, GameClient_OnGmsDeathRecap 0x006B6200 -> the UI object
@@ -301,6 +302,11 @@ def main():
                 inv.append(f'{s}: {p.cstr(p.u32(asset))} x{p.u32(item + 0x18)}')
         say(f'  available gold (+0xA8) {p.f32(pl + 0xA8):.2f}, spell points (+0x20) {p.u32(pl + 0x20)}, items '
             f'[{", ".join(inv) if inv else "none"}]')
+        # WARDSKIN: the vanity slots (+0x314 ward skin Noun, +0x318 AnnouncerPack; LabsPlayer_SetVanityAsset 0x009113F0,
+        # set by shaper select's C8 0E echo and OnLocalPlayerReconnect 0x8A; 0 = the kind's default)
+        van = [p.u32(pl + 0x314), p.u32(pl + 0x318)]
+        say('  vanity (+0x314): ward ' + (p.cstr(p.u32(van[0])) if van[0] else 'default') + ', announcer ' +
+            (p.cstr(p.u32(van[1])) if van[1] else 'default'))
 
     # X2a: the tower graphics' slot stride (TowerGraphics_Init 0x00539310 copies mNumTowersPerLane, cBattlegroundsUIData
     # at sim +0xC930 + 0xD0, at EnterGame; 0 makes all four lane groups share slots) and the per-slot states that

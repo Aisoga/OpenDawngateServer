@@ -19,8 +19,9 @@
 // A timer-ended phase's successor starts at the old end (not at the tick that noticed it), so the ends are exact.
 // Records go to the player's team in phases 1-3 and to everyone in phase 4; a shaper is unique within a team only.
 // Every C8 04 is answered (00 when refused: the client's UI waits for it); C8 05 is answered 01 only (00 asserts in the
-// client); the current C8 01 is repeated every second to every client in shaper select. Messages in the wrong phase or
-// for a locked part are ignored and logged.
+// client); the current C8 01 is repeated every second to every client in shaper select, except to a client that moved
+// ahead by itself (its lock-in answered, or its C8 08 sent, while the others still choose): a C8 01 of an earlier
+// phase would take it back there. Messages in the wrong phase or for a locked part are ignored and logged.
 // Several humans (G3a): a client has a record only for the players its simulator had when it opened shaper select
 // (HelloPlayer and PlayerJoined before B6); a record or role toggle for any other index asserts in the client
 // ("Using invalid player index"). So with SetKnown a client gets records and toggles only of the indices it knows.
@@ -95,6 +96,9 @@ struct ShaperSelectConfig {
   uint32_t seed = 1;            // the Random picks' generator (std::mt19937)
   ShaperContent humanDefault;   // for a human whose gameplay index has no entry in `players`
   std::vector<ShaperSelectPlayer> players;
+  // No C8 01 of an earlier phase to a client that moved ahead by itself (Player::clientPhase); false = every repeat to
+  // everyone, as before (the host's [host] shaper_phase_guard=0, to see the old behaviour).
+  bool clientPhaseGuard = true;
 };
 
 // A player's result (phase 4), in gameplay-index order.
@@ -128,6 +132,12 @@ std::vector<LoadoutAttribute> LoadoutCreatureModifiers(const std::vector<Loadout
 // modifier_PerkHandler_ProtectDistantAllies ends OnAgentDeath (its aura stops while its holder is dead) and comes back,
 // as the host's passives do (passives.h) [assumed: the stripped player hook 0x009A3F00 that GameObject_OnRevived calls].
 std::vector<uint32_t> PageModifiersToRenew(const std::vector<uint32_t>& page, const std::vector<uint32_t>& active);
+// WARDSKIN: whether an asset of that name may be a player's vanity asset of `kind` (C8 0E): a ward skin is a Noun named
+// wardskin_* (the 28 of build 854, wardskin_default.Noun the default; ability_Item_Ward creates the object
+// nPlayer.GetWardAsset gives it, so anything else would put another object into the world), an announcer pack an
+// AnnouncerPack asset. Case-insensitive ("wardSkin_fish.Noun"). The host writes only fitting assets into the server
+// player.
+bool VanityAssetNameFits(uint8_t kind, const std::string& name);
 // The reveal's LabsPlayerGlobalUpdate members for a pick: mStatus, mRole, mpNounDef, plus mLoadoutID/Version with a
 // perk page (GMS_PROTOCOL.md *Into the game*, step 1), and their values.
 std::vector<int> RevealMembers(const ShaperPick& p);
@@ -207,8 +217,17 @@ class ShaperSelect {
     uint32_t ward = 0, announcer = 0;
     bool knowsAll = true;        // G3a: no SetKnown yet: every index counts as known
     std::set<uint8_t> knows;     // G3a: the indices its client has records for (SetKnown)
+    // The phase its client shows by itself: the client enters phase 2 on our C8 05 ... 01 and phase 3 when it sends
+    // C8 08, before the match's phase follows (the other players haven't locked yet). ShaperSelect_HandleGmsMessage
+    // 0x00521B50 takes any other phase in a C8 01 as a phase change, and ShaperSelect_SetPhase 0x005201B0 has no
+    // guard against going back, so a phase-1 repeat would reopen the shaper list of a locked player (and a phase-2
+    // repeat the role page of a role-locked one). Phase messages behind it are therefore not sent to it.
+    int clientPhase = 1;
+    const char* aheadWhy = "";
+    int aheadLogged = 0;
     bool Acting() const { return !scripted && bound && !gone; }  // a connected human: acts for itself
     bool Receives() const { return Acting() && ready && open; }
+    bool TakesPhase(int phase, bool guard) const { return Receives() && (!guard || clientPhase <= phase); }
     bool Knows(uint8_t index) const { return knowsAll || knows.count(index) != 0; }
   };
 
@@ -228,8 +247,11 @@ class ShaperSelect {
   void SendRoleToggle(uint8_t index, uint8_t role, ISender& out);
   void Advance(int64_t now, ISender& out);
   void Refuse(uint8_t index, const char* what, const char* why) const;
+  void ClientAhead(Player& p, int phase, const char* why);
+  void LogClientAhead(Player& p);
 
   ShaperSelectTimers timers_;
+  bool guard_ = true;  // ShaperSelectConfig::clientPhaseGuard
   ShaperContent humanDefault_;
   std::map<uint8_t, Player> players_;  // by gameplay index (the order of every pass)
   std::mt19937 rng_;

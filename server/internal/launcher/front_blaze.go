@@ -203,6 +203,11 @@ func (bc *blazeConn) login(fr fire.Frame, raw []byte) {
 	case len(tag) > 0 && tag[0] == pickRemove:
 		bc.errorReply(fr, f.removeFromLogin(tag[1:]))
 		return
+	case len(tag) > 0 && tag[0] == pickAddOnly:
+		if b, err = f.addFromLogin(tag[1:]); err == nil {
+			err = frontErr(FrontErrAdded, "%s (%s) is in the server list (the picker's ADD; no login)", b.Tag, b.Gateway())
+			f.wantList()
+		}
 	case len(tag) > 0 && tag[0] == pickAdd:
 		b, err = f.addFromLogin(tag[1:])
 	default:

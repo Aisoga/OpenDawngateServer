@@ -760,6 +760,36 @@ class Setup:
                                              "(is the game running from this copy?)")
         return self.report(DONE, step, f"{line} (was: {why})")
 
+    def step_bot_profiles(self, step, copy):
+        """a copy's added archive game/Data/zz_BotProfiles.snap (bot_profiles.py: the project's own bot profiles, a
+        Warden with the Predator role), made from the copy's own AssetData.snap; current means byte for byte what
+        bot_profiles.py makes (the Go setup's botprofiles, the same bytes). Every client and host copy."""
+        import bot_profiles as bpr
+        src = os.path.join(copy, *bpr.SOURCE.split("/"))
+        added = os.path.join(copy, *bpr.REL.split("/"))
+        if not os.path.isfile(src):
+            return self.report(MISSING, step, f"{self.show(src)} (the copy is incomplete)")
+        if sha256(src) != self.orig_sha(bpr.SOURCE):
+            return self.report(FAILED, step, f"{self.show(src)} is not the untouched build-854 file "
+                                             "(docs/file_manifest.csv); delete the copy and run this again")
+        try:
+            want = bpr.build(src)
+        except (bpr.ProfileError, ValueError) as e:
+            return self.report(FAILED, step, str(e))
+        line = f"{self.show(added)}: {len(bpr.PROFILES)} bot profile(s) ({hashlib.sha256(want).hexdigest()[:16]})"
+        have = read(added) if os.path.isfile(added) else None
+        if have == want:
+            return self.report(OK, step, line)
+        why = "not there" if have is None else "older profiles"
+        if self.check:
+            return self.report(MISSING if have is None else STALE, step, f"{self.show(added)}: {why}")
+        self.never_pristine(added)
+        if self.script("bot_profiles.py", os.path.join(copy, "game", "Data")) or not os.path.isfile(added) or \
+                read(added) != want:
+            return self.report(FAILED, step, f"bot_profiles.py didn't write the expected {self.show(added)} "
+                                             "(is the game running from this copy?)")
+        return self.report(DONE, step, f"{line} (was: {why})")
+
     # -- RakNet and the builds
     def step_raknet(self):
         step = "RakNet"
@@ -1038,6 +1068,7 @@ class Setup:
                 self.step_exe("client exe", self.client, os.path.join(self.certs, "ca_modulus.bin"), "local", LOCAL)
             config = self.step_config("client config", self.client, LOCAL)
             self.step_locale("client texts", self.client, LOCAL)
+            self.step_bot_profiles("client bots", self.client)
             client = bool(exe and config)
         raknet = self.step_raknet()
         gms = self.step_gms(raknet)
@@ -1045,6 +1076,7 @@ class Setup:
         host_copy = self.copy_there("host copy", self.host, archive, PATCHED + (LOADER,))
         host = False
         if host_copy:
+            self.step_bot_profiles("host bots", self.host)
             exe = self.needs("host exe", certificates=certs) and \
                 self.step_exe("host exe", self.host, os.path.join(self.certs, "ca_modulus.bin"), "local", LOCAL,
                               exact=False)
@@ -1081,6 +1113,7 @@ class Setup:
             self.step_exe("client exe", self.client, ca, "lan", host, bind)
             self.step_config("client config", self.client, host)
             self.step_locale("client texts", self.client, host)
+            self.step_bot_profiles("client bots", self.client)
 
     def finish(self):
         bad = [r for r in self.results if r[0] in BAD]

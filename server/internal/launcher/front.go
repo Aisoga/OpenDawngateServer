@@ -1,6 +1,8 @@
 package launcher
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -17,6 +19,7 @@ import (
 	"dawngate/server/internal/setup"
 	"dawngate/server/internal/telemetry"
 	"dawngate/server/internal/tunnel"
+	"dawngate/server/internal/version"
 	"dawngate/server/internal/web"
 )
 
@@ -68,6 +71,12 @@ const (
 	FrontErrThisPCStarting uint16 = 0x00E9
 	// FrontErrThisPCFailed: the server on this PC couldn't be set up or started (Start-Client's console says why).
 	FrontErrThisPCFailed uint16 = 0x00EA
+	// FrontErrVersion: the server runs another version than this Start-Client, or names none (a release before the
+	// version check, or no answer to the question): the list shows both versions. This PC is never refused.
+	FrontErrVersion uint16 = 0x00EB
+	// FrontErrAdded: a login as <name>#*<address> (the picker's ADD) added that server to the list (or found it there
+	// already); no login is made.
+	FrontErrAdded uint16 = 0x00EC
 )
 
 // frontError is a refused login: its code and the log's text.
@@ -111,6 +120,9 @@ type Front struct {
 	// the server on this PC when needed, waiting up to ThisPCWait (0: the const ThisPCWait).
 	ThisPC     *thisPC
 	ThisPCWait time.Duration
+	// Version is this Start-Client's version ("": version.String()): a login to a server of another version, or of
+	// none it can tell, is refused with FrontErrVersion (This PC never).
+	Version string
 
 	qos       *web.QoS
 	httpLocal *web.HTTP
@@ -132,6 +144,12 @@ type Front struct {
 
 	keyMu sync.Mutex
 	shown map[string]tunnel.Pin // confirm once: a new key a login was refused for, by server address
+
+	pageMu    sync.Mutex
+	pageToken string         // the confirm form's token (front_pages.go): random per run
+	slots     map[string]int // the servers' link slots by tag (slotOf), kept for the run
+	slotTags  []string       // the tags by slot
+	lastSts   []serverStatus // the statuses of the list written last (the pages' server list)
 
 	listMu     sync.Mutex
 	listCopy   string // the player copy the server list is written into (WriteServerList)
@@ -226,12 +244,16 @@ func (f *Front) Start() error {
 	if f.ThisPCWait == 0 {
 		f.ThisPCWait = ThisPCWait
 	}
+	if f.Version == "" {
+		f.Version = version.String()
+	}
 	if f.ThisPC != nil {
 		f.ThisPC.logf, f.ThisPC.changed = f.logf, f.wantList
 	}
 	f.done = make(chan struct{})
 	f.tcpLns, f.udpLns, f.conns, f.probes = map[int]net.Listener{}, map[int]*net.UDPConn{}, map[net.Conn]struct{}{}, map[string]probeResult{}
 	f.refresh = make(chan struct{}, 1)
+	f.pageToken = randomToken()
 	f.listMu.Lock()
 	f.atLogin = true
 	f.listMu.Unlock()
@@ -446,10 +468,24 @@ func (c *replayConn) CloseWrite() error {
 	return c.Conn.Close()
 }
 
-// serveHTTP serves the game's HTTP port: through the current session, and before a login dgserver's built-in
-// answers (the telemetry rules), else 404.
+// serveHTTP serves the game's HTTP port: the login screen's pages (/dawngate/<page>, the picker's
+// /dawngate/pick/<slot>/<page>) are the front's (front_pages.go); the rest goes through the current session, and
+// before a login to dgserver's built-in answers (the telemetry rules), else 404.
 func (f *Front) serveHTTP(c net.Conn) {
-	f.servePiped(f.Ports.HTTP, c, f.httpLocal.ServeConn)
+	c.SetReadDeadline(time.Now().Add(30 * time.Second))
+	br := bufio.NewReaderSize(c, 8192)
+	line, err := br.ReadSlice('\n')
+	if err != nil && len(line) == 0 {
+		return
+	}
+	first := append([]byte(nil), line...)
+	rest := io.MultiReader(bytes.NewReader(first), br)
+	if isPagePath(first) {
+		f.servePage(c, bufio.NewReader(rest))
+		return
+	}
+	c.SetReadDeadline(time.Time{})
+	f.servePiped(f.Ports.HTTP, &replayConn{Conn: c, r: rest}, f.httpLocal.ServeConn)
 }
 
 // serveTelemetry carries the game's telemetry connection (it stays open across logins) packet by packet to the
@@ -643,12 +679,15 @@ func (f *Front) dialerFor(address string) *net.Dialer {
 	return nil
 }
 
-// connect probes a server's gateway, checks its key (trustKey: a new one confirmed once) and starts a session.
+// connect probes a server's gateway (its key and its version), checks the version (checkVersion: the same as this
+// Start-Client's) and the key (trustKey: a new one confirmed once) and starts a session.
 func (f *Front) connect(b Bookmark) (*frontSession, error) {
 	gw := b.Gateway()
 	start := time.Now()
-	served, err := tunnel.ProbePin(gw, f.ConnectTimeout, f.dialerFor(b.Address))
-	r := probeResult{at: time.Now(), reachable: err == nil, ping: time.Since(start), pin: served}
+	info, err := tunnel.ProbeInfo(gw, f.ConnectTimeout, f.dialerFor(b.Address))
+	served := info.Pin
+	r := probeResult{at: time.Now(), reachable: err == nil, ping: time.Since(start), pin: served, version: info.Version, versionErr: info.VersionErr,
+		facts: info.Facts}
 	if err != nil {
 		r.problem = f.classifyDial(b, err, f.ConnectTimeout)
 	}
@@ -656,6 +695,10 @@ func (f *Front) connect(b Bookmark) (*frontSession, error) {
 	if err != nil {
 		f.wantList()
 		return nil, r.problem
+	}
+	if err := f.checkVersion(b, r); err != nil {
+		f.wantList()
+		return nil, err
 	}
 	if err := f.trustKey(b, served); err != nil {
 		f.wantList()
@@ -720,6 +763,48 @@ func (f *Front) trustedPin(b Bookmark) (tunnel.Pin, bool) {
 	}
 	known, err := tunnel.ParsePin(strings.TrimSpace(string(raw)))
 	return known, err == nil
+}
+
+// Version states of a server in the list (versionState): the same version as this Start-Client's, another one, or
+// none it could tell (a release before the version check). "" for a server not reached, and for This PC.
+const (
+	versionSame    = "same"
+	versionOther   = "other"
+	versionUnknown = "unknown"
+)
+
+// versionState compares a probe's version with this Start-Client's.
+func (f *Front) versionState(b Bookmark, r probeResult) string {
+	switch {
+	case !r.reachable || (b.Tag == ThisPCTag && f.ThisPC != nil):
+		return ""
+	case r.version == "":
+		return versionUnknown
+	case version.Same(f.Version, r.version):
+		return versionSame
+	}
+	return versionOther
+}
+
+// checkVersion refuses a login to a server whose version isn't this Start-Client's (FrontErrVersion): any difference,
+// and a server that names none. This PC is never refused (the server on this PC is this folder's own program); a
+// difference there is only logged.
+func (f *Front) checkVersion(b Bookmark, r probeResult) error {
+	if b.Tag == ThisPCTag && f.ThisPC != nil {
+		if r.version != f.Version {
+			f.logf("This PC (%s) runs version %q, this Start-Client %s: not refused (This PC never is)", b.Gateway(), r.version, f.Version)
+		}
+		return nil
+	}
+	switch f.versionState(b, r) {
+	case versionSame:
+		return nil
+	case versionUnknown:
+		return frontErr(FrontErrVersion, "%s (%s) doesn't tell its version (%v), so the login is refused: this Start-Client "+
+			"is %s and plays only on servers of the same version", b.Tag, b.Gateway(), r.versionErr, f.Version)
+	}
+	return frontErr(FrontErrVersion, "%s (%s) runs version %s, this Start-Client is %s: both need the same version, so the "+
+		"login is refused", b.Tag, b.Gateway(), r.version, f.Version)
 }
 
 // trustKey checks a server's key against the trusted one and refuses a changed one (the player can't be asked during

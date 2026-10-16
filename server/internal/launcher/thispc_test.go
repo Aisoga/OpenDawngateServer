@@ -3,7 +3,9 @@ package launcher
 import (
 	"bufio"
 	"bytes"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -151,7 +153,7 @@ func TestBookmarksThisPC(t *testing.T) {
 func TestThisPCFlags(t *testing.T) {
 	l := setup.Layout{Root: t.TempDir()}
 	bm := &Bookmarks{path: BookmarksPath(l)}
-	pc := newThisPC(IO{}, l, "127.0.0.1", "host", nil, bm, true)
+	pc := newThisPC(IO{}, l, "127.0.0.1", "host", nil, bm, true, false)
 	f := strings.Join(pc.flags(), " ")
 	for _, want := range []string{"--certs " + l.Certs("127.0.1.11"), "--shaper-select", "--signup open", "--log-days 30",
 		"--bind 127.0.1.11 --public-host 127.0.1.11 --gms-control-bind 127.0.1.11 --web-port 0 --tunnel on --gateway-port 42128 --plain off --gms-bind 127.0.1.11"} {
@@ -159,8 +161,20 @@ func TestThisPCFlags(t *testing.T) {
 			t.Errorf("no Start-Server.ini: flags lack %q:\n%s", want, f)
 		}
 	}
+	if strings.Contains(f, "--local-trust") || pc.signupMode() != signupOpen {
+		t.Errorf("without local trust: %s, mode %q", f, pc.signupMode())
+	}
 	ini := Config{"address": "192.168.1.20", "shaper_select": "off", "signup": "invite", "server_flags": "--owned starter --web-port 443"}
-	pc = newThisPC(IO{}, l, "127.0.0.1", "host", ini, bm, true)
+	pc = newThisPC(IO{}, l, "127.0.0.1", "host", ini, bm, true, false)
+	if pc.signupMode() != signupInvite {
+		t.Errorf("the folder's Start-Server.ini's mode: %q", pc.signupMode())
+	}
+	// local trust (Start-Client.ini local_trust = on, the default): --local-trust, the list's mode local
+	pc = newThisPC(IO{}, l, "127.0.0.1", "host", ini, bm, true, true)
+	if f := strings.Join(pc.flags(), " "); !strings.Contains(f, "--local-trust --bind 127.0.1.11") || pc.signupMode() != signupLocal {
+		t.Errorf("local trust: %s, mode %q", f, pc.signupMode())
+	}
+	pc = newThisPC(IO{}, l, "127.0.0.1", "host", ini, bm, true, false)
 	f = strings.Join(pc.flags(), " ")
 	if strings.Contains(f, "--shaper-select") || !strings.Contains(f, "--certs "+l.Certs("192.168.1.20")) || !strings.Contains(f, "--signup invite") ||
 		!strings.Contains(f, "--owned starter --web-port 443 --bind 127.0.1.11") || !strings.HasSuffix(f, "--gms-bind 127.0.1.11") {
@@ -227,7 +241,7 @@ func TestThisPCFront(t *testing.T) {
 		t.Fatal(err)
 	}
 	var console syncBuffer
-	pc := newThisPC(IO{Out: &console}, l, thisPCFront, filepath.Join(dir, "host"), nil, bm, false)
+	pc := newThisPC(IO{Out: &console}, l, thisPCFront, filepath.Join(dir, "host"), nil, bm, false, true)
 	pc.findZip = func() (string, error) { return filepath.Join(dir, "Dawngate.zip"), nil }
 	defer pc.Close()
 	_, tlsCfg, err := tunnelCertSet(l, thisPCFront, false)
@@ -246,7 +260,7 @@ func TestThisPCFront(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	if list := string(f.ServerList()); !strings.Contains(list, "preselect\t\nlast\t\nserver\tpc\tThis PC\t127.0.9.11\t42128\tlocal\t0\t\t\tfixed\nend\n") {
+	if list := string(f.ServerList()); !strings.Contains(list, "preselect\t\nlast\t\nserver\tpc\tThis PC\t127.0.9.11\t42128\tlocal\t0\t\t\tfixed\t\t\tlocal\t0\nend\n") {
 		t.Errorf("the list before:\n%s", list)
 	}
 	g := fakeGame{t: t, ip: thisPCFront}
@@ -313,7 +327,18 @@ func TestThisPCFront(t *testing.T) {
 	if strings.Contains(readLogs(t, logFront), "isn't trusted yet") {
 		t.Error("This PC's key needed a confirmation")
 	}
-	if list := string(f.ServerList()); !strings.Contains(list, "server\tpc\tThis PC\t127.0.9.11\t42128\tok\t") || !strings.Contains(list, "\tfixed\n") {
+	// no password (local trust): the account made without one; the front's own sign-up page for This PC
+	waitLog(t, l.Logs(), `created for "tpc1" (This PC: no password)`, 1)
+	resp, err := http.Get("http://" + net.JoinHostPort(thisPCFront, strconv.Itoa(DefaultFrontPorts.HTTP)) + "/dawngate/pick/0/signup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(page), "No sign-up needed on This PC") {
+		t.Errorf("This PC's sign-up page: %s", page)
+	}
+	if list := string(f.ServerList()); !strings.Contains(list, "server\tpc\tThis PC\t127.0.9.11\t42128\tok\t") || !strings.Contains(list, "\tfixed\t"+f.Version+"\t\tlocal\t0\n") {
 		t.Errorf("the list while it runs:\n%s", list)
 	}
 	if b, _ := bm.Last(); b.Tag != ThisPCTag {

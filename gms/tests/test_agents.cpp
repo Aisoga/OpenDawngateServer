@@ -2,6 +2,7 @@
 #include <vector>
 
 #include "core/agents/aggro.h"
+#include "core/agents/leash.h"
 #include "core/agents/minion_target.h"
 #include "tests/check.h"
 
@@ -196,4 +197,59 @@ GMS_TEST(MinionTargetShaperHitLog) {
   CHECK(!log.Attacked(7, 10, 1500, 2500));
   log.Record(8, 9, 2000);                  // the latest hit replaces the earlier one
   CHECK(log.Attacked(8, 9, 2500, 2500) && !log.Attacked(7, 9, 2500, 2500));
+}
+
+GMS_TEST(LeashOwnAndTarget) {
+  using namespace gms::agents;
+  LeashOptions o;  // 15 own, +4 reach, home 6, 3 s chase
+  LeashState s;
+  CHECK(LeashSelfCheck(o, s, 14.9f, 0) == kLeashKeep);
+  CHECK(LeashSelfCheck(o, s, 15.1f, 0) == kLeashOwn);
+  CHECK(!LeashTargetBeyond(o, 19.f));
+  CHECK(LeashTargetBeyond(o, 19.1f));
+  o.enabled = false;  // the old rule: the tether only
+  CHECK(LeashSelfCheck(o, s, 40.f, 0) == kLeashKeep);
+  CHECK(!LeashTargetBeyond(o, 40.f));
+}
+
+GMS_TEST(LeashChaseTime) {
+  using namespace gms::agents;
+  LeashOptions o;
+  LeashState s;
+  UpdateLeash(&s, o, 5, 2.f, 1000);  // a fight at home: no clock
+  CHECK(s.target == 5 && s.sinceMs == 1000 && s.outSinceMs == -1);
+  CHECK(LeashSelfCheck(o, s, 2.f, 9000) == kLeashKeep);
+  UpdateLeash(&s, o, 5, 8.f, 2000);  // out of its home radius: the clock runs
+  CHECK(s.outSinceMs == 2000);
+  CHECK(LeashSelfCheck(o, s, 8.f, 4999) == kLeashKeep);
+  NoteLeashHit(&s, 5, 4000);  // it hits its target: the clock starts over
+  NoteLeashHit(&s, 6, 4500);  // a hit on someone else doesn't count
+  CHECK(LeashSelfCheck(o, s, 8.f, 6999) == kLeashKeep);
+  CHECK(LeashSelfCheck(o, s, 8.f, 7000) == kLeashChase);
+  CHECK(LeashSelfCheck(o, s, 5.f, 9000) == kLeashKeep);  // back within its home radius
+  UpdateLeash(&s, o, 5, 5.f, 7500);  // home again: the out clock stops
+  CHECK(s.outSinceMs == -1);
+  UpdateLeash(&s, o, 7, 9.f, 8000);  // another target: a new fight
+  CHECK(s.target == 7 && s.sinceMs == 8000 && s.outSinceMs == 8000 && s.lastHitMs == -1);
+  UpdateLeash(&s, o, 0, 9.f, 8500);  // nothing: no fight
+  CHECK(s.target == 0 && s.sinceMs == -1 && LeashSelfCheck(o, s, 9.f, 20000) == kLeashKeep);
+  o.chaseMs = 0;  // no time limit
+  UpdateLeash(&s, o, 5, 9.f, 9000);
+  CHECK(LeashSelfCheck(o, s, 9.f, 60000) == kLeashKeep);
+}
+
+GMS_TEST(LeashGroupDropsAndPlatform) {
+  using namespace gms::agents;
+  LeashGroupDrops g;
+  g.Drop(100, 5, 3000);
+  CHECK(g.Ignored(100, 5, 2999) && !g.Ignored(100, 5, 3000));
+  CHECK(!g.Ignored(101, 5, 1000) && !g.Ignored(100, 6, 1000));  // another camp, another target
+  g.Drop(100, 5, 2000);  // an earlier end doesn't shorten it
+  CHECK(g.Ignored(100, 5, 2500));
+  g.Expire(3000);
+  CHECK(g.Size() == 0);
+  const float centre[3] = {10.f, 20.f, 0.f};
+  const float spots[9] = {32.f, 20.f, 0.f, 10.f, -2.5f, 0.f, 0.f, 20.f, 0.f};
+  CHECK(PlatformRadius(centre, spots, 3) > 22.49f && PlatformRadius(centre, spots, 3) < 22.51f);
+  CHECK(PlatformRadius(centre, spots, 0) == 0.f);
 }

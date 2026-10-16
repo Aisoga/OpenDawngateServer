@@ -107,6 +107,12 @@ func (e *udpEcho) counts() (distinct, dups int) {
 // portHost forwarded to an echo socket.
 func startGateway(t *testing.T, logw io.Writer) (*Gateway, *udpEcho) {
 	t.Helper()
+	return startGatewayWith(t, logw, nil)
+}
+
+// startGatewayWith is startGateway with more settings made before the start (nil: none).
+func startGatewayWith(t *testing.T, logw io.Writer, set func(*Gateway)) (*Gateway, *udpEcho) {
+	t.Helper()
 	id, _, err := LoadOrCreateIdentity(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -120,6 +126,9 @@ func startGateway(t *testing.T, logw io.Writer) (*Gateway, *udpEcho) {
 	})
 	g.ForwardUDP(portHost)
 	rl := g.Listener(RedirectorPort)
+	if set != nil {
+		set(g)
+	}
 	if err := g.Start(net.JoinHostPort(gwIP, "0")); err != nil {
 		t.Fatal(err)
 	}
@@ -322,6 +331,113 @@ func TestTunnelWrongPin(t *testing.T) {
 	}()
 	if _, err := ProbePin(ln.Addr().String(), 2*time.Second, nil); err == nil {
 		t.Error("ProbePin accepted a TLS server that is no gateway")
+	}
+}
+
+// TestProbeInfo: the info hello answers the gateway's version and opens no session; a gateway of a release before
+// it (closing the connection at the unknown kind, as this one did) still gives its key, with no version; something
+// that is no gateway fails as with ProbePin.
+func TestProbeInfo(t *testing.T) {
+	buf := &syncBuf{}
+	g, _ := startGateway(t, buf)
+	if g.Version == "" {
+		t.Error("the gateway has no version after Start")
+	}
+	info, err := ProbeInfo(g.Addr(), 2*time.Second, nil)
+	if err != nil || info.Pin != g.Identity.Pin || info.Version != g.Version || info.VersionErr != nil {
+		t.Errorf("ProbeInfo: %+v, %v (the gateway's version %q)", info, err, g.Version)
+	}
+	if g.Sessions() != 0 || !strings.Contains(buf.String(), "version asked ("+g.Version) {
+		t.Errorf("%d sessions after the info hello; log:\n%s", g.Sessions(), buf.String())
+	}
+	if v, facts, err := readInfoReply(bytes.NewReader(infoReply("Dawngate-Restoration-test\t2", map[string]string{"signup": "in vite"}))); err != nil ||
+		v != "Dawngate-Restoration-test-2" || len(facts) != 1 || facts[FactSignup] != "in-vite" {
+		t.Errorf("an info reply read back: %q, %v, %v (cleaned)", v, facts, err)
+	}
+	if info.Facts == nil || len(info.Facts) != 0 {
+		t.Errorf("a gateway without facts: %v (want an empty set)", info.Facts)
+	}
+	// the server's facts: asked at each hello (a change while it runs shows)
+	mode := "invite"
+	var modeMu sync.Mutex
+	gf, _ := startGatewayWith(t, io.Discard, func(g *Gateway) {
+		g.Facts = func() map[string]string {
+			modeMu.Lock()
+			defer modeMu.Unlock()
+			return map[string]string{FactSignup: mode}
+		}
+	})
+	for _, want := range []string{"invite", "closed"} {
+		modeMu.Lock()
+		mode = want
+		modeMu.Unlock()
+		if info, err := ProbeInfo(gf.Addr(), 2*time.Second, nil); err != nil || info.Facts[FactSignup] != want || info.Version != gf.Version {
+			t.Errorf("ProbeInfo with the facts: %+v, %v (want signup %s)", info, err, want)
+		}
+	}
+
+	// an older gateway: the TLS handshake, the hello's head read, the connection closed (unknown hello kind)
+	old, err := tls.Listen("tcp4", gwIP+":0", ServerTLS(g.Identity))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer old.Close()
+	go func() {
+		for {
+			c, err := old.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				if kind, err := readHello(c); err == nil && kind != kindSession && kind != kindStream {
+					return // "unknown hello kind": closed
+				}
+			}()
+		}
+	}()
+	info, err = ProbeInfo(old.Addr().String(), 2*time.Second, nil)
+	if err != nil || info.Pin != g.Identity.Pin || info.Version != "" || info.VersionErr == nil ||
+		!strings.Contains(info.VersionErr.Error(), "before it") {
+		t.Errorf("ProbeInfo of an older gateway: %+v, %v", info, err)
+	}
+
+	// no gateway: a plain TLS 1.3 server without the ALPN
+	ln, err := tls.Listen("tcp4", gwIP+":0", &tls.Config{Certificates: []tls.Certificate{selfSigned(t)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.(*tls.Conn).Handshake()
+			c.Close()
+		}
+	}()
+	if _, err := ProbeInfo(ln.Addr().String(), 2*time.Second, nil); err == nil {
+		t.Error("ProbeInfo accepted a TLS server that is no gateway")
+	}
+	// the wire: "DGTN", 1, 3; the reply status 0, the length, the text
+	if got := infoHello(); string(got) != "DGTN\x01\x03" {
+		t.Errorf("infoHello = %q", got)
+	}
+	// the facts: a count, then each key and value with a length byte; a reply of a release before them ends after
+	// the version and reads without facts
+	if got := infoReply("r1", nil); string(got) != "\x00\x02r1\x00" {
+		t.Errorf("infoReply = %q", got)
+	}
+	if got := infoReply("r1", map[string]string{"signup": "open", "": "x"}); string(got) != "\x00\x02r1\x01\x06signup\x04open" {
+		t.Errorf("infoReply with a fact = %q", got)
+	}
+	if v, facts, err := readInfoReply(bytes.NewReader([]byte("\x00\x02r1"))); err != nil || v != "r1" || facts != nil {
+		t.Errorf("a reply without facts: %q, %v, %v", v, facts, err)
+	}
+	if _, _, err := readInfoReply(bytes.NewReader([]byte{StatusVersion})); err == nil {
+		t.Error("readInfoReply took a refusal")
 	}
 }
 

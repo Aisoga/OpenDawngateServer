@@ -160,6 +160,12 @@ def snappy_compress(src):
 
 def pack(out_path, files, raw=False, stored_ext=()):
     """files: [(archive name, bytes)] in index order."""
+    with open(out_path, "wb") as f:
+        f.write(pack_bytes(files, raw, stored_ext))
+
+
+def pack_bytes(files, raw=False, stored_ext=()):
+    """The archive pack() writes, as bytes: files [(archive name, bytes)] in index order."""
     data = bytearray()
     index = bytearray()
     names = bytearray()
@@ -171,8 +177,7 @@ def pack(out_path, files, raw=False, stored_ext=()):
         names += name.encode("utf-8") + b"\0"
         data += payload
     head = MAGIC + struct.pack("<HHII", 0x200, 1, len(files), len(names)) + b"\0" * 16
-    with open(out_path, "wb") as f:
-        f.write(head + data + index + names)
+    return head + bytes(data) + bytes(index) + bytes(names)
 
 
 def cmd_pack(argv):

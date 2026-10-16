@@ -17,6 +17,7 @@ references are computed with the Go setup's own ca_modulus.bin):
   certificates   certs\\<address>: the five files, the CA modulus = the CA certificate's, CN = the address
   client texts   the client copy's game\\Data\\Locale\\en-us\\AA_Server.package = patch_locale.build(its own
                  Locale.package, the address [, --web-domain]); the host copy has none
+  bot profiles   both copies' game\\Data\\zz_BotProfiles.snap = bot_profiles.build(its own AssetData.snap)
   server picker  the client copy's game\\Data\\zz_ServerPicker.snap (Start-Client's picker mode) =
                  patch_login_movie.build(its own LoginScreen.snap), when it is there or with --picker; the server
                  list's archive zz_ServerList.snap (written by Start-Client before each game start) isn't compared
@@ -38,6 +39,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)  # -I drops the script folder
+import bot_profiles  # noqa: E402
 import patch_client  # noqa: E402
 import patch_config  # noqa: E402
 import patch_locale  # noqa: E402
@@ -178,6 +180,16 @@ def main(argv):
         print(f"client {patch_locale.PACKAGE}: {sha(got)}  ({'equal' if got == want else 'DIFFERENT'})")
     r.check(not os.path.isfile(j(host, *patch_locale.REL.split("/"))), f"the host copy has no {patch_locale.PACKAGE}")
 
+    print("bot profiles")
+    for label, copy, there in (("client", client, have_client), ("host", host, have_host)):
+        if not there:
+            continue
+        want = bot_profiles.build(j(copy, *bot_profiles.SOURCE.split("/")))
+        p = j(copy, *bot_profiles.REL.split("/"))
+        got = read(p) if os.path.isfile(p) else b""
+        r.check(got == want, f"{label} {bot_profiles.ARCHIVE} = bot_profiles.py", f"{sha(got)[:16]} vs {sha(want)[:16]}")
+        print(f"{label} {bot_profiles.ARCHIVE}: {sha(got)}  ({'equal' if got == want else 'DIFFERENT'})")
+
     print("server picker")
     picker = j(client, *patch_login_movie.REL.split("/"))
     if not have_client:
@@ -225,8 +237,8 @@ def main(argv):
         for dp, _dn, fn in os.walk(copy):
             for f in fn:
                 rel = os.path.relpath(j(dp, f), copy).replace("\\", "/")
-                if rel not in untouched and not rel.endswith(".orig") and not (label == "host" and (
-                        rel.startswith("game/dgsim") or rel == "game/PhysXLoader_orig.dll")) and not (
+                if rel not in untouched and not rel.endswith(".orig") and rel != bot_profiles.REL and not (
+                        label == "host" and (rel.startswith("game/dgsim") or rel == "game/PhysXLoader_orig.dll")) and not (
                         label == "client" and rel in (patch_locale.REL, patch_login_movie.REL, LIST_ARCHIVE)):
                     extra.append(rel)
         r.line(f"{label}: extra files {extra[:5] if extra else 'none'}")

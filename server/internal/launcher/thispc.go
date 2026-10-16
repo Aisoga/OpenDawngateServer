@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"dawngate/server/internal/accounts"
 	"dawngate/server/internal/dgserver"
 	"dawngate/server/internal/setup"
 	"dawngate/server/internal/setup/archive"
@@ -81,10 +82,13 @@ type thisPC struct {
 	// signups_per_address, log_days, server_flags) are This PC's too
 	serverIni Config
 	bm        *Bookmarks
-	run       func([]string, dgserver.Hooks) int // dgserver.Run
-	logf      func(format string, a ...any)      // the front's log (may be nil)
-	changed   func()                             // the list should be written again (the front's wantList)
-	check     bool                               // write nothing (Start-Client --check)
+	// localTrust runs Start-Client's own server without passwords (dgserver --local-trust; Start-Client.ini
+	// local_trust): any name logs in with any password. Not for this folder's Start-Server, which checks them.
+	localTrust bool
+	run        func([]string, dgserver.Hooks) int // dgserver.Run
+	logf       func(format string, a ...any)      // the front's log (may be nil)
+	changed    func()                             // the list should be written again (the front's wantList)
+	check      bool                               // write nothing (Start-Client --check)
 
 	mu        sync.Mutex
 	state     string // "", thisPCSetup, thisPCStarting, thisPCRunning, thisPCFailed
@@ -102,9 +106,9 @@ type thisPC struct {
 
 // newThisPC prepares This PC for a setup folder and puts it into the list (bm); check changes no file (Start-Client
 // --check). Its findZip is set by the caller (nil: the archive isn't found).
-func newThisPC(o IO, l setup.Layout, tunnelIP, hostDir string, serverIni Config, bm *Bookmarks, check bool) *thisPC {
+func newThisPC(o IO, l setup.Layout, tunnelIP, hostDir string, serverIni Config, bm *Bookmarks, check, localTrust bool) *thisPC {
 	p := &thisPC{out: o.Out, live: o.Live, l: l, address: ThisPCAddress(tunnelIP), gwPort: tunnel.DefaultPort, hostDir: hostDir,
-		serverIni: serverIni, bm: bm, run: dgserver.Run, pct: -1, check: check}
+		serverIni: serverIni, bm: bm, run: dgserver.Run, pct: -1, check: check, localTrust: localTrust}
 	p.certsAddr = p.address
 	if a := serverIni["address"]; a != "" {
 		if _, err := setup.ClientOptions(a); err == nil {
@@ -130,6 +134,9 @@ func (p *thisPC) describe() string {
 		return fmt.Sprintf("%s: this folder's %s (%s, %s)", ThisPCName, o.Program, net.JoinHostPort(o.Dial, strconv.Itoa(o.GatewayPort)), state)
 	}
 	what := "starts when you log in to it"
+	if p.localTrust {
+		what += "; without passwords (local_trust): any login name logs in"
+	}
 	if _, err := os.Stat(filepath.Join(p.l.HostCopy(), "game", "Dawngate.exe")); err != nil {
 		what += "; the first time it sets up the match host: about half a minute, 1.5 GB"
 	}
@@ -187,6 +194,25 @@ func (p *thisPC) pin(address, pinHex string) {
 			p.say("its key %s trusted (the server of this folder)", pin.Fingerprint())
 		}
 	}
+}
+
+// signupMode is This PC's sign-up mode for the list while nothing answers there (the probe tells it once something
+// does): local without passwords (Start-Client's own server with localTrust), else the mode of this folder's
+// Start-Server.ini (signup; open without one).
+func (p *thisPC) signupMode() string {
+	p.mu.Lock()
+	held := p.otherHeld
+	p.mu.Unlock()
+	switch {
+	case held:
+		return "" // this folder's Start-Server: its own mode, told once it answers
+	case p.localTrust:
+		return signupLocal
+	}
+	if m, err := accounts.ParseMode(firstNonEmpty(p.serverIni["signup"], signupOpen)); err == nil {
+		return m.String()
+	}
+	return signupOpen
 }
 
 // status is This PC's state for the list: "" when a server answers there (the list probes it like any server), else
@@ -424,6 +450,9 @@ func (p *thisPC) flags() []string {
 		own, _ = LoginFlags(Config{})
 	}
 	f := ServerFlags(p.l, p.certsAddr, shaperSelect, append(own, SplitFlags(ini["server_flags"])...))
+	if p.localTrust { // no passwords: the server binds only ThisPCAddress, a loopback address (dgserver checks it)
+		f = append(f, "--local-trust")
+	}
 	return append(f, "--bind", p.address, "--public-host", p.address, "--gms-control-bind", p.address, "--web-port", "0",
 		"--tunnel", "on", "--gateway-port", strconv.Itoa(p.gwPort), "--plain", "off", "--gms-bind", HostsAddress(p.address))
 }

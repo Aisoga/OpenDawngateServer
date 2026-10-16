@@ -900,6 +900,7 @@ BotShop& ShopOf(const Bot& b) {
   std::string base = b.botClass;
   const std::size_t dot = base.find('.');
   if (dot != std::string::npos) base.resize(dot);
+  base = gb::BaseClass(base);  // BOTPROFILE: a profile shops as the shaper it copies
   void* build = SehRecommendedBuild(SehAsset(gms::AssetIdOf(base + ".Noun")));
   if (!build && base.size() > 3 && base.compare(0, 3, "PC_") == 0)
     build = SehAsset(gms::AssetIdOf("RecommendedItemBuild_" + base.substr(3) + ".ItemBuild"));
@@ -1420,6 +1421,8 @@ void Configure(const Options& o) {
     HostOptionString("bot_composition_drop", o.compositionDrop.c_str(), drop, sizeof drop);
     g_opt.compositionDrop = drop;
   }
+  // BOTPROFILE: 0 = never our profiles (the Predator on PC_Warden with the role set after it, as before)
+  g_opt.profiles = HostOptionInt("bot_profiles", o.profiles ? 1 : 0) != 0;
   g_opt.harassStartWorkers = HostOptionInt("bot_harass_start_workers", o.harassStartWorkers);
   g_opt.harassEndWorkers = HostOptionInt("bot_harass_end_workers", o.harassEndWorkers);
   g_opt.team = HostOptionInt("bot_team", o.team ? 1 : 0) != 0;                   // BOTTEAM
@@ -1434,7 +1437,7 @@ void Configure(const Options& o) {
   Log("bots (D6a, D6b): bots %d%s, allies %d, classes '%s', lua %d, lanes %d, ftue %d, log limit %d; missions %d (every "
       "%d ms), shopping %d (potions %d), fire tracker %d, script fix-ups %d; BOTCOMP composition %d (drop '%s'), harass "
       "workers %d..%d, Hunter gank %d; BOTTEAM team layer %d, pings %d; BOTTEMPO %d, team status every %d s; "
-      "BOTJUNGLE jungler %d, ping following %d",
+      "BOTJUNGLE jungler %d, ping following %d; BOTPROFILE profiles %d",
       g_opt.teamSize,
       g_opt.teamSize < 0
           ? " (auto: createGame's fillTeams a team, else 5 a team when the game's descriptors have BotsFillTeams 0x400)"
@@ -1442,7 +1445,8 @@ void Configure(const Options& o) {
       g_opt.allies, g_opt.classes.c_str(), g_opt.lua, g_opt.lanes, g_opt.ftue, g_opt.logLimit, g_opt.missions,
       g_opt.missionMs, g_opt.shopping, g_opt.potions, g_opt.fireTracker, g_opt.fixups, g_opt.composition,
       g_opt.compositionDrop.c_str(), g_opt.harassStartWorkers, g_opt.harassEndWorkers, g_opt.hunterGank,
-      g_opt.team && g_opt.laneFixes, g_opt.teamPings, g_opt.tempo, g_opt.teamStatusS, g_opt.jungle, g_opt.pingFollow);
+      g_opt.team && g_opt.laneFixes, g_opt.teamPings, g_opt.tempo, g_opt.teamStatusS, g_opt.jungle, g_opt.pingFollow,
+      g_opt.profiles);
 }
 
 void OnHumanPing(int team, std::uint32_t pinger, std::uint32_t target, const float* pos, int type) {
@@ -1547,11 +1551,21 @@ const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& human
     }
     for (const std::string& n : names) {
       if (available.count(n)) continue;
-      void* a = SehAsset(gms::AssetIdOf(n + ".BotClass"));
-      if (!a) {
-        Log("bots: BOTCOMP: %s.BotClass not in the catalog", n.c_str());
+      if (gb::IsProfile(n) && !g_opt.profiles) {
+        Log("bots: BOTPROFILE: %s not used ([host] bot_profiles=0): %s with the role set after it", n.c_str(),
+            gb::BaseClass(n).c_str());
         continue;
       }
+      void* a = SehAsset(gms::AssetIdOf(n + ".BotClass"));
+      if (!a) {
+        if (gb::IsProfile(n))
+          Log("bots: BOTPROFILE: %s.BotClass not in this copy's catalog (no %s): %s with the role set after it", n.c_str(),
+              "game\\Data\\zz_BotProfiles.snap", gb::BaseClass(n).c_str());
+        else
+          Log("bots: BOTCOMP: %s.BotClass not in the catalog", n.c_str());
+        continue;
+      }
+      if (gb::IsProfile(n)) Log("bots: BOTPROFILE: %s.BotClass in the catalog (asset %08X)", n.c_str(), SehAssetId(a));
       g_classIds[n] = SehAssetId(a);
       available.insert(n);
     }

@@ -36,7 +36,9 @@ const (
 
 // ErrorLines are BlazeErrors' new lines (full error codes); 0x00CA0001 and 0x40720000 have no line in build 854.
 var ErrorLines = map[uint32]string{
-	0x000B0001: "The login name or password you entered is incorrect.",
+	// 0x000B0001: a server that needs a sign-up first (invite, closed) refuses an unknown name and a wrong password
+	// alike with it (accounts.Policy), so it tells no names but points to the sign-up page
+	0x000B0001: "The login name or password you entered is incorrect. No account on this server yet? Make one first: Sign up now! below.",
 	0x000C0001: "The login name or password you entered is incorrect.",
 	0x00160001: "Your login name contains invalid characters. Use letters, digits and . _ - @ only.",
 	0x00CA0001: "Too short: a login name needs at least 3 characters and a password at least 8.",
@@ -58,11 +60,14 @@ var ErrorLines = map[uint32]string{
 	0x00E80001: "This PC is always in the list: it can't be removed.",
 	0x00E90001: "The server on this PC is still being set up. Log in again when the list says online.",
 	0x00EA0001: "The server on this PC didn't start: Start-Client's window says why.",
+	0x00EB0001: "This server runs another version than your Start-Client, or doesn't tell its version: both need the same one. SERVER above the login shows both versions.",
+	0x00EC0001: "The server was added to your list. Pick it and log in, or use Sign up now! below to make an account there first.",
 }
 
 // LoginLines are LoginScreen's: the account field's label and the check box beside it, and the server picker's
 // texts (client_ui/serverpicker/ServerPicker.as reads 0x5E70A1xx through Global.ForceTranslateString, its English
-// fallbacks the same; {1} is a ping, {2} the key a server shows, {3} the trusted key).
+// fallbacks the same; {1} is a ping, {2} the key a server shows, {3} the trusted key; in the version lines {1} is the
+// server's version, {2} Start-Client's).
 var LoginLines = map[uint32]string{
 	0x0AC5BE93: "Enter Login Name",
 	0x0AC5BE95: "Remember Login Name",
@@ -75,7 +80,7 @@ var LoginLines = map[uint32]string{
 	0x5E70A107: "CANCEL",
 	0x5E70A108: "Server address",
 	0x5E70A109: "Name (optional)",
-	0x5E70A10A: "Added at your next login, which checks the server and shows its key: log in again to trust it.",
+	0x5E70A10A: "ADD checks the server and adds it to your list. Then pick it: Sign up now! below the login opens its sign-up page.",
 	0x5E70A10B: "Type the server's address: an IPv4 address such as 203.0.113.5, or a host name.",
 	0x5E70A10C: "No servers yet: add one.",
 	0x5E70A10D: "none: add a server",
@@ -92,6 +97,8 @@ var LoginLines = map[uint32]string{
 	0x5E70A118: "setting up, {1} %",
 	0x5E70A119: "starting",
 	0x5E70A11A: "didn't start",
+	0x5E70A11B: "other version",
+	0x5E70A11C: "version unknown",
 	0x5E70A120: "Online, {1} ms. Its key: {2}.",
 	0x5E70A121: "New server key {2}: compare it with the fingerprint its operator gives you. The first login stops here; log in again to trust it.",
 	0x5E70A122: "KEY CHANGED: you trusted {3}, the server now shows {2}. Don't log in until its operator confirms the new key: see the troubleshooting guide.",
@@ -102,6 +109,17 @@ var LoginLines = map[uint32]string{
 	0x5E70A127: "Setting up the server on this PC: {1} %. Your login waits for it, or log in again when it says online.",
 	0x5E70A128: "The server on this PC is starting.",
 	0x5E70A129: "The server on this PC didn't start: Start-Client's window says why. Log in again to retry.",
+	0x5E70A12A: "This server runs version {1}, your Start-Client is {2}. A login needs the same version: use the server's release.",
+	0x5E70A12B: "This server doesn't tell its version (an older release). Your Start-Client is {2}: a login needs the same version.",
+	0x5E70A12C: "Version {1}.",
+	0x5E70A130: "open",
+	0x5E70A131: "invite only",
+	0x5E70A132: "closed",
+	0x5E70A133: "no password",
+	0x5E70A134: "Sign-up open: your first login with a new name makes the account.",
+	0x5E70A135: "Sign up first: this server needs an invite code (Sign up now! below the login).",
+	0x5E70A136: "Sign up first: only its operator makes accounts (Sign up now! below the login says how).",
+	0x5E70A137: "No sign-up and no password here: any name logs in.",
 }
 
 // URLPages are the URL table's lines that link to the server's pages (sitelinks): the legal links 1, 2, 7, Forgot
@@ -112,6 +130,22 @@ var URLPages = map[uint32]string{
 	0x00000004: sitelinks.Signup, 0x00000005: sitelinks.Signup, 0x00000006: sitelinks.Signup,
 	0x00000007: sitelinks.Terms, 0x00000100: sitelinks.Index, 0x00000101: sitelinks.Index,
 	0x00000103: sitelinks.Index,
+}
+
+// LinkSlots is how many servers of the login screen's list have links of their own (SlotLink): the server picker
+// opens a server's Sign up now! and Forgot Password? pages through Global.OpenLocalizedURL with the URL table's line
+// of its slot, which the list file gives each server; Start-Client's front answers them (launcher's pick pages).
+const LinkSlots = 64
+
+// The URL table's lines of the slots' links: SlotSignup + slot, SlotPassword + slot.
+const (
+	SlotSignup   = 0x5E70B100
+	SlotPassword = 0x5E70B200
+)
+
+// SlotPath is the path of a slot's link below dgserver's HTTP root: dawngate/pick/<slot>/<page>.
+func SlotPath(slot int, page string) string {
+	return fmt.Sprintf("%spick/%d/%s", sitelinks.FallbackPrefix, slot, page)
 }
 
 // Options say where the links point: the address the copy is patched for, dgserver's HTTP port (0: 18080) and the
@@ -140,6 +174,16 @@ func Tables(o Options) (map[uint32]map[uint32]string, error) {
 	urls := map[uint32]string{}
 	for id, page := range URLPages {
 		urls[id] = base + page
+	}
+	// the slots' links always go to the HTTP port of the address the copy is patched for (Start-Client's front
+	// there), also in a copy with a website
+	port := o.HTTPPort
+	if port == 0 {
+		port = sitelinks.HTTPPort
+	}
+	for slot := 0; slot < LinkSlots; slot++ {
+		urls[SlotSignup+uint32(slot)] = fmt.Sprintf("http://%s:%d/%s", o.Host, port, SlotPath(slot, sitelinks.Signup))
+		urls[SlotPassword+uint32(slot)] = fmt.Sprintf("http://%s:%d/%s", o.Host, port, SlotPath(slot, sitelinks.Password))
 	}
 	return map[uint32]map[uint32]string{BlazeErrors: ErrorLines, URLs: urls, LoginScreen: LoginLines}, nil
 }

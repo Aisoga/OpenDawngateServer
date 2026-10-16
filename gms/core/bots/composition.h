@@ -10,9 +10,10 @@
 //   Tactician  PC_Guardian (tank melee), PC_Artist (support ranged), PC_TidalQueen (mage ranged), PC_Sculptor
 //              (support melee), PC_Warden (bruiser melee)
 //   Hunter     PC_Artificer (bruiser melee)
-//   Predator   none. PC_Warden's BotClass (AI warden_Tactician: a bruiser with a Well plan and a Harass phase) is used
-//              with the player's mRole set to 3 after LabsPlayer_ReflectBotData [assumed: the role only picks the role
-//              passive, the gold/XP modifiers and the shown role; the AI is the shaper's own].
+//   Predator   none shipped. BOTPROFILE: our profile PC_Warden_Predator (profiles.h: PC_Warden's BotClass, AI
+//              warden_Tactician, a bruiser with a Well plan and a Harass phase, with role Predator) when the copy has
+//              it; else PC_Warden's own with the player's mRole set to 3 after LabsPlayer_ReflectBotData [assumed: the
+//              role only picks the role passive, the gold/XP modifiers and the shown role; the AI is the shaper's own].
 // Lanes (nLaneID via nBot.AssignLane at the deploy; Tuning.BotPlan has 2 top and 3 bottom lane slots):
 //   Top     Gladiator 1 (PC_HighHuntress) + Tactician          (2 = topLaners)
 //   Bottom  Gladiator 2 (PC_Creature) + Predator + Hunter      (3 = botLaners; the Hunter's lane only matters until
@@ -31,6 +32,7 @@
 #include <vector>
 
 #include "core/bots/lanes.h"  // kLaneTop, kLaneBottom
+#include "core/bots/profiles.h"
 
 namespace gms::bots {
 
@@ -64,7 +66,7 @@ inline std::vector<WantedSeat> DefaultSetup() {
 }
 
 // A BotClass the composition may pick for a role: `roleOverride` says the seat's mRole is set to the wanted role
-// after the BotClass's own (the Predator on PC_Warden).
+// after the BotClass's own (the Predator on PC_Warden, when the copy lacks the PC_Warden_Predator profile).
 struct ClassChoice {
   std::string botClass;
   bool roleOverride = false;
@@ -76,16 +78,17 @@ inline std::vector<ClassChoice> ClassPreference(int role) {
       return {{"PC_Guardian", false}, {"PC_Artist", false}, {"PC_TidalQueen", false}, {"PC_Sculptor", false},
               {"PC_Warden", false}};
     case kRoleHunter: return {{"PC_Artificer", false}};
-    case kRolePredator: return {{"PC_Warden", true}};
+    case kRolePredator: return {{"PC_Warden_Predator", false}, {"PC_Warden", true}};
   }
   return {};
 }
 
 // The roles (bit per role) a BotClass may play besides its seat's, when the human teammates fill the seat's role: the
 // label (mRole: role passive, gold/XP modifiers, the Predator's well harassing) changes, the class's AI does not, so
-// only a class whose AI fits the other role is allowed one: PC_Warden plays both the Tactician and the Predator.
+// only a class whose AI fits the other role is allowed one: PC_Warden plays both the Tactician and the Predator (and so
+// does its Predator profile; the session's role follow-up then shows the label the seat took).
 inline unsigned AltRoles(const std::string& botClass) {
-  if (botClass == "PC_Warden") return (1u << kRoleTactician) | (1u << kRolePredator);
+  if (BaseClass(botClass) == "PC_Warden") return (1u << kRoleTactician) | (1u << kRolePredator);
   return 0;
 }
 
@@ -145,7 +148,7 @@ inline std::vector<WantedSeat> WantedSeats(int botSeats, const std::vector<int>&
 
 // Picks a BotClass for every wanted seat. `available` = the BotClass assets that exist (names like "PC_Warden").
 // Seats are served Predator, Hunter, Gladiator, Tactician (so the Predator gets PC_Warden before the Tacticians'
-// list reaches it); a role whose preferred classes are all used or missing takes any unused available class from
+// list reaches it); a shaper is used once per team, a profile counting as its base class (BaseClass); a role whose preferred classes are all used or missing takes any unused available class from
 // `anyClass` (fallback = true), or stays empty. Output order = wanted order.
 // `seed` != 0 shuffles each role's preference list first (varied teams from game to game: which Gladiator takes the top
 // lane, which Tactician comes); 0 keeps the fixed order.
@@ -163,11 +166,13 @@ inline std::vector<ComposedSeat> ComposeTeam(const std::vector<WantedSeat>& want
       if (wanted[i].role != role) continue;
       std::vector<ClassChoice> prefs = ClassPreference(role);
       if (seed != 0) std::shuffle(prefs.begin(), prefs.end(), rng);
+      // a profile before its base class: the class that says the seat's role itself
+      std::stable_partition(prefs.begin(), prefs.end(), [](const ClassChoice& c) { return IsProfile(c.botClass); });
       for (const ClassChoice& c : prefs) {
-        if (available.count(c.botClass) && !used.count(c.botClass)) {
+        if (available.count(c.botClass) && !used.count(BaseClass(c.botClass))) {
           out[i].botClass = c.botClass;
           out[i].roleOverride = c.roleOverride;
-          used.insert(c.botClass);
+          used.insert(BaseClass(c.botClass));
           break;
         }
       }
@@ -176,10 +181,10 @@ inline std::vector<ComposedSeat> ComposeTeam(const std::vector<WantedSeat>& want
   for (ComposedSeat& s : out) {
     if (!s.botClass.empty()) continue;
     for (const std::string& name : anyClass)
-      if (available.count(name) && !used.count(name)) {
+      if (available.count(name) && !used.count(BaseClass(name))) {
         s.botClass = name;
         s.fallback = true;
-        used.insert(name);
+        used.insert(BaseClass(name));
         break;
       }
   }
@@ -189,7 +194,8 @@ inline std::vector<ComposedSeat> ComposeTeam(const std::vector<WantedSeat>& want
 // BOTVARY (free draw, seed != 0): every team gets exactly 2 Gladiators (both Gladiator classes, one per lane), 1 Hunter
 // (PC_Artificer) and 2 flex seats, each a Tactician or a Predator (the user's rule, 2026-10-11): the flex seats draw two
 // distinct classes of the 5 with the Tactician AI (Guardian, Artist, TidalQueen, Sculptor, Warden); PC_Warden is the
-// Predator (mRole 3 on its Tactician AI) or, by a coin flip, a Tactician, so a team has 0 or 1 Predator. Lanes as the
+// Predator (its PC_Warden_Predator profile when available, else mRole 3 on its own Tactician class) or, by a coin
+// flip, a Tactician, so a team has 0 or 1 Predator. Lanes as the
 // default setup: Gladiator + flex on top, Gladiator + flex + Hunter at the bottom (the Hunter's lane only matters until it
 // leaves for the camps); which Gladiator takes the top lane is drawn. A human of known role (`humanRoles`, the team's
 // humans' mRole, -1 unknown) takes that role's seat; with still fewer seats the flex seats go first, then the Hunter,
@@ -218,7 +224,9 @@ inline std::vector<ComposedSeat> ComposeTeamFree(int seats, const std::set<std::
     ComposedSeat s = seat(c, kRoleTactician, f.empty() ? kLaneTop : kLaneBottom);
     if (c == "PC_Warden" && (rng() & 1u)) {
       s.role = kRolePredator;
-      s.roleOverride = true;
+      const std::string profile = ProfileFor(c, kRolePredator);
+      if (!profile.empty() && have(profile)) s.botClass = profile;  // BOTPROFILE: the class itself says Predator
+      else s.roleOverride = true;
     }
     f.push_back(s);
   }

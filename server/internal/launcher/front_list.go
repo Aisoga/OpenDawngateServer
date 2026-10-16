@@ -13,6 +13,7 @@ import (
 
 	"dawngate/server/internal/setup/snap"
 	"dawngate/server/internal/tunnel"
+	"dawngate/server/internal/version"
 )
 
 // The server list the login screen's picker shows (client_ui/serverpicker/ServerPicker.as). The movie can read only
@@ -25,10 +26,11 @@ import (
 //
 // The file (UTF-8, LF, tab-separated fields):
 //
-//	dawngate-servers	1
+//	dawngate-servers	3
+//	version	<version>     this Start-Client's version (version.String)
 //	preselect	<tag>     the server Start-Client was started for (empty: none)
 //	last	<tag>          the server a login went to last (empty: none yet)
-//	server	<tag>	<name>	<address>	<gateway port>	<status>	<ping ms>	<key>	<trusted key>[	fixed]
+//	server	<tag>	<name>	<address>	<gateway port>	<status>	<ping ms>	<key>	<trusted key>	<fixed>	<version>	<version state>	<sign-up>	<link>
 //	end
 //
 // status is ok, new (it answers, no key trusted yet: trusted at the first login), changed (another key than the
@@ -36,14 +38,21 @@ import (
 // for This PC (tag pc, the tenth field fixed: the first line, never removed) while nothing answers there also local
 // (it starts at the login), setup (its first setup runs; the ping field holds the percentage), starting or failed.
 // key is the fingerprint of the key the server showed (empty when it wasn't reached), trusted the one trusted for it
-// (empty: none yet). The last line, end, tells the picker that it read the whole list: the front writes the list
-// again while the login screen shows (refreshLoop), and the picker reads it again every few seconds.
+// (empty: none yet). fixed is "fixed" for This PC, else empty. version is the version the server named (empty: none,
+// or not reached), version state same, other or unknown as Start-Client compares it with its own (a login is refused
+// unless same), empty for a server not reached and for This PC (never refused). sign-up is the server's sign-up mode
+// as its gateway tells it (open, invite, closed, or local: This PC without passwords; empty: not reached, or a release
+// before it). link is the server's slot for its own Sign up now! and Forgot Password? links (0 to
+// localepatch.LinkSlots-1, empty: none): the picker opens the URL table's line of that slot, which leads to
+// /dawngate/pick/<slot>/<page> on the front (front_pages.go); a server keeps its slot for the run. The last line, end,
+// tells the picker that it read the whole list: the front writes the list again while the login screen shows
+// (refreshLoop), and the picker reads it again every few seconds.
 const (
 	// ListArchive is the list's archive in the player copy; ListPath the list's path inside it, which the movie
 	// loads as LoginScreen/dgservers.json (the file opener keeps the .json extension).
 	ListArchive = "game/Data/zz_ServerList.snap"
 	ListPath    = "UI/Scaleform/LoginScreen/dgservers.json"
-	listMagic   = "dawngate-servers\t1"
+	listMagic   = "dawngate-servers\t3"
 	listFixed   = "fixed"
 )
 
@@ -59,6 +68,11 @@ type serverStatus struct {
 	Served, Trusted string
 	// Local is This PC's state while no server answers there (local, setup, starting, failed; thispc.go): no probe
 	Local string
+	// Version is the version the server named ("": none, or not reached); VState its state against this
+	// Start-Client's (versionState: same, other, unknown; "" not reached, This PC).
+	Version, VState string
+	// Signup is the server's sign-up mode (tunnel.FactSignup: open, invite, closed, local; "": not known)
+	Signup string
 }
 
 // status is the list's word for a server's state.
@@ -81,12 +95,18 @@ type probeResult struct {
 	ping      time.Duration
 	pin       tunnel.Pin
 	problem   *frontError
+	// version is the version the gateway named ("": none: versionErr says why)
+	version    string
+	versionErr error
+	// facts are the gateway's facts besides its version (tunnel.FactSignup; nil: none)
+	facts map[string]string
 }
 
 // probeFresh is how long a probe's result is reused.
 const probeFresh = 3 * time.Second
 
-// probe probes a server's gateway (a TLS handshake without the pin; reused for probeFresh).
+// probe probes a server's gateway (a TLS handshake without the pin and the info hello: its key and version; reused
+// for probeFresh).
 func (f *Front) probe(b Bookmark, timeout time.Duration) probeResult {
 	key := b.Gateway()
 	f.probeMu.Lock()
@@ -96,8 +116,9 @@ func (f *Front) probe(b Bookmark, timeout time.Duration) probeResult {
 	}
 	f.probeMu.Unlock()
 	start := time.Now()
-	pin, err := tunnel.ProbePin(key, timeout, f.dialerFor(b.Address))
-	r := probeResult{at: time.Now(), reachable: err == nil, ping: time.Since(start), pin: pin}
+	info, err := tunnel.ProbeInfo(key, timeout, f.dialerFor(b.Address))
+	r := probeResult{at: time.Now(), reachable: err == nil, ping: time.Since(start), pin: info.Pin, version: info.Version,
+		versionErr: info.VersionErr, facts: info.Facts}
 	if err != nil {
 		r.problem = f.classifyDial(b, err, timeout)
 	}
@@ -123,7 +144,29 @@ func (f *Front) status(b Bookmark, r probeResult) serverStatus {
 	if r.problem != nil {
 		st.Problem = problemName(r.problem.code)
 	}
+	if r.reachable {
+		st.Version = r.version
+		st.Signup = signupFact(r.facts)
+	}
+	st.VState = f.versionState(b, r)
 	return st
+}
+
+// The sign-up modes a server's gateway tells (tunnel.FactSignup); signupLocal is This PC without passwords.
+const (
+	signupOpen   = "open"
+	signupInvite = "invite"
+	signupClosed = "closed"
+	signupLocal  = "local"
+)
+
+// signupFact is a probe's sign-up mode, "" for none or one this release doesn't know.
+func signupFact(facts map[string]string) string {
+	switch v := facts[tunnel.FactSignup]; v {
+	case signupOpen, signupInvite, signupClosed, signupLocal:
+		return v
+	}
+	return ""
 }
 
 func problemName(code uint16) string {
@@ -147,7 +190,7 @@ func (f *Front) statuses() []serverStatus {
 	for i, b := range bms {
 		if b.Tag == ThisPCTag && f.ThisPC != nil {
 			if st, pct := f.ThisPC.status(); st != "" { // nothing answers there yet: no probe
-				out[i] = serverStatus{Bookmark: b, Local: st, PingMS: int64(pct), Key: "unknown"}
+				out[i] = serverStatus{Bookmark: b, Local: st, PingMS: int64(pct), Key: "unknown", Signup: f.ThisPC.signupMode()}
 				continue
 			}
 		}
@@ -183,16 +226,22 @@ func (f *Front) ServerList() []byte {
 	if b, ok := f.Bookmarks.Last(); ok && b.LastUsed != "" {
 		last = b.Tag
 	}
-	fmt.Fprintf(&sb, "preselect\t%s\nlast\t%s\n", pre, last)
-	for _, s := range f.statuses() {
-		fmt.Fprintf(&sb, "server\t%s\t%s\t%s\t%d\t%s\t%d\t%s\t%s", s.Tag, listField(s.Name), s.Address, s.GatewayPort,
-			s.status(), s.PingMS, s.Served, s.Trusted)
+	fmt.Fprintf(&sb, "version\t%s\npreselect\t%s\nlast\t%s\n", version.Clean(f.Version), pre, last)
+	sts := f.statuses()
+	for _, s := range sts {
+		fixed := ""
 		if s.Tag == ThisPCTag && f.ThisPC != nil {
-			sb.WriteString("\t" + listFixed)
+			fixed = listFixed
 		}
-		sb.WriteString("\n")
+		link := ""
+		if slot := f.slotOf(s.Tag); slot >= 0 {
+			link = strconv.Itoa(slot)
+		}
+		fmt.Fprintf(&sb, "server\t%s\t%s\t%s\t%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.Tag, listField(s.Name), s.Address,
+			s.GatewayPort, s.status(), s.PingMS, s.Served, s.Trusted, fixed, version.Clean(s.Version), s.VState, s.Signup, link)
 	}
 	sb.WriteString("end\n")
+	f.keepStatuses(sts)
 	return []byte(sb.String())
 }
 
@@ -271,7 +320,8 @@ func (f *Front) writeListText(copy string, text []byte, always bool) error {
 	return nil
 }
 
-// listSummary is the list's servers and states for the log: "a ok 2ms, b unreachable" (pings: with the pings).
+// listSummary is the list's servers and states for the log: "a ok 2ms, b unreachable, c ok 3ms other version x"
+// (pings: with the pings).
 func listSummary(text []byte, pings bool) string {
 	var out []string
 	for _, line := range strings.Split(string(text), "\n") {
@@ -283,6 +333,12 @@ func listSummary(text []byte, pings bool) string {
 			}
 			if pings && f[5] == thisPCSetup {
 				s += " " + f[6] + "%"
+			}
+			if len(f) >= 12 && (f[11] == versionOther || f[11] == versionUnknown) {
+				s += " " + f[11] + " version"
+				if f[10] != "" {
+					s += " " + f[10]
+				}
 			}
 			out = append(out, s)
 		}
@@ -382,11 +438,14 @@ func RemoveServerList(copy string) error {
 //
 //	<name>#+<address>[:<gateway port>][=<display name>]   add the server (once its gateway answers) and log in there
 //	<name>#-<tag>                                         remove the server (answered with FrontErrRemoved)
+//	<name>#*<address>[:<gateway port>][=<display name>]   add the server (once its gateway answers), no login
+//	                                                      (answered with FrontErrAdded: the picker's ADD)
 //
-// Tags never start with '+' or '-' (ValidTag).
+// Tags never start with '+', '-' or '*' (ValidTag).
 const (
-	pickAdd    = '+'
-	pickRemove = '-'
+	pickAdd     = '+'
+	pickRemove  = '-'
+	pickAddOnly = '*'
 )
 
 // parseAdd reads an add pick's server: address, optional gateway port and display name.

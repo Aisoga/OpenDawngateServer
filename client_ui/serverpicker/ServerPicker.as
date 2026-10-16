@@ -9,17 +9,24 @@
 // the login panel; its list has a row per server (name, address, the status Start-Client found at the start)
 // and Add and Remove. The pick reaches Start-Client through the login name: at LOGIN the name becomes
 //     <name>#<tag>                      log in on the server with that tag
-//     <name>#+<address>[=<name>]        add that server (Start-Client checks it, trusts its key on first use,
-//                                       stores it) and log in on it
-// and Remove sends a login as <name>#-<tag>, which Start-Client answers by removing the server (its own error
-// code, so the game shows the login error panel). The first row is This PC, the server on this PC (Start-Client
-// starts it at the login to it), which can't be removed. The game's handler reads the field after ours has changed
-// it; ours puts the typed name back right after, so the field and a remembered login name show the name only.
+//     <name>#+<address>[=<name>]        add that server (Start-Client checks it and stores it) and log in on it
+// ADD sends a login as <name>#*<address>[=<name>] and Remove one as <name>#-<tag>, which Start-Client answers by
+// adding or removing the server, without a login (its own error codes, so the game shows the login error panel).
+// The first row is This PC, the server on this PC (Start-Client starts it at the login to it), which can't be
+// removed. The game's handler reads the field after ours has changed it; ours puts the typed name back right after,
+// so the field and a remembered login name show the name only.
+//
+// The login panel's Sign up now! and Forgot Password? open the selected server's own page: the class takes their
+// clicks before the game's handlers and asks the game's Global.OpenLocalizedURL for the URL table's line of that
+// server's link slot (the list gives it; Start-Client's setup adds the lines, and its front answers them). Each row
+// shows the server's sign-up mode (open, invite only, closed, or no password for This PC).
 //
 // The texts come from the game's LoginScreen string table (lines 0x5e70a1xx, which Start-Client's setup adds to the
 // copy's locale package) through the game's own Global.ForceTranslateString; the English below is the fallback.
 // Start-Client writes the list again while the login screen shows (each server probed again), and the class reads it
-// again every few seconds, so a server going offline or coming back shows without a restart.
+// again every few seconds, so a server going offline or coming back shows without a restart. Each server's version is
+// in the list: a server of another version than Start-Client's, or one that doesn't tell its version, is marked (a
+// login there is refused), and its sentence names both versions.
 //
 // Build: re/scripts/build_picker.py (the Apache Flex SDK's mxmlc). Without the list file (Start-Client not in
 // picker mode) the class shows nothing and changes nothing.
@@ -52,10 +59,23 @@ package {
         private static const ROW_H:int = 32;
         private static const DETAIL_H:int = 60;     // the selected server's status in words, under the rows
         private static const RELOAD_MS:int = 4000;  // how often the list is read again while the login panel shows
+        private static const DETAIL_LONG:int = 190; // a longer sentence is shown in a smaller size (four lines)
+
+        // The links: the URL table (0x30B0670B) and its lines. Each server of the list has a slot; its Sign up now!
+        // opens line SLOT_SIGNUP + slot and its Forgot Password? line SLOT_PASSWORD + slot (LINK_SLOTS of each). A
+        // server without a slot (one added here, not stored yet) opens the game's own lines, which Start-Client's front
+        // answers with the list of servers.
+        private static const URL_TABLE:uint = 0x30B0670B;
+        private static const SLOT_SIGNUP:uint = 0x5E70B100;
+        private static const SLOT_PASSWORD:uint = 0x5E70B200;
+        private static const LINK_SLOTS:int = 64;
+        private static const LINE_SIGNUP:uint = 6;
+        private static const LINE_PASSWORD:uint = 3;
 
         // The texts: the LoginScreen table's line ids (re/scripts/patch_locale.py, server/internal/setup/localepatch
         // add them) and the English fallback. {1} is the ping, {2} the key the server shows, {3} the trusted key
-        // (fingerprints: 16 hex digits, as Start-Server shows them).
+        // (fingerprints: 16 hex digits, as Start-Server shows them); in the version lines {1} is the server's version,
+        // {2} Start-Client's.
         private static const TX_SERVER:Array = [0x5e70a101, "SERVER"];
         private static const TX_SELECT:Array = [0x5e70a102, "SELECT A SERVER"];
         private static const TX_ADD_SERVER:Array = [0x5e70a103, "ADD SERVER"];
@@ -65,7 +85,7 @@ package {
         private static const TX_CANCEL:Array = [0x5e70a107, "CANCEL"];
         private static const TX_ADDRESS:Array = [0x5e70a108, "Server address"];
         private static const TX_NAME:Array = [0x5e70a109, "Name (optional)"];
-        private static const TX_ADD_HINT:Array = [0x5e70a10a, "Added at your next login, which checks the server and shows its key: log in again to trust it."];
+        private static const TX_ADD_HINT:Array = [0x5e70a10a, "ADD checks the server and adds it to your list. Then pick it: Sign up now! below the login opens its sign-up page."];
         private static const TX_BAD_ADDRESS:Array = [0x5e70a10b, "Type the server's address: an IPv4 address such as 203.0.113.5, or a host name."];
         private static const TX_EMPTY:Array = [0x5e70a10c, "No servers yet: add one."];
         private static const TX_NONE:Array = [0x5e70a10d, "none: add a server"];
@@ -82,6 +102,8 @@ package {
         private static const TX_ST_SETUP:Array = [0x5e70a118, "setting up, {1} %"];
         private static const TX_ST_STARTING:Array = [0x5e70a119, "starting"];
         private static const TX_ST_FAILED:Array = [0x5e70a11a, "didn't start"];
+        private static const TX_ST_OTHER_VERSION:Array = [0x5e70a11b, "other version"];
+        private static const TX_ST_NO_VERSION:Array = [0x5e70a11c, "version unknown"];
         private static const TX_D_OK:Array = [0x5e70a120, "Online, {1} ms. Its key: {2}."];
         private static const TX_D_NEW:Array = [0x5e70a121, "New server key {2}: compare it with the fingerprint its operator gives you. The first login stops here; log in again to trust it."];
         private static const TX_D_CHANGED:Array = [0x5e70a122, "KEY CHANGED: you trusted {3}, the server now shows {2}. Don't log in until its operator confirms the new key: see the troubleshooting guide."];
@@ -92,6 +114,17 @@ package {
         private static const TX_D_SETUP:Array = [0x5e70a127, "Setting up the server on this PC: {1} %. Your login waits for it, or log in again when it says online."];
         private static const TX_D_STARTING:Array = [0x5e70a128, "The server on this PC is starting."];
         private static const TX_D_FAILED:Array = [0x5e70a129, "The server on this PC didn't start: Start-Client's window says why. Log in again to retry."];
+        private static const TX_D_OTHER_VERSION:Array = [0x5e70a12a, "This server runs version {1}, your Start-Client is {2}. A login needs the same version: use the server's release."];
+        private static const TX_D_NO_VERSION:Array = [0x5e70a12b, "This server doesn't tell its version (an older release). Your Start-Client is {2}: a login needs the same version."];
+        private static const TX_D_VERSION:Array = [0x5e70a12c, "Version {1}."];
+        private static const TX_M_OPEN:Array = [0x5e70a130, "open"];
+        private static const TX_M_INVITE:Array = [0x5e70a131, "invite only"];
+        private static const TX_M_CLOSED:Array = [0x5e70a132, "closed"];
+        private static const TX_M_LOCAL:Array = [0x5e70a133, "no password"];
+        private static const TX_DM_OPEN:Array = [0x5e70a134, "Sign-up open: your first login with a new name makes the account."];
+        private static const TX_DM_INVITE:Array = [0x5e70a135, "Sign up first: this server needs an invite code (Sign up now! below the login)."];
+        private static const TX_DM_CLOSED:Array = [0x5e70a136, "Sign up first: only its operator makes accounts (Sign up now! below the login says how)."];
+        private static const TX_DM_LOCAL:Array = [0x5e70a137, "No sign-up and no password here: any name logs in."];
 
         private static const GOLD:uint = 0xC9A865;
         private static const TEXT:uint = 0xE6DFD0;
@@ -101,7 +134,8 @@ package {
         private static const RED:uint = 0xD0473B;
         private static const GREY:uint = 0x7A7A7A;
 
-        private var servers:Array = [];   // {tag, name, address, port, status, ping, key, trusted, pending, named, fixed}
+        private var servers:Array = [];   // {tag, name, address, port, status, ping, key, trusted, pending, named, fixed,
+                                          //  version, vstate, signup, link}
         private var sel:int = -1;
         private var texts:Object = {};    // the looked-up texts by line id
         private var loading:Boolean = false;
@@ -109,6 +143,7 @@ package {
         private var top:int = 0;          // the first row shown
         private var preselect:String = "";
         private var lastUsed:String = "";
+        private var ownVersion:String = ""; // Start-Client's version (the list's version line)
         private var listState:int = 0;    // 0 loading, 1 loaded, -1 none
         private var remembered:Object = null; // the server a remembered name#suffix named
 
@@ -183,16 +218,21 @@ package {
 
         // -- the list file ----------------------------------------------------------------------------------
         // Lines of tab-separated fields (UTF-8):
-        //   dawngate-servers  1
+        //   dawngate-servers  3
+        //   version    <version>          Start-Client's version
         //   preselect  <tag>              the server Start-Client was started for (may be empty)
         //   last       <tag>              the server a login went to last (may be empty)
-        //   server     <tag> <name> <address> <gateway port> <status> <ping ms> [<key> <trusted key> [fixed]]
+        //   server     <tag> <name> <address> <gateway port> <status> <ping ms> <key> <trusted key> <fixed>
+        //              <version> <version state> <sign-up> <link>
         //   end                           the list is whole (Start-Client may be writing it while it is read)
         // status: ok, new (online, its key not trusted yet), changed (another key than the trusted one),
         // unreachable, no_gateway (no Dawngate tunnel there), unknown; for This PC (fixed: the first line, shown in
         // the game's language, never removed) also local (starts at the login), setup (the ping field: the setup's
         // percentage), starting, failed. key: the fingerprint of the key the server showed, trusted: the one trusted
-        // for it (both may be empty).
+        // for it (both may be empty). fixed: "fixed" for This PC, else empty. version: the one the server named (may be
+        // empty); version state: same, other (another version than Start-Client's), unknown (it named none), or empty
+        // (not reached, This PC): a login is refused unless same. sign-up: open, invite, closed, local (This PC without
+        // passwords) or empty (not known). link: the server's link slot (0 to 63), or empty.
 
         private function load():void {
             if (loading) {
@@ -233,9 +273,11 @@ package {
             var pre:String = "";
             var last:String = "";
             var whole:Boolean = false;
+            var ver:String = "";
             for (var i:int = 1; i < lines.length; i++) {
                 var f:Array = String(lines[i]).split("\t");
                 switch (f[0]) {
+                    case "version": ver = f.length > 1 ? f[1] : ""; break;
                     case "preselect": pre = f.length > 1 ? f[1] : ""; break;
                     case "last": last = f.length > 1 ? f[1] : ""; break;
                     case "end": whole = true; break;
@@ -244,18 +286,23 @@ package {
                             var fixed:Boolean = f.length > 9 && f[9] == "fixed";
                             got.push({tag: f[1], name: f[2], address: f[3], port: int(f[4]),
                                       status: f[5], ping: int(f[6]), key: f.length > 7 ? f[7] : "",
-                                      trusted: f.length > 8 ? f[8] : "", pending: false, named: true, fixed: fixed});
+                                      trusted: f.length > 8 ? f[8] : "", pending: false, named: true, fixed: fixed,
+                                      version: f.length > 10 ? f[10] : "", vstate: f.length > 11 ? f[11] : "",
+                                      signup: f.length > 12 ? f[12] : "",
+                                      link: (f.length > 13 && f[13] != "") ? int(f[13]) : -1});
                         }
                         break;
                 }
             }
             if (listState == 1) {
                 if (whole) {
+                    ownVersion = ver;
                     merge(got);
                 }
                 return;
             }
             servers = got;
+            ownVersion = ver;
             preselect = pre;
             lastUsed = last;
             listState = 1;
@@ -376,6 +423,20 @@ package {
             btn.addEventListener("buttonClick", restore, false, -1000);
             acc.addEventListener("IF_Submit", restore, false, -1000);
             pw.addEventListener("IF_Submit", restore, false, -1000);
+            // The links: the game listens on the button (buttonClick) and the text field (link) with priority 0; ours
+            // on the same targets with priority 1000 run first and stop the game's when they open the server's page.
+            var forgot:Object = lp["btnForgotPassword"];
+            if (forgot != null) {
+                forgot.addEventListener("buttonClick", function (e:Event):void {
+                    openLink(e, SLOT_PASSWORD, LINE_PASSWORD);
+                }, false, 1000);
+            }
+            var signUp:Object = lp["signUpTextField"];
+            if (signUp != null) {
+                signUp.addEventListener("link", function (e:Event):void {
+                    openLink(e, SLOT_SIGNUP, LINE_SIGNUP);
+                }, false, 1000);
+            }
             hooked = true;
             if (stage != null) {
                 // capture phase: before the focused control (the game's focus moves with the arrow keys too)
@@ -402,6 +463,26 @@ package {
             acc["text"] = t + "#" + suffix(s);
             if (panel != null && panel.visible) {
                 closePanel();
+            }
+        }
+
+        // openLink opens the selected server's page in the player's browser through the game's own URL opener
+        // (Global.OpenLocalizedURL: a line of the URL table, http and https only) and stops the game's handler, which
+        // would open the plain link. Without a list, or when the call fails, the game's handler opens its line.
+        private function openLink(e:Event, first:uint, plain:uint):void {
+            if (listState != 1) {
+                return;
+            }
+            var s:Object = current();
+            var line:uint = plain;
+            if (s != null && !s.pending && s.link >= 0 && s.link < LINK_SLOTS) {
+                line = first + uint(s.link);
+            }
+            try {
+                var table:uint = URL_TABLE;
+                ExternalInterface.call("Global.OpenLocalizedURL", table, line);
+                e.stopImmediatePropagation();
+            } catch (err:Error) {
             }
         }
 
@@ -437,7 +518,7 @@ package {
             acc["text"] = name;
             stripped = name;
             var r:Object = null;
-            if (rest.charAt(0) == "+") {
+            if (rest.charAt(0) == "+" || rest.charAt(0) == "*") {
                 var a:String = rest.substring(1);
                 var eq:int = a.indexOf("=");
                 r = {tag: null, address: eq >= 0 ? a.substring(0, eq) : a};
@@ -596,7 +677,9 @@ package {
             detail.x = 14;
             detail.y = 38 + ROWS * ROW_H + 2;
             detail.width = W - 28;
-            detail.height = DETAIL_H;
+            // down to 2 px above the buttons: four lines of 11 px need about 66 px (seen live: the fourth line of
+            // a 60-px field was cut)
+            detail.height = DETAIL_H + 8;
             detail.multiline = true;
             detail.wordWrap = true;
             panel.addChild(detail);
@@ -727,20 +810,27 @@ package {
             r.dot.y = (ROW_H - 2) / 2;
             r.dot.mouseEnabled = false;
             r.box.addChild(r.dot);
+            // the columns: name 25 %, address 19 %, sign-up mode 20 %, status 36 % (its longest word, version
+            // unknown, takes about 100 px at 12 px; 28 % cut it)
             r.name = text(13, TEXT);
             r.name.x = 26;
             r.name.y = 5;
-            r.name.width = (W - 20) * 0.38;
+            r.name.width = (W - 20) * 0.25;
             r.box.addChild(r.name);
             r.address = text(12, DIM);
-            r.address.x = 26 + (W - 20) * 0.38;
+            r.address.x = 26 + (W - 20) * 0.25;
             r.address.y = 6;
-            r.address.width = (W - 20) * 0.32;
+            r.address.width = (W - 20) * 0.19;
             r.box.addChild(r.address);
+            r.mode = text(12, DIM);
+            r.mode.x = 26 + (W - 20) * 0.44;
+            r.mode.y = 6;
+            r.mode.width = (W - 20) * 0.20;
+            r.box.addChild(r.mode);
             r.status = text(12, DIM);
-            r.status.x = 26 + (W - 20) * 0.70;
+            r.status.x = 26 + (W - 20) * 0.64;
             r.status.y = 6;
-            r.status.width = (W - 20) * 0.30 - 30;
+            r.status.width = (W - 20) * 0.36 - 30;
             r.box.addChild(r.status);
             return r;
         }
@@ -752,16 +842,34 @@ package {
             return s.fixed ? tr(TX_THIS_PC) : String(s.name);
         }
 
+        // modeOf is a server's sign-up mode: its word for the row and its sentence (both "" when not known).
+        private function modeOf(s:Object):Array {
+            switch (s.signup) {
+                case "open": return [tr(TX_M_OPEN), tr(TX_DM_OPEN)];
+                case "invite": return [tr(TX_M_INVITE), tr(TX_DM_INVITE)];
+                case "closed": return [tr(TX_M_CLOSED), tr(TX_DM_CLOSED)];
+                case "local": return [tr(TX_M_LOCAL), tr(TX_DM_LOCAL)];
+            }
+            return ["", ""];
+        }
+
         // statusOf is a server's status word, its colour and the sentence under the list.
         private function statusOf(s:Object):Array {
             if (s.pending) {
                 return [tr(TX_ST_PENDING), AMBER, tr(TX_ADD_HINT)];
             }
             var ping:String = String(s.ping);
+            if (!s.fixed && s.vstate == "other") {
+                return [tr(TX_ST_OTHER_VERSION), RED, fill(tr(TX_D_OTHER_VERSION), s.version, ownVersion)];
+            }
+            if (!s.fixed && s.vstate == "unknown") {
+                return [tr(TX_ST_NO_VERSION), RED, fill(tr(TX_D_NO_VERSION), s.version, ownVersion)];
+            }
+            var ver:String = (s.version != null && s.version != "") ? " " + fill(tr(TX_D_VERSION), s.version) : "";
             switch (s.status) {
-                case "ok": return [fill(tr(TX_ST_OK), ping), GREEN, fill(tr(TX_D_OK), ping, s.key, s.trusted)];
-                case "new": return [tr(TX_ST_NEW), GREEN, fill(tr(TX_D_NEW), ping, s.key, s.trusted)];
-                case "changed": return [tr(TX_ST_CHANGED), RED, fill(tr(TX_D_CHANGED), ping, s.key, s.trusted)];
+                case "ok": return [fill(tr(TX_ST_OK), ping), GREEN, fill(tr(TX_D_OK), ping, s.key, s.trusted) + ver];
+                case "new": return [tr(TX_ST_NEW), GREEN, fill(tr(TX_D_NEW), ping, s.key, s.trusted) + ver];
+                case "changed": return [tr(TX_ST_CHANGED), RED, fill(tr(TX_D_CHANGED), ping, s.key, s.trusted) + ver];
                 case "unreachable": return [tr(TX_ST_OFFLINE), RED, tr(TX_D_OFFLINE)];
                 case "no_gateway": return [tr(TX_ST_NO_TUNNEL), RED, tr(TX_D_NO_TUNNEL)];
                 case "local": return [tr(TX_ST_LOCAL), GREEN, tr(TX_D_LOCAL)];
@@ -791,7 +899,17 @@ package {
                 selDot.visible = true;
                 selStatus.text = cur[0];
                 selStatus.textColor = cur[1];
-                detail.text = cur[2];
+                // the sign-up mode's sentence, except for a server of another version (no login there anyway; the
+                // two versions fill the three lines)
+                var m:String = (!s.fixed && (s.vstate == "other" || s.vstate == "unknown")) ? "" : String(modeOf(s)[1]);
+                var d:String = String(cur[2]) + (m != "" ? " " + m : "");
+                var fmt:TextFormat = detail.defaultTextFormat;
+                fmt.size = d.length > DETAIL_LONG ? 11 : 12;
+                detail.defaultTextFormat = fmt;
+                detail.text = d;
+                // Scaleform kept the field's first size for new text (seen live: a long sentence stayed at 12 px),
+                // so the size is set on the text itself too
+                detail.setTextFormat(fmt);
                 detail.textColor = cur[1] == RED ? RED : TEXT;
             } else {
                 selName.text = servers.length == 0 ? tr(TX_NONE) : tr(TX_PICK);
@@ -818,6 +936,7 @@ package {
                 var st:Array = statusOf(v);
                 r.name.text = nameOf(v);
                 r.address.text = v.address;
+                r.mode.text = String(modeOf(v)[0]);
                 r.status.text = st[0];
                 r.status.textColor = st[1];
                 dot(r.dot, st[1]);
@@ -937,14 +1056,40 @@ package {
                 return;
             }
             var k:int = findAddress(address);
-            if (k < 0) {
+            var added:Boolean = k < 0;
+            if (added) {
                 servers.push({tag: "", name: name != "" ? name : address, address: address, port: 0, status: "",
-                              ping: 0, pending: true, named: name != ""});
+                              ping: 0, pending: true, named: name != "", signup: "", link: -1});
                 k = servers.length - 1;
             }
             closeAdd();
             select(k);
             closePanel();
+            if (added) {
+                addNow(servers[k]);
+            }
+        }
+
+        // addNow asks Start-Client to check and store a server added here, without a login: a login as
+        // <name>#*<address>[=<name>], which it answers by adding the server (the game shows its login error panel: the
+        // server added, or why not). The list read again then has it with its status, key, sign-up mode and link; one
+        // that couldn't be added stays here as added at login (a login to it tries again).
+        private function addNow(s:Object):void {
+            if (saved != null) {
+                return;
+            }
+            var name:String = String(acc["text"]);
+            if (name.indexOf("#") >= 0) {
+                name = name.substring(0, name.indexOf("#"));
+            }
+            saved = String(acc["text"]);
+            acc["text"] = (name != "" ? name : "player") + "#*" + s.address + (s.named ? "=" + s.name : "");
+            try {
+                root["OnLoginClicked"](null);
+            } catch (err:Error) {
+            }
+            acc["text"] = saved;
+            saved = null;
         }
 
         // Remove: a pending server goes from the list at once; a stored one by a login as <name>#-<tag>, which

@@ -9,7 +9,9 @@
      <GmsRoot>\gms\engine\lua. GmsRoot is this checkout unless given (e.g. the main checkout from a worktree that
      didn't build gms\).
   2. Start-Server.exe and Start-Client.exe: go build of server\cmd\start-server and server\cmd\start-client from this
-     checkout (windows/amd64, -trimpath, GOTOOLCHAIN=local, CGO off).
+     checkout (windows/amd64, -trimpath, GOTOOLCHAIN=local, CGO off), with the release's name as their version
+     (-X dawngate/server/internal/version.release=<Name>): a player's Start-Client logs in only on servers of the same
+     version, so two releases with different names never play together.
   3. The folder <Out>\<Name>\: the two programs, host\dgsim.dll, host\lua\*.lua, README.txt (re\scripts\release),
      LICENSE.txt (the AGPL text: the checkout's LICENSE, else branch public's), THIRD-PARTY-NOTICES.txt (RakNet 4.081's LICENSE and PATENTS
      from tools\raknet\RakNet and a note on this project's RakNet patches (gms\cmake\raknet_patches),
@@ -50,6 +52,8 @@ $commit = "$(& git -C $Repo rev-parse --short=10 HEAD)".Trim()
 $dirty = "$(& git -C $Repo status --porcelain --untracked-files=no -- server re/scripts/release)".Trim()
 if (-not $Name) { $Name = "Dawngate-Restoration-$(Get-Date -Format 'yyyyMMdd')-$commit" }
 function Fail([string]$m) { Write-Host $m -ForegroundColor Red; exit 1 }
+# the name is the build's version (server\internal\version): Start-Client plays only on servers of the same one
+if ($Name -notmatch '^[A-Za-z0-9._+-]{1,64}$') { Fail "-Name $Name`: 1-64 of letters, digits and . _ + - (it is the release's version)" }
 
 # 1. the match host
 . (Join-Path $PSScriptRoot 'gms_stale.ps1')
@@ -73,8 +77,10 @@ try {
     $env:GOOS = 'windows'; $env:GOARCH = 'amd64'; $env:CGO_ENABLED = '0'; $env:GOTOOLCHAIN = 'local'
     foreach ($p in @(@('Start-Server.exe', './cmd/start-server'), @('Start-Client.exe', './cmd/start-client'))) {
         Write-Host "building $($p[0]) ..." -ForegroundColor Cyan
-        & $go build -C (Join-Path $Repo 'server') -trimpath -ldflags '-s -w' -o (Join-Path $dir $p[0]) $p[1]
+        & $go build -C (Join-Path $Repo 'server') -trimpath -ldflags "-s -w -X dawngate/server/internal/version.release=$Name" -o (Join-Path $dir $p[0]) $p[1]
         if ($LASTEXITCODE -ne 0) { Fail "go build $($p[1]) failed" }
+        $said = "$(& (Join-Path $dir $p[0]) --version)".Trim()
+        if ($said -ne $Name) { Fail "$($p[0]) --version says '$said', not its version $Name (the linker's -X)" }
     }
     # the outside Go modules the two programs link, for their licences below ("path version dir")
     $modules = @(& $go list -C (Join-Path $Repo 'server') -deps -f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Version}} {{.Dir}}{{end}}{{end}}' ./cmd/start-server ./cmd/start-client |
@@ -184,7 +190,8 @@ foreach ($row in Import-Csv (Join-Path $Repo 'docs\file_manifest.csv')) {
 }
 $allowed = '^(Start-Server\.exe|Start-Client\.exe|README\.txt|LICENSE\.txt|THIRD-PARTY-NOTICES\.txt|BUILD\.txt|host\\dgsim\.dll|host\\lua\\[A-Za-z0-9_]+\.lua)$'
 $files = @(Get-ChildItem $dir -Recurse -File | Sort-Object FullName)
-$build = @("release  $Name", "commit   $commit$(if ($dirty) { ' (with uncommitted changes in server\ or re\scripts\release)' })",
+$build = @("release  $Name", "version  $Name (Start-Server.exe and Start-Client.exe; a player's Start-Client and the server must have the same)",
+    "commit   $commit$(if ($dirty) { ' (with uncommitted changes in server\ or re\scripts\release)' })",
     "built    $(Get-Date -Format s)", "go       $goVersion", "dgsim    $dll (current: newer than its sources, its build stamp's bytes)",
     '', 'SHA-256 of the files:')
 $problems = @()

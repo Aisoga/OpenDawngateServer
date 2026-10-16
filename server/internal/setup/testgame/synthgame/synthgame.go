@@ -105,10 +105,31 @@ func Files(ts *assetdata.Types) ([]testgame.SnapFile, error) {
 		}
 		files = append(files, testgame.SnapFile{Name: "AssetData/Binary/" + o.name + "." + o.class + ".bin", Data: b})
 	}
+	// the BotClass the bot profiles copy (botprofiles: PC_Warden)
+	bc, err := Bin(ts, "BotClass", map[string]any{"nounDef": "ember.Noun", "aiDefinition": "BOT_ember.AIDefinition",
+		"role": uint32(1)})
+	if err != nil {
+		return nil, err
+	}
+	files = append(files, testgame.SnapFile{Name: "AssetData/Binary/PC_Warden.BotClass.bin", Data: bc})
 	// a file that doesn't parse (left out, as assetdata.py dump leaves it out) and the catalog
 	files = append(files, testgame.SnapFile{Name: "AssetData/Binary/broken.CollectionItem.bin", Data: []byte{1, 2, 3}},
-		testgame.SnapFile{Name: "AssetData/Binary/catalog_153.bin", Data: make([]byte, 8)})
+		testgame.SnapFile{Name: "AssetData/Binary/catalog_153.bin", Data: catalog()})
 	return files, nil
+}
+
+// catalog is a Catalog listing PC_Warden.BotClass alone (a CatalogEntry of 0x30 bytes: name, compile time, typeCrc
+// 0xDF9D7C39 = the BotClass table's, source file, location and status 4; then its two strings).
+func catalog() []byte {
+	le := binary.LittleEndian
+	e := make([]byte, 0x30)
+	le.PutUint32(e[0x00:], 0x02000010)
+	le.PutUint64(e[0x08:], 1415127097)
+	le.PutUint32(e[0x14:], 0xDF9D7C39)
+	le.PutUint32(e[0x1C:], 0x02000020)
+	e[0x20], e[0x21] = 4, 4
+	d := le.AppendUint32(le.AppendUint32(nil, 0x02000000), 1)
+	return append(append(d, e...), "PC_Warden.BotClass\x00Heroes/ember/PC_Warden.Noun\x00"...)
 }
 
 // Locale is the synthetic English Locale.package.

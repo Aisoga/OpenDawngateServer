@@ -43,7 +43,12 @@ func ParseStatus(name string) (Status, error) {
 	return 0, fmt.Errorf("%q is not an account status (active, disabled, banned, deleted)", name)
 }
 
-// Credentials are what a login checks: the account's id, its login name as stored, its password hash ("" = none yet),
+// LocalTrustHash is the password column of an account that This PC's server made without a password (accounts.Policy's
+// LocalTrust). The earlier builds' accounts without one have "", and no PHC string looks like it.
+const LocalTrustHash = "local-trust"
+
+// Credentials are what a login checks: the account's id, its login name as stored, its password hash ("" = none yet,
+// LocalTrustHash = made by This PC without one),
 // its status and its role.
 type Credentials struct {
 	UserID int64

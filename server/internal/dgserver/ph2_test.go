@@ -50,7 +50,7 @@ func TestAccountCommands(t *testing.T) {
 	if code != 0 || m2 == nil || m2[1] == m[1] {
 		t.Fatalf("reset: %d %s", code, out)
 	}
-	if login(m[1]) != accounts.CodeInvalidPassword || login(m2[1]) != 0 {
+	if login(m[1]) != accounts.CodeInvalidUser || login(m2[1]) != 0 { // closed: a wrong password as an unknown name
 		t.Error("after the reset the old password works or the new one doesn't")
 	}
 	if out, code := run(accountCommands{accountStatus: "op.made=disabled"}); code != 0 || !strings.Contains(out, "disabled (was active)") {

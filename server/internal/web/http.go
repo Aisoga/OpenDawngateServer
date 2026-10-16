@@ -89,6 +89,15 @@ type HTTP struct {
 // one the operator's Start-Server.exe shows.
 const CAModulusPath = "dawngate/ca_modulus.bin"
 
+// VersionPath is where dgserver answers its build's version (version.String, one line of text). Start-Client asks it
+// of a server it plays on without the tunnel; through the tunnel the gateway's info hello answers it.
+const VersionPath = "dawngate/version.txt"
+
+// VersionPage is the answer at VersionPath.
+func VersionPage(v string) Builtin {
+	return Builtin{Path: VersionPath, ContentType: "text/plain", Body: []byte(v + "\n")}
+}
+
 // Fingerprint is a CA modulus's fingerprint: the first 16 hex digits of its SHA-256 (patch_client.py --show's
 // ca_sha256, certs.Fingerprint).
 func Fingerprint(modulus []byte) string {

@@ -346,6 +346,7 @@ constexpr std::uintptr_t kPlayerIndex = 0x4C;       // mPlayerIdx (0xFF none)
 constexpr std::uintptr_t kTeam = 0x4D;              // mTeam
 constexpr std::uintptr_t kPendingDelete = 0x55;
 constexpr std::uintptr_t kPlayerControlled = 0x56;  // mbPlayerControlled
+constexpr std::uintptr_t kInitialPosition = 0x5C;   // f32 x 3 (nGameObject.GetInitialPosition; the tether's centre)
 constexpr std::uintptr_t kHasCollision = 0x58;      // mbHasCollision
 constexpr std::uintptr_t kMarkerId = 0x84;          // sourceMarkerKey.markerId
 constexpr std::uintptr_t kNetwork = 0x8BC;          // network component (NetworkComponent_Create 0x00895670)

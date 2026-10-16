@@ -46,6 +46,7 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 | `--config <file>` | Use another config file instead of `Start-Server.ini`. |
 | `--i-accept-the-risk` | Accept the risk notice for a public address. |
 | `--non-interactive` | Never ask anything (for scripts). |
+| `--version` | Print the release's version and exit. Players need a `Start-Client.exe` of the same version. |
 
 **Account commands** (they work while the server runs, print their result and exit):
 
@@ -77,14 +78,17 @@ Start-Client.exe [<server address or tag>] [options]
 | `--zip <file>` | Use this `Dawngate.zip` to set up or repair the game copy. |
 | `--check` | Only report what is missing. |
 | `--setup-only` | Prepare the game copy for the server without starting the game. |
+| `--version` | Print the release's version and exit. It plays only on servers of the same version. |
+| `--local-trust on\|off` | This PC without passwords: `on` (the default) lets any login name in on the server `Start-Client.exe` runs for This PC, with any password; `off` checks passwords there. |
 
-`Start-Client.ini` has the keys `server` (empty: the server list), `folder`, `tunnel`, `gateway_port` and `picker` (`auto`, `on`, `off`). An older `Start-Client.ini` keeps working: its `server` becomes the first server of a new list, and its comments are updated.
+`Start-Client.ini` has the keys `server` (empty: the server list), `folder`, `tunnel`, `gateway_port`, `picker` (`auto`, `on`, `off`) and `local_trust` (`on`, `off`). An older `Start-Client.ini` keeps working: its `server` becomes the first server of a new list, and its comments are updated.
 
 **This PC.** The server list's first entry, tag `pc`, is the server on this PC; it can't be removed. A login to it goes to the server of `Start-Server.exe` in the same folder while that runs (`Dawngate-Data\server.lock` says which program runs the folder's server, its address and its key). Otherwise `Start-Client.exe` runs the server itself, in its own process, until the game ends:
 
 - It starts at the first login to This PC, not at `Start-Client.exe`'s start. Its first start sets up the match-host copy `host\` (about half a minute and 1.5 GB, from `Dawngate.zip`); the login waits up to 50 seconds for it (a longer setup goes on, and the login is refused with `00E90001` until it is done), and the list shows the progress.
 - It listens on its own loopback address, `127.0.1.11` (`127.0.N.11` for a front on `127.0.0.N`): the tunnel's port 42128, the control port 10040 and its matches' UDP ports. Nothing else listens and no website runs.
 - It uses the folder's accounts (`data\accounts.db`), the same certificate set as the folder's `Start-Server.exe` (`certs\<its address>`, else `certs\127.0.1.11`), and the game options of a `Start-Server.ini` in the same folder (`shaper_select`, `signup`, `signups_per_address`, `log_days`, `server_flags`); without one, shaper select is on and sign-up is open.
+- It has no passwords while `local_trust` is `on` (the default): any login name logs in with any password, whatever the sign-up mode; a new name makes its account without a password, and none is checked or stored. The folder's `Start-Server.exe` checks passwords: an account made without one gets the password of its first login there from this PC (one of this PC's own addresses), and a login to it from anywhere else is refused.
 - Its log goes to `Dawngate-Data\logs`, as `Start-Server.exe`'s; the console shows its setup and one line when it runs.
 - A folder has one server at a time: `Start-Server.exe` refuses to start (or set up) while `Start-Client.exe` runs the folder's server.
 
@@ -123,6 +127,7 @@ The login name carries the pick ([playing.md](playing.md#the-server-list)):
 | `<name>` | Log in on the server selected on the login screen, else the one used last. |
 | `<name>#<tag>` | Log in on that server (a tag, address or name of the list). |
 | `<name>#+<address>[:<port>][=<display name>]` | Add the server once it answers, then log in there. |
+| `<name>#*<address>[:<port>][=<display name>]` | Add the server once it answers, without a login (the list's ADD; refused with `00EC0001` as its confirmation). |
 | `<name>#-<tag>` | Remove the server from the list (the login is then refused with a confirmation). |
 | `<name>#pc` | Log in on This PC. |
 
@@ -141,6 +146,14 @@ The refusals the list can show at LOGIN, besides the server's own:
 | `00E80001` | This PC is always in the list: it can't be removed. |
 | `00E90001` | The server on this PC is still being set up. Log in again when the list says online. |
 | `00EA0001` | The server on this PC didn't start: Start-Client's window says why. |
+| `00EB0001` | This server runs another version than your Start-Client, or doesn't tell its version: both need the same one. |
+| `00EC0001` | The server was added to your list. |
+
+A server whose sign-up isn't open refuses an unknown login name and a wrong password alike with `000B0001`: *The login name or password you entered is incorrect. No account on this server yet? Make one first: Sign up now! below.* (An open server refuses a wrong password with `000C0001`, without the second sentence.)
+
+**Sign-up and the login screen's links.** The list shows each server's sign-up mode (`open`, `invite only`, `closed`, `no password` for This PC without passwords), which the server answers inside its tunnel with its version. *Sign up now!* and *Forgot Password?* open the selected server's page through `Start-Client.exe` (`http://127.0.0.1:18080/dawngate/pick/<n>/signup` and `…/password`, where `<n>` is the server's place in the list for this run; the game's own links `/dawngate/signup` and `/dawngate/password` open a page that lists the servers). `Start-Client.exe` reaches a server for its page through a short tunnel session of its own, without a login; a key that isn't trusted yet is shown on the page with its fingerprint and trusted only when you confirm it there, and a changed key is refused. The server answers with its own page, or sends the browser on to its website. The start page and the legal links go to the server of your last login, else to the list.
+
+**Versions.** Every release has a version, its name (`Start-Client.exe --version` and `Start-Server.exe --version` print it; both windows show it at the start). A login is refused with `00EB0001` before it reaches a server whose version differs from `Start-Client.exe`'s in any way, or that doesn't tell its version (a release from before this check); This PC never is. The server answers its version inside the tunnel, without opening a session, and the list asks it with each status check. A server without the tunnel answers it on its HTTP port (`/dawngate/version.txt`); `Start-Client.exe --tunnel off` asks it at its start and doesn't start the game on another version. A build made from the source without the release script names its commit instead (`dev-<commit>`, `+dirty` with uncommitted changes).
 
 ## Extra server options (server_flags)
 

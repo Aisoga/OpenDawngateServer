@@ -81,6 +81,10 @@ with "New server key" and the list shows the key's fingerprint (compare it with 
 the second login trusts it. Every later login checks it: KEY CHANGED means it isn't the same server any more, so
 don't log in, and ask its operator (see "When something goes wrong"). The list is the file
 Dawngate-Data\servers\bookmarks.json.
+Your Start-Client.exe and a server must be the same release (this one is @VERSION@; Start-Client.exe --version
+and Start-Server.exe --version print it). Any other version is marked "other version" in the list (a server of a
+release before this check: "version unknown") and its logins are refused; This PC never is. To update, unpack
+the new release into the same folder over the old files: Start-Server.ini, Start-Client.ini and Dawngate-Data stay.
 
 
 Hosting on the internet (use at your own risk)
@@ -188,6 +192,9 @@ When something goes wrong
   setup took longer than the login waits; log in again when the list says online.
 - "New server key" at LOGIN: your first login to that server. Open the list (SERVER), compare the key it shows
   with the one the server's operator gives you, and press LOGIN again if it is the same.
+- "This server runs another version than your Start-Client" at LOGIN: the list's sentence names both versions.
+  Use the Start-Client.exe of the server's release (ask its operator); "version unknown" means the server runs a
+  release from before the version check, and only its operator can update it.
 - The setup stopped halfway: start the program again; it continues. If the same step fails again, delete
   the folder the message names inside Dawngate-Data; it is made anew.
 - "is not the Dawngate.zip of archive.org": download it again; the setup checks every file against build

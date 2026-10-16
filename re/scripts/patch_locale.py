@@ -12,13 +12,18 @@ copy's own file at setup time):
                             the limits), banned / disabled / deleted without EA's help address (0x00200001,
                             0x002b0001, 0x00650001, 0x00290001), Start-Client's server picker refusing a login
                             before it reached a server (0x00e00001-0x00e60001: unknown server, no answer, the key
-                            changed, no tunnel, the server failed, removed, not an address)
+                            changed, no tunnel, the server failed, removed, not an address, This PC's, the version,
+                            added: 0x00e00001-0x00ec0001); 0x000b0001 also points to Sign up now! (a server that
+                            needs a sign-up first refuses an unknown name and a wrong password with it)
   LoginScreen  0x69E51800   the field label 0x0ac5be93 "Enter Login Name", the check box 0x0ac5be95, the server
-                            picker's labels, status words and sentences (0x5e70a101-0x5e70a125)
+                            picker's labels, status words and sentences (0x5e70a101-0x5e70a137)
   URLs         0x30B0670B   the links the login screen opens in the player's browser: Forgot Password? (line 3), Sign
                             up now! (line 6, also 4 and 5), the legal links (1, 2, 7), forum, survey and funds (0x100,
                             0x101, 0x103), all at the server's own pages instead of EA's and Waystone's dead (and
-                            re-registrable) domains; 0x102 (Adobe's Flash download) stays
+                            re-registrable) domains; 0x102 (Adobe's Flash download) stays; and the server picker's
+                            own links, Sign up now! and Forgot Password? per server of its list (0x5e70b100 +
+                            slot, 0x5e70b200 + slot, 64 slots: http://<host>:<http port>/dawngate/pick/<slot>/<page>,
+                            which Start-Client's front answers)
 
 The links (SITE_PAGES): without a website, http://<host>:<http port>/dawngate/<page>, which dgserver's HTTP port
 answers with a short page of its own (server/internal/web/sitepages.go: how sign-up works in its mode, ask the operator
@@ -64,7 +69,9 @@ ADDED_COMMENT = "# PH2b: lines the build lacks, added by the server's setup"
 SITE_PAGES = ("", "signup", "password", "terms", "privacy")
 
 ERROR_LINES = {
-    0x000B0001: "The login name or password you entered is incorrect.",
+    # a server that needs a sign-up first (invite, closed) refuses an unknown name and a wrong password alike with it
+    0x000B0001: "The login name or password you entered is incorrect. No account on this server yet? Make one first: "
+                "Sign up now! below.",
     0x000C0001: "The login name or password you entered is incorrect.",
     0x00160001: "Your login name contains invalid characters. Use letters, digits and . _ - @ only.",
     0x00CA0001: "Too short: a login name needs at least 3 characters and a password at least 8.",
@@ -87,10 +94,14 @@ ERROR_LINES = {
     0x00E80001: "This PC is always in the list: it can't be removed.",
     0x00E90001: "The server on this PC is still being set up. Log in again when the list says online.",
     0x00EA0001: "The server on this PC didn't start: Start-Client's window says why.",
+    0x00EB0001: "This server runs another version than your Start-Client, or doesn't tell its version: both need the "
+                "same one. SERVER above the login shows both versions.",
+    0x00EC0001: "The server was added to your list. Pick it and log in, or use Sign up now! below to make an account "
+                "there first.",
 }
 # the field label, the check box and the server picker's texts (client_ui/serverpicker/ServerPicker.as reads
 # 0x5e70a1xx through Global.ForceTranslateString, with the same English as its fallback; {1} a ping, {2} the key a
-# server shows, {3} the trusted key)
+# server shows, {3} the trusted key; in the version lines {1} the server's version, {2} Start-Client's)
 LOGIN_LINES = {
     0x0AC5BE93: "Enter Login Name",
     0x0AC5BE95: "Remember Login Name",
@@ -103,7 +114,8 @@ LOGIN_LINES = {
     0x5E70A107: "CANCEL",
     0x5E70A108: "Server address",
     0x5E70A109: "Name (optional)",
-    0x5E70A10A: "Added at your next login, which checks the server and shows its key: log in again to trust it.",
+    0x5E70A10A: "ADD checks the server and adds it to your list. Then pick it: Sign up now! below the login opens its "
+                "sign-up page.",
     0x5E70A10B: "Type the server's address: an IPv4 address such as 203.0.113.5, or a host name.",
     0x5E70A10C: "No servers yet: add one.",
     0x5E70A10D: "none: add a server",
@@ -120,6 +132,8 @@ LOGIN_LINES = {
     0x5E70A118: "setting up, {1} %",
     0x5E70A119: "starting",
     0x5E70A11A: "didn't start",
+    0x5E70A11B: "other version",
+    0x5E70A11C: "version unknown",
     0x5E70A120: "Online, {1} ms. Its key: {2}.",
     0x5E70A121: "New server key {2}: compare it with the fingerprint its operator gives you. The first login stops "
                 "here; log in again to trust it.",
@@ -133,12 +147,31 @@ LOGIN_LINES = {
     0x5E70A127: "Setting up the server on this PC: {1} %. Your login waits for it, or log in again when it says online.",
     0x5E70A128: "The server on this PC is starting.",
     0x5E70A129: "The server on this PC didn't start: Start-Client's window says why. Log in again to retry.",
+    0x5E70A12A: "This server runs version {1}, your Start-Client is {2}. A login needs the same version: use the "
+                "server's release.",
+    0x5E70A12B: "This server doesn't tell its version (an older release). Your Start-Client is {2}: a login needs the "
+                "same version.",
+    0x5E70A12C: "Version {1}.",
+    0x5E70A130: "open",
+    0x5E70A131: "invite only",
+    0x5E70A132: "closed",
+    0x5E70A133: "no password",
+    0x5E70A134: "Sign-up open: your first login with a new name makes the account.",
+    0x5E70A135: "Sign up first: this server needs an invite code (Sign up now! below the login).",
+    0x5E70A136: "Sign up first: only its operator makes accounts (Sign up now! below the login says how).",
+    0x5E70A137: "No sign-up and no password here: any name logs in.",
 }
 URL_PAGES = {  # line id -> page
     0x00000001: "terms", 0x00000002: "privacy", 0x00000003: "password", 0x00000004: "signup",
     0x00000005: "signup", 0x00000006: "signup", 0x00000007: "terms", 0x00000100: "", 0x00000101: "",
     0x00000103: "",
 }
+
+# the server picker's own links (server/internal/setup/localepatch's LinkSlots): Sign up now! and Forgot Password? of
+# each server in the login screen's list, by its slot, always to the HTTP port of the address the copy is patched for
+# (Start-Client's front answers them), also in a copy with a website
+LINK_SLOTS = 64
+SLOT_SIGNUP, SLOT_PASSWORD = 0x5E70B100, 0x5E70B200
 
 _LINE = re.compile(rb"0[xX]([0-9A-Fa-f]{8}) ")
 _DOMAIN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+"
@@ -179,8 +212,11 @@ def site_base(host, http_port=HTTP_PORT, web_domain=None):
 def tables(host, http_port=HTTP_PORT, web_domain=None):
     """{table instance: {line id: new text}}."""
     base = site_base(host, http_port, web_domain)
-    return {BLAZE_ERRORS: dict(ERROR_LINES), URLS: {i: base + p for i, p in URL_PAGES.items()},
-            LOGIN_SCREEN: dict(LOGIN_LINES)}
+    urls = {i: base + p for i, p in URL_PAGES.items()}
+    for slot in range(LINK_SLOTS):
+        for first, page in ((SLOT_SIGNUP, "signup"), (SLOT_PASSWORD, "password")):
+            urls[first + slot] = f"http://{host}:{http_port}/{FALLBACK_PREFIX}pick/{slot}/{page}"
+    return {BLAZE_ERRORS: dict(ERROR_LINES), URLS: urls, LOGIN_SCREEN: dict(LOGIN_LINES)}
 
 
 def patch_table(text, lines):

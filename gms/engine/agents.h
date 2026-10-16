@@ -59,6 +59,7 @@
 #include <cstdint>
 #include <string>
 
+#include "core/agents/leash.h"
 #include "core/agents/minion_target.h"
 
 namespace agents {
@@ -80,6 +81,14 @@ struct Options {
   int minionDefendMs = 2500;     // [host] minion_defend_ms: how long an own shaper counts as under attack
   bool botPursuePoint = true;  // D6d: a bot's gambit at a point out of range walks to the point (blackboard +0x1E64)
   bool objectiveOnSight = false;    // D14: the objective type (the parasite) adds perceived enemies too (D1b-live)
+  // NPCTARGET (gms/core/agents/brain.h NpcThink): an NPC's gambit on a passing condition's own target (its 5th value
+  // with the 6th true; the parasite's and the Guardian's conditions pick shapers), else on the best target, and none
+  // without a best target; a prioritized list's conditions run lazily in order (the parasite's special after four
+  // basics); an out-of-range refusal without pursuit lets the next passing gambit try
+  bool npcConditionTarget = true;   // [host] npc_condition_target
+  bool npcLazyConditions = true;    // [host] npc_lazy_conditions
+  bool npcRangeFallthrough = true;  // [host] npc_range_fallthrough
+  int npcTargetLogLimit = 2000;     // [host] npc_target_log_limit: the parasite's and the Guardians' "npc target:" lines
   // BOTIDLE: bots that stand still. All three are on with [host] bot_idle_fixes (1); bot_fixups=0 turns them off too.
   bool botGambitFallthrough = true;  // [host] bot_gambit_fallthrough: a refused gambit (cooldown, resource, CanUse) lets the next one try
   int botPursueStuckMs = 6000;       // [host] bot_pursue_stuck_ms: a pursuit that gets no closer for this long drops its gambit (0 = off)
@@ -108,6 +117,14 @@ struct Options {
   // minion_chase (1; 0 = MINTARGET's rules only), minion_chase_distance (20), minion_chase_ms (3000),
   // minion_chase_min_move (6), minion_lane_leash (20), minion_chase_ignore_ms (4000)
   gms::agents::MinionChaseOptions minionChase;
+  // LEASH: how far jungle creatures and well workers follow a target from home (gms/core/agents/leash.h). Creeps:
+  // home = their spawn spot (object +0x5C), group = their camp (+0x50); [host] creep_leash (15; 0 = off, the tether
+  // only), creep_leash_reach (4), creep_leash_home (6). Workers: home = their well's centre, the own limit = the
+  // platform radius (the farthest worker spot) + worker_leash (2; 0 = off), worker_leash_reach (2), group = the well.
+  // Both: leash_chase_ms (3000; 0 = no chase time), leash_ignore_ms (2000), leash_log_limit (300, the "leash:" lines).
+  gms::agents::LeashOptions creepLeash;
+  gms::agents::LeashOptions workerLeash;  // ownLimit = the margin beyond the platform; homeRadius unused (the platform)
+  int leashLogLimit = 300;
 };
 
 // Checks the prologues of the client functions it calls. False (logged) if AgentBehaviorTree_Tick differs; then nothing
@@ -141,10 +158,17 @@ int AddBaseStructures(std::uint32_t agentId, const std::uint32_t* ids, int n, st
 // for an object the step hasn't seen.
 std::string DescribeBot(std::uint32_t objectId);
 
+// NPCTARGET: the NPC brain's target, lazy-walk and fall-through counters and the parasite's and Guardians' starts per
+// ability, for a "stats npc:" line; false before the first brain step.
+bool FormatNpcStats(char* buf, std::size_t size);
+
 // "agents N (trees ticked N this frame), ticks N, ..., leaves: PassiveIdle=3 Idle=30 ..." for the stats lines.
 void FormatStats(char* buf, std::size_t size);
 // MINJUNGLE: "idle off lane now N (most at once N), episodes N, ..." for the "stats minions:" line; false when the
 // watch is off.
 bool FormatMinionStats(char* buf, std::size_t size);
+// LEASH: "creeps: fights N (mean N s, longest N s; farthest from home mean N, max N), drops ..." for the
+// "stats leash:" line; false before the first fight of a creep or a worker.
+bool FormatLeashStats(char* buf, std::size_t size);
 
 }  // namespace agents

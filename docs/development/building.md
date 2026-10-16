@@ -47,11 +47,13 @@ python -m venv .venv
 |---|---|
 | archive | `client\ia_Dawngate`: the game extracted from `Dawngate.zip`, every file checked against [`file_manifest.csv`](../file_manifest.csv). It is never modified afterwards. |
 | certificates | `server\certs`: a certificate authority and server certificate for `127.0.0.1` |
-| client copy | `client\run_854\Dawngate`, patched to use only `127.0.0.1` and to trust your certificate authority |
+| client copy | `client\run_854\Dawngate`, patched to use only `127.0.0.1` and to trust your certificate authority, with the login texts (`game\Data\Locale\en-us\AA_Server.package`) and the bot profiles (`game\Data\zz_BotProfiles.snap`) |
 | RakNet | `tools\raknet\RakNet` |
 | builds | `gms\build` (the match host) and `server\bin\dgserver.exe` |
-| host copy | `client\run_854_server\Dawngate` with `dgsim.dll` installed as `PhysXLoader.dll` and its settings file `game\dgsim.ini` |
+| host copy | `client\run_854_server\Dawngate` with `dgsim.dll` installed as `PhysXLoader.dll`, its settings file `game\dgsim.ini` and the bot profiles |
 | content | `server\data\content.json`, what accounts can own, built from your game files (`--no-content` skips it) |
+
+The bot profiles are BotClass assets the game doesn't ship, such as a Warden that plays the Predator role. `re\scripts\bot_profiles.py` makes `zz_BotProfiles.snap` from the copy's own `AssetData.snap` (a catalog with the new entries and their files); nothing of the game's data is committed. A copy without it still plays: the match host then runs the Predator on the Warden's own profile and corrects the shown role after every update.
 
 The first run takes a few minutes. **Run it again after every update of your checkout.** It rebuilds what changed and skips the rest in a few seconds. `--check` only reports. The script downloads nothing, installs no tool and never changes firewall rules.
 
@@ -63,10 +65,13 @@ robocopy client\ia_Dawngate\Dawngate client\run_854\Dawngate /E /COPY:DAT /DCOPY
 .venv\Scripts\python -I server\tools\make_certs.py server\certs 127.0.0.1
 .venv\Scripts\python -I re\scripts\patch_client.py client\run_854\Dawngate\game\Dawngate.exe server\certs\ca_modulus.bin 127.0.0.1
 .venv\Scripts\python -I re\scripts\patch_config.py client\run_854\Dawngate\game\Data
+.venv\Scripts\python -I re\scripts\patch_locale.py client\run_854\Dawngate\game\Data
+.venv\Scripts\python -I re\scripts\bot_profiles.py client\run_854\Dawngate\game\Data
 cmake -S gms -B gms\build -G "Visual Studio 17 2022" -A Win32 [-DRAKNET_ROOT=<RakNet folder>]
 cmake --build gms\build --config Release
 go build -C server -o bin\dgserver.exe .\cmd\dgserver
 .venv\Scripts\python -I re\scripts\setup_server_copy.py client\run_854\Dawngate client\run_854_server\Dawngate gms\build\Release\dgsim.dll
+.venv\Scripts\python -I re\scripts\bot_profiles.py client\run_854_server\Dawngate\game\Data
 server\bin\dgserver.exe --make-content client\ia_Dawngate\Dawngate
 ```
 

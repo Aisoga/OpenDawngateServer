@@ -295,10 +295,12 @@ func (s *Setup) Server(o ServerOptions) error {
 		}
 		s.stepConfig("client config", s.ClientCopy(), o.Address)
 		s.stepLocale("client texts", s.ClientCopy(), o.Address)
+		s.stepBotProfiles("client bots", s.ClientCopy())
 	}
 	host := s.ensureCopy("host copy", s.HostCopy(), hostExempt) || (s.Check && isDir(s.HostCopy()))
 	patched := false
 	if host {
+		s.stepBotProfiles("host bots", s.HostCopy())
 		exe := false
 		if modulus != nil {
 			exe = s.stepExe("host exe", s.HostCopy(), modulus, hostOptions, exepatch.HostKeys)
@@ -346,6 +348,7 @@ func (s *Setup) Client(server string, ca []byte) error {
 		s.stepExe("client exe", s.ClientCopy(), ca, opts, nil)
 		s.stepConfig("client config", s.ClientCopy(), server)
 		s.stepLocale("client texts", s.ClientCopy(), server)
+		s.stepBotProfiles("client bots", s.ClientCopy())
 		if s.Picker {
 			s.stepPicker("server picker", s.ClientCopy())
 		} else {

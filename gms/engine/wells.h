@@ -102,6 +102,10 @@ struct Threat {
 };
 int Threats(int team, Threat* out, int max);
 
+// LEASH: the platform of `worker`'s well: the well's object, its centre and the platform radius (its farthest worker
+// spot from the centre). False if `worker` is no live worker of a well.
+bool WorkerPlatform(std::uint32_t worker, std::uint32_t* well, float centre[3], float* radius);
+
 void FormatStats(char* buf, std::size_t size);
 
 }  // namespace wells

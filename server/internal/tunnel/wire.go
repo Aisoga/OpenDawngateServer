@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sort"
+
+	build "dawngate/server/internal/version"
 )
 
 // The hellos at the start of every TLS connection to the gateway (all integers big-endian):
@@ -16,10 +19,16 @@ import (
 //	             up again within Grace, with new UDP keys)
 //	  2 stream:  session id uint64, token [16], port uint16 (the server port it opens), the game socket's
 //	             address [4] and port uint16
+//	  3 info:    nothing more (no session: Start-Client's list and login ask the server's version this way; a gateway
+//	             of a release before the info hello closes the connection at the unknown kind)
 //	gateway -> client:
 //	  session: status uint8, session id uint64, token [16], resumed uint8, max payload uint16,
 //	           TCP port count uint8 + ports uint16 each, UDP port count uint8 + ports uint16 each
 //	  stream:  status uint8 (0: the bytes that follow are the port's)
+//	  info:    status uint8, version length uint8 + the build's version (version.String, at most version.MaxLen
+//	           bytes), then the server's facts: a count uint8 and per fact a key and a value, each a length uint8
+//	           and its bytes (e.g. "signup": open, invite, closed or local); then the gateway closes the connection.
+//	           A reply that ends after the version (a release before the facts) has none.
 //
 // After a session's reply both sides derive the UDP keys (DeriveKeys) and the control connection carries only
 // heartbeats (one byte 0 every HeartbeatEvery, both ways); it ends the session's life, after Grace.
@@ -29,6 +38,7 @@ const (
 
 	kindSession byte = 1
 	kindStream  byte = 2
+	kindInfo    byte = 3
 )
 
 // Status codes of the gateway's replies.
@@ -116,6 +126,80 @@ func (r sessionReply) encode() []byte {
 		}
 	}
 	return b
+}
+
+func infoHello() []byte { return append([]byte(magic), version, kindInfo) }
+
+// infoReply is the gateway's answer to an info hello: its version and facts (keys and values cleaned with
+// version.Clean's rule, in key order; at most maxFacts).
+func infoReply(v string, facts map[string]string) []byte {
+	if len(v) > 255 {
+		v = v[:255]
+	}
+	b := append([]byte{StatusOK, byte(len(v))}, v...)
+	keys := make([]string, 0, len(facts))
+	for k := range facts {
+		if build.Clean(k) != "" {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	if len(keys) > maxFacts {
+		keys = keys[:maxFacts]
+	}
+	b = append(b, byte(len(keys)))
+	for _, k := range keys {
+		ck, cv := build.Clean(k), build.Clean(facts[k])
+		b = append(append(b, byte(len(ck))), ck...)
+		b = append(append(b, byte(len(cv))), cv...)
+	}
+	return b
+}
+
+// maxFacts bounds the facts of an info reply.
+const maxFacts = 16
+
+// readInfoReply reads an info reply's version and facts (cleaned: version.Clean). A reply that ends after the version
+// (a gateway of a release before the facts) gives no facts and no error.
+func readInfoReply(r io.Reader) (string, map[string]string, error) {
+	var head [2]byte
+	if _, err := io.ReadFull(r, head[:1]); err != nil {
+		return "", nil, err
+	}
+	if head[0] != StatusOK {
+		return "", nil, fmt.Errorf("the gateway answered the info hello with %s", StatusText(head[0]))
+	}
+	if _, err := io.ReadFull(r, head[1:]); err != nil {
+		return "", nil, err
+	}
+	b := make([]byte, head[1])
+	if _, err := io.ReadFull(r, b); err != nil {
+		return "", nil, err
+	}
+	v := build.Clean(string(b))
+	var n [1]byte
+	if _, err := io.ReadFull(r, n[:]); err != nil {
+		return v, nil, nil // no facts: a gateway of an earlier release
+	}
+	facts := map[string]string{}
+	for i := 0; i < int(n[0]) && i < maxFacts; i++ {
+		var kv [2]string
+		for j := range kv {
+			var l [1]byte
+			if _, err := io.ReadFull(r, l[:]); err != nil {
+				return v, facts, nil
+			}
+			s := make([]byte, l[0])
+			if _, err := io.ReadFull(r, s); err != nil {
+				return v, facts, nil
+			}
+			kv[j] = build.Clean(string(s))
+		}
+		if kv[0] != "" {
+			facts[kv[0]] = kv[1]
+		}
+	}
+	return v, facts, nil
 }
 
 var errMagic = errors.New("not a Dawngate tunnel hello")

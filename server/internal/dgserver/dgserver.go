@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -36,6 +37,7 @@ import (
 	"dawngate/server/internal/store"
 	"dawngate/server/internal/telemetry"
 	"dawngate/server/internal/tunnel"
+	"dawngate/server/internal/version"
 	"dawngate/server/internal/web"
 )
 
@@ -435,6 +437,10 @@ func start(cfg config) (*instance, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.accounts.LocalTrust && !(net.ParseIP(cfg.bind).IsLoopback() && net.ParseIP(public).IsLoopback()) {
+		return nil, fmt.Errorf("--local-trust (no passwords) is only for a server that only this PC reaches: --bind and --public-host must be loopback addresses, not %s and %s", cfg.bind, public)
+	}
+	cfg.accounts.ThisMachine = thisMachine
 	tunnelOn, err := tunnelWanted(cfg.tunnel, public)
 	if err != nil {
 		return nil, err
@@ -474,6 +480,7 @@ func start(cfg config) (*instance, error) {
 		caNote = web.Fingerprint(modulus)
 	}
 	extra = append(extra, web.SitePages(cfg.accounts.Mode)...) // the login screen's links (sitelinks)
+	extra = append(extra, web.VersionPage(version.String()))   // Start-Client's check of a server without the tunnel
 	st, cont, contentInfo, err := openData(cfg)
 	if err != nil {
 		return nil, err
@@ -621,6 +628,8 @@ func start(cfg config) (*instance, error) {
 	if in.gateway != nil {
 		log.Log("stub", in.gateway.Describe()+tunnelNote)
 	}
+	log.Logf("stub", "version %s (a player's Start-Client needs the same one; the tunnel's info hello and /%s answer it)",
+		version.String(), web.VersionPath)
 	if in.website != nil {
 		log.Log("stub", in.website.note)
 	}
@@ -678,8 +687,36 @@ func describeSessionEnd(cfg config, checking bool) string {
 	return s
 }
 
+// thisMachine reports whether a login's source address is this machine's own: a loopback address or one of its
+// interfaces' (accounts.Policy.ThisMachine: only this machine gives an account This PC made without a password its
+// first password).
+func thisMachine(a netip.Addr) bool {
+	if !a.IsValid() {
+		return false
+	}
+	a = a.Unmap()
+	if a.IsLoopback() {
+		return true
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, ia := range addrs {
+		if n, ok := ia.(*net.IPNet); ok {
+			if own, ok := netip.AddrFromSlice(n.IP); ok && own.Unmap() == a {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // describeSignup is the sign-up policy for the start-up line.
 func describeSignup(p accounts.Policy) string {
+	if p.LocalTrust {
+		return "no passwords (--local-trust, a server only this PC reaches): any login name logs in with any password, none is checked or stored"
+	}
 	s := "passwords checked (argon2id hashes); sign-up " + p.CurrentMode().String()
 	switch p.CurrentMode() {
 	case accounts.Open:
@@ -960,6 +997,7 @@ func Run(args []string, h Hooks) int {
 	fs.Int64Var(&cfg.broadcastFlags, "broadcast-flags", blaze.DefaultBroadcastFlags, "display flags of the broadcast messages: 4 the main menu's marquee and shaper select, 2 a System chat line (also in a match), 1 the main menu chat's notifications; added up")
 	signup := fs.String("signup", "open", "sign-up mode: open (a new login name makes an account at its first login, with the password typed), invite (new accounts only with an invite code: --make-invite; the website), closed (only the operator: --create-account)")
 	fs.IntVar(&cfg.accounts.SignupsPerAddress, "signups-per-address", accounts.DefaultSignupsPerAddress, "the most accounts one public source address may make per UTC day (loopback and LAN addresses are never counted); 0 = no cap")
+	fs.BoolVar(&cfg.accounts.LocalTrust, "local-trust", false, "no passwords, for a server only this PC reaches (Start-Client's own server for This PC): any login name logs in with any password, and none is checked or stored; needs a loopback --bind")
 	fs.DurationVar(&cfg.statusCheck, "status-check", DefaultStatusCheck, "re-read the status of the logged-in accounts this often and end the game session of each one that isn't active any more (the operator's --account-status in another process); the admin page and the website end it at once; 0 = never")
 	sessionEnd := fs.String("session-end", blaze.SessionEndDisconnected.String(), "a test aid: what the client hears before its session is ended: disconnected (UserSessions::UserSessionDisconnected), unauthenticated (UserUnauthenticated), close (the connection closed without a word)")
 	fs.IntVar(&cfg.logDays, "log-days", 0, "delete dgserver's log files and the match hosts' folders (--gms-data) older than this many days, at the start and every 6 hours (the logs hold login names and addresses); 0 = keep everything")
@@ -1173,6 +1211,8 @@ type Info struct {
 	// the website's address and its self-signed certificate's SHA-256 fingerprint ("" without a website; the
 	// fingerprint "" with a domain's certificate)
 	WebURL, WebFingerprint string
+	// Version is the build's version (version.String): a player's Start-Client needs the same one
+	Version string
 }
 
 func (in *instance) info(cfg config) Info {
@@ -1187,7 +1227,8 @@ func (in *instance) info(cfg config) Info {
 	if public == "" {
 		public = cfg.bind
 	}
-	info := Info{Bind: cfg.bind, PublicHost: public, TCPPorts: ports, Log: in.log.Path, CAFingerprint: in.caFingerprint}
+	info := Info{Bind: cfg.bind, PublicHost: public, TCPPorts: ports, Log: in.log.Path, CAFingerprint: in.caFingerprint,
+		Version: version.String()}
 	if in.gateway != nil {
 		info.GatewayPort, info.GatewayFingerprint = in.gateway.Port(), in.gateway.Identity.Pin.Fingerprint()
 		info.GatewayPin = in.gateway.Identity.Pin.String()

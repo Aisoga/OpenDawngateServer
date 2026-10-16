@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -39,9 +40,9 @@ const (
 	frontGateway   = "127.0.9.55"
 )
 
-// serveTunnelLogged runs dgserver with the tunnel's gateway on address until the test ends; it returns the gateway's
-// port and the log folder.
-func serveTunnelLogged(t *testing.T, address string) (int, string) {
+// serveTunnelLogged runs dgserver with the tunnel's gateway on address (and the flags extra) until the test ends; it
+// returns the gateway's port and the log folder.
+func serveTunnelLogged(t *testing.T, address string, extra ...string) (int, string) {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "certs")
 	if _, err := certs.Make(dir, address); err != nil {
@@ -50,8 +51,8 @@ func serveTunnelLogged(t *testing.T, address string) (int, string) {
 	logDir := t.TempDir()
 	stop, started, done := make(chan struct{}), make(chan dgserver.Info, 1), make(chan int, 1)
 	go func() {
-		done <- dgserver.Run([]string{"--bind", address, "--certs", dir, "--log", logDir, "--data", "", "--broadcast-file", "",
-			"--tunnel", "on", "--gateway-port", "0"}, dgserver.Hooks{Stop: stop,
+		done <- dgserver.Run(append([]string{"--bind", address, "--certs", dir, "--log", logDir, "--data", "", "--broadcast-file", "",
+			"--tunnel", "on", "--gateway-port", "0"}, extra...), dgserver.Hooks{Stop: stop,
 			Started: func(i dgserver.Info) { started <- i }, StartFailed: func(error) { started <- dgserver.Info{} }})
 	}()
 	info := <-started
@@ -453,11 +454,11 @@ func TestFrontServerSwitch(t *testing.T) {
 	if !strings.Contains(list, "\nlast\ta\n") && !strings.Contains(list, "\nlast\tb\n") { // both used within a second
 		t.Errorf("the server list's last server isn't a or b:\n%s", list)
 	}
-	for _, want := range []string{"dawngate-servers\t1\n", "\npreselect\t\n",
+	for _, want := range []string{"dawngate-servers\t3\nversion\t" + f.Version + "\n", "\npreselect\t\n",
 		"\nserver\ta\tServer A\t" + frontServerA + "\t" + strconv.Itoa(portA) + "\tchanged\t",
 		"\nserver\tb\t" + frontServerB + "\t" + frontServerB + "\t" + strconv.Itoa(portB) + "\tok\t",
-		"\nserver\tdown\t" + frontNothing + "\t" + frontNothing + "\t42128\tunreachable\t0\t\t\n",
-		"\nserver\tnogw\t" + frontNoGateway + "\t" + frontNoGateway + "\t42128\tno_gateway\t0\t\t\n"} {
+		"\nserver\tdown\t" + frontNothing + "\t" + frontNothing + "\t42128\tunreachable\t0\t\t\t\t\t\t\t2\n",
+		"\nserver\tnogw\t" + frontNoGateway + "\t" + frontNoGateway + "\t42128\tno_gateway\t0\t\t\t\t\t\t\t3\n"} {
 		if !strings.Contains(list, want) {
 			t.Errorf("the server list lacks %q:\n%s", want, list)
 		}
@@ -465,13 +466,15 @@ func TestFrontServerSwitch(t *testing.T) {
 	if !strings.HasSuffix(strings.TrimRight(list, "\n"), "\nend") {
 		t.Errorf("the server list doesn't end with its end line:\n%s", list)
 	}
-	// the fingerprints: A's served key and the other one trusted for it; B's served key is its trusted one
+	// the fingerprints: A's served key and the other one trusted for it; B's served key is its trusted one; both run
+	// this Start-Client's version (the same build) and open sign-up; their link slots are the list's first two
 	for _, line := range strings.Split(list, "\n") {
 		fs := strings.Split(line, "\t")
 		if len(fs) < 2 || fs[0] != "server" || (fs[1] != "a" && fs[1] != "b") {
 			continue
 		}
-		if len(fs) != 9 || len(fs[7]) != 16 || len(fs[8]) != 16 || (fs[1] == "a") != (fs[7] != fs[8]) {
+		if len(fs) != 14 || len(fs[7]) != 16 || len(fs[8]) != 16 || (fs[1] == "a") != (fs[7] != fs[8]) || fs[9] != "" ||
+			fs[10] != f.Version || fs[11] != versionSame || fs[12] != signupOpen || fs[13] != map[string]string{"a": "0", "b": "1"}[fs[1]] {
 			t.Errorf("server %s's fingerprints: %q", fs[1], line)
 		}
 	}
@@ -548,22 +551,211 @@ func TestFrontServerSwitch(t *testing.T) {
 	if _, ok := bm.Find("c"); ok || strings.Contains(readList(t, copyDir), "\tThird #1\t") {
 		t.Error("c is still in the list")
 	}
-	// the old list endpoint's path is no longer the front's: it goes to the current server like any other
-	for _, path := range []string{"/dawngate-picker/servers", "/dawngate/signup"} {
+	// the old list endpoint's path is no longer the front's: it goes to the current server like any other; the
+	// login screen's pages are the front's: the plain sign-up link lists the servers, a server's own link (its slot)
+	// reaches it, through the current session (B), and A's changed key is refused there too; a legal page goes to the
+	// current server
+	get := func(path string) (int, string) {
+		t.Helper()
 		resp, err := http.Get("http://" + net.JoinHostPort(frontLocal, strconv.Itoa(DefaultFrontPorts.HTTP)) + path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		io.Copy(io.Discard, resp.Body)
+		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		waitLog(t, logB, "GET "+path, 1)
+		return resp.StatusCode, string(body)
 	}
+	get("/dawngate-picker/servers")
+	waitLog(t, logB, "GET /dawngate-picker/servers", 1)
+	if code, body := get("/dawngate/signup"); code != 200 || !strings.Contains(body, "pick the server") ||
+		!strings.Contains(body, `href="/dawngate/pick/1/signup"`) || !strings.Contains(body, "open: your first login") {
+		t.Errorf("the plain sign-up link: %d\n%s", code, body)
+	}
+	if strings.Contains(readLogs(t, logB), "GET /dawngate/signup") {
+		t.Error("the plain sign-up link reached B")
+	}
+	if code, body := get("/dawngate/pick/1/signup"); code != 200 || !strings.Contains(body, "an account is made at its first login") {
+		t.Errorf("B's sign-up page: %d\n%s", code, body)
+	}
+	waitLog(t, logB, "GET /dawngate/signup", 1)
+	if code, body := get("/dawngate/pick/0/password"); code != 403 || !strings.Contains(body, "KEY CHANGED") {
+		t.Errorf("A's page with a changed key: %d\n%s", code, body)
+	}
+	if strings.Contains(readLogs(t, logA), "GET /dawngate/password") {
+		t.Error("A's page was asked despite its changed key")
+	}
+	get("/dawngate/terms")
+	waitLog(t, logB, "GET /dawngate/terms", 1)
 
 	// the file as written
 	raw, _ := os.ReadFile(BookmarksPath(l))
 	again, err := LoadBookmarks(BookmarksPath(l))
 	if err != nil || len(again.List()) != 4 || !strings.Contains(string(raw), `"gateway_port": `+strconv.Itoa(portA)) {
 		t.Errorf("bookmarks.json reread: %v\n%s", err, raw)
+	}
+}
+
+// TestFrontPages: the login screen's links before any login. The picker's ADD (<name>#*<address>) adds a server
+// without a login (FrontErrAdded); the list shows its sign-up mode and link slot; its own sign-up link shows its new
+// key, which only the page's confirmation (this run's token, from the front's own page) trusts; the page then comes
+// from the server through a short tunnel session of its own; the plain link lists the servers; a login with an unknown
+// name there gets the server's own refusal (0x000B, whose text points to Sign up now!).
+func TestFrontPages(t *testing.T) {
+	if testing.Short() {
+		t.Skip("binds 127.0.9.58's and 127.0.9.59's ports")
+	}
+	const server, local = "127.0.9.58", "127.0.9.59"
+	port, logS := serveTunnelLogged(t, server, "--signup", "invite")
+	l := setup.Layout{Root: t.TempDir()}
+	bm, err := LoadBookmarks(BookmarksPath(l))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, tlsCfg, err := tunnelCertSet(l, local, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logDir := t.TempDir()
+	lf, err := os.Create(filepath.Join(logDir, "front.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lf.Close()
+	f := &Front{Log: logging.New(lf), Layout: l, Bookmarks: bm, TunnelIP: net.ParseIP(local), RedirectorTLS: tlsCfg,
+		ConnectTimeout: 3 * time.Second, ListRefresh: -1}
+	if err := f.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	copyDir := t.TempDir()
+	os.MkdirAll(filepath.Join(copyDir, "game", "Data"), 0o755)
+	if err := f.WriteServerList(copyDir); err != nil {
+		t.Fatal(err)
+	}
+	g := fakeGame{t: t, ip: local}
+	g.redirect()
+	c := g.dial(DefaultFrontPorts.Blaze)
+	defer c.Close()
+	g.start(c)
+	// the picker's ADD: added, no login (nothing reaches the server's Blaze), the list written again with its mode
+	add := "player#*" + net.JoinHostPort(server, strconv.Itoa(port)) + "=Invited"
+	if rep := g.call(c, 1, 0x28, 2, loginBody(add)); rep.Type != fire.ErrorReply || rep.Error != FrontErrAdded {
+		t.Fatalf("ADD: %v error %#x\n%s", rep.Type, rep.Error, readLogs(t, logDir))
+	}
+	b, ok := bm.Find(server)
+	if !ok || b.Name != "Invited" {
+		t.Fatalf("not added: %+v", bm.List())
+	}
+	if rep := g.call(c, 1, 0x28, 3, loginBody("player#*"+server)); rep.Type != fire.ErrorReply || rep.Error != FrontErrAdded || len(bm.List()) != 1 {
+		t.Errorf("ADD again: %v error %#x, %d servers", rep.Type, rep.Error, len(bm.List()))
+	}
+	if rep := g.call(c, 1, 0x28, 4, loginBody("player#*127.0.9.53")); rep.Type != fire.ErrorReply || rep.Error != FrontErrUnreachable || len(bm.List()) != 1 {
+		t.Errorf("ADD of nothing: %v error %#x, %d servers", rep.Type, rep.Error, len(bm.List()))
+	}
+	if strings.Contains(readLogs(t, logS), "MAIL:") {
+		t.Error("an ADD reached the server's Blaze")
+	}
+	if list := readList(t, copyDir); !strings.Contains(list, "\tnew\t") || !strings.Contains(list, "\tsame\tinvite\t0\n") {
+		t.Errorf("the list after the ADD:\n%s", list)
+	}
+	base := "http://" + net.JoinHostPort(local, strconv.Itoa(DefaultFrontPorts.HTTP))
+	do := func(method, path, host string, form url.Values, hdr map[string]string) (int, string, http.Header) {
+		t.Helper()
+		var body io.Reader
+		if form != nil {
+			body = strings.NewReader(form.Encode())
+		}
+		req, _ := http.NewRequest(method, base+path, body)
+		if host != "" {
+			req.Host = host
+		}
+		if form != nil {
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		resp, err := (&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode, string(raw), resp.Header
+	}
+	// its sign-up link before any login: the new key shown, nothing trusted, nothing asked of the server yet
+	code, page, phdr := do("GET", "/dawngate/pick/0/signup", "", nil, nil)
+	pin, _ := tunnel.ProbePin(b.Gateway(), 3*time.Second, nil)
+	if rp := phdr.Get("Referrer-Policy"); rp != "same-origin" { // no-referrer made browsers send Origin: null
+		t.Errorf("the page's Referrer-Policy: %q", rp)
+	}
+	if code != 200 || !strings.Contains(page, "New server key") || !strings.Contains(page, pin.Fingerprint()) || !strings.Contains(page, `name="token"`) {
+		t.Fatalf("the sign-up link of a new server: %d\n%s", code, page)
+	}
+	if _, err := os.Stat(TrustedGateway(l, server)); err == nil {
+		t.Fatal("the key was trusted by showing the page")
+	}
+	// confirmations that aren't the page's: no token, another site, another Host (DNS rebinding)
+	good := url.Values{"token": {f.pageToken}, "key": {pin.String()}}
+	for _, bad := range []struct {
+		host string
+		form url.Values
+		hdr  map[string]string
+	}{
+		{"", url.Values{"key": {pin.String()}}, nil},
+		{"", url.Values{"token": {"0" + f.pageToken[1:]}, "key": {pin.String()}}, nil},
+		{"", good, map[string]string{"Origin": "http://evil.example"}},
+		{"", good, map[string]string{"Sec-Fetch-Site": "cross-site"}},
+		{"", good, map[string]string{"Origin": "null"}},
+		{"", good, map[string]string{"Origin": "null", "Sec-Fetch-Site": "cross-site"}},
+		{"evil.example:18080", good, nil},
+	} {
+		if code, page, _ := do("POST", "/dawngate/pick/0/signup", bad.host, bad.form, bad.hdr); code != 403 {
+			t.Errorf("a confirmation %+v: %d\n%s", bad, code, page)
+		}
+	}
+	if _, err := os.Stat(TrustedGateway(l, server)); err == nil {
+		t.Fatal("a bad confirmation trusted the key")
+	}
+	// the confirmation as Chrome and Edge sent it under the page's earlier Referrer-Policy no-referrer: Origin null
+	// beside Sec-Fetch-Site same-origin (a page's own Referrer-Policy is same-origin now, so they name the origin)
+	if code, _, hdr := do("POST", "/dawngate/pick/0/signup", "", good, map[string]string{"Origin": "null", "Sec-Fetch-Site": "same-origin"}); code != 303 ||
+		hdr.Get("Location") != "/dawngate/pick/0/signup" {
+		t.Fatalf("the confirmation: %d %v\n%s", code, hdr, readLogs(t, logDir))
+	}
+	if raw, err := os.ReadFile(TrustedGateway(l, server)); err != nil || strings.TrimSpace(string(raw)) != pin.String() {
+		t.Fatalf("the confirmed key: %q %v", raw, err)
+	}
+	// now the server's own page, through a short session of its own (no login)
+	if code, page, _ := do("GET", "/dawngate/pick/0/signup", "", nil, nil); code != 200 || !strings.Contains(page, "invite code") {
+		t.Errorf("the server's sign-up page: %d\n%s", code, page)
+	}
+	waitLog(t, logS, "GET /dawngate/signup", 1)
+	if _, ok := f.Current(); ok {
+		t.Error("the page opened a current session")
+	}
+	// the plain link: the list of servers with their modes; a page of a host other than the front's is refused
+	if code, page, _ := do("GET", "/dawngate/signup", "", nil, nil); code != 200 || !strings.Contains(page, "Invited") ||
+		!strings.Contains(page, "invite only") || !strings.Contains(page, `href="/dawngate/pick/0/signup"`) {
+		t.Errorf("the plain sign-up link: %d\n%s", code, page)
+	}
+	if code, _, _ := do("GET", "/dawngate/pick/0/signup", "rebound.example:18080", nil, nil); code != 403 {
+		t.Errorf("another Host: %d", code)
+	}
+	if code, page, _ := do("GET", "/dawngate/pick/9/password", "", nil, nil); code != 200 || !strings.Contains(page, "no longer in your list") {
+		t.Errorf("a slot of no server: %d\n%s", code, page)
+	}
+	// a login with an unknown name: the server's refusal for a sign-up first (the key is trusted now)
+	if rep := g.call(c, 1, 0x28, 5, loginBody("newbie#a")); rep.Type != fire.ErrorReply || rep.Error != 0x000B {
+		t.Errorf("an unknown name on an invite server: %v error %#x\n%s", rep.Type, rep.Error, readLogs(t, logDir))
+	}
+	front := readLogs(t, logDir)
+	for _, want := range []string{"login refused (error 0x00ec)", "is in the server list (the picker's ADD; no login)",
+		"isn't trusted yet: shown for confirmation", "a confirmation without this run's token refused",
+		"trusting " + server + "'s tunnel key " + pin.Fingerprint() + " from now on (confirmed on its sign-up page"} {
+		if !strings.Contains(front, want) {
+			t.Errorf("the front's log lacks %q", want)
+		}
 	}
 }
 
@@ -944,11 +1136,11 @@ func TestFrontListRefresh(t *testing.T) {
 	}
 	fp := gw.Identity.Pin.Fingerprint()
 	ok := "\nserver\ta\t" + gwAddr + "\t" + gwAddr + "\t" + strconv.Itoa(gw.Port()) + "\tok\t"
-	if list := readList(t, copyDir); !strings.Contains(list, ok) || !strings.Contains(list, "\t"+fp+"\t"+fp+"\nend\n") {
+	if list := readList(t, copyDir); !strings.Contains(list, ok) || !strings.Contains(list, "\t"+fp+"\t"+fp+"\t\t"+gw.Version+"\tsame\t\t0\nend\n") {
 		t.Fatalf("the list before:\n%s", list)
 	}
 	gw.Close()
-	down := "\nserver\ta\t" + gwAddr + "\t" + gwAddr + "\t" + strconv.Itoa(gw.Port()) + "\tunreachable\t0\t\t" + fp + "\nend\n"
+	down := "\nserver\ta\t" + gwAddr + "\t" + gwAddr + "\t" + strconv.Itoa(gw.Port()) + "\tunreachable\t0\t\t" + fp + "\t\t\t\t\t0\nend\n"
 	deadline := time.Now().Add(5 * time.Second)
 	for !strings.Contains(readList(t, copyDir), down) {
 		if time.Now().After(deadline) {

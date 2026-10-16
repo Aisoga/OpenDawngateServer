@@ -168,7 +168,7 @@ func summary(q querier, userID int64) (AccountSummary, error) {
 		userID).Scan(&a.Name, &hash, &a.Status, &a.Role, &a.Level, &created, &last); err != nil {
 		return a, err
 	}
-	a.HasHash = hash != ""
+	a.HasHash = hash != "" && hash != LocalTrustHash
 	a.Created, _ = parseTime(created)
 	a.LastLogin, _ = parseTime(last)
 	err := each(q, func(r *sql.Rows) error {

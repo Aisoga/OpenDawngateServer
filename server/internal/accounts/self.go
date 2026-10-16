@@ -14,8 +14,9 @@ import (
 
 // Authenticate checks a login name and password for the website's self-service: the account's credentials, or a
 // refusal (Code CodeInvalidUser/CodeInvalidPassword for a wrong pair, CodeUserInactive/CodeBanned/CodeDeactivated
-// for an account that isn't active, CodeTooLong, CodeSystem). An account without a password (made by an earlier build) can't
-// act here: it gets one at its next game login under Open, or from the operator.
+// for an account that isn't active, CodeTooLong, CodeSystem). An account without a password (made by an earlier build,
+// or by This PC) can't act here: it gets one at its next game login under Open (This PC's: from this machine), or from
+// the operator.
 func Authenticate(st *store.Store, name, password string) (store.Credentials, Result) {
 	name = NormalizeName(name)
 	if len(name) > MaxInput || len(password) > MaxPassword {
@@ -25,7 +26,7 @@ func Authenticate(st *store.Store, name, password string) (store.Credentials, Re
 	if err != nil {
 		return cred, refuse(CodeSystem, "account store: %v", err)
 	}
-	if !found || cred.Hash == "" {
+	if !found || cred.Hash == "" || cred.Hash == store.LocalTrustHash {
 		Verify(dummyHash(), password)
 		if !found {
 			return cred, refuse(CodeInvalidUser, "no account %q", name)

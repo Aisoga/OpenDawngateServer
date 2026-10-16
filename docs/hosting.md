@@ -120,6 +120,18 @@ The server window shows the **key's fingerprint**, 16 hex digits, and the whole 
 
 The key is in `Dawngate-Data\certs\<address>\`. Keep it private, and keep it. If the key changes, for example because `Dawngate-Data\certs` was lost or made anew, every player's list shows **KEY CHANGED** with the old and the new fingerprint, and their logins are refused. Each player then has to confirm the new fingerprint with you and delete their old copy of the key ([troubleshooting.md](troubleshooting.md#logging-in)). That is what protects them from a stranger at your address, so tell them in advance if you ever change it.
 
+## Versions and updates
+
+Every release has a version, its name, such as `Dawngate-Restoration-20261016-905ef17f5f`. The server window shows it at the start and when the server runs (`Version …: players need Start-Client.exe of the same release`), and `Start-Server.exe --version` prints it. A player's `Start-Client.exe` logs in only on a server of exactly the same version: any difference refuses the login, and their server list shows your server as **other version**. A server of a release from before this check doesn't tell its version, and every current `Start-Client.exe` refuses it (**version unknown**).
+
+So when you update the server, tell your players which release it runs now, and publish it next to your key's fingerprint. To update:
+
+1. Stop the server (Ctrl+C, or close its window). This ends running matches.
+2. Unpack the new release into the same folder, replacing the old files. `Start-Server.ini` and `Dawngate-Data` (accounts, keys, the match hosts' copy) stay.
+3. Start `Start-Server.exe`. The start checks the setup and brings the match hosts' copy up to date.
+
+Players unpack the same release's `Start-Client.exe` into their folder the same way. Until they do, their logins to your server are refused, with a message that names both versions in their server list. **This PC**, the server in a player's own folder, is never refused.
+
 ## Accounts
 
 Players log in with a **login name** (3–32 of `A–Z a–z 0–9 . _ - @`, not case-sensitive) and a **password** (8–63 characters). The server stores only a hash of each password.
@@ -131,6 +143,10 @@ Players log in with a **login name** (3–32 of `A–Z a–z 0–9 . _ - @`, not
 | `open` | The first login with a new name creates the account. This is the default for a home server. |
 | `invite` | Players register on the website with an invite code you made. The default for a public server. |
 | `closed` | Only you create accounts. |
+
+Players see the mode in their server list (*open*, *invite only*, *closed*; a change on the admin page shows within seconds), and the login screen's *Sign up now!* opens your server's sign-up page before they ever log in. Under `invite` and `closed` an unknown login name and a wrong password get the same answer, which points to *Sign up now!*, so it doesn't tell which names exist.
+
+**This PC's accounts.** When a player plays on *This PC* without your server running, `Start-Client.exe` runs a server of its own on the same folder's accounts, without passwords (only that PC reaches it; `local_trust = off` in `Start-Client.ini` turns passwords on). Accounts it makes have no password. Your server checks passwords: such an account takes the password of its first login from this PC (one of this PC's own addresses), and a login to it from anywhere else is refused, so nobody else can take it over.
 
 **Account commands.** They work while the server is running. Each one prints its result and exits.
 

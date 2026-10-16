@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"os"
@@ -200,6 +201,61 @@ func ClientTLS(pin Pin, cache tls.ClientSessionCache) *tls.Config {
 // ProbePin connects to a gateway without a pin and returns the key it presents: Start-Client's first contact (trust
 // on first use; the player compares Fingerprint with the operator's). dialer may be nil.
 func ProbePin(addr string, timeout time.Duration, dialer *net.Dialer) (Pin, error) {
+	c, got, err := probeDial(addr, timeout, dialer)
+	if err != nil {
+		return got, err
+	}
+	c.Close()
+	return got, nil
+}
+
+// Info is what a probe learns of a gateway: its key and its build's version.
+type Info struct {
+	Pin Pin
+	// Version is the server's build version (version.String on the server); "" when it named none: a gateway of a
+	// release before the info hello closes the connection at it.
+	Version string
+	// VersionErr says why Version is empty (nil when it isn't).
+	VersionErr error
+	// Facts are the server's facts besides its version (FactSignup; nil: none, a release before them).
+	Facts map[string]string
+}
+
+// The facts an info hello answers with (Gateway.Facts, Info.Facts).
+const (
+	// FactSignup is the server's sign-up mode: open (a first login makes the account), invite (an invite code on its
+	// website), closed (only the operator makes accounts) or local (This PC without passwords: any name logs in).
+	FactSignup = "signup"
+)
+
+// ProbeInfo is ProbePin plus the server's version, on the same connection: after the TLS handshake (no pin) it sends
+// the info hello, which opens no session. The error is the connection's (nothing answers, no tunnel there); a
+// gateway that doesn't answer the hello still gives its key, with Version empty.
+func ProbeInfo(addr string, timeout time.Duration, dialer *net.Dialer) (Info, error) {
+	c, got, err := probeDial(addr, timeout, dialer)
+	info := Info{Pin: got}
+	if err != nil {
+		return info, err
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(timeout))
+	if _, err := c.Write(infoHello()); err != nil {
+		info.VersionErr = err
+		return info, nil
+	}
+	if info.Version, info.Facts, err = readInfoReply(c); err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			err = errors.New("the gateway closed the connection at the info hello (a release before it)")
+		}
+		info.VersionErr = err
+	} else if info.Version == "" {
+		info.VersionErr = errors.New("the gateway named no version")
+	}
+	return info, nil
+}
+
+// probeDial is a TLS connection to a gateway without a pin, and the key it presents.
+func probeDial(addr string, timeout time.Duration, dialer *net.Dialer) (*tls.Conn, Pin, error) {
 	var got Pin
 	cfg := &tls.Config{
 		MinVersion:         tls.VersionTLS13,
@@ -224,10 +280,9 @@ func ProbePin(addr string, timeout time.Duration, dialer *net.Dialer) (Pin, erro
 	d.Timeout = timeout
 	c, err := tls.DialWithDialer(&d, "tcp4", addr, cfg)
 	if err != nil {
-		return got, err
+		return nil, got, err
 	}
-	c.Close()
-	return got, nil
+	return c, got, nil
 }
 
 // SamePin compares two pins in constant time.

@@ -1,5 +1,7 @@
 // gms/core/agents/brain.h (D1b-live step 3): gambit choice per phase type, cooldowns, condition lists, links.
 #include <cmath>
+#include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "core/agents/brain.h"
@@ -328,4 +330,299 @@ GMS_TEST(BotBackStepTowardTheStartPoint) {
   CHECK(std::fabs(goal[0] + 18.f) < 1e-3f && std::fabs(goal[1] + 24.f) < 1e-3f && goal[2] == 3.f);  // 30 toward it
   const float close[3] = {-50.f, -60.f, 0.f};  // 22.4 away: the original short walk
   CHECK(!BackStepGoal(close, base, c, goal));
+}
+
+// ---- NPCTARGET -------------------------------------------------------------------------------------------------------
+namespace {
+
+// The parasite's phases as data (Objective_SpiritMonster_State1-3) and its scripts as a model: the conditions read and
+// reset the basic attacks' counter (attackCounter, 4) and stage 3's alternation flag, the basics count at rank > 1, the
+// specials' Deactivate set the flag (PersistentFire false, OrbLauncher true).
+enum ParasiteAbility { kMelee, kRanged, kPersistentFire, kOrbLauncher };
+struct ParasiteModel {
+  int rank = 2;
+  int counter = 0;
+  bool alternate = false;
+  bool playerInMelee = true;   // an enemy player within 8 (the melee condition's target: 0x11)
+  bool playerInRanged = true;  // an enemy player within 30 of the origin, beyond 2 (0x22)
+  std::vector<ParasiteAbility> gambits;
+  std::vector<bool> wait;
+  std::vector<ParasiteAbility> used;
+
+  explicit ParasiteModel(int stage) : rank(stage) {
+    gambits = {kMelee, kRanged};
+    wait = {true, stage >= 2};
+    if (stage >= 2) {
+      gambits.push_back(kPersistentFire);
+      wait.push_back(stage >= 3);
+    }
+    if (stage >= 3) {
+      gambits.push_back(kOrbLauncher);
+      wait.push_back(false);
+    }
+  }
+  bool Eval(int i, std::uint32_t* target) {
+    switch (gambits[static_cast<std::size_t>(i)]) {
+      case kMelee:
+        if (counter < 4 && playerInMelee) {
+          *target = 0x11;
+          return true;
+        }
+        return false;
+      case kRanged:
+        if (counter < 4 && playerInRanged) {
+          *target = 0x11;
+          return true;
+        }
+        return false;
+      default:  // condition_Parasite_EnemyInRangedExcludeMelee
+        if (rank == 3 && !alternate) {
+          alternate = true;
+          return false;
+        }
+        counter = 0;
+        if (playerInRanged) {
+          *target = 0x22;
+          return true;
+        }
+        return false;
+    }
+  }
+  int Request(int i) {
+    const ParasiteAbility a = gambits[static_cast<std::size_t>(i)];
+    used.push_back(a);
+    if ((a == kMelee || a == kRanged) && rank > 1) ++counter;
+    if (a == kPersistentFire) alternate = false;
+    if (a == kOrbLauncher) alternate = true;
+    return 1;
+  }
+  // `thinks` thinks far enough apart that every gambit cooldown is over
+  void Run(int thinks, const gms::agents::NpcThinkOptions& o) {
+    for (int t = 0; t < thinks; ++t) {
+      std::vector<GambitView> g(gambits.size());
+      for (std::size_t i = 0; i < g.size(); ++i) g[i].waitOnCondition = wait[i];
+      const std::vector<bool> available(g.size(), true);
+      gms::agents::NpcThink(gms::agents::kPrioritizedList, g, available, 0x99, o, nullptr, 0.5,
+                            [this](int i, std::uint32_t* tg) { return Eval(i, tg); },
+                            [this](int i, std::uint32_t) { return Request(i); });
+    }
+  }
+};
+
+}  // namespace
+
+// The request's target: the condition's own, else the best target; none without a best target
+GMS_TEST(NpcGambitTargetRule) {
+  using gms::agents::NpcGambitTarget;
+  CHECK_EQ(NpcGambitTarget(0x11u, 0x99u, true), 0x11u);
+  CHECK_EQ(NpcGambitTarget(0u, 0x99u, true), 0x99u);
+  CHECK_EQ(NpcGambitTarget(0x11u, 0u, true), 0u);      // nobody on the list: the parasite fights only its attackers
+  CHECK_EQ(NpcGambitTarget(0x11u, 0u, false), 0x11u);  // the earlier rule needed no best target
+  CHECK_EQ(NpcGambitTarget(0u, 0u, false), 0u);
+  CHECK(gms::agents::NpcRefusalFallsThrough(-0x270C));
+  CHECK_EQ(gms::agents::kResultOutOfRangeNoPursuit, -9996);
+  for (int r : {1, 2, 5, -0x270F, -0x270B, -0x2708}) CHECK(!gms::agents::NpcRefusalFallsThrough(r));
+  // the pause after an out-of-range think: the melee out of reach passed on and the ranged basic only cooling (-0x270F
+  // or 3) must not repeat the melee request every frame
+  using gms::agents::NpcThinkAgainLater;
+  CHECK(NpcThinkAgainLater(-0x270C, 0, true));
+  CHECK(NpcThinkAgainLater(-0x270F, 1, true));
+  CHECK(NpcThinkAgainLater(3, 1, true));
+  CHECK(!NpcThinkAgainLater(1, 1, true));
+  CHECK(!NpcThinkAgainLater(5, 1, true));
+  CHECK(!NpcThinkAgainLater(-0x270F, 0, true));   // no fall-through: the cooldown's own retry as before
+  CHECK(!NpcThinkAgainLater(-0x270C, 0, false));  // switched off: the earlier every-frame retry
+}
+
+// Stage 2: four basics, then PersistentFire, again and again; with every condition run on every think the special's
+// condition reset the counter each time and the special never came
+GMS_TEST(NpcParasiteStageTwoRhythm) {
+  using namespace gms::agents;
+  ParasiteModel lazy(2);
+  lazy.Run(10, NpcThinkOptions());
+  const std::vector<ParasiteAbility> want = {kMelee, kMelee, kMelee, kMelee, kPersistentFire,
+                                             kMelee, kMelee, kMelee, kMelee, kPersistentFire};
+  CHECK(lazy.used == want);
+  NpcThinkOptions eager;
+  eager.lazy = false;
+  ParasiteModel old(2);
+  old.Run(10, eager);
+  CHECK_EQ(old.used.size(), 10u);
+  for (ParasiteAbility a : old.used) CHECK_EQ(static_cast<int>(a), static_cast<int>(kMelee));
+  // out of melee: the ranged basic counts the same way
+  ParasiteModel ranged(2);
+  ranged.playerInMelee = false;
+  ranged.Run(5, NpcThinkOptions());
+  const std::vector<ParasiteAbility> want2 = {kRanged, kRanged, kRanged, kRanged, kPersistentFire};
+  CHECK(ranged.used == want2);
+}
+
+// Stage 3: the specials alternate (OrbLauncher first: the flag starts false), four basics between them; stage 1 counts
+// nothing (rank 1) and has no special
+GMS_TEST(NpcParasiteStageThreeAlternates) {
+  using namespace gms::agents;
+  ParasiteModel p(3);
+  p.Run(15, NpcThinkOptions());
+  const std::vector<ParasiteAbility> want = {kMelee, kMelee, kMelee, kMelee, kOrbLauncher,
+                                             kMelee, kMelee, kMelee, kMelee, kPersistentFire,
+                                             kMelee, kMelee, kMelee, kMelee, kOrbLauncher};
+  CHECK(p.used == want);
+  ParasiteModel s1(1);
+  s1.Run(6, NpcThinkOptions());
+  CHECK_EQ(s1.used.size(), 6u);
+  for (ParasiteAbility a : s1.used) CHECK_EQ(static_cast<int>(a), static_cast<int>(kMelee));
+}
+
+// The stall: a shaper in melee (the condition's target) while the sticky best target stands out of melee reach. The
+// earlier rule requested the melee basic on the best target, -0x270C, every frame; the ranged basic never ran
+GMS_TEST(NpcParasiteMeleeStall) {
+  using namespace gms::agents;
+  const std::uint32_t inMelee = 0x11, best = 0x99;  // best: 20 units away, in ranged reach
+  std::vector<std::pair<int, std::uint32_t>> req;
+  auto run = [&](const NpcThinkOptions& o) {
+    std::vector<GambitView> g(2);
+    g[0].waitOnCondition = true;
+    const std::vector<bool> available(2, true);
+    return NpcThink(kPrioritizedList, g, available, best, o, nullptr, 0.5,
+                    [&](int i, std::uint32_t* t) {
+                      // the ranged condition's nearest: the best target here; the engine passes a condition's own
+                      // target only under the new rule (the data sets no useTargetInfo)
+                      if (o.conditionTargets) *t = i == 0 ? inMelee : best;
+                      return true;
+                    },
+                    [&](int i, std::uint32_t t) {
+                      req.push_back({i, t});
+                      return i == 0 && t != inMelee ? kResultOutOfRangeNoPursuit : 1;
+                    });
+  };
+  NpcThinkResult r = run(NpcThinkOptions());
+  CHECK_EQ(r.chosen, 0);
+  CHECK_EQ(r.result, 1);
+  CHECK_EQ(r.target, inMelee);
+  CHECK(r.fromCondition);
+  CHECK_EQ(req.size(), 1u);
+  NpcThinkOptions old;
+  old.conditionTargets = false;
+  old.lazy = false;
+  old.rangeFallthrough = false;
+  req.clear();
+  r = run(old);  // the condition's target ignored (no useTargetInfo in the data): the stall
+  CHECK_EQ(r.chosen, 0);
+  CHECK_EQ(r.result, kResultOutOfRangeNoPursuit);
+  CHECK_EQ(req.size(), 1u);
+  NpcThinkOptions fallOnly = old;
+  fallOnly.rangeFallthrough = true;
+  req.clear();
+  r = run(fallOnly);  // the fall-through alone: the ranged basic on the best target
+  CHECK_EQ(r.chosen, 1);
+  CHECK_EQ(r.result, 1);
+  CHECK_EQ(r.fallthroughs, 1);
+  CHECK_EQ(req.size(), 2u);
+}
+
+// No best target: nothing evaluated, nothing requested (the parasite stays quiet until hit)
+GMS_TEST(NpcThinkNeedsABestTarget) {
+  using namespace gms::agents;
+  std::vector<GambitView> g(2);
+  const std::vector<bool> available(2, true);
+  int evals = 0, requests = 0;
+  NpcThinkResult r = NpcThink(kPrioritizedList, g, available, 0, NpcThinkOptions(), nullptr, 0.5,
+                              [&](int, std::uint32_t* t) {
+                                ++evals;
+                                *t = 0x11;
+                                return true;
+                              },
+                              [&](int, std::uint32_t) {
+                                ++requests;
+                                return 1;
+                              });
+  CHECK(r.noBest);
+  CHECK_EQ(r.chosen, -1);
+  CHECK_EQ(evals, 0);
+  CHECK_EQ(requests, 0);
+}
+
+// The lazy walk: a cooling gambit without waitOnCondition runs no condition; one with it holds the list when its
+// conditions pass, and the gambits below are not evaluated
+GMS_TEST(NpcThinkLazyWalk) {
+  using namespace gms::agents;
+  std::vector<GambitView> g(3);
+  g[0].coolingDown = true;  // no wait: passed over
+  g[1].coolingDown = true;  // waits when it passes
+  g[1].waitOnCondition = true;
+  const std::vector<bool> available = {true, true, true};
+  std::vector<int> evaluated;
+  int requests = 0;
+  auto eval = [&](int i, std::uint32_t*) {
+    evaluated.push_back(i);
+    return true;
+  };
+  auto req = [&](int, std::uint32_t) {
+    ++requests;
+    return 1;
+  };
+  NpcThinkResult r = NpcThink(kPrioritizedList, g, available, 0x99, NpcThinkOptions(), nullptr, 0.5, eval, req);
+  CHECK(r.waiting);
+  CHECK_EQ(r.chosen, -1);
+  CHECK_EQ(r.passedOver, 1);
+  CHECK(evaluated == std::vector<int>{1});
+  CHECK_EQ(requests, 0);
+  // the waiting gambit's conditions fail: the walk goes on to the third
+  evaluated.clear();
+  r = NpcThink(kPrioritizedList, g, available, 0x99, NpcThinkOptions(), nullptr, 0.5,
+               [&](int i, std::uint32_t*) {
+                 evaluated.push_back(i);
+                 return i != 1;
+               },
+               req);
+  CHECK_EQ(r.chosen, 2);
+  CHECK_EQ(r.target, 0x99u);
+  CHECK(!r.fromCondition);
+  CHECK(evaluated == (std::vector<int>{1, 2}));
+  // a gambit without an ability is skipped
+  const std::vector<bool> none = {false, false, false};
+  r = NpcThink(kPrioritizedList, g, none, 0x99, NpcThinkOptions(), nullptr, 0.5, eval, req);
+  CHECK_EQ(r.chosen, -1);
+  CHECK_EQ(r.evaluated, 0);
+}
+
+// The Guardian: its basic attack's condition picks a shaper while the aggro list puts the minion first; a random
+// special phase picks again among the passing ones after an out-of-range refusal
+GMS_TEST(NpcGuardianTargetsAndRandomFallthrough) {
+  using namespace gms::agents;
+  const std::uint32_t minion = 0x99, shaper = 0x11;
+  std::vector<GambitView> basic(1);
+  const std::vector<bool> one(1, true);
+  auto started = [](int, std::uint32_t) { return 1; };
+  NpcThinkResult r = NpcThink(kPrioritizedList, basic, one, minion, NpcThinkOptions(), nullptr, 0.5,
+                              [&](int, std::uint32_t* t) {
+                                *t = shaper;
+                                return true;
+                              },
+                              started);
+  CHECK_EQ(r.target, shaper);
+  CHECK(r.fromCondition);
+  // only minions near: the condition passes without a target, the best target is used
+  r = NpcThink(kPrioritizedList, basic, one, minion, NpcThinkOptions(), nullptr, 0.5,
+               [](int, std::uint32_t*) { return true; }, started);
+  CHECK_EQ(r.target, minion);
+  CHECK(!r.fromCondition);
+  // five specials, the 2nd and 4th pass; the first pick refused -0x270C, the other one requested
+  std::vector<GambitView> specials(5);
+  const std::vector<bool> all(5, true);
+  std::vector<int> asked;
+  r = NpcThink(kRandom, specials, all, minion, NpcThinkOptions(), nullptr, 0.1,
+               [&](int i, std::uint32_t* t) {
+                 *t = shaper;
+                 return i == 1 || i == 3;
+               },
+               [&](int i, std::uint32_t) {
+                 asked.push_back(i);
+                 return asked.size() == 1 ? kResultOutOfRangeNoPursuit : 1;
+               });
+  CHECK(asked == (std::vector<int>{1, 3}));
+  CHECK_EQ(r.chosen, 3);
+  CHECK_EQ(r.result, 1);
+  CHECK_EQ(r.fallthroughs, 1);
+  CHECK_EQ(r.evaluated, 5);  // a random phase evaluates every gambit (unchanged)
 }

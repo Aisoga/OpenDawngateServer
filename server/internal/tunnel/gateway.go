@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"dawngate/server/internal/logging"
+	build "dawngate/server/internal/version"
 )
 
 // Defaults of the gateway's and the client's timings.
@@ -72,6 +73,11 @@ type Gateway struct {
 	// doesn't count as a new one).
 	Limits             Limits
 	MaxSessionsPerPeer int
+	// Version is the build's version the gateway answers an info hello with ("" at Start: version.String()).
+	Version string
+	// Facts, when set, gives the server's facts the info hello answers with besides the version (asked at each
+	// hello, so a change while the server runs shows): FactSignup, the sign-up mode.
+	Facts func() map[string]string
 
 	listeners map[int]*listener
 	handlers  map[int]PacketHandler
@@ -145,6 +151,10 @@ func (g *Gateway) defaults() {
 	if g.StatsEvery == 0 {
 		g.StatsEvery = DefaultStatsEvery
 	}
+	if g.Version == "" {
+		g.Version = build.String()
+	}
+	g.Version = build.Clean(g.Version)
 }
 
 // Start listens on addr (host:port) with TCP and UDP and serves both until Close.
@@ -325,6 +335,14 @@ func (g *Gateway) serveConn(c *tls.Conn) {
 		g.serveSession(c, peer)
 	case kindStream:
 		g.serveStream(c, peer)
+	case kindInfo: // the server's version and facts for Start-Client's list and login: no session
+		var facts map[string]string
+		if g.Facts != nil {
+			facts = g.Facts()
+		}
+		c.Write(infoReply(g.Version, facts))
+		g.logf("%s: version asked (%s; a server list's probe or a login's)", peer, g.Version)
+		c.Close()
 	default:
 		g.logf("%s: unknown hello kind %d", peer, kind)
 		c.Close()

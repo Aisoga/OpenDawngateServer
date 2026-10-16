@@ -17,6 +17,7 @@ import (
 	"dawngate/server/internal/setup"
 	"dawngate/server/internal/setup/certs"
 	"dawngate/server/internal/tunnel"
+	"dawngate/server/internal/version"
 )
 
 // ClientConfigName is Start-Client.exe's config file, next to it (written only when a player saves a server address).
@@ -48,6 +49,11 @@ gateway_port =
 ; shows its key's fingerprint and the login stops; compare it with the one its operator gives you, then log in again
 ; to trust it.
 picker = auto
+
+; This PC without passwords: on (the default) lets any login name in on the server Start-Client runs for This PC, with
+; any password (none is checked or stored; only this PC reaches that server). off checks passwords there as any server
+; does. Not used while this folder's Start-Server.exe serves This PC: it always checks passwords.
+local_trust = on
 `
 
 // oldClientComments are the tunnel and picker keys' comments that earlier releases wrote into Start-Client.ini (when
@@ -63,7 +69,7 @@ var oldClientComments = map[string][][]string{
 		"; network) can't be picked: Start-Client then plays on it directly."}},
 }
 
-var clientKeys = []string{"server", "folder", "zip", "tunnel", "gateway_port", "picker"}
+var clientKeys = []string{"server", "folder", "zip", "tunnel", "gateway_port", "picker", "local_trust"}
 
 // TestParkEnv set to 1 is Start-Client's --test-park (the release's test hook; never needed by a player).
 const TestParkEnv = "DAWNGATE_TEST_PARK"
@@ -92,12 +98,19 @@ func RunClient(args []string, o IO) int {
 		"): auto (the default) whenever the tunnel is used, on always (needs the tunnel), off plays on one server")
 	lane := fs.String("test-lane", "", `test hook: one letter X; the game copy gets per-user folders of its own (%APPDATA%\DawngateDataX, `+
 		`Documents\DawngateX) and the game runs with -multipleInstances, beside another client on this PC`)
+	showVersion := fs.Bool("version", false, "print this release's version and exit (it plays only on servers of the same version)")
+	localTrustFlag := fs.String("local-trust", "", "This PC without passwords: on (the default) lets any login name in on the server Start-Client runs for This PC, "+
+		"with any password; off checks passwords there (Start-Client.ini local_trust)")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 2
+	}
+	if *showVersion {
+		fmt.Fprintln(o.Out, version.String())
+		return 0
 	}
 	if len(positional) > 1 {
 		fmt.Fprintf(o.Out, "Start-Client takes one server address, not %q\n", positional)
@@ -108,7 +121,7 @@ func RunClient(args []string, o IO) int {
 		return o.fail("--test-lane %s: one letter", *lane)
 	}
 	in := bufio.NewReader(o.In)
-	fmt.Fprintln(o.Out, "Dawngate Restoration: Start-Client")
+	fmt.Fprintf(o.Out, "Dawngate Restoration: Start-Client, version %s\n", version.String())
 
 	clientIni := filepath.Join(o.ExeDir, ClientConfigName)
 	ccfg, err := ReadConfig(clientIni)
@@ -130,6 +143,10 @@ func RunClient(args []string, o IO) int {
 	}
 	scfg, _ := ReadConfig(filepath.Join(o.ExeDir, ServerConfigName)) // this PC's server, when there is one
 	pickerSet, err := pickerSetting(firstNonEmpty(*pickerFlag, ccfg["picker"]))
+	if err != nil {
+		return o.fail("%v", err)
+	}
+	localTrust, err := localTrustSetting(firstNonEmpty(*localTrustFlag, ccfg["local_trust"]))
 	if err != nil {
 		return o.fail("%v", err)
 	}
@@ -200,7 +217,7 @@ func RunClient(args []string, o IO) int {
 			if sameFolder(scfg, o.ExeDir, l) {
 				ini = scfg
 			}
-			pc = newThisPC(o, l, patchFor, filepath.Join(o.ExeDir, "host"), ini, bookmarks, *check)
+			pc = newThisPC(o, l, patchFor, filepath.Join(o.ExeDir, "host"), ini, bookmarks, *check, localTrust)
 			if preselect, err = pickerBookmarks(o, l, choice, *gwPinFlag, *check, pc); err != nil {
 				return o.fail("%v", err)
 			}
@@ -246,6 +263,13 @@ func RunClient(args []string, o IO) int {
 		}
 		if ca == nil {
 			if ca, err = remoteCA(o, in, l, server, *caFile, *trust, answering == nil); err != nil {
+				return o.fail("%v", err)
+			}
+		}
+		if answering == nil && !*setupOnly && !*check {
+			// the server's version must be this Start-Client's: the game talks to it directly, so the check is now
+			v, verr := FetchVersion(server, HTTPPort, 5*time.Second)
+			if err := versionMismatch(server, v, verr); err != nil {
 				return o.fail("%v", err)
 			}
 		}
@@ -397,6 +421,17 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 		positional = append(positional, rest[0])
 		args = rest[1:]
 	}
+}
+
+// localTrustSetting reads local_trust = (--local-trust): on (the default, also "") or off.
+func localTrustSetting(v string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "on", "yes", "true", "1":
+		return true, nil
+	case "off", "no", "false", "0":
+		return false, nil
+	}
+	return false, fmt.Errorf("local_trust = %s: use on or off", v)
 }
 
 func firstNonEmpty(s ...string) string {

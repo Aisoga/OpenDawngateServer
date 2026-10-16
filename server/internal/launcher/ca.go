@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"dawngate/server/internal/setup/certs"
+	"dawngate/server/internal/version"
 	"dawngate/server/internal/web"
 )
 
@@ -54,6 +55,30 @@ func FetchCA(address string, port int, timeout time.Duration) ([]byte, error) {
 		return nil, fmt.Errorf("%s: %d bytes, not a CA modulus (128)", url, len(b))
 	}
 	return b, nil
+}
+
+// FetchVersion asks a server without the tunnel for its version (dgserver's /dawngate/version.txt on the HTTP port).
+// A server of a release before the version check answers 404: an error, as when nothing answers.
+func FetchVersion(address string, port int, timeout time.Duration) (string, error) {
+	cl := &http.Client{Timeout: timeout}
+	url := "http://" + net.JoinHostPort(address, strconv.Itoa(port)) + "/" + web.VersionPath
+	resp, err := cl.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("%s: %s (a server of a release before the version check)", url, resp.Status)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 256))
+	if err != nil {
+		return "", err
+	}
+	v := version.Clean(string(b))
+	if v == "" {
+		return "", fmt.Errorf("%s: no version in the answer", url)
+	}
+	return v, nil
 }
 
 // CheckServerCert connects to the redirector at address:port as the client does (TLS 1.1, RSA key exchange) and

@@ -14,6 +14,7 @@
 // Header-only, so the harness (dgsim.dll) uses it with or without gms_core; gms_tests checks it.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -236,6 +237,142 @@ inline bool HoldStuck(double heldSeconds, float moved, double limitSeconds, floa
 // parasite's spot after it died (its next stage untargetable there) and stood on it for two to three minutes, the
 // Pursue leaf following the old target with no gambit to replace it.
 inline bool TargetStale(bool hasTarget, bool validHostile) { return hasTarget && !validHostile; }
+
+// ---- NPCTARGET: what an NPC's gambit aims at and how far down its list a think goes ---------------------------------
+// The NPCs whose gambit conditions pick their own target (the parasite's: the nearest enemy player in melee, the nearest
+// within 30 of the map's origin, a random one beyond melee; the Guardian's: a random enemy player within its basic
+// attack's reach, a random one within 67 for a special, an ally player for its health packs) return it as their 5th
+// value with the 6th (useTarget) true, and no NPC condition record sets the data's useTargetInfo. The rules
+// [assumed: the brain's update was compiled out]:
+//   - a passing condition's own target is the request's target, else the aggro list's best target; with no best target
+//     no gambit runs at all (the parasite fights only once someone hit it; the Guardian only with something on its
+//     list), and no condition is evaluated then;
+//   - a prioritized list is walked lazily in order: a gambit without an ability or cooling down without waitOnCondition
+//     is passed over without running its conditions; the first gambit whose conditions pass is used, or, if it is
+//     cooling down with waitOnCondition, holds the list. The parasite's conditions have side effects that rely on it:
+//     the special's condition (the 3rd gambit of stages 2 and 3) resets the basic attacks' counter, which the first two
+//     gambits' conditions read (4 basics, then the special), and stage 3's alternates PersistentFire and OrbLauncher
+//     through a blackboard flag the conditions set;
+//   - a request refused "out of range without pursuit" (-0x270C: the parasite cannot move) lets the next passing
+//     gambit try in the same think (random phases: a new pick among the other passing ones).
+constexpr int kResultOutOfRangeNoPursuit = -0x270C;
+
+inline std::uint32_t NpcGambitTarget(std::uint32_t conditionTarget, std::uint32_t best, bool conditionTargets) {
+  if (!conditionTargets) return conditionTarget ? conditionTarget : best;  // the earlier rule: no best target needed
+  if (!best) return 0;
+  return conditionTarget ? conditionTarget : best;
+}
+
+inline bool NpcRefusalFallsThrough(int result) { return result == kResultOutOfRangeNoPursuit; }
+
+// Whether an NPC thinks again only after a pause (100 ms) instead of next frame: with the fall-through on, when the
+// think ended out of range, or a gambit out of range passed on and what followed didn't act (started, 1/2, or pursued,
+// 5): a lower gambit only waiting for its own cooldown would otherwise repeat the out-of-range request every frame.
+inline bool NpcThinkAgainLater(int result, int fallthroughs, bool rangeFallthrough) {
+  if (!rangeFallthrough) return false;
+  if (result == kResultOutOfRangeNoPursuit) return true;
+  return fallthroughs > 0 && result != 1 && result != 2 && result != 5;
+}
+
+struct NpcThinkOptions {
+  bool conditionTargets = true;  // a passing condition's own target; a best target required
+  bool lazy = true;              // a prioritized list's conditions in order, stopping at the first usable gambit
+  bool rangeFallthrough = true;  // -0x270C lets the next passing gambit try
+  int maxTries = 8;              // requests per think at most
+};
+
+struct NpcThinkResult {
+  int chosen = -1;               // the gambit requested last, -1 none
+  int result = 0;                // its request's result
+  std::uint32_t target = 0;      // its target
+  bool fromCondition = false;    // the target came from the gambit's condition
+  bool waiting = false;          // a waitOnCondition gambit cooling down held the list
+  bool noBest = false;           // nothing evaluated: no best target (conditionTargets)
+  bool noTarget = false;         // a gambit passed but had no target
+  int evaluated = 0;             // condition lists run
+  int passedOver = 0;            // gambits of a lazy walk whose conditions were not run
+  int fallthroughs = 0;          // -0x270C refusals passed to the next gambit
+};
+
+// One NPC think over the current phase's gambits. `g[i]` holds each gambit's cooldown and waitOnCondition (and weight);
+// `available[i]` whether it has an ability. `eval(i, &conditionTarget)` runs gambit i's condition list (true if it
+// passes; the target a passing condition returned, 0 if none), `request(i, target)` requests its ability and returns
+// the engine's result. `cursor`, `random01`: ChooseGambit's.
+template <class Eval, class Request>
+NpcThinkResult NpcThink(int phaseType, std::vector<GambitView>& g, const std::vector<bool>& available,
+                        std::uint32_t best, const NpcThinkOptions& o, int* cursor, double random01, Eval eval,
+                        Request request) {
+  NpcThinkResult r;
+  const std::size_t n = g.size();
+  if (o.conditionTargets && !best) {
+    r.noBest = true;
+    return r;
+  }
+  std::vector<std::uint32_t> targets(n, 0);
+  const bool lazy = o.lazy && phaseType == kPrioritizedList;
+  if (!lazy) {  // every gambit's conditions, then the phase type's pick
+    for (std::size_t i = 0; i < n; ++i) {
+      g[i].conditionsPass = false;
+      if (i < available.size() && available[i]) {
+        g[i].conditionsPass = eval(static_cast<int>(i), &targets[i]);
+        ++r.evaluated;
+      }
+    }
+  }
+  std::size_t from = 0;
+  for (int tries = 0; tries < o.maxTries; ++tries) {
+    int chosen = -1;
+    if (lazy) {
+      for (std::size_t i = from; i < n; ++i) {
+        g[i].conditionsPass = false;
+        if (i >= available.size() || !available[i]) continue;
+        if (g[i].coolingDown && !g[i].waitOnCondition) {
+          ++r.passedOver;
+          continue;
+        }
+        targets[i] = 0;
+        g[i].conditionsPass = eval(static_cast<int>(i), &targets[i]);
+        ++r.evaluated;
+        if (!g[i].conditionsPass) continue;
+        if (g[i].coolingDown) r.waiting = true;  // waitOnCondition: hold the list for this one
+        else chosen = static_cast<int>(i);
+        break;
+      }
+    } else {
+      chosen = ChooseGambit(phaseType, g, cursor, random01);
+      if (chosen < 0 && phaseType == kPrioritizedList) {
+        for (std::size_t i = 0; i < n; ++i) {
+          if (g[i].Usable()) break;
+          if (g[i].waitOnCondition && g[i].conditionsPass) {
+            r.waiting = true;
+            break;
+          }
+        }
+      }
+    }
+    if (chosen < 0) break;
+    const std::size_t c = static_cast<std::size_t>(chosen);
+    const std::uint32_t target = NpcGambitTarget(targets[c], best, o.conditionTargets);
+    if (!target) {
+      r.noTarget = true;
+      r.chosen = -1;
+      break;
+    }
+    r.chosen = chosen;
+    r.target = target;
+    r.fromCondition = targets[c] != 0 && target == targets[c];
+    r.result = request(chosen, target);
+    if (!o.rangeFallthrough || !NpcRefusalFallsThrough(r.result)) break;
+    ++r.fallthroughs;
+    if (lazy) {
+      from = c + 1;
+      if (from >= n) break;
+    } else {
+      g[c].conditionsPass = false;  // the others still passing get a pick
+    }
+  }
+  return r;
+}
 
 // Who may be answered when a bot idles under attack: players and the mobile NPC types (nNPCType: lane minions 0-2, creeps
 // 3, objectives 6-8, pets 11, followers 12), not structures (Tower 9, Guardian 13, Nub 14, Locus 15, Ward 16), mines,

@@ -288,6 +288,13 @@ def main():
         say(f'player {idx}: handle 0x{h:08x} at 0x{pl:08x}, creature (+0x0C) 0x{p.u32(pl + 0x0C):08x}, '
             f'status (+0x10) 0x{p.u32(pl + 0x10):x}, index (+0x2C) {p.u8(pl + 0x2C)}, team (+0xA0) {p.u8(pl + 0xA0)}, '
             f'noun (+4) {p.cstr(p.u32(noun)) if noun else "-"}, mDeathTime {death}, mRespawnTime {respawn} ({state})')
+        # BOTPROFILE: mRole (+0x08: 0 gladiator, 1 tactician, 2 hunter, 3 predator; what the scoreboard, target panel
+        # and shaper panel read through LabsPlayer_GetRole 0x00912180), mbIsBot (+0x48), mpBotData (+0x4C, the BotClass
+        # asset LabsPlayer_ReflectBotData 0x00915D30 set) and the name (+0x50, the bot's "<shaper> BOT")
+        bot_data = p.u32(pl + 0x4C)
+        name_ptr = p.u32(pl + 0x50)
+        say(f'  role (+0x08) {p.u8(pl + 0x08)}, bot (+0x48) {p.u8(pl + 0x48)}, bot data (+0x4C) '
+            f'{p.cstr(p.u32(bot_data)) if bot_data else "-"}, name (+0x50) {p.cstr(name_ptr) if name_ptr else "-"!r}')
         k, d, a_, cs = struct.unpack('<4I', p.read(pl + 0x240, 16) or bytes(16))
         say(f'  K/D/A {k}/{d}/{a_}, creeps {cs}, multi-kill (+0x250) {p.u32(pl + 0x250)}, streak (+0x260) '
             f'{p.u32(pl + 0x260)}, XP (+0xA4) {p.f32(pl + 0xA4):.2f}, total gold (+0xAC) {p.f32(pl + 0xAC):.2f}, '

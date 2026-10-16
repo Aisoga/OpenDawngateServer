@@ -105,7 +105,7 @@ def main(argv):
         source = f.read()
     fallbacks = {int(i, 16): t for i, t in re.findall(r'\[(0x5e70a1[0-9a-f]{2}), "((?:[^"\\]|\\.)*)"\]', source)}
     locale = {i: t for i, t in patch_locale.LOGIN_LINES.items() if i >> 8 == 0x5E70A1}
-    check(fallbacks == locale and len(locale) == 36,
+    check(fallbacks == locale and len(locale) == 49,
           f"the picker's {len(fallbacks)} texts are the locale package's {len(locale)} LoginScreen lines")
 
     tags = plm.read_tags()

@@ -889,6 +889,62 @@ GMS_TEST(BotsCompositionFreeDrawLeavesTheHumansRoles) {
   }
 }
 
+// BOTPROFILE: our PC_Warden_Predator profile (profiles.h) takes the Predator seat without a role override when the
+// catalog lists it; a profile and its base class count as one shaper per team.
+GMS_TEST(BotsProfilesPredator) {
+  CHECK(BaseClass("PC_Warden_Predator") == "PC_Warden" && BaseClass("PC_Warden") == "PC_Warden");
+  CHECK(ProfileFor("PC_Warden", kRolePredator) == "PC_Warden_Predator" && ProfileFor("PC_Warden", kRoleTactician).empty());
+  CHECK(IsProfile("PC_Warden_Predator") && !IsProfile("PC_Guardian"));
+  CHECK_EQ(AltRoles("PC_Warden_Predator"), AltRoles("PC_Warden"));
+  const std::vector<int> drop = ParseDropOrder("");
+  std::set<std::string> avail = AllBotClasses();
+  avail.insert("PC_Warden_Predator");
+  std::vector<ComposedSeat> seats = ComposeTeam(WantedSeats(5, {}, drop), avail, PlanClassNames());
+  CHECK(seats[3].role == kRolePredator && seats[3].botClass == "PC_Warden_Predator" && !seats[3].roleOverride);
+  for (unsigned seed = 1; seed < 40; ++seed) {  // shuffled lists still prefer the profile; no second Warden
+    seats = ComposeTeam(WantedSeats(5, {}, drop), avail, PlanClassNames(), seed);
+    CHECK(seats[3].botClass == "PC_Warden_Predator" && !seats[3].roleOverride);
+    CHECK(seats[1].botClass != "PC_Warden");
+  }
+  // the Warden is the Predator: the Tactician list may not take PC_Warden as well
+  seats = ComposeTeam(WantedSeats(5, {}, drop), {"PC_Warden", "PC_Warden_Predator", "PC_Guardian"}, {});
+  CHECK(seats[1].botClass == "PC_Guardian" && seats[3].botClass == "PC_Warden_Predator");
+  seats = ComposeTeam(WantedSeats(5, {}, drop), {"PC_Warden", "PC_Warden_Predator"}, {"PC_Warden"});
+  CHECK(seats[3].botClass == "PC_Warden_Predator" && seats[1].botClass.empty());
+  // without the profile (an older copy): PC_Warden with the role set after it, as before
+  seats = ComposeTeam(WantedSeats(5, {}, drop), AllBotClasses(), PlanClassNames());
+  CHECK(seats[3].botClass == "PC_Warden" && seats[3].roleOverride);
+  // the free draw: a Predator is always the profile, a Warden Tactician the base class
+  bool predator = false, tactician = false;
+  for (unsigned seed = 1; seed < 200; ++seed) {
+    for (const ComposedSeat& s : ComposeTeamFree(5, avail, seed)) {
+      if (s.role == kRolePredator) {
+        CHECK(s.botClass == "PC_Warden_Predator" && !s.roleOverride);
+        predator = true;
+      }
+      if (s.botClass == "PC_Warden") {
+        CHECK(s.role == kRoleTactician);
+        tactician = true;
+      }
+    }
+  }
+  CHECK(predator && tactician);
+  // the planner: both teams' Predators (the human's team keeps its own when it drops the Hunter instead)
+  HumanPlayer h;
+  h.index = 0;
+  h.team = 1;
+  h.role = -1;
+  const std::vector<BotPlayer> bots =
+      PlanBotPlayersComposed({h}, 5, {1, 2}, avail, PlanClassNames(), ParseDropOrder("hunter"));
+  int predators = 0;
+  for (const BotPlayer& b : bots)
+    if (b.role == kRolePredator) {
+      CHECK(b.botClass == "PC_Warden_Predator" && !b.roleOverride);
+      ++predators;
+    }
+  CHECK_EQ(predators, 2);
+}
+
 GMS_TEST(BotsCompositionShuffleVariesTheTeams) {
   const std::vector<int> drop = ParseDropOrder("");
   const std::vector<WantedSeat> wanted = WantedSeats(5, {}, drop);

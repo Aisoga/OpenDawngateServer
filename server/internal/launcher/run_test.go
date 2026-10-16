@@ -130,7 +130,7 @@ func TestStartServerAndClient(t *testing.T) {
 	}
 	code, out = run(t, RunClient, dir, "--non-interactive", "--setup-only", "--tunnel-address", "127.0.9.2")
 	if code != 0 || strings.Contains(out, "added to the server list") ||
-		!strings.Contains(out, "#pc     This PC: the server on this PC, run by Start-Client on 127.0.9.11 (it starts when you log in to it)") ||
+		!strings.Contains(out, "#pc     This PC: the server on this PC, run by Start-Client on 127.0.9.11 (it starts when you log in to it; without passwords (local_trust): any login name logs in)") ||
 		!strings.Contains(out, "links at http://127.0.9.2:18080/dawngate/") {
 		t.Errorf("Start-Client --setup-only: exit %d\n%s", code, out)
 	}

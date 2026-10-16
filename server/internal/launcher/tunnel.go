@@ -17,6 +17,7 @@ import (
 	"dawngate/server/internal/setup"
 	"dawngate/server/internal/setup/certs"
 	"dawngate/server/internal/tunnel"
+	"dawngate/server/internal/version"
 )
 
 // the encrypted tunnel, on by default for every server (tunnel = auto). Start-Server runs the gateway and no
@@ -124,12 +125,17 @@ func gatewayAddress(server string, port int, scfg Config) string {
 }
 
 // trustedGatewayPin probes the gateway and returns its key once trusted: the one stored before, a pin given with
-// --gateway-pin (no question), or one the player confirms.
+// --gateway-pin (no question), or one the player confirms. A server of another version, or of none it can tell, is
+// refused first (versionMismatch).
 func trustedGatewayPin(o IO, in *bufio.Reader, l setup.Layout, server, gw, pinFlag string, trust bool) (tunnel.Pin, error) {
-	served, err := tunnel.ProbePin(gw, 5*time.Second, nil)
+	info, err := tunnel.ProbeInfo(gw, 5*time.Second, nil)
+	served := info.Pin
 	if err != nil {
 		return served, fmt.Errorf("no Dawngate tunnel answers at %s: %v\nIs Start-Server.exe running there (its window says "+
 			"\"The server runs\" and names the tunnel), and does its router forward TCP and UDP %s to it?", gw, err, portOf(gw))
+	}
+	if err := versionMismatch(server, info.Version, info.VersionErr); err != nil {
+		return served, err
 	}
 	if pinFlag != "" {
 		want, err := tunnel.ParsePin(pinFlag)
@@ -160,6 +166,22 @@ func trustedGatewayPin(o IO, in *bufio.Reader, l setup.Layout, server, gw, pinFl
 		fmt.Fprintf(o.Out, "  trusting the server's new tunnel key %s\n", served.Fingerprint())
 	}
 	return served, nil
+}
+
+// versionMismatch is Start-Client's refusal of a server whose version isn't its own (nil: the same). It names both
+// versions; a server that names none (a release before the version check) is refused too.
+func versionMismatch(server, served string, why error) error {
+	own := version.String()
+	switch {
+	case version.Same(own, served):
+		return nil
+	case served == "":
+		return fmt.Errorf("the server %s doesn't tell its version (%v), so this Start-Client (version %s) doesn't play on it:\n"+
+			"it plays only on servers of its own version. Ask the server's operator which release it runs, and use that "+
+			"release's Start-Client.exe.", server, why, own)
+	}
+	return fmt.Errorf("the server %s runs version %s, this Start-Client is version %s: both need the same version.\n"+
+		"Use the Start-Client.exe of the server's release (ask its operator), or ask them to update the server.", server, served, own)
 }
 
 func portOf(hostport string) string {

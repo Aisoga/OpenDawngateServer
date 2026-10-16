@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"dawngate/server/internal/accounts"
 	"dawngate/server/internal/gms"
 	"dawngate/server/internal/redirector"
 	"dawngate/server/internal/tdf"
@@ -264,6 +266,52 @@ func TestPlainOff(t *testing.T) {
 	}
 	if c.hostsBind() != "" || (config{bind: "127.0.9.33"}).hostsBind() != "127.0.9.33" || (config{bind: "a", gmsBind: "b"}).hostsBind() != "b" {
 		t.Error("hostsBind")
+	}
+}
+
+// TestSignupFact: the gateway's info hello tells the sign-up mode (Start-Client's server list shows it), as the admin
+// page has it now, and "local" for --local-trust, which only a server that only this PC reaches may use.
+func TestSignupFact(t *testing.T) {
+	cfg := config{bind: "127.0.9.34", certs: testCerts(t), logDir: t.TempDir(), plain: PlainOff, tunnel: TunnelOn,
+		gatewayPort: 0, redirectorPort: redirector.Port}
+	cfg.accounts.Mode = accounts.Invite
+	in, err := start(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask := func(in *instance) string {
+		t.Helper()
+		info, err := tunnel.ProbeInfo(in.gateway.Addr(), 3*time.Second, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info.Facts[tunnel.FactSignup]
+	}
+	if got := ask(in); got != "invite" {
+		t.Errorf("--signup invite: the gateway says %q", got)
+	}
+	in.stop()
+
+	cfg.accounts.LocalTrust = true
+	if in, err = start(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := ask(in); got != "local" {
+		t.Errorf("--local-trust: the gateway says %q", got)
+	}
+	if log := logText(t, cfg.logDir); !strings.Contains(log, "no passwords (--local-trust") {
+		t.Errorf("the start-up line doesn't name --local-trust:\n%s", log)
+	}
+	in.stop()
+	for _, c := range []config{{bind: "127.0.9.34", publicHost: "203.0.113.5"}} {
+		c.certs, c.logDir, c.tunnel, c.plain = cfg.certs, t.TempDir(), TunnelOn, PlainOff
+		c.accounts.LocalTrust = true
+		if _, err := start(c); err == nil || !strings.Contains(err.Error(), "--local-trust") {
+			t.Errorf("--local-trust with --bind %s --public-host %s: %v", c.bind, c.publicHost, err)
+		}
+	}
+	if !thisMachine(netip.MustParseAddr("127.0.0.1")) || thisMachine(netip.MustParseAddr("203.0.113.5")) || thisMachine(netip.Addr{}) {
+		t.Error("thisMachine")
 	}
 }
 

@@ -7,12 +7,14 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "core/agents/aggro.h"
 #include "core/agents/brain.h"
+#include "core/agents/leash.h"
 #include "core/agents/minion_target.h"
 #include "core/agents/recall.h"
 #include "core/agents/reflex.h"
@@ -118,6 +120,10 @@ struct AgentState {
   unsigned requests = 0;
   unsigned long long nextThinkMs = 0;  // after a step without a usable gambit: think again 100 ms later
   int lastSlot = -2;
+  // NPCTARGET: the object's nNPCType (-99 not read yet) and the last logged request of a watched NPC
+  int npcType = -99;
+  int npcLogResult = 0x7FFFFFFF, npcLogGambit = -1;
+  std::uint32_t npcLogTarget = 0;
   // D6a: a bot's brain (the plan and phase layer; host-side timers, the engine's +0x14/+0x18 written on changes)
   int isBot = -1;                      // GameObject_IsBot, asked once
   int botPlan = -2, botPhase = -1;     // -2: not seen yet
@@ -177,8 +183,21 @@ struct AgentState {
   unsigned long long chaseLogSinceMs = 0;
   float chaseStartLane = 0.f, chaseMaxLane = 0.f, chaseStartPos[2] = {};
   const char* chaseEndWhy = nullptr;
+  // LEASH (gms/core/agents/leash.h): the class (-1 not known yet, 0 none, 1 jungle creature, 2 well worker), its home,
+  // its group (a creep's camp marker, a worker's well), its limits, the rule's state and the fight log (the target,
+  // since when, the farthest from home, why it ended)
+  int leashClass = -1;
+  float leashHome[3] = {};
+  std::uint32_t leashGroup = 0;
+  gms::agents::LeashOptions leashOpt;
+  gms::agents::LeashState leash;
+  std::uint32_t fightTarget = 0;
+  unsigned long long fightSinceMs = 0;
+  float fightMaxOwn = 0.f, fightMaxTarget = 0.f;
+  const char* fightEndWhy = nullptr;
 };
 std::unordered_map<std::uint32_t, AgentState> g_agents;  // by object id
+gms::agents::LeashGroupDrops g_leashDrops;                // LEASH: what a camp or a well's workers dropped together
 
 struct Stats {
   unsigned frames = 0, ticks = 0, refused = 0, exceptions = 0, viaCommands = 0;
@@ -196,6 +215,11 @@ struct Stats {
   unsigned linksFired = 0, brainExceptions = 0, pursueOn = 0, pursueOff = 0;
   unsigned nodeTimersKept = 0;  // D6c: NPC node entries that got their timers back from an earlier visit
   unsigned heldThinks = 0;      // D6c: NPC brain steps without gambits: an uninterruptible ability held the agent
+  // NPCTARGET: requests on a condition's own target / the best target, condition lists run, gambits a lazy walk passed
+  // over, thinks a waitOnCondition gambit held, thinks without a best target, out-of-range refusals passed on (and the
+  // thinks in which a later gambit then acted)
+  unsigned npcOwnTargets = 0, npcBestTargets = 0, conditionLists = 0, npcPassedOver = 0, npcWaiting = 0, npcNoBest = 0;
+  unsigned npcFallthroughs = 0, npcFallthroughActed = 0;
   unsigned prunedAbilities = 0, prunedModifiers = 0;
   // D5: nBattlegrounds.AddBaseStructuresToAggroList
   unsigned baseCalls = 0, baseAdded = 0, baseMarked = 0, baseSkipped = 0, baseKeptBeyondRange = 0;
@@ -206,6 +230,10 @@ struct Stats {
   unsigned chaseDropLane = 0, chaseDropTime = 0, chaseDropDistance = 0, chaseIgnored = 0, chases = 0;
   unsigned chaseLogged = 0;
   double chaseSecondsSum = 0, chaseSecondsMax = 0, chaseLaneSum = 0, chaseLaneMax = 0;
+  // LEASH, per class (0 creeps, 1 workers): fights (a target as the best target), their length and the farthest the
+  // NPC got from home, the rule's drops by kind (own, chase, target, group), hits not taken onto the list, early updates
+  unsigned fights[2] = {}, fightLogged = 0, classLogged = 0, workerClassLogged = 0, leashDrops[2][5] = {}, leashHitsSkipped[2] = {}, leashForced = 0, leashResets = 0;
+  double fightSecondsSum[2] = {}, fightSecondsMax[2] = {}, fightOwnSum[2] = {}, fightOwnMax[2] = {};
 };
 Stats g_st;
 unsigned g_logLines;
@@ -672,6 +700,200 @@ void MinionChaseAfterUpdate(void* o, AgentState& st, const AgentInfo& a,
   (void)o;
 }
 
+// ---- LEASH: jungle creatures and well workers (gms/core/agents/leash.h) ---------------------------------------------
+
+float LeashDist(const float* a, const float* b) {
+  const float dx = a[0] - b[0], dy = a[1] - b[1];
+  return std::sqrt(dx * dx + dy * dy);
+}
+
+bool SehLeashHome(void* o, float* home, std::uint32_t* camp) {
+  __try {
+    std::memcpy(home, static_cast<char*>(o) + gobj::kInitialPosition, 12);
+    *camp = Field<std::uint32_t>(o, kObjectCampMarker);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "leash home")) {
+    return false;
+  }
+}
+
+bool SehResetDefaultBehavior(void* o);
+void SehSetTarget(void* o, std::uint32_t target);
+std::uint32_t SehRawTarget(void* o);
+
+// Which leash an agent has: a jungle creature (its spawn spot, its camp) or a well's worker (the well's platform). A
+// normal-type NPC is asked again at each update until the wells module knows it (a worker is registered right after its
+// creation).
+bool LeashClassify(void* o, AgentState& st, const AgentInfo& a) {
+  if (st.leashClass >= 0) return st.leashClass > 0;
+  if (a.self.player) {
+    st.leashClass = 0;
+    return false;
+  }
+  if (a.aggroType == gms::agents::kAggroJungleCreature) {
+    std::uint32_t camp = 0;
+    if (!SehLeashHome(o, st.leashHome, &camp)) return false;
+    st.leashClass = 1;
+    st.leashGroup = camp ? camp : a.self.id;
+    st.leashOpt = g_opt.creepLeash;
+    if (++g_st.classLogged <= 40)
+      Log("leash: %08X %s jungle creature: home (%.1f, %.1f) (%.1f from it now), camp %u; rule %s: own leash %.1f, "
+          "target leash %.1f, home radius %.1f, chase time %lld ms",
+          a.self.id, st.noun, static_cast<double>(st.leashHome[0]), static_cast<double>(st.leashHome[1]),
+          static_cast<double>(LeashDist(a.self.pos, st.leashHome)), camp, st.leashOpt.enabled ? "on" : "off",
+          static_cast<double>(st.leashOpt.ownLimit), static_cast<double>(st.leashOpt.ownLimit + st.leashOpt.targetMargin),
+          static_cast<double>(st.leashOpt.homeRadius), static_cast<long long>(st.leashOpt.chaseMs));
+    return true;
+  }
+  if (a.aggroType == gms::agents::kAggroNormal) {
+    std::uint32_t well = 0;
+    float radius = 0.f;
+    if (!::wells::WorkerPlatform(a.self.id, &well, st.leashHome, &radius)) return false;
+    st.leashClass = 2;
+    st.leashGroup = well;
+    st.leashOpt = g_opt.workerLeash;
+    st.leashOpt.ownLimit = radius + g_opt.workerLeash.ownLimit;  // the margin beyond the platform
+    st.leashOpt.homeRadius = radius;
+    if (++g_st.workerClassLogged <= 8)
+      Log("leash: %08X %s well worker: well %08X at (%.1f, %.1f), platform radius %.1f, %.1f from the centre now; rule "
+          "%s: own leash %.1f, target leash %.1f, chase time %lld ms",
+          a.self.id, st.noun, well, static_cast<double>(st.leashHome[0]), static_cast<double>(st.leashHome[1]),
+          static_cast<double>(radius), static_cast<double>(LeashDist(a.self.pos, st.leashHome)),
+          st.leashOpt.enabled ? "on" : "off", static_cast<double>(st.leashOpt.ownLimit),
+          static_cast<double>(st.leashOpt.ownLimit + st.leashOpt.targetMargin), static_cast<long long>(st.leashOpt.chaseMs));
+    return true;
+  }
+  st.leashClass = 0;
+  return false;
+}
+
+// The rule in the aggro update: the targets a leashed NPC drops now (its own leash or chase time: all of them; else
+// each target beyond its reach from the leash's edge, and what its group dropped a moment ago). A taunt holds.
+void LeashPrune(AgentState& st, const AgentInfo& a, std::vector<gms::agents::AggroCandidate>* cands,
+                std::vector<std::uint32_t>* dropped, unsigned long long nowMs) {
+  const int cls = st.leashClass - 1;
+  const std::int64_t now = static_cast<std::int64_t>(nowMs);
+  const float own = LeashDist(a.self.pos, st.leashHome);
+  if (own > st.fightMaxOwn && st.fightTarget) st.fightMaxOwn = own;
+  if (!st.leashOpt.enabled) return;
+  g_leashDrops.Expire(now);
+  const int self = gms::agents::LeashSelfCheck(st.leashOpt, st.leash, own, now);
+  const std::size_t before = dropped->size();
+  for (const auto& c : *cands) {
+    if (c.taunting) continue;
+    int why = self;
+    if (!why) {
+      void* t = SehFind(c.id);
+      ObjInfo ti;
+      if (t && SehObjInfo(t, &ti) &&
+          gms::agents::LeashTargetBeyond(st.leashOpt, LeashDist(ti.pos, st.leashHome) - ti.radius))
+        why = gms::agents::kLeashTarget;
+    }
+    if (!why && g_leashDrops.Ignored(st.leashGroup, c.id, now)) why = gms::agents::kLeashGroup;
+    if (!why) continue;
+    dropped->push_back(c.id);
+    ++g_st.leashDrops[cls][why];
+    if (why == gms::agents::kLeashOwn || why == gms::agents::kLeashChase)
+      g_leashDrops.Drop(st.leashGroup, c.id, now + st.leashOpt.ignoreMs);  // the camp or the well's workers let go too
+    if (c.id == st.fightTarget) st.fightEndWhy = gms::agents::LeashDropName(why);
+  }
+  if (dropped->size() != before)
+    cands->erase(std::remove_if(cands->begin(), cands->end(),
+                                [dropped, before](const gms::agents::AggroCandidate& c) {
+                                  return std::find(dropped->begin() + static_cast<std::ptrdiff_t>(before),
+                                                   dropped->end(), c.id) != dropped->end();
+                                }),
+                 cands->end());
+}
+
+// After the update: the rule's fight clock, and the fight log (a target as the best target: how long, how far the NPC
+// got from home, why it ended).
+void LeashAfterUpdate(void* o, AgentState& st, const AgentInfo& a, std::uint32_t best, unsigned long long nowMs) {
+  const int cls = st.leashClass - 1;
+  const float own = LeashDist(a.self.pos, st.leashHome);
+  gms::agents::UpdateLeash(&st.leash, st.leashOpt, best, own, static_cast<std::int64_t>(nowMs));
+  float targetDist = 0.f;
+  if (best) {
+    void* t = SehFind(best);
+    ObjInfo ti;
+    if (t && SehObjInfo(t, &ti)) targetDist = LeashDist(ti.pos, st.leashHome) - ti.radius;
+  }
+  if (st.fightTarget && best != st.fightTarget) {  // a fight ended
+    if (own > st.fightMaxOwn) st.fightMaxOwn = own;
+    const double secs = static_cast<double>(nowMs - st.fightSinceMs) / 1000.0;
+    ++g_st.fights[cls];
+    g_st.fightSecondsSum[cls] += secs;
+    if (secs > g_st.fightSecondsMax[cls]) g_st.fightSecondsMax[cls] = secs;
+    g_st.fightOwnSum[cls] += st.fightMaxOwn;
+    if (st.fightMaxOwn > g_st.fightOwnMax[cls]) g_st.fightOwnMax[cls] = st.fightMaxOwn;
+    if (g_st.fightLogged < static_cast<unsigned>(g_opt.leashLogLimit)) {
+      ++g_st.fightLogged;
+      Log("leash: fight: %08X %s (%s %u) fought %08X %.1f s (t %.1f-%.1f s), farthest %.1f from home (own leash %.1f, "
+          "rule %s), %.1f at the end, the target %.1f at most; ended: %s",
+          a.self.id, st.noun, cls ? "well" : "camp", st.leashGroup, st.fightTarget, secs,
+          static_cast<double>(st.fightSinceMs) / 1000.0, static_cast<double>(nowMs) / 1000.0,
+          static_cast<double>(st.fightMaxOwn), static_cast<double>(st.leashOpt.ownLimit),
+          st.leashOpt.enabled ? "on" : "off", static_cast<double>(own), static_cast<double>(st.fightMaxTarget),
+          a.self.hasHp && a.self.hp <= 0.f ? "it died"
+          : st.fightEndWhy                 ? st.fightEndWhy
+          : best                           ? "another best target"
+                                           : "list empty");
+    }
+    // the list is empty: a Pursue leaf still follows the agent's mTarget (nBehavior_Follow ends only at the target), so
+    // a worker walked on after a shaper for up to 12 s with nothing on its list; the target is cleared and the default
+    // behavior (the walk home, the mining loop) restarted
+    if (!best && st.leashOpt.enabled && !(a.self.hasHp && a.self.hp <= 0.f)) {
+      if (SehRawTarget(o) == st.fightTarget) SehSetTarget(o, 0);
+      if (st.leaf == kLeafPursue && SehResetDefaultBehavior(o)) ++g_st.leashResets;
+    }
+    st.fightTarget = 0;
+  }
+  if (best && st.fightTarget != best) {  // a fight began
+    st.fightTarget = best;
+    st.fightSinceMs = nowMs;
+    st.fightMaxOwn = own;
+    st.fightMaxTarget = targetDist;
+  }
+  if (st.fightTarget) {
+    if (own > st.fightMaxOwn) st.fightMaxOwn = own;
+    if (targetDist > st.fightMaxTarget) st.fightMaxTarget = targetDist;
+  }
+  st.fightEndWhy = nullptr;
+}
+
+// Whether the agent's aggro list holds anything (between two updates the damage hook and Agent_CallForHelp add to it).
+bool SehListNonEmpty(void* o) {
+  __try {
+    void* ag = Field<void*>(o, agent::kOfObject);
+    return ag && Field<char*>(ag, agent::kAggroEnd) != Field<char*>(ag, agent::kAggroBegin);
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
+// The groups (camps, wells) whose members a call for help just reached: each member gets its update in the next frame,
+// so one beyond its leash or the group's ignore lets go before it walks on (Agent_CallForHelp adds the attacker to every
+// camp member, wherever it stands).
+std::vector<std::uint32_t> g_leashForceGroups, g_leashCalledNow;  // called since the last frame / in this frame
+
+// Every frame for a leashed NPC with something on its list: the farthest it got, and an update at once when it passed
+// its own leash, its chase time ran out or its group was just called (else it walked on for up to a blackboard period).
+void LeashWatch(void* o, AgentState& st, unsigned long long nowMs) {
+  if (!st.leash.target && !SehListNonEmpty(o)) return;
+  ObjInfo self;
+  if (!SehObjInfo(o, &self)) return;
+  const float own = LeashDist(self.pos, st.leashHome);
+  if (st.fightTarget && own > st.fightMaxOwn) st.fightMaxOwn = own;
+  if (st.nextUpdateMs <= nowMs || !st.leashOpt.enabled) return;
+  const bool called = std::find(g_leashCalledNow.begin(), g_leashCalledNow.end(), st.leashGroup) !=
+                      g_leashCalledNow.end();
+  if (called || gms::agents::LeashSelfCheck(st.leashOpt, st.leash, own, static_cast<std::int64_t>(nowMs)) !=
+                    gms::agents::kLeashKeep) {
+    st.nextUpdateMs = nowMs;
+    ++g_st.leashForced;
+  }
+}
+
 void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long nowMs) {
   AgentInfo a;
   if (!SehAgentInfo(o, &a) || !SehObjInfo(o, &a.self)) return;
@@ -760,11 +982,10 @@ void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long now
       if (why) {
         ++g_st.removed;
         ++g_st.removedBy[why - 1];
-        if (e.Id() == st.chaseLogTarget) {
-          static const char* const kWhy[] = {"gone or dead", "invalid", "untargetable", "invisible", "beyond the drop range",
-                                             "outside the tether"};
-          st.chaseEndWhy = kWhy[why - 1];
-        }
+        static const char* const kWhy[] = {"gone or dead", "invalid", "untargetable", "invisible", "beyond the drop range",
+                                           "outside the tether"};
+        if (e.Id() == st.chaseLogTarget) st.chaseEndWhy = kWhy[why - 1];
+        if (e.Id() == st.fightTarget) st.fightEndWhy = kWhy[why - 1];  // LEASH
         continue;
       }
       gms::agents::AggroCandidate c;
@@ -810,6 +1031,8 @@ void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long now
     // MINTARGET: a lane minion's shapers (see gms/core/agents/minion_target.h)
     const bool strict = g_opt.minionTarget && a.aggroType == gms::agents::kAggroMinion;
     std::vector<std::uint32_t> dropped;
+    // LEASH: a jungle creature's or a well worker's leash, measured on the NPC itself (gms/core/agents/leash.h)
+    if (!selfDead && LeashClassify(o, st, a)) LeashPrune(st, a, &cands, &dropped, nowMs);
     if (strict) {
       gms::agents::MinionTargetOptions mo;
       mo.leashRange = g_opt.minionLeash;
@@ -901,6 +1124,7 @@ void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long now
     }
     best = SehBestTarget(a.agent);
     if (a.aggroType == gms::agents::kAggroMinion) MinionChaseAfterUpdate(o, st, a, cands, best, nowMs);
+    if (st.leashClass > 0) LeashAfterUpdate(o, st, a, best, nowMs);
     // the list after the update, logged when it changes
     std::string sig;
     for (const auto& c : cands) sig += (sig.empty() ? "" : " ") + Hex8(c.id);
@@ -1126,8 +1350,11 @@ static_assert(sizeof(ConditionOut) == 0x20, "ConditionOut layout");
 // condition_nearest_minion: `return true, 0, 0, 0, v5`, and set neither). `pointOnly` (D6d): set when a passing, not
 // negated condition with useTargetInfo gives a position and, with useTarget, kObjIDNone as its target: its target info
 // is that point and no object (condition_Bot_Ward: `return true, x, y, z, kObjIDNone, true`).
+// NPCTARGET (`ownTarget`, NPCs): a passing, not negated condition's target counts when the condition returned it with
+// useTarget (its 6th value) true, without the data's useTargetInfo, which no NPC condition record sets
+// (condition_Parasite_EnemyInMelee: `return true, 0, 0, 0, target, true`); the first one given.
 bool SehCondition(char* rec, std::uint32_t self, gms::agents::ConditionResult* r, std::uint32_t* target,
-                  bool anyTarget, float* pos, std::int32_t* linkValue, bool* pointOnly) {
+                  bool anyTarget, float* pos, std::int32_t* linkValue, bool* pointOnly, bool ownTarget) {
   __try {
     const std::uint32_t guid = Field<std::uint32_t>(rec, 0);
     r->postfixOperator = Field<int>(rec, 0x10);
@@ -1135,7 +1362,9 @@ bool SehCondition(char* rec, std::uint32_t self, gms::agents::ConditionResult* r
     const bool useTargetInfo = Field<unsigned char>(rec, 0x15) != 0;
     ConditionOut out = {};
     r->pass = guid ? ConditionEvaluate(guid, self, &out, Field<void*>(rec, 0x18), Field<int>(rec, 0x1C)) : true;
-    if (out.target && ((useTargetInfo && out.useTarget) || (anyTarget && r->pass && !*target))) *target = out.target;
+    if (out.target && ((useTargetInfo && out.useTarget) || (anyTarget && r->pass && !*target) ||
+                       (ownTarget && out.useTarget && r->pass && !r->negate && !*target)))
+      *target = out.target;
     // D6b: a passing, not negated link condition's 3rd value (condition_Bot_IsMissionAvailable: the mission id), the
     // first one given
     if (linkValue && r->pass && !r->negate && out.linkValue > 0 && *linkValue <= 0) *linkValue = out.linkValue;
@@ -1158,12 +1387,14 @@ bool SehCondition(char* rec, std::uint32_t self, gms::agents::ConditionResult* r
 // A condition list: true if it passes; `target` gets a condition's target when one gives it; `linkValue` (D6b) a
 // passing link condition's 3rd value; `pointOnly` (D6d) whether a condition aimed the list at a point and no object.
 bool Conditions(char* list, int count, std::uint32_t self, std::uint32_t* target, bool anyTarget = false,
-                float* pos = nullptr, std::int32_t* linkValue = nullptr, bool* pointOnly = nullptr) {
+                float* pos = nullptr, std::int32_t* linkValue = nullptr, bool* pointOnly = nullptr,
+                bool ownTarget = false) {
   if (!list || count <= 0) return true;
   std::vector<gms::agents::ConditionResult> results;
   for (int i = 0; i < count && i < 16; ++i) {
     gms::agents::ConditionResult r;
-    if (!SehCondition(list + i * aidef::kConditionSize, self, &r, target, anyTarget, pos, linkValue, pointOnly)) {
+    if (!SehCondition(list + i * aidef::kConditionSize, self, &r, target, anyTarget, pos, linkValue, pointOnly,
+                      ownTarget)) {
       ++g_st.brainExceptions;
       return false;
     }
@@ -1263,6 +1494,32 @@ bool GameOver(void* sim) {
   }
 }
 
+// NPCTARGET: the NPC types whose gambit requests get their own log lines (`npc target:`), the lines' budget
+// ([host] npc_target_log_limit, then every 50th), the starts per ability of those NPCs (the stats line), an ability's
+// name by GUID
+constexpr int kNpcTypeObjective = 8;  // nNPCType: the parasite
+constexpr int kNpcTypeGuardian = 13;  // nNPCType: the Guardian
+int SehNpcType(void* o);
+unsigned g_npcLogLines;
+std::map<std::uint32_t, unsigned> g_npcStarts;
+bool NpcLogBudget() {
+  ++g_npcLogLines;
+  return g_npcLogLines <= static_cast<unsigned>(g_opt.npcTargetLogLimit) || g_npcLogLines % 50 == 0;
+}
+const char* AbilityNameOf(std::uint32_t guid) {
+  __try {
+    void* st = guid ? FindStaticAbility(guid) : nullptr;
+    const char* name = st ? *reinterpret_cast<const char**>(st) : nullptr;
+    return name ? name : "?";
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return "?";
+  }
+}
+float PlaneDistance(const float* a, const float* b) {
+  const float dx = a[0] - b[0], dy = a[1] - b[1];
+  return std::sqrt(dx * dx + dy * dy);
+}
+
 void EnterNode(AgentState& st, const BrainView& v, int node, unsigned long long nowMs) {
   // D6c: the node left keeps its timers; the node entered gets back its own from an earlier visit
   if (g_opt.keepNodeTimers && st.node >= 0) {
@@ -1327,58 +1584,117 @@ void BrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) {
     for (std::size_t i = 0; i < v.node.gambits.size(); ++i)
       anyReady = anyReady || (v.node.gambits[i].guid && nowMs >= st.gambitReadyMs[i]);
   }
+  if (st.npcType == -99) st.npcType = SehNpcType(o);
+  const bool watched = st.npcType == kNpcTypeObjective || st.npcType == kNpcTypeGuardian;  // NPCTARGET's log lines
   int chosen = -1;
-  std::uint32_t target = 0;
+  int r = 0;
+  int fallthroughs = 0;
   if (anyReady) {
-    std::vector<gms::agents::GambitView> views(v.node.gambits.size());
-    std::vector<std::uint32_t> targets(v.node.gambits.size(), 0);
-    for (std::size_t i = 0; i < v.node.gambits.size(); ++i) {
+    // NPCTARGET (gms/core/agents/brain.h NpcThink): the condition's own target, a prioritized list walked lazily, an
+    // out-of-range refusal passed to the next passing gambit
+    const std::size_t n = v.node.gambits.size();
+    std::vector<gms::agents::GambitView> views(n);
+    std::vector<bool> available(n);
+    std::vector<std::uint32_t> condTargets(n, 0);
+    for (std::size_t i = 0; i < n; ++i) {
       const GambitDef& g = v.node.gambits[i];
       views[i].coolingDown = nowMs < st.gambitReadyMs[i];
       views[i].waitOnCondition = g.waitOnCondition;
       views[i].weight = g.weight;
-      views[i].conditionsPass = g.guid != 0 && Conditions(g.conditions, g.conditionCount, self.id, &targets[i]);
+      available[i] = g.guid != 0;
     }
-    chosen = gms::agents::ChooseGambit(v.node.phaseType, views, &st.seqCursor, Random01());
-    if (chosen >= 0) target = targets[static_cast<std::size_t>(chosen)] ? targets[static_cast<std::size_t>(chosen)] : best;
+    gms::agents::NpcThinkOptions to;
+    to.conditionTargets = g_opt.npcConditionTarget;
+    to.lazy = g_opt.npcLazyConditions;
+    to.rangeFallthrough = g_opt.npcRangeFallthrough;
+    const gms::agents::NpcThinkResult think = gms::agents::NpcThink(
+        v.node.phaseType, views, available, best, to, &st.seqCursor, Random01(),
+        [&](int i, std::uint32_t* t) {
+          const GambitDef& g = v.node.gambits[static_cast<std::size_t>(i)];
+          const bool pass = Conditions(g.conditions, g.conditionCount, self.id, t, false, nullptr, nullptr, nullptr,
+                                       to.conditionTargets);
+          condTargets[static_cast<std::size_t>(i)] = *t;
+          return pass;
+        },
+        [&](int i, std::uint32_t t) {
+          const GambitDef& g = v.node.gambits[static_cast<std::size_t>(i)];
+          ObjInfo ti;
+          void* tobj = SehFind(t);
+          const bool known = tobj && SehObjInfo(tobj, &ti);
+          float pos[3] = {self.pos[0], self.pos[1], self.pos[2]};
+          if (known) std::memcpy(pos, ti.pos, sizeof pos);
+          const int res = SehRequest(g.guid, self.id, t, pos, v.rank);
+          ++g_st.requests;
+          ++st.requests;
+          if (res == 1 || res == 2) ++g_st.started;
+          else if (res == 5) ++g_st.outOfRange;
+          else ++g_st.requestRefused;
+          const std::uint32_t ct = condTargets[static_cast<std::size_t>(i)];
+          const bool own = ct != 0 && ct == t;
+          ++(own ? g_st.npcOwnTargets : g_st.npcBestTargets);
+          // NPCTARGET: the parasite's and the Guardians' requests: every start, other results on change (not the
+          // ability's own cooldown, its end within the command window (3) or a cast in progress: the rhythm between
+          // two starts)
+          if (watched) {
+            const bool started = res == 1 || res == 2;
+            if (started) ++g_npcStarts[g.guid];
+            const bool quiet =
+                res == 3 || res == gms::agents::kResultCooldown || res == gms::agents::kResultHoldsAgent;
+            if ((started || (!quiet && (res != st.npcLogResult || i != st.npcLogGambit || t != st.npcLogTarget))) &&
+                NpcLogBudget())
+              Log("npc target: %08X %s node %d gambit %d %s on %08X (%s, %.1f units; %s, best %08X) -> %d%s "
+                  "(t %.2f s)",
+                  self.id, st.noun, st.node, i, AbilityNameOf(g.guid), t, known ? SehNounName(tobj) : "gone",
+                  known ? static_cast<double>(PlaneDistance(ti.pos, self.pos)) : -1.0,
+                  own ? "the condition's target" : "the best target", best, res,
+                  started ? " started"
+                          : res == 5 ? " out of range: pursue"
+                                     : gms::agents::NpcRefusalFallsThrough(res) && to.rangeFallthrough
+                                           ? " out of range: the next passing gambit may try"
+                                           : "",
+                  static_cast<double>(nowMs) / 1000.0);
+            if (!quiet) {  // a quiet result between two equal refusals doesn't make the second one new
+              st.npcLogResult = res;
+              st.npcLogGambit = i;
+              st.npcLogTarget = t;
+            }
+          }
+          if ((res != st.lastResult || g.guid != st.lastGuid) && LogBudget())
+            Log("agents: %08X %s gambit %d (ability %08X) on %08X%s -> %d%s (t %.2f s)", self.id, st.noun, i, g.guid, t,
+                own ? " (the condition's target)" : "", res,
+                res == 1 || res == 2 ? " started" : res == 5 ? " out of range: pursue" : "",
+                static_cast<double>(nowMs) / 1000.0);
+          st.lastResult = res;
+          st.lastGuid = g.guid;
+          return res;
+        });
+    chosen = think.chosen;
+    r = think.result;
+    fallthroughs = think.fallthroughs;
+    g_st.conditionLists += static_cast<unsigned>(think.evaluated);
+    g_st.npcPassedOver += static_cast<unsigned>(think.passedOver);
+    g_st.npcFallthroughs += static_cast<unsigned>(think.fallthroughs);
+    if (think.fallthroughs > 0 && (r == 1 || r == 2 || r == 5)) ++g_st.npcFallthroughActed;
+    if (think.waiting) ++g_st.npcWaiting;
+    if (think.noBest) ++g_st.npcNoBest;
+    if (think.noTarget) ++g_st.noTarget;  // [assumed] a gambit needs a target: the condition's or the best target
   }
-  if (chosen >= 0 && !target) {
-    ++g_st.noTarget;  // [assumed] a gambit needs a target: the condition's or the best target
-    chosen = -1;
-  }
-  // nothing to do now: think again in 100 ms (a usable gambit's Lua conditions run at most 10 times a second)
-  if (chosen < 0) st.nextThinkMs = nowMs + 100;
+  // nothing to do now, or a gambit out of reach passed on and nothing started: think again in 100 ms (a usable
+  // gambit's Lua conditions run at most 10 times a second, and an out-of-range request isn't repeated every frame)
+  if (chosen < 0 || gms::agents::NpcThinkAgainLater(r, fallthroughs, g_opt.npcRangeFallthrough))
+    st.nextThinkMs = nowMs + 100;
   if (chosen >= 0) {
     const GambitDef& g = v.node.gambits[static_cast<std::size_t>(chosen)];
-    ObjInfo t;
-    void* tobj = SehFind(target);
-    float pos[3] = {self.pos[0], self.pos[1], self.pos[2]};
-    if (tobj && SehObjInfo(tobj, &t)) std::memcpy(pos, t.pos, sizeof pos);
-    const int r = SehRequest(g.guid, self.id, target, pos, v.rank);
-    ++g_st.requests;
-    ++st.requests;
-    if (r == 1 || r == 2) {
-      ++g_st.started;
+    if (r == 1 || r == 2)
       st.gambitReadyMs[static_cast<std::size_t>(chosen)] =
           nowMs + static_cast<unsigned long long>(
                       gms::agents::GambitCooldownSeconds(g.cooldown, g.maxCooldown, g.randomize, Random01()) * 1000.0);
-    } else if (r == 5) {
-      ++g_st.outOfRange;
-    } else {
-      ++g_st.requestRefused;
-    }
     const bool pursue = r == 5;
     if (pursue != st.pursue) {
       st.pursue = pursue;
       SehSetTreeFlag(o, 8, pursue);
       ++(pursue ? g_st.pursueOn : g_st.pursueOff);
     }
-    if ((r != st.lastResult || g.guid != st.lastGuid) && LogBudget())
-      Log("agents: %08X %s gambit %d (ability %08X) on %08X%s -> %d%s (t %.2f s)", self.id, st.noun, chosen, g.guid,
-          target, target == best ? "" : " (the condition's target)", r,
-          r == 1 || r == 2 ? " started" : r == 5 ? " out of range: pursue" : "", static_cast<double>(nowMs) / 1000.0);
-    st.lastResult = r;
-    st.lastGuid = g.guid;
   } else if (!best && st.pursue && !held) {
     st.pursue = false;
     SehSetTreeFlag(o, 8, false);
@@ -2873,10 +3189,12 @@ bool Install(const Options& options) {
   g_installed = true;
   Log("agents: installed (D1b-live): tree tick %d, blackboard update %d%s, brain step %d%s, log limit %d; bot brain "
       "(D6a) %d, think every %d ms; node timers kept across visits (D6c) %d, canInterrupt respected (D6c) %d; a bot "
-      "walks to a point out of range (D6d) %d; the objective type adds on sight (D14) %d",
+      "walks to a point out of range (D6d) %d; the objective type adds on sight (D14) %d; NPC gambits on their "
+      "condition's target %d, lazy conditions %d, out-of-range fall-through %d (NPCTARGET)",
       g_opt.tickTrees, g_opt.blackboard, g_blackboardOk ? "" : " (prologues differ: off)", g_opt.brain,
       g_brainOk ? "" : " (prologue differs: off)", g_opt.logLimit, g_opt.botBrain, g_opt.botThinkMs,
-      g_opt.keepNodeTimers, g_opt.respectCanInterrupt, g_opt.botPursuePoint, g_opt.objectiveOnSight);
+      g_opt.keepNodeTimers, g_opt.respectCanInterrupt, g_opt.botPursuePoint, g_opt.objectiveOnSight,
+      g_opt.npcConditionTarget, g_opt.npcLazyConditions, g_opt.npcRangeFallthrough);
   return true;
 }
 
@@ -2911,6 +3229,8 @@ void Tick(void* sim, float dt) {
   const unsigned before = g_st.ticks;
   const bool blackboard = g_opt.blackboard && g_blackboardOk;
   const bool brain = g_opt.brain && g_brainOk && blackboard;  // the brain reads the best target the update keeps
+  g_leashCalledNow.swap(g_leashForceGroups);  // LEASH: the groups called since the last frame
+  g_leashForceGroups.clear();
   g_snapPlayers.clear();
   g_snapTowers.clear();
   g_snapObjectives.clear();
@@ -2938,6 +3258,8 @@ void Tick(void* sim, float dt) {
     AgentState& st = StateOf(id);
     if (st.noun[0] == '?') st.noun = SehNounName(o);  // for the update's and the brain's log lines
     if (g_opt.allVisible) SehMarkVisible(o);
+    // LEASH: a leashed NPC in a fight that passed its leash gets its update now
+    if (blackboard && st.leashClass > 0) LeashWatch(o, st, nowMs);
     // 5.1 the blackboard update, when due
     if (blackboard && UpdateDue(o, st, nowMs)) {
       st.nextUpdateMs = nowMs + kBlackboardPeriodMs;
@@ -3015,11 +3337,40 @@ void OnDamaged(void* victim, void* attacker, unsigned descLo, unsigned descHi, b
   // the victim's own list (AGENT_AI.md §6.3, [assumed]): the attacker, stamped with the victim as the source
   // MINTARGET: the lane minions' defend rule reads who hit which shaper last
   if (g_opt.minionTarget && v.player && at.player && g_sim) g_shaperHits.Record(at.id, v.id, static_cast<std::int64_t>(NowMs(g_sim)));
+  // LEASH: a leashed attacker that hit its target is fighting, not chasing; a leashed victim beyond its own leash, or
+  // hit from beyond its reach from the leash's edge, or by what its group just dropped, takes nobody onto its list and
+  // calls nobody (else it turned back toward a target the next update drops again)
+  if (g_sim) {
+    const std::int64_t now = static_cast<std::int64_t>(NowMs(g_sim));
+    const auto ita = g_agents.find(at.id);
+    if (ita != g_agents.end() && ita->second.leashClass > 0) gms::agents::NoteLeashHit(&ita->second.leash, v.id, now);
+    const auto itv = g_agents.find(v.id);
+    if (itv != g_agents.end() && itv->second.leashClass > 0 && itv->second.leashOpt.enabled) {
+      AgentState& s = itv->second;
+      const float own = LeashDist(v.pos, s.leashHome);
+      const bool beyondSelf = own > s.leashOpt.ownLimit;
+      const bool beyondTarget = gms::agents::LeashTargetBeyond(s.leashOpt, LeashDist(at.pos, s.leashHome) - at.radius);
+      const bool ignored = g_leashDrops.Ignored(s.leashGroup, at.id, now);
+      if (beyondSelf || beyondTarget || ignored) {
+        ++g_st.leashHitsSkipped[s.leashClass - 1];
+        if (g_st.fightLogged < static_cast<unsigned>(g_opt.leashLogLimit) && LogBudget())
+          Log("leash: %08X %s hit by %08X from %.1f (edge) of its home, %.1f from home itself: not taken (%s)", v.id,
+              s.noun, at.id, static_cast<double>(LeashDist(at.pos, s.leashHome) - at.radius),
+              static_cast<double>(own), beyondSelf ? "own leash" : beyondTarget ? "beyond the leash" : "group leash");
+        return;
+      }
+    }
+  }
   if (!lethal && a.hasBrain && !v.player) SehAdd(victim, at.id);
   // its helpers (Agent_CallForHelp: perception list, team, camp, callForHelpRange, filter, tether)
   __try {
     CallForHelp(victim, attacker, descLo, descHi);
     ++g_st.callsForHelp;
+    const auto itg = g_agents.find(v.id);  // LEASH: the members it reached get their update in the next frame
+    if (itg != g_agents.end() && itg->second.leashClass > 0 && itg->second.leashOpt.enabled &&
+        std::find(g_leashForceGroups.begin(), g_leashForceGroups.end(), itg->second.leashGroup) ==
+            g_leashForceGroups.end())
+      g_leashForceGroups.push_back(itg->second.leashGroup);
   } __except (SehNote(GetExceptionInformation(), "Agent_CallForHelp")) {
   }
 }
@@ -3167,6 +3518,42 @@ void FormatStats(char* buf, std::size_t size) {
                   "BOTTEMPO: holds ended on one spot %u, stale targets dropped %u",
                   g_bot.skipped, g_bot.skippedThenActed, g_bot.pursuitStuck, g_bot.fallbackTries, g_bot.fallbackActed,
                   g_bot.recalls, g_bot.backSteps, g_bot.holdStuck, g_bot.staleTargets);
+}
+
+bool FormatNpcStats(char* buf, std::size_t size) {
+  if (!g_st.brainSteps) return false;
+  int len = std::snprintf(buf, size,
+                          "NPCTARGET: requests on the condition's target %u, on the best target %u, condition lists %u, "
+                          "gambits passed over %u, waits %u, no best target %u, out-of-range fall-throughs %u (then "
+                          "acted %u); parasite/Guardian starts:",
+                          g_st.npcOwnTargets, g_st.npcBestTargets, g_st.conditionLists, g_st.npcPassedOver,
+                          g_st.npcWaiting, g_st.npcNoBest, g_st.npcFallthroughs, g_st.npcFallthroughActed);
+  for (const auto& kv : g_npcStarts) {
+    if (len <= 0 || static_cast<std::size_t>(len) >= size) break;
+    len += std::snprintf(buf + len, size - len, " %s %u", AbilityNameOf(kv.first), kv.second);
+  }
+  return true;
+}
+
+bool FormatLeashStats(char* buf, std::size_t size) {
+  if (!g_installed || !size || g_st.fights[0] + g_st.fights[1] + g_st.leashHitsSkipped[0] + g_st.leashHitsSkipped[1] == 0)
+    return false;
+  int len = 0;
+  for (int c = 0; c < 2 && len >= 0 && static_cast<std::size_t>(len) < size; ++c) {
+    const unsigned n = g_st.fights[c];
+    const auto& d = g_st.leashDrops[c];
+    len += std::snprintf(buf + len, size - len,
+                         "%s%s (rule %s): fights %u (mean %.1f s, longest %.1f s; farthest from home: mean %.1f, max "
+                         "%.1f); drops by the own leash %u, the chase time %u, the target leash %u, the group %u; hits "
+                         "not taken %u",
+                         c ? "; " : "", c ? "workers" : "creeps",
+                         (c ? g_opt.workerLeash.enabled : g_opt.creepLeash.enabled) ? "on" : "off", n,
+                         n ? g_st.fightSecondsSum[c] / n : 0.0, g_st.fightSecondsMax[c], n ? g_st.fightOwnSum[c] / n : 0.0,
+                         g_st.fightOwnMax[c], d[1], d[2], d[3], d[4], g_st.leashHitsSkipped[c]);
+  }
+  if (len >= 0 && static_cast<std::size_t>(len) < size)
+    std::snprintf(buf + len, size - len, "; early updates %u, pursuits ended %u", g_st.leashForced, g_st.leashResets);
+  return true;
 }
 
 bool FormatMinionStats(char* buf, std::size_t size) {

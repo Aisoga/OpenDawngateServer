@@ -143,8 +143,8 @@ func TestLoginLegacyAccounts(t *testing.T) {
 	st.Login("Zoë Smith", t0)
 	st.Login("old@example.com", t0)
 	st.Login("closed@example.com", t0)
-	check(t, Policy{Mode: Invite}, st, "old@example.com", "dawngate1", loopback, CodeInvalidPassword)
-	check(t, Policy{Mode: Closed}, st, "old@example.com", "dawngate1", loopback, CodeInvalidPassword)
+	check(t, Policy{Mode: Invite}, st, "old@example.com", "dawngate1", loopback, CodeInvalidUser)
+	check(t, Policy{Mode: Closed}, st, "old@example.com", "dawngate1", loopback, CodeInvalidUser)
 	open := Policy{Mode: Open}
 	check(t, open, st, "old@example.com", "short", loopback, CodeTooShort)
 	r := check(t, open, st, "old@example.com", "dawngate1", loopback, 0)
@@ -177,13 +177,84 @@ func TestLoginInviteAndClosed(t *testing.T) {
 			t.Fatalf("%v: %+v %v", m, a, err)
 		}
 		check(t, p, st, "made.by-op", pw, public1, 0)
-		check(t, p, st, "made.by-op", pw+"x", public1, CodeInvalidPassword)
+		// a wrong password: the same code as an unknown name under invite and closed (its text points to the sign-up page)
+		check(t, p, st, "made.by-op", pw+"x", public1, CodeInvalidUser)
+		check(t, p, st, "made.by-op", "", public1, CodeInvalidUser)
 		if _, _, err := CreateAccount(st, "MADE.BY-OP", t0); err == nil {
 			t.Errorf("%v: created a taken name", m)
 		}
 		if _, _, err := CreateAccount(st, "bad name", t0); err == nil {
 			t.Errorf("%v: created a name against the rules", m)
 		}
+	}
+}
+
+// TestLoginLocalTrust: This PC without passwords (dgserver --local-trust): any name with any password, none stored;
+// the account's status still counts. A server that checks passwords lets only this machine give such an account its
+// first password; from elsewhere it is refused in every mode.
+func TestLoginLocalTrust(t *testing.T) {
+	st := store.New()
+	for _, m := range []Mode{Open, Invite, Closed} {
+		local := Policy{Mode: m, LocalTrust: true}
+		if local.SignupFact() != "local" || (Policy{Mode: m}).SignupFact() != m.String() {
+			t.Errorf("%v: SignupFact %q", m, local.SignupFact())
+		}
+	}
+	local := Policy{Mode: Closed, LocalTrust: true}
+	r := check(t, local, st, "Marc", "", loopback, 0)
+	if !r.First || !strings.Contains(r.Note, "no password") {
+		t.Errorf("a new name under local trust: %+v", r)
+	}
+	if c, _, _ := st.Credentials("marc"); c.Hash != store.LocalTrustHash {
+		t.Errorf("stored %q, want no password (%q)", c.Hash, store.LocalTrustHash)
+	}
+	for _, pw := range []string{"anything", "x", strings.Repeat("p", 100), ""} {
+		if r := check(t, local, st, "MARC", pw, loopback, 0); r.First || r.Account.UserID != store.FirstUserID {
+			t.Errorf("a second login %q: %+v", pw, r)
+		}
+	}
+	if c, _, _ := st.Credentials("marc"); c.Hash != store.LocalTrustHash {
+		t.Errorf("a login stored a password: %q", c.Hash)
+	}
+	check(t, local, st, "ab", "x", loopback, CodeTooShort) // a new name still keeps the rules
+	check(t, local, st, "two words", "x", loopback, CodeInvalidName)
+	// an account with a password logs in with any other under local trust, and keeps its own
+	check(t, Policy{}, st, "haspw", "dawngate1", loopback, 0)
+	check(t, local, st, "haspw", "whatever", loopback, 0)
+	if c, _, _ := st.Credentials("haspw"); !Verify(c.Hash, "dawngate1") {
+		t.Error("local trust changed a stored password")
+	}
+	SetStatus(st, "marc", store.StatusDisabled)
+	check(t, local, st, "marc", "x", loopback, CodeUserInactive)
+	SetStatus(st, "marc", store.StatusActive)
+
+	// the folder's Start-Server (passwords checked) on the same accounts: not from another machine, in any mode
+	for _, m := range []Mode{Open, Invite, Closed} {
+		p := Policy{Mode: m}
+		want := CodeInvalidPassword
+		if m != Open {
+			want = CodeInvalidUser
+		}
+		check(t, p, st, "marc", "dawngate1", lan, want)
+		check(t, p, st, "marc", "dawngate1", public1, want)
+	}
+	if c, _, _ := st.Credentials("marc"); c.Hash != store.LocalTrustHash {
+		t.Error("a login from elsewhere set the password")
+	}
+	// this machine: a LAN address of its own counts when ThisMachine says so
+	own := Policy{Mode: Closed, ThisMachine: func(a netip.Addr) bool { return a == lan || a.IsLoopback() }}
+	check(t, own, st, "marc", "short", lan, CodeTooShort)
+	r = check(t, own, st, "marc", "dawngate1", lan, 0)
+	if !strings.Contains(r.Note, "made on This PC") {
+		t.Errorf("the first password from this machine: %+v", r)
+	}
+	check(t, Policy{Mode: Closed}, st, "marc", "dawngate1", public1, 0) // now it has one, from anywhere
+	check(t, Policy{Mode: Closed}, st, "marc", "other123", loopback, CodeInvalidUser)
+	// the website's self-service takes no account without a password
+	st2 := store.New()
+	check(t, local, st2, "webless", "x", loopback, 0)
+	if _, r := Authenticate(st2, "webless", "x"); r.Code != CodeInvalidPassword {
+		t.Errorf("Authenticate of a This PC account: %+v", r)
 	}
 }
 

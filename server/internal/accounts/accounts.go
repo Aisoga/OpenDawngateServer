@@ -65,6 +65,41 @@ type Policy struct {
 	// SignupsPerAddress caps the accounts made per source address and UTC day, for public addresses only (loopback and
 	// private LAN addresses are never counted: tests and home play make many); 0 = no cap.
 	SignupsPerAddress int
+	// LocalTrust is This PC without passwords (dgserver --local-trust, the server Start-Client runs for This PC, which
+	// only this PC reaches): any login name logs in with any password, none is checked or stored. A new name makes its
+	// account without a password (store.LocalTrustHash) whatever the sign-up mode; the account's status still counts.
+	LocalTrust bool
+	// ThisMachine reports whether a login's source address is this machine's own (nil: loopback addresses only). A
+	// server that checks passwords lets such a login give an account that This PC made without a password its first
+	// password; from anywhere else that account is refused, so nobody else can take it over.
+	ThisMachine func(netip.Addr) bool
+}
+
+// SignupFact is the sign-up mode as a server's tunnel tells it (tunnel.FactSignup): open, invite, closed, or local
+// for LocalTrust.
+func (p Policy) SignupFact() string {
+	if p.LocalTrust {
+		return "local"
+	}
+	return p.CurrentMode().String()
+}
+
+// badCredentials is the code of a refused login name or password: CodeInvalidPassword under open sign-up (an unknown
+// name makes an account there), CodeInvalidUser under invite and closed, for an unknown name and a wrong password
+// alike, so the text doesn't tell which names exist; its text points to the sign-up page (setup/localepatch).
+func (p Policy) badCredentials() uint16 {
+	if p.CurrentMode() != Open {
+		return CodeInvalidUser
+	}
+	return CodeInvalidPassword
+}
+
+// thisMachine reports whether from is this machine's own address (ThisMachine, else loopback).
+func (p Policy) thisMachine(from netip.Addr) bool {
+	if p.ThisMachine != nil {
+		return p.ThisMachine(from)
+	}
+	return from.IsValid() && from.Unmap().IsLoopback()
 }
 
 // CurrentMode is the sign-up mode in force: Live's when set, else Mode.
@@ -147,22 +182,28 @@ func addrKey(addr netip.Addr) string {
 //     (disabled, banned, deleted). An account without a hash (made by an earlier build) takes the password of this login as its
 //     own under Open, if that keeps the password rules; otherwise it is refused (CodeInvalidPassword) until the
 //     operator sets one (--reset-password);
-//   - an unknown name is CodeInvalidUser under Invite and Closed (the same text as a wrong password), and under Open
-//     becomes a new account when the name and the password keep the rules and the address hasn't made its accounts
-//     for today (CodeBusy).
+//   - an unknown name is CodeInvalidUser under Invite and Closed, and under Open becomes a new account when the name
+//     and the password keep the rules and the address hasn't made its accounts for today (CodeBusy);
+//   - an account This PC made without a password (store.LocalTrustHash) takes the password of a login from this
+//     machine (ThisMachine) as its own, in any mode; from elsewhere it is refused.
 //
-// A login that verified a hash made with older parameters stores a new one. Unknown names take as long as a known one
-// (a dummy check), so the time doesn't tell which names exist.
+// Under Invite and Closed every refused name or password is CodeInvalidUser (badCredentials), under Open
+// CodeInvalidPassword: the same text for an unknown name and a wrong password. With LocalTrust no password is checked
+// (loginLocal). A login that verified a hash made with older parameters stores a new one. Unknown names take as long
+// as a known one (a dummy check), so the time doesn't tell which names exist.
 func (p Policy) Login(st *store.Store, name, password string, from netip.Addr, now time.Time) Result {
 	name = NormalizeName(name)
 	if len(name) > MaxInput {
 		return refuse(CodeTooLong, "login name of %d bytes", len(name))
 	}
+	if p.LocalTrust {
+		return p.loginLocal(st, name, now)
+	}
 	if len(password) > MaxPassword {
 		return refuse(CodeTooLong, "password longer than %d bytes", MaxPassword)
 	}
 	if password == "" {
-		return refuse(CodeInvalidPassword, "empty password")
+		return refuse(p.badCredentials(), "empty password")
 	}
 	cred, found, err := st.Credentials(name)
 	if err != nil {
@@ -177,9 +218,27 @@ func (p Policy) Login(st *store.Store, name, password string, from netip.Addr, n
 	}
 	note := ""
 	switch {
+	case cred.Hash == store.LocalTrustHash:
+		if !p.thisMachine(from) {
+			Verify(dummyHash(), password)
+			return refuse(p.badCredentials(), "account %d was made on This PC without a password: only a login from this "+
+				"machine gives it one", cred.UserID)
+		}
+		if code := CheckPassword(password); code != 0 {
+			return refuse(code, "account %d has no password yet (made on This PC) and this one breaks the rules (%d characters)",
+				cred.UserID, len([]rune(password)))
+		}
+		h, err := Hash(password)
+		if err == nil {
+			err = st.SetPassword(cred.UserID, h)
+		}
+		if err != nil {
+			return refuse(CodeSystem, "account %d: storing its first password: %v", cred.UserID, err)
+		}
+		note = "; it had no password (made on This PC): this login's from this machine is now its password"
 	case cred.Hash != "":
 		if !Verify(cred.Hash, password) {
-			return refuse(CodeInvalidPassword, "account %d: wrong password", cred.UserID)
+			return refuse(p.badCredentials(), "account %d: wrong password", cred.UserID)
 		}
 		if cred.Status == store.StatusActive && NeedsRehash(cred.Hash) {
 			if h, err := Hash(password); err == nil && st.SetPassword(cred.UserID, h) == nil {
@@ -189,7 +248,7 @@ func (p Policy) Login(st *store.Store, name, password string, from netip.Addr, n
 	case cred.Status != store.StatusActive:
 		// no password to check: the status below says no anyway
 	case p.CurrentMode() != Open:
-		return refuse(CodeInvalidPassword, "account %d has no password yet (made by an earlier build); under sign-up %s the operator sets one (--reset-password)", cred.UserID, p.CurrentMode())
+		return refuse(p.badCredentials(), "account %d has no password yet (made by an earlier build); under sign-up %s the operator sets one (--reset-password)", cred.UserID, p.CurrentMode())
 	default:
 		if code := CheckPassword(password); code != 0 {
 			return refuse(code, "account %d has no password yet and this one breaks the rules (%d characters)", cred.UserID, len([]rune(password)))
@@ -217,6 +276,43 @@ func (p Policy) Login(st *store.Store, name, password string, from netip.Addr, n
 		return refuse(CodeSystem, "account %d: %v", cred.UserID, err)
 	}
 	return Result{Account: acct, Note: fmt.Sprintf("account %d logged in%s", cred.UserID, note)}
+}
+
+// loginLocal is a login under LocalTrust: the password isn't looked at. A known name logs in (its status still
+// counts; a password it has stays as it is), a new one that keeps the name rules makes its account without a password
+// (store.LocalTrustHash), in any sign-up mode and without the per-address cap.
+func (p Policy) loginLocal(st *store.Store, name string, now time.Time) Result {
+	cred, found, err := st.Credentials(name)
+	if err != nil {
+		return refuse(CodeSystem, "account store: %v", err)
+	}
+	if !found {
+		if c := CheckName(name); c != 0 {
+			return refuseField(FieldName, c, "new login name %q breaks the rules", name)
+		}
+		acct, err := st.Create(store.NewAccount{Name: name, Hash: store.LocalTrustHash}, now)
+		switch {
+		case errors.Is(err, store.ErrExists):
+			return refuseField(FieldName, CodeExists, "login name %q is taken", name)
+		case err != nil:
+			return refuse(CodeSystem, "new account %q: %v", name, err)
+		}
+		return Result{Account: acct, First: true, Note: fmt.Sprintf("account %d created for %q (This PC: no password)", acct.UserID, name)}
+	}
+	switch cred.Status {
+	case store.StatusActive:
+	case store.StatusDisabled:
+		return refuse(CodeUserInactive, "account %d is disabled", cred.UserID)
+	case store.StatusBanned:
+		return refuse(CodeBanned, "account %d is banned", cred.UserID)
+	default:
+		return refuse(CodeDeactivated, "account %d is deleted (%s)", cred.UserID, cred.Status)
+	}
+	acct, err := st.LoginUser(cred.UserID, now)
+	if err != nil {
+		return refuse(CodeSystem, "account %d: %v", cred.UserID, err)
+	}
+	return Result{Account: acct, Note: fmt.Sprintf("account %d logged in (This PC: no password checked)", cred.UserID)}
 }
 
 // Register makes an account from the website: the login name, the display name ("" = made from the login name,

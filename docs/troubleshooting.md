@@ -41,6 +41,18 @@ The programs aren't signed. Click *More info*, then *Run anyway*.
 **"The login name or password you entered is incorrect"**
 Check the password. On a server with open sign-up, a new login name creates a new account, so a typo in the name logs you into a different, new account.
 
+**"… No account on this server yet? Make one first: Sign up now! below."**
+The server needs an account before the first login (its row in the server list says **invite only** or **closed**), and it doesn't know this login name, or the password is wrong (the server doesn't say which). Check both; if you have no account there yet, select the server and click **Sign up now!** below the login. An **invite only** server's page takes an invite code from its operator; on a **closed** server ask the operator for an account.
+
+**Sign up now! opens a list of servers instead of the server's page**
+The link of a server you have just added, before the list knows it, or of a game copy without the server list, goes to that list: click the server's *open its page*. The pages come from `Start-Client.exe` and work only while the game runs.
+
+**The sign-up page says "New server key"**
+You haven't logged in to that server yet, so its key isn't trusted. Compare the fingerprint on the page with the one the server's operator gives you; only if they match, confirm. That trusts the key for your logins as well. "KEY CHANGED" on the page means the same as in the server list (below): don't continue until the operator confirms the new key.
+
+**This PC takes any password**
+That is how the server `Start-Client.exe` runs for This PC works: only your PC reaches it, so it checks no password (`local_trust = on` in `Start-Client.ini`, the default; `off` makes it check them). While `Start-Server.exe` runs in the same folder, This PC is that server, and it checks passwords: the first login there from this PC gives an account you made without a password its password.
+
 **Forgot your password**
 The server's operator can print a new one with `Start-Server.exe --reset-password <name>`, or reset it on the admin page. If the server is your own, you are the operator.
 
@@ -62,6 +74,9 @@ The server is offline, or its address in your list is wrong. The list checks eve
 **"Something answers at that address, but no Dawngate server with the tunnel on"**
 The server runs without its tunnel (`tunnel = off`, an option for developers), or it is an older release. Ask the operator to set `tunnel = auto` in `Start-Server.ini` and to use a current release; or play on it with `Start-Client.exe <address> --tunnel off`.
 
+**"This server runs another version than your Start-Client, or doesn't tell its version", or other version / version unknown in the server list**
+A server and your `Start-Client.exe` must be the same release; any difference refuses the login. Open the server list on the login screen: the sentence under it names the server's version and yours (`Start-Client.exe --version` prints yours). Ask the server's operator which release the server runs and use that release's `Start-Client.exe`; unpacking it into your folder over the old files keeps your game copy, server list and trusted keys. *version unknown* means the server runs a release from before this check: only its operator can fix that, by updating the server. If you run the server yourself, update `Start-Server.exe` and `Start-Client.exe` together (they come in the same release). This PC, the server in your own folder, is never refused.
+
 **"That server isn't in your list"**
 The login name had a `#` with a server that isn't in your list. Type only your login name and pick the server with SERVER above the login panel.
 
@@ -74,6 +89,9 @@ The address typed in ADD SERVER (or after `#+` in the login name) is no IPv4 add
 **"The server was removed from your list"**
 That is REMOVE's confirmation, not an error. Click OK and pick another server.
 
+**"The server was added to your list"**
+That is ADD's confirmation, not an error. Click OK; the list shows the new server within a few seconds.
+
 **"This PC is always in the list: it can't be removed"**
 A login typed as `<name>#-pc`. This PC is the server on your own PC and stays the first row of the list.
 
@@ -82,6 +100,9 @@ The login screen shows the server list whenever the tunnel is used, which is the
 
 **Shift+Tab or Escape on the login screen does something else**
 The server list is used with the mouse. Shift+Tab from the login name goes to the game's EXIT button, and Enter there asks whether to quit the game. Escape doesn't close the list; click DONE.
+
+**Start-Client.exe says "the server ... runs version ..." and doesn't start the game**
+You play without the tunnel (`--tunnel off`), and the server runs another release, or one that doesn't tell its version. Use the `Start-Client.exe` of the server's release, as above.
 
 **The login screen can't connect, or stays at "Initializing"**
 The game copy and the server don't match. This happens, for example, when the server's address or certificates changed. Start `Start-Client.exe` again: it checks the copy and patches it for the server.

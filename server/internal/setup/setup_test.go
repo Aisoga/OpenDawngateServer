@@ -77,7 +77,7 @@ var allSteps = []string{"certificates", "client copy", "client exe", "client con
 
 // synthLocal is the client copy's AA_Server.package for 127.0.0.1 from the synthetic archive's Locale.package: what
 // re/scripts/patch_locale.py makes from the same file (test_ph2b.py and localepatch_test.go pin the same SHA-256).
-const synthLocal = "b31b247eef4147284e49a4012fdd6520877330c87583f9504d55f834f9012a53"
+const synthLocal = "1be4652de6a59c8690e3a9c5597b5969185f175481cede1ad309a636883de043"
 
 func localeSHA(t *testing.T, copy string) string {
 	t.Helper()

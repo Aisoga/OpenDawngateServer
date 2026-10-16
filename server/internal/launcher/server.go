@@ -18,6 +18,7 @@ import (
 	"dawngate/server/internal/setup/archive"
 	"dawngate/server/internal/setup/hostcopy"
 	"dawngate/server/internal/sitelinks"
+	"dawngate/server/internal/version"
 )
 
 // ServerConfigName is Start-Server.exe's config file, next to it.
@@ -212,14 +213,19 @@ func RunServer(args []string, o IO) int {
 	riskFlag := fs.Bool(RiskAckFlag, false, "accept the risk of a server on a public address (needed to start one)")
 	dedicatedFlag := fs.Bool("dedicated", false, "a dedicated server: set up and run only the match-host copy, never a player copy (the config file's dedicated = yes)")
 	configure := fs.Bool("configure", false, "ask the first start's questions again (who plays: this PC, a home network, the internet)")
+	showVersion := fs.Bool("version", false, "print this release's version and exit (players need a Start-Client.exe of the same version)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 2
 	}
+	if *showVersion {
+		fmt.Fprintln(o.Out, version.String())
+		return 0
+	}
 	in := bufio.NewReader(o.In)
-	fmt.Fprintln(o.Out, "Dawngate Restoration: Start-Server")
+	fmt.Fprintf(o.Out, "Dawngate Restoration: Start-Server, version %s\n", version.String())
 	path := *configPath
 	if path == "" {
 		path = filepath.Join(o.ExeDir, ServerConfigName)
@@ -499,6 +505,7 @@ func RunServer(args []string, o IO) int {
 		}
 		fmt.Fprintln(o.Out, "")
 		fmt.Fprintf(o.Out, "==== The server runs on %s. ====\n", address)
+		fmt.Fprintf(o.Out, "  Version %s: players need Start-Client.exe of the same release (it refuses a login to any other).\n", info.Version)
 		if info.GatewayPort > 0 {
 			fmt.Fprintf(o.Out, "  Players connect through the encrypted tunnel on %s port %d (TCP and UDP), its only port for players.\n",
 				bindAddr, info.GatewayPort)

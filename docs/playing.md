@@ -36,7 +36,7 @@ You don't need `Start-Server.exe` to play. It is for running a server that other
 
 ## Your first match
 
-1. **Log in.** Choose a login name (3–32 letters, digits or `. _ - @`; an e-mail address works) and a password of 8–63 characters. On a server with open sign-up, the first login with a new name creates the account. After that, use the same password. Use a password you don't use anywhere else.
+1. **Log in.** On **This PC** there is nothing to sign up for: type any login name (3–32 letters, digits or `. _ - @`) and any password. The name is your profile on this PC; no password is checked or stored. On another server, choose a login name and a password of 8–63 characters: on a server with open sign-up, the first login with a new name creates the account, and after that you use the same password (one you don't use anywhere else). Other servers need an account first ([Signing up](#signing-up)).
 2. **The news overlay.** The first time you log in, a news overlay with three pages appears. Click its right arrow twice, then OK. Escape doesn't close it. It doesn't come back for that account.
 3. **PLAY, then PRACTICE, then PRACTICE DAWNGATE.** The server starts a match for you ("Creating game, please wait.").
 4. **Shaper select:**
@@ -74,6 +74,8 @@ The match runs as in the original game. The server uses the game's own data and 
 
 - **Minion waves** appear every 30 seconds from 1:00. Six minions spawn one after another and walk their lane in a line.
 - **Minions fight minions and towers first.** They attack a shaper only when nothing else is near them, or when that shaper hits a shaper of their team. They follow a shaper who walks away only a short way (about 20 units, or 3 seconds of chasing), never far into the jungle, then return to their lane and leave that shaper alone for a few seconds.
+- **Jungle camps** ignore you until you hit one; then the whole camp fights you. A camp follows you only a short way: a creature turns back about 15 units from its spot, together with the rest of its camp, walks home untouchable and heals to full. Hits from far outside the camp don't pull it.
+- **Spirit well workers** fight back when hit but never leave their well's platform; step off it and they go back to mining.
 - **Towers (Bindings)** shoot minions first. They switch to an enemy shaper who attacks you near them.
 - The **Locus** (the big tower) guards each base.
 - Units collide and push each other a little. The item *Fluidity* lets you walk through them.
@@ -82,6 +84,7 @@ The match runs as in the original game. The server uses the game's own data and 
 
 - A destroyed core makes your minions stronger.
 - A core grows back after eight minutes, and the Guardian's shield comes back with it.
+- The Guardian defends its base: its attacks go at enemy shapers in its reach before minions, and its special attacks (orbs, laser, fire wall) at shapers.
 
 **Bots.** The bots take their lanes after about a minute. They last-hit minions, cast their abilities, buy items, drink potions, place wards, push towers and fight. They also play as a team: they defend towers, gather for the parasite, capture and defend spirit wells, and join an ally going for a kill. When they have the advantage, after won fights or with the parasite's buff, they group up in one lane and push with their minions until they lose the fight; from about 20 minutes, and whenever enemy cores are down, they siege the enemy base to end the match. Their jungler leaves its camps to gank a lane where an ally is fighting, to defend the base, and to join pushes, well captures and the parasite near it. The bots follow your minimap pings: ping an enemy Binding to push its lane, the parasite to take it together, an enemy spirit well to capture it, or "retreat" to call a push or an objective off; ping one of your own Bindings or wells, an enemy shaper or a spot on the map and the jungler comes, answering with an "on my way" ping. In a practice match they go easier on you, as the original's first-time rules did.
 
@@ -105,7 +108,7 @@ The match runs as in the original game. The server uses the game's own data and 
 **Jungle.** Creep camps respawn after you clear them.
 
 - Killing the big creature of a buff camp gives you its buff for 150 seconds: Green for Power, Blue for Haste or Orange for armor.
-- The **parasite** in the middle of the map becomes attackable at 5:00 and only fights players who attack it. While it lives, its red mark shows in the middle of the minimap.
+- The **parasite** in the middle of the map becomes attackable at 5:00 and only fights players who attack it. Once it fights, it attacks the shaper next to it, or else the nearest within its reach; from 15:00 every fifth attack is a fire breath, and from 25:00 a fire breath or a barrage of orbs in turn. While it lives, its red mark shows in the middle of the minimap.
 - Killing the parasite pays your team. A kill at its later stages gives your team a big buff and strong Strider minions in your waves for a few minutes.
 
 **Fog of war.** You see what your team's units, towers and wards see.
@@ -187,15 +190,29 @@ Every server, on the internet or on your home network, is reached through its en
 
 If the operator hands you the whole key (64 hex digits, shown in the server's window), start `Start-Client.exe <address> --gateway-pin <key>` once instead: the key is trusted without the question.
 
-- You'll need an account first. Most public servers use invite codes: get one from the operator, then register on the server's website at `https://<server address>/signup`. The login screen's *Sign up now!* link opens the same page.
-- On the website you can also change your password, download your data or delete your account.
+#### Signing up
+
+Each row of the server list shows how that server makes accounts:
+
+| Sign-up | Meaning |
+|---|---|
+| **open** | Your first login with a new name makes the account, with the password you type. |
+| **invite only** | Sign up first, with an invite code from the operator, on the server's sign-up page. |
+| **closed** | Only the operator makes accounts: ask them for one. |
+| **no password** (This PC) | Any login name logs in with any password. |
+
+To sign up, select the server in the list and click **Sign up now!** below the login: your browser opens that server's sign-up page, before you have ever logged in there. *Forgot Password?* opens the server's own page the same way. For a server whose key you haven't trusted yet, the page shows its key first: compare the fingerprint with the one its operator gives you, and only if they match, click **Trust … and open the page**. That trusts the key for your logins too. The links' pages come from `Start-Client.exe` on your PC, which reaches the server through its tunnel; they work only while the game runs.
+
+A login with a name the server doesn't know, on a server that needs a sign-up first, says *The login name or password you entered is incorrect. No account on this server yet? Make one first: Sign up now! below.* (A wrong password says the same: the server doesn't tell which names exist.)
+
+- On a server's website you can also change your password, download your data or delete your account.
 - If you forget your password, ask the operator: the server doesn't send e-mail.
 
 #### The server list
 
-Each row shows a server's name, its address and its status. The status is checked again every few seconds while the login screen is open, so a server that goes down or comes back shows without a restart.
+Each row shows a server's name, its address, its sign-up ([Signing up](#signing-up)) and its status. The status is checked again every few seconds while the login screen is open, so a server that goes down or comes back shows without a restart.
 
-The first row is always **This PC**, the server on your own PC. It can't be removed. Logging in to it starts the server inside `Start-Client.exe` (or uses `Start-Server.exe`'s server when that runs in the same folder), and its key is never asked for: it is in your own folder.
+The first row is always **This PC**, the server on your own PC. It can't be removed. Logging in to it starts the server inside `Start-Client.exe` (or uses `Start-Server.exe`'s server when that runs in the same folder), and its key is never asked for: it is in your own folder. The server that `Start-Client.exe` runs has no passwords: any login name logs in with any password, and only your PC reaches it. Set `local_trust = off` in `Start-Client.ini` to have it check passwords like any server. While `Start-Server.exe` runs in the same folder, This PC is that server, which may have other players, so it checks passwords: an account you made on This PC without a password takes the password of your first login there from this PC (a login from elsewhere is refused).
 
 | Status | Meaning |
 |---|---|
@@ -208,12 +225,14 @@ The first row is always **This PC**, the server on your own PC. It can't be remo
 | **KEY CHANGED** (red) | The server shows another key than the one you trusted. Logins are refused: see [troubleshooting.md](troubleshooting.md#logging-in). |
 | **offline** (red) | Nothing answers: the server is down, or its address is wrong. |
 | **no tunnel** | Something answers at that address, but not a Dawngate server with its tunnel on. |
-| **added at login** | A server you just added. It is checked when you log in. |
+| **added at login** | A server you added that couldn't be checked yet. Your next login to it checks it and adds it. |
 | **not checked** | Not checked yet. |
+| **other version** (red) | The server runs another release than your `Start-Client.exe`. Logins there are refused: see [Versions](#versions). |
+| **version unknown** (red) | The server doesn't tell its version: it runs a release from before the version check. Logins there are refused. |
 
-The sentence under the list says more about the selected server. For an online server it names the server's key, a fingerprint of 16 hex digits such as `25edc74b8876bbbc`. For a new server, compare that fingerprint with the one its operator publishes: your first login there stops so that you can, and the next one trusts the key; every later login checks it. For a changed key, the sentence names both the key you trusted and the one the server shows now.
+The sentence under the list says more about the selected server, its sign-up included (for a server of another version it names both versions instead). For an online server it names the server's version and key, a fingerprint of 16 hex digits such as `25edc74b8876bbbc`. For a new server, compare that fingerprint with the one its operator publishes: your first login there stops so that you can, and the next one trusts the key; every later login checks it. For a changed key, the sentence names both the key you trusted and the one the server shows now.
 
-**Adding a server:** open the list, click **ADD SERVER**, type the address (an IPv4 address such as `203.0.113.5` or a host name, with `:<port>` if the operator's tunnel port isn't 42128) and, if you like, a name, then click **ADD**. The server is added at your next login: **LOGIN** checks it and adds it, then stops with *New server key* while the list shows its key; compare it, and **LOGIN** again trusts it and logs you in there. If it doesn't answer, the login is refused with *The server you picked doesn't answer* and nothing is added. `Start-Client.exe <address>` adds a server too.
+**Adding a server:** open the list, click **ADD SERVER**, type the address (an IPv4 address such as `203.0.113.5` or a host name, with `:<port>` if the operator's tunnel port isn't 42128) and, if you like, a name, then click **ADD**. ADD checks the server at once and adds it to your list without logging in: the login screen confirms with *The server was added to your list*, and a moment later the list shows its status, key and sign-up. Then sign up there, or log in: your first login stops with *New server key* while the list shows its key; compare it, and **LOGIN** again trusts it and logs you in. If the server doesn't answer, ADD says *The server you picked doesn't answer*: nothing is added, and the row stays marked **added at login** until a login to it succeeds. `Start-Client.exe <address>` adds a server too.
 
 **Removing a server:** select it in the list and click **REMOVE**. The login screen confirms with *The server was removed from your list.* Its key stays remembered, so a server you add again is still checked against it. **This PC** has no **REMOVE**.
 
@@ -224,6 +243,7 @@ The sentence under the list says more about the selected server. For an online s
 | `alex#b` | Log in as `alex` on the server with tag `b`. |
 | `alex#pc` | Log in as `alex` on This PC. |
 | `alex#+203.0.113.5` | Add that server (optionally `alex#+203.0.113.5=Friends` with a name) and log in there. |
+| `alex#*203.0.113.5` | Add that server without logging in (what **ADD** does). |
 | `alex#-b` | Remove the server with tag `b`. |
 
 The server only ever sees `alex`.
@@ -232,9 +252,18 @@ The server only ever sees `alex`.
 
 **Switching servers:** log out, or wait for the game's idle logout. You are back at the login screen with the list, and you can pick another server.
 
-**The key check** makes sure you are talking to that server and not to someone else at the same address. This PC needs none (`Start-Client.exe` reads its key from your own folder), nor does a server whose key you got with `--gateway-pin`.
+**The key check** makes sure you are talking to that server and not to someone else at the same address; a sign-up page asks for it too. This PC needs none (`Start-Client.exe` reads its key from your own folder), nor does a server whose key you got with `--gateway-pin`.
 
 **A server without the tunnel** (its operator set `tunnel = off`, an option for developers) can't be in the list: start `Start-Client.exe <address> --tunnel off`, which plays on that one server directly and asks once whether the server's certificate fingerprint matches the one in its window.
+
+#### Versions
+
+Your `Start-Client.exe` and the server must be the same release: **any difference refuses the login**, and so does a server that doesn't tell its version (a release from before this check). The list marks such a server **other version** or **version unknown**, and the sentence under the list names the server's version and yours. A refused login says *This server runs another version than your Start-Client, or doesn't tell its version*.
+
+- `Start-Client.exe --version` prints your version; its window shows it at the start too. A release's version is its name, such as `Dawngate-Restoration-20261016-905ef17f5f`.
+- To play on a server of another version, get the release it runs (ask its operator) and use that release's `Start-Client.exe`. You can unpack it into the same folder over the old files: `Dawngate-Data`, your server list and the trusted keys stay.
+- **This PC** is never refused: it is the server in your own folder.
+- Without the tunnel (`--tunnel off`), `Start-Client.exe` asks the server's version when it starts and doesn't start the game on a server of another version.
 
 ## Known limitations
 

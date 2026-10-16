@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "core/agents/leash.h"
 #include "core/wells/wells.h"
 #include "death.h"
 #include "director.h"
@@ -1034,6 +1035,20 @@ int Threats(int team, Threat* out, int max) {
     ++n;
   }
   return n;
+}
+
+bool WorkerPlatform(std::uint32_t worker, std::uint32_t* well, float centre[3], float* radius) {
+  if (!g_ready || !worker) return false;
+  const auto it = g_workers.find(worker);
+  if (it == g_workers.end() || it->second.well < 0 || static_cast<size_t>(it->second.well) >= g_info.size()) return false;
+  const WellInfo& w = g_info[static_cast<size_t>(it->second.well)];
+  std::vector<float> xyz;
+  xyz.reserve(w.spots.size() * 3);
+  for (const director::WellSpot& s : w.spots) xyz.insert(xyz.end(), s.pos, s.pos + 3);
+  *well = w.object;
+  std::memcpy(centre, w.pos, sizeof w.pos);
+  *radius = gms::agents::PlatformRadius(w.pos, xyz.data(), static_cast<int>(w.spots.size()));
+  return true;
 }
 
 void OnObjectDied(std::uint32_t id) {

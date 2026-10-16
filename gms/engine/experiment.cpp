@@ -712,6 +712,8 @@ void Stats(unsigned now, bool histo) {
     agents::FormatStats(ag, sizeof ag);
     Log("stats agents: %s", ag);
     if (agents::FormatMinionStats(ag, sizeof ag)) Log("stats minions: %s", ag);  // MINJUNGLE
+    if (agents::FormatNpcStats(ag, sizeof ag)) Log("stats npc: %s", ag);          // NPCTARGET
+    if (agents::FormatLeashStats(ag, sizeof ag)) Log("stats leash: %s", ag);      // LEASH
   }
   if (g_damage && histo) {
     char dm[640];
@@ -939,6 +941,10 @@ void ReadConfig() {
     if (ao.botHoldStuckMs < 0) ao.botHoldStuckMs = 0;
     ao.botStaleTarget = HostOptionInt("bot_stale_target", 1) != 0;  // BOTTEMPO
     ao.botBackStep = HostOptionInt("bot_back_step", 1) != 0 && ao.botReflex;  // BOTBACK
+    ao.npcConditionTarget = HostOptionInt("npc_condition_target", 1) != 0;    // NPCTARGET
+    ao.npcLazyConditions = HostOptionInt("npc_lazy_conditions", 1) != 0;      // NPCTARGET
+    ao.npcRangeFallthrough = HostOptionInt("npc_range_fallthrough", 1) != 0;  // NPCTARGET
+    ao.npcTargetLogLimit = HostOptionInt("npc_target_log_limit", ao.npcTargetLogLimit);
     ao.objectiveOnSight = HostOptionInt("objective_aggro_on_sight", 0) != 0;  // D14: the parasite fights only its attackers (1 from 2026-10-10 to 2026-10-15)
     ao.minionTarget = HostOptionInt("minion_target_priority", 1) != 0;  // MINTARGET
     ao.minionLeash = static_cast<float>(HostOptionInt("minion_leash_range", static_cast<int>(ao.minionLeash)));
@@ -957,6 +963,17 @@ void ReadConfig() {
     ao.minionChase.chaseDistance =
         static_cast<float>(HostOptionInt("minion_chase_distance", static_cast<int>(ao.minionChase.chaseDistance)));
     ao.minionChase.ignoreMs = HostOptionInt("minion_chase_ignore_ms", static_cast<int>(ao.minionChase.ignoreMs));
+    // LEASH: jungle creatures and well workers (gms/core/agents/leash.h)
+    ao.creepLeash.ownLimit = static_cast<float>(HostOptionInt("creep_leash", 15));
+    ao.creepLeash.enabled = ao.creepLeash.ownLimit > 0.f;
+    ao.creepLeash.targetMargin = static_cast<float>(HostOptionInt("creep_leash_reach", 4));
+    ao.creepLeash.homeRadius = static_cast<float>(HostOptionInt("creep_leash_home", 6));
+    ao.workerLeash.ownLimit = static_cast<float>(HostOptionInt("worker_leash", 2));
+    ao.workerLeash.enabled = ao.workerLeash.ownLimit > 0.f;
+    ao.workerLeash.targetMargin = static_cast<float>(HostOptionInt("worker_leash_reach", 2));
+    ao.creepLeash.chaseMs = ao.workerLeash.chaseMs = HostOptionInt("leash_chase_ms", 3000);
+    ao.creepLeash.ignoreMs = ao.workerLeash.ignoreMs = HostOptionInt("leash_ignore_ms", 2000);
+    ao.leashLogLimit = HostOptionInt("leash_log_limit", ao.leashLogLimit);
     agents::Install(ao);
   } else {
     Log("agent step off (tick_agents / [host] agents = 0)");

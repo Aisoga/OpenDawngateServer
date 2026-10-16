@@ -89,6 +89,10 @@ func startGateway(cfg config, log *logging.Log, in *instance, sv services, gmsPo
 			}
 			return nil
 		}}
+	// the facts an info hello answers with besides the version: the sign-up mode as it is now (the admin page may
+	// change it), which Start-Client's server list shows
+	policy := cfg.accounts
+	g.Facts = func() map[string]string { return map[string]string{tunnel.FactSignup: policy.SignupFact()} }
 	if in.limits != nil { // connections, datagrams and sessions per real address (a nil *Limiter isn't nil here)
 		g.Limits, g.MaxSessionsPerPeer = in.limits, in.limits.Config().TunnelSessions
 	}

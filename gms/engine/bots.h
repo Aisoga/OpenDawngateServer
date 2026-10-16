@@ -65,6 +65,7 @@ struct Options {
   bool parasiteGuard = true;  // BOTPARA: dgsim_bots_api.lua's fourth fix-up (the parasite missions)
   bool composition = true;    // BOTCOMP: the preferred 5v5 setup (2 Gladiators, Tactician, Predator, Hunter); 0 = Tuning.BotPlan's fill
   std::string compositionDrop = "predator,hunter,tactician,gladiator";  // BOTCOMP: the roles' order of giving up a seat
+  bool profiles = true;  // BOTPROFILE: our own BotClass profiles (PC_Warden_Predator) when the copy's catalog lists them
   int harassStartWorkers = 4; // BOTCOMP: a well's workers above which the Predator may harass it (the script's HarassWell: 16)
   int harassEndWorkers = 2;   // BOTCOMP: ... and below which the harass ends (the script's 4)
   bool team = true;           // BOTTEAM: the team layer (one call per team: farm, parasite, contest, well, push, defend)

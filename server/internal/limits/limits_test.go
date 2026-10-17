@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -410,14 +411,15 @@ func TestListener(t *testing.T) {
 	}
 	defer c1.Close()
 	s1 := <-accepted
-	c2, err := net.Dial("tcp4", inner.Addr().String())
-	if err != nil {
+	// Linux may deliver the server's close as a reset before Dial returns: refused as well
+	if c2, err := net.Dial("tcp4", inner.Addr().String()); err == nil {
+		defer c2.Close()
+		c2.SetReadDeadline(time.Now().Add(5 * time.Second))
+		if _, err := c2.Read(make([]byte, 1)); err == nil || isTimeout(err) {
+			t.Fatalf("the second connection wasn't closed by the server: %v", err)
+		}
+	} else if !errors.Is(err, syscall.ECONNRESET) {
 		t.Fatal(err)
-	}
-	defer c2.Close()
-	c2.SetReadDeadline(time.Now().Add(5 * time.Second))
-	if _, err := c2.Read(make([]byte, 1)); err == nil || isTimeout(err) {
-		t.Fatalf("the second connection wasn't closed by the server: %v", err)
 	}
 	s1.Close()
 	c3, err := net.Dial("tcp4", inner.Addr().String())

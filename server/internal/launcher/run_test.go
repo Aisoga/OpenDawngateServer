@@ -86,8 +86,11 @@ func TestStartServerAndClient(t *testing.T) {
 		!strings.Contains(out, "Server stopped.") {
 		t.Fatalf("Start-Server: exit %d\n%s", code, out)
 	}
-	// the website on the default port 443 of the test address, self-signed
-	if !strings.Contains(out, "The website: https://"+testAddress+"/") || !strings.Contains(out, "self-signed") {
+	// the website on the default port 443 of the test address, self-signed; a Linux run without root (CI) can't bind a
+	// port below 1024: then the server starts without it and says so
+	if strings.Contains(out, "listen tcp4 "+testAddress+":443: bind: permission denied") {
+		t.Log("port 443 needs root here: the website's check is skipped")
+	} else if !strings.Contains(out, "The website: https://"+testAddress+"/") || !strings.Contains(out, "self-signed") {
 		t.Errorf("no website in the banner:\n%s", out)
 	}
 	// with the tunnel (the default) Start-Server leaves the player copy to Start-Client

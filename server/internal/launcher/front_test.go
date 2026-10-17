@@ -697,13 +697,17 @@ func TestFrontPages(t *testing.T) {
 	}
 	// confirmations that aren't the page's: no token, another site, another Host (DNS rebinding)
 	good := url.Values{"token": {f.pageToken}, "key": {pin.String()}}
+	wrong := "0" + f.pageToken[1:] // a token one character off (never the page's own, which may start with 0)
+	if f.pageToken[0] == '0' {
+		wrong = "1" + f.pageToken[1:]
+	}
 	for _, bad := range []struct {
 		host string
 		form url.Values
 		hdr  map[string]string
 	}{
 		{"", url.Values{"key": {pin.String()}}, nil},
-		{"", url.Values{"token": {"0" + f.pageToken[1:]}, "key": {pin.String()}}, nil},
+		{"", url.Values{"token": {wrong}, "key": {pin.String()}}, nil},
 		{"", good, map[string]string{"Origin": "http://evil.example"}},
 		{"", good, map[string]string{"Sec-Fetch-Site": "cross-site"}},
 		{"", good, map[string]string{"Origin": "null"}},

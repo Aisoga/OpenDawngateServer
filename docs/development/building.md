@@ -94,6 +94,15 @@ After making new certificates, run `patch_client.py` again: the client must carr
    - `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt`;
    - `BUILD.txt`, which names the source commit and every file's SHA-256.
 
+   Beside it, the script writes the Linux server: `re\out\release\<name>-linux\` and `<name>-linux.tar.gz`, with one top folder `<name>-linux/` inside. It contains:
+
+   - `start-server`, built for `linux/amd64` with the same version name as the Windows programs (players' `Start-Client.exe` connects only to a server of its own version);
+   - the same `host/dgsim.dll` and Lua scripts;
+   - `dawngate.service`, the systemd unit, and `README.txt`, the operator's manual from `re\scripts\release\README-Linux.txt`;
+   - `LICENSE.txt`, `THIRD-PARTY-NOTICES.txt` (for the modules in `start-server`) and `BUILD.txt`.
+
+   Its text files have LF line ends. The script writes the tar archive itself, so the modes don't depend on the file system it is built on: owner and group 0, `start-server` and the folders 0755, every other file 0644. It then reads the archive back with Windows' own `tar.exe` and checks the modes, the owner and every file's bytes. `-NoLinux` skips the Linux server and `-NoZip` skips both archives.
+
 The script refuses to include any game file. It checks each file by name and by checksum against both archive builds.
 
 A release is a binary distribution under the AGPL: whoever hands it out also offers the source of the commit in its `BUILD.txt`.
@@ -119,6 +128,10 @@ The public repository builds itself with GitHub Actions (`.github/workflows/buil
 2. runs `gofmt`, `go vet` and `go test` in `server/`;
 3. builds the match host and runs `gms_tests` and `dg_control_tests`;
 4. runs the Lua check;
-5. builds the release zip with `make_release.ps1`.
+5. builds the release zip and the Linux archive with `make_release.ps1`.
 
-A successful build of `main` replaces the **`nightly`** pre-release on the *Releases* page with its zip. It is a convenience for testers: unsigned, and not tested in the game, because CI has no game files. Tests that need them skip themselves there. The numbered releases stay the stable ones.
+Beside it, a Linux job on `ubuntu-24.04` runs `gofmt`, `go vet` and `go test` in `server/` with the same Go version and `GOTOOLCHAIN=local`, then builds the Linux programs `dgserver` and `start-server` (`GOOS=linux GOARCH=amd64`, without cgo). `start-client` stays Windows-only: it starts the Windows game. Tests that need Wine or a host copy skip themselves there, as the ones that need the game's files do. To run the same checks on a Linux machine, use Go from `server/go.mod` and run those commands in `server/`.
+
+A third job, also on `ubuntu-24.04`, checks the Linux archive the Windows job built: one top folder, owner and group 0, the modes, no file outside the layout, LF text files, every file's SHA-256 as its `BUILD.txt` lists it, and that `start-server --version` prints the release's name.
+
+A successful build of `main` (every job green) replaces the **`nightly`** pre-release on the *Releases* page with its zip and its Linux archive. It is a convenience for testers: unsigned, and not tested in the game, because CI has no game files. Tests that need them skip themselves there. The numbered releases stay the stable ones.

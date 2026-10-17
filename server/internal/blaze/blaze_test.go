@@ -207,7 +207,14 @@ func TestServeConn(t *testing.T) {
 	ps.expect(9, 5, fire.Reply, 6, "gettelemetryserver_reply")
 	ps.send(0x825, 0x78, 7, nil)
 	ps.expect(0x825, 0x78, fire.Reply, 7, "enterservice_reply")
-	ps.send(0x7FFF, 1, 8, nil) // no such component
+	ps.send(0x7FFF, 1, 8, nil) // no such component: an error reply (LBFIX)
+	ps.expectError(0x7FFF, 1, 8, ErrComponentNotFound)
+	ps.send(9, 0x7F, 9, nil) // a component we serve, a command we don't
+	ps.expectError(9, 0x7F, 9, ErrCommandNotFound)
+	ps.send(9, 2, 10, []byte{0x86}) // a payload that doesn't decode
+	ps.expectError(9, 2, 10, ErrSystem)
+	ps.send(9, 2, 11, nil) // and the connection goes on
+	ps.next("ping reply")
 	log := ps.close()
 
 	for _, want := range []string{
@@ -221,7 +228,9 @@ func TestServeConn(t *testing.T) {
 		"[blaze] -> UserSessions::UserSessionExtendedDataUpdate notification, ",
 		"[blaze] -> updateNetworkInfo reply, 0 bytes:\n",
 		"[blaze] <- component32767(0x7fff) cmd 0x0001 request id 8 err 0x0, 0 bytes",
-		"[blaze]    (no handler; not answered)\n",
+		"[blaze] -> error reply (no handler; error 0x4002), 0 bytes:\n",
+		"[blaze] -> error reply (no handler; error 0x4003), 0 bytes:\n",
+		"[blaze] -> error reply (request doesn't decode; error 0x4001), 0 bytes:\n",
 		"[blaze] connection closed\n",
 	} {
 		if !strings.Contains(log, want) {
@@ -281,7 +290,8 @@ func TestB8RepliesMatchGolden(t *testing.T) {
 // (its LAN address replaced by loopback) as PNET; removePlayer gets an empty reply.
 func TestPracticeGame(t *testing.T) {
 	ps := newPipeSession(t)
-	ps.send(9, 0x19, 0, nil) // wrong component: no handler
+	ps.send(9, 0x19, 0, nil) // wrong component: no handler, an error reply
+	ps.expectError(9, 0x19, 0, ErrCommandNotFound)
 	ps.send(4, 0x19, 1, ps.request("creategame_request"))
 	ps.send(1, 0x28, 2, ps.request("login_request"))
 	ps.expect(1, 0x28, fire.Reply, 2, "login_reply")

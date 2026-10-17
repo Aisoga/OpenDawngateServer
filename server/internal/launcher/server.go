@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -149,7 +150,7 @@ var oldServerTunnelComments = [][]string{
 var manifest *archive.Manifest
 
 var serverKeys = []string{"address", "bind", RiskAckKey, "profile", "tunnel", "gateway_port", "shaper_select", "dedicated", "signup",
-	"signups_per_address", "log_days", "web_port", "web_domain", "web_email", "folder", "zip", "server_flags"}
+	"signups_per_address", "log_days", "web_port", "web_domain", "web_email", "folder", "zip", "server_flags", "wine"}
 
 // IO is where a launcher talks: the console normally, buffers in tests.
 type IO struct {
@@ -191,8 +192,12 @@ func zipFinder(o IO, in *bufio.Reader, configured string) func() (string, error)
 			return "", fmt.Errorf("%w (looked in %s); put it next to Start-Server.exe or name it in the config file (zip =)",
 				setup.ErrNoZip, strings.Join(cands, ", "))
 		}
-		home, _ := os.UserHomeDir()
-		return AskZip(in, o.Out, func() (string, error) { return PickZip(filepath.Join(home, "Downloads")) })
+		var pick func() (string, error) // Windows' file dialog; elsewhere only a typed path
+		if runtime.GOOS == "windows" {
+			home, _ := os.UserHomeDir()
+			pick = func() (string, error) { return PickZip(filepath.Join(home, "Downloads")) }
+		}
+		return AskZip(in, o.Out, pick)
 	}
 }
 
@@ -200,6 +205,9 @@ func zipFinder(o IO, in *bufio.Reader, configured string) func() (string, error)
 // sets everything up in the folder next to it (setup.Server), every start checks (and repairs) that setup, then runs
 // dgserver in this process with the match-host copy until Ctrl+C or the window is closed. It returns the exit code.
 func RunServer(args []string, o IO) int {
+	if hostsUnderWine { // Linux: start-server and Linux's tools in the texts (wine.go)
+		o.Out = linuxWriter{o.Out}
+	}
 	args, accountArgs := SplitAccountArgs(args)
 	fs := flag.NewFlagSet("Start-Server", flag.ContinueOnError)
 	fs.SetOutput(o.Out)
@@ -230,7 +238,7 @@ func RunServer(args []string, o IO) int {
 	if path == "" {
 		path = filepath.Join(o.ExeDir, ServerConfigName)
 	}
-	cfg, created, err := LoadOrCreate(path, ServerConfigText)
+	cfg, created, err := LoadOrCreate(path, serverConfigText())
 	if err != nil {
 		return o.fail("The config file %s can't be read or written: %v", path, err)
 	}
@@ -238,7 +246,7 @@ func RunServer(args []string, o IO) int {
 		fmt.Fprintf(o.Out, "  wrote %s with the default options (edit it to change them)\n", path)
 	} else if !*check {
 		// an earlier release's file: tunnel = auto meant on only for a public address, now for every server
-		if changed, err := migrateComment(path, oldServerTunnelComments, commentOf(ServerConfigText, "tunnel")); err != nil {
+		if changed, err := migrateComment(path, oldServerTunnelComments, commentOf(serverConfigText(), "tunnel")); err != nil {
 			fmt.Fprintf(o.Out, "  note: %s can't be updated: %v\n", path, err)
 		} else if changed {
 			fmt.Fprintf(o.Out, "  note: %s: the encrypted tunnel is now on for every server (tunnel = auto; the comment above it updated)\n", path)
@@ -308,7 +316,7 @@ func RunServer(args []string, o IO) int {
 	if err != nil {
 		return o.fail("%s: %v", path, err)
 	}
-	dedicated = dedicated || *dedicatedFlag
+	dedicated = dedicated || *dedicatedFlag || hostsUnderWine // Linux: no Start-Client, so never a player copy
 	folder := cfg["folder"]
 	if folder == "" {
 		folder = DefaultFolder
@@ -367,7 +375,7 @@ func RunServer(args []string, o IO) int {
 
 	hostsAddr := bindAddr // the match hosts' GMS ports: with the tunnel on a loopback address of their own
 	if tunnelOn {
-		hostsAddr = HostsAddress(bindAddr)
+		hostsAddr = serverHostsAddress(bindAddr) // under Wine 127.0.0.1 (wine.go)
 	}
 	if !*check && !*setupOnly { // before the setup: a second Start-Server must not touch the copies of a running one
 		var held []string
@@ -390,8 +398,13 @@ func RunServer(args []string, o IO) int {
 						"Encrypt checks the domain on it). Close that program, or set web_port to another port and "+
 						"forward TCP 443 on your router to it.", bindAddr, h[0], web.Domain)
 				}
-				fmt.Fprintf(o.Out, "  note: another program holds the website's port %d (%s): the server starts without its "+
-					"website this time (set web_port = 8443, for example, in %s)\n", web.Port, h[0], path)
+				if hostsUnderWine && web.Port < 1024 && strings.Contains(h[0], "permission denied") {
+					fmt.Fprintf(o.Out, "  note: port %d needs root or the capability CAP_NET_BIND_SERVICE (%s): the server starts "+
+						"without its website this time (the systemd unit in hosting.md gives the capability)\n", web.Port, h[0])
+				} else {
+					fmt.Fprintf(o.Out, "  note: another program holds the website's port %d (%s): the server starts without its "+
+						"website this time (set web_port = 8443, for example, in %s)\n", web.Port, h[0], path)
+				}
 				web.Port = 0
 			}
 		}
@@ -418,6 +431,11 @@ func RunServer(args []string, o IO) int {
 		}
 		runLock = h
 		defer h.Release()
+		if hostsUnderWine { // the accounts, the keys and the logs: the operator's alone
+			if err := os.Chmod(root, 0o700); err != nil {
+				fmt.Fprintf(o.Out, "  note: %s can't be made private (%v)\n", root, err)
+			}
+		}
 	}
 	where := "this PC only"
 	if !net.ParseIP(address).IsLoopback() {
@@ -430,7 +448,10 @@ func RunServer(args []string, o IO) int {
 		where += "; the public profile: the tunnel, the limits, sign-up " + loginFlags[1]
 	}
 	fmt.Fprintf(o.Out, "  folder   %s\n  address  %s (%s)\n", root, address, where)
-	if dedicated {
+	switch {
+	case hostsUnderWine:
+		fmt.Fprintln(o.Out, "  mode     dedicated server, the match hosts under Wine (the match-host copy only)")
+	case dedicated:
 		fmt.Fprintln(o.Out, "  mode     dedicated server (the match-host copy only, no player copy)")
 	}
 	fmt.Fprintln(o.Out)
@@ -439,6 +460,8 @@ func RunServer(args []string, o IO) int {
 	} else {
 		size := "3 GB"
 		switch {
+		case hostsUnderWine:
+			size = "3 GB: the match-host copy and the hosts' Wine prefix"
 		case dedicated:
 			size = "1.5 GB: the match-host copy only"
 		case tunnelOn:
@@ -456,11 +479,30 @@ func RunServer(args []string, o IO) int {
 			return o.fail("%v", err)
 		}
 	}
+	var wine setup.WineEnv
+	if hostsUnderWine { // first Wine (and its prefix): without it no host can start, so nothing else is set up
+		wine, err = prepareWine(s, setup.WineOptions{Command: strings.TrimSpace(cfg["wine"]), Prefix: os.Getenv("WINEPREFIX")})
+		if err != nil && !*check {
+			if release != nil {
+				release()
+			}
+			advice := "Start again; if the same step fails again, delete the Wine prefix " + wine.Prefix + " so that it is made anew."
+			for _, b := range s.Bad() {
+				if b.Step == "wine" || b.Step == "wine 32-bit" {
+					advice = setup.WineInstallHint
+				}
+			}
+			return o.fail("Wine isn't ready for the match hosts:\n%s\n\n%s", lines(s.Bad()), advice)
+		}
+	}
 	// with the tunnel Start-Client makes the player copy; dedicated = yes: never one, also with tunnel = off
 	so := setup.ServerOptions{Address: address, NoClient: tunnelOn}
 	if dedicated {
 		so.NoClient = true
 		so.NoClientNote = "a dedicated server: the match-host copy only (Start-Client.exe makes its own player copy)"
+		if hostsUnderWine {
+			so.NoClientNote = "a Linux server: the match-host copy only (players play with Start-Client.exe on Windows)"
+		}
 	}
 	err = s.Server(so)
 	if release != nil {
@@ -485,6 +527,10 @@ func RunServer(args []string, o IO) int {
 	own := append(loginFlags, web.Flags()...)
 	if publicP { // the limits on also for a public profile on a LAN address (dgserver's auto covers a public one)
 		own = append(own, "--limits", "on")
+	}
+	if hostsUnderWine { // the hosts under the Wine the setup checked, in its prefix
+		own = append(own, "--gms-runner", wine.Wine)
+		os.Setenv("WINEPREFIX", wine.Prefix)
 	}
 	flags := ServerFlags(l, address, shaperSelect, append(own, SplitFlags(cfg["server_flags"])...))
 	if bindAddr != address {
@@ -511,6 +557,9 @@ func RunServer(args []string, o IO) int {
 				bindAddr, info.GatewayPort)
 			fmt.Fprintf(o.Out, "  The server's key fingerprint is %s.\n", info.GatewayFingerprint)
 			switch {
+			case net.ParseIP(address).IsLoopback() && hostsUnderWine:
+				fmt.Fprintf(o.Out, "  It listens on %s, so only this machine reaches it: for players set address in %s to this\n"+
+					"  machine's address (start-server --configure asks for it).\n", address, ServerConfigName)
 			case net.ParseIP(address).IsLoopback():
 				fmt.Fprintln(o.Out, "  Now double-click Start-Client.exe to play: This PC in its server list is this server (the same folder).")
 			default:
@@ -519,11 +568,17 @@ func RunServer(args []string, o IO) int {
 					if bindAddr == address {
 						fmt.Fprintf(o.Out, "  This PC holds the public address itself: let its firewall in only TCP and UDP %d and TCP 443.\n", info.GatewayPort)
 					}
+				} else if hostsUnderWine {
+					fmt.Fprintf(o.Out, "  If this machine has a firewall, let in TCP and UDP %d (and TCP 443 for the website).\n", info.GatewayPort)
 				} else {
 					fmt.Fprintln(o.Out, "  If Windows asks whether the server may use the network, allow it for private networks.")
 				}
 				fmt.Fprintf(o.Out, "  Players add %s to the server list on the game's login screen (or start Start-Client.exe %s);\n", address, address)
-				fmt.Fprintf(o.Out, "  you play here with just Start-Client.exe. At a player's first login the list shows the key\n")
+				if hostsUnderWine {
+					fmt.Fprintf(o.Out, "  at a player's first login the list shows the key\n")
+				} else {
+					fmt.Fprintf(o.Out, "  you play here with just Start-Client.exe. At a player's first login the list shows the key\n")
+				}
 				fmt.Fprintf(o.Out, "  fingerprint, which must be %s; logging in again trusts it. Or hand out the whole key, so\n", info.GatewayFingerprint)
 				fmt.Fprintf(o.Out, "  that nobody needs to compare:  Start-Client.exe %s --gateway-pin %s\n", address, info.GatewayPin)
 			}
@@ -547,6 +602,9 @@ func RunServer(args []string, o IO) int {
 			} else if public {
 				fmt.Fprintln(o.Out, "  Its certificate comes from Let's Encrypt (it checks the domain on TCP 443, which your router forwards).")
 			}
+		}
+		if hostsUnderWine {
+			fmt.Fprintf(o.Out, "  The match hosts run under %s (%s) on 127.0.0.1, in the Wine prefix %s.\n", wine.Version, wine.Wine, wine.Prefix)
 		}
 		fmt.Fprintf(o.Out, "  Logs: %s\n", l.Logs())
 		fmt.Fprintln(o.Out, "  Stop the server with Ctrl+C or by closing this window (it ends running matches).")

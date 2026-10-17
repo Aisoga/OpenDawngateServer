@@ -222,6 +222,14 @@ int SpiritWellUpdate(void* sim, bool full, bool withFieldState, Bytes* out);
 // states if `withFieldState`) or the changed members, as SpiritWellUpdate. Must follow the player's first 8B.
 int CampUpdate(void* sim, bool full, bool withFieldState, Bytes* out);
 
+// CAMPICONS: a second view of the camp list for the spectators, with its own field states: `view` holds a copy of the
+// server's entries (0x18 bytes each, made at the first call); each call copies every entry's mCampVisibleToTeam and
+// mSpawnMarkerId into it, puts `bitsOf(marker)` (when >= 0) into its mCampVisibleToTeam, and writes the 8D as
+// CampUpdate does from the copy (full, or the copy's changed members against the copy's field states).
+typedef std::vector<char> CampViewBuffer;
+int CampViewUpdate(void* sim, CampViewBuffer* view, int (*bitsOf)(std::uint32_t marker), bool full,
+                   bool withFieldState, Bytes* out);
+
 // The server player's team (false if there is no such player).
 bool PlayerTeam(void* sim, unsigned index, std::uint8_t* team);
 

@@ -60,6 +60,16 @@ Patches (each checks the original bytes first):
            30-minute match with the bit and the low 2 GB reserved from outside (va_map.py --reserve-low), so the
            match's allocations lay above 2 GB, without a new assert; H1-live did the same for the engine core alone
            (the host's laa_reserve=2).
+  preload  Since SNDBANK, in every profile (--preload off leaves it out): GameClient_PreloadPlayerCharacters (0x0066BD10,
+           called at pre-game 03 and at 0x0066CCB9) preloads each player's shaper skin, and with it the shaper's sound
+           banks, for the player indexes i < GameSimulator_CountPlayers() (0x008F1110: the number of players and
+           spectators, not the highest index). Our match host seats team 2 at indexes 5-9, so with fewer than 6
+           participants the red shapers were never preloaded and their ability sounds and voice failed on every other
+           client ("Unable to play audio event", GameGraphics.cpp 10310/1571; seen on a public server). The call at
+           0x0066BD1F (E8 EC 53 28 00) becomes mov eax,15 (B8 0F 00 00 00; the caller's add esp,0x10 still pops the
+           four arguments), so every index 0-14 is looked up: GameSimulator_GetPlayerByIndex (0x008F0D90, a hash map
+           lookup, the spectator map for 10-14) returns 0 for an empty index and LabsPlayer_GetNounDef (0x00912160,
+           +0x04) 0 for a spectator, and the loop skips both, as the shipped loop already did for spectators at 10+.
 
 Profiles (roadmap A5, docs/RUNNING_THE_CLIENT.md "Playing across machines (A5)"):
   local    (default) everything above; redirector host 127.0.0.1 (or a loopback address given as [host]
@@ -172,6 +182,11 @@ LAN_LOOPBACK_ROOM = 16
 # Q3b: IMAGE_FILE_HEADER.Characteristics (build 854: relocations stripped, executable, 32-bit machine) and the LAA bit
 CHAR_BUILD = 0x0103
 CHAR_LAA = 0x0020
+# SNDBANK: GameClient_PreloadPlayerCharacters (0x0066BD10): push edi (sim); call GameSimulator_CountPlayers (0x008F1110),
+# its loop bound; becomes mov eax,15 (the caller's add esp,0x10 still pops the four pushed arguments)
+PRELOAD_COUNT = 0x0066BD1F
+PRELOAD_COUNT_ORIG = bytes.fromhex("e8ec532800")
+PRELOAD_COUNT_NEW = bytes.fromhex("b80f000000")
 
 
 def wide(text):
@@ -240,7 +255,7 @@ def check_data_suffix(suffix):
 
 
 def patch_bytes(orig, modulus, profile="local", host=None, server_host=None, client_bind=None, data_suffix=None,
-                laa=True):
+                laa=True, preload=True):
     """Patch a copy of the untouched exe's bytes; returns (patched bytes, summary text)."""
     server, cave_address = resolve_profile(profile, host, server_host, client_bind)
     check_data_suffix(data_suffix)
@@ -346,6 +361,12 @@ def patch_bytes(orig, modulus, profile="local", host=None, server_host=None, cli
     if laa:
         data[char_at:char_at + 2] = (CHAR_BUILD | CHAR_LAA).to_bytes(2, "little")
         summary += "; LARGE_ADDRESS_AWARE (4 GB of address space)"
+
+    # --- SNDBANK: preload every player index's shaper (0-14), not only the first CountPlayers() indexes
+    expect(PRELOAD_COUNT, PRELOAD_COUNT_ORIG, "GameClient_PreloadPlayerCharacters' call to GameSimulator_CountPlayers")
+    if preload:
+        data[off(PRELOAD_COUNT):off(PRELOAD_COUNT) + len(PRELOAD_COUNT_NEW)] = PRELOAD_COUNT_NEW
+        summary += "; every player's shaper preloaded (player indexes 0-14)"
     return bytes(data), summary
 
 
@@ -379,6 +400,8 @@ def describe(data):
     out["ca_sha256"] = hashlib.sha256(at(OTG3_MODULUS, 128)).hexdigest()[:16]
     out["ca_flag"] = str(int.from_bytes(at(OTG3_FLAGS, 4), "little"))
     out["laa"] = "on" if pe.FILE_HEADER.Characteristics & CHAR_LAA else "off"
+    count = at(PRELOAD_COUNT, len(PRELOAD_COUNT_ORIG))
+    out["preload"] = {PRELOAD_COUNT_NEW: "all", PRELOAD_COUNT_ORIG: "as-shipped"}.get(count, "unknown")
     return out
 
 
@@ -401,6 +424,8 @@ def main(argv):
                                           "(%%APPDATA%%\\DawngateData<X>, Documents\\Dawngate<X>)")
     ap.add_argument("--laa", choices=("on", "off"), default="on",
                     help="Q3b: LARGE_ADDRESS_AWARE (4 GB of address space instead of 2 GB); on by default")
+    ap.add_argument("--preload", choices=("on", "off"), default="on",
+                    help="SNDBANK: preload every player index's shaper (and its sound banks); on by default")
     args = ap.parse_args(argv[1:])
     exe = os.path.abspath(args.exe)
     if os.sep + "ia_" in exe or "/ia_" in exe:
@@ -422,7 +447,7 @@ def main(argv):
         untouched = f.read()
     try:
         data, summary = patch_bytes(untouched, modulus, args.profile, args.host, args.server_host, args.client_bind,
-                                    args.data_suffix, laa=args.laa == "on")
+                                    args.data_suffix, laa=args.laa == "on", preload=args.preload == "on")
     except PatchError as e:
         sys.exit(str(e))
     with open(exe, "wb") as f:

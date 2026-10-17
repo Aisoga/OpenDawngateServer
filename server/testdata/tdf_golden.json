@@ -665,6 +665,26 @@
    "name": "notifyplayerremoved_kicked_notification",
    "hex": "8eed3800009e99000001c299000081d0acf30eca58730008",
    "pretty": "    CNTX: 0\n    GID: 1\n    PID: 2000000001\n    REAS: 8"
+  },
+  {
+   "name": "getleaderboard_reply",
+   "hex": "b24b3304030296e86d01077365636f6e640096ea640082d0acf30eca1bab0001cf48740401040233000234000233000531303031000096e86d0107706c617965720096ea640081d0acf30eca1bab0002cf487404010402330002350002330002300000",
+   "pretty": "    LDLS: \n      - \n        ENAM: 'second'\n        ENID: 2000000002\n        RANK: 1\n        STAT: \n          - '3'\n          - '4'\n          - '3'\n          - '1001'\n      - \n        ENAM: 'player'\n        ENID: 2000000001\n        RANK: 2\n        STAT: \n          - '3'\n          - '5'\n          - '3'\n          - '0'"
+  },
+  {
+   "name": "getleaderboard_empty_reply",
+   "hex": "b24b33040300",
+   "pretty": "    LDLS: []"
+  },
+  {
+   "name": "filepetition_reply",
+   "hex": "9f5a6401097265706f72742d3100",
+   "pretty": "    GUID: 'report-1'"
+  },
+  {
+   "name": "selectcategoryupdates_reply",
+   "hex": "db7a640000",
+   "pretty": "    VWID: 0"
   }
  ],
  "decode": [
@@ -1002,6 +1022,26 @@
    "name": "destroygamelist_request",
    "hex": "9eca640001",
    "pretty": "    GLID: 1"
+  },
+  {
+   "name": "getleaderboard_request",
+   "hex": "8efd6e008803b22a640000ba1b650106536b696c6c00c2f9a60000c32a640000cf4cb40001d29b650000d7397409000000",
+   "pretty": "    COUN: 200\n    LBID: 0\n    NAME: 'Skill'\n    POFF: 0\n    PRID: 0\n    STRT: 1\n    TIME: 0\n    USET: \n      (0, 0, 0)"
+  },
+  {
+   "name": "getleaderboard_daily_request",
+   "hex": "8efd6e008803b22a640000ba1b65010b536b696c6c4461696c7900c2f9a60001c32a640000cf4cb40001d29b650000d7397409000000",
+   "pretty": "    COUN: 200\n    LBID: 0\n    NAME: 'SkillDaily'\n    POFF: 1\n    PRID: 0\n    STRT: 1\n    TIME: 0\n    USET: \n      (0, 0, 0)"
+  },
+  {
+   "name": "filepetition_request",
+   "hex": "8efa64090000008efd39010b4861726173736d656e7400c349250197015b0a7b0a2274797065223a2243686174222c0a2273656e6465724944223a323030303030303030322c0a2273656e6465724e616d65223a227365636f6e64222c0a226d657373616765223a2268656c6c6f220a7d0a5d00cf58aa019201506c61796572205265706f727420286e616d653a207365636f6e64292028747970653a20312c204772696566696e672028496e74656e74696f6e616c6c792046656564696e672f54726f6c6c696e67292900d2deaf0106474d542d3800d329f404000182d0acf30e",
+   "pretty": "    COID: \n      (0, 0, 0)\n    COTY: 'Harassment'\n    PTDE: '[\\n{\\n\"type\":\"Chat\",\\n\"senderID\":2000000002,\\n\"senderName\":\"second\",\\n\"message\":\"hello\"\\n}\\n]'\n    SUBJ: 'Player Report (name: second) (type: 1, Griefing (Intentionally Feeding/Trolling))'\n    TMZO: 'GMT-8'\n    TRGT: \n      - 2000000002"
+  },
+  {
+   "name": "selectcategoryupdates_request",
+   "hex": "db7a640000",
+   "pretty": "    VWID: 0"
   }
  ],
  "errors": [
@@ -1150,6 +1190,17 @@
    "payload": "",
    "pretty": "",
    "hex": "000000010046000010000047"
+  },
+  {
+   "name": "resumesession_notfound_reply",
+   "component": 30722,
+   "command": 35,
+   "type": 3,
+   "id": 5,
+   "error": 16387,
+   "payload": "",
+   "pretty": "",
+   "hex": "000078020023400330000005"
   }
  ]
 }

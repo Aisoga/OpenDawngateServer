@@ -616,11 +616,83 @@ GMS_TEST(ShaperSelectRejoiningHumanGetsItsSkins) {
   for (size_t i = mark; i < out.sent.size(); ++i) CHECK(out.sent[i].conn != b2);
   const size_t ready = out.sent.size();
   ss.OnReady(b2, 3300, out);
+  // REJOINSS: the skins (and the phase with them) wait for its client's UI: list and records only
   CHECK_LIST(out.To(b2, ready), {"c802ab4a04ef0100000000009eb0a85d010000000000",
                                  gms::Hex(gms::BuildShaperRecord(*ss.Record(0))),
-                                 gms::Hex(gms::BuildShaperRecord(*ss.Record(1))), "c80b019eb0a85d00",
-                                 gms::Hex(gms::BuildShaperPhase(ss.PhaseEnd(), 2))});
+                                 gms::Hex(gms::BuildShaperRecord(*ss.Record(1)))});
+  // no phase repeat to it while they wait; its first C8 after the C8 02 (a role click: its UI is up) releases them
+  const size_t held = out.sent.size();
+  for (int64_t t = 3400; t <= 4600; t += 100) ss.Tick(t, out);
+  CHECK(out.To(b2, held).empty());
+  const size_t ui = out.sent.size();
+  Msg(ss, b2, Req(gms::kShaperSelectRole, 0, 1), 4700, out);
+  const std::vector<std::string> got = out.To(b2, ui);
+  CHECK(got.size() >= 2);
+  if (got.size() >= 2) {
+    CHECK_EQ(got[0], "c80b019eb0a85d00");
+    CHECK_EQ(got[1], gms::Hex(gms::BuildShaperPhase(ss.PhaseEnd(), 2)));
+  }
   CHECK_EQ(ss.Phase(), 2);
+}
+
+// REJOINSS: a returning player whose client says nothing after its C8 02 gets its held skins and
+// the phase lateSkinsHoldMs after it; one that comes after the reveal (a rejoin into the running game) gets no skins at
+// all and the phase at once; with lateSkinsHoldMs 0 the skins go at once, before the phase (the old behaviour).
+GMS_TEST(ShaperSelectLateSkinsWaitForTheClientsUi) {
+  for (int variant = 0; variant < 3; ++variant) {
+    QuietLog log;
+    gms::ShaperSelectConfig cfg;
+    cfg.timers = Timers(1000, 30000, 30000, 16);
+    cfg.humanDefault.list = {Entry(kAlpha, 1), Entry(kArtificer, 1)};
+    cfg.lateSkinsHoldMs = variant == 2 ? 0 : 3000;
+    gms::ShaperSelect ss(cfg);
+    const gms::ConnId a = 11, b = 12, b2 = 13;
+    ss.AddHuman(a, 0, 1);
+    ss.AddHuman(b, 1, 1);
+    RecordingSender out;
+    ss.OnReady(a, 1000, out);
+    ss.OnReady(b, 1000, out);
+    Msg(ss, a, Req(gms::kShaperRequest, kAlpha), 1100, out);
+    Msg(ss, a, Req(gms::kShaperLockIn, kAlpha), 1150, out);
+    ss.RemoveHuman(b);
+    int64_t t = 1200;
+    for (; t <= 2000; t += 50) ss.Tick(t, out);
+    CHECK_EQ(ss.Phase(), 2);
+    if (variant == 1) {  // the rest of shaper select without b: roles by the timer, skins, the reveal
+      Msg(ss, a, Req(gms::kShaperLockRole, 0, 0), t, out);
+      Msg(ss, a, Req(gms::kShaperLockSkin, kAlpha), t += 10, out);
+      for (int i = 0; i < 70 && !ss.Revealed(); ++i) ss.Tick(t += 500, out);
+      CHECK(ss.Revealed());
+    }
+    ss.AddHuman(b2, 1, 1);
+    const size_t ready = out.sent.size();
+    ss.OnReady(b2, t += 100, out);
+    const std::string skins = "c80b019eb0a85d00";
+    const std::string phase = gms::Hex(gms::BuildShaperPhase(ss.PhaseEnd(), static_cast<uint32_t>(ss.Phase())));
+    std::vector<std::string> got = out.To(b2, ready);
+    const bool hasSkins = std::find(got.begin(), got.end(), skins) != got.end();
+    if (variant == 0) {
+      CHECK(!hasSkins);
+      CHECK(std::find(got.begin(), got.end(), phase) == got.end());
+      const size_t mark = out.sent.size();
+      for (int i = 0; i < 28; ++i) ss.Tick(t += 100, out);  // 2.8 s: still held
+      CHECK(out.To(b2, mark).empty());
+      ss.Tick(t += 300, out);  // 3.1 s after its C8 02
+      got = out.To(b2, mark);
+      CHECK(got.size() >= 2);
+      if (got.size() >= 2) {
+        CHECK_EQ(got[0], skins);
+        CHECK_EQ(got[1], phase);
+      }
+    } else if (variant == 1) {
+      CHECK_EQ(ss.Phase(), 4);
+      CHECK(!hasSkins);
+      CHECK(!got.empty() && got.back() == phase);
+    } else {
+      CHECK(hasSkins);
+      CHECK(got.size() >= 2 && got[got.size() - 2] == skins && got.back() == phase);
+    }
+  }
 }
 
 // ---- G3a: several humans ----------------------------------------------------------------------------------------------
@@ -749,9 +821,21 @@ GMS_TEST(ShaperSelectTwoHumansRejoinInEachPhase) {
       std::vector<std::string> want = {gms::Hex(gms::BuildShaperList(cfg.humanDefault.list)),
                                        gms::Hex(gms::BuildShaperRecord(*ss.Record(0))),
                                        gms::Hex(gms::BuildShaperRecord(*ss.Record(1)))};
-      if (ss.Record(1)->flags & gms::kRecordShaperLocked) want.push_back(gms::Hex(gms::BuildSkins({kArtificer, artB})));
-      want.push_back(gms::Hex(gms::BuildShaperPhase(ss.PhaseEnd(), static_cast<uint32_t>(p))));
+      // REJOINSS: a locked shaper's skins (and the phase with them) wait for the client's UI before phase 4; from
+      // phase 4 on no skins, the phase at once
+      const bool held = (ss.Record(1)->flags & gms::kRecordShaperLocked) && p < 4;
+      if (!held) want.push_back(gms::Hex(gms::BuildShaperPhase(ss.PhaseEnd(), static_cast<uint32_t>(p))));
       CheckList(out.To(b2, ready), want, __LINE__);
+      if (held) {  // its UI shows (a preferred-role toggle): the skins, then the phase
+        const size_t ui = out.sent.size();
+        Msg(ss, b2, Req(gms::kShaperPreferredRole, 0, 3), t += 10, out);
+        const std::vector<std::string> got = out.To(b2, ui);
+        CHECK(got.size() >= 2);
+        if (got.size() >= 2) {
+          CHECK_EQ(got[0], gms::Hex(gms::BuildSkins({kArtificer, artB})));
+          CHECK_EQ(got[1], gms::Hex(gms::BuildShaperPhase(ss.PhaseEnd(), static_cast<uint32_t>(p))));
+        }
+      }
       CHECK_EQ(ss.Phase(), p);
       if (p >= 2) CHECK(ss.Record(1)->flags & gms::kRecordShaperLocked);
       b = b2;
@@ -897,7 +981,7 @@ GMS_TEST(ShaperSelectLateNewPlayerGetsTheAutomaticPicks) {
   CHECK(ss.Record(4)->shaper == kArtificer && (ss.Record(4)->flags & gms::kRecordShaperLocked));
   CHECK(log.Has("player 4 joins in phase 2; its shaper is locked to 0x5da8b09e"));
   ss.OnReady(2, 1160, out);
-  CHECK(out.To(2).size() >= 4);  // list, records, skins (locked), phase 2
+  CHECK(out.To(2).size() >= 2);  // list, records (REJOINSS: its skins and phase 2 wait for its UI)
   for (int64_t t = 1170; t <= 1400; t += 10) ss.Tick(t, out);
   CHECK(ss.Revealed());
   ss.AddHuman(3, 6, 2);  // and one after the reveal

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 )
 
 // LockFile is the setup folder's lock: one setup at a time (Start-Server's and Start-Client's may be started together).
@@ -26,6 +24,9 @@ func Lock(root string) (func(), error) {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err == nil {
 			fmt.Fprintf(f, "pid=%d\n", os.Getpid())
+			if st := processStart(os.Getpid()); st != "" { // Linux: a reused pid isn't the holder (holderRunning)
+				fmt.Fprintf(f, "started=%s\n", st)
+			}
 			f.Close()
 			return func() { os.Remove(path) }, nil
 		}
@@ -33,9 +34,9 @@ func Lock(root string) (func(), error) {
 			return nil, err
 		}
 		b, _ := os.ReadFile(path)
-		pid, _ := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(b)), "pid=")))
-		if pid > 0 && pid != os.Getpid() && processRunning(pid) {
-			return nil, fmt.Errorf("%w (pid %d; %s): wait until it has finished", ErrLocked, pid, path)
+		held := parseRunLock(b) // its pid= and started= lines
+		if holderRunning(held.Pid, held.Started) {
+			return nil, fmt.Errorf("%w (pid %d; %s): wait until it has finished", ErrLocked, held.Pid, path)
 		}
 		os.Remove(path) // left by a process that ended
 	}

@@ -1,0 +1,35 @@
+# The Dawngate server as a systemd service (docs/hosting.md, "Linux server").
+# Copy it to /etc/systemd/system/dawngate.service, adjust the paths if the server folder isn't /srv/dawngate, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now dawngate
+# Its output: journalctl -u dawngate -f ; the server's own logs: /srv/dawngate/Dawngate-Data/logs
+
+[Unit]
+Description=Dawngate server (start-server)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=dawngate
+Group=dawngate
+WorkingDirectory=/srv/dawngate
+ExecStart=/srv/dawngate/start-server --non-interactive
+# The accounts, keys and logs are readable by the dawngate user only.
+UMask=0077
+# The website's port 443 without running as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+# The stop goes to start-server alone, which ends its match hosts itself; whatever is left after
+# TimeoutStopSec is killed.
+KillMode=mixed
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/srv/dawngate
+
+[Install]
+WantedBy=multi-user.target

@@ -65,6 +65,10 @@ NotifyPlayerJoining, NotifyPlayerJoinCompleted, NotifyGameAttribChange with the 
 NotifyGamePlayerTeamChange, GetGameListResponse and NotifyGameListUpdate), written from the member tables; the game
 list request is rebuilt from session g3b_run10b's log (289 bytes), the others from a static reading of the client's
 senders (live check: B15-live).
+The LBFIX cases answer the requests the public server left unanswered: Stats::getLeaderboard's reply (two fixture
+rows, and empty), GpsContentController::filePetition's and Rooms::selectCategoryUpdates' replies, written from the
+member tables, and the error reply frame for a request without a handler; the leaderboard request is rebuilt from the
+public server's log (49 bytes), the player report request from a static reading of its builder with made-up names.
 
 Usage:
     .venv/Scripts/python -I re/scripts/tdf_golden.py [out_dir]
@@ -1695,6 +1699,46 @@ def case_list_unions():  # a list of unions (HNET): member byte, then the struct
     return w
 
 
+# LBFIX: the requests the public server left unanswered (each one stopped the client's keep-alive pings, and the
+# client closed Blaze 90 s later). Stats::getLeaderboard -> Blaze::Stats::LeaderboardStatValues 0x012F050C (LDLS,
+# rows Blaze::Stats::LeaderboardStatValuesRow 0x012F0590: ENAM, ENID, RANK, STAT = wins, games, wins, shaper);
+# GpsContentController::filePetition -> FilePetitionResponse 0x012FC3B0 (GUID); Rooms::selectCategoryUpdates ->
+# SelectCategoryUpdatesResponse 0x012FFAC0 (VWID).
+LBFIX_SHAPER = 1001  # a made-up catalogID
+
+
+def lbfix_leaderboard(rows, first_rank=1):  # rows (persona id, name, games, wins, shaper)
+    items = []
+    for i, (pid, name, games, wins, shaper) in enumerate(rows):
+        items.append(tdf.Writer().string("ENAM", name).int("ENID", pid).int("RANK", first_rank + i)
+                     .list("STAT", STRING, [str(wins), str(games), str(wins), str(shaper)]))
+    return bytes(tdf.Writer().list("LDLS", STRUCT, items))
+
+
+def lbfix_leaderboard_request(name, poff):  # LeaderboardStatsRequest 0x012F0518 as the logs showed it
+    w = tdf.Writer().int("COUN", 200).int("LBID", 0).string("NAME", name).int("POFF", poff).int("PRID", 0)
+    w.int("STRT", 1).int("TIME", 0)
+    return bytes(objid(w, "USET", 0, 0, 0))
+
+
+def lbfix_petition_request():  # FilePetitionRequest 0x012FC350 (made-up names and lines; the shape of the client's)
+    w = objid(tdf.Writer(), "COID", 0, 0, 0).string("COTY", "Harassment")
+    w.string("PTDE", '[\n{\n"type":"Chat",\n"senderID":%d,\n"senderName":"%s",\n"message":"hello"\n}\n]'
+             % (B11_SECOND_PID, B11_SECOND_NAME))
+    w.string("SUBJ", "Player Report (name: %s) (type: 1, Griefing (Intentionally Feeding/Trolling))" % B11_SECOND_NAME)
+    w.string("TMZO", "GMT-8").list("TRGT", INT, [B11_SECOND_PID])
+    return bytes(w)
+
+
+LBFIX_CASES = {
+    "getleaderboard_reply": lambda: lbfix_leaderboard([(B11_SECOND_PID, B11_SECOND_NAME, 4, 3, LBFIX_SHAPER),
+                                                       (B5_PID, B5_NAME, 5, 3, 0)]),
+    "getleaderboard_empty_reply": lambda: lbfix_leaderboard([]),
+    "filepetition_reply": lambda: bytes(tdf.Writer().string("GUID", "report-1")),
+    "selectcategoryupdates_reply": lambda: bytes(tdf.Writer().int("VWID", 0)),
+}
+
+
 WRITER_CASES = {
     "ints": case_ints, "labels": case_labels, "strings": case_strings, "blobs": case_blobs,
     "structs": case_structs, "lists": case_lists, "maps": case_maps, "unions": case_unions,
@@ -1727,6 +1771,7 @@ WRITER_CASES = {
     **B14_CASES,
     **B15_CASES,
     **PH5B_CASES,
+    **LBFIX_CASES,
 }
 
 
@@ -1826,6 +1871,13 @@ DECODE_CASES = {
                                          .int("GID", 1).int("PID", B11_SECOND_PID)),
     "sendmessage_jointeam_request": b10c_request([(0xB0000, "1"), (0xB0001, "2")], 0, [B5_PID], B10C_USER, B15_JOIN_TEAM),
     "destroygamelist_request": bytes(tdf.Writer().int("GLID", 1)),
+    # LBFIX: the leaderboard requests (the first as the public server's log showed it, 49 bytes; the second, from the
+    # first's callback 0x00AA4FA0, as the live client sent it: POFF 1, 54 bytes), the player report and the logout's
+    # selectCategoryUpdates
+    "getleaderboard_request": lbfix_leaderboard_request("Skill", 0),
+    "getleaderboard_daily_request": lbfix_leaderboard_request("SkillDaily", 1),
+    "filepetition_request": lbfix_petition_request(),
+    "selectcategoryupdates_request": bytes(tdf.Writer().int("VWID", 0)),
 }
 
 ERROR_CASES = {
@@ -1852,6 +1904,10 @@ FRAMES = [  # name, component, command, type, msg id, error, payload
     # payload) and our empty reply (its RPC job has no response class)
     ("logout_request", 1, 0x46, 0, 71, 0, b""),
     ("logout_reply", 1, 0x46, 1, 71, 0, b""),
+    # LBFIX: the error reply to a request without a handler (ERR_COMMAND_NOT_FOUND; ERR_COMPONENT_NOT_FOUND 0x4002
+    # when no command of the component has one), here UserSessions::resumeSession (0x23), which the client sends after
+    # a lost session
+    ("resumesession_notfound_reply", 0x7802, 0x23, 3, 5, 0x4003, b""),
 ]
 
 

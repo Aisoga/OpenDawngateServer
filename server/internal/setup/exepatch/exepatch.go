@@ -18,6 +18,9 @@
 //     send test goes to the bound address.
 //   - data-folders: only with a DataSuffix (the test lanes): %APPDATA%\DawngateData<X>, Documents\Dawngate<X>.
 //   - laa: IMAGE_FILE_LARGE_ADDRESS_AWARE (4 GB of address space), on unless NoLAA.
+//   - preload: the client preloads the shaper (and with it the sound banks) of every player index 0-14, not only of
+//     the first GameSimulator_CountPlayers() indexes, which left out a second team seated at 5-9 in small games; on
+//     unless NoPreload.
 //
 // Profiles: "local" (the default; the server on a loopback address, every wildcard bind narrowed to it) and "lan" (a
 // server elsewhere on our own network: ServerHost required, the binds as shipped unless ClientBind names this
@@ -62,8 +65,9 @@ const (
 	raknetLoopbackPtr = 0x013F6AC4 // const char *IPV4_LOOPBACK
 	lanLoopbackString = 0x011AB130 // where the lan profile's bind address goes (16 bytes after the 40-byte cave)
 	lanLoopbackRoom   = 16
-	charBuild         = 0x0103 // IMAGE_FILE_HEADER.Characteristics of build 854
-	charLAA           = 0x0020 // IMAGE_FILE_LARGE_ADDRESS_AWARE
+	charBuild         = 0x0103     // IMAGE_FILE_HEADER.Characteristics of build 854
+	charLAA           = 0x0020     // IMAGE_FILE_LARGE_ADDRESS_AWARE
+	preloadCount      = 0x0066BD1F // GameClient_PreloadPlayerCharacters' call to GameSimulator_CountPlayers (its loop bound)
 )
 
 var (
@@ -78,6 +82,8 @@ var (
 	callBind           = append([]byte{0xFF, 0x15}, le32(bindIAT)...)
 	jmpBind            = append([]byte{0xFF, 0x25}, le32(bindIAT)...)
 	raknetLoopbackOrig = []byte("127.0.0.1\x00\x00\x00::1\x00")
+	preloadCountOrig   = mustHex("e8ec532800") // call 0x008F1110
+	preloadCountNew    = mustHex("b80f000000") // mov eax,15: every player index 0-14 (the caller's add esp,0x10 stays)
 	dataFolders        = []struct {
 		va   uint32
 		room int
@@ -117,6 +123,7 @@ type Options struct {
 	ClientBind string // local: a loopback address to bind (default the server's); lan: this machine's LAN address (default: binds as shipped)
 	DataSuffix string // one letter or digit for the per-user folders (test lanes only); "" leaves them
 	NoLAA      bool   // leave out LARGE_ADDRESS_AWARE (patch_client.py --laa off)
+	NoPreload  bool   // leave out the preload of every player index's shaper (patch_client.py --preload off)
 }
 
 // Error is a refusal: the exe isn't the expected build, or the options don't fit the profile (patch_client.py's
@@ -409,15 +416,24 @@ func Patch(orig, modulus []byte, o Options) ([]byte, string, error) {
 		binary.LittleEndian.PutUint16(data[charAt:], charBuild|charLAA)
 		summary += "; LARGE_ADDRESS_AWARE (4 GB of address space)"
 	}
+
+	// --- preload every player index's shaper (0-14), not only the first CountPlayers() indexes
+	if err := expect(preloadCount, preloadCountOrig, "GameClient_PreloadPlayerCharacters' call to GameSimulator_CountPlayers"); err != nil {
+		return nil, "", err
+	}
+	if !o.NoPreload {
+		write(preloadCount, preloadCountNew)
+		summary += "; every player's shaper preloaded (player indexes 0-14)"
+	}
 	return data, summary, nil
 }
 
 // Description is what an exe carries (patch_client.py's describe, --show), by key: redirector, bind, appdata,
-// documents, raknet_loopback, ca_sha256, ca_flag, laa (DescriptionKeys, in --show's order).
+// documents, raknet_loopback, ca_sha256, ca_flag, laa, preload (DescriptionKeys, in --show's order).
 type Description map[string]string
 
 // DescriptionKeys are Description's keys in patch_client.py --show's order.
-var DescriptionKeys = []string{"redirector", "bind", "appdata", "documents", "raknet_loopback", "ca_sha256", "ca_flag", "laa"}
+var DescriptionKeys = []string{"redirector", "bind", "appdata", "documents", "raknet_loopback", "ca_sha256", "ca_flag", "laa", "preload"}
 
 // HostKeys are what a match host's copy must carry (setup_all.py's HOST_KEYS): its sockets are the harness's.
 var HostKeys = []string{"redirector", "appdata", "documents"}
@@ -443,6 +459,7 @@ func Describe(data []byte) (Description, error) {
 	ptrBytes := at(raknetLoopbackPtr, 4)
 	mod := at(otg3Modulus, 128)
 	flags := at(otg3Flags, 4)
+	count := at(preloadCount, len(preloadCountOrig))
 	if err != nil {
 		return nil, err
 	}
@@ -486,6 +503,14 @@ func Describe(data []byte) (Description, error) {
 	out["laa"] = "off"
 	if img.characteristics&charLAA != 0 {
 		out["laa"] = "on"
+	}
+	switch {
+	case bytes.Equal(count, preloadCountNew):
+		out["preload"] = "all"
+	case bytes.Equal(count, preloadCountOrig):
+		out["preload"] = "as-shipped"
+	default:
+		out["preload"] = "unknown"
 	}
 	return out, nil
 }

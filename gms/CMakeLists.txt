@@ -175,6 +175,7 @@ if(RAKNET_FOUND)
     tests/test_agents.cpp       # D1b-live: the aggro order, battle ready
     tests/test_brain.cpp        # D1b-live: gambit choice, cooldowns, conditions, links
     tests/test_flow.cpp         # D1c-live: waves, camp timers, the end, energy lines, tower slots
+    tests/test_camps.cpp        # CAMPICONS: the jungle camps' minimap icons as each team's knowledge
     tests/test_damage.cpp       # D1f-live: PRD (T9), defense multiplier, reward split, passive gold; D1i: regen
     tests/test_damage_edge.cpp  # D13: the combat edge cases (core/damage/pipeline.h)
     tests/test_kills.cpp        # D1h: assists, kill book, player-kill gold and XP, the death recap's bytes

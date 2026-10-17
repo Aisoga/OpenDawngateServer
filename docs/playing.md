@@ -73,10 +73,10 @@ The match runs as in the original game. The server uses the game's own data and 
 **The map.** There is one map, with two lanes and a jungle.
 
 - **Minion waves** appear every 30 seconds from 1:00. Six minions spawn one after another and walk their lane in a line.
-- **Minions fight minions and towers first.** They attack a shaper only when nothing else is near them, or when that shaper hits a shaper of their team. They follow a shaper who walks away only a short way (about 20 units, or 3 seconds of chasing), never far into the jungle, then return to their lane and leave that shaper alone for a few seconds.
+- **Minions fight minions and towers first.** They attack a shaper only when nothing else is near them, or when that shaper hits a shaper of their team. They follow a shaper who walks away only a short way (about 20 units, or 3 seconds of chasing), never far into the jungle, then return to their lane and leave that shaper alone for a few seconds. A minion that loses sight of you, for example in grass, turns back at once.
 - **Jungle camps** ignore you until you hit one; then the whole camp fights you. A camp follows you only a short way: a creature turns back about 15 units from its spot, together with the rest of its camp, walks home untouchable and heals to full. Hits from far outside the camp don't pull it.
 - **Spirit well workers** fight back when hit but never leave their well's platform; step off it and they go back to mining.
-- **Towers (Bindings)** shoot minions first. They switch to an enemy shaper who attacks you near them.
+- **Towers (Bindings)** shoot minions first, before any shaper, even one they were already shooting when the minions arrived. They switch to an enemy shaper who damages a shaper of their team within their range, and keep shooting that shaper until it leaves their range.
 - The **Locus** (the big tower) guards each base.
 - Units collide and push each other a little. The item *Fluidity* lets you walk through them.
 
@@ -108,6 +108,8 @@ The match runs as in the original game. The server uses the game's own data and 
 **Jungle.** Creep camps respawn after you clear them.
 
 - Killing the big creature of a buff camp gives you its buff for 150 seconds: Green for Power, Blue for Haste or Orange for armor.
+- **Camp icons on the minimap** show what your team knows. Every camp gets its icon when it first spawns. When your team sees a camp's last creature die, its icon goes away for your team and comes back when the camp respawns. A camp the enemy cleared out of your sight keeps its icon until you see it empty yourself, so an icon can be out of date. Spectators see every camp as it really is.
+- **Respawn clocks.** When your team sees a buff camp or a Boar camp cleared, a clock appears on the ground at the camp: its hand sweeps once round, and the camp is back when the dial is empty (5 minutes). Only your team sees your clocks; spectators see every team's. The smaller camps have no clock.
 - The **parasite** in the middle of the map becomes attackable at 5:00 and only fights players who attack it. Once it fights, it attacks the shaper next to it, or else the nearest within its reach; from 15:00 every fifth attack is a fire breath, and from 25:00 a fire breath or a barrage of orbs in turn. While it lives, its red mark shows in the middle of the minimap.
 - Killing the parasite pays your team. A kill at its later stages gives your team a big buff and strong Strider minions in your waves for a few minutes.
 
@@ -144,6 +146,7 @@ The match runs as in the original game. The server uses the game's own data and 
 - **Loadouts:** your perk pages. Drag a Spiritstone onto the grid, then fill its sockets with Sparks from the *Sparks* tab, and click **Save**.
   - A page only counts in a match when every socket of its Spiritstone holds a matching Spark.
   - The **+** beside the page tabs buys another page, up to 10.
+- **Leaderboard:** the server's top 200 players with at least 50 games (the server's operator can change the number), ranked by wins, then by fewer games. Every match counts, practice and custom games too. The arrows show how a rank changed since the start of the day (UTC).
 - **Profile:** your career, recent history and all-time statistics.
 - **Wins** show on the trophy at the top right.
 
@@ -269,7 +272,7 @@ Your `Start-Client.exe` and the server must be the same release: **any differenc
 
 - The loot bag click after a win hasn't been confirmed in a real game yet. If you don't click the bag, the game returns to the main menu about 105 seconds after the end anyway.
 - Pause isn't available. Surrender isn't available in practice matches.
-- The minimap doesn't show jungle camp icons (only the parasite's).
+- The minimap has no respawn timers for the jungle camps; a cleared camp's icon just comes back at the respawn. Only the buff and Boar camps get the clock on the ground, and only when your team saw them cleared.
 - The bots follow rules partly reconstructed from the game's data, so their exact behaviour may differ from the original.
 - Some details of the original server had to be guessed. If something works differently from how you remember it, a report helps, especially with a video of the original.
 

@@ -862,7 +862,7 @@ func TestExecLauncher(t *testing.T) {
 	}{
 		{"finish", true, false, 0},
 		{"crash", false, false, 3},
-		{"hang", false, true, 1},
+		{"hang", false, true, killedExitCode},
 	} {
 		t.Run(c.mode, func(t *testing.T) {
 			prepared := 0

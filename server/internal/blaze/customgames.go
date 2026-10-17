@@ -570,11 +570,19 @@ func (s *Server) joinCustomGame(r *Request, hg *hostedGame) []byte {
 	return JoinGameReply(gid)
 }
 
-// customJoinCompleted completes player's join of custom game gid once its client reports the GMS connection
-// (updateMeshConnection CONNECTED to the dedicated server): NotifyPlayerJoinCompleted to every player, once.
-func (s *Server) customJoinCompleted(gid, player int64) {
+// hostedJoinCompleted completes player's join of hosted game gid once its client reports the GMS connection
+// (updateMeshConnection CONNECTED to the dedicated server): NotifyPlayerJoinCompleted to every player, once per join
+// (a rejoin completes again). B15 sent it for custom games only; since TEAMCHAT for every hosted game (practice,
+// matchmade, custom), as BlazeSDK's server does: the client's chat takes its team from it. The rooms manager's
+// game listener slot 11 (onPlayerJoinComplete, vtable 0x012B3760 -> 0x00AB15C0 -> 0x00AB1540) sets the local
+// player's team (+0xF0 = the player's team index) and joins TG-<game>-<team> (BlazeRoomsManager_UpdateTeamChatGroups
+// 0x00AAF220); without it +0xF0 stays unset and the team send (0x00AB1E50) drops every line. The other listeners on
+// the slot: cBlazeGameManager (0x00AC4AF0: for the local player it registers its game-report result handler, and it
+// logs and posts the "N Player in game" message), MatchInviteUI (0x004E7C40: drops the player from its pending
+// invites), the custom lobby's roster manager (0x006A11A0, custom games only); cGameEntryManager has none.
+func (s *Server) hostedJoinCompleted(gid, player int64) {
 	hg := s.hosted.get(gid)
-	if hg == nil || hg.custom == nil {
+	if hg == nil {
 		return
 	}
 	hg.mu.Lock()

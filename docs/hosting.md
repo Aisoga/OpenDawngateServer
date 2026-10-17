@@ -1,6 +1,6 @@
 # Hosting a server
 
-This guide is for whoever runs the server that other people play on. It uses the release's `Start-Server.exe`. To only play on your own PC you don't need it: `Start-Client.exe` runs a server on your PC by itself (**This PC** in the login screen's server list; the quick start in the [README](../README.md#quick-start)).
+This guide is for whoever runs the server that other people play on. It uses the release's `Start-Server.exe` on Windows, or `start-server` on Linux ([Linux server](#linux-server)). To only play on your own PC you don't need it: `Start-Client.exe` runs a server on your PC by itself (**This PC** in the login screen's server list; the quick start in the [README](../README.md#quick-start)).
 
 - [What the server is](#what-the-server-is)
 - [What you need](#what-you-need)
@@ -13,6 +13,7 @@ This guide is for whoever runs the server that other people play on. It uses the
 - [Backups](#backups)
 - [Logs](#logs)
 - [Security: what is protected and what isn't](#security-what-is-protected-and-what-isnt)
+- [Linux server](#linux-server)
 
 Every setting, command and port is listed in [reference.md](reference.md).
 
@@ -27,7 +28,7 @@ A match host has no window, graphics or sound. It needs about 100 MB of memory a
 
 ## What you need
 
-- A Windows 10 or 11 PC, 64-bit, that stays on while people play.
+- A Windows 10 or 11 PC, 64-bit, that stays on while people play. A Linux machine works too: see [Linux server](#linux-server).
 - `Dawngate.zip` from <https://archive.org/details/Dawngate> and the release zip.
 - About 5 GB of free disk space (about 3 GB on a PC that only hosts, see [A server that only hosts](#a-server-that-only-hosts)).
 
@@ -241,3 +242,141 @@ Accounts live in one database, `Dawngate-Data\data\accounts.db`, with `accounts.
 - **The control port, TCP 10040, has no login.** Never forward it.
 
 **With `tunnel = off`** (an option for developers), the game's own traffic isn't encrypted, including the password typed at login, and the server's plain ports listen on its address. Keep it to a network you trust.
+
+## Linux server
+
+The Linux release runs the same server on a 64-bit Linux machine, for example a rented server. Its match hosts run the game under Wine, so one Linux machine does everything; players still play with `Start-Client.exe` on Windows. Everything above applies, with `start-server` in place of `Start-Server.exe` and `/` in paths; this section covers what is different.
+
+### What you need on Linux
+
+- A 64-bit Linux machine with Wine and its 32-bit part. Debian 12 and Ubuntu 24.04 work with their own Wine packages.
+- The release's Linux archive (`Dawngate-Restoration-<version>-linux.tar.gz`) and `Dawngate.zip`.
+- About 3 GB of free disk space, plus 1.3 GB while `Dawngate.zip` is there. Each running match needs about 120 MB of memory and a tenth of one CPU core.
+
+Install Wine (Debian or Ubuntu):
+
+```sh
+sudo dpkg --add-architecture i386
+sudo apt update
+sudo apt install --no-install-recommends wine wine32 wine64
+```
+
+On other distributions, install Wine with its 32-bit (WoW64) support. The server needs no graphical desktop and no X server.
+
+### Setting it up on Linux
+
+1. Make a user for the server, and its folder:
+
+   ```sh
+   sudo useradd --system --create-home --home-dir /srv/dawngate --shell /usr/sbin/nologin dawngate
+   ```
+
+2. Unpack the archive into that folder, put `Dawngate.zip` next to `start-server`, and give the folder to the user:
+
+   ```sh
+   sudo tar xzf Dawngate-Restoration-<version>-linux.tar.gz -C /srv/dawngate --strip-components=1
+   sudo cp Dawngate.zip /srv/dawngate/
+   sudo chown -R dawngate:dawngate /srv/dawngate
+   ```
+
+3. Start it once in a terminal:
+
+   ```sh
+   cd /srv/dawngate
+   sudo -u dawngate ./start-server
+   ```
+
+   It asks who will play, as on Windows: **2** for your home network, **3** for the internet. It writes `Start-Server.ini`, checks Wine, makes the match hosts' Wine prefix (`Dawngate-Data/wine`, about half a minute), sets everything up in `Dawngate-Data` and starts the server. It shows the key fingerprint for your players. Press Ctrl+C to stop it.
+
+4. Run it as a service from now on (below), so it starts with the machine.
+
+If Wine or its 32-bit part is missing, `start-server` says what to install and starts nothing. `sudo -u dawngate ./start-server --check` reports what is missing without changing anything.
+
+`Dawngate-Data` is readable by the `dawngate` user only: it holds the accounts, the server's keys and the logs.
+
+### Running it as a service
+
+The archive includes `dawngate.service`, a systemd unit for the folder `/srv/dawngate`:
+
+```sh
+sudo cp /srv/dawngate/dawngate.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now dawngate
+```
+
+- `systemctl status dawngate` shows whether it runs, and `journalctl -u dawngate -f` shows what the window would show, including the key fingerprint.
+- `sudo systemctl stop dawngate` stops the server and ends its matches.
+- The unit runs the server as `dawngate` and gives it the right to use port 443 for the website, without running as root.
+- If your folder isn't `/srv/dawngate`, change the paths in the unit.
+
+Account commands work while the service runs. Run them as the server's user, for example:
+
+```sh
+cd /srv/dawngate
+sudo -u dawngate ./start-server --create-account alex
+sudo -u dawngate ./start-server --make-invite --invite-uses 5
+```
+
+### Ports and the firewall on Linux
+
+Players need one port, **TCP and UDP 42128**, and the website **TCP 443**. Nothing else of the server listens on the network: the control channel uses `127.0.0.1:10040`, and the match hosts use UDP 10042–10051 on `127.0.0.1`.
+
+Allow only those ports in the machine's firewall, and keep SSH open for yourself. With ufw:
+
+```sh
+sudo ufw default deny incoming
+sudo ufw allow OpenSSH
+sudo ufw allow 42128
+sudo ufw allow 443/tcp
+sudo ufw enable
+```
+
+Or with nftables, in `/etc/nftables.conf`:
+
+```
+table inet filter {
+  chain input {
+    type filter hook input priority 0; policy drop;
+    ct state established,related accept
+    iif "lo" accept
+    ip protocol icmp accept
+    ip6 nexthdr icmpv6 accept
+    tcp dport 22 accept
+    tcp dport { 443, 42128 } accept
+    udp dport 42128 accept
+  }
+}
+```
+
+**Never open TCP 10040 or UDP 10042–10051.** The control channel has no login, and the matches are meant to be reached only through the tunnel. If your firewall lists them as open, close them.
+
+With `tunnel = off` (an option for developers), the matches listen on every address of the server's network interface. Keep such a server on a network you trust.
+
+### Updating on Linux
+
+1. `sudo systemctl stop dawngate`
+2. Unpack the new archive over the folder and give it to the user again:
+
+   ```sh
+   sudo tar xzf Dawngate-Restoration-<new version>-linux.tar.gz -C /srv/dawngate --strip-components=1
+   sudo chown -R dawngate:dawngate /srv/dawngate
+   ```
+
+3. `sudo systemctl start dawngate`. The start checks the setup and brings the match hosts' copy up to date.
+
+`Start-Server.ini` and `Dawngate-Data` stay. Tell your players the new version, as on Windows ([Versions and updates](#versions-and-updates)).
+
+### Wine on Linux
+
+- `start-server` uses `wine` from the `PATH`. For another Wine, for example WineHQ's packages in `/opt/wine-stable`, set `wine = /opt/wine-stable/bin/wine` in `Start-Server.ini`.
+- The match hosts share one Wine prefix, `Dawngate-Data/wine`. If `WINEPREFIX` is set in the server's environment, that prefix is used instead. After a Wine upgrade, the next start checks the prefix again.
+- Wine never downloads anything for the server. `start-server` turns off Wine's offer to fetch Mono and Gecko, which the match hosts don't need.
+
+### In a container
+
+`start-server` runs in a container too, with the same Wine packages installed. Two things matter:
+
+- Start the container with host networking (`docker run --network host`). Behind Docker's port forwarding every player seems to come from one address, so the per-address limits and the sign-up limit would treat all players as one.
+- Start it with `--init`, so that Ctrl+C and `docker stop` reach `start-server` and the processes Wine leaves behind are cleaned up.
+
+Keep the server folder on the container's own file system or in a volume. Wine can't run the game from a folder shared from a Windows machine.

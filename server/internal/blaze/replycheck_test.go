@@ -30,6 +30,11 @@ func TestRepliesMatchClientMemberTables(t *testing.T) {
 		{"Blaze::Util::PostAuthResponse", PostAuthReply("127.0.0.1", 9988, acct.UserID)},
 		{"Blaze::Util::GetTelemetryServerResponse", TelemetryServerReply("127.0.0.1", 9988)},
 		{"Blaze::Entry::EnterServiceResponse", EnterServiceReply()},
+		// LBFIX: the leaderboard, the player report, the logout's selectCategoryUpdates
+		{"Blaze::Stats::LeaderboardStatValues", LeaderboardReply([]store.LeaderRow{{PersonaID: p.ID, Name: "player", Games: 5, Wins: 3, Shaper: 1001}}, 1)},
+		{"Blaze::Stats::LeaderboardStatValues", LeaderboardReply(nil, 1)},
+		{"Blaze::GpsContentController::FilePetitionResponse", FilePetitionReply("report-1")},
+		{"Blaze::Rooms::SelectCategoryUpdatesResponse", SelectCategoryUpdatesReply(0)},
 		// B5 part 2: the meta data up to the main menu (nil = an empty reply, all defaults)
 		{"Blaze::BattlegroundsAccounts::BGAMetagameGetCompleteAccountDataResponse", CompleteAccountDataReply(BasicData{BlazeID: p.ID, Level: 1}, nil, nil)},
 		{"Blaze::BattlegroundsAccounts::BGAMetagameGetBasicAccountDataResponse", BasicAccountDataReply([]BasicData{{BlazeID: p.ID, Level: 1}})},

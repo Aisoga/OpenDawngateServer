@@ -82,6 +82,9 @@ type ExecLauncher struct {
 	// Prepare runs once before the first launch (dgserver: create the launcher event the game
 	// needs, see launcherEvent). An error fails every launch.
 	Prepare func() error
+	// Runner (H4a, dgserver --gms-runner) runs Path: nil = Path itself (Windows), ["wine"] on Linux,
+	// where the host also gets its data folder as a Wine path (wine.go).
+	Runner []string
 
 	once    sync.Once
 	prepErr error
@@ -97,7 +100,7 @@ func (l *ExecLauncher) Launch(env Env) (Process, error) {
 	if l.prepErr != nil {
 		return nil, l.prepErr
 	}
-	cmd := exec.Command(l.Path, l.Args...)
+	cmd := l.command() // Path, or the runner with Path (wine.go)
 	cmd.Dir = l.Dir
 	if cmd.Dir == "" {
 		cmd.Dir = filepath.Dir(l.Path)
@@ -122,6 +125,7 @@ func (l *ExecLauncher) Launch(env Env) (Process, error) {
 	if l.Options != "" {
 		vars = append(vars, "DGGMS_OPTIONS="+l.Options)
 	}
+	vars = l.hostVars(vars)                 // under Wine: the data folder as a Wine path, Wine's defaults
 	cmd.Env = append(os.Environ(), vars...) // later entries win (exec dedups the environment)
 	if err := startInJob(cmd); err != nil { // H2b: the host dies with this process (job_windows.go)
 		if out != nil {
@@ -141,7 +145,7 @@ type execProcess struct {
 }
 
 func (p *execProcess) Pid() int    { return p.cmd.Process.Pid }
-func (p *execProcess) Kill() error { return p.cmd.Process.Kill() }
+func (p *execProcess) Kill() error { return killHost(p.cmd.Process) } // job_*.go
 
 func (p *execProcess) Wait() (int, error) {
 	p.once.Do(func() {

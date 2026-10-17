@@ -76,5 +76,6 @@ func SyntheticExe() []byte {
 	for _, f := range dataFolders {
 		put(f.va, wide(f.name))
 	}
+	put(preloadCount, preloadCountOrig)
 	return b
 }

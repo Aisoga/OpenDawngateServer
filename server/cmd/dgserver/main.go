@@ -31,7 +31,8 @@
 //	            docs/HOST_CONTROL.md), and NotifyGameSetup goes out once the host reports gameReady.
 //	            --gms-dir may also name gms_script.exe (C1b: the scripted GMS speaks the channel in host
 //	            mode; --gms-args "--script-a"). --gms-data gives each host a data folder of its own,
-//	            --gms-options its DGGMS_OPTIONS (run_session.ps1 -GmsHost).
+//	            --gms-options its DGGMS_OPTIONS (run_session.ps1 -GmsHost). Off Windows the hosts run
+//	            under Wine (--gms-runner, default auto: "wine"; H4a).
 //	agents      With --agent-key (roadmap H2): host machines running dgserver --agent register on the
 //	            control port with the shared key, and games may start their hosts there; HNET then
 //	            names that machine. --gms-control-bind puts the control port on a LAN address for them.
@@ -49,11 +50,11 @@
 //	    [--seconds N] [--data DIR] [--content FILE] [--owned all|starter] [--start-ec N] [--start-pc N]
 //	    [--ftue-required] [--perk-pages 10] [--print-ports]
 //	    [--gms-dir DIR [--gms-args "-multipleInstances"] [--gms-ports 10042-10051] [--gms-data DIR]
-//	    [--gms-options "key=value;..."] [--gms-warm N]]
+//	    [--gms-options "key=value;..."] [--gms-warm N] [--gms-runner auto|none|CMD]]
 //	    [--agent-key FILE] [--gms-control-bind 127.0.0.1] [--gms-control-port 10040]
 //	    [--gms-hello-timeout 30s] [--gms-ready-timeout 2m] [--gms-heartbeat-timeout 30s]
 //	    [--mm-team-size 5] [--mm-min-players 1] [--mm-fill-after 15s] [--mm-max-wait 0] [--mm-bots=false] [--mm-refuse]
-//	    [--custom-bots]
+//	    [--custom-bots] [--leaderboard-min-games 50]
 //	    [--kill-switches WalletTopUp] [--broadcast TEXT] [--broadcast-file FILE] [--broadcast-flags 4]
 //	bin\dgserver.exe --agent <server IP>:10040 --agent-key FILE --gms-dir DIR --host <this machine's IP>
 //	    [--public-host ADDR] [--gms-args ...] [--gms-ports 10042-10051] [--agent-name NAME] [--log DIR] [--seconds N]

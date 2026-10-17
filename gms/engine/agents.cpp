@@ -18,6 +18,7 @@
 #include "core/agents/minion_target.h"
 #include "core/agents/recall.h"
 #include "core/agents/reflex.h"
+#include "core/agents/tower_target.h"
 #include "core/bots/lanes.h"
 #include "bots.h"
 #include "director.h"
@@ -37,6 +38,7 @@ bool g_brainOk;       // AIConditions_Evaluate's prologue matched
 unsigned g_frame = 1;
 void* g_sim;
 gms::agents::ShaperHitLog g_shaperHits;  // MINTARGET: shaper-on-shaper hits (OnDamaged)
+gms::agents::ShaperHitHistory g_towerHits;  // TOWERAGGRO: shaper-on-shaper hits with the victim's position (OnDamaged)
 
 // AgentBehaviorTree_Tick's prologue (sub esp, 8; push esi; mov esi, [esp+0x10]).
 constexpr unsigned char kAgentTickBytes[] = {0x83, 0xEC, 0x08, 0x56, 0x8B, 0x74, 0x24, 0x10};
@@ -195,6 +197,18 @@ struct AgentState {
   unsigned long long fightSinceMs = 0;
   float fightMaxOwn = 0.f, fightMaxTarget = 0.f;
   const char* fightEndWhy = nullptr;
+  // MINPURSUE (gms/core/agents/minion_target.h MinionFollowCheck): a lane minion's running Pursue leaf: the object it
+  // follows (its best target when the leaf started; kFollowUnknown: none then), since when, from where, the farthest it
+  // walked from there and from its lane, why it ended
+  int followAggroType = -99;  // the aggro type, read when a Pursue leaf first starts (-99 not yet)
+  std::uint32_t followTarget = 0;
+  unsigned long long followSinceMs = 0;
+  float followStart[2] = {}, followStartLane = 0.f, followMaxWalk = 0.f, followMaxLane = 0.f;
+  const char* followEndWhy = nullptr;
+  // TOWERAGGRO (gms/core/agents/tower_target.h): -1 not known yet, 0 not under the rule, 1 a tower under it; its
+  // defended-against shapers
+  int towerRule = -1;
+  gms::agents::TowerDefend towerDefend;
 };
 std::unordered_map<std::uint32_t, AgentState> g_agents;  // by object id
 gms::agents::LeashGroupDrops g_leashDrops;                // LEASH: what a camp or a well's workers dropped together
@@ -234,6 +248,15 @@ struct Stats {
   // NPC got from home, the rule's drops by kind (own, chase, target, group), hits not taken onto the list, early updates
   unsigned fights[2] = {}, fightLogged = 0, classLogged = 0, workerClassLogged = 0, leashDrops[2][5] = {}, leashHitsSkipped[2] = {}, leashForced = 0, leashResets = 0;
   double fightSecondsSum[2] = {}, fightSecondsMax[2] = {}, fightOwnSum[2] = {}, fightOwnMax[2] = {};
+  // MINPURSUE: the lane minions' follows (Pursue leaves): how many, how long, how far walked and from the lane, how
+  // many over 40 units, the restarts by kind (not the best target, list empty, lane leash)
+  unsigned follows = 0, followsOver40 = 0, followLogged = 0, followResets[4] = {};
+  double followSecondsSum = 0, followSecondsMax = 0, followWalkSum = 0, followWalkMax = 0, followLaneSum = 0,
+         followLaneMax = 0;
+  // TOWERAGGRO: shaper-on-shaper hits recorded, defend locks begun and released (left the range, left the list),
+  // updates whose best target was a shaper while a non-player stood on the list (defended or not), tower log lines
+  unsigned towerHits = 0, towerLocks = 0, towerReleasedRange = 0, towerReleasedList = 0, towerShaperDefended = 0,
+           towerShaperOther = 0, towerUpdates = 0, towerLogged = 0;
 };
 Stats g_st;
 unsigned g_logLines;
@@ -359,6 +382,75 @@ bool SehSnapshot(void* o, Snapshot* s) {
 
 AgentState& StateOf(std::uint32_t id) { return g_agents[id]; }
 
+int SehAggroTypeOf(void* o);
+std::uint32_t SehBestTarget(void* agentPtr);
+
+// ---- MINPURSUE: a lane minion's follows (the Pursue leaf, nBehavior_Follow) -----------------------------------------
+
+constexpr std::uint32_t kFollowUnknown = 0xFFFFFFFFu;  // a Pursue leaf that started without a best target
+
+float LaneDistanceAt(const float* p) {
+  float d = 0.f;
+  return ::director::NearestLane(p[0], p[1], &d) != 0 ? d : 0.f;
+}
+
+// The farthest the follow got from where it began and from the lane, at its updates and its end.
+void FollowNote(AgentState& a, const float* pos) {
+  const float dx = pos[0] - a.followStart[0], dy = pos[1] - a.followStart[1], walk = std::sqrt(dx * dx + dy * dy);
+  if (walk > a.followMaxWalk) a.followMaxWalk = walk;
+  const float lane = LaneDistanceAt(pos);
+  if (lane > a.followMaxLane) a.followMaxLane = lane;
+}
+
+std::uint32_t SehBestOf(void* o) {
+  __try {
+    void* ag = Field<void*>(o, agent::kOfObject);
+    return ag ? GetBestTarget(ag) : 0u;
+  } __except (SehNote(GetExceptionInformation(), "GetBestTarget (follow)")) {
+    return 0;
+  }
+}
+
+// A lane minion entered the Pursue leaf: it follows its best target of this frame (the leaf's start took it).
+void FollowBegin(void* o, AgentState& a, const float* pos, unsigned long long nowMs) {
+  if (a.followAggroType == -99) a.followAggroType = SehAggroTypeOf(o);
+  if (a.followAggroType != gms::agents::kAggroMinion) return;
+  const std::uint32_t best = SehBestOf(o);
+  a.followTarget = best ? best : kFollowUnknown;
+  a.followSinceMs = nowMs;
+  a.followStart[0] = pos[0];
+  a.followStart[1] = pos[1];
+  a.followStartLane = a.followMaxLane = LaneDistanceAt(pos);
+  a.followMaxWalk = 0.f;
+  a.followEndWhy = nullptr;
+}
+
+// A follow ended (the leaf ended, or the rule restarted the default behavior): stats and the "minions: follow:" line.
+void FollowEnd(AgentState& a, std::uint32_t id, const float* pos, unsigned long long nowMs, const char* why) {
+  if (!a.followTarget) return;
+  FollowNote(a, pos);
+  const double secs = static_cast<double>(nowMs - a.followSinceMs) / 1000.0;
+  ++g_st.follows;
+  if (a.followMaxWalk > 40.f) ++g_st.followsOver40;
+  g_st.followSecondsSum += secs;
+  if (secs > g_st.followSecondsMax) g_st.followSecondsMax = secs;
+  g_st.followWalkSum += a.followMaxWalk;
+  if (a.followMaxWalk > g_st.followWalkMax) g_st.followWalkMax = a.followMaxWalk;
+  g_st.followLaneSum += a.followMaxLane;
+  if (a.followMaxLane > g_st.followLaneMax) g_st.followLaneMax = a.followMaxLane;
+  if (g_st.followLogged < static_cast<unsigned>(g_opt.minionWatchLogLimit) || a.followMaxWalk > 40.f) {
+    ++g_st.followLogged;
+    Log("minions: follow: %08X %s followed %08X %.1f s (t %.1f-%.1f s), %.1f units from where it began at most, "
+        "from %.1f to %.1f units from its lane (%.1f at most); ended: %s",
+        id, a.noun, a.followTarget, secs, static_cast<double>(a.followSinceMs) / 1000.0,
+        static_cast<double>(nowMs) / 1000.0, static_cast<double>(a.followMaxWalk),
+        static_cast<double>(a.followStartLane), static_cast<double>(LaneDistanceAt(pos)),
+        static_cast<double>(a.followMaxLane), why);
+  }
+  a.followTarget = 0;
+  a.followEndWhy = nullptr;
+}
+
 // After a tree tick: the leaf log, the death watch.
 void Observe(void* o, double now) {
   Snapshot s;
@@ -371,7 +463,11 @@ void Observe(void* o, double now) {
     if (LogBudget())
       Log("agents: %08X %s leaf %s -> %s (t %.2f s, hp %.1f, at (%.2f, %.2f))", s.id, s.noun, LeafName(a.leaf),
           LeafName(s.leaf), now, s.hp, s.pos[0], s.pos[1]);
-    if ((s.leaf == kLeafDeath || s.leaf == kLeafDeathAbility || s.leaf == kLeafDeathAbilityDefault) && a.deathAt < 0) {
+    const bool dying = s.leaf == kLeafDeath || s.leaf == kLeafDeathAbility || s.leaf == kLeafDeathAbilityDefault;
+    if (a.leaf == kLeafPursue && a.followTarget)  // MINPURSUE: the follow ended by itself (reached, the target gone, ...)
+      FollowEnd(a, s.id, s.pos, static_cast<unsigned long long>(now * 1000.0 + 0.5),
+                dying ? "the minion died" : "the leaf ended");
+    if (dying && a.deathAt < 0) {
       a.deathAt = now;
       std::memcpy(a.deathPos, s.pos, sizeof a.deathPos);
       if (s.leaf == kLeafDeath) ++g_st.deaths;
@@ -379,6 +475,9 @@ void Observe(void* o, double now) {
     }
     a.leaf = s.leaf;
   }
+  // MINPURSUE: a Pursue leaf without a follow record (new, or started again after the rule's restart)
+  if (s.leaf == kLeafPursue && !a.followTarget && !(s.hasHp && s.hp <= 0.f))
+    FollowBegin(o, a, s.pos, static_cast<unsigned long long>(now * 1000.0 + 0.5));
   if (a.deathAt >= 0 && !a.movedLogged) {
     const float dx = s.pos[0] - a.deathPos[0], dy = s.pos[1] - a.deathPos[1];
     if (dx * dx + dy * dy > 0.01f) {
@@ -700,6 +799,42 @@ void MinionChaseAfterUpdate(void* o, AgentState& st, const AgentInfo& a,
   (void)o;
 }
 
+bool SehResetDefaultBehavior(void* o);
+void SehSetTarget(void* o, std::uint32_t target);
+std::uint32_t SehRawTarget(void* o);
+
+// MINPURSUE: after a lane minion's aggro update, while its Pursue leaf runs: the follow's distances, and the rule
+// (gms/core/agents/minion_target.h MinionFollowCheck): a followed object that is no longer the best target, an empty
+// list, or the lane leash while following a shaper ends the follow: the follow target is cleared and the default
+// behavior restarted (request 0x400), so the tree decides again in this frame's tick.
+void MinionFollowAfterUpdate(void* o, AgentState& st, const AgentInfo& a,
+                             const std::vector<gms::agents::AggroCandidate>& cands, std::uint32_t best,
+                             unsigned long long nowMs) {
+  if (st.leaf != kLeafPursue || !st.followTarget) return;
+  FollowNote(st, a.self.pos);
+  if (a.self.hasHp && a.self.hp <= 0.f) return;
+  bool bestIsShaper = false, bestTaunting = false;
+  for (const auto& c : cands)
+    if (c.id == best) {
+      bestIsShaper = c.isPlayer;
+      bestTaunting = c.taunting;
+    }
+  bool onLane = false;
+  float laneDistance = 0.f;
+  const bool laneKnown =
+      SehOnLane(o, &onLane) && ::director::NearestLane(a.self.pos[0], a.self.pos[1], &laneDistance) != 0;
+  gms::agents::MinionFollowOptions fo = g_opt.minionFollow;
+  fo.laneLeash = g_opt.minionChase.laneLeash;
+  const int why = gms::agents::MinionFollowCheck(fo, st.followTarget, best, bestIsShaper, bestTaunting,
+                                                 laneKnown && onLane, laneDistance);
+  if (why == gms::agents::kFollowKeep) return;
+  const std::uint32_t followed = st.followTarget;
+  if (followed != kFollowUnknown && SehRawTarget(o) == followed) SehSetTarget(o, 0);
+  if (!SehResetDefaultBehavior(o)) return;
+  ++g_st.followResets[why];
+  FollowEnd(st, a.self.id, a.self.pos, nowMs, gms::agents::MinionFollowEndName(why));
+}
+
 // ---- LEASH: jungle creatures and well workers (gms/core/agents/leash.h) ---------------------------------------------
 
 float LeashDist(const float* a, const float* b) {
@@ -716,10 +851,6 @@ bool SehLeashHome(void* o, float* home, std::uint32_t* camp) {
     return false;
   }
 }
-
-bool SehResetDefaultBehavior(void* o);
-void SehSetTarget(void* o, std::uint32_t target);
-std::uint32_t SehRawTarget(void* o);
 
 // Which leash an agent has: a jungle creature (its spawn spot, its camp) or a well's worker (the well's platform). A
 // normal-type NPC is asked again at each update until the wells module knows it (a worker is registered right after its
@@ -892,6 +1023,80 @@ void LeashWatch(void* o, AgentState& st, unsigned long long nowMs) {
     st.nextUpdateMs = nowMs;
     ++g_st.leashForced;
   }
+}
+
+// ---- TOWERAGGRO: whom a tower shoots (gms/core/agents/tower_target.h) -------------------------------------------------
+
+int SehNpcType(void* o);
+constexpr int kTowerRuleSkipNpcType = 13;  // nNPCType: the Guardian (its gambits pick their own targets, NPCTARGET)
+
+bool TowerLogBudget() {
+  ++g_st.towerLogged;
+  return g_st.towerLogged <= static_cast<unsigned>(g_opt.towerLogLimit) || g_st.towerLogged % 50 == 0;
+}
+
+// Aggro type tower (Bindings, the Locus; nubs have aggro range 0), not the Guardian, and [host] tower_target on.
+bool TowerRuleApplies(void* o, AgentState& st, const AgentInfo& a) {
+  if (!g_opt.towerTarget.enabled || a.aggroType != gms::agents::kAggroTower || a.aggro <= 0.f) return false;
+  if (st.towerRule < 0) {
+    st.towerRule = SehNpcType(o) == kTowerRuleSkipNpcType ? 0 : 1;
+    if (st.towerRule && TowerLogBudget())
+      Log("towers: %08X %s: minions before shapers, a shaper that hits a shaper of team %d within %.1f stays the "
+          "target until it leaves %.1f (TOWERAGGRO)",
+          a.self.id, st.noun, a.self.team, static_cast<double>(a.aggro), static_cast<double>(a.aggro));
+  }
+  return st.towerRule == 1;
+}
+
+// The new hits since the tower's last update lock their attackers; a lock ends when its shaper left the list or the
+// tower's range; the candidates' defend flag is the lock.
+void TowerDefendUpdate(AgentState& st, const AgentInfo& a, std::vector<gms::agents::AggroCandidate>* cands,
+                       unsigned long long nowMs) {
+  gms::agents::TowerDefend& d = st.towerDefend;
+  const std::size_t before = d.locked.size();
+  d.Scan(g_towerHits, a.self.team, a.self.pos, a.self.radius, a.aggro, static_cast<std::int64_t>(nowMs));
+  for (std::size_t i = before; i < d.locked.size(); ++i) {
+    ++g_st.towerLocks;
+    float dist = -1.f;
+    for (const auto& c : *cands)
+      if (c.id == d.locked[i]) dist = c.distance;
+    if (TowerLogBudget())
+      Log("towers: %08X %s defends against %08X (it hit a shaper of team %d within %.1f; %s) (t %.2f s)", a.self.id,
+          st.noun, d.locked[i], a.self.team, static_cast<double>(a.aggro),
+          dist < 0.f ? "not on the list" : "on the list", static_cast<double>(nowMs) / 1000.0);
+  }
+  const auto released = d.Release(a.aggro, [cands](std::uint32_t id, float* dist) {
+    for (const auto& c : *cands)
+      if (c.id == id && c.isPlayer) {
+        *dist = c.distance;
+        return true;
+      }
+    return false;
+  });
+  for (std::uint32_t id : released) {
+    bool onList = false;
+    for (const auto& c : *cands) onList = onList || c.id == id;
+    ++(onList ? g_st.towerReleasedRange : g_st.towerReleasedList);
+    if (TowerLogBudget())
+      Log("towers: %08X %s no longer defends against %08X: %s (t %.2f s)", a.self.id, st.noun, id,
+          onList ? "it left the range" : "it left the list", static_cast<double>(nowMs) / 1000.0);
+  }
+  for (auto& c : *cands) c.defend = c.isPlayer && !c.taunting && d.Has(c.id);
+}
+
+// The check of the rule: a shaper as the best target while a non-player is on the list.
+void TowerAfterUpdate(AgentState& st, const std::vector<gms::agents::AggroCandidate>& cands, std::uint32_t best) {
+  ++g_st.towerUpdates;
+  bool bestShaper = false, bestDefend = false, nonPlayer = false;
+  for (const auto& c : cands) {
+    if (c.id == best) {
+      bestShaper = c.isPlayer;
+      bestDefend = c.defend || c.taunting;
+    }
+    nonPlayer = nonPlayer || !c.isPlayer;
+  }
+  if (bestShaper && nonPlayer) ++(bestDefend ? g_st.towerShaperDefended : g_st.towerShaperOther);
+  (void)st;
 }
 
 void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long nowMs) {
@@ -1093,6 +1298,9 @@ void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long now
                     cands.end());
       }
     }
+    // TOWERAGGRO: a tower's defended-against shapers, then the strict order (gms/core/agents/tower_target.h)
+    const bool towerRule = !selfDead && TowerRuleApplies(o, st, a);
+    if (towerRule) TowerDefendUpdate(st, a, &cands, nowMs);
     // order (the targeting priority, gms/core/agents/aggro.h); the entries are re-read (the adds appended theirs)
     std::vector<AggroEntry> now;
     bool readOk = SehReadAggro(a.agent, &now);
@@ -1105,7 +1313,7 @@ void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long now
       if (!SehWriteAggro(a.agent, now)) ++g_st.bbExceptions;
     }
     if (readOk && now.size() == cands.size() && now.size() > 1) {
-      gms::agents::OrderAggro(&cands, a.aggroType, gms::agents::kCallForHelpTimeMs, strict);
+      gms::agents::OrderAggro(&cands, a.aggroType, gms::agents::kCallForHelpTimeMs, strict || towerRule);
       std::vector<AggroEntry> ordered;
       ordered.reserve(now.size());
       bool moved = false;
@@ -1123,7 +1331,11 @@ void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long now
       }
     }
     best = SehBestTarget(a.agent);
-    if (a.aggroType == gms::agents::kAggroMinion) MinionChaseAfterUpdate(o, st, a, cands, best, nowMs);
+    if (towerRule) TowerAfterUpdate(st, cands, best);
+    if (a.aggroType == gms::agents::kAggroMinion) {
+      MinionChaseAfterUpdate(o, st, a, cands, best, nowMs);
+      MinionFollowAfterUpdate(o, st, a, cands, best, nowMs);  // MINPURSUE
+    }
     if (st.leashClass > 0) LeashAfterUpdate(o, st, a, best, nowMs);
     // the list after the update, logged when it changes
     std::string sig;
@@ -3195,6 +3407,9 @@ bool Install(const Options& options) {
       g_brainOk ? "" : " (prologue differs: off)", g_opt.logLimit, g_opt.botBrain, g_opt.botThinkMs,
       g_opt.keepNodeTimers, g_opt.respectCanInterrupt, g_opt.botPursuePoint, g_opt.objectiveOnSight,
       g_opt.npcConditionTarget, g_opt.npcLazyConditions, g_opt.npcRangeFallthrough);
+  Log("agents: a lane minion's follow ends when its object is no longer the best target (MINPURSUE) %d; towers: "
+      "minions before shapers, a shaper that hits a shaper in range kept until it leaves the range (TOWERAGGRO) %d",
+      g_opt.minionFollow.enabled ? 1 : 0, g_opt.towerTarget.enabled ? 1 : 0);
   return true;
 }
 
@@ -3229,6 +3444,7 @@ void Tick(void* sim, float dt) {
   const unsigned before = g_st.ticks;
   const bool blackboard = g_opt.blackboard && g_blackboardOk;
   const bool brain = g_opt.brain && g_brainOk && blackboard;  // the brain reads the best target the update keeps
+  g_towerHits.Expire(static_cast<std::int64_t>(nowMs), g_opt.towerTarget.keepHitsMs);  // TOWERAGGRO
   g_leashCalledNow.swap(g_leashForceGroups);  // LEASH: the groups called since the last frame
   g_leashForceGroups.clear();
   g_snapPlayers.clear();
@@ -3337,6 +3553,19 @@ void OnDamaged(void* victim, void* attacker, unsigned descLo, unsigned descHi, b
   // the victim's own list (AGENT_AI.md §6.3, [assumed]): the attacker, stamped with the victim as the source
   // MINTARGET: the lane minions' defend rule reads who hit which shaper last
   if (g_opt.minionTarget && v.player && at.player && g_sim) g_shaperHits.Record(at.id, v.id, static_cast<std::int64_t>(NowMs(g_sim)));
+  // TOWERAGGRO: the towers' defend rule reads who hit which shaper, and where that shaper stood
+  if (g_opt.towerTarget.enabled && v.player && at.player && g_sim) {
+    gms::agents::ShaperHit h;
+    h.attacker = at.id;
+    h.victim = v.id;
+    h.victimTeam = v.team;
+    h.pos[0] = v.pos[0];
+    h.pos[1] = v.pos[1];
+    h.radius = v.radius;
+    h.ms = static_cast<std::int64_t>(NowMs(g_sim));
+    g_towerHits.Record(h);
+    ++g_st.towerHits;
+  }
   // LEASH: a leashed attacker that hit its target is fighting, not chasing; a leashed victim beyond its own leash, or
   // hit from beyond its reach from the leash's edge, or by what its group just dropped, takes nobody onto its list and
   // calls nobody (else it turned back toward a target the next update drops again)
@@ -3565,12 +3794,31 @@ bool FormatMinionStats(char* buf, std::size_t size) {
                 "%u; MINTARGET shapers "
                 "dropped %u (beyond the leash %u), defended %u; chase rule %s: drops by the lane leash %u, by the chase "
                 "time %u, by the chase distance %u, ignored on sight %u; chases of shapers %u (mean %.1f s, longest %.1f s; farthest from the "
-                "lane: mean %.1f, max %.1f)",
+                "lane: mean %.1f, max %.1f); follow rule %s: follows %u (mean %.1f s, longest %.1f s; walked: mean "
+                "%.1f, max %.1f, over 40 units %u; farthest from the lane: mean %.1f, max %.1f), restarts: not the best "
+                "target %u, list empty %u, lane leash %u",
                 idleNow, g_st.watchMaxNow, g_st.watchEpisodes, g_st.watchRecovered, g_st.watchDiedIdle,
                 g_st.watchResets, g_st.minShaperDropped, g_st.minShaperLeash, g_st.minShaperDefend, g_opt.minionChase.enabled ? "on" : "off",
                 g_st.chaseDropLane, g_st.chaseDropTime, g_st.chaseDropDistance, g_st.chaseIgnored, g_st.chases,
                 g_st.chases ? g_st.chaseSecondsSum / g_st.chases : 0.0, g_st.chaseSecondsMax,
-                g_st.chases ? g_st.chaseLaneSum / g_st.chases : 0.0, g_st.chaseLaneMax);
+                g_st.chases ? g_st.chaseLaneSum / g_st.chases : 0.0, g_st.chaseLaneMax,
+                g_opt.minionFollow.enabled ? "on" : "off", g_st.follows,
+                g_st.follows ? g_st.followSecondsSum / g_st.follows : 0.0, g_st.followSecondsMax,
+                g_st.follows ? g_st.followWalkSum / g_st.follows : 0.0, g_st.followWalkMax, g_st.followsOver40,
+                g_st.follows ? g_st.followLaneSum / g_st.follows : 0.0, g_st.followLaneMax,
+                g_st.followResets[gms::agents::kFollowNotBest], g_st.followResets[gms::agents::kFollowListEmpty],
+                g_st.followResets[gms::agents::kFollowLaneLeash]);
+  return true;
+}
+
+bool FormatTowerStats(char* buf, std::size_t size) {
+  if (!g_installed || !size || !g_st.towerUpdates) return false;
+  std::snprintf(buf, size,
+                "rule %s: updates %u; shaper-on-shaper hits %u; defend locks %u, released: left the range %u, left "
+                "the list %u; a shaper as the best target with a non-player on the list: defended or taunting %u, "
+                "other %u",
+                g_opt.towerTarget.enabled ? "on" : "off", g_st.towerUpdates, g_st.towerHits, g_st.towerLocks,
+                g_st.towerReleasedRange, g_st.towerReleasedList, g_st.towerShaperDefended, g_st.towerShaperOther);
   return true;
 }
 

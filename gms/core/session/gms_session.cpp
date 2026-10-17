@@ -495,7 +495,10 @@ void GmsSession::AfterShaperSelect() {
   std::vector<Conn*> to;
   for (auto& kv : conns_) {
     Conn& c = *kv.second;
-    if (c.shaperSelect && !c.loading && !c.revealed && !c.superseded && c.sent >= kStepHello) to.push_back(&c);
+    // REJOINSS: from B6 on (a connection that comes after the reveal got it right after HelloPlayer before, and its
+    // client, still in the lobby, dropped the C0 02 loadouts: "HandleUserMessage [id=192] no handler registered";
+    // cPreDungeonState subscribes ids 64 and 71 at its entry)
+    if (c.shaperSelect && !c.loading && !c.revealed && !c.superseded && c.sent >= kStepPreGameFlow) to.push_back(&c);
   }
   const bool first = !revealed_;
   if (!first && to.empty()) return;

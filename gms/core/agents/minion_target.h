@@ -107,6 +107,42 @@ inline void UpdateChase(MinionChase* s, std::uint32_t best, bool bestIsShaper, c
   }
 }
 
+// MINPURSUE (the public server, 2026-10-16: minions wandered up to 85 units off their lane): a minion's Pursue leaf
+// (12, nBehavior_Follow) follows the object that was its best target when the leaf started, and ends only when it
+// reaches it (0.5) or the object dies; nothing in the behavior tree re-checks the leaf's own precondition while it
+// runs. So when the chase rule, MINTARGET or the prune drops the followed shaper, or a minion becomes the better
+// target, the minion walked on after the old object (LEASH found the same for creeps and workers). The rule: a lane
+// minion in the Pursue leaf gets its default behavior restarted (request 0x400) and its follow target cleared when the
+// followed object is no longer its best target, when its list is empty, or when it is beyond the lane leash while
+// following a shaper (a taunt holds). After the restart the tree decides again: Pursue anew on the new best target if
+// the brain's request is still out of range, else CombatIdle or Assault back to the lane.
+struct MinionFollowOptions {
+  bool enabled = true;
+  float laneLeash = 20.f;  // the minion's own distance from its lane (MINJUNGLE's minion_lane_leash)
+};
+
+enum MinionFollowEnd { kFollowKeep = 0, kFollowNotBest = 1, kFollowListEmpty = 2, kFollowLaneLeash = 3 };
+
+inline const char* MinionFollowEndName(int why) {
+  switch (why) {
+    case kFollowNotBest: return "no longer the best target";
+    case kFollowListEmpty: return "list empty";
+    case kFollowLaneLeash: return "lane leash";
+    default: return "kept";
+  }
+}
+
+// followed: the object the running Pursue leaf follows (0: unknown, nothing is done); best: the aggro list's best
+// target after the update; onLane/laneDistance: as for ShaperChaseCheck.
+inline int MinionFollowCheck(const MinionFollowOptions& o, std::uint32_t followed, std::uint32_t best,
+                             bool bestIsShaper, bool bestTaunting, bool onLane, float laneDistance) {
+  if (!o.enabled || !followed) return kFollowKeep;
+  if (!best) return kFollowListEmpty;
+  if (followed != best) return kFollowNotBest;
+  if (bestIsShaper && !bestTaunting && onLane && laneDistance > o.laneLeash) return kFollowLaneLeash;
+  return kFollowKeep;
+}
+
 // Recent shaper-on-shaper hits: victim id -> (attacker id, time of the hit).
 class ShaperHitLog {
  public:

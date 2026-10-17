@@ -1296,6 +1296,67 @@ int CampUpdate(void* sim, bool full, bool withFieldState, Bytes* out) {
 }
 
 namespace {
+// Copies `n` bytes of the server's camp list (under SEH); false on an exception.
+bool SehCopyCamps(const char* from, char* to, std::size_t n) {
+  __try {
+    std::memcpy(to, from, n);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "UI camp view")) {
+    return false;
+  }
+}
+}  // namespace
+
+int CampViewUpdate(void* sim, CampViewBuffer* view, int (*bitsOf)(std::uint32_t marker), bool full,
+                   bool withFieldState, Bytes* out) {
+  out->clear();
+  if (!g_ready || !view) return 0;
+  int count = 0;
+  char* camps = SehUiCamps(sim, &count);
+  if (!camps || count <= 0) return 0;
+  if (count > 32) count = 32;  // the mask is a u32
+  const std::size_t size = static_cast<std::size_t>(count) * kCampSize;
+  if (view->size() != size) {  // the first call: the whole entries, the field states as the engine set them up
+    view->assign(size, 0);
+    if (!SehCopyCamps(camps, view->data(), size)) {
+      view->clear();
+      return 0;
+    }
+  }
+  static unsigned char buf[256];
+  Bytes body;
+  std::uint32_t mask = 0;
+  int total = 0;
+  for (int i = 0; i < count; ++i) {
+    char* v = view->data() + i * kCampSize;
+    if (!SehCopyCamps(camps + i * kCampSize, v, camp::kFieldState)) return 0;  // mCampVisibleToTeam, mSpawnMarkerId
+    std::uint32_t marker = 0;
+    std::memcpy(&marker, v + camp::kSpawnMarkerId, 4);
+    if (bitsOf && marker) {
+      const int b = bitsOf(marker);
+      if (b >= 0) v[0] = static_cast<char>(b);
+    }
+    if (full && !marker) continue;
+    int written = 0;
+    const int n = UiBody(v, kCamp, v + camp::kFieldState, full, withFieldState, buf, sizeof buf, &written);
+    if (n < 0) {
+      Log("replication: UICreepCampUpdate (spectators) camp %d (%s) not written (%d: %s)", i, full ? "full" : "delta",
+          n, WriteError(n));
+      return n;
+    }
+    if (n == 0) continue;
+    mask |= 1u << i;
+    body.insert(body.end(), buf, buf + n);
+    total += written;
+  }
+  if (!mask) return 0;
+  out->push_back(gms::kGmsUICreepCampUpdate);
+  PutU32(*out, mask);
+  out->insert(out->end(), body.begin(), body.end());
+  return total;
+}
+
+namespace {
 void SehLogFow(int first, int last) {
   __try {
     void* t = g_types[kFow];

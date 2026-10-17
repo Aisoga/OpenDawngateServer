@@ -6,15 +6,18 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+#include "core/matchflow/camps.h"
 #include "core/matchflow/flow.h"
 #include "crowd.h"
 #include "game.h"
+#include "host/host.h"
 #include "log.h"
 
 using namespace game;
@@ -285,6 +288,15 @@ struct Camp {
   std::uint32_t recordId = 0;    // its +0x00
   flow::CampTimer timer;
   std::vector<std::uint32_t> members;
+  // CAMPICONS ([host] camp_icons=3): each team's knowledge of the camp (gms/core/matchflow/camps.h) and the truth the
+  // spectators get (gms::flow::CampTruthBits; -1 = nothing yet)
+  bool buffClass = false;  // a buff camp or the Boar camp: the 60-s reveal window (else the small camps' 10 s)
+  flow::CampKnowledge know;
+  int truthBits = -1;
+  // CAMPICONS step 2 ([host] camp_clock): each team's world clock (the effect object's id, 0 = none) and the respawn
+  // time it was made for (gms::flow::PlanCampClocks)
+  std::uint32_t clockId[2] = {0, 0};
+  double clockDue[2] = {-1.0, -1.0};
 };
 
 std::vector<Lane> g_lanes;
@@ -300,6 +312,14 @@ int g_camp_parasite = -1;
 std::uint32_t g_parasite = 0;
 bool g_parasiteBorn = false;  // PARAMAP: the parasite was seen born (HideHealthBar 0) once
 double g_lastSecond = -1.0;
+double g_now = 0.0;  // CAMPICONS: the last Tick's match seconds (a death between two ticks is dated by it)
+// CAMPICONS: the teams that see a point (the host's vision model, gms_host.cpp; nullptr = nobody's answer: no team)
+PointSightFn g_pointSight = nullptr;
+void* g_pointSightCtx = nullptr;
+// CAMPICONS step 2: [host] camp_clock (1: the world clock for a team that knows a 300-s respawn from its start; 0 off)
+// and the clocks' effect objects -> their team (the fog step shows each to its own team only: ClockTeamBits)
+int g_campClock = 1;
+std::map<std::uint32_t, int> g_clockTeam;
 double g_lastTrace = -1.0;
 std::vector<std::uint32_t> g_traced;  // the first wave's minions (one per spawner), followed in the lane trace
 
@@ -307,6 +327,7 @@ struct Stats {
   unsigned waves = 0, minions = 0, failed = 0, campSpawns = 0, creatures = 0, campClears = 0, members = 0;
   unsigned overrides = 0, resets = 0, parasiteStages = 0, exceptions = 0, laneEntries = 0, laneAssigned = 0;
   unsigned membersPruned = 0;
+  unsigned clocksCreated = 0, clocksDestroyed = 0, clockFails = 0;  // CAMPICONS step 2
 } g_st;
 
 void* g_director;  // sim +0x560
@@ -798,6 +819,108 @@ void TraceShapes(double t) {
   }
 }
 
+int SehSetCampIcon(void* sim, std::uint32_t marker, std::uint8_t bits);
+
+// CAMPICONS: mVisibleToTeam (object +0x888) of a living or dying object, its players' bits only (0x06); -1 if gone.
+int SehVisibleTo(std::uint32_t id) {
+  __try {
+    void* o = GetObjectById(id);
+    if (!o) return -1;
+    return Field<unsigned char>(o, kObjectVisibleToTeam) & 0x06;
+  } __except (SehNote(GetExceptionInformation(), "VisibleTo")) {
+    return -1;
+  }
+}
+
+bool KnowledgeMode(const Camp& c) { return g_opt.campIcons == 3 && !c.parasite; }
+
+// A Lua chunk on the server's lua_State under lua_pcall (the caller binds the server simulator); its string result
+// (or the error) into `out`.
+bool SehRunLua(void* sim, const char* chunk, const char* name, char* out, unsigned cap) {
+  __try {
+    out[0] = 0;
+    void* L = Field<void*>(static_cast<char*>(sim) + sim::kLua, luasim::kLuaState);
+    const int top = LuaGetTop(L);
+    int rc = LuaLoadBuffer(L, chunk, static_cast<unsigned>(std::strlen(chunk)), name);
+    if (rc == 0) rc = LuaPcall(L, 0, 1, 0);
+    const char* s = LuaToString(L, -1, nullptr);
+    if (s) {
+      unsigned k = 0;
+      for (; s[k] && k + 1 < cap; ++k) out[k] = s[k];
+      out[k] = 0;
+    }
+    LuaSetTop(L, top);
+    return rc == 0;
+  } __except (SehNote(GetExceptionInformation(), "RunLua")) {
+    return false;
+  }
+}
+
+// CAMPICONS step 2: the world clocks of a camp (gms::flow::PlanCampClocks): the shipped jungle_respawn_clock_effect
+// played at the camp marker with the knowing team (nEffect.CreateEffect makes a placeable effect object of that
+// team, LuaJobObjectWithGraphics, which the host replicates; ClockTeamBits keeps it to that team), destroyed at the
+// respawn (nEffect.DestroyEffect: 91 to its knowers).
+void UpdateClocks(Camp& c, double t) {
+  if (!g_campClock || !g_sim) return;
+  for (const flow::CampClockAction& a : flow::PlanCampClocks(c.know, t, c.clockDue)) {
+    const int i = a.team - 1;
+    char chunk[512], out[96];
+    if (!a.create) {
+      const std::uint32_t id = c.clockId[i];
+      std::snprintf(chunk, sizeof chunk,
+                    "local o = nUtil.ToGUID('0x%08X') if nGameObject.Exists(o) then nEffect.DestroyEffect(kObjIDNone, "
+                    "false, o) return 'destroyed' end return 'gone'",
+                    id);
+      const bool ok = id && SehRunLua(g_sim, chunk, "dgsim camp clock", out, sizeof out);
+      if (!ok) ++g_st.clockFails;
+      ++g_st.clocksDestroyed;
+      g_clockTeam.erase(id);
+      Log("director: camp clock %s (marker %u) at match %.2f s: team %d's clock %08X (to %.2f s) %s: %s", c.name.c_str(),
+          c.marker, t, a.team, id, a.dueAt, ok ? "ok" : "FAILED", out);
+      c.clockId[i] = 0;
+      c.clockDue[i] = -1.0;
+      continue;
+    }
+    std::snprintf(chunk, sizeof chunk,
+                  "local fx = nEffect.CreateEffect(true, nUtil.GetAsset('jungle_respawn_clock_effect.ServerEventDef'), "
+                  "kObjIDNone, nVector.create(%.3f, %.3f, %.3f), kZeroVector, kObjIDNone, %d, 0, kObjIDNone, "
+                  "kZeroVector, 0) return tostring(fx)",
+                  c.pos[0], c.pos[1], c.pos[2], a.team);
+    const bool ok = SehRunLua(g_sim, chunk, "dgsim camp clock", out, sizeof out);
+    const std::uint32_t id = ok ? static_cast<std::uint32_t>(std::strtoul(out, nullptr, 16)) : 0;
+    if (id) {
+      c.clockId[i] = id;
+      g_clockTeam[id] = a.team;
+      ++g_st.clocksCreated;
+    } else {
+      ++g_st.clockFails;
+    }
+    c.clockDue[i] = a.dueAt;  // also on a failure: no retry every second
+    Log("director: camp clock %s (marker %u) at match %.2f s: team %d's clock %08X at (%.1f, %.1f), runs to the "
+        "respawn at %.2f s (jungle_respawn_clock_effect, %.0f s) %s%s%s",
+        c.name.c_str(), c.marker, t, a.team, id, c.pos[0], c.pos[1], a.dueAt, flow::kCampClockLengthS,
+        id ? "ok" : "FAILED", id ? "" : ": ", id ? "" : out);
+  }
+}
+
+// CAMPICONS: one line per change of a team's knowledge (the camp_icons=3 lines), then the camp entry's new bits.
+void ApplyKnowledge(Camp& c, double t, const std::vector<flow::CampKnowledge::Change>& changes) {
+  for (const flow::CampKnowledge::Change& ch : changes) {
+    char known[48] = "no respawn time";
+    if (ch.knownRespawnAt >= 0.0) std::snprintf(known, sizeof known, "respawn known at %.2f s", ch.knownRespawnAt);
+    Log("director: camp knowledge %s (marker %u) at match %.2f s: team %d icon %s, %s (%s)", c.name.c_str(), c.marker,
+        t, ch.team, ch.icon ? "ON" : "off", known, ch.why);
+  }
+  UpdateClocks(c, t);
+  const int bits = c.know.Bits();
+  if (bits == c.iconBits) return;
+  const int old = g_sim ? SehSetCampIcon(g_sim, c.marker, static_cast<std::uint8_t>(bits)) : -1;
+  c.iconBits = bits;
+  Log("director: camp icon %s (marker %u) at match %.2f s: mCampVisibleToTeam 0x%02X -> 0x%02X (each team's "
+      "knowledge)%s",
+      c.name.c_str(), c.marker, t, old & 0xFF, bits, old < 0 ? "; NO UI CAMP ENTRY" : "");
+}
+
 void SpawnCamp(Camp& c, double t) {
   const flow::Composition comp = flow::CompositionOf(c.def.counts);
   int pruned = SehPruneMembers();
@@ -839,6 +962,10 @@ void SpawnCamp(Camp& c, double t) {
     }
   c.timer.OnSpawned();
   ++g_st.campSpawns;
+  if (KnowledgeMode(c)) {  // CAMPICONS: a spawn is public, every team gets the icon
+    c.truthBits = flow::CampTruthBits(true);
+    ApplyKnowledge(c, t, c.know.OnSpawned());
+  }
   if (c.parasite && !c.members.empty()) {
     g_parasite = c.members[0];
     SehSetParasiteId(g_parasite);
@@ -934,12 +1061,36 @@ float SehHideHealthBar(std::uint32_t id) {
   }
 }
 
+// CAMPICONS: what the teams see of a jungle camp now (its living members' mVisibleToTeam, its spot through the host's
+// vision model), then the known respawn times that came; and the truth for the spectators. Once a second.
+void ObserveCamp(Camp& c, double t) {
+  if (!c.know.Spawned()) return;  // nobody knows anything before the first (public) spawn
+  std::uint8_t seeAlive = 0;
+  bool alive = false;
+  for (std::uint32_t id : c.members) {
+    float hp = 0.f;
+    if (SehMemberState(id, &hp, nullptr, nullptr) != 1) continue;
+    alive = true;
+    const int v = SehVisibleTo(id);
+    if (v > 0) seeAlive = static_cast<std::uint8_t>(seeAlive | v);
+  }
+  const std::uint8_t seeSpot =
+      g_pointSight ? static_cast<std::uint8_t>(g_pointSight(g_pointSightCtx, c.pos[0], c.pos[1]) & 0x06) : 0;
+  const double respawnAt = !alive && !c.timer.Alive() ? c.timer.DueAt() : -1.0;
+  c.truthBits = flow::CampTruthBits(alive);
+  ApplyKnowledge(c, t, c.know.Observe(t, seeAlive, seeSpot, alive, respawnAt));
+}
+
 // PARAMAP: the camps' minimap icons (gms::flow::CampIconBits, [host] camp_icons): the parasite's camp shows its icon
 // while the parasite is alive and born (back at its resurrect; a new stage is followed by FollowParasite), the other
 // camps with camp_icons=2 while a member lives. Once a second, after FollowParasite.
 void UpdateCampIcons(double t) {
   if (!g_sim || g_opt.campIcons <= 0) return;
   for (Camp& c : g_camps) {
+    if (KnowledgeMode(c)) {
+      ObserveCamp(c, t);
+      continue;
+    }
     bool up = false;
     const char* why = "no living member";
     if (c.parasite) {
@@ -1047,7 +1198,17 @@ bool SehRegister(void* L, const char* ns, const LuaReg* regs, int n) {
 
 }  // namespace
 
-void Configure(const Options& o) { g_opt = o; }
+double g_revealBuffS = flow::kCampRevealBuffS, g_revealSmallS = flow::kCampRevealSmallS;  // CAMPICONS
+
+void Configure(const Options& o) {
+  g_opt = o;
+  // CAMPICONS: camp_icons is 3 by default (each team's knowledge), read here so the default holds whoever filled `o`
+  // (the option block in experiment.cpp still passes PARAMAP's 1 as its default)
+  g_opt.campIcons = HostOptionInt("camp_icons", 3);
+  g_revealBuffS = HostOptionInt("camp_reveal_buff_s", static_cast<int>(flow::kCampRevealBuffS));
+  g_revealSmallS = HostOptionInt("camp_reveal_small_s", static_cast<int>(flow::kCampRevealSmallS));
+  g_campClock = HostOptionInt("camp_clock", 1);
+}
 
 void RegisterLua(void* L, void* sim) {
   g_sim = sim;
@@ -1222,6 +1383,9 @@ bool OnLevelStarted(void* sim) {
       }
       c.record = SehFindCamp(c.marker, &c.recordId);
       c.timer.Init(def.delay, def.respawn);
+      // CAMPICONS: the buff camps and the Boar camp (the user, 2026-10-17: "Boar as buff") have the 60-s reveal window
+      c.buffClass = c.name.find("Buff") != std::string::npos || c.name.find("Boar") != std::string::npos;
+      c.know.Init(c.buffClass ? g_revealBuffS : g_revealSmallS);
       if (c.parasite) g_camp_parasite = static_cast<int>(g_camps.size());
       if (LogBudget())
         Log("director: %s %s (marker %u) at (%.1f, %.1f): %s, %zu creature markers, first %.0f s, respawn %.0f s%s, camp "
@@ -1257,6 +1421,7 @@ void OnMatchStarted() {
 
 void Tick(void* sim, double t) {
   g_sim = sim;
+  g_now = t;
   if (!g_levelOk || !g_started || g_stopped) return;
   if (g_opt.waves)
     while (g_waves.Due(t)) {
@@ -1289,6 +1454,73 @@ void Stop() {
   }
   g_groups.clear();
   g_stopped = true;
+}
+
+void OnObjectDied(std::uint32_t id) {
+  if (!g_levelOk || !g_started || g_stopped || !id) return;
+  for (Camp& c : g_camps) {
+    if (c.parasite || !c.timer.Alive()) continue;
+    if (std::find(c.members.begin(), c.members.end(), id) == c.members.end()) continue;
+    for (std::uint32_t m : c.members) {
+      if (m == id) continue;
+      float hp = 0.f;
+      if (SehMemberState(m, &hp, nullptr, nullptr) == 1) return;  // not the camp's last creature
+    }
+    // the camp's last creature: the camp is cleared now (CheckCamps' once-a-second check is the fallback for members
+    // gone without a death), and the teams that see it die witness the clear
+    const int seen = SehVisibleTo(id);
+    c.timer.OnCleared(g_now);
+    ++g_st.campClears;
+    if (LogBudget())
+      Log("director: camp %s (marker %u) cleared at match %.2f s by the death of %08X (seen by teams 0x%02X); respawn at "
+          "%.2f s",
+          c.name.c_str(), c.marker, g_now, id, seen < 0 ? 0 : seen, c.timer.DueAt());
+    if (KnowledgeMode(c)) {
+      c.truthBits = flow::CampTruthBits(false);
+      ApplyKnowledge(c, g_now, c.know.OnCleared(static_cast<std::uint8_t>(seen < 0 ? 0 : seen),
+                                                 g_opt.camps ? c.timer.DueAt() : -1.0));
+    }
+    return;
+  }
+}
+
+void SetPointSight(PointSightFn fn, void* ctx) {
+  g_pointSight = fn;
+  g_pointSightCtx = ctx;
+}
+
+int CampIconMode() { return g_opt.campIcons; }
+
+bool ClockTeamBits(std::uint32_t id, std::uint8_t* bits) {
+  if (g_clockTeam.empty()) return false;
+  auto it = g_clockTeam.find(id);
+  if (it == g_clockTeam.end()) return false;
+  *bits = static_cast<std::uint8_t>(1u << it->second);
+  return true;
+}
+
+int SpectatorCampBits(std::uint32_t marker) {
+  if (g_opt.campIcons != 3) return -1;
+  for (const Camp& c : g_camps)
+    if (c.marker == marker) return KnowledgeMode(c) ? c.truthBits : -1;
+  return -1;
+}
+
+std::vector<CampView> CampViews() {
+  std::vector<CampView> out;
+  for (const Camp& c : g_camps) {
+    if (c.parasite) continue;
+    CampView v;
+    v.marker = c.marker;
+    v.name = c.name;
+    std::memcpy(v.pos, c.pos, sizeof v.pos);
+    v.alive = c.timer.Alive();
+    v.respawnAt = c.timer.Alive() ? -1.0 : c.timer.DueAt();
+    v.knownRespawnAt[0] = c.know.KnownRespawnAt(1);
+    v.knownRespawnAt[1] = c.know.KnownRespawnAt(2);
+    out.push_back(v);
+  }
+  return out;
 }
 
 std::vector<std::uint32_t> IconCampMarkers() {
@@ -1377,10 +1609,11 @@ void FormatStats(char* buf, std::size_t size) {
   std::snprintf(buf, size,
                 "waves %u (next at %.0f s), minions %u (lane assigned %u, spawning %zu waves), creatures %u in %u camp "
                 "spawns (cleared %u, members %u, pruned %u), parasite %08X (stages %u), overrides %u/%u, failed %u, lane "
-                "table %u",
+                "table %u, camp clocks %u made / %u gone (%u failed)",
                 g_st.waves, g_waves.TimeOf(g_waves.next), g_st.minions, g_st.laneAssigned, g_groups.size(), g_st.creatures,
                 g_st.campSpawns, g_st.campClears, g_st.members, g_st.membersPruned, g_parasite, g_st.parasiteStages,
-                g_st.overrides, g_st.resets, g_st.failed, g_st.laneEntries);
+                g_st.overrides, g_st.resets, g_st.failed, g_st.laneEntries, g_st.clocksCreated, g_st.clocksDestroyed,
+                g_st.clockFails);
 }
 
 }  // namespace director

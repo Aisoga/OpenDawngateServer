@@ -20,8 +20,9 @@
 // Since G2 the host also serves the GMS port itself (gms_host.h): RakNet 4.081 bound to DGGMS_BIND (default
 // 127.0.0.1:10042; "off" = no endpoint, for runs where another process serves the GMS).
 // A second instance next to a client needs Dawngate.exe's -multipleInstances switch (main 0x006B2E20 creates the
-// mutex Global\Dawngate otherwise) and the launcher event Global\Dawngate L2G; whoever starts the host provides both
-// (run_session.ps1 -HostDir, dgserver C1).
+// mutex Global\Dawngate otherwise) and the launcher event Global\Dawngate L2G. The starter gives the switch
+// (run_session.ps1 -HostDir, dgserver C1); since H4a the host creates the event itself at DllMain time when nobody
+// holds it (under Wine the starter can't: [host] launcher_event, default 1).
 #pragma once
 
 #include <cstddef>

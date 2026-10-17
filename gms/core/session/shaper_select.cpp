@@ -81,7 +81,11 @@ PlayerGlobalValues RevealValues(const ShaperPick& p) {
 }
 
 ShaperSelect::ShaperSelect(const ShaperSelectConfig& config)
-    : timers_(config.timers), guard_(config.clientPhaseGuard), humanDefault_(config.humanDefault), rng_(config.seed) {
+    : timers_(config.timers),
+      guard_(config.clientPhaseGuard),
+      skinsHoldMs_(config.lateSkinsHoldMs),
+      humanDefault_(config.humanDefault),
+      rng_(config.seed) {
   for (const ShaperSelectPlayer& sp : config.players) {
     Player& p = players_[sp.gameplayIndex];
     p.team = sp.team;
@@ -118,6 +122,8 @@ void ShaperSelect::AddHuman(ConnId conn, uint8_t gameplayIndex, uint8_t team) {
   p.open = true;
   p.ready = false;  // a returning player's new client has no shaper select until its C8 02 (Q2)
   p.clientPhase = 1;  // a new client starts in phase 1 and follows our C8 01
+  p.uiUp = false;     // REJOINSS: a new client's shaper select movie isn't up before its C8 02
+  p.skinsHeld = false;
   p.knowsAll = true;  // until the session's SetKnown for the new client (G3a)
   p.knows.clear();
   if (p.content.list.empty()) {
@@ -344,12 +350,41 @@ void ShaperSelect::Lock(uint8_t index, bool answer, ISender& out) {
   p.rec.flags |= kRecordShaperLocked;
   SendRecord(index, out);
   if (!p.Receives()) return;
-  const std::vector<uint32_t> skins = p.content.SkinsFor(s);
-  out.Send(p.conn, BuildSkins(skins),
-           "shaper select: skins of " + NounText(s) + " (" + std::to_string(skins.size()) + ")");
+  SendSkins(p, false, out);  // its own lock-in, or a phase-1 timer seconds after its C8 02
   if (!answer) return;
   out.Send(p.conn, BuildShaperLockResult(s), "shaper select: lock answer " + NounText(s));
   ClientAhead(p, 2, "its lock-in answered");  // the answer takes the client into phase 2 by itself
+}
+
+// The player's skins (C8 0B: its locked shaper's default skin and its owned skins). REJOINSS: not to a client whose
+// shaper select movie may still be loading (its C8 02 came less than lateSkinsHoldMs ago and nothing else since):
+// C8 0B goes straight to ShaperSelect_RefreshSkins 0x0051E070, which calls through the movie's SkinData object
+// (ShaperSelect +0x16F8, set by ShaperSelect_OnMovieLoaded 0x00523850) unchecked, and crashed a rejoining client (access
+// violation at 0x0051E0A5). Held, they go out with the phase when its UI shows (ReleaseSkins).
+void ShaperSelect::SendSkins(Player& p, bool mayHold, ISender& out) {
+  if (mayHold && skinsHoldMs_ > 0 && !p.uiUp && now_ < p.readyAt + skinsHoldMs_) {
+    if (!p.skinsHeld)
+      Logf("%s    shaper select: player %u's skins wait for its client's shaper select UI (its C8 02 came %lld ms ago, "
+           "nothing since); no phase message to it until they go",
+           Clock().c_str(), p.rec.index, static_cast<long long>(now_ - p.readyAt));
+    p.skinsHeld = true;
+    return;
+  }
+  const std::vector<uint32_t> skins = p.content.SkinsFor(p.rec.shaper);
+  out.Send(p.conn, BuildSkins(skins),
+           "shaper select: skins of " + NounText(p.rec.shaper) + " (" + std::to_string(skins.size()) + ")");
+}
+
+// REJOINSS: the held skins, then the current phase (none went to the client while they were held).
+void ShaperSelect::ReleaseSkins(Player& p, const char* why, ISender& out) {
+  if (!p.skinsHeld) return;
+  p.skinsHeld = false;
+  Logf("%s    shaper select: player %u's held skins go now (%s)", Clock().c_str(), p.rec.index, why);
+  if (!p.Receives()) return;
+  const std::vector<uint32_t> skins = p.content.SkinsFor(p.rec.shaper);
+  out.Send(p.conn, BuildSkins(skins),
+           "shaper select: skins of " + NounText(p.rec.shaper) + " (" + std::to_string(skins.size()) + ")");
+  if (phase_ != 0 && (!guard_ || p.clientPhase <= phase_)) SendPhase(p.conn, false, out);
 }
 
 void ShaperSelect::Enter(int phase, int64_t at, int64_t now, ISender& out) {
@@ -459,7 +494,11 @@ void ShaperSelect::LockFollowerRoles(ISender& out) {
 }
 
 void ShaperSelect::Advance(int64_t now, ISender& out) {
+  now_ = now;
   if (phase_ == 0) return;
+  for (auto& kv : players_)  // REJOINSS: held skins whose client stayed silent go after lateSkinsHoldMs, before any
+    if (kv.second.skinsHeld && now >= kv.second.readyAt + skinsHoldMs_)  // phase change
+      ReleaseSkins(kv.second, "its C8 02 came lateSkinsHoldMs ago", out);
   const uint64_t t = static_cast<uint64_t>(now);
   for (bool again = true; again;) {
     again = false;
@@ -528,6 +567,8 @@ void ShaperSelect::OnReady(ConnId conn, int64_t serverMs, ISender& out) {
   }
   Advance(serverMs, out);
   p->ready = true;
+  p->readyAt = serverMs;  // REJOINSS: its shaper select movie loads from now on
+  p->uiUp = false;
   const uint8_t index = p->rec.index;
   out.Send(conn, BuildShaperList(p->content.list),
            "shaper select: list of player " + std::to_string(index) + " (" +
@@ -545,16 +586,19 @@ void ShaperSelect::OnReady(ConnId conn, int64_t serverMs, ISender& out) {
     for (const PerkPage& pg : p->content.pages) ids.push_back(pg.id);
     out.Send(conn, BuildPerkPages(ids), "shaper select: perk pages (" + std::to_string(ids.size()) + ")");
   }
-  if (p->rec.flags & kRecordShaperLocked) {
+  if ((p->rec.flags & kRecordShaperLocked) && phase_ >= 4 && skinsHoldMs_ > 0) {
+    // REJOINSS: a returning player's client after the reveal (a rejoin into the running game) gets no skins: no skin
+    // page follows (ShaperSelect_SetPhase 0x005201B0 reads them in phase 3 only), and at this moment its movie isn't up
+    Logf("%s    shaper select: player %u's client comes in phase %d: no skins (no skin page follows)", Clock().c_str(),
+         index, phase_);
+  } else if (p->rec.flags & kRecordShaperLocked) {
     // locked while this client had no shaper select (a late C8 02, a returning player): its skins before the phase,
-    // as C8 0B must come before phase 3 (Q2)
-    const std::vector<uint32_t> skins = p->content.SkinsFor(p->rec.shaper);
-    out.Send(conn, BuildSkins(skins),
-             "shaper select: skins of " + NounText(p->rec.shaper) + " (" + std::to_string(skins.size()) + ")");
+    // as C8 0B must come before phase 3 (Q2); REJOINSS: held until its UI is up, and the phase with them
+    SendSkins(*p, true, out);
   }
   if (phase_ == 0) {
     Enter(1, serverMs, serverMs, out);  // the first C8 02 starts phase 1 (and sends it to every ready client)
-  } else {
+  } else if (!p->skinsHeld) {
     SendPhase(conn, false, out);
   }
   Advance(serverMs, out);
@@ -572,6 +616,11 @@ void ShaperSelect::OnMessage(ConnId conn, const uint8_t* body, size_t n, int64_t
   Player& p = *pp;
   const uint8_t index = p.rec.index;
   const std::string what = std::string(ShaperRequestName(r.sub)) + " " + NounText(r.id);
+  if (r.sub != kShaperHello && r.sub != kShaperReady && !p.uiUp) {
+    // REJOINSS: ShaperSelect_Init sends only C8 01 and 02 before the movie loads; anything else comes from its UI
+    p.uiUp = true;
+    ReleaseSkins(p, "its client's UI is up: its first C8 after its C8 02", out);
+  }
   switch (r.sub) {
     case kShaperHello:
     case kShaperReady:  // the session hands C8 02 to OnReady

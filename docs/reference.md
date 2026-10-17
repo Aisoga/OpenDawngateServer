@@ -1,6 +1,6 @@
 # Reference
 
-Settings, commands, ports and limits of the release's two programs. For explanations, see [hosting.md](hosting.md) and [playing.md](playing.md).
+Settings, commands, ports and limits of the release's two programs. For explanations, see [hosting.md](hosting.md) and [playing.md](playing.md). The Linux server's `start-server` takes the same settings and options as `Start-Server.exe`; what differs is in [Linux](#linux).
 
 - [Start-Server.ini](#start-serverini)
 - [Start-Server.exe options](#start-serverexe-options)
@@ -8,6 +8,7 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 - [Extra server options (server_flags)](#extra-server-options-server_flags)
 - [The Dawngate-Data folder](#the-dawngate-data-folder)
 - [Ports](#ports)
+- [Linux](#linux)
 - [Limits](#limits)
 
 ## Start-Server.ini
@@ -33,6 +34,7 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 | `folder` | `Dawngate-Data` | Where the game copies, certificates, accounts and logs go: relative to the program's folder, or a full path. |
 | `zip` | empty | Where `Dawngate.zip` is, if it's not next to the program or in your Downloads folder. Only needed for setup and repairs. |
 | `server_flags` | empty | More server options, separated by spaces. See [below](#extra-server-options-server_flags). |
+| `wine` | empty | Linux only: the Wine program that runs the match hosts, for example `/opt/wine-stable/bin/wine`. Empty: `wine` from the `PATH`. |
 
 ## Start-Server.exe options
 
@@ -171,11 +173,13 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 | `--mm-max-wait <time>` | `0` (no limit) | The longest a player waits in the queue before being told it timed out. |
 | `--mm-bots=false` | on | Leave the empty seats of a queue match empty instead of filling them with bots. |
 | `--custom-bots` | off | Fill a custom game's empty seats with bots. |
+| `--leaderboard-min-games N` | `50` | The fewest games a player needs to appear on the Leaderboard (the screen says 50). Every game counts, practice and custom games included. |
 | `--kill-switches <names>` | `WalletTopUp` | Client features to switch off, comma-separated: `Matchmaking`, `WalletTopUp` (the add-funds button), `EUGameServers`, `PracticeSoloGames`, `FTUESoloGames`, `PurchaseWithWaypoints`, `PracticeGroupGames`, `CustomGames`, `ForwardRenderer`. `none` switches nothing off. |
 | `--broadcast <text>` | none | One announcement, in addition to `broadcast.txt`. |
 | `--broadcast-flags N` | `4` | Where announcements show by default (see [Announcements](hosting.md#announcements)). |
 | `--gms-ports <from>-<to>` | `10042-10051` | The match hosts' UDP ports, one per running match. |
 | `--gms-warm N` | `0` | Keep N idle match hosts ready, so a match starts instantly. Each holds a port and about 90 MB of memory. |
+| `--gms-runner auto\|none\|<command>` | `auto` | What starts the match hosts' `Dawngate.exe`: `auto` starts it directly on Windows and through `wine` on other systems, `none` always directly, or a command such as `/opt/wine-stable/bin/wine`. |
 | `--limits auto\|on\|off` | `auto` | The limits: `auto` turns them on for a public address. |
 | `--status-check <time>` | `5s` | How often the server rechecks logged-in accounts, so that a disabled account is taken out quickly. |
 
@@ -208,6 +212,23 @@ With the tunnel (the default) the server listens for players on one port, on its
 Nothing else listens, so a `Start-Client.exe` on the same PC uses the game's own ports on `127.0.0.1` (TCP 42127, 10041, 17502, 18080 and 9988, UDP 17502 and 10042–10051) without a collision. The server `Start-Client.exe` runs for This PC listens on `127.0.1.11` only: TCP and UDP 42128, TCP 10040 and its matches' UDP 10042–10051.
 
 With `tunnel = off` (an option for developers) the server listens on its address on TCP 42127 (the redirector, the client's first contact), 10041 (logins, menus, matchmaking and chat), 17502 (the connection-quality test, also UDP), 18080 (web content and the login screen's links) and 9988 (game telemetry), and the matches on UDP 10042–10051 there too.
+
+On Linux the matches listen on `127.0.0.1` (see [Linux](#linux)).
+
+## Linux
+
+The Linux release has one program, `start-server`, with `host/` beside it. It is `Start-Server.exe` for Linux: the same `Start-Server.ini`, options, account commands and `Dawngate-Data` folder. Setting it up is described in [Linux server](hosting.md#linux-server). The differences:
+
+| What | On Linux |
+|---|---|
+| Match hosts | Each runs the game under Wine, which needs its 32-bit part. The first start checks Wine and makes the hosts' Wine prefix, `Dawngate-Data/wine`, in about half a minute. If the environment sets `WINEPREFIX`, that prefix is used instead. Without Wine, `start-server` says what to install and starts nothing. |
+| Matches' ports | UDP 10042–10051 on `127.0.0.1`, whatever the address. Under Wine, `127.0.0.1` is the one loopback address a match host listens on exactly. |
+| Copy for playing | None. The game runs on Windows, so a Linux server is always a dedicated server: `dedicated` is always `yes`. |
+| `Dawngate-Data` | Readable by the server's user only. |
+| Stopping | Ctrl+C, or SIGTERM (`systemctl stop`, `docker stop`). Either ends the running matches and their hosts. |
+| `tunnel = off` | The matches listen on the server's address. Under Wine, that means every address of its network interface, so `address` must be the interface's main address. |
+
+`start-server` needs about 3 GB of disk space: the match hosts' copy (1.5 GB), the Wine prefix (1.3 GB) and the logs; `Dawngate.zip` (1.3 GB) is needed again only for repairs. Each running match needs about 120 MB of memory and 10 % of one CPU core.
 
 ## Limits
 

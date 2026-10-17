@@ -197,6 +197,10 @@ func (s *Setup) report(st Status, step, detail string) bool {
 	return !st.Bad()
 }
 
+// Report adds a step's line for a step a launcher runs itself (and the tests' stand-ins); false when it leaves the
+// setup incomplete.
+func (s *Setup) Report(st Status, step, detail string) bool { return s.report(st, step, detail) }
+
 // needs reports step as missing when a precondition failed (setup_all.py's needs).
 func (s *Setup) needs(step string, what ...string) bool {
 	return s.report(Missing, step, "needs "+strings.Join(what, ", "))

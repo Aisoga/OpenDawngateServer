@@ -414,10 +414,31 @@ struct LiveClientModel {
         break;
     }
   }
-  // The received messages without the ClockSync answers, as hex.
+  // TESTFLAKE: the received messages, with the echo of the client's clock-primed status (0x80, which it sends on the
+  // 5th ClockSync answer) put back before B6 when it came after it. The session sends B6 step-ms after that answer and
+  // the echo when the 0x80 arrives; nothing in the protocol orders the two (ReadyForPreGame waits for 5 answers only),
+  // and over loopback RakNet the client's 0x80 sometimes takes longer than a 50 ms step (live: the echo first).
+  std::vector<Bytes> InProtocolOrder() const {
+    std::vector<Bytes> r = received;
+    const auto b6 = std::find_if(r.begin(), r.end(), [](const Bytes& m) { return m[0] == gms::kGmsEnterPreGameFlow; });
+    if (b6 == r.end()) return r;
+    const auto primedEcho = [this](const Bytes& m) {
+      return m.size() >= 7 && m[0] == gms::kGmsLabsPlayerGlobalUpdate && m[1] == myIndex && m[2] == 0x13 &&
+             (gms::GetU32LE(&m[3]) & 0x80u) != 0;
+    };
+    if (std::any_of(r.begin(), b6, primedEcho)) return r;
+    const auto echo = std::find_if(b6 + 1, r.end(), primedEcho);
+    if (echo == r.end()) return r;
+    const Bytes e = *echo;
+    const auto at = b6 - r.begin();
+    r.erase(echo);
+    r.insert(r.begin() + at, e);
+    return r;
+  }
+  // The received messages without the ClockSync answers, as hex (InProtocolOrder).
   std::vector<std::string> Sequence() const {
     std::vector<std::string> s;
-    for (const Bytes& m : received)
+    for (const Bytes& m : InProtocolOrder())
       if (m[0] != gms::kGmsClockSync) s.push_back(gms::Hex(m, static_cast<size_t>(-1)));
     return s;
   }
@@ -425,7 +446,7 @@ struct LiveClientModel {
   std::vector<std::string> ShaperSequence() const {
     std::vector<std::string> s;
     int lastPhase = 0;
-    for (const Bytes& m : received) {
+    for (const Bytes& m : InProtocolOrder()) {
       if (m[0] == gms::kGmsClockSync) continue;
       if (m[0] == gms::kGmsShaperSelectMsgs && m.size() >= 14 && m[1] == gms::kShaperPhase) {
         const int p = static_cast<int>(gms::GetU32LE(&m[10]));
@@ -1231,6 +1252,9 @@ struct MultiRig {
   explicit MultiRig(uint32_t phaseMs, bool g3 = false, bool withShaperSelect = true,
                     const std::function<void(gms::SessionOptions&)>& tweak = nullptr) {
     match.config = TwoHumans(phaseMs);
+    // REJOINSS: a late client's skins wait for its UI (its first C8 after C8 02), which the fake clients never show
+    // by themselves; a short hold keeps the late paths' phases where the tests expect them
+    match.config.lateSkinsHoldMs = 50;
     match.joinOnHello = !g3;
     shaperSelect = withShaperSelect;
     gms::SessionOptions so;
@@ -1413,9 +1437,13 @@ GMS_TEST(SessionShaperSelectRejoinInEachPhase) {
     CHECK(b2.model.Has(0) && b2.model.recordsKnown == std::set<uint8_t>({0, 1}));
     // nothing of shaper select before its own (B6, C8 02), nothing after its C0 01
     CHECK_EQ(b2.model.shaperAfterLoad, 0);
-    // a shaper locked before it came back: its skins before its first phase message
+    // a shaper locked before it came back: its skins before its first phase message; REJOINSS: none after the reveal
+    // (no skin page follows; a C8 0B before its movie loaded crashed the real client)
     const int skins = b2.First("c80b"), phase = b2.First("c801");
-    if (p >= 2) CHECK(skins >= 0 && skins < phase);
+    if (p >= 2 && p < 4) CHECK(skins >= 0 && skins < phase);
+    if (p == 4) CHECK(skins < 0 && phase >= 0);
+    // REJOINSS: the reveal's updates (and C0 02) come after its B6, once its client's cPreDungeonState takes them
+    CHECK(b2.First("b6") >= 0 && b2.First("b6") < b2.First("a90131"));
     // the reveal's updates (members 0, 9, 16) and C0 01 reached the new connection, also after the reveal
     CHECK(b2.First("a90131") >= 0);
     CHECK(b2.Got(gms::BuildPreGame(gms::kPreGameLoad)));

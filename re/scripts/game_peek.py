@@ -50,6 +50,8 @@ Usage (64-bit Python from .venv; the game runs as the same user, no admin needed
   --all also lists the objects without a network component (the client's own level objects; ~7,000 lines).
   --vision (D2g-rest) adds the vision fields: vis = mVisibleToTeam, vr = mVisionRadius, grass s<server id>/c<the
   client's own id>@<server cell>, STEALTHED (mStealthed), IN-GRASS (mbInGrass).
+Since CAMPICONS a "camps" line: the client's camp list as 8D left it (each camp's spawn marker id and its
+mCampVisibleToTeam byte), so a live check reads which camp icons the minimap draws for the client's team.
 Exit code: 0 ok, 2 process not readable or no client simulator yet.
 """
 import argparse
@@ -321,6 +323,21 @@ def main():
     slot_states = struct.unpack('<16I', p.read(0x01542840, 64) or bytes(64))
     say(f'tower graphics: towers per lane {p.u8(0x01542889)} (the UI data has {p.u32(sim + 0xC930 + 0xD0)}), '
         f'slot states {list(slot_states)}')
+
+    # CAMPICONS: the client's camp list (cBattlegroundsUIData at sim +0xC930: +0x368 entries of 0x18 bytes, +0x36C
+    # count; +0 mCampVisibleToTeam, +4 mSpawnMarkerId), what 8D wrote: the minimap draws a camp's icon only while its
+    # byte has the local team's bit (GGMinimap_UpdateObjectIcon 0x005801F0)
+    camps, ncamps = p.u32(sim + 0xC930 + 0x368), p.u32(sim + 0xC930 + 0x36C)
+    if camps and 0 < ncamps <= 64:
+        parts = []
+        for i in range(ncamps):
+            raw = p.read(camps + i * 0x18, 8) or bytes(8)
+            bits, marker = raw[0], struct.unpack('<I', raw[4:8])[0]
+            if marker:
+                parts.append(f'{marker}:0x{bits:02x}')
+        say(f'camps (8D, mSpawnMarkerId:mCampVisibleToTeam; bit 0x02 Mortal, 0x04 Spirit): {" ".join(parts)}')
+    else:
+        say(f'camps: no camp list (0x{camps:08x}, count {ncamps})')
 
     ui = p.u32(0x0148DDB4)
     if ui:

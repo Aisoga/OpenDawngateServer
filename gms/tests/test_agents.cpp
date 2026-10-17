@@ -1,9 +1,11 @@
 // gms/core/agents (D1b-live): the aggro list's order (docs/AGENT_AI.md §6.3) and the battle-ready hysteresis.
+#include <string>
 #include <vector>
 
 #include "core/agents/aggro.h"
 #include "core/agents/leash.h"
 #include "core/agents/minion_target.h"
+#include "core/agents/tower_target.h"
 #include "tests/check.h"
 
 using gms::agents::AggroCandidate;
@@ -197,6 +199,124 @@ GMS_TEST(MinionTargetShaperHitLog) {
   CHECK(!log.Attacked(7, 10, 1500, 2500));
   log.Record(8, 9, 2000);                  // the latest hit replaces the earlier one
   CHECK(log.Attacked(8, 9, 2500, 2500) && !log.Attacked(7, 9, 2500, 2500));
+}
+
+// ---- MINPURSUE: a lane minion's Pursue leaf ends with its target ----
+
+GMS_TEST(MinionFollowCheck) {
+  using namespace gms::agents;
+  MinionFollowOptions o;  // lane leash 20
+  CHECK(MinionFollowCheck(o, 5, 5, true, false, true, 10.f) == kFollowKeep);
+  CHECK(MinionFollowCheck(o, 5, 7, false, false, true, 10.f) == kFollowNotBest);  // a minion became the best target
+  CHECK(MinionFollowCheck(o, 5, 7, true, false, true, 10.f) == kFollowNotBest);   // another shaper
+  CHECK(MinionFollowCheck(o, 5, 0, false, false, true, 10.f) == kFollowListEmpty);
+  CHECK(MinionFollowCheck(o, 5, 5, true, false, true, 21.f) == kFollowLaneLeash);  // a shaper, beyond the lane leash
+  CHECK(MinionFollowCheck(o, 5, 5, true, true, true, 40.f) == kFollowKeep);        // a taunt holds
+  CHECK(MinionFollowCheck(o, 5, 5, false, false, true, 40.f) == kFollowKeep);      // a minion or structure: no leash
+  CHECK(MinionFollowCheck(o, 5, 5, true, false, false, 40.f) == kFollowKeep);      // the lane's end: no band
+  CHECK(MinionFollowCheck(o, 0, 0, false, false, true, 10.f) == kFollowKeep);      // no follow known
+  CHECK(MinionFollowCheck(o, 0xFFFFFFFFu, 5, true, false, true, 1.f) == kFollowNotBest);  // started without a best
+  o.enabled = false;
+  CHECK(MinionFollowCheck(o, 5, 0, false, false, true, 40.f) == kFollowKeep);
+  CHECK(std::string(MinionFollowEndName(kFollowListEmpty)) == "list empty");
+}
+
+// ---- TOWERAGGRO: whom a tower shoots ----
+
+namespace {
+gms::agents::ShaperHit Hit(unsigned attacker, unsigned victim, int team, float x, float y, long long ms) {
+  gms::agents::ShaperHit h;
+  h.attacker = attacker;
+  h.victim = victim;
+  h.victimTeam = team;
+  h.pos[0] = x;
+  h.pos[1] = y;
+  h.radius = 1.f;
+  h.ms = ms;
+  return h;
+}
+}  // namespace
+
+GMS_TEST(TowerDefendTrigger) {
+  using namespace gms::agents;
+  const float tower[2] = {0.f, 0.f};
+  // a Binding: footprint 2.76, range 28; the victim's footprint 1: edge distance = centre - 3.76
+  CHECK(TowerDefendTrigger(Hit(9, 4, 1, 31.7f, 0.f, 0), 1, tower, 2.76f, 28.f));   // edge 27.94: within
+  CHECK(!TowerDefendTrigger(Hit(9, 4, 1, 31.8f, 0.f, 0), 1, tower, 2.76f, 28.f));  // edge 28.04: outside
+  CHECK(!TowerDefendTrigger(Hit(9, 4, 2, 5.f, 0.f, 0), 1, tower, 2.76f, 28.f));    // a shaper of the other team
+}
+
+GMS_TEST(TowerDefendLockUntilOutOfRange) {
+  using namespace gms::agents;
+  ShaperHitHistory hist;
+  TowerDefend d;
+  const float tower[2] = {0.f, 0.f};
+  hist.Record(Hit(9, 4, 1, 10.f, 0.f, 1000));  // enemy shaper 9 hits own shaper 4 under the tower
+  hist.Record(Hit(8, 4, 1, 40.f, 0.f, 1000));  // enemy shaper 8 hits it outside the range
+  hist.Record(Hit(4, 9, 2, 10.f, 0.f, 1000));  // the own shaper hits back: not a lock for this tower
+  CHECK(d.Scan(hist, 1, tower, 2.76f, 28.f, 1200) == 1);
+  CHECK(d.Has(9) && !d.Has(8) && !d.Has(4));
+  CHECK(d.Scan(hist, 1, tower, 2.76f, 28.f, 1700) == 0);  // the same hits aren't seen twice
+  hist.Record(Hit(6, 4, 1, 10.f, 0.f, 1700));            // a hit in the same millisecond as the last scan counts
+  CHECK(d.Scan(hist, 1, tower, 2.76f, 28.f, 1700) == 1 && d.Has(6));
+  d.locked.erase(d.locked.begin() + 1);
+  // the lock holds without new hits while 9 stays within 28 (here 27.9), long after any window
+  float dist9 = 27.9f;
+  auto onList = [&dist9](std::uint32_t id, float* dd) {
+    if (id != 9 || dist9 < 0.f) return false;
+    *dd = dist9;
+    return true;
+  };
+  CHECK(d.Release(28.f, onList).empty() && d.Has(9));
+  hist.Expire(60000, 2000);
+  CHECK(hist.Hits().empty());
+  CHECK(d.Scan(hist, 1, tower, 2.76f, 28.f, 60000) == 0 && d.Has(9));
+  dist9 = 28.1f;  // it left the range
+  CHECK(d.Release(28.f, onList) == std::vector<std::uint32_t>{9});
+  CHECK(!d.Has(9));
+  // a hit before a tower's first scan counts if it is recent (1 s), not otherwise
+  TowerDefend fresh, late;
+  ShaperHitHistory h2;
+  h2.Record(Hit(7, 4, 1, 5.f, 0.f, 5000));
+  CHECK(fresh.Scan(h2, 1, tower, 2.76f, 28.f, 5900) == 1);
+  CHECK(late.Scan(h2, 1, tower, 2.76f, 28.f, 6100) == 0);
+  // a lock whose shaper left the list (dead, hidden) ends
+  dist9 = -1.f;
+  d.locked.push_back(9);
+  CHECK(d.Release(28.f, onList).size() == 1 && d.locked.empty());
+}
+
+GMS_TEST(TowerOrderMinionsFirstUnlessDefended) {
+  using namespace gms::agents;
+  // the public server's case: a shaper first on a Binding's list (sticky, reported by a minion it hit) ahead of minions
+  AggroCandidate shaper = Cand(1, 5.f, 0);
+  shaper.isPlayer = true;
+  shaper.sticky = true;
+  shaper.otherReportAgeMs = 200;
+  AggroCandidate m1 = Cand(2, 20.f, 1), m2 = Cand(3, 12.f, 2);
+  std::vector<AggroCandidate> v = {shaper, m1, m2};
+  OrderAggro(&v, kAggroTower);  // the old order
+  CHECK(v[0].id == 1);
+  OrderAggro(&v, kAggroTower, kCallForHelpTimeMs, true);  // TOWERAGGRO: every non-player first, the nearer first
+  CHECK(Ids(v) == (std::vector<unsigned>{3, 2, 1}));
+  // stickiness only within a class: the sticky minion stays ahead of a nearer one
+  for (auto& c : v) c.sticky = c.id == 2;
+  OrderAggro(&v, kAggroTower, kCallForHelpTimeMs, true);
+  CHECK(Ids(v) == (std::vector<unsigned>{2, 3, 1}));
+  // a player's report (a shaper hit by it) doesn't lift it over minions either; the defend lock does
+  for (auto& c : v)
+    if (c.id == 1) c.playerReportAgeMs = 100;
+  OrderAggro(&v, kAggroTower, kCallForHelpTimeMs, true);
+  CHECK(v[2].id == 1);
+  for (auto& c : v) c.defend = c.id == 1;
+  OrderAggro(&v, kAggroTower, kCallForHelpTimeMs, true);
+  CHECK(v[0].id == 1);
+  // a taunt first of all
+  AggroCandidate t = Cand(4, 27.f, 3);
+  t.taunting = true;
+  v.push_back(t);
+  OrderAggro(&v, kAggroTower, kCallForHelpTimeMs, true);
+  CHECK(v[0].id == 4 && v[1].id == 1);
 }
 
 GMS_TEST(LeashOwnAndTarget) {

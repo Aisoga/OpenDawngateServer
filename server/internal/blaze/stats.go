@@ -12,6 +12,7 @@ import (
 const (
 	ComponentStats               = 7
 	CmdStatsGetStatGroup         = 0x04
+	CmdStatsGetLeaderboard       = 0x0C
 	CmdStatsGetKeyScopesMap      = 0x0F
 	CmdStatsGetStatsByGroupAsync = 0x10
 	NotifyStatsGetStatsAsync     = 0x32
@@ -47,6 +48,9 @@ func registerStats(s *Server) {
 	s.Register(ComponentStats, CmdStatsGetStatGroup, "getStatGroup", func(r *Request) []byte {
 		name, _ := r.Body.Str("NAME")
 		return StatGroupReply(name, StatGroups[name])
+	})
+	s.Register(ComponentStats, CmdStatsGetLeaderboard, "getLeaderboard", func(r *Request) []byte {
+		return r.leaderboard()
 	})
 	s.Register(ComponentStats, CmdStatsGetStatsByGroupAsync, "getStatsByGroupAsync", func(r *Request) []byte {
 		name, _ := r.Body.Str("NAME")

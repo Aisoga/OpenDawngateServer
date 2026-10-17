@@ -714,6 +714,7 @@ void Stats(unsigned now, bool histo) {
     if (agents::FormatMinionStats(ag, sizeof ag)) Log("stats minions: %s", ag);  // MINJUNGLE
     if (agents::FormatNpcStats(ag, sizeof ag)) Log("stats npc: %s", ag);          // NPCTARGET
     if (agents::FormatLeashStats(ag, sizeof ag)) Log("stats leash: %s", ag);      // LEASH
+    if (agents::FormatTowerStats(ag, sizeof ag)) Log("stats towers: %s", ag);     // TOWERAGGRO
   }
   if (g_damage && histo) {
     char dm[640];
@@ -963,6 +964,9 @@ void ReadConfig() {
     ao.minionChase.chaseDistance =
         static_cast<float>(HostOptionInt("minion_chase_distance", static_cast<int>(ao.minionChase.chaseDistance)));
     ao.minionChase.ignoreMs = HostOptionInt("minion_chase_ignore_ms", static_cast<int>(ao.minionChase.ignoreMs));
+    ao.minionFollow.enabled = HostOptionInt("minion_follow_reset", 1) != 0;  // MINPURSUE
+    ao.towerTarget.enabled = HostOptionInt("tower_target", 1) != 0;          // TOWERAGGRO
+    ao.towerLogLimit = HostOptionInt("tower_log_limit", ao.towerLogLimit);
     // LEASH: jungle creatures and well workers (gms/core/agents/leash.h)
     ao.creepLeash.ownLimit = static_cast<float>(HostOptionInt("creep_leash", 15));
     ao.creepLeash.enabled = ao.creepLeash.ownLimit > 0.f;
@@ -1029,7 +1033,7 @@ void ReadConfig() {
     HostOptionString("wave_shape_for_s", "40", v, sizeof v);
     mo.director.shapeForS = std::atof(v);
     mo.director.campMajorSpot = HostOptionInt("camp_major_spot", 1) != 0;  // D14: a buff major on its scale-2.0 marker
-    mo.director.campIcons = HostOptionInt("camp_icons", 1);  // PARAMAP: the parasite's minimap icon (2: every camp)
+    mo.director.campIcons = HostOptionInt("camp_icons", 3);  // CAMPICONS: each team's knowledge (director::Configure reads it too)
     crowd::Options co;  // D1k: NavPower's constraint solver for the server space
     co.constraintSolver = HostOptionInt("navpower_constraint_solver", 1) != 0;
     crowd::Configure(co);

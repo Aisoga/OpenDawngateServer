@@ -1582,6 +1582,19 @@ constexpr std::uintptr_t kCooldown2Next = 0x18;
 constexpr std::uintptr_t kMapBuckets = 0x04;
 constexpr std::uintptr_t kMapBucketCount = 0x08;
 }  // namespace container
+// MODCAP-live (the 32-modifier cap): the two adds to the container's id lists, thiscall
+// (container, instance id), ret 4. AbilityDataContainer_AddModifierInstance (0x00904CA0; its only caller
+// LabsAbilities_ActivateAbility 0x0090A390) asserts id != 0 (LabsAbilities.cpp 3088), size < 32 (3089) and that the
+// instance is a modifier (+4 == 1, 3090), then appends; AbilityDataContainer_AddAbilityInstance (0x00904AB0; caller
+// LabsAbilities_CreateAbilityInstance) the same for abilities (3072, 3073 size < 32, 3075 a dump of the list at exactly
+// 32, 3076 +4 == 0). A failed assert only logs (ShipLog_ReportAssertFailure returns, the code falls through): past 32
+// the id is always appended, the full inline buffer moved to the heap by VectorU32_InsertSlow (0x0097F4D0, doubling).
+// Prologues: push esi; push edi; mov edi, [esp+0xC] and push -1; mov eax, fs:[0] (no relative operands).
+constexpr std::uintptr_t kAddModifierInstance = 0x00904CA0;
+constexpr unsigned char kAddModifierInstanceBytes[] = {0x56, 0x57, 0x8B, 0x7C, 0x24, 0x0C};
+constexpr std::uintptr_t kAddAbilityInstance = 0x00904AB0;
+constexpr unsigned char kAddAbilityInstanceBytes[] = {0x6A, 0xFF, 0x64, 0xA1, 0x00, 0x00, 0x00, 0x00};
+using AddInstanceIdFn = void(__thiscall*)(void* container, std::uint32_t id);
 
 // --- the component pools and the container's release (D1j; docs/SERVER_MODE.md *The ability data containers (D1j)*) --
 // ComponentType_Register (0x0087F580, thiscall on its 0x34-byte descriptor, linked into the list at kComponentTypes):

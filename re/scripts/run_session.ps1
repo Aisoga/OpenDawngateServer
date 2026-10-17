@@ -629,6 +629,8 @@ function Get-StubSummary([string]$path) {
             if ($pending[$who]) { Count $reqs "$($pending[$who]) -> not answered" }
             $pending[$who] = "$($Matches[1]) cmd $($Matches[2])" + $(if ($Matches[3] -ne 'request') { " ($($Matches[3]))" } else { '' })
         }
+        # LBFIX: a request without a handler (or one that doesn't decode) gets an error reply from ServeConn itself
+        elseif ($pending[$who] -and $msg -match '^-> error reply \((no handler|request doesn.t decode); error (0x[0-9a-f]+)\)') { Count $reqs "$($pending[$who]) -> $($Matches[1]), error $($Matches[2])"; $pending[$who] = $null }
         elseif ($pending[$who] -and $msg -match '^-> (\w+) reply') { Count $reqs "$($pending[$who]) -> $($Matches[1])"; $pending[$who] = $null }
         # a refused request (a wrong password's login) is an error reply, not a missing one
         elseif ($pending[$who] -and $msg -match '^-> (\w+) error reply \(error (0x[0-9a-f]+)\)') { Count $reqs "$($pending[$who]) -> $($Matches[1]) error $($Matches[2])"; $pending[$who] = $null }

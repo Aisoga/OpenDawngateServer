@@ -99,6 +99,14 @@ struct ShaperSelectConfig {
   // No C8 01 of an earlier phase to a client that moved ahead by itself (Player::clientPhase); false = every repeat to
   // everyone, as before (the host's [host] shaper_phase_guard=0, to see the old behaviour).
   bool clientPhaseGuard = true;
+  // REJOINSS: how long a late client's skins (C8 0B: a returning player's or a late C8 02's, its shaper locked already)
+  // wait for its shaper select movie. ShaperSelect_HandleGmsMessage 0x00521B50 hands C8 0B to ShaperSelect_RefreshSkins
+  // 0x0051E070, which calls through the movie's SkinData object (+0x16F8) without a check; that object exists only once
+  // ShaperSelect_OnMovieLoaded 0x00523850 has run, after the client's C8 01/02 (ShaperSelect_Init sends them at once).
+  // So the skins (and the phase, which needs them in phase 3) wait until the client's first other C8 message (its UI is
+  // up) or this many ms after its C8 02; from phase 4 on none are sent (no skin page follows). 0 = the old behaviour:
+  // at once at its C8 02 (a C8 0B there crashed a rejoining client).
+  int lateSkinsHoldMs = 3000;
 };
 
 // A player's result (phase 4), in gameplay-index order.
@@ -167,6 +175,8 @@ class ShaperSelect {
   void SetKnown(ConnId conn, const std::vector<uint8_t>& indices);
   // The client's C8 02 (its records exist): its list, its team's records, its perk pages, its skins if its shaper is
   // locked already (a late C8 02 or a returning player, Q2), the current phase. Nothing goes to a connection before it.
+  // REJOINSS: such skins, and the phase with them, wait for the client's UI (ShaperSelectConfig::lateSkinsHoldMs);
+  // from phase 4 on (a rejoin into a running game) no skins go at all.
   void OnReady(ConnId conn, int64_t serverMs, ISender& out);
   // Any other client ShaperSelectMsgs body (after the wire byte).
   void OnMessage(ConnId conn, const uint8_t* body, size_t n, int64_t serverMs, ISender& out);
@@ -225,9 +235,16 @@ class ShaperSelect {
     int clientPhase = 1;
     const char* aheadWhy = "";
     int aheadLogged = 0;
+    // REJOINSS (ShaperSelectConfig::lateSkinsHoldMs): its client's UI is up (a C8 other than 01/02 came since its C8
+    // 02), when its C8 02 came, and whether its skins (and with them its phase messages) wait for that UI.
+    bool uiUp = false;
+    int64_t readyAt = 0;
+    bool skinsHeld = false;
     bool Acting() const { return !scripted && bound && !gone; }  // a connected human: acts for itself
     bool Receives() const { return Acting() && ready && open; }
-    bool TakesPhase(int phase, bool guard) const { return Receives() && (!guard || clientPhase <= phase); }
+    bool TakesPhase(int phase, bool guard) const {
+      return Receives() && !skinsHeld && (!guard || clientPhase <= phase);
+    }
     bool Knows(uint8_t index) const { return knowsAll || knows.count(index) != 0; }
   };
 
@@ -249,9 +266,13 @@ class ShaperSelect {
   void Refuse(uint8_t index, const char* what, const char* why) const;
   void ClientAhead(Player& p, int phase, const char* why);
   void LogClientAhead(Player& p);
+  void SendSkins(Player& p, bool mayHold, ISender& out);
+  void ReleaseSkins(Player& p, const char* why, ISender& out);
 
   ShaperSelectTimers timers_;
   bool guard_ = true;  // ShaperSelectConfig::clientPhaseGuard
+  int skinsHoldMs_ = 3000;  // ShaperSelectConfig::lateSkinsHoldMs
+  int64_t now_ = 0;         // the server ms of the latest call (Lock's skins compare against a C8 02's time)
   ShaperContent humanDefault_;
   std::map<uint8_t, Player> players_;  // by gameplay index (the order of every pass)
   std::mt19937 rng_;

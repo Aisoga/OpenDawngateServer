@@ -49,6 +49,7 @@ Because the game's own code and data run the match, every shaper, ability and it
 - It trusts a certificate authority made fresh for your PC, instead of EA's.
 - Its network sockets stay on the addresses it needs, and router port-opening (UPnP) is switched off.
 - It may use 4 GB of memory instead of 2 GB, so long matches don't run out.
+- It loads every player's shaper before a match, sounds included. The game loads only as many seats as the match has players, counted from the first seat, and the match host seats the second team from the sixth seat on, so without this change the second team's shapers made no ability sounds on the other players' PCs in a match of fewer than six players.
 
 **The tunnel** carries every connection to every server, the one on your own PC included. `Start-Client.exe` runs a small relay on the player's PC. The game connects to that relay, and the relay carries everything to the server over one encrypted port (TLS 1.3 for TCP, AES-GCM for UDP). The game's own 2014 security never leaves the player's PC. On the server's side the tunnel hands each connection to the server's services inside its own process, so the server needs no other port; its match hosts listen on a loopback address of their own, and the server and a player's relay can run on one PC.
 

@@ -240,8 +240,9 @@ func TestStartServerRefusals(t *testing.T) {
 func TestServerFlags(t *testing.T) {
 	l := setup.Layout{Root: `D:\x`}
 	got := strings.Join(ServerFlags(l, "192.168.1.20", true, []string{"--owned", "starter"}), " ")
-	for _, want := range []string{`--bind 192.168.1.20 --public-host 192.168.1.20`, `--certs D:\x\certs\192.168.1.20`,
-		`--gms-dir D:\x\host\Dawngate`, `--gms-args=-multipleInstances`, `--gms-control-bind 127.0.0.1`,
+	// the paths are joined with the running system's separator (a Linux build joins D:\x/certs/...)
+	for _, want := range []string{`--bind 192.168.1.20 --public-host 192.168.1.20`, `--certs ` + filepath.Join(l.Root, "certs", "192.168.1.20"),
+		`--gms-dir ` + filepath.Join(l.Root, "host", "Dawngate"), `--gms-args=-multipleInstances`, `--gms-control-bind 127.0.0.1`,
 		`--shaper-select --owned starter`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("no %q in %s", want, got)

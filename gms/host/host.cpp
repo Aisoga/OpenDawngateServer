@@ -329,6 +329,29 @@ bool FindOption(const char* key, char* out, std::size_t size) {
 
 char g_iniPath[MAX_PATH];
 
+// The launcher event (H4a): Dawngate.exe's main (0x006B2E20) opens Global\Dawngate L2G with OpenEventA and, if it
+// is missing, starts ..\launcher\Launcher.exe and exits with -1337. On Windows the starter holds it (dgserver's
+// gmshost.LauncherEvent, run_session.ps1); under Wine on Linux nobody can, since a named event lives in the Wine
+// server of the prefix, not in Linux. So the host creates it itself here, at DllMain time, before the game's main
+// runs (PhysXLoader.dll is a static import of the exe), and keeps the handle for the process's lifetime. If the
+// starter already holds it, CreateEventW opens that same event (ERROR_ALREADY_EXISTS). [host] launcher_event=0
+// turns this off (then the starter must provide it, as before H4a).
+HANDLE g_launcherEvent;
+
+void LauncherEventInstall() {
+  SetLastError(0);
+  g_launcherEvent = CreateEventW(nullptr, TRUE, FALSE, L"Global\\Dawngate L2G");  // manual reset, as the starters
+  const DWORD err = GetLastError();
+  if (!g_launcherEvent)
+    Log("host: launcher event Global\\Dawngate L2G: CreateEventW failed (error %lu); the game will start its launcher "
+        "and exit with -1337 unless the starter holds the event", err);
+  else
+    Log("host: launcher event Global\\Dawngate L2G %s", err == ERROR_ALREADY_EXISTS
+                                                          ? "already held by the starter (opened)"
+                                                          : "created by the host (nobody held it: no starter event, "
+                                                            "e.g. under Wine)");
+}
+
 }  // namespace
 
 int HostOptionInt(const char* key, int def) {
@@ -383,6 +406,7 @@ void HostInstall(const char* ini) {
     bool ok = Hook("SHELL32.dll", "SHGetFolderPathW", &SHGetFolderPathWHook, &g_getFolder);
     Log("host: folder redirect %s (per-user folders -> %s)", ok ? "installed" : "FAILED", g_host.dataDir);
   }
+  if (HostOptionInt("launcher_event", 1) != 0) LauncherEventInstall();
   HeadlessInstall();  // H1-live: stage 2's start-up changes (headless.h), each behind its [host] key
   HostMark("hooks installed");
 }

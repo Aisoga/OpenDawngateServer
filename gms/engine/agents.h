@@ -61,6 +61,7 @@
 
 #include "core/agents/leash.h"
 #include "core/agents/minion_target.h"
+#include "core/agents/tower_target.h"
 
 namespace agents {
 
@@ -117,6 +118,16 @@ struct Options {
   // minion_chase (1; 0 = MINTARGET's rules only), minion_chase_distance (20), minion_chase_ms (3000),
   // minion_chase_min_move (6), minion_lane_leash (20), minion_chase_ignore_ms (4000)
   gms::agents::MinionChaseOptions minionChase;
+  // MINPURSUE: a lane minion's Pursue leaf ends (default behavior restarted, follow target cleared) when the followed
+  // object is no longer its best target, its list is empty, or it is beyond minion_lane_leash following a shaper:
+  // [host] minion_follow_reset (1; 0 = the follow runs on until it reaches its object or the object dies)
+  gms::agents::MinionFollowOptions minionFollow;
+  // TOWERAGGRO (gms/core/agents/tower_target.h): towers (aggro type tower, not the Guardian) take a taunt, then a
+  // shaper that hit a shaper of their team within their range until it leaves that range, then every non-player before
+  // every shaper (stickiness and reports only within a class): [host] tower_target (1; 0 = the old order),
+  // tower_log_limit (300, the "towers:" lines)
+  gms::agents::TowerTargetOptions towerTarget;
+  int towerLogLimit = 300;
   // LEASH: how far jungle creatures and well workers follow a target from home (gms/core/agents/leash.h). Creeps:
   // home = their spawn spot (object +0x5C), group = their camp (+0x50); [host] creep_leash (15; 0 = off, the tether
   // only), creep_leash_reach (4), creep_leash_home (6). Workers: home = their well's centre, the own limit = the
@@ -170,5 +181,8 @@ bool FormatMinionStats(char* buf, std::size_t size);
 // LEASH: "creeps: fights N (mean N s, longest N s; farthest from home mean N, max N), drops ..." for the
 // "stats leash:" line; false before the first fight of a creep or a worker.
 bool FormatLeashStats(char* buf, std::size_t size);
+// TOWERAGGRO: "rule on: updates N; shaper-on-shaper hits N; defend locks N, ..." for the "stats towers:" line; false
+// before a tower's first update under the rule.
+bool FormatTowerStats(char* buf, std::size_t size);
 
 }  // namespace agents

@@ -57,6 +57,8 @@ type config struct {
 	gmsDir, gmsArgs, gmsPorts string
 	// C1b: the hosts' data folders (--gms-data: <dir>\<match>, DGGMS_DATA) and DGGMS_OPTIONS (--gms-options)
 	gmsData, gmsOptions string
+	// H4a: what runs the hosts' Dawngate.exe (--gms-runner: auto = the exe itself on Windows, wine elsewhere for a .exe)
+	gmsRunner string
 	// H1-live: idle hosts kept ready (--gms-warm; 0 = a host per game, started on demand)
 	gmsWarm        int
 	gmsControlPort int
@@ -74,6 +76,7 @@ type config struct {
 	mmRefuse             bool               // B10b test aid: refuse every startMatchmaking
 	testLoginErrors      []uint16           // test aid: the n-th login's error reply (--test-login-errors)
 	mmBots               bool               // B10d: bots in a matchmade game's open seats (--mm-bots, on by default)
+	leaderboardMinGames  int                // LBFIX: the fewest games for the Leaderboard (--leaderboard-min-games)
 	customBots           bool               // B15: bots in a custom game's open seats (--custom-bots)
 	shaperSelect         blaze.ShaperSelect // D3-live step 4: --shaper-select, --free-rotation, --shaper-timers
 	// B14: the kill switches every login gets (--kill-switches), a broadcast message from the command line
@@ -260,6 +263,7 @@ func startHosts(cfg config, log *logging.Log) (*gmshost.Manager, string, error) 
 	mc := gmshost.Config{Log: log, BindHost: cfg.hostsBind(), GMSHost: cfg.gmsBind,
 		HelloTimeout: cfg.gmsTimeouts[0], ReadyTimeout: cfg.gmsTimeouts[1], HeartbeatTimeout: cfg.gmsTimeouts[2]}
 	var notes []string
+	runner := ""
 	if cfg.gmsDir != "" {
 		exe, err := gmshost.ResolveExe(cfg.gmsDir)
 		if err != nil {
@@ -271,10 +275,13 @@ func startHosts(cfg config, log *logging.Log) (*gmshost.Manager, string, error) 
 		}
 		mc.Pool = gmshost.NewPool(first, last)
 		mc.Launcher = &gmshost.ExecLauncher{Path: exe, Args: strings.Fields(cfg.gmsArgs), Prepare: prepareHosts,
-			DataDir: cfg.gmsData, Options: cfg.gmsOptions}
+			DataDir: cfg.gmsData, Options: cfg.gmsOptions, Runner: gmshost.RunnerFor(cfg.gmsRunner, exe)}
 		notes = append(notes, fmt.Sprintf("match hosts %s %s, ports %d-%d", exe, cfg.gmsArgs, first, last))
+		if r := gmshost.RunnerFor(cfg.gmsRunner, exe); len(r) > 0 {
+			runner = ", hosts run by " + strings.Join(r, " ") // H4a: under Wine off Windows
+		}
 		if cfg.gmsData != "" {
-			notes = append(notes, `host data `+cfg.gmsData+`\<match>`)
+			notes = append(notes, "host data "+filepath.Join(cfg.gmsData, "<match>"))
 		}
 		if cfg.gmsOptions != "" {
 			notes = append(notes, "host options "+cfg.gmsOptions)
@@ -300,7 +307,7 @@ func startHosts(cfg config, log *logging.Log) (*gmshost.Manager, string, error) 
 		return nil, "", err
 	}
 	m.FillWarm() // H1-live: start the warm hosts (--gms-warm)
-	return m, strings.Join(notes, ", ") + ", control " + m.Addr(), nil
+	return m, strings.Join(notes, ", ") + ", control " + m.Addr() + runner, nil
 }
 
 // agentInstance is dgserver in agent mode (H2): only the agent runs.
@@ -346,7 +353,7 @@ func startAgent(cfg config) (*agentInstance, error) {
 	}
 	ag := &gmshost.Agent{Server: cfg.agent, Key: key, Name: name, BindHost: cfg.bind, PublicHost: public, Ports: cfg.gmsPorts,
 		Build: "dgserver", Launcher: &gmshost.ExecLauncher{Path: exe, Args: strings.Fields(cfg.gmsArgs), Prepare: prepareHosts,
-			DataDir: cfg.gmsData, Options: cfg.gmsOptions}}
+			DataDir: cfg.gmsData, Options: cfg.gmsOptions, Runner: gmshost.RunnerFor(cfg.gmsRunner, exe)}}
 	if err := ag.Check(); err != nil {
 		return nil, err
 	}
@@ -562,6 +569,7 @@ func start(cfg config) (*instance, error) {
 	bz.TestLoginErrors = cfg.testLoginErrors
 	bz.Accounts = cfg.accounts
 	bz.MMBots = cfg.mmBots
+	bz.LeaderboardMinGames = cfg.leaderboardMinGames
 	bz.CustomBots = cfg.customBots
 	bz.ShaperSelect = cfg.shaperSelect
 	bz.KillSwitches = cfg.killSwitches
@@ -954,6 +962,7 @@ func Run(args []string, h Hooks) int {
 	fs.StringVar(&cfg.gmsPorts, "gms-ports", gmshost.DefaultPorts, "UDP port pool of the match hosts (one per running match)")
 	fs.StringVar(&cfg.gmsData, "gms-data", "", `give each match host its own data folder <dir>\<match id> (DGGMS_DATA: its dgsim.log, AppData, Documents; its stdout in stdout.txt there); default: the DLL's <game dir>\host\<match id>`)
 	fs.IntVar(&cfg.gmsWarm, "gms-warm", 0, "keep this many idle match hosts ready on this machine (H1-live warm pool; each holds a port of --gms-ports); 0 = start a host per game")
+	fs.StringVar(&cfg.gmsRunner, "gms-runner", "auto", `what runs the match hosts' Dawngate.exe: "auto" (the exe itself on Windows, "wine" elsewhere for a .exe), "none", or a command line such as "/opt/wine-stable/bin/wine"`)
 	fs.StringVar(&cfg.gmsOptions, "gms-options", "", `DGGMS_OPTIONS for the match hosts: "key=value;..." over the host copy's dgsim.ini [host] keys (development runs)`)
 	fs.IntVar(&cfg.gmsControlPort, "gms-control-port", gmshost.DefaultControlPort, "TCP port of the control channel the match hosts (and agents) dial (JSON Lines)")
 	fs.StringVar(&cfg.gmsControlBind, "gms-control-bind", "127.0.0.1", "IPv4 address the control port binds; a LAN address only for agents on other machines (needs --agent-key; H2)")
@@ -987,6 +996,7 @@ func Run(args []string, h Hooks) int {
 	testLoginErrors := fs.String("test-login-errors", "", "test aid: comma-separated 16-bit error codes (hex 0x.. or decimal); the n-th login gets the n-th as its error reply (0 = answered as usual), later logins are answered as usual; e.g. 0x0C,0x4072,0")
 	fs.BoolVar(&cfg.mmRefuse, "mm-refuse", false, "PvP matchmaking test aid: refuse every startMatchmaking (GAMEMANAGER_ERR_INVALID_MATCHMAKING_CRITERIA)")
 	fs.BoolVar(&cfg.mmBots, "mm-bots", true, "PvP matchmaking with match hosts: a game that starts with open seats (after --mm-fill-after) gets bots in them, up to --mm-team-size a team (B10d); --mm-bots=false leaves them empty")
+	fs.IntVar(&cfg.leaderboardMinGames, "leaderboard-min-games", blaze.LeaderboardMinGames, "the main menu's Leaderboard lists the accounts with at least this many games (the screen says 50)")
 	fs.BoolVar(&cfg.customBots, "custom-bots", false, "custom games with match hosts: bots fill the open seats when the game starts (B15; off: only the lobby's players)")
 	fs.BoolVar(&cfg.shaperSelect.On, "shaper-select", false, "match hosts run shaper select with each player's shapers, skins, wards and announcers from its account (D3-live)")
 	freeRotation := fs.String("free-rotation", "", `shaper select: shapers in the free rotation, comma-separated ("gunman,PC_Otter,Fenmore")`)

@@ -1,5 +1,7 @@
-# Builds and tests everything that runs without the game, and builds the release zip.
-# A successful build of main replaces the rolling "nightly" pre-release (never marked Latest).
+# Builds and tests everything that runs without the game, and builds the release zip and the
+# Linux server's archive. The server's Go code is also tested and built on Linux, and the Linux
+# archive is checked there.
+# A successful build of main (every job green) replaces the rolling "nightly" pre-release (never marked Latest).
 # Nothing here needs the game's files: tests that read them skip themselves.
 name: build
 
@@ -104,24 +106,114 @@ jobs:
           if ($got -ne $env:LUAJ_SHA256) { throw "LuaJ SHA-256 $got, expected $env:LUAJ_SHA256" }
           python -I re/scripts/bots_lua_check.py --java "$env:JAVA_HOME_21_X64\bin\java.exe" --luaj $jar
 
-      - name: Release zip
+      - name: Release zip and Linux archive
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           powershell -NoProfile -ExecutionPolicy Bypass -File re/scripts/make_release.ps1
           $zip = @(Get-ChildItem re/out/release -Filter '*.zip')
           if ($zip.Count -ne 1) { throw "expected one release zip, found $($zip.Count)" }
+          $tgz = @(Get-ChildItem re/out/release -Filter '*-linux.tar.gz')
+          if ($tgz.Count -ne 1) { throw "expected one Linux archive, found $($tgz.Count)" }
           "RELEASE_ZIP=$($zip[0].FullName)" >> $env:GITHUB_ENV
+          "RELEASE_TGZ=$($tgz[0].FullName)" >> $env:GITHUB_ENV
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release
-          path: ${{ env.RELEASE_ZIP }}
+          path: |
+            ${{ env.RELEASE_ZIP }}
+            ${{ env.RELEASE_TGZ }}
           if-no-files-found: error
           retention-days: 14
 
-  nightly:
-    # a build of main (a push or the weekly run) replaces the rolling pre-release
+  linux:
+    # the server's Go code on Linux: format, vet, tests, and the Linux programs
+    # (Start-Client stays Windows-only: it starts the Windows game)
+    if: github.repository == 'Aisoga/OpenDawngateServer'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Go (format, vet, tests)
+        run: |
+          set -euo pipefail
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then echo "$unformatted"; echo '::error::gofmt: the files above are not formatted'; exit 1; fi
+          go vet ./...
+          go test ./...
+
+      - name: Linux programs (build)
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/linux-amd64"
+          go build -trimpath -ldflags '-s -w' -o "$out/" ./cmd/dgserver ./cmd/start-server
+          ls -l "$out"
+
+  linux-release:
+    # the Linux archive the Windows job built: one top folder, owner 0:0, the modes and the files
+    # of the layout, LF texts, every file's SHA-256 as BUILD.txt lists it, and start-server runs
+    # here with the release's version
     needs: build
+    if: github.repository == 'Aisoga/OpenDawngateServer'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: release
+
+      - name: Linux archive (layout, modes, start-server)
+        run: |
+          set -euo pipefail
+          zip=$(ls release/*.zip)
+          tgz=$(ls release/*-linux.tar.gz)
+          name=$(basename "$zip" .zip)
+          if [ "$(basename "$tgz")" != "$name-linux.tar.gz" ]; then echo "::error::$tgz is not $name-linux.tar.gz"; exit 1; fi
+          tar -tvzf "$tgz" --numeric-owner > listing.txt
+          grep -v '/host/lua/' listing.txt
+          echo "$(grep -c '/host/lua/.*\.lua$' listing.txt) Lua scripts in host/lua"
+          awk -v top="$name-linux/" '
+            { mode = $1; own = $2; path = $NF
+              if (own != "0/0") { print "::error::owner " own ": " path; bad = 1 }
+              if (index(path, top) != 1) { print "::error::outside " top ": " path; bad = 1; next }
+              rel = substr(path, length(top) + 1)
+              if (mode ~ /^d/) want = "drwxr-xr-x"; else if (rel == "start-server") want = "-rwxr-xr-x"; else want = "-rw-r--r--"
+              if (mode != want) { print "::error::mode " mode " (not " want "): " path; bad = 1 }
+              if (mode !~ /^d/ && rel !~ /^(start-server|dawngate\.service|README\.txt|LICENSE\.txt|THIRD-PARTY-NOTICES\.txt|BUILD\.txt|host\/dgsim\.dll|host\/lua\/[A-Za-z0-9_]+\.lua)$/) { print "::error::not a file of the layout: " path; bad = 1 }
+            }
+            END { exit bad }' listing.txt
+          mkdir unpacked
+          tar xzf "$tgz" -C unpacked --strip-components=1
+          cd unpacked
+          version=$(./start-server --version)
+          if [ "$version" != "$name" ]; then echo "::error::start-server --version says $version, not $name"; exit 1; fi
+          sed -n '/^SHA-256 of the files:$/,$p' BUILD.txt | tail -n +2 | sha256sum -c --quiet
+          for f in README.txt dawngate.service LICENSE.txt THIRD-PARTY-NOTICES.txt BUILD.txt; do
+            if grep -q $'\r' "$f"; then echo "::error::$f has CR line ends"; exit 1; fi
+          done
+          echo "the Linux archive of $name: layout, modes and owner as specified, start-server $version"
+
+  nightly:
+    # a build of main (a push or the weekly run) replaces the rolling pre-release,
+    # only when the Linux jobs passed too
+    needs: [build, linux, linux-release]
     if: github.repository == 'Aisoga/OpenDawngateServer' && github.ref == 'refs/heads/main' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-24.04
     permissions:
@@ -140,15 +232,17 @@ jobs:
         run: |
           set -euo pipefail
           zip=$(ls release/*.zip)
+          tgz=$(ls release/*-linux.tar.gz)
           gh release delete nightly --repo "$REPO" --cleanup-tag --yes || true
           cat > notes.md <<EOF
           An automatic build of commit ${SHA}, made by this repository's build workflow.
 
           - Unsigned and not tested in the game: the stable versions are the numbered releases.
           - Like every release it contains no game file: put your own \`Dawngate.zip\` (archive.org) next to \`Start-Server.exe\`.
-          - \`BUILD.txt\` in the zip names the commit it was built from (the source, AGPL-3.0).
+          - The \`-linux.tar.gz\` archive is the same server for a 64-bit Linux machine (\`start-server\`, its match hosts under Wine); players use the zip's \`Start-Client.exe\`.
+          - \`BUILD.txt\` in each archive names the commit it was built from (the source, AGPL-3.0).
 
           This pre-release is replaced by the next build.
           EOF
-          gh release create nightly "$zip" --repo "$REPO" --target "$SHA" --prerelease --latest=false \
+          gh release create nightly "$zip" "$tgz" --repo "$REPO" --target "$SHA" --prerelease --latest=false \
             --title "Nightly build $(date -u +%Y-%m-%d) (${SHA:0:10})" --notes-file notes.md

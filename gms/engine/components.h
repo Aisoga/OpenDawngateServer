@@ -20,6 +20,15 @@
 // [host]/[dgsim] container_release (1), container_end_instances (1), container_free_heap (1), container_log_limit (100:
 // the first 100 destroys with a container, then every 100th and every one that ended, freed or failed something);
 // pool_stats (1): a `stats pools:` line with every server pool's live count, high water and capacity.
+//
+// MODCAP-live (the 32-modifier cap): detours on AbilityDataContainer_AddModifierInstance
+// (0x00904CA0) and AddAbilityInstance (0x00904AB0), server simulator only. An ended instance's id stays in its list
+// (nothing in the client erases one; the host compacts every 500 ms in agents.cpp), so a modifier a script requests on
+// every hit fills the 32 slots with stale ids within one burst and the original asserts (LabsAbilities.cpp 3089) and
+// appends past 32. At 32 or more entries the detour writes the new id over the first stale entry
+// (gms::damage::PlaceInstanceId; no entry moves, so the client's loops over the raw list stay valid) and skips the
+// original; with every entry live the original runs. [host] modifier_slot_reuse (1; 0: the original's adds, counted),
+// modifier_slot_hooks (1; 0: no detour), modifier_slot_log_limit (50); counted on the `stats containers:` line.
 #pragma once
 
 #include <cstddef>
@@ -32,6 +41,10 @@ struct Options {
   bool freeHeap = true;       // free its heap parts (else only counted)
   bool poolStats = true;      // the `stats pools:` line
   int logLimit = 100;
+  // MODCAP-live (read by Install from [host]: modifier_slot_hooks, modifier_slot_reuse, modifier_slot_log_limit)
+  bool slotHooks = true;      // the detours on the two adds (counting the adds at the cap)
+  bool slotReuse = true;      // at the cap, the new id over the first stale entry
+  int slotLogLimit = 50;      // the first 50 reuses or adds past the cap per list, then every 1000th / 100th
 };
 
 bool Install(const Options& options);

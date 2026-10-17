@@ -168,8 +168,9 @@ type hostedPlayer struct {
 	removed bool  // left on the Blaze side, or removed by us
 	party   int64 // D8b: the PvP party (playgroup id) the player queued with, 0 when solo (createGame's roster)
 	// B15, a custom game's player: its player attributes (PATT: the join's ATTR, then setPlayerAttributes), its Blaze
-	// slot (SID, in join order), whether its join completed (NotifyPlayerJoinCompleted went out after its mesh
-	// connection), and the setup context its NotifyGameSetup carries (create for the creator, join for the others).
+	// slot (SID, in join order), and the setup context its NotifyGameSetup carries (create for the creator, join for
+	// the others). Every hosted game's player (TEAMCHAT): whether its join completed (NotifyPlayerJoinCompleted went
+	// out after its mesh connection; reset by a rejoin).
 	attrs     []tdf.Pair
 	slot      int64
 	completed bool

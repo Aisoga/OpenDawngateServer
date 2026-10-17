@@ -319,10 +319,10 @@ func registerGameManager(s *Server) {
 						pid, _ := t.Int("PID")
 						stat, _ := t.Int("STAT")
 						r.Server.Log.Logf("blaze", "   game %d: mesh connection to %d %s", gid, pid, meshStatusNames[stat])
-						// B15: in a custom game the player's join completes with its connection to the GMS
+						// B15, TEAMCHAT: in a hosted game the player's join completes with its connection to the GMS
 						if pid == DedicatedServerID && stat == meshConnected && r.Conn.Session != nil {
 							me := r.Conn.Session.Persona.ID
-							r.After(func() { r.Server.customJoinCompleted(gid, me) })
+							r.After(func() { r.Server.hostedJoinCompleted(gid, me) })
 						}
 					}
 				}

@@ -7,9 +7,9 @@ DG_PATCH_EXE, <repo>/re/out/a5/Dawngate.exe or <repo>/client/run_854/Dawngate/ga
 patcher tests are skipped. Nothing here touches client/ia_* or a working copy.
 
 What is pinned:
-  - the local profile (the default) with --laa off writes exactly what the A4 version of patch_client.py wrote
-    (SHA-256 of its output for a fixed CA modulus, taken from that version before A5 changed it); since Q3b the
-    default adds only the LARGE_ADDRESS_AWARE bit (pinned too);
+  - the local profile with --laa off --preload off writes exactly what the A4 version of patch_client.py wrote
+    (SHA-256 of its output for a fixed CA modulus, taken from that version before A5 changed it); Q3b added only the
+    LARGE_ADDRESS_AWARE bit, SNDBANK only the preload call (5 bytes); each output is pinned;
   - the lan profile changes only the CA, the redirector host and UPnP, and leaves every bind site, the
     cave slack and .text's VirtualSize as shipped; with --client-bind it narrows to that address;
   - the refusals (non-loopback host in the local profile, loopback/public/wildcard hosts in lan, a
@@ -42,6 +42,9 @@ A4_SUMMARY = ("redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery
 # Q3b: the default since then, the A4 output plus IMAGE_FILE_LARGE_ADDRESS_AWARE (characteristics 0x0103 -> 0x0123)
 Q3B_OUTPUT_SHA256 = "237512dc68b4135e220b410d92a6579cd602188079bd093b365871e38d214613"
 Q3B_SUMMARY = A4_SUMMARY + "; LARGE_ADDRESS_AWARE (4 GB of address space)"
+# SNDBANK: the default since then, the Q3b output plus the preload call (0x0066BD1F: call CountPlayers -> mov eax,15)
+SNDBANK_OUTPUT_SHA256 = "a6ca0ae63b8815bf38aeb4575f61a951e4c92f5a159f0c1465f4a47cfe57267e"
+SNDBANK_SUMMARY = Q3B_SUMMARY + "; every player's shaper preloaded (player indexes 0-14)"
 EXE = None  # set in __main__
 
 
@@ -89,7 +92,8 @@ class PatchClientTest(unittest.TestCase):
         cls.off = staticmethod(lambda va: pe.get_offset_from_rva(va - pc.IMAGE_BASE))
         cls.vsize_at = pe.sections[0].get_file_offset() + 8
         cls.local, cls.local_summary = pc.patch_bytes(cls.orig, MODULUS)
-        cls.a4, cls.a4_summary = pc.patch_bytes(cls.orig, MODULUS, laa=False)
+        cls.a4, cls.a4_summary = pc.patch_bytes(cls.orig, MODULUS, laa=False, preload=False)
+        cls.q3b, cls.q3b_summary = pc.patch_bytes(cls.orig, MODULUS, preload=False)
 
     def at(self, data, va, n):
         return data[self.off(va):self.off(va) + n]
@@ -98,9 +102,18 @@ class PatchClientTest(unittest.TestCase):
         self.assertEqual(sha256(self.a4), A4_OUTPUT_SHA256)
         self.assertEqual(self.a4_summary, A4_SUMMARY)
 
-    def test_local_default_is_a4_output_plus_laa(self):
-        self.assertEqual(sha256(self.local), Q3B_OUTPUT_SHA256)
-        self.assertEqual(self.local_summary, Q3B_SUMMARY)
+    def test_local_without_preload_is_a4_output_plus_laa(self):
+        self.assertEqual(sha256(self.q3b), Q3B_OUTPUT_SHA256)
+        self.assertEqual(self.q3b_summary, Q3B_SUMMARY)
+
+    def test_local_default_is_q3b_output_plus_preload(self):
+        self.assertEqual(sha256(self.local), SNDBANK_OUTPUT_SHA256)
+        self.assertEqual(self.local_summary, SNDBANK_SUMMARY)
+        at = self.off(pc.PRELOAD_COUNT)
+        self.assertEqual(diff_ranges(self.q3b, self.local), [(at, at + 4)])  # the fifth byte is 00 in both
+        self.assertEqual(self.local[at:at + 5], bytes.fromhex("b80f000000"))
+        self.assertEqual((pc.describe(self.q3b)["preload"], pc.describe(self.local)["preload"]), ("as-shipped", "all"))
+        self.assertEqual(pc.describe(self.orig)["preload"], "as-shipped")
 
     def test_laa_sets_only_the_header_bit(self):
         # Q3b: LARGE_ADDRESS_AWARE changes IMAGE_FILE_HEADER.Characteristics 0x0103 -> 0x0123 and nothing else
@@ -127,11 +140,12 @@ class PatchClientTest(unittest.TestCase):
         self.assertEqual(self.at(lan, pc.LOOPBACK_CAVE, 0x100), bytes(0x100))
         self.assertEqual(lan[self.vsize_at:self.vsize_at + 4], pc.TEXT_VSIZE.to_bytes(4, "little"))
         # what the lan profile changes at all: modulus, flags, redirector host, the two UPnP patches (since Q3b also
-        # the LARGE_ADDRESS_AWARE bit in IMAGE_FILE_HEADER.Characteristics)
+        # the LARGE_ADDRESS_AWARE bit in IMAGE_FILE_HEADER.Characteristics, since SNDBANK the preload call)
         chars = pc.pefile.PE(data=self.orig, fast_load=True).FILE_HEADER.get_file_offset() + 0x12
         changed = {(self.off(pc.OTG3_MODULUS), 128), (self.off(pc.OTG3_FLAGS), 4),
                    (self.off(pc.REDIRECTOR_HOST), 21), (self.off(pc.NOUPNP_JNZ), 1),
-                   (self.off(pc.UPNP_DISC), len(pc.UPNP_DISC_NEW)), (chars, 2)}
+                   (self.off(pc.UPNP_DISC), len(pc.UPNP_DISC_NEW)), (chars, 2),
+                   (self.off(pc.PRELOAD_COUNT), len(pc.PRELOAD_COUNT_NEW))}
         for start, end in diff_ranges(self.orig, lan):
             self.assertTrue(any(s <= start and end <= s + n for s, n in changed), hex(start))
         self.assertIn("sockets as shipped", summary)
@@ -191,7 +205,7 @@ class PatchClientTest(unittest.TestCase):
             pc.patch_bytes(self.orig, MODULUS[:64])
 
     def test_wrong_build_is_refused_in_every_profile(self):
-        for va in (pc.BIND_CALLS[0], pc.BIND_THUNK, pc.REDIRECTOR_HOST, pc.NOUPNP_JNZ):
+        for va in (pc.BIND_CALLS[0], pc.BIND_THUNK, pc.REDIRECTOR_HOST, pc.NOUPNP_JNZ, pc.PRELOAD_COUNT):
             bad = bytearray(self.orig)
             bad[self.off(va)] ^= 0xFF
             for profile, kw in [("local", {}), ("lan", {"server_host": "192.168.1.20"})]:
@@ -206,8 +220,10 @@ class PatchClientTest(unittest.TestCase):
             with open(mod, "wb") as f:
                 f.write(MODULUS)
             pc.main(["patch_client.py", exe, mod])
+            self.assertEqual(sha256(read(exe)), SNDBANK_OUTPUT_SHA256)
+            pc.main(["patch_client.py", exe, mod, "--preload", "off"])
             self.assertEqual(sha256(read(exe)), Q3B_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--laa", "off"])
+            pc.main(["patch_client.py", exe, mod, "--laa", "off", "--preload", "off"])
             self.assertEqual(sha256(read(exe)), A4_OUTPUT_SHA256)
             pc.main(["patch_client.py", exe, mod, "--profile", "lan", "--server-host", "192.168.1.20"])
             lan = read(exe)
@@ -215,10 +231,10 @@ class PatchClientTest(unittest.TestCase):
             self.assertEqual(self.at(lan, pc.BIND_THUNK, 6), pc.JMP_BIND)
             self.assertEqual(sha256(read(exe + ".orig")), BUILD_854_SHA256)
             pc.main(["patch_client.py", exe, mod, "127.0.0.1"])  # the A4 command line, back to local
-            self.assertEqual(sha256(read(exe)), Q3B_OUTPUT_SHA256)
+            self.assertEqual(sha256(read(exe)), SNDBANK_OUTPUT_SHA256)
             with self.assertRaises(SystemExit):  # refused before anything is written
                 pc.main(["patch_client.py", exe, mod, "--profile", "lan"])
-            self.assertEqual(sha256(read(exe)), Q3B_OUTPUT_SHA256)
+            self.assertEqual(sha256(read(exe)), SNDBANK_OUTPUT_SHA256)
 
 
 class RefusalWithoutExeTest(unittest.TestCase):

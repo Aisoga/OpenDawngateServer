@@ -8,8 +8,10 @@
 #include <cstring>
 
 #include "abilities.h"
+#include "core/damage/instance_ids.h"
 #include "game.h"
 #include "hook.h"
+#include "host/host.h"
 #include "log.h"
 
 using namespace game;
@@ -260,10 +262,156 @@ void __fastcall OnObjectDestroyedHook(void* om, void* /*edx*/, void* obj) {
         heap, g_opt.freeHeap ? "freed" : "kept", live);
 }
 
+// ---- MODCAP-live: the adds to the id lists (components.h) ------------------------------------------------------------
+
+enum SlotList { kModifierList = 0, kAbilityList = 1 };
+
+struct SlotStats {
+  unsigned reused;      // ids written over a stale entry at the cap (the original skipped)
+  unsigned capLive;     // adds at the cap with every entry live (to the original: its assert)
+  unsigned pastCap;     // adds the original made at 32 or more entries (each one its cap assert)
+  unsigned appended;    // of those, the list grew (the id appended past 32, the buffer on the heap)
+  unsigned notAdded;    // of those, the list did not grow
+  unsigned longest;     // the longest list seen at an add
+  unsigned exceptions;
+  unsigned logs;
+} g_slots[2];
+
+AddInstanceIdFn g_origAdd[2];
+const std::uintptr_t kListBegin[2] = {container::kModifiersBegin, container::kAbilitiesBegin};
+const std::uint32_t kListType[2] = {1, 0};  // instance +4: 1 modifier, 0 ability
+const std::size_t kListCap[2] = {gms::damage::kMaxModifiersPerAgent, gms::damage::kMaxAbilitiesPerAgent};
+const char* const kListName[2] = {"modifier", "ability"};
+
+DWORD SehSlotNote(EXCEPTION_POINTERS* ep, int list) {
+  ++g_slots[list].exceptions;
+  Log("EXCEPTION in components (the %s list's add): code %08lX at %08lX", kListName[list],
+      ep->ExceptionRecord->ExceptionCode, reinterpret_cast<DWORD>(ep->ExceptionRecord->ExceptionAddress));
+  return EXCEPTION_EXECUTE_HANDLER;
+}
+
+// The list's size (its end - begin), or -1.
+int SehListSize(char* c, int list) {
+  __try {
+    const std::uint32_t* b = Field<const std::uint32_t*>(c, kListBegin[list]);
+    const std::uint32_t* e = Field<const std::uint32_t*>(c, kListBegin[list] + 4);
+    return b && e >= b && e - b < 4096 ? static_cast<int>(e - b) : -1;
+  } __except (SehSlotNote(GetExceptionInformation(), list)) {
+    return -1;
+  }
+}
+
+bool InstanceLive(std::uint32_t id) { return GetInstance(id) != nullptr; }
+
+// The add rule (gms::damage::PlaceInstanceId) on container `c`: 1 the id was written over the stale entry *index (the
+// original must not run), 2 at the cap with every entry live, 0 the original's add (below the cap, or not this list's
+// kind of instance: the original asserts that). *size is the list's size before.
+int SehPlace(char* c, int list, std::uint32_t id, int* size, std::size_t* index, char* name, std::size_t nameCap) {
+  __try {
+    std::uint32_t* b = Field<std::uint32_t*>(c, kListBegin[list]);
+    std::uint32_t* e = Field<std::uint32_t*>(c, kListBegin[list] + 4);
+    if (!b || e < b || e - b >= 4096) return 0;
+    const std::size_t n = static_cast<std::size_t>(e - b);
+    *size = static_cast<int>(n);
+    if (n < kListCap[list] || !id) return 0;
+    void* in = GetInstance(id);
+    if (!in || Field<std::uint32_t>(in, inst::kType) != kListType[list]) return 0;
+    const gms::damage::IdPlacement p = gms::damage::PlaceInstanceId(b, n, kListCap[list], &InstanceLive);
+    if (!p.reuse) return 2;
+    b[p.index] = id;
+    *index = p.index;
+    const char* st = Field<const char*>(in, inst::kStatic);
+    const char* nm = st ? *reinterpret_cast<const char* const*>(st) : nullptr;
+    std::snprintf(name, nameCap, "%s", nm ? nm : "?");
+    return 1;
+  } __except (SehSlotNote(GetExceptionInformation(), list)) {
+    return 0;
+  }
+}
+
+std::uint32_t SehObjectIdOf(char* c) {
+  __try {
+    return Field<std::uint32_t>(c, 4);  // the container's object id (AbilityDataContainer_Construct)
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return 0;
+  }
+}
+
+void AddInstanceId(int list, void* container, std::uint32_t id) {
+  char* c = static_cast<char*>(container);
+  if (!g_sim || !c || GetCurrentSim() != g_sim) {  // the client simulator's containers, or another simulator bound
+    g_origAdd[list](container, id);
+    return;
+  }
+  SlotStats& st = g_slots[list];
+  int size = -1;
+  if (g_opt.slotReuse) {
+    std::size_t index = 0;
+    char name[96] = "";
+    const int r = SehPlace(c, list, id, &size, &index, name, sizeof name);
+    if (r == 1) {
+      ++st.reused;
+      if (static_cast<unsigned>(size) > st.longest) st.longest = static_cast<unsigned>(size);
+      if (++st.logs <= static_cast<unsigned>(g_opt.slotLogLimit) || st.reused % 1000 == 0)
+        Log("modifier slots (MODCAP): %s %08X (%s) of object %08X into stale entry %u of %d (t %.2f s; %u reuses)",
+            kListName[list], id, name, SehObjectIdOf(c), static_cast<unsigned>(index), size, GameSeconds(), st.reused);
+      return;
+    }
+    if (r == 2) ++st.capLive;
+  } else {
+    size = SehListSize(c, list);
+  }
+  g_origAdd[list](container, id);
+  if (size < static_cast<int>(kListCap[list])) return;
+  ++st.pastCap;
+  const int after = SehListSize(c, list);
+  const bool grew = after > size;
+  if (grew) ++st.appended;
+  else ++st.notAdded;
+  const unsigned longest = static_cast<unsigned>(grew ? after : size);
+  if (longest > st.longest) st.longest = longest;
+  if (++st.logs <= static_cast<unsigned>(g_opt.slotLogLimit) || st.pastCap % 100 == 0)
+    Log("modifier slots (MODCAP): %s %08X of object %08X added by the original at %d entries (t %.2f s): the list %s "
+        "(%d after; %u past the cap)",
+        kListName[list], id, SehObjectIdOf(c), size, GameSeconds(), grew ? "grew" : "did NOT grow", after, st.pastCap);
+}
+
+void __fastcall AddModifierInstanceHook(void* container, void* /*edx*/, std::uint32_t id) {
+  AddInstanceId(kModifierList, container, id);
+}
+void __fastcall AddAbilityInstanceHook(void* container, void* /*edx*/, std::uint32_t id) {
+  AddInstanceId(kAbilityList, container, id);
+}
+
+void InstallSlotHooks() {
+  g_opt.slotReuse = HostOptionInt("modifier_slot_reuse", g_opt.slotReuse ? 1 : 0) != 0;
+  g_opt.slotHooks = HostOptionInt("modifier_slot_hooks", g_opt.slotHooks ? 1 : 0) != 0;
+  g_opt.slotLogLimit = HostOptionInt("modifier_slot_log_limit", g_opt.slotLogLimit);
+  if (!g_opt.slotHooks) {
+    g_opt.slotReuse = false;
+    Log("modifier slots (MODCAP): off (modifier_slot_hooks 0): the original adds, the cap asserts past 32");
+    return;
+  }
+  g_origAdd[kModifierList] = reinterpret_cast<AddInstanceIdFn>(
+      HookDetour(kAddModifierInstance, kAddModifierInstanceBytes, sizeof kAddModifierInstanceBytes,
+                 reinterpret_cast<void*>(&AddModifierInstanceHook)));
+  g_origAdd[kAbilityList] = reinterpret_cast<AddInstanceIdFn>(
+      HookDetour(kAddAbilityInstance, kAddAbilityInstanceBytes, sizeof kAddAbilityInstanceBytes,
+                 reinterpret_cast<void*>(&AddAbilityInstanceHook)));
+  if (!g_origAdd[kModifierList] || !g_origAdd[kAbilityList])
+    Log("modifier slots (MODCAP): detour FAILED (AddModifierInstance %s, AddAbilityInstance %s)",
+        g_origAdd[kModifierList] ? "ok" : "failed", g_origAdd[kAbilityList] ? "ok" : "failed");
+  if (!g_origAdd[kModifierList] || !g_origAdd[kAbilityList]) g_opt.slotReuse = false;
+  Log("modifier slots (MODCAP): AddModifierInstance/AddAbilityInstance detours %s; reuse of stale entries at the cap %s",
+      g_origAdd[kModifierList] && g_origAdd[kAbilityList] ? "installed" : "partly installed",
+      g_opt.slotReuse ? "on" : "off (modifier_slot_reuse 0: counted only)");
+}
+
 }  // namespace
 
 bool Install(const Options& options) {
   g_opt = options;
+  InstallSlotHooks();  // MODCAP-live: its keys are read there (experiment.cpp fills the D1j ones)
   if (!g_opt.release && !g_opt.endInstances && !g_opt.poolStats) {
     Log("containers (D1j): off (container_release 0, container_end_instances 0, pool_stats 0)");
     return false;
@@ -299,6 +447,16 @@ void FormatStats(char* buf, std::size_t size, int objectsWithContainer) {
                 objectsWithContainer, g_st.destroyed, g_st.withContainer, g_st.released, g_st.endedBefore,
                 g_st.endedAfter, g_st.pending, g_opt.freeHeap ? "freed" : "kept",
                 g_opt.freeHeap ? g_st.heapFreed : g_st.heapKept, g_st.mismatches, g_st.notBound, g_st.exceptions);
+  const std::size_t len = std::strlen(buf);
+  if (len + 1 >= size) return;
+  const SlotStats& m = g_slots[kModifierList];
+  const SlotStats& a = g_slots[kAbilityList];
+  std::snprintf(buf + len, size - len,
+                "; slots (MODCAP, reuse %s): mod reused %u, cap all live %u, past cap %u (grew %u, not added %u), "
+                "longest %u; abl reused %u, past cap %u (grew %u, not added %u), longest %u; exc %u",
+                !g_opt.slotHooks ? "off, no detour" : g_opt.slotReuse ? "on" : "off", m.reused, m.capLive, m.pastCap,
+                m.appended, m.notAdded, m.longest, a.reused, a.pastCap, a.appended, a.notAdded, a.longest,
+                m.exceptions + a.exceptions);
 }
 
 namespace {

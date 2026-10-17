@@ -2,6 +2,7 @@ package gmshost
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -172,3 +173,6 @@ func resumeThreads(pid uint32) error {
 	}
 	return nil
 }
+
+// killHost kills the host process (what it started itself stays in the host job until this process ends).
+func killHost(p *os.Process) error { return p.Kill() }

@@ -251,6 +251,7 @@ func (hg *hostedGame) rejoin(conn *Conn, playerID int64) (Game, []Player, *hoste
 	}
 	me.removed = false
 	me.conn = conn
+	me.completed = false // TEAMCHAT: its new GMS connection completes the join again (the client's team chat)
 	g := hg.game
 	g.State = hg.state
 	return g, players, me, true

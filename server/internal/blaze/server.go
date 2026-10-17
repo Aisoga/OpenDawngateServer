@@ -78,6 +78,9 @@ type Server struct {
 	// a match that formed with open seats (matchmaker.Match.Full false, after FillAfter) asks its host for bots
 	// up to the team size (createGame's fillTeams). Off = the open seats stay empty (B10b's 1 v 0).
 	MMBots bool
+	// LeaderboardMinGames is the fewest games an account needs for the main menu's Leaderboard (LBFIX, dgserver
+	// --leaderboard-min-games; leaderboard.go). NewServer sets the client's own text's 50.
+	LeaderboardMinGames int
 	// Rand is the random source of the post-game rewards (B7c, progression.go); nil = math/rand/v2's.
 	Rand progress.Rand
 	// ShaperSelect asks the match hosts for shaper select with each player's content (D3-live step 4,
@@ -308,7 +311,7 @@ const Service = "battlegrounds-1-pc"
 func NewServer(log *logging.Log, host string, qosPort int) *Server {
 	s := &Server{Log: log, Host: host, QosPort: qosPort, Service: Service, Now: time.Now, Store: store.New(),
 		NewKey: randomKey, GMSPort: GMSPort, Policy: DefaultPolicy(), MM: matchmaker.New(DefaultMatchmaking()),
-		handlers: map[key]Handler{}}
+		LeaderboardMinGames: LeaderboardMinGames, handlers: map[key]Handler{}}
 	registerUtil(s)
 	registerAuthentication(s)
 	registerUserSessions(s)
@@ -320,6 +323,7 @@ func NewServer(log *logging.Log, host string, qosPort int) *Server {
 	registerStats(s)
 	registerAssociationLists(s)
 	registerRooms(s)
+	registerGpsContentController(s) // LBFIX: the player report
 	registerMessaging(s)
 	registerBGOps(s)
 	registerGameManager(s)
@@ -374,14 +378,22 @@ func (s *Server) ServeConn(c net.Conn) {
 			break
 		}
 		fire.Describe(s.Log, who, f)
+		if f.Type != fire.Request {
+			s.Log.Log(who, "   (not a request; not answered)")
+			continue
+		}
 		h, ok := s.handlers[key{f.Component, f.Command}]
-		if !ok || f.Type != fire.Request {
-			s.Log.Log(who, "   (no handler; not answered)")
+		if !ok {
+			if !s.sendUnhandled(conn, f, s.noHandlerError(f.Component), "no handler") {
+				break
+			}
 			continue
 		}
 		body, err := tdf.Decode(f.Payload)
 		if err != nil {
-			s.Log.Log(who, "   (request doesn't decode; not answered)")
+			if !s.sendUnhandled(conn, f, ErrSystem, "request doesn't decode") {
+				break
+			}
 			continue
 		}
 		conn.notes, conn.pre = conn.notes[:0], conn.pre[:0]
@@ -437,6 +449,35 @@ func (s *Server) send(c *Conn, f fire.Frame, what string) bool {
 	}
 	s.Log.Log(who, fmt.Sprintf("-> %s, %d bytes:\n", what, len(f.Payload))+prettyPayload(f.Payload))
 	return true
+}
+
+// Blaze framework errors (no component; the client's names in Blaze_GetFrameworkErrorName 0x00C7A160), the Fire
+// header's error field.
+const (
+	ErrSystem            uint16 = 0x4001 // ERR_SYSTEM
+	ErrComponentNotFound uint16 = 0x4002 // ERR_COMPONENT_NOT_FOUND
+	ErrCommandNotFound   uint16 = 0x4003 // ERR_COMMAND_NOT_FOUND
+)
+
+// noHandlerError is the error for a request without a handler: ERR_COMPONENT_NOT_FOUND when no command of its
+// component has one, else ERR_COMMAND_NOT_FOUND.
+func (s *Server) noHandlerError(component uint16) uint16 {
+	for k := range s.handlers {
+		if k.component == component {
+			return ErrCommandNotFound
+		}
+	}
+	return ErrComponentNotFound
+}
+
+// sendUnhandled answers a request that no handler answers (none registered, or its payload doesn't decode) with an
+// error reply (LBFIX). Silence is worse: while one of its requests is outstanding the client sends no keep-alive
+// ping (job 0x00CCC620), so after connIdleTimeout (90 s, PreAuthReply) without a reply it closed its Blaze connection
+// and went back to the login screen (the public server's "disconnected in the menus"). Any reply ends the client's
+// RPC job; its callback gets the error code (BlazeCallbackRpcJob_OnReply 0x00C7CF30 and the generated jobs alike).
+func (s *Server) sendUnhandled(c *Conn, f fire.Frame, code uint16, why string) bool {
+	return s.send(c, fire.Frame{Component: f.Component, Command: f.Command, Error: code, Type: fire.ErrorReply, ID: f.ID},
+		fmt.Sprintf("error reply (%s; error %#04x)", why, code))
 }
 
 func prettyPayload(b []byte) string {

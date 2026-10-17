@@ -33,11 +33,18 @@ type RunLock struct {
 	GatewayPort   int
 	State         string // RunSetup, RunRunning
 	Pin           string // the gateway key's pin (64 hex digits), once running with the tunnel
+	// Started is the holder's start (processStart: Linux only, "" elsewhere), so that a reused pid isn't read as the
+	// holder; written only when known.
+	Started string
 }
 
 func (r RunLock) text() string {
-	return fmt.Sprintf("pid=%d\nprogram=%s\naddress=%s\ndial=%s\ngateway_port=%d\nstate=%s\npin=%s\n", r.Pid, r.Program,
+	t := fmt.Sprintf("pid=%d\nprogram=%s\naddress=%s\ndial=%s\ngateway_port=%d\nstate=%s\npin=%s\n", r.Pid, r.Program,
 		r.Address, r.Dial, r.GatewayPort, r.State, r.Pin)
+	if r.Started != "" {
+		t += "started=" + r.Started + "\n"
+	}
+	return t
 }
 
 func parseRunLock(b []byte) RunLock {
@@ -63,6 +70,8 @@ func parseRunLock(b []byte) RunLock {
 			r.State = v
 		case "pin":
 			r.Pin = v
+		case "started":
+			r.Started = v
 		}
 	}
 	if r.Dial == "" {
@@ -93,7 +102,19 @@ func readRunLock(path string) (RunLock, bool, error) {
 		return RunLock{}, false, err
 	}
 	r := parseRunLock(b)
-	return r, r.Pid > 0 && r.Pid != os.Getpid() && processRunning(r.Pid), nil
+	return r, holderRunning(r.Pid, r.Started), nil
+}
+
+// holderRunning reports whether a lock's holder (pid, started as the lock recorded it) is a running process other
+// than this one: its pid runs and, where both starts are known, it is the same process (not a reused pid).
+func holderRunning(pid int, started string) bool {
+	if pid <= 0 || pid == os.Getpid() || !processRunning(pid) {
+		return false
+	}
+	if now := processStart(pid); started != "" && now != "" && now != started {
+		return false
+	}
+	return true
 }
 
 // RunLockHandle is a held run lock.
@@ -114,7 +135,7 @@ func TakeRunLock(root string, r RunLock) (*RunLockHandle, RunLock, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, RunLock{}, err
 	}
-	r.Pid = os.Getpid()
+	r.Pid, r.Started = os.Getpid(), processStart(os.Getpid())
 	if r.Dial == "" {
 		r.Dial = r.Address
 	}

@@ -98,4 +98,7 @@ GMS_TEST(ParamapCampIconBits) {
   CHECK_EQ(CampIconBits(2, false, true), 0x07);   // mode 2: every camp while up
   CHECK_EQ(CampIconBits(2, false, false), 0x01);
   CHECK_EQ(CampIconBits(0, true, true), 0x01);    // off
+  CHECK_EQ(CampIconBits(3, true, true), 0x07);    // CAMPICONS (mode 3): the parasite as in mode 1
+  CHECK_EQ(CampIconBits(3, true, false), 0x01);
+  CHECK_EQ(CampIconBits(3, false, true), 0x07);   // a jungle camp's truth (the spectators' bits)
 }

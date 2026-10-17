@@ -44,6 +44,7 @@
 #include "control/host_control.h"
 #include "commands.h"
 #include "death.h"
+#include "director.h"
 #include "fow.h"
 #include "game.h"
 #include "host/control.h"
@@ -924,6 +925,13 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     config->clientPhaseGuard = HostOptionInt("shaper_phase_guard", 1) != 0;
     if (!config->clientPhaseGuard)
       gms::Logf("%s match: shaper select: [host] shaper_phase_guard=0: every phase repeat to every client, as before",
+                gms::Clock().c_str());
+    // [host] shaper_skins_hold_ms (3000): a late client's skins (a returning player's, a late C8 02's) wait for its
+    // shaper select UI, and none go from phase 4 on (a C8 0B before the movie loaded crashed a rejoining client:
+    // ShaperSelect_RefreshSkins 0x0051E0A5); 0 = before (at once at its C8 02)
+    config->lateSkinsHoldMs = HostOptionInt("shaper_skins_hold_ms", 3000);
+    if (config->lateSkinsHoldMs <= 0)
+      gms::Logf("%s match: shaper select: [host] shaper_skins_hold_ms=0: a late client's skins at once, as before",
                 gms::Clock().c_str());
     config->humanDefault = o_.shapers;
     if (config->humanDefault.list.empty()) {
@@ -2262,7 +2270,14 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     p.stealth = fowOpt_.stealth;
     model_.Update(*ents, p);
     std::vector<uint8_t> bits(objs.size(), 0);
-    for (size_t i = 0; i < objs.size(); ++i) bits[i] = model_.Bits(i);
+    for (size_t i = 0; i < objs.size(); ++i) {
+      bits[i] = model_.Bits(i);
+      // CAMPICONS step 2: a camp's world clock is its own team's only (director::ClockTeamBits), wherever the other
+      // team's vision reaches
+      uint8_t forced = 0;
+      if (director::ClockTeamBits(objs[i].id, &forced)) bits[i] = forced;
+    }
+    visionBits_ = bits;
     // D2g-rest: the record's +0x51 mask = the teams that would see the object without grass and stealth (the terrain
     // test only), which LabsAbilities_CreateAbilityObject reads to reveal a caster in grass (RevealInGrass)
     if (p.grass || p.stealth) {
@@ -2402,7 +2417,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       f.id = o.id;
       f.known = known;
       f.visible = static_cast<uint16_t>(o.visible | createdNow[i]);
-      f.teamBits = model_.Bits(i);
+      f.teamBits = i < visionBits_.size() ? visionBits_[i] : model_.Bits(i);
       f.maintainPos = info[i].maintain;
       f.x = info[i].pos[0];
       f.y = info[i].pos[1];
@@ -2534,11 +2549,24 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       out.Send(conn, w, "UISpiritWellUpdate (full: the four spirit wells)");
       counts_.Add(w[0], w.size());
     }
-    // D2g-live step 3: the creep camps (8D), after the 8B that gave the client its camp list
+    // D2g-live step 3: the creep camps (8D), after the 8B that gave the client its camp list. CAMPICONS: with
+    // camp_icons=3 a player's entries carry each team's knowledge (the server's own list, so a rejoin gets its team's
+    // view back), a spectator's the truth (its own copy of the list with its own field states: SpectatorCampView)
     gms::Bytes c;
-    const int campMembers = repl::CampUpdate(sim_, true, withFieldState, &c);
+    const bool spectatorView = pl.spectator && director::CampIconMode() == 3;
+    int campMembers = 0;
+    if (spectatorView) {
+      campMembers = repl::CampViewUpdate(sim_, &spectatorCamps_, &director::SpectatorCampBits, true,
+                                         !spectatorCampFieldStateUsed_, &c);
+      spectatorCampFieldStateUsed_ = true;
+    } else {
+      campMembers = repl::CampUpdate(sim_, true, !campFieldStateUsed_, &c);
+      campFieldStateUsed_ = true;
+    }
     if (campMembers > 0) {
-      out.Send(conn, c, "UICreepCampUpdate (full: the creep camps)");
+      out.Send(conn, c,
+               spectatorView ? "UICreepCampUpdate (full: the creep camps as they are, for a spectator)"
+                             : "UICreepCampUpdate (full: the creep camps)");
       counts_.Add(c[0], c.size());
     }
     gms::Logf("%s match: UI data for player %d %s: 8B %d members (%zu B), 8C %d members (%zu B), 8D %d members (%zu B)%s",
@@ -2568,12 +2596,13 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     if (!match::Enabled() || !replicate_) return;
     BoundTo b(sim_);
     if (!repl::Init()) return;
-    uint16_t have = 0;
+    uint16_t have = 0, haveSpectators = 0;
     for (auto& kv : players_) {
       Player& pl = kv.second;
       if (!pl.world || pl.index < 0) continue;
       if (pl.ui) {
         have = static_cast<uint16_t>(have | (1u << pl.index));
+        if (pl.spectator) haveSpectators = static_cast<uint16_t>(haveSpectators | (1u << pl.index));
         continue;
       }
       if (!pl.inGame) continue;
@@ -2585,8 +2614,31 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     gms::Bytes wd;
     if (repl::SpiritWellUpdate(sim_, false, true, &wd) > 0) SendTo(out, have, wd, nullptr);
     gms::Bytes cd;
-    if (repl::CampUpdate(sim_, false, true, &cd) > 0) SendTo(out, have, cd, nullptr);
+    if (director::CampIconMode() == 3) {
+      // CAMPICONS: the players' entries (each team's knowledge) to the players, the spectators' copy (the truth) to the
+      // spectators
+      const uint16_t players = static_cast<uint16_t>(have & ~haveSpectators);
+      if (players && repl::CampUpdate(sim_, false, true, &cd) > 0) SendTo(out, players, cd, nullptr);
+      gms::Bytes sd;
+      if (haveSpectators && spectatorCampFieldStateUsed_ &&
+          repl::CampViewUpdate(sim_, &spectatorCamps_, &director::SpectatorCampBits, false, true, &sd) > 0)
+        SendTo(out, haveSpectators, sd, nullptr);
+    } else if (repl::CampUpdate(sim_, false, true, &cd) > 0) {
+      SendTo(out, have, cd, nullptr);
+    }
   }
+
+ public:
+  // CAMPICONS: the teams that see the point (x, y) now (the vision model's last update, as kind-3 messages are
+  // routed); every team without fog, none before the fog's first step. director::SetPointSight's function.
+  static std::uint8_t PointSight(void* ctx, float x, float y) {
+    const ServerMatch* m = static_cast<const ServerMatch*>(ctx);
+    if (!m->fog_) return 0x07;
+    if (!m->fogReady_) return 0;
+    return m->model_.TeamsSeeingPoint(x, y, 0, 0.f);
+  }
+
+ private:
 
   double NowS() const {
     return std::chrono::duration<double>(gms::SteadyClock::now().time_since_epoch()).count();
@@ -3092,6 +3144,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   fow::Options fowOpt_;
   int fogLogLimit_ = 200, fogLogged_ = 0, fogFailLogged_ = 0;
   gms::vision::VisionModel model_;
+  std::vector<uint8_t> visionBits_;         // the last VisionStep's answers as written (model_ plus the overrides)
   gms::vision::VisionModel modelFree_;      // without the terrain, grass and stealth tests (evidence only)
   gms::vision::VisionModel modelTerrain_;   // D2g-rest: the terrain test only (the records' +0x51 mask)
   gms::SteadyClock::time_point visionLast_{};
@@ -3129,6 +3182,9 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   int animDeltas_ = 0;
   // D1c-live
   bool uiFieldStateUsed_ = false;
+  bool campFieldStateUsed_ = false;            // CAMPICONS: the players' 8D field states written by a full one
+  repl::CampViewBuffer spectatorCamps_;        // CAMPICONS: the spectators' copy of the camp list (the truth)
+  bool spectatorCampFieldStateUsed_ = false;
   match::End end_;
   // D8-live
   gms::postgame::PostGame postgame_;
@@ -3492,6 +3548,7 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   g->port = g->ep.BoundPort();
   g->start = gms::SteadyClock::now();
   g->match.reset(new ServerMatch(sim, mo));
+  director::SetPointSight(&ServerMatch::PointSight, g->match.get());  // CAMPICONS: a camp's spot seen by a team
   // with shaper select the server player starts without 0x10: seam 5 writes the session's first update from it
   g->match->SetSkipShaper(so.skipShaper && !so.shaperSelect);
   {

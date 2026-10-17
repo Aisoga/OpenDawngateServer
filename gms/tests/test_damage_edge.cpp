@@ -7,6 +7,7 @@
 #include <functional>
 #include <vector>
 
+#include "core/damage/instance_ids.h"
 #include "core/damage/pipeline.h"
 #include "core/damage/rules.h"
 #include "tests/check.h"
@@ -669,4 +670,148 @@ GMS_TEST(DamageEdgeSubIntegerHit) {
   CHECK(ReportsHit(kill.intChange, kill.lethal));
   // a hit a shield took whole changes nothing: no event (its OnTookDamage still fires, FiresDamageEvents)
   CHECK(!ReportsHit(0, false));
+}
+
+// ---- MODCAP: the agent's modifier id list (core/damage/instance_ids.h) -------------------------------------------
+
+namespace {
+// One agent's modifier list as the client keeps it: ids appended, never erased by an end (LabsAbilities_RemoveInstance
+// frees the instance only). `place` = the host's add rule (PlaceInstanceId) instead of the original's append.
+struct ModList {
+  std::vector<std::uint32_t> ids;
+  std::vector<std::uint32_t> live;  // the instances that exist
+  std::uint32_t next = 0x100;
+  bool place = false;
+  unsigned asserts = 0, reported = 0;  // cap asserts; of them the ones Application.log shows (the throttle)
+  std::uint32_t* assertCount = nullptr;  // the throttle's count per file:line (shared by every agent)
+
+  bool IsLive(std::uint32_t id) const { return std::find(live.begin(), live.end(), id) != live.end(); }
+  std::uint32_t Add() {
+    const std::uint32_t id = next++;
+    live.push_back(id);
+    if (place) {
+      const IdPlacement p = PlaceInstanceId(ids.data(), ids.size(), kMaxModifiersPerAgent,
+                                            [this](std::uint32_t x) { return IsLive(x); });
+      if (p.reuse) {
+        ids[p.index] = id;
+        return id;
+      }
+    }
+    if (ids.size() >= kMaxModifiersPerAgent) {  // the assert only logs; the id is appended anyway (heap)
+      ++asserts;
+      if (CapAssertReported(++*assertCount)) ++reported;
+    }
+    ids.push_back(id);
+    return id;
+  }
+  void End(std::uint32_t id) { live.erase(std::remove(live.begin(), live.end(), id), live.end()); }
+  bool Listed(std::uint32_t id) const { return std::find(ids.begin(), ids.end(), id) != ids.end(); }
+  // nActivationType.Unique: every listed instance of the GUID ends (AbilityDataContainer_FindModifiersByGuid walks the
+  // list), then a new one starts
+  std::uint32_t Unique(std::uint32_t* current) {
+    if (*current && Listed(*current)) End(*current);
+    *current = Add();
+    return *current;
+  }
+  std::size_t Live() const {
+    std::size_t n = 0;
+    for (std::uint32_t x : ids)
+      if (IsLive(x)) ++n;
+    return n;
+  }
+};
+}  // namespace
+
+// The public server's burst (M1, 2026-10-16): an Artificer with Preservation (modifier_Item_Legendary_AblativeArmor) and
+// the SpeedWhenNotDamaging perk; each hit it deals requests the Unique HiddenTimer (ModifyDamageOutgoing) and the Unique
+// Wait (OnDealtDamage), so each hit leaves two stale ids. 16 live modifiers and one E Spin tick through 8 targets
+// (modifier_Artificer_E_Spin's DamageEnemiesInArea, one synchronous call) fill the 32 slots; the next hit asserts.
+GMS_TEST(ModCapStaleIdsFillTheList) {
+  std::uint32_t throttle = 0;
+  ModList a;
+  a.assertCount = &throttle;
+  for (int i = 0; i < 16; ++i) a.Add();  // role, shaper passive, perks, item passives, the Spin, its movespeed, ...
+  std::uint32_t timer = 0, wait = 0;
+  for (int hit = 0; hit < 8; ++hit) {
+    a.Unique(&timer);
+    a.Unique(&wait);
+  }
+  CHECK_EQ(a.ids.size(), static_cast<std::size_t>(32));
+  CHECK_EQ(a.Live(), static_cast<std::size_t>(18));
+  CHECK_EQ(a.asserts, 0u);
+  // the next Spin tick: 8 more hits, 16 more adds, every one at the cap (no compaction inside the call)
+  for (int hit = 0; hit < 8; ++hit) {
+    a.Unique(&timer);
+    a.Unique(&wait);
+  }
+  CHECK_EQ(a.asserts, 16u);
+  CHECK_EQ(a.reported, 10u);  // counts 1-10 in Application.log, 11-16 silent (as a lane session's 1-10, 20, 40, 60)
+  CHECK_EQ(a.ids.size(), static_cast<std::size_t>(48));  // every one appended, the vector on the heap
+  // nothing runs outside the list (MODCAP-live: 77 adds past the cap, the list grew at each)
+  std::size_t orphans = 0;
+  for (std::uint32_t x : a.live)
+    if (!a.Listed(x)) ++orphans;
+  CHECK_EQ(orphans, static_cast<std::size_t>(0));
+  CHECK_EQ(a.Live(), static_cast<std::size_t>(18));  // listed and alive: the 16, the last HiddenTimer, the last Wait
+  // the host's 500 ms prune (agents.cpp) then drops the stale ids, keeping the live ones in order
+  const std::size_t n = CompactInstanceIds(a.ids.data(), a.ids.size(), [&a](std::uint32_t x) { return a.IsLive(x); });
+  a.ids.resize(n);
+  CHECK_EQ(n, static_cast<std::size_t>(18));
+  for (std::size_t i = 1; i < n; ++i) CHECK(a.ids[i - 1] < a.ids[i]);  // order kept
+}
+
+// The proposed add rule: at the cap a stale entry is reused in place, so the same two Spin ticks (and any number more)
+// never assert while fewer than 32 modifiers live, and no entry moves (the client's raw loops stay valid).
+GMS_TEST(ModCapPlaceReusesStaleSlots) {
+  std::uint32_t throttle = 0;
+  ModList a;
+  a.place = true;
+  a.assertCount = &throttle;
+  for (int i = 0; i < 16; ++i) a.Add();
+  std::uint32_t timer = 0, wait = 0;
+  for (int hit = 0; hit < 200; ++hit) {
+    a.Unique(&timer);
+    a.Unique(&wait);
+  }
+  CHECK_EQ(a.asserts, 0u);
+  CHECK_EQ(a.ids.size(), static_cast<std::size_t>(32));
+  CHECK_EQ(a.Live(), static_cast<std::size_t>(18));
+  CHECK(std::find(a.ids.begin(), a.ids.end(), timer) != a.ids.end());
+  CHECK(std::find(a.ids.begin(), a.ids.end(), wait) != a.ids.end());
+  // 32 live modifiers: the original's assert stays (nothing stale to reuse)
+  for (int i = 0; i < 14; ++i) a.Add();
+  CHECK_EQ(a.Live(), static_cast<std::size_t>(32));
+  CHECK_EQ(a.asserts, 0u);
+  a.Add();
+  CHECK_EQ(a.asserts, 1u);
+  CHECK_EQ(a.reported, 1u);
+  CHECK_EQ(a.ids.size(), static_cast<std::size_t>(33));
+  // below the cap the rule is the original's append, stale entries or not
+  const std::uint32_t few[3] = {7, 8, 9};
+  const IdPlacement p = PlaceInstanceId(few, 3, kMaxModifiersPerAgent, [](std::uint32_t) { return false; });
+  CHECK(!p.reuse);
+  CHECK_EQ(p.index, static_cast<std::size_t>(3));
+  // a zero entry is stale too
+  std::vector<std::uint32_t> full(32, 5);
+  full[17] = 0;
+  const IdPlacement z = PlaceInstanceId(full.data(), full.size(), kMaxModifiersPerAgent, [](std::uint32_t) { return true; });
+  CHECK(z.reuse);
+  CHECK_EQ(z.index, static_cast<std::size_t>(17));
+}
+
+// ShipLog_ThrottleAssert's table (0x0141C260: {1, 10}, {20, 100}, {200, 1000}, {10000, -}): the counts Application.log
+// shows (the add goes on either way). A match host's Application.log lists exactly 1-10, 20, 40, 60, 80, 100.
+GMS_TEST(ModCapThrottle) {
+  std::vector<std::uint32_t> reported;
+  for (std::uint32_t c = 1; c <= 1000; ++c)
+    if (CapAssertReported(c)) reported.push_back(c);
+  CHECK_EQ(reported.size(), static_cast<std::size_t>(10 + 5 + 5));
+  CHECK_EQ(reported[9], 10u);
+  CHECK_EQ(reported[10], 20u);
+  CHECK_EQ(reported[14], 100u);
+  CHECK_EQ(reported[15], 200u);
+  CHECK(!CapAssertReported(0));
+  CHECK(!CapAssertReported(1001));
+  CHECK(CapAssertReported(10000));
+  CHECK(!CapAssertReported(12000));
 }

@@ -33,19 +33,35 @@ func freePort(t *testing.T) int {
 	return ln.Addr().(*net.TCPAddr).Port
 }
 
+// startWeb starts cfg with its website on a free port (cfg.web.port). A port taken between freePort and the start
+// (another test's connection may get it) is tried again with another one and a fresh log folder.
+func startWeb(t *testing.T, cfg *config) *instance {
+	t.Helper()
+	for try := 0; ; try++ {
+		cfg.web.port = freePort(t)
+		in, err := start(*cfg)
+		if err == nil {
+			return in
+		}
+		if try == 4 || !strings.Contains(err.Error(), "the website's port: ") {
+			t.Fatal(err)
+		}
+		if cfg.logDir != "" {
+			cfg.logDir = t.TempDir()
+		}
+	}
+}
+
 // TestWebsite runs dgserver with its website and a self-signed certificate: a browser that trusts it registers
 // an account in invite mode, the account logs in as the game's login does, and the HTTP port sends the client's
 // login-screen links there.
 func TestWebsite(t *testing.T) {
-	logDir, data := t.TempDir(), t.TempDir()
-	port := freePort(t)
-	cfg := config{bind: "127.0.0.1", certs: testCerts(t), logDir: logDir, dataDir: data,
-		accounts: accounts.Policy{Mode: accounts.Invite}, web: websiteConfig{port: port}}
-	in, err := start(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := t.TempDir()
+	cfg := config{bind: "127.0.0.1", certs: testCerts(t), logDir: t.TempDir(), dataDir: data,
+		accounts: accounts.Policy{Mode: accounts.Invite}}
+	in := startWeb(t, &cfg)
 	defer in.stop()
+	port := cfg.web.port
 	info := in.info(cfg)
 	base := "https://127.0.0.1:" + strconv.Itoa(port) + "/"
 	if info.WebURL != base || len(info.WebFingerprint) != 95 || info.TCPPorts[len(info.TCPPorts)-1] != port {
@@ -148,14 +164,10 @@ func TestWebsite(t *testing.T) {
 // TestWebsiteLimits: with --limits on, the website's password forms take the game login's backoff per account:
 // after five wrong passwords the account is locked for 30 s, also for the right one.
 func TestWebsiteLimits(t *testing.T) {
-	port := freePort(t)
-	cfg := config{bind: "127.0.0.1", certs: testCerts(t), logDir: t.TempDir(), dataDir: t.TempDir(),
-		limitsMode: limits.On, web: websiteConfig{port: port}}
-	in, err := start(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	cfg := config{bind: "127.0.0.1", certs: testCerts(t), logDir: t.TempDir(), dataDir: t.TempDir(), limitsMode: limits.On}
+	in := startWeb(t, &cfg)
 	defer in.stop()
+	port := cfg.web.port
 	if r := cfg.accounts.Register(in.store, "locked", "", "dawngate1", "", netip.Addr{}, time.Now()); r.Code != 0 {
 		t.Fatal(r.Note)
 	}
@@ -221,11 +233,8 @@ func TestWebsiteFlags(t *testing.T) {
 func TestWebsiteDomainURL(t *testing.T) {
 	data := t.TempDir()
 	cfg := config{bind: "127.0.0.1", certs: testCerts(t), logDir: t.TempDir(), dataDir: data,
-		web: websiteConfig{port: freePort(t), domain: "play.example.org", acmeURL: "http://127.0.0.1:1/directory"}}
-	in, err := start(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+		web: websiteConfig{domain: "play.example.org", acmeURL: "http://127.0.0.1:1/directory"}}
+	in := startWeb(t, &cfg)
 	defer in.stop()
 	link, _ := sitelinks.Base("203.0.113.7", sitelinks.HTTPPort, "play.example.org")
 	if info := in.info(cfg); info.WebURL != link || info.WebFingerprint != "" {

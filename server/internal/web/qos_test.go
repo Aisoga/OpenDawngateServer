@@ -43,7 +43,8 @@ type qosRig struct {
 
 const testSecret = 0x12345678
 
-func newQoSRig(t *testing.T) *qosRig {
+// newQoSRig serves a QoS on loopback; set changes its settings before it serves.
+func newQoSRig(t *testing.T, set ...func(q *QoS)) *qosRig {
 	t.Helper()
 	udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -56,6 +57,9 @@ func newQoSRig(t *testing.T) *qosRig {
 	r := &qosRig{log: &lockedBuffer{}, http: ln.Addr().String(), udp: udp.LocalAddr().(*net.UDPAddr).Port}
 	r.q = NewQoS(logging.New(r.log), "127.0.0.1", udp)
 	r.q.Secret = func() uint32 { return testSecret }
+	for _, f := range set {
+		f(r.q)
+	}
 	go r.q.Serve(ln)
 	go r.q.ServeUDP()
 	t.Cleanup(func() { ln.Close(); udp.Close() })
@@ -185,8 +189,7 @@ func TestQoSLatencyReply(t *testing.T) {
 // A latency probe (QosApiSendLatencyProbe 0x00CE2580: request id, requestid, reqsecret, flags, tick)
 // comes back after the hold with the client's address, port and an empty extra-data field.
 func TestQoSLatencyEcho(t *testing.T) {
-	r := newQoSRig(t)
-	r.q.Hold = 20 * time.Millisecond
+	r := newQoSRig(t, func(q *QoS) { q.Hold = 20 * time.Millisecond })
 	c := r.udpClient(t)
 	probe := words(2, 1, 0, 1, 0x00ABCDEF)
 	start := time.Now()
@@ -264,8 +267,7 @@ func TestQoSBandwidth(t *testing.T) {
 
 // With probes lost, the test answers BandwidthWait after the first one.
 func TestQoSBandwidthTimeout(t *testing.T) {
-	r := newQoSRig(t)
-	r.q.BandwidthWait = 50 * time.Millisecond
+	r := newQoSRig(t, func(q *QoS) { q.BandwidthWait = 50 * time.Millisecond })
 	r.get(t, "/qos/qos?vers=1&qtyp=2&prpt=3659")
 	c := r.udpClient(t)
 	p := make([]byte, 1200)
@@ -338,8 +340,7 @@ func TestQoSFirewall(t *testing.T) {
 // A5: with dgserver --public-host the firewall reply names that address (where the client sends its
 // firewall packets), not the one the server binds.
 func TestQoSFirewallPublicHost(t *testing.T) {
-	r := newQoSRig(t)
-	r.q.Host = "192.168.1.20"
+	r := newQoSRig(t, func(q *QoS) { q.Host = "192.168.1.20" })
 	resp := r.get(t, "/qos/firewall?vers=1&nint=2")
 	i := strings.Index(resp, "<firewall>")
 	if i < 0 {
@@ -354,8 +355,7 @@ func TestQoSFirewallPublicHost(t *testing.T) {
 }
 
 func TestQoSFiretypeMappedAndMissing(t *testing.T) {
-	r := newQoSRig(t)
-	r.q.FiretypeWait = 100 * time.Millisecond
+	r := newQoSRig(t, func(q *QoS) { q.FiretypeWait = 100 * time.Millisecond })
 	c := r.udpClient(t)
 	r.get(t, "/qos/firewall?vers=1&nint=2")
 	c.Write(words(2, testSecret))

@@ -104,14 +104,9 @@ func TestAdminPageOnServer(t *testing.T) {
 	// run starts dgserver with the website and the sign-up mode signup; stop ends it and returns its log
 	run := func(signup accounts.Mode) (base string, stop func() string) {
 		t.Helper()
-		logDir, port := t.TempDir(), freePort(t)
-		cfg := config{bind: "127.0.0.1", certs: certs, logDir: logDir, dataDir: dir,
-			accounts: accounts.Policy{Mode: signup}, web: websiteConfig{port: port}}
-		in, err := start(cfg)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return fmt.Sprintf("https://127.0.0.1:%d", port), func() string { in.stop(); return readLog(t, logDir) }
+		cfg := config{bind: "127.0.0.1", certs: certs, logDir: t.TempDir(), dataDir: dir, accounts: accounts.Policy{Mode: signup}}
+		in := startWeb(t, &cfg)
+		return fmt.Sprintf("https://127.0.0.1:%d", cfg.web.port), func() string { in.stop(); return readLog(t, cfg.logDir) }
 	}
 	base, stop := run(accounts.Open)
 	jar, _ := cookiejar.New(nil)

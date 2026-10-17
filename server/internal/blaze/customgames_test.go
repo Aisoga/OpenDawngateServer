@@ -333,9 +333,14 @@ func TestCustomGameHosted(t *testing.T) {
 	}
 	wantLine(t, hostNext[gmshost.UpdateRoster](t, host), `{"t":"updateRoster","roster":[{"user":2000000001,"name":"alpha",`+
 		`"index":0,"team":1,"noun":"","bot":false},{"user":2000000002,"name":"bravo","index":5,"team":2,"noun":"","bot":false}]}`)
-	if got, _ := listGames(t, b.note(ComponentGameManager, NotifyGameListUpdateID)); got[1] != 2 {
-		t.Errorf("list after the join %v", got)
-	}
+	// the update after the join (the host's ready may still have pushed the game as it was before)
+	b.wait("the list after the join", func(f fire.Frame) bool {
+		if f.Component != ComponentGameManager || f.Command != NotifyGameListUpdateID || f.Type != fire.Notification {
+			return false
+		}
+		got, _ := listGames(t, f)
+		return got[1] == 2
+	})
 
 	// both connect to the GMS: NotifyPlayerJoinCompleted to both, once each
 	mesh := func(c *tcpClient) {

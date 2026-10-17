@@ -1,11 +1,13 @@
 package dgserver
 
 import (
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -42,29 +44,34 @@ func TestLimitsOn(t *testing.T) {
 	if in.limits == nil || in.stopLimits == nil {
 		t.Fatal("no limiter")
 	}
-	dial := func(i int) net.Conn {
-		t.Helper()
+	dial := func(i int) (net.Conn, error) {
 		// from 127.0.9.1, an address of the test's own (no address is exempt; the server's own included)
 		d := net.Dialer{LocalAddr: &net.TCPAddr{IP: net.IPv4(127, 0, 9, 1)}}
 		c, err := d.Dial("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(in.ports[i])))
-		if err != nil {
+		if err == nil {
+			t.Cleanup(func() { c.Close() })
+		}
+		return c, err
+	}
+	for _, i := range []int{0, 4} { // the redirector (no TLS handshake yet) and telemetry hold the address's two slots
+		if _, err := dial(i); err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { c.Close() })
-		return c
 	}
-	dial(0) // the redirector (no TLS handshake yet) and telemetry hold the address's two slots
-	dial(4)
 	deadline := time.Now().Add(5 * time.Second)
 	for in.limits.Open("127.0.9.1") < 2 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	b := dial(1)
-	b.SetReadDeadline(time.Now().Add(5 * time.Second))
-	if _, err := b.Read(make([]byte, 1)); err == nil {
-		t.Error("a third connection from the address was served")
-	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
-		t.Error("a third connection from the address wasn't closed")
+	// Linux may deliver the server's close as a reset before Dial returns: refused as well
+	if b, err := dial(1); err == nil {
+		b.SetReadDeadline(time.Now().Add(5 * time.Second))
+		if _, err := b.Read(make([]byte, 1)); err == nil {
+			t.Error("a third connection from the address was served")
+		} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			t.Error("a third connection from the address wasn't closed")
+		}
+	} else if !errors.Is(err, syscall.ECONNRESET) {
+		t.Fatal(err)
 	}
 	in.stop()
 	log := serverLog(t, logDir)

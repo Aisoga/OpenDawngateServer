@@ -108,8 +108,7 @@ The match runs as in the original game. The server uses the game's own data and 
 **Jungle.** Creep camps respawn after you clear them.
 
 - Killing the big creature of a buff camp gives you its buff for 150 seconds: Green for Power, Blue for Haste or Orange for armor.
-- **Camp icons on the minimap** show what your team knows. Every camp gets its icon when it first spawns. When your team sees a camp's last creature die, its icon goes away for your team and comes back when the camp respawns. A camp the enemy cleared out of your sight keeps its icon until you see it empty yourself, so an icon can be out of date. Spectators see every camp as it really is.
-- **Respawn clocks.** When your team sees a buff camp or a Boar camp cleared, a clock appears on the ground at the camp: its hand sweeps once round, and the camp is back when the dial is empty (5 minutes). Only your team sees your clocks; spectators see every team's. The smaller camps have no clock.
+- **Camp icons on the minimap** show what your team knows. Every camp gets its icon when it first spawns. When your team kills a camp or sees its last creature die, its icon goes away for your team and comes back when the camp respawns. A camp the enemy cleared out of your sight keeps its icon until your team sees it empty, so an icon can be out of date. Spectators see every camp as it really is.
 - The **parasite** in the middle of the map becomes attackable at 5:00 and only fights players who attack it. Once it fights, it attacks the shaper next to it, or else the nearest within its reach; from 15:00 every fifth attack is a fire breath, and from 25:00 a fire breath or a barrage of orbs in turn. While it lives, its red mark shows in the middle of the minimap.
 - Killing the parasite pays your team. A kill at its later stages gives your team a big buff and strong Strider minions in your waves for a few minutes.
 
@@ -272,7 +271,7 @@ Your `Start-Client.exe` and the server must be the same release: **any differenc
 
 - The loot bag click after a win hasn't been confirmed in a real game yet. If you don't click the bag, the game returns to the main menu about 105 seconds after the end anyway.
 - Pause isn't available. Surrender isn't available in practice matches.
-- The minimap has no respawn timers for the jungle camps; a cleared camp's icon just comes back at the respawn. Only the buff and Boar camps get the clock on the ground, and only when your team saw them cleared.
+- The minimap has no respawn timers for the jungle camps; a cleared camp's icon just comes back at the respawn.
 - The bots follow rules partly reconstructed from the game's data, so their exact behaviour may differ from the original.
 - Some details of the original server had to be guessed. If something works differently from how you remember it, a report helps, especially with a video of the original.
 

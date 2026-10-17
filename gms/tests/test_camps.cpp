@@ -37,7 +37,7 @@ GMS_TEST(CampIconsWitnessedDeathOffUntilTheRespawn) {
   CHECK_EQ(k.Bits(), static_cast<uint8_t>(0x01 | kSpirit));  // Mortal's icon off, Spirit's stays (stale)
   CHECK_EQ(k.KnownRespawnAt(1), 160.0);
   CHECK_EQ(k.KnownRespawnAt(2), -1.0);
-  // Mortal still sees the empty spot: no change
+  // Mortal still sees the empty spot: no change (already off, the time known)
   CHECK(k.Observe(120.0, 0, kMortal, false, 160.0).empty());
   CHECK_EQ(k.Bits(), static_cast<uint8_t>(0x01 | kSpirit));
   // the known respawn time comes: on again without sight
@@ -55,12 +55,39 @@ GMS_TEST(CampIconsUnwitnessedDeathKeepsTheStaleIcon) {
   k.OnSpawned();
   CHECK(k.OnCleared(0x01, 200.0).empty());  // only the NPC bit saw it: nobody's knowledge changes
   CHECK_EQ(k.Bits(), 0x07);
-  // a team that sees the empty spot outside the reveal window learns nothing (no EMPTY_UNKNOWN icon)
-  CHECK(k.Observe(150.0, 0, kBoth, false, 200.0).empty());
+  // unseen, the stale icon stays through every observation
+  for (double t = 101.0; t < 150.0; t += 1.0) CHECK(k.Observe(t, 0, 0, false, 200.0).empty());
   CHECK_EQ(k.Bits(), 0x07);
-  CHECK_EQ(k.KnownRespawnAt(1), -1.0);
   // the respawn: nothing changes for either team (their icons were on)
   CHECK(k.OnSpawned().empty());
+}
+
+// CAMPFIX (the user, 2026-10-17): a team that sees the camp empty loses the icon, also outside the reveal window (the
+// respawn time unknown then: the icon comes back with the public respawn).
+GMS_TEST(CampIconsSeenEmptyTurnsTheIconOff) {
+  CampKnowledge k;
+  k.Init(gms::flow::kCampRevealSmallS);
+  k.OnSpawned();
+  CHECK(k.OnCleared(0x01, 200.0).empty());  // unwitnessed: stale
+  const auto c = k.Observe(150.0, 0, kMortal, false, 200.0);  // 50 s before: outside the 10-s window
+  CHECK_EQ(c.size(), 1u);
+  CHECK_EQ(c[0].team, 1);
+  CHECK(!c[0].icon);
+  CHECK_EQ(c[0].knownRespawnAt, -1.0);
+  CHECK_EQ(k.Bits(), static_cast<uint8_t>(0x01 | kSpirit));  // Spirit didn't look: its icon stays
+  CHECK(k.Observe(151.0, 0, kMortal, false, 200.0).empty());  // still empty: nothing new
+  // inside the window the time becomes known (the icon stays off)
+  const auto w = k.Observe(190.0, 0, kMortal, false, 200.0);
+  CHECK_EQ(w.size(), 1u);
+  CHECK(!w[0].icon);
+  CHECK_EQ(w[0].knownRespawnAt, 200.0);
+  // the respawn: on again for Mortal
+  const auto s = k.OnSpawned();
+  CHECK_EQ(s.size(), 1u);
+  CHECK_EQ(k.Bits(), 0x07);
+  // an empty spot seen at the very respawn second (the spawn a tick later): no flicker
+  k.OnCleared(0x01, 300.0);
+  CHECK(k.Observe(300.0, 0, kBoth, false, 300.0).empty());
 }
 
 GMS_TEST(CampIconsTheEnemyTeamIsUnaffected) {
@@ -82,25 +109,28 @@ GMS_TEST(CampIconsRevealWindow) {
   k.Init(gms::flow::kCampRevealBuffS);
   k.OnSpawned();
   k.OnCleared(0x01, 500.0);  // unwitnessed
-  CHECK(k.Observe(439.0, 0, kMortal, false, 500.0).empty());  // 61 s before: outside
+  const auto o = k.Observe(439.0, 0, kMortal, false, 500.0);  // 61 s before: outside, the icon off, no time
+  CHECK_EQ(o.size(), 1u);
+  CHECK_EQ(o[0].knownRespawnAt, -1.0);
   const auto c = k.Observe(440.0, 0, kMortal, false, 500.0);  // 60 s before: inside
   CHECK_EQ(c.size(), 1u);
   CHECK_EQ(c[0].team, 1);
-  CHECK(c[0].icon);  // no change on the minimap: the stale icon stays on
+  CHECK(!c[0].icon);
   CHECK_EQ(c[0].knownRespawnAt, 500.0);
   CHECK_EQ(k.KnownRespawnAt(1), 500.0);
   CHECK_EQ(k.KnownRespawnAt(2), -1.0);
-  CHECK_EQ(k.Bits(), 0x07);
-  // the time comes: the known time is spent (the icon was already on)
+  CHECK_EQ(k.Bits(), static_cast<uint8_t>(0x01 | kSpirit));
+  // the time comes: the icon on without sight
   const auto r = k.Observe(500.0, 0, 0, false, 500.0);
   CHECK_EQ(r.size(), 1u);
+  CHECK(r[0].icon);
   CHECK_EQ(k.KnownRespawnAt(1), -1.0);
   // a small camp: 10 s
   CampKnowledge s;
   s.Init(gms::flow::kCampRevealSmallS);
   s.OnSpawned();
   s.OnCleared(0x01, 100.0);
-  CHECK(s.Observe(89.0, 0, kSpirit, false, 100.0).empty());
+  CHECK_EQ(s.Observe(89.0, 0, kSpirit, false, 100.0)[0].knownRespawnAt, -1.0);  // off, the time unknown
   CHECK_EQ(s.Observe(90.0, 0, kSpirit, false, 100.0).size(), 1u);
   CHECK_EQ(s.KnownRespawnAt(2), 100.0);
 }
@@ -131,76 +161,9 @@ GMS_TEST(CampIconsNeverRespawns) {
   const auto c = k.OnCleared(kMortal, -1.0);  // no respawn: off for the witness for good
   CHECK_EQ(c.size(), 1u);
   CHECK_EQ(c[0].knownRespawnAt, -1.0);
-  CHECK(k.Observe(1.0e6, 0, kBoth, false, -1.0).empty());
+  CHECK(k.Observe(1.0e6, 0, kMortal, false, -1.0).empty());
   CHECK(!k.Icon(1));
   CHECK(k.Icon(2));
-}
-
-// CAMPICONS step 2: the world clock (a fixed 300-s effect) only for a time known one clock length ahead.
-GMS_TEST(CampClockWitnessedBuffClearGetsAClock) {
-  CampKnowledge k;
-  k.Init(gms::flow::kCampRevealBuffS);
-  k.OnSpawned();
-  double due[2] = {-1.0, -1.0};
-  k.OnCleared(kMortal, 400.0);  // cleared at 100 s, respawn 300 s later
-  auto a = gms::flow::PlanCampClocks(k, 100.0, due);
-  CHECK_EQ(a.size(), 1u);
-  CHECK_EQ(a[0].team, 1);
-  CHECK(a[0].create);
-  CHECK_EQ(a[0].dueAt, 400.0);
-  due[0] = 400.0;
-  CHECK(gms::flow::PlanCampClocks(k, 101.0, due).empty());  // running: nothing
-  CHECK(gms::flow::PlanCampClocks(k, 399.0, due).empty());
-  // the respawn: the known time is gone, the clock goes
-  k.OnSpawned();
-  a = gms::flow::PlanCampClocks(k, 400.0, due);
-  CHECK_EQ(a.size(), 1u);
-  CHECK_EQ(a[0].team, 1);
-  CHECK(!a[0].create);
-}
-
-GMS_TEST(CampClockTheKnownTimeComesFirst) {
-  CampKnowledge k;
-  k.Init(gms::flow::kCampRevealBuffS);
-  k.OnSpawned();
-  k.OnCleared(kBoth, 400.0);
-  double due[2] = {400.0, 400.0};
-  // the director's once-a-second step reaches the time before the spawn's own call: both clocks go
-  auto a = gms::flow::PlanCampClocks(k, 400.5, due);
-  CHECK_EQ(a.size(), 2u);
-  CHECK(!a[0].create);
-  CHECK(!a[1].create);
-}
-
-GMS_TEST(CampClockNoneForAShortRespawnOrALateLearnedTime) {
-  CampKnowledge small;
-  small.Init(gms::flow::kCampRevealSmallS);
-  small.OnSpawned();
-  small.OnCleared(kMortal, 160.0);  // a small camp: 60 s
-  double due[2] = {-1.0, -1.0};
-  CHECK(gms::flow::PlanCampClocks(small, 100.0, due).empty());
-  CampKnowledge buff;
-  buff.Init(gms::flow::kCampRevealBuffS);
-  buff.OnSpawned();
-  buff.OnCleared(0x01, 400.0);  // nobody saw it
-  CHECK(gms::flow::PlanCampClocks(buff, 100.0, due).empty());
-  buff.Observe(350.0, 0, kSpirit, false, 400.0);  // Spirit learns the time 50 s before (the reveal window)
-  CHECK_EQ(buff.KnownRespawnAt(2), 400.0);
-  CHECK(gms::flow::PlanCampClocks(buff, 350.0, due).empty());  // 50 s left: the 300-s dial would lie
-}
-
-GMS_TEST(CampClockOnlyTheWitnessesTeam) {
-  CampKnowledge k;
-  k.Init(gms::flow::kCampRevealBuffS);
-  k.OnSpawned();
-  k.OnCleared(kSpirit, 500.0);
-  double due[2] = {-1.0, -1.0};
-  const auto a = gms::flow::PlanCampClocks(k, 200.0, due);
-  CHECK_EQ(a.size(), 1u);
-  CHECK_EQ(a[0].team, 2);
-  CHECK(a[0].create);
-  // within the tolerance (the death dated by the last tick): still a clock
-  double none[2] = {-1.0, -1.0};
-  CHECK_EQ(gms::flow::PlanCampClocks(k, 201.5, none).size(), 1u);
-  CHECK(gms::flow::PlanCampClocks(k, 203.0, none).empty());
+  CHECK_EQ(k.Observe(1.0e6, 0, kSpirit, false, -1.0).size(), 1u);  // Spirit sees it empty: off for good too
+  CHECK(!k.Icon(2));
 }

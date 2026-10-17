@@ -94,13 +94,17 @@ type fixture struct {
 }
 
 // newFixture runs a manager on an ephemeral loopback port with a fake launcher, a pool of the given
-// size (made-up port numbers; nothing binds them) and short timeouts.
-func newFixture(t *testing.T, ports int, run func(env Env, p *FakeProcess)) *fixture {
+// size (made-up port numbers; nothing binds them) and short timeouts; set changes the config before it listens.
+func newFixture(t *testing.T, ports int, run func(env Env, p *FakeProcess), set ...func(*Config)) *fixture {
 	t.Helper()
 	f := &fixture{l: &FakeLauncher{Run: run}, log: &syncBuf{}}
-	f.m = NewManager(Config{Log: logging.New(f.log), Launcher: f.l, Pool: NewPool(20042, 20042+ports-1),
+	cfg := Config{Log: logging.New(f.log), Launcher: f.l, Pool: NewPool(20042, 20042+ports-1),
 		HelloTimeout: 500 * time.Millisecond, ReadyTimeout: 500 * time.Millisecond,
-		HeartbeatTimeout: 500 * time.Millisecond, ExitTimeout: 300 * time.Millisecond})
+		HeartbeatTimeout: 500 * time.Millisecond, ExitTimeout: 300 * time.Millisecond}
+	for _, s := range set {
+		s(&cfg)
+	}
+	f.m = NewManager(cfg)
 	if err := f.m.Listen("127.0.0.1:0"); err != nil {
 		t.Fatal(err)
 	}
@@ -228,8 +232,7 @@ func TestTokenCheck(t *testing.T) {
 		PlayHost(env, p, func(h *HostConn, cg CreateGame) error {
 			return h.Send(FinishGame{Reason: "ok"})
 		})
-	})
-	f.m.cfg.HelloTimeout = 3 * time.Second
+	}, func(c *Config) { c.HelloTimeout = 3 * time.Second })
 	rec := newRecorder()
 	if _, err := f.m.Start(practice, rec.Events()); err != nil {
 		t.Fatal(err)

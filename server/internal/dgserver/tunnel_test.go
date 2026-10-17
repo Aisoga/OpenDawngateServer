@@ -293,6 +293,7 @@ func TestSignupFact(t *testing.T) {
 	in.stop()
 
 	cfg.accounts.LocalTrust = true
+	cfg.logDir = t.TempDir() // a log file per start second: the first start's may be another
 	if in, err = start(cfg); err != nil {
 		t.Fatal(err)
 	}

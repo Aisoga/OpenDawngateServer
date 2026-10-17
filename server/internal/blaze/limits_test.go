@@ -101,12 +101,14 @@ func TestLimitsLoginBackoff(t *testing.T) {
 // one held back for longer than RequestHeld is closed.
 func TestLimitsRequestRate(t *testing.T) {
 	cfg := testLimits()
-	cfg.Requests = limits.Rate{PerSec: 200, Burst: 5}
-	cfg.RequestHeld = 100 * time.Millisecond
+	// slow enough that a loaded machine's handling of a ping takes well under a token's 40 ms (a whole token back
+	// lets the client off)
+	cfg.Requests = limits.Rate{PerSec: 25, Burst: 5}
+	cfg.RequestHeld = 250 * time.Millisecond
 	ts := newTCPServer(t, func(s *Server) { s.Limits = limits.New(cfg, nil) })
 	a := ts.dial("a")
 	start := time.Now()
-	ids := make([]uint32, 15)
+	ids := make([]uint32, 8)
 	for i := range ids {
 		ids[i] = a.send(ComponentUtil, CmdUtilPing, nil)
 	}
@@ -115,8 +117,8 @@ func TestLimitsRequestRate(t *testing.T) {
 			t.Fatalf("ping %d: %s", id, f.Type)
 		}
 	}
-	if d := time.Since(start); d < 40*time.Millisecond { // 10 past the burst at 200/s: 50 ms
-		t.Errorf("15 pings answered in %s; want them slowed down", d)
+	if d := time.Since(start); d < 100*time.Millisecond { // 3 past the burst at 25/s: 120 ms
+		t.Errorf("8 pings answered in %s; want them slowed down", d)
 	}
 	b := ts.dial("b")
 	for i := 0; i < 200; i++ {
@@ -135,7 +137,7 @@ func TestLimitsRequestRate(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if !strings.Contains(ts.log.String(), "limits: connection from 127.0.0.1 closed: requests held back to 200/s (burst 5) for more than 100ms") {
+	if !strings.Contains(ts.log.String(), "limits: connection from 127.0.0.1 closed: requests held back to 25/s (burst 5) for more than 250ms") {
 		t.Errorf("log:\n%s", ts.log.String())
 	}
 }

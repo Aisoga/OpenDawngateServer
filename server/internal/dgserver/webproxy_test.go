@@ -20,14 +20,11 @@ import (
 // certificate of its own; the players' addresses from the proxy's headers, the limits per player address.
 func TestWebsiteProxy(t *testing.T) {
 	data := t.TempDir()
-	port := freePort(t)
 	cfg := config{bind: "127.0.0.1", certs: testCerts(t), logDir: t.TempDir(), dataDir: data, limitsMode: limits.On,
-		web: websiteConfig{port: port, domain: "play.example.org", proxy: true}}
-	in, err := start(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+		web: websiteConfig{domain: "play.example.org", proxy: true}}
+	in := startWeb(t, &cfg)
 	defer in.stop()
+	port := cfg.web.port
 	listen := "127.0.0.1:" + strconv.Itoa(port)
 	info := in.info(cfg)
 	if info.WebURL != "https://play.example.org/" || info.WebProxy != listen || info.WebFingerprint != "" {

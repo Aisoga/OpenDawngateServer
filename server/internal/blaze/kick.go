@@ -168,20 +168,21 @@ func (s *Server) EndAccountSessions(user int64, why string) int {
 		}
 	}
 	r.mu.Unlock()
+	delay, grace := KickGameDelay, KickGrace
 	for _, ls := range todo {
 		cp := *ls
-		go s.kick(&cp, why)
+		go s.kick(&cp, why, delay, grace)
 	}
 	return len(todo)
 }
 
 // kick ends one session: the hosted games, the notice, the connection.
-func (s *Server) kick(ls *liveSession, why string) {
+func (s *Server) kick(ls *liveSession, why string, delay, grace time.Duration) {
 	conn := ls.conn
 	notice := s.SessionEnd
 	s.Log.Logf("blaze", "account %d (persona %d): ending its session now (%s); notice %s", ls.user, ls.persona, why, notice)
 	if s.kickFromGames(conn) {
-		time.Sleep(KickGameDelay)
+		time.Sleep(delay)
 	}
 	switch notice {
 	case SessionEndDisconnected:
@@ -196,7 +197,7 @@ func (s *Server) kick(ls *liveSession, why string) {
 		case <-conn.gone:
 			s.Log.Logf("blaze", "account %d: the client closed its connection after the notice", ls.user)
 			return
-		case <-time.After(KickGrace):
+		case <-time.After(grace):
 		}
 	}
 	s.Log.Logf("blaze", "account %d: closing its connection (session ended: %s)", ls.user, why)

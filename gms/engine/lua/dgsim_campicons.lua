@@ -6,10 +6,12 @@
 --   {'kill', prefix, x, y}       kill every living creature whose asset name starts with prefix within 12 units of
 --                                (x, y), each with one lethal true-damage hit from player 0's snapshot (the damage path,
 --                                as a player's kill)
+--   {'kill', prefix, x, y, pid}  the same with player pid's snapshot (its creature is the killer: e.g. a team-2 bot's
+--                                clear that team 1 doesn't see)
 --   {'report', prefix, x, y}     report only
---   {'vision', team, x, y, r, s} a vision object of `team` at (x, y), radius r, for s seconds (step 2's witness)
+--   {'vision', team, x, y, r, s} a vision object of `team` at (x, y), radius r, for s seconds (a team's witness)
 --   {'tpo', x, y}                teleport the other human player (a second client) to (x, y)
--- dgsim_campclock_plan.lua sets the steps of CAMPICONS step 2's live check.
+-- (a test may set its own steps in dgsim_campicons_steps before the first call)
 -- The defaults (a practice match, bots=0, director_waves=0): the human next to the CreepsFish camp at (65.7, -132.2)
 -- at 95 s, kills it in sight at 100 s (a witnessed clear), kills the CreepsFungus camp at (-67.4, 3.3) and the
 -- Buff_Fish camp at (-67.6, 165.9) unseen at 104 and 106 s, stands at the Fungus camp 7 s before its 60-s respawn
@@ -106,7 +108,9 @@ local ok, err = pcall(function()
       f2(t), tostring(id), tostring(nGameObject.GetAssetName(id)), tostring(alive), f2(nGameObject.GetHitPoints(id)),
       tostring(nGameObject.IsVisibleToTeam(id, 1)), tostring(nGameObject.IsVisibleToTeam(id, 2)))
     if s[1] == 'kill' and alive then
-      local snap = nAttribute.CreateAttributeSnapshot_FromObject(h, kObjIDNone)
+      local by = h
+      if s[5] ~= nil then by = nPlayer.GetPlayerControlledObjectID(s[5]) end
+      local snap = nAttribute.CreateAttributeSnapshot_FromObject(by, kObjIDNone)
       local r, dealt = nGameObject.TakeDamage(snap, id, nGameObject.GetHitPoints(id) + 1000, 0,
         nDescriptors.IsTrueDamage, kZeroVector)
       nAttribute.RemoveAttributeSnapshot(snap)
@@ -115,8 +119,8 @@ local ok, err = pcall(function()
     end
     p(line)
   end
-  p(string.format('campicons step %d at match %s: %s %s near (%.1f %.1f): %d creature(s), %d killed', n, f2(t), s[1],
-    s[2], s[3], s[4], #list, killed))
+  p(string.format('campicons step %d at match %s: %s %s near (%.1f %.1f): %d creature(s), %d killed%s', n, f2(t), s[1],
+    s[2], s[3], s[4], #list, killed, s[5] ~= nil and (' by player ' .. tostring(s[5])) or ''))
 end)
 if not ok then p('campicons: ERROR', err) end
 return table.concat(out, '\n')

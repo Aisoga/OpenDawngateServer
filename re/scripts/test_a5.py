@@ -268,6 +268,25 @@ class EgressAllowHostTest(unittest.TestCase):
         self.assertEqual(r("192.168.1.20", "gosredirector.ea.com", {3659}, dg, ["192.168.1.20"]),
                          ["EA-related name"])
 
+    def test_own_server_name_can_be_allowed(self):
+        # VPSLIVE: our public server's name holds the word "dawngate"; only that exact name is exempt from the name rule
+        self.assertEqual(egress_report.allowed_name("Dawngate.Example.org."), "dawngate.example.org")
+        for bad in ["dawngate.com", "www.dawngate.com", "gosredirector.ea.com", "x.easports.com", "play.waystone.net",
+                    "example.org", "dawngate", "bad_name.example.org", "127.0.0.1"]:
+            with self.assertRaises(Exception, msg=bad):
+                egress_report.allowed_name(bad)
+        own = ["dawngate.example.org"]
+        self.assertFalse(egress_report.name_flagged("dawngate.example.org", own))
+        self.assertTrue(egress_report.name_flagged("dawngate.example.org"))
+        self.assertTrue(egress_report.name_flagged("www.dawngate.example.org", own))  # exact names only
+        self.assertTrue(egress_report.name_flagged("gosredirector.ea.com", own))
+        self.assertFalse(egress_report.name_flagged("example.org", own))
+        r = egress_report.outbound_reasons
+        self.assertEqual(r("203.0.113.5", "dawngate.example.org", {51000}, {3659}, [], own), [])
+        self.assertEqual(r("203.0.113.5", "dawngate.example.org", {51000}, {3659}), ["EA-related name"])
+        # the game's own ports to that address still need --allow-host
+        self.assertEqual(r("203.0.113.5", "dawngate.example.org", {3659}, {3659}, [], own), ["Dawngate.exe port [3659]"])
+
     def test_ports_per_protocol(self):
         # C1b (c1b_run7): the game's UDP port number on 127.0.0.1 doesn't make another program's TCP flow its own
         with tempfile.TemporaryDirectory() as d:

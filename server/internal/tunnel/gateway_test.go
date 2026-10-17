@@ -347,6 +347,10 @@ func TestProbeInfo(t *testing.T) {
 	if err != nil || info.Pin != g.Identity.Pin || info.Version != g.Version || info.VersionErr != nil {
 		t.Errorf("ProbeInfo: %+v, %v (the gateway's version %q)", info, err, g.Version)
 	}
+	// the gateway logs after its reply
+	for deadline := time.Now().Add(5 * time.Second); !strings.Contains(buf.String(), "version asked (") && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
 	if g.Sessions() != 0 || !strings.Contains(buf.String(), "version asked ("+g.Version) {
 		t.Errorf("%d sessions after the info hello; log:\n%s", g.Sessions(), buf.String())
 	}

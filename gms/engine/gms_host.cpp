@@ -2270,14 +2270,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     p.stealth = fowOpt_.stealth;
     model_.Update(*ents, p);
     std::vector<uint8_t> bits(objs.size(), 0);
-    for (size_t i = 0; i < objs.size(); ++i) {
-      bits[i] = model_.Bits(i);
-      // CAMPICONS step 2: a camp's world clock is its own team's only (director::ClockTeamBits), wherever the other
-      // team's vision reaches
-      uint8_t forced = 0;
-      if (director::ClockTeamBits(objs[i].id, &forced)) bits[i] = forced;
-    }
-    visionBits_ = bits;
+    for (size_t i = 0; i < objs.size(); ++i) bits[i] = model_.Bits(i);
     // D2g-rest: the record's +0x51 mask = the teams that would see the object without grass and stealth (the terrain
     // test only), which LabsAbilities_CreateAbilityObject reads to reveal a caster in grass (RevealInGrass)
     if (p.grass || p.stealth) {
@@ -2417,7 +2410,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       f.id = o.id;
       f.known = known;
       f.visible = static_cast<uint16_t>(o.visible | createdNow[i]);
-      f.teamBits = i < visionBits_.size() ? visionBits_[i] : model_.Bits(i);
+      f.teamBits = model_.Bits(i);
       f.maintainPos = info[i].maintain;
       f.x = info[i].pos[0];
       f.y = info[i].pos[1];
@@ -3144,7 +3137,6 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   fow::Options fowOpt_;
   int fogLogLimit_ = 200, fogLogged_ = 0, fogFailLogged_ = 0;
   gms::vision::VisionModel model_;
-  std::vector<uint8_t> visionBits_;         // the last VisionStep's answers as written (model_ plus the overrides)
   gms::vision::VisionModel modelFree_;      // without the terrain, grass and stealth tests (evidence only)
   gms::vision::VisionModel modelTerrain_;   // D2g-rest: the terrain test only (the records' +0x51 mask)
   gms::SteadyClock::time_point visionLast_{};

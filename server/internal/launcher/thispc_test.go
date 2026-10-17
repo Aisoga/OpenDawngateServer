@@ -290,6 +290,10 @@ func TestThisPCFront(t *testing.T) {
 	if !sawSetup {
 		t.Error("no setup or start state seen")
 	}
+	// the running line follows the state
+	for deadline := time.Now().Add(5 * time.Second); !strings.Contains(console.String(), "the server runs on") && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
 	out := console.String()
 	for _, want := range []string{"This PC  starting the server on this PC (127.0.9.11)", "[done]     host copy", "[done]     host DLL",
 		"[skipped]  client copy", "This PC  the server runs on 127.0.9.11"} {

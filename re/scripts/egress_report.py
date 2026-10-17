@@ -41,11 +41,18 @@ address, 127.0.4.2 for lane d's), so its packets to itself or to the lane's serv
 between the PC's own non-loopback addresses (Npcap sees it on the loopback adapter) is listed in its own section, by
 destination port; a game endpoint on the LAN address sending to a loopback address is still flagged as cross-lane.
 
+Our own public server by name (VPSLIVE): --allow-name <DNS name> (repeatable) names our own server's host name when it
+contains one of the EA words above (dawngate.example.org does): its DNS queries and the flows to the addresses the
+capture resolved for it are not flagged for the name. Only that exact name, and only when the EA word sits in a label
+left of the registered domain (the last two labels): dawngate.com, waystone.net or any ea.com name can't be allowed.
+The EA address range still applies to its addresses, and a Dawngate.exe flow to them still needs --allow-host.
+
 Exit code: 0 clean, 1 flagged lines, 2 usage/tshark error.
 
 Usage:
     .venv/Scripts/python -I re/scripts/egress_report.py <session dir | capture.pcapng> [--monitor monitor.log ...]
-        [--tshark "C:/Program Files/Wireshark/tshark.exe"] [--allow-host <IPv4> ...] [--lane-address 127.0.0.3 ...]
+        [--tshark "C:/Program Files/Wireshark/tshark.exe"] [--allow-host <IPv4> ...] [--allow-name <DNS name> ...]
+        [--lane-address 127.0.0.3 ...]
 """
 import argparse
 import collections
@@ -138,14 +145,36 @@ def lan_host(text):
     return str(ip)
 
 
-def outbound_reasons(dst, name, sports, dg_ports, allowed=()):
+EA_DOMAIN = re.compile(r"(^|\.)(ea\.com|easports\.com|origin\.com)$", re.IGNORECASE)
+
+
+def allowed_name(text):
+    """argparse type for --allow-name (VPSLIVE): our own server's DNS name, whose EA word sits in a label left of the
+    registered domain (dawngate.example.org); EA's own domains and names like dawngate.com are refused."""
+    name = text.strip().rstrip(".").lower()
+    labels = name.split(".")
+    if (len(labels) < 3 or labels[-1].isdigit()
+            or not all(re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?", lab) for lab in labels)):
+        raise argparse.ArgumentTypeError(f"{text!r}: a host name below a registered domain, e.g. dawngate.example.org")
+    if EA_DOMAIN.search(name) or EA_NAME.search(".".join(labels[-2:])):
+        raise argparse.ArgumentTypeError(f"{text!r}: an EA domain, or a domain named after the game, can't be allowed")
+    return name
+
+
+def name_flagged(name, allowed_names=()):
+    """Whether a DNS name counts as EA-related: the EA_NAME rule, except our own server's exact names (--allow-name)."""
+    return bool(name) and bool(EA_NAME.search(name)) and name.rstrip(".").lower() not in allowed_names
+
+
+def outbound_reasons(dst, name, sports, dg_ports, allowed=(), allowed_names=()):
     """Why an outbound flow is flagged ([] = it isn't). A flow from Dawngate.exe ports to an allowed LAN
-    machine (--allow-host) isn't flagged for that; the EA rules apply to every address."""
+    machine (--allow-host) isn't flagged for that; the EA rules apply to every address (a name allowed by
+    --allow-name doesn't count as EA-related)."""
     reason = []
     ip = ipaddress.ip_address(dst)
     if ip.version == 4 and ip in EA_NET:
         reason.append("EA address range")
-    if name and EA_NAME.search(name):
+    if name_flagged(name, allowed_names):
         reason.append("EA-related name")
     if sports & dg_ports and dst not in allowed:
         reason.append(f"Dawngate.exe port {sorted(sports & dg_ports)}")
@@ -192,6 +221,9 @@ def main():
     ap.add_argument("--tshark", default=r"C:\Program Files\Wireshark\tshark.exe")
     ap.add_argument("--allow-host", type=lan_host, action="append", default=[], metavar="IPV4",
                     help="one of our own LAN machines in an A5 test (repeatable); not flagged for Dawngate.exe ports")
+    ap.add_argument("--allow-name", type=allowed_name, action="append", default=[], metavar="NAME",
+                    help="VPSLIVE: our own server's DNS name when it holds an EA word (dawngate.example.org); its queries "
+                         "and flows aren't flagged for the name (repeatable)")
     ap.add_argument("--lane-address", type=lane_address, action="append", default=[], metavar="IPV4",
                     help="A6: the session's own loopback address (lanes a, b, c, d: 127.0.0.1 to 127.0.0.4; default "
                          "127.0.0.1); A5b: repeatable, a further one is another client's of the same session")
@@ -285,16 +317,20 @@ def main():
           + (f" (and its further clients': {', '.join(lanes[1:])})" if lanes[1:] else ""))
     if args.allow_host:
         print(f"allowed LAN machines (A5): {', '.join(args.allow_host)}")
+    if args.allow_name:
+        print(f"allowed names (our own server, VPSLIVE): {', '.join(args.allow_name)}")
     print("\n== DNS queries (mDNS/LLMNR excluded)")
     for name, (n, t) in queries.items():
-        print(f"  t={t:7.1f}s  {n:3}x  {name}" + flag("EA-related name" if EA_NAME.search(name) else ""))
+        own_name = bool(EA_NAME.search(name)) and not name_flagged(name, args.allow_name)
+        print(f"  t={t:7.1f}s  {n:3}x  {name}" + ("  (allowed: our own server's name)" if own_name else "")
+              + flag("EA-related name" if name_flagged(name, args.allow_name) else ""))
     if not queries:
         print("  none")
     print("\n== Outbound flows on non-loopback interfaces (TCP SYN / UDP from this host)")
     for (proto, dst, dport), (n, t, sports) in outbound.items():
         name = names.get(dst, "")
         own = dg_by_proto[proto]  # the game's ports in this protocol only
-        reason = outbound_reasons(dst, name, sports, own, args.allow_host)
+        reason = outbound_reasons(dst, name, sports, own, args.allow_host, args.allow_name)
         note = "  (allowed: our LAN machine)" if dst in args.allow_host and sports & own and not reason else ""
         print(f"  t={t:7.1f}s  {n:3}x  {proto} -> {dst}:{dport}  {name}  (local ports {sorted(sports)[:6]})"
               + note + flag(", ".join(reason)))

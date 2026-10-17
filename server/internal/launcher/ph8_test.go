@@ -154,6 +154,19 @@ func TestServerRiskNotice(t *testing.T) {
 	if strings.Contains(out, "Nothing limits") {
 		t.Error("the old notice's 'Nothing limits'")
 	}
+	// VPSLIVE: the notice names the hosts' real address, 127.0.0.1 under Wine (the Linux server's banner had said
+	// 127.0.1.10, Windows' HostsAddress)
+	for _, wine := range []bool{false, true} {
+		saved := hostsUnderWine
+		hostsUnderWine = wine
+		b.Reset()
+		ServerRiskNotice(&b, RiskInfo{Address: "8.8.8.8", Signup: "open"})
+		want := map[bool]string{false: HostsAddress("8.8.8.8"), true: "127.0.0.1"}[wine]
+		if !strings.Contains(b.String(), "the match hosts listen on "+want+", a loopback address") {
+			t.Errorf("under Wine %v: no hosts address %s in\n%s", wine, want, b.String())
+		}
+		hostsUnderWine = saved
+	}
 	b.Reset()
 	ServerRiskNotice(&b, RiskInfo{Address: "8.8.8.8", Bind: "192.168.1.20", Signup: "invite"})
 	if out := b.String(); strings.Contains(out, "holds the public address itself") || !strings.Contains(out, "invite code") ||

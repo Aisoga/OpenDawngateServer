@@ -11,11 +11,9 @@ import (
 // QoS datagrams over the source address's rate are dropped before they are read (one log line a minute per
 // address; the rest counted in the minute's limits line).
 func TestQoSLimits(t *testing.T) {
-	r := newQoSRig(t)
 	cfg := limits.Default()
 	cfg.Packets = limits.Rate{PerSec: 1.0 / 60, Burst: 3}
-	r.q.Limits = limits.New(cfg, nil)
-	r.q.Hold = 0
+	r := newQoSRig(t, func(q *QoS) { q.Limits, q.Hold = limits.New(cfg, nil), 0 })
 	c := r.udpClient(t)
 	for i := 0; i < 6; i++ {
 		if _, err := c.Write(words(uint32(i+1), 1, 0, 1, 1000)); err != nil {

@@ -82,7 +82,7 @@ ports and never uses UPnP.
 	if r.Bind == "" || r.Bind == r.Address {
 		fmt.Fprintf(w, `This PC holds the public address itself (no router): only the tunnel's port and the website listen on it
 (the match hosts listen on %s, a loopback address). Let your firewall in only TCP and UDP %d and TCP 443.
-`, HostsAddress(r.Address), gp)
+`, serverHostsAddress(r.Address), gp)
 	}
 	fmt.Fprintln(w, "Never use a password you use anywhere else. See README.txt (\"Hosting on the internet\").")
 }

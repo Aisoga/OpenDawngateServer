@@ -80,8 +80,8 @@ func (p *FakeProcess) Pid() int { return p.pid }
 
 // Kill marks the process killed and ends it with exit code 1 (like TerminateProcess(h, 1)).
 func (p *FakeProcess) Kill() error {
+	p.Exit(1) // first: a script that wakes on Killed and exits with its own code must not win
 	p.kill.Do(func() { close(p.killed) })
-	p.Exit(1)
 	return nil
 }
 

@@ -1536,7 +1536,8 @@ void OnDeath(void* victim, void* killer, std::uint32_t killerId, void* snapshot,
   ++g_st.deaths;
   if (std::strcmp(how, "kill") == 0) ++g_st.byKill; else ++g_st.byDamage;
   wells::OnObjectDied(v.id);  // D9: a well's worker frees its slot
-  director::OnObjectDied(v.id);  // CAMPICONS: a camp's last creature: the clear and who saw it (mVisibleToTeam now)
+  // CAMPICONS: a camp's last creature: the clear and who saw it (mVisibleToTeam now, and the killer's team)
+  director::OnObjectDied(v.id, hasKiller ? k.team : 0);
   const double t = GameSeconds();
   // remember the instances that exist now (step 5)
   Pending p;

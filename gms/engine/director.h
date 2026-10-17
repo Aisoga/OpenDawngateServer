@@ -27,9 +27,7 @@
 // (40): the "wave shape" lines (length, width, closest pair of the first waves' minions per spawner); PARAMAP:
 // camp_icons (1: the parasite's minimap icon while it is alive and born, 8D mCampVisibleToTeam; 2 every camp; 0 off;
 // CAMPICONS: 3, the default, the parasite as 1 and the jungle camps by each team's knowledge, gms/core/matchflow/
-// camps.h, with camp_reveal_buff_s (60) and camp_reveal_small_s (10); Configure reads camp_icons itself; CAMPICONS
-// step 2: camp_clock (1: a team that saw a 300-s camp's clear gets the world clock jungle_respawn_clock_effect at the
-// camp, its own team only; 0 off; with camp_icons=3)).
+// camps.h, with camp_reveal_buff_s (60) and camp_reveal_small_s (10); Configure reads camp_icons itself).
 #pragma once
 
 #include <cstddef>
@@ -87,8 +85,9 @@ void Stop();
 std::vector<std::uint32_t> IconCampMarkers();
 
 // CAMPICONS: an object died (death.cpp OnDeath, the server simulator bound, before the object goes): when it is a
-// jungle camp's last living creature the camp is cleared now, and the teams in its mVisibleToTeam witnessed it.
-void OnObjectDied(std::uint32_t id);
+// jungle camp's last living creature the camp is cleared now, and the teams in its mVisibleToTeam witnessed it, and
+// the killer's team (`killerTeam` 1 or 2; 0 = none or not a player team) whatever its vision (CAMPFIX).
+void OnObjectDied(std::uint32_t id, int killerTeam = 0);
 
 // CAMPICONS: the teams that see a point (x, y) now, as bits 1 << team (the host's vision model; gms_host.cpp sets it).
 typedef std::uint8_t (*PointSightFn)(void* ctx, float x, float y);
@@ -96,11 +95,6 @@ void SetPointSight(PointSightFn fn, void* ctx);
 
 // CAMPICONS: [host] camp_icons as the director uses it (0-3).
 int CampIconMode();
-
-// CAMPICONS step 2: a camp's world clock (jungle_respawn_clock_effect's effect object, [host] camp_clock) is shown to
-// its own team only: true and `bits` = 1 << team for such an object (the fog step writes them instead of the vision
-// model's answer, so the other team never sees it; a spectator's client draws both teams' bits); false otherwise.
-bool ClockTeamBits(std::uint32_t id, std::uint8_t* bits);
 
 // CAMPICONS: the camp entry's bits for a spectator (the camp's truth, gms::flow::CampTruthBits) for the camp whose
 // mSpawnMarkerId is `marker`; -1 = the players' value (the parasite's camp, or camp_icons other than 3).

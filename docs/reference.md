@@ -31,6 +31,7 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 | `web_port` | `443` | The website's HTTPS port. `0` turns the website off. |
 | `web_domain` | empty | Your domain name for the website, for a free Let's Encrypt certificate. Needs TCP 443 forwarded. |
 | `web_email` | empty | An e-mail address for Let's Encrypt (optional). |
+| `web_proxy` | `off` | `on` puts the website behind a reverse proxy such as nginx that already serves HTTPS on port 443: the website then listens on `127.0.0.1:<web_port>` over plain HTTP, for the proxy only, and has no certificate of its own. Needs `web_domain` and a `web_port` above 1023 (for example `8095`); `web_email` isn't used. See [The website behind nginx](hosting.md#the-website-behind-nginx). |
 | `folder` | `Dawngate-Data` | Where the game copies, certificates, accounts and logs go: relative to the program's folder, or a full path. |
 | `zip` | empty | Where `Dawngate.zip` is, if it's not next to the program or in your Downloads folder. Only needed for setup and repairs. |
 | `server_flags` | empty | More server options, separated by spaces. See [below](#extra-server-options-server_flags). |
@@ -205,7 +206,7 @@ With the tunnel (the default) the server listens for players on one port, on its
 | Port | Protocol | What | Who needs it |
 |---|---|---|---|
 | 42128 | TCP and UDP | The encrypted tunnel: logins, menus, matchmaking, chat, the connection-quality test, web content, telemetry and the matches all travel inside it | Every player; from the internet: **forward this** |
-| 443 | TCP | The website | Internet players and Let's Encrypt: **forward this** |
+| 443 | TCP | The website (with `web_proxy = on`: your reverse proxy, which forwards to `127.0.0.1:<web_port>`) | Internet players and Let's Encrypt: **forward this** |
 | 10040 | TCP | The server's control channel to its match hosts | **Nobody. Never forward it.** It stays on 127.0.0.1 (on a server on a loopback address, that address). |
 | 10042–10051 | UDP | Matches, one port per running match, on a loopback address of their own: `127.0.N.10` for a server on `127.0.0.N`, else `127.0.1.10` | Nobody: the tunnel reaches them inside the PC. |
 

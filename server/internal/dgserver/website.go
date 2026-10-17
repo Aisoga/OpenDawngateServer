@@ -26,12 +26,55 @@ import (
 // TCP 443 to it) or else a self-signed one for the server's addresses, both kept in --web-dir (default <data>\site,
 // which also holds the operator's privacy.html, terms.html and about.html). The plain HTTP port then redirects the
 // client's login-screen links /dawngate/<page> there.
+//
+// Behind a reverse proxy (--web-proxy): plain HTTP on a loopback address (--web-bind, default 127.0.0.1) and
+// --web-port, for a proxy such as nginx that holds the certificate of --web-domain and forwards
+// https://<domain>/ there; no TLS, no ACME, no self-signed certificate. The site takes the players' addresses from
+// the proxy's X-Forwarded-For/X-Real-IP (from a loopback peer only), and the limits apply per request to them.
 
 // websiteConfig is the website's part of config.
 type websiteConfig struct {
 	port          int
 	domain, email string
 	dir, acmeURL  string
+	proxy         bool   // --web-proxy
+	bind          string // --web-bind: the proxy mode's loopback address ("" = DefaultWebProxyBind)
+}
+
+// DefaultWebProxyBind is where the website listens behind a reverse proxy unless --web-bind names another loopback
+// address.
+const DefaultWebProxyBind = "127.0.0.1"
+
+// checkWebProxy checks the proxy mode's flags: --web-domain is needed (the links and redirects name it, the proxy
+// serves it), --web-bind must be a loopback IPv4 address (the plain-HTTP site is the proxy's only: never on a network
+// address), and the ACME flags have no use (the proxy holds the certificate). Without --web-proxy, --web-bind is
+// refused. It fills in the default bind address.
+func checkWebProxy(wc *websiteConfig) error {
+	if !wc.proxy {
+		if wc.bind != "" {
+			return errors.New("--web-bind needs --web-proxy (the website otherwise listens on --bind)")
+		}
+		return nil
+	}
+	if wc.port == 0 {
+		return nil // no website
+	}
+	if wc.domain == "" {
+		return errors.New("--web-proxy needs --web-domain: the domain your reverse proxy serves (the links and " +
+			"redirects point at https://<domain>/)")
+	}
+	if wc.email != "" || wc.acmeURL != "" {
+		return errors.New("--web-email and --web-acme-url have no use with --web-proxy: your reverse proxy holds the " +
+			"certificate")
+	}
+	if wc.bind == "" {
+		wc.bind = DefaultWebProxyBind
+	}
+	if ip := net.ParseIP(wc.bind); ip == nil || ip.To4() == nil || !ip.IsLoopback() || strings.Contains(wc.bind, ":") {
+		return fmt.Errorf("--web-bind %s: behind a reverse proxy the website listens only on a loopback IPv4 address "+
+			"such as %s, never on a network address", wc.bind, DefaultWebProxyBind)
+	}
+	return nil
 }
 
 // checkWebDomain checks --web-domain: "" or a DNS name such as play.example.org (lower-cased): sitelinks.WebsiteDomain,
@@ -50,6 +93,7 @@ type website struct {
 	acme        *site.ACME
 	url         string // https://<host>[:port]/
 	fingerprint string // the self-signed certificate's (""with a domain)
+	proxyAddr   string // behind a reverse proxy: where the site listens (<loopback address>:<port>), else ""
 	note        string // the start-up line
 }
 
@@ -83,6 +127,9 @@ func startWebsite(cfg config, lg *logging.Log, st *store.Store, lim *limits.Limi
 	dir := wc.dir
 	if dir == "" && cfg.dataDir != "" {
 		dir = filepath.Join(cfg.dataDir, "site")
+	}
+	if wc.proxy {
+		return startProxiedWebsite(cfg, lg, st, lim, status, admin, endSessions, dir)
 	}
 	ws := &website{}
 	var tlsCfg *tls.Config
@@ -153,6 +200,52 @@ func startWebsite(cfg config, lg *logging.Log, st *store.Store, lim *limits.Limi
 	}
 	ws.note = fmt.Sprintf("website (PH4) on %s (bound %s:%d): %s; %s; the HTTP port's /dawngate/<page> redirect there",
 		ws.url, cfg.bind, ln.Addr().(*net.TCPAddr).Port, certNote, pages)
+	if admin != nil {
+		ws.note += "; " + describeAdmin(st, ws.url)
+	}
+	return ws, nil
+}
+
+// startProxiedWebsite is startWebsite behind a reverse proxy (--web-proxy; checkWebProxy has passed): plain HTTP on
+// --web-bind:--web-port, https://<domain>/ the address everywhere. The listener isn't wrapped in the limits (every
+// connection is the proxy's): the site asks the per-address connection rule per request with the player's address.
+func startProxiedWebsite(cfg config, lg *logging.Log, st *store.Store, lim *limits.Limiter, status func() site.Status,
+	admin *site.AdminConfig, endSessions func(userID int64, why string) int, dir string) (*website, error) {
+	wc := cfg.web
+	if err := checkWebProxy(&wc); err != nil { // again: never a plain-HTTP site on a network address
+		return nil, err
+	}
+	ws := &website{url: webURL(wc.domain, 443)}
+	sc := site.Config{Store: st, Policy: cfg.accounts, Status: status, Pages: dir, HSTS: true, Admin: admin,
+		EndSessions: endSessions, Proxy: true, PublicURL: ws.url,
+		Log: func(format string, a ...any) { lg.Logf("web", format, a...) }}
+	if lim != nil { // not a nil *Limiter in the interfaces: the site skips the calls without limits
+		sc.Limits, sc.Conns = lim, lim
+	}
+	h, err := site.New(sc)
+	if err != nil {
+		return nil, err
+	}
+	ln, err := net.Listen("tcp4", net.JoinHostPort(wc.bind, strconv.Itoa(wc.port)))
+	if err != nil {
+		return nil, fmt.Errorf("the website's port: %w", err)
+	}
+	ws.proxyAddr = ln.Addr().String()
+	ws.srv = &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second,
+		WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10,
+		ErrorLog: log.New(logWriter{lg}, "", 0)}
+	go ws.srv.Serve(ln)
+	pages := "the operator's pages (privacy.html, terms.html, about.html) from " + dir
+	if dir == "" {
+		pages = "no operator pages (no --data)"
+	}
+	limitsNote := "limits off"
+	if lim != nil {
+		limitsNote = "the limits per request by the player's address"
+	}
+	ws.note = fmt.Sprintf("website on %s behind a reverse proxy (--web-proxy): plain HTTP on %s, no certificate of its "+
+		"own (the proxy holds %s's); the players' addresses from X-Forwarded-For/X-Real-IP of a loopback peer only, %s; "+
+		"%s; the HTTP port's /dawngate/<page> redirect there", ws.url, ws.proxyAddr, wc.domain, limitsNote, pages)
 	if admin != nil {
 		ws.note += "; " + describeAdmin(st, ws.url)
 	}

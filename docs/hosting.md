@@ -168,7 +168,7 @@ Start-Server.exe --remove-admin <name>
 
 ## The website and the admin page
 
-The server runs a small website at `https://<server address>/` (`web_port`, 443 by default).
+The server runs a small website at `https://<server address>/` (`web_port`, 443 by default). If another web server such as nginx already uses port 443 on the machine, it can serve the website instead: [The website behind nginx](#the-website-behind-nginx).
 
 **Players** use it to:
 
@@ -306,7 +306,7 @@ sudo systemctl enable --now dawngate
 
 - `systemctl status dawngate` shows whether it runs, and `journalctl -u dawngate -f` shows what the window would show, including the key fingerprint.
 - `sudo systemctl stop dawngate` stops the server and ends its matches.
-- The unit runs the server as `dawngate` and gives it the right to use port 443 for the website, without running as root.
+- The unit runs the server as `dawngate` and gives it the right to use port 443 for the website, without running as root (not needed when nginx serves the website).
 - If your folder isn't `/srv/dawngate`, change the paths in the unit.
 
 Account commands work while the service runs. Run them as the server's user, for example:
@@ -319,7 +319,7 @@ sudo -u dawngate ./start-server --make-invite --invite-uses 5
 
 ### Ports and the firewall on Linux
 
-Players need one port, **TCP and UDP 42128**, and the website **TCP 443**. Nothing else of the server listens on the network: the control channel uses `127.0.0.1:10040`, and the match hosts use UDP 10042–10051 on `127.0.0.1`.
+Players need one port, **TCP and UDP 42128**, and the website **TCP 443**. Nothing else of the server listens on the network: the control channel uses `127.0.0.1:10040`, and the match hosts use UDP 10042–10051 on `127.0.0.1`. With the website behind nginx ([below](#the-website-behind-nginx)), ports 80 and 443 are nginx's, and the server's website listens only on `127.0.0.1`.
 
 Allow only those ports in the machine's firewall, and keep SSH open for yourself. With ufw:
 
@@ -351,6 +351,84 @@ table inet filter {
 **Never open TCP 10040 or UDP 10042–10051.** The control channel has no login, and the matches are meant to be reached only through the tunnel. If your firewall lists them as open, close them.
 
 With `tunnel = off` (an option for developers), the matches listen on every address of the server's network interface. Keep such a server on a network you trust.
+
+### The website behind nginx
+
+On a machine where nginx already serves other sites, nginx holds ports 80 and 443, and the server can't run its website there itself. Let nginx serve it: the server's website then listens only on `127.0.0.1`, over plain HTTP, and nginx answers `https://<your domain>/` with its own Let's Encrypt certificate and passes each request on. This works with any reverse proxy; the example is nginx with certbot, on Debian or Ubuntu.
+
+You need a domain name whose DNS record points at the machine, for example `dawngate.example.org` (an A record, and an AAAA record if the machine has IPv6).
+
+1. In `Start-Server.ini`, set:
+
+   ```ini
+   web_port = 8095
+   web_domain = dawngate.example.org
+   web_proxy = on
+   ```
+
+   `web_port` is any free port above 1023: only nginx connects to it, on `127.0.0.1`. `web_email` isn't used, because the certificate is nginx's.
+
+2. Get the certificate with certbot's nginx plugin. It checks the domain over port 80 through your running nginx and renews the certificate by itself:
+
+   ```sh
+   sudo certbot certonly --nginx -d dawngate.example.org
+   ```
+
+3. Add a server block for the domain, for example `/etc/nginx/sites-available/dawngate`:
+
+   ```nginx
+   server {
+       listen 80;
+       listen [::]:80;
+       server_name dawngate.example.org;
+       return 301 https://$host$request_uri;
+   }
+
+   server {
+       listen 443 ssl;
+       listen [::]:443 ssl;
+       server_name dawngate.example.org;
+
+       ssl_certificate     /etc/letsencrypt/live/dawngate.example.org/fullchain.pem;
+       ssl_certificate_key /etc/letsencrypt/live/dawngate.example.org/privkey.pem;
+       include             /etc/letsencrypt/options-ssl-nginx.conf;
+       ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
+
+       location / {
+           proxy_pass http://127.0.0.1:8095;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto https;
+       }
+   }
+   ```
+
+   The port in `proxy_pass` is your `web_port`. The `include` and `ssl_dhparam` lines are certbot's recommended TLS settings, the same your other sites use; if the two files don't exist on your machine, leave those lines out.
+
+4. Turn the site on, check the configuration and reload nginx:
+
+   ```sh
+   sudo ln -s /etc/nginx/sites-available/dawngate /etc/nginx/sites-enabled/
+   sudo nginx -t
+   sudo systemctl reload nginx
+   ```
+
+5. Restart the server (`sudo systemctl restart dawngate`). Its window, or `journalctl -u dawngate`, shows:
+
+   ```
+   The website: https://dawngate.example.org/ (behind your reverse proxy on 127.0.0.1:8095).
+   ```
+
+How this differs from the server's own website:
+
+- The server makes no certificate and never contacts Let's Encrypt; certbot renews nginx's certificate.
+- The server's website listens only on a loopback address. It refuses to listen anywhere else in this mode, so it is never reachable without nginx.
+- The server takes each player's address from the headers nginx sets (the last entry of `X-Forwarded-For`, or `X-Real-IP`), and only from connections that come from the machine itself. The limits, the sign-up limit per address and the logs use that address. Keep the four `proxy_set_header` lines: without them every player would seem to come from `127.0.0.1`.
+- The game itself doesn't go through nginx: players still need **TCP and UDP 42128** open ([Ports and the firewall on Linux](#ports-and-the-firewall-on-linux)). Ports 80 and 443 are nginx's, and are usually open already for your other sites.
+- The game's *Sign up now!* and *Forgot Password?* links lead to `https://<your domain>/` as before.
+
+If nginx answers `502 Bad Gateway`, the server isn't running, or `proxy_pass` names another port than `web_port`. If `start-server` says another program holds the website's port, choose another `web_port` and change `proxy_pass` to match.
 
 ### Updating on Linux
 

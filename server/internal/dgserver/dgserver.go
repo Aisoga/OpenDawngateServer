@@ -106,7 +106,8 @@ type config struct {
 	// --limits (auto: on for a public bind or announced address) and the limits themselves (nil = Default())
 	limitsMode limits.Mode
 	limitsCfg  *limits.Config
-	// the website (website.go): --web-port, --web-domain, --web-email, --web-dir, --web-acme-url
+	// the website (website.go): --web-port, --web-domain, --web-email, --web-dir, --web-acme-url, --web-proxy,
+	// --web-bind
 	web websiteConfig
 	// quiet writes the log to its file only, not to the console (Hooks.Quiet: Start-Client's server for This PC)
 	quiet bool
@@ -1043,6 +1044,8 @@ func Run(args []string, h Hooks) int {
 	fs.StringVar(&cfg.web.email, "web-email", "", "--web-domain: a contact address for the CA's expiry mail (optional)")
 	fs.StringVar(&cfg.web.dir, "web-dir", "", `the website's folder: its certificates and the operator's privacy.html, terms.html, about.html (default <data>\site)`)
 	fs.StringVar(&cfg.web.acmeURL, "web-acme-url", "", "--web-domain: the ACME directory (default Let's Encrypt; "+site.LetsEncryptStagingURL+" for a first try)")
+	fs.BoolVar(&cfg.web.proxy, "web-proxy", false, "serve the website behind a reverse proxy (nginx, for example) that holds --web-domain's HTTPS certificate: plain HTTP on --web-bind:--web-port only, no certificate of its own; the links and redirects point at https://<web-domain>/, and the players' addresses come from the proxy's X-Forwarded-For or X-Real-IP (trusted from a loopback peer only)")
+	fs.StringVar(&cfg.web.bind, "web-bind", "", "--web-proxy: the loopback address the website listens on (default "+DefaultWebProxyBind+"; never a network address)")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Dawngate restoration server: redirector (TLS :%d), Blaze, QoS, HTTP and telemetry.\n"+
 			"Usage: dgserver [flags]\n", redirector.Port)
@@ -1121,6 +1124,10 @@ func Run(args []string, h Hooks) int {
 	}
 	if cfg.web.port < 0 || cfg.web.port > 65535 || (cfg.web.domain != "" && cfg.web.port == 0) {
 		fmt.Fprintln(os.Stderr, "dgserver: --web-port must be 1-65535 for a website (--web-domain needs one), 0 for none")
+		return 2
+	}
+	if err := checkWebProxy(&cfg.web); err != nil {
+		fmt.Fprintln(os.Stderr, "dgserver:", err)
 		return 2
 	}
 	if codes, err := parseLoginErrors(*testLoginErrors); err != nil {
@@ -1221,6 +1228,8 @@ type Info struct {
 	// the website's address and its self-signed certificate's SHA-256 fingerprint ("" without a website; the
 	// fingerprint "" with a domain's certificate)
 	WebURL, WebFingerprint string
+	// WebProxy is where the website listens behind a reverse proxy (<loopback address>:<port>; "" otherwise)
+	WebProxy string
 	// Version is the build's version (version.String): a player's Start-Client needs the same one
 	Version string
 }
@@ -1245,7 +1254,7 @@ func (in *instance) info(cfg config) Info {
 		info.TCPPorts = append(info.TCPPorts, info.GatewayPort)
 	}
 	if in.website != nil {
-		info.WebURL, info.WebFingerprint = in.website.url, in.website.fingerprint
+		info.WebURL, info.WebFingerprint, info.WebProxy = in.website.url, in.website.fingerprint, in.website.proxyAddr
 		info.TCPPorts = append(info.TCPPorts, cfg.web.port)
 	}
 	return info

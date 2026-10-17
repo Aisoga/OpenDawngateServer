@@ -25,12 +25,14 @@ const (
 func IsPublicAddress(address string) bool { return exepatch.IsPublic(address) }
 
 // RiskInfo is what the server notice names: the public address, the bind address (empty or the same: this PC holds
-// the public address itself), the tunnel's port (0 = the default), the sign-up mode and the website's domain.
+// the public address itself), the tunnel's port (0 = the default), the sign-up mode and the website's domain, and
+// whether a reverse proxy serves the website (web_proxy = on).
 type RiskInfo struct {
 	Address, Bind string
 	GatewayPort   int
 	Signup        string
 	WebDomain     string
+	WebProxy      bool
 	LogDays       int
 }
 
@@ -76,13 +78,24 @@ What remains your risk and your duty:
   - The match hosts' control channel (TCP 10040) has no login: it stays on 127.0.0.1; never forward it.
 Forward on your router only TCP and UDP %d (the tunnel) and TCP 443 (the website%s); this program never opens
 ports and never uses UPnP.
-`, r.Address, gp, signup, logs, gp, map[bool]string{true: ", for Let's Encrypt too", false: ""}[r.WebDomain != ""])
+`, r.Address, gp, signup, logs, gp, riskWebsiteNote(r))
 	if r.Bind == "" || r.Bind == r.Address {
 		fmt.Fprintf(w, `This PC holds the public address itself (no router): only the tunnel's port and the website listen on it
 (the match hosts listen on %s, a loopback address). Let your firewall in only TCP and UDP %d and TCP 443.
 `, HostsAddress(r.Address), gp)
 	}
 	fmt.Fprintln(w, "Never use a password you use anywhere else. See README.txt (\"Hosting on the internet\").")
+}
+
+// riskWebsiteNote completes the notice's "TCP 443 (the website...)".
+func riskWebsiteNote(r RiskInfo) string {
+	switch {
+	case r.WebProxy:
+		return ", served by your reverse proxy, which holds its certificate"
+	case r.WebDomain != "":
+		return ", for Let's Encrypt too"
+	}
+	return ""
 }
 
 // ServerRiskRefusal is what Start-Server says when a public address wasn't acknowledged.

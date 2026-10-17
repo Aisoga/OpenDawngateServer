@@ -160,7 +160,9 @@ Start-Server.ini   address, bind, profile (auto/home/public: public = the tunnel
                    signups_per_address, log_days (logs are deleted after so many days), tunnel (auto/on/off:
                    auto and on = the tunnel, off = a developers' option), gateway_port (42128), web_port
                    (443; 0 = no website),
-                   web_domain, web_email, folder (where Dawngate-Data goes), zip, server_flags (more server
+                   web_domain, web_email, web_proxy (on: the website behind a reverse proxy such as nginx
+                   that serves port 443, on 127.0.0.1:web_port), folder (where Dawngate-Data goes), zip,
+                   server_flags (more server
                    options, e.g.  --owned starter  or  --mm-team-size 1 --mm-fill-after 5s).
                    Start-Server.exe --configure asks the first start's questions again.
 Accounts           Start-Server.exe --create-account <name>   makes an account and prints its password;

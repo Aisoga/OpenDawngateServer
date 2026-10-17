@@ -109,6 +109,15 @@ web_domain =
 ; With web_domain: an e-mail address Let's Encrypt may write to about the certificate (optional).
 web_email =
 
+; Behind a reverse proxy: when a web server on this machine (nginx, for example) already serves HTTPS on port 443
+; for other sites, it can serve the Dawngate website too.
+;   off  the server serves its website itself on web_port, as above (the default)
+;   on   the website runs as plain HTTP on 127.0.0.1:web_port only, for your proxy; set web_port to a free port
+;        above 1023 (e.g. 8095). Your proxy holds web_domain's certificate and forwards https://<web_domain>/ to
+;        http://127.0.0.1:<web_port> (the hosting guide, "The website behind nginx"). Needs web_domain; web_email
+;        isn't used.
+web_proxy = off
+
 ; The folder for the game copies (about 3 GB), the certificates, the accounts and the logs: relative to this
 ; program's folder, or a full path such as D:\Games\Dawngate-Data.
 folder = Dawngate-Data
@@ -150,7 +159,8 @@ var oldServerTunnelComments = [][]string{
 var manifest *archive.Manifest
 
 var serverKeys = []string{"address", "bind", RiskAckKey, "profile", "tunnel", "gateway_port", "shaper_select", "dedicated", "signup",
-	"signups_per_address", "log_days", "web_port", "web_domain", "web_email", "folder", "zip", "server_flags", "wine"}
+	"signups_per_address", "log_days", "web_port", "web_domain", "web_email", "web_proxy", "folder", "zip", "server_flags",
+	"wine"}
 
 // IO is where a launcher talks: the console normally, buffers in tests.
 type IO struct {
@@ -350,7 +360,7 @@ func RunServer(args []string, o IO) int {
 	if public {
 		logDays, _ := strconv.Atoi(firstNonEmpty(cfg["log_days"], "30"))
 		ServerRiskNotice(o.Out, RiskInfo{Address: address, Bind: cfg["bind"], GatewayPort: gwPort, Signup: loginFlags[1],
-			WebDomain: web.Domain, LogDays: logDays})
+			WebDomain: web.Domain, WebProxy: web.Proxy && web.Port > 0, LogDays: logDays})
 		if !riskOK && !*check && !*setupOnly {
 			ServerRiskRefusal(o.Out, path)
 			return o.fail("%s: address = %s is a public address and the risk is not accepted.", path, address)
@@ -391,7 +401,13 @@ func RunServer(args []string, o IO) int {
 				"Start-Server window, or dgserver.exe)? Close it, then start Start-Server.exe again.", address,
 				strings.Join(held, "\n  "))
 		}
-		if web.Port > 0 { // the website's port (443 is often taken by another program on a home PC)
+		if web.Port > 0 && web.Proxy { // behind a reverse proxy: the proxy forwards to this port, so it must be ours
+			if h := HeldPorts(ProxyBind, []Port{{web.Port, false, "the website"}}); len(h) > 0 {
+				return o.fail("Another program holds the website's port on %s:\n  %s\nweb_proxy = on: your reverse proxy "+
+					"forwards https://%s/ to http://%s. Close that program, or set web_port to another free port (and the "+
+					"proxy's proxy_pass to it).", ProxyBind, h[0], web.Domain, web.ProxyAddress())
+			}
+		} else if web.Port > 0 { // the website's port (443 is often taken by another program on a home PC)
 			if h := HeldPorts(bindAddr, []Port{{web.Port, false, "the website"}}); len(h) > 0 {
 				if web.Domain != "" {
 					return o.fail("Another program holds the website's port on %s:\n  %s\nweb_domain = %s needs it (Let's "+
@@ -453,6 +469,9 @@ func RunServer(args []string, o IO) int {
 		fmt.Fprintln(o.Out, "  mode     dedicated server, the match hosts under Wine (the match-host copy only)")
 	case dedicated:
 		fmt.Fprintln(o.Out, "  mode     dedicated server (the match-host copy only, no player copy)")
+	}
+	if web.Proxy && web.Port > 0 {
+		fmt.Fprintf(o.Out, "  website  %s\n", proxyWebsiteLine("https://"+web.Domain+"/", web.ProxyAddress()))
 	}
 	fmt.Fprintln(o.Out)
 	if *check {
@@ -563,13 +582,17 @@ func RunServer(args []string, o IO) int {
 			case net.ParseIP(address).IsLoopback():
 				fmt.Fprintln(o.Out, "  Now double-click Start-Client.exe to play: This PC in its server list is this server (the same folder).")
 			default:
+				site443 := "the website"
+				if info.WebProxy != "" {
+					site443 = "the website, through your reverse proxy"
+				}
 				if public {
-					fmt.Fprintf(o.Out, "  Forward TCP and UDP %d and TCP 443 (the website) on your router to this PC, and no other port.\n", info.GatewayPort)
+					fmt.Fprintf(o.Out, "  Forward TCP and UDP %d and TCP 443 (%s) on your router to this PC, and no other port.\n", info.GatewayPort, site443)
 					if bindAddr == address {
 						fmt.Fprintf(o.Out, "  This PC holds the public address itself: let its firewall in only TCP and UDP %d and TCP 443.\n", info.GatewayPort)
 					}
 				} else if hostsUnderWine {
-					fmt.Fprintf(o.Out, "  If this machine has a firewall, let in TCP and UDP %d (and TCP 443 for the website).\n", info.GatewayPort)
+					fmt.Fprintf(o.Out, "  If this machine has a firewall, let in TCP and UDP %d (and TCP 443 for %s).\n", info.GatewayPort, site443)
 				} else {
 					fmt.Fprintln(o.Out, "  If Windows asks whether the server may use the network, allow it for private networks.")
 				}
@@ -594,15 +617,7 @@ func RunServer(args []string, o IO) int {
 			fmt.Fprintln(o.Out, "  The public profile: players only through the tunnel, the limits on (connections, logins, games, packets).")
 		}
 		fmt.Fprintf(o.Out, "  %s\n", loginHint(cfg["signup"]))
-		if info.WebURL != "" {
-			fmt.Fprintf(o.Out, "  The website: %s (registration, password change, account deletion, status).\n", info.WebURL)
-			fmt.Fprintf(o.Out, "  The admin page: %sadmin (for accounts made admin with Start-Server.exe --make-admin <login name>).\n", info.WebURL)
-			if info.WebFingerprint != "" {
-				fmt.Fprintf(o.Out, "  Its certificate is self-signed: browsers warn once; its SHA-256 fingerprint is\n    %s\n", info.WebFingerprint)
-			} else if public {
-				fmt.Fprintln(o.Out, "  Its certificate comes from Let's Encrypt (it checks the domain on TCP 443, which your router forwards).")
-			}
-		}
+		websiteBanner(o.Out, info, public)
 		if hostsUnderWine {
 			fmt.Fprintf(o.Out, "  The match hosts run under %s (%s) on 127.0.0.1, in the Wine prefix %s.\n", wine.Version, wine.Wine, wine.Prefix)
 		}
@@ -645,11 +660,19 @@ func LoginFlags(cfg Config) ([]string, error) {
 }
 
 // Website is Start-Server.ini's website keys: web_port (default 443, also for an ini of an earlier release;
-// 0 = none), web_domain (a DNS name: Let's Encrypt; empty: self-signed), web_email.
+// 0 = none), web_domain (a DNS name: Let's Encrypt; empty: self-signed), web_email, web_proxy (on: plain HTTP on
+// ProxyBind:web_port for a reverse proxy that serves web_domain's HTTPS).
 type Website struct {
 	Port          int
 	Domain, Email string
+	Proxy         bool
 }
+
+// ProxyBind is where the website listens behind a reverse proxy (dgserver's default --web-bind).
+const ProxyBind = dgserver.DefaultWebProxyBind
+
+// ProxyAddress is the address the reverse proxy forwards to (web_proxy = on), e.g. 127.0.0.1:8095.
+func (w Website) ProxyAddress() string { return net.JoinHostPort(ProxyBind, strconv.Itoa(w.Port)) }
 
 // ReadWebsite reads the website keys.
 func ReadWebsite(cfg Config) (Website, error) {
@@ -667,6 +690,20 @@ func ReadWebsite(cfg Config) (Website, error) {
 		}
 		w.Port = n
 	}
+	proxy, err := cfg.Bool("web_proxy", false)
+	if err != nil {
+		return w, err
+	}
+	w.Proxy = proxy
+	if w.Proxy && w.Port != 0 { // web_port = 0 turns the website off, the proxy mode with it
+		if w.Domain == "" {
+			return w, fmt.Errorf("web_proxy = on needs web_domain: the domain name your reverse proxy serves the website on")
+		}
+		if w.Port < 1024 {
+			return w, fmt.Errorf("web_proxy = on: web_port = %d is the proxy's side; set web_port to a free port above "+
+				"1023 (e.g. 8095), where the website listens on %s for your proxy", w.Port, ProxyBind)
+		}
+	}
 	if w.Domain != "" && w.Port == 0 {
 		return w, fmt.Errorf("web_domain = %s needs a web_port (443)", w.Domain)
 	}
@@ -676,6 +713,9 @@ func ReadWebsite(cfg Config) (Website, error) {
 // Flags are dgserver's flags for the website (before server_flags, which may override them).
 func (w Website) Flags() []string {
 	f := []string{"--web-port", strconv.Itoa(w.Port)}
+	if w.Proxy && w.Port != 0 { // the proxy holds the certificate: no e-mail for Let's Encrypt
+		return append(f, "--web-domain", w.Domain, "--web-proxy")
+	}
 	if w.Domain != "" {
 		f = append(f, "--web-domain", w.Domain)
 		if w.Email != "" {
@@ -683,6 +723,31 @@ func (w Website) Flags() []string {
 		}
 	}
 	return f
+}
+
+// websiteBanner is the banner's part on the website (nothing without one).
+func websiteBanner(w io.Writer, info dgserver.Info, public bool) {
+	if info.WebURL == "" {
+		return
+	}
+	if info.WebProxy != "" {
+		fmt.Fprintf(w, "  The website: %s.\n", proxyWebsiteLine(info.WebURL, info.WebProxy))
+		fmt.Fprintln(w, "  Registration, password change, account deletion and status are there; your proxy holds its certificate.")
+	} else {
+		fmt.Fprintf(w, "  The website: %s (registration, password change, account deletion, status).\n", info.WebURL)
+	}
+	fmt.Fprintf(w, "  The admin page: %sadmin (for accounts made admin with Start-Server.exe --make-admin <login name>).\n", info.WebURL)
+	switch {
+	case info.WebFingerprint != "":
+		fmt.Fprintf(w, "  Its certificate is self-signed: browsers warn once; its SHA-256 fingerprint is\n    %s\n", info.WebFingerprint)
+	case info.WebProxy == "" && public:
+		fmt.Fprintln(w, "  Its certificate comes from Let's Encrypt (it checks the domain on TCP 443, which your router forwards).")
+	}
+}
+
+// proxyWebsiteLine names the website behind a reverse proxy: its public address and where the proxy forwards to.
+func proxyWebsiteLine(url, listen string) string {
+	return fmt.Sprintf("%s (behind your reverse proxy on %s)", url, listen)
 }
 
 // loginHint is the banner's line on logging in, by sign-up mode.

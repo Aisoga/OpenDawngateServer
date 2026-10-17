@@ -51,6 +51,8 @@ Ports
 Players need TCP and UDP 42128 (the encrypted tunnel) and TCP 443 (the website). Let only these (and SSH) in:
     sudo ufw default deny incoming ; sudo ufw allow OpenSSH ; sudo ufw allow 42128 ; sudo ufw allow 443/tcp
     sudo ufw enable
+If a web server such as nginx already holds port 443 on this machine, let it serve the website: web_proxy = on
+in Start-Server.ini (docs/hosting.md, "The website behind nginx").
 Never open TCP 10040 (the match hosts' control channel, no login) or UDP 10042-10051 (the matches, which
 listen on 127.0.0.1 and are reached through the tunnel).
 

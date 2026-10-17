@@ -3,7 +3,8 @@
 // download the own data as JSON), the public status page (players online, matches running, the server's version; no
 // names), the forgotten-password help (the operator resets passwords: the server never sends mail) and the
 // operator's privacy and terms pages. dgserver serves it over HTTPS (--web-port; a Let's Encrypt certificate for
-// --web-domain by TLS-ALPN-01 (acme.go), else a self-signed one (selfsigned.go)).
+// --web-domain by TLS-ALPN-01 (acme.go), else a self-signed one (selfsigned.go)), or over plain HTTP on a loopback
+// address behind a reverse proxy that serves the domain's HTTPS (--web-proxy; proxy.go).
 //
 // Server-rendered html/template pages, no script. Every form carries a CSRF token bound to a cookie (csrf.go), every
 // POST passes a per-address rate (always on) and, when dgserver's limits are on (internal/limits), the same
@@ -46,6 +47,13 @@ type Limiter interface {
 	LoginDone(addr, account string, ok bool)
 }
 
+// ConnLimiter is dgserver's per-address connection rule (*limits.Limiter's Admit). Directly on the network the
+// listener applies it to each TCP connection; behind a reverse proxy every connection is the proxy's, so the site
+// asks it for each request with the player's address instead: a request counts as a connection while it runs.
+type ConnLimiter interface {
+	Admit(addr string) (release func(), ok bool, why string)
+}
+
 // Status is what the public status page shows: no names.
 type Status struct {
 	PlayersOnline  int
@@ -68,6 +76,13 @@ type Config struct {
 	Pages string
 	// HSTS sends Strict-Transport-Security (a real certificate: --web-domain).
 	HSTS bool
+	// Proxy: the site runs behind a reverse proxy on a loopback address (proxy.go): a loopback peer's
+	// X-Forwarded-For, X-Real-IP and X-Forwarded-Proto are trusted, nobody else's. PublicURL is the address the proxy
+	// serves (https://<domain>/), where a request the proxy forwarded over plain HTTP is redirected. Conns, if set,
+	// is the per-address connection rule, asked per request with the player's address.
+	Proxy     bool
+	PublicURL string
+	Conns     ConnLimiter
 	// Admin is the admin page under /admin (admin.go); nil = none. Policy.Live is the sign-up mode it changes.
 	Admin *AdminConfig
 	// EndSessions ends the account's running game sessions now (blaze.Server.EndAccountSessions) and returns how
@@ -227,7 +242,25 @@ func (s *Site) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
 	rec := &recorder{ResponseWriter: w}
-	s.mux.ServeHTTP(rec, r)
+	r, https := s.fromProxy(r)
+	switch {
+	case !https && s.cfg.PublicURL != "":
+		rec.note = "plain HTTP at the proxy: redirected to HTTPS"
+		s.toHTTPS(rec, r)
+	case s.cfg.Proxy && s.cfg.Conns != nil:
+		release, ok, why := s.cfg.Conns.Admit(clientAddr(r))
+		if !ok {
+			rec.note = "refused: limits: " + why
+			rec.Header().Set("Retry-After", "5")
+			http.Error(rec, "Too many requests from your address. Please wait a moment and try again.",
+				http.StatusTooManyRequests)
+			break
+		}
+		s.mux.ServeHTTP(rec, r)
+		release()
+	default:
+		s.mux.ServeHTTP(rec, r)
+	}
 	if s.cfg.Log != nil {
 		note := ""
 		if rec.note != "" {

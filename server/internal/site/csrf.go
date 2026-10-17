@@ -54,7 +54,7 @@ func (s *Site) csrfOK(r *http.Request) (ok bool, why string) {
 	}
 	if o := r.Header.Get("Origin"); o != "" && o != "null" {
 		u, err := url.Parse(o)
-		if err != nil || u.Host != r.Host {
+		if err != nil || (u.Host != r.Host && (!s.cfg.Proxy || u.Host != s.publicHost())) {
 			return false, "Origin " + o
 		}
 	}

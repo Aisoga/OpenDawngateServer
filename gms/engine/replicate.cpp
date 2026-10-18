@@ -256,15 +256,25 @@ bool ReadCreateInfo(void* o, CreateInfo* i) {
   }
 }
 
-// The live networked objects (network component, not pending delete), at most `max`. -1 on an exception.
-int ScanRaw(void* sim, NetObject* out, int max) {
+// The live networked objects (network component, not pending delete), at most `max`. With `pendingEffects` instead
+// only the placeable effects that are pending delete and that no player knows (ABILVFX: made and destroyed in one
+// tick). -1 on an exception.
+int ScanRaw(void* sim, NetObject* out, int max, bool pendingEffects) {
   __try {
     void* om = Field<void*>(sim, sim::kObjectManager);
     int it = ObjMgrIterBegin(om);
     int n = 0;
     for (void* o = ObjMgrIterNext(om, &it); o && n < max; o = ObjMgrIterNext(om, &it)) {
       char* nc = Field<char*>(o, gobj::kNetwork);
-      if (!nc || Field<unsigned char>(o, gobj::kPendingDelete)) continue;
+      if (!nc) continue;
+      const bool pending = Field<unsigned char>(o, gobj::kPendingDelete) != 0;
+      if (pending != pendingEffects) continue;
+      if (pendingEffects) {
+        if (Field<std::uint16_t>(nc, kNetworkKnownMask)) continue;
+        void* nn = Field<void*>(o, gobj::kNoun);
+        char* nd = nn ? Field<char*>(nn, noun::kData) : nullptr;
+        if (!nd || Field<std::int32_t>(nd, noun::kType) != noun::kTypePlaceableEffect) continue;
+      }
       NetObject& i = out[n++];
       i = NetObject();
       i.object = o;
@@ -285,6 +295,9 @@ int ScanRaw(void* sim, NetObject* out, int max) {
       i.owner = Field<std::uint32_t>(o, gobj::kOwner);
       i.markerId = Field<std::uint32_t>(o, gobj::kMarkerId);
       if (i.data[kPartLocomotion]) i.parent = Field<std::uint32_t>(i.data[kPartLocomotion], loco::kParent);
+      if (i.data[kPartProjectile])
+        i.target = Field<std::uint32_t>(i.data[kPartProjectile], projdata::kTargetObjectId);
+      i.pendingDelete = pending;
     }
     return n;
   } __except (SehNote(GetExceptionInformation(), "Scan")) {
@@ -579,7 +592,14 @@ std::uint32_t DeployShaper(void* sim, unsigned index) {
 
 int Scan(void* sim, std::vector<NetObject>* out) {
   out->resize(0x400);  // a server simulator's object pool holds 0x400 (ObjectPool_Init, D2e)
-  const int n = ScanRaw(sim, out->data(), static_cast<int>(out->size()));
+  const int n = ScanRaw(sim, out->data(), static_cast<int>(out->size()), false);
+  out->resize(n > 0 ? static_cast<size_t>(n) : 0);
+  return n;
+}
+
+int ScanPendingEffects(void* sim, std::vector<NetObject>* out) {
+  out->resize(0x400);
+  const int n = ScanRaw(sim, out->data(), static_cast<int>(out->size()), true);
   out->resize(n > 0 ? static_cast<size_t>(n) : 0);
   return n;
 }
@@ -676,12 +696,14 @@ bool BuildCreate(const NetObject& o, bool withFieldState, const Bytes& modifierR
   for (const auto& m : msgs) n += static_cast<int>(m.msg.size());
   *bytes = n;
   out->insert(out->end(), msgs.begin(), msgs.end());
-  Log("replication: create %08X %-30s %-14s pos (%.2f, %.2f, %.2f) rot z %.1f team %u owner %08X flags %u marker %u%s; "
-      "parts:%s; hp %.0f; %zu modifier record(s); %zu messages, %d bytes%s",
+  char target[40] = "";
+  if (o.target) std::snprintf(target, sizeof target, " target %08X", o.target);  // ABILVFX: a homing projectile's
+  Log("replication: create %08X %-30s %-14s pos (%.2f, %.2f, %.2f) rot z %.1f team %u owner %08X flags %u marker %u%s%s; "
+      "parts:%s; hp %.0f; %zu modifier record(s); %zu messages, %d bytes%s%s",
       o.id, o.name, NounTypeName(o.nounType), ci.pos[0], ci.pos[1], ci.pos[2], rz, ci.team, ci.owner,
-      Field<std::uint8_t>(cd, create::kFlags), ci.markerId, ci.playerControlled ? " (player controlled)" : "",
+      Field<std::uint8_t>(cd, create::kFlags), ci.markerId, ci.playerControlled ? " (player controlled)" : "", target,
       parts[0] ? parts : " none", o.hp, modifierRecords.size() / 41, msgs.size(), n,
-      withFieldState ? "" : " (without field states: others knew it)");
+      withFieldState ? "" : " (without field states: others knew it)", o.pendingDelete ? " (pending delete)" : "");
   return true;
 }
 
@@ -915,7 +937,8 @@ void BuildWorld(void* sim, unsigned index, bool all, RecordsFn records, void* ct
   // D9b: every object after its owner (the client maps the full state's mOwnerID through its id map, an unknown id
   // becomes 0); otherwise the object manager's order
   std::vector<gms::CreateOrderItem> items(objs.size());
-  for (size_t k = 0; k < objs.size(); ++k) items[k] = gms::CreateOrderItem{objs[k].id, objs[k].owner, objs[k].parent};
+  for (size_t k = 0; k < objs.size(); ++k)
+    items[k] = gms::CreateOrderItem{objs[k].id, objs[k].owner, objs[k].parent, objs[k].target};
   for (const size_t k : gms::CreateOrder(items)) {
     const NetObject& o = objs[k];
     if (!Replicated(o, all)) {

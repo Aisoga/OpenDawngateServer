@@ -590,6 +590,12 @@ constexpr std::uintptr_t kClientPathBlock = 0xE0;
 constexpr std::uintptr_t kClientPathXY = 0xE2;
 }  // namespace loco
 
+// cProjectileData (cGameObject +0x8A4, 9D, the reflected type's member 10): mTargetObjectId, a tObjID the
+// client maps through its id map at the create (ABILVFX: the homing projectile's target object goes out first).
+namespace projdata {
+constexpr std::uintptr_t kTargetObjectId = 0x80;
+}  // namespace projdata
+
 // --- item transactions, emotes and voice lines (D7b; docs/SERVER_MODE.md *Item transactions, emotes and voice lines on
 // the host (D7b)*) ---------------------------------------------------------------------------------------------------
 // GameSimulator_OnItemTransaction (0x008F1390) validates and applies the five transactions on the server's cLabsPlayer
@@ -1786,6 +1792,11 @@ constexpr std::uintptr_t kLevelUpTuning = 0x60C;  // LevelUpTuning: +0 Level[] (
 }  // namespace level
 namespace roleTuning {
 constexpr std::uint32_t kSize = 0xB0;
+// ROLEVIM: the NPC-kill gold modifiers (AssetData order; PlayerRoles_GetRoleStats 0x009200A0 reads +0..+0x20 for the role card)
+constexpr std::uintptr_t kLastHitMinionGold = 0x08;         // lastHitMinionGoldModifier (Carry/Gladiator 2.0)
+constexpr std::uintptr_t kLastHitCreatureGold = 0x0C;       // lastHitCreatureGoldModifier (1.0 each)
+constexpr std::uintptr_t kProximityGold = 0x10;             // proximityToMinionOrCreatureDeathGoldModifier (Support/Tactician 2.0)
+constexpr std::uintptr_t kProximityAllyLastHitGold = 0x14;  // proximityToAllyLastHitMinionOrCreatureGoldModifier (1.0 each)
 constexpr std::uintptr_t kKillGold = 0x18;    // enemyPlayerKillGoldModifier
 constexpr std::uintptr_t kAssistGold = 0x1C;  // enemyPlayerAssistGoldModifier
 constexpr std::uintptr_t kKillXp = 0x20;      // enemyPlayerKillOrAssistXPModifier

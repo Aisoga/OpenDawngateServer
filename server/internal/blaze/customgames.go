@@ -96,6 +96,12 @@ const (
 	AttrGameOwnerID   = "GameOwnerId"   // the browser asserts it (hex, 0x004E40A0)
 	AttrGameOwnerName = "GameOwnerName" // the browser's Owner column
 	AttrLevelID       = "LevelId"
+
+	// BotFillMarker ends a custom game's name when its creator ticked the create dialog's bot checkbox (our addition
+	// to MatchOptionsUI, BOTBOX): the server strips it, fills the open seats with bots and shows the game with
+	// BotFillPrefix.
+	BotFillMarker = "~#bots"
+	BotFillPrefix = "[Bots] "
 )
 
 // IsLobbyGame reports whether a game with these GameFlags is made in a lobby first (B15): a custom game (2) or a
@@ -440,8 +446,8 @@ func lobbyRegion(sites map[string]int64) string {
 func (s *Server) startCustomGame(r *Request, g Game, p Player) []byte {
 	flags := int64(g.descriptors())
 	g.Attrs = mergeAttrs(g.Attrs, []tdf.Pair{tdf.KV(ServerBuildVersionAttr, g.Version)})
-	if p.Team < 0 || p.Team >= SpectatorTeam {
-		p.Team = 0
+	if p.Team < 0 || p.Team >= SpectatorTeam || flags&GameFlagBotsFillTeams != 0 {
+		p.Team = 0 // a practice group's humans are all on team index 0, the bots on the other
 	}
 	hp := &hostedPlayer{p: p, userID: r.Conn.Session.Account.UserID, conn: r.Conn, setupCtx: SetupContextCreateGame}
 	lobby := &customLobby{admins: []int64{p.ID}, browsable: flags&GameFlagBotsFillTeams == 0,
@@ -450,11 +456,27 @@ func (s *Server) startCustomGame(r *Request, g Game, p Player) []byte {
 	if !lobby.browsable {
 		kind = "practice group game"
 	}
+	bots := false
+	if name, ok := strings.CutSuffix(g.Name, BotFillMarker); ok {
+		// the create dialog's bot checkbox; a practice group gets its bots anyway and a lobby without a match host
+		// has none to fill, so there only the marker goes
+		g.Name = strings.TrimSpace(name)
+		if g.Name == "" {
+			g.Name = p.Name + "'s Game"
+		}
+		if lobby.browsable && s.Hosts != nil {
+			bots = true
+			g.Name = BotFillPrefix + g.Name
+		}
+	}
 	s.Log.Logf("blaze", "   game %d %q: a %s (GameFlags %#x, %d teams of %d, private %v); admin %d", g.ID, g.Name, kind,
 		flags, len(g.TeamIDs), g.TeamCap, attrValue(g.Attrs, AttrPrivateMatch) == "1", p.ID)
+	if bots {
+		s.Log.Logf("blaze", "   game %d: bots fill the open seats (the creator's checkbox)", g.ID)
+	}
 	if s.Hosts != nil {
 		fill := 0
-		if s.CustomBots && lobby.browsable {
+		if (s.CustomBots || bots) && lobby.browsable {
 			fill = int(g.TeamCap)
 		}
 		hg, err := s.launchHostedGame(g, gmshost.ModeCustom, fill, []*hostedPlayer{hp}, make(chan struct{}), nil, lobby)
@@ -484,7 +506,9 @@ func (s *Server) startCustomGame(r *Request, g Game, p Player) []byte {
 // joinCustomGame is joinGame for a custom game (B15): JOIN GAME (TIDX 0xFFFF or a team) and SPECTATE GAME (TIDX 2)
 // from the browser, or a player of the game coming back (a reconnect, or a lobby player who had left). A new player
 // gets a team with room (0xFFFF: the smaller of teams 0 and 1), joins only before the start unless it spectates, and
-// takes the next Blaze slot. The reply is JoinGameResponse, then NotifyGameSetup with the join context; the others get
+// takes the next Blaze slot. A practice group's player always gets team 0, the group's own: its lobby shows only that
+// team, and the bots fill the other (VPSLIVE: a client answering a stale invite asked for TIDX 1 and played unseen
+// against its group). The reply is JoinGameResponse, then NotifyGameSetup with the join context; the others get
 // NotifyPlayerJoining (the admin's roster manager adds the player at its NotifyPlayerJoinCompleted).
 func (s *Server) joinCustomGame(r *Request, hg *hostedGame) []byte {
 	me := r.Conn.Session.Persona.ID
@@ -518,6 +542,12 @@ func (s *Server) joinCustomGame(r *Request, hg *hostedGame) []byte {
 		case tidx == SpectatorTeam:
 		case hg.custom.started:
 			return fail(ErrGameInProgress, "started: only a spectator may join")
+		case !hg.custom.browsable: // a practice group
+			if tidx != 0 && tidx != 0xFFFF {
+				s.Log.Logf("blaze", "   joinGame: game %d: player %d asked for team %d; a practice group's players join team 0",
+					gid, me, tidx)
+			}
+			tidx = 0
 		case tidx == 0 || tidx == 1:
 		default: // 0xFFFF: any player team, the one with fewer players
 			tidx = 0
@@ -802,7 +832,8 @@ func registerCustomGames(s *Server) {
 	// swapPlayersTeam (cmd 0x70, SwapPlayersTeamRequest 0x012E7AC0: GID, LGAM list of SwapPlayerTeamData {PID, TIDX};
 	// sender 0x0069DAF0 from the roster manager's sync 0x006A3840, generic job without response class): every player's
 	// Blaze team index as the admin's rosters have it. Admin only; a team over its capacity refuses the whole list
-	// (GAMEMANAGER_ERR_TEAM_FULL); every moved player's NotifyGamePlayerTeamChange goes to all.
+	// (GAMEMANAGER_ERR_TEAM_FULL); every moved player's NotifyGamePlayerTeamChange goes to all. A practice group's
+	// players stay on team 0: a move elsewhere is ignored.
 	s.Register(ComponentGameManager, CmdGameManagerSwapPlayersTeam, "swapPlayersTeam", func(r *Request) []byte {
 		gid, _ := r.Body.Int("GID")
 		hg := r.Server.customGameOf(r, gid, true, "swapPlayersTeam")
@@ -829,8 +860,13 @@ func registerCustomGames(s *Server) {
 				teams[hp.p.ID] = hp.p.Team
 			}
 		}
+		ignored := 0
 		for _, m := range moves {
 			if _, ok := teams[m.pid]; ok && m.team >= 0 && m.team < int64(len(hg.game.TeamIDs)) {
+				if !hg.custom.browsable && m.team != 0 {
+					ignored++
+					continue
+				}
 				teams[m.pid] = m.team
 			}
 		}
@@ -855,6 +891,9 @@ func registerCustomGames(s *Server) {
 		}
 		hg.mu.Unlock()
 		r.Server.Log.Logf("blaze", "   game %d: teams swapped: %d asked, %d moved %v", gid, len(moves), len(moved), moved)
+		if ignored > 0 {
+			r.Server.Log.Logf("blaze", "   game %d: %d moves off team 0 ignored (a practice group)", gid, ignored)
+		}
 		r.After(func() {
 			for _, m := range moved {
 				note := GamePlayerTeamChangeNotification(gid, m.pid, m.team)

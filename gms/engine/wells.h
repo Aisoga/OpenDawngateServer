@@ -95,10 +95,18 @@ void OnDamaged(void* target, void* attacker, float dealt);
 void OnObjectDied(std::uint32_t id);
 
 // BOTREFLEX: a well `team` owns that an enemy captures (the capture moved forward in the last tick) or whose worker an
-// enemy hit within the last 5 match seconds (the bots' Hunters and Predators go and defend it).
+// enemy hit within the last 5 match seconds (the bots' Hunters and Predators go and defend it). WELLDEF: also a well with
+// enemy shapers in its ring whose capture stands still (contested by a defender, paused by hits), and what the bots'
+// StepWellDefense weighs (gms/core/agents/welldef.h).
 struct Threat {
   std::uint32_t object = 0;
+  int well = -1;                   // the well's index
   float pos[3] = {};
+  bool moving = false;             // the capture moved forward in the last tick
+  double secondsToCapture = -1.0;  // ... seconds to completion at its speed
+  int capturers = 0;               // enemy shapers in the ring
+  bool workerHit = false;          // an enemy hit one of its workers within the last 5 s
+  bool workerPlayerHit = false;    // ... an enemy player's creature or pet did (WELLDEF counts only these)
 };
 int Threats(int team, Threat* out, int max);
 

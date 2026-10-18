@@ -69,11 +69,18 @@ struct NetObject {
   std::uint32_t owner = 0;  // object +0x48 (mOwnerID): BuildWorld creates an owner first (D9b, core/replication/create_order.h)
   std::uint32_t markerId = 0;  // object +0x84 (sourceMarkerKey.markerId): a spawn point's camp marker (PARAMAP)
   std::uint32_t parent = 0;  // cLocomotionData +8 (attach parent, follow target): created first too (FARISW)
+  std::uint32_t target = 0;  // cProjectileData +0x80 (mTargetObjectId): created first too (ABILVFX)
+  bool pendingDelete = false;  // ScanPendingEffects only: marked for delete (+0x55) in this tick (ABILVFX)
 };
 
 // The live networked objects (network component, not pending delete), in the object manager's order. -1 on an
 // exception.
 int Scan(void* sim, std::vector<NetObject>* out);
+// ABILVFX: the placeable effects (noun type 943327861, LuaJobObjectWithGraphics*) that are pending delete and that no
+// player knows yet: an effect object a script made and destroyed in the same tick (Khagen's Q: nEffect.CreateEffect in
+// the Tick, nEffect.DestroyEffect in the Deactivate of the same tick's end pass). Called before DeletePending, which
+// removes them in that tick, so Scan never sees them. -1 on an exception.
+int ScanPendingEffects(void* sim, std::vector<NetObject>* out);
 
 // Whether objects of this noun type are created for the players: all = D2g's rule (every networked type but spawn
 // points: the 23 networked spawn points are invisible and Base_Health_Regen_* load on both sides), else D2f's (Tower,

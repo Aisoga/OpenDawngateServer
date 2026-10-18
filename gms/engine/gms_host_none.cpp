@@ -18,6 +18,7 @@ void GmsHostFormatStats(char* buf, std::size_t size) { std::snprintf(buf, size, 
 void GmsHostTickCommands() {}
 void GmsHostFlush() {}
 void GmsHostTickNetworkRate() {}
+void GmsHostBeforeDelete() {}
 bool GmsHostFormatCommandStats(char*, std::size_t) { return false; }
 
 // D6a: the bot players need the replication (engine/replicate.cpp) and gms_core, so without RakNet there are none.

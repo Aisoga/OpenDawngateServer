@@ -77,7 +77,7 @@ var allSteps = []string{"certificates", "client copy", "client exe", "client con
 
 // synthLocal is the client copy's AA_Server.package for 127.0.0.1 from the synthetic archive's Locale.package: what
 // re/scripts/patch_locale.py makes from the same file (test_ph2b.py and localepatch_test.go pin the same SHA-256).
-const synthLocal = "1be4652de6a59c8690e3a9c5597b5969185f175481cede1ad309a636883de043"
+const synthLocal = "c8f7d64be868d1c88ae93f0efef6ab02590cc65fe01a4351a10991ce1378b4fd"
 
 func localeSHA(t *testing.T, copy string) string {
 	t.Helper()
@@ -277,7 +277,14 @@ func TestClientForAnotherServer(t *testing.T) {
 	if err := s.Client("192.168.1.20", set.CAModulus); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, s, map[string]Status{"client copy": Done, "client exe": Done, "client config": Done, "client texts": Done})
+	expect(t, s, map[string]Status{"client copy": Done, "client exe": Done, "client config": Done, "client texts": Done,
+		"bot check box": Done})
+	src, _ := os.ReadFile(filepath.Join(s.ClientCopy(), filepath.FromSlash(moviepatch.MatchOptions.Source)))
+	want, err := moviepatch.MatchOptions.Build(src)
+	if b, err2 := os.ReadFile(filepath.Join(s.ClientCopy(), filepath.FromSlash(moviepatch.MatchOptions.Rel))); err != nil ||
+		err2 != nil || !bytes.Equal(b, want) {
+		t.Errorf("bot check box: %v, %v", err, err2)
+	}
 	if b, _ := os.ReadFile(filepath.Join(s.ClientCopy(), filepath.FromSlash(localepatch.Rel))); !bytes.Contains(b,
 		[]byte("0x00000003 http://192.168.1.20:18080/dawngate/password\r\n")) {
 		t.Error("client texts: Forgot Password? doesn't link to the server's page")
@@ -298,7 +305,8 @@ func TestClientForAnotherServer(t *testing.T) {
 	if err := s2.Client("192.168.1.20", set.CAModulus); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, s2, map[string]Status{"client copy": OK, "client exe": OK, "client config": OK, "client texts": OK})
+	expect(t, s2, map[string]Status{"client copy": OK, "client exe": OK, "client config": OK, "client texts": OK,
+		"bot check box": OK})
 	// the website: the links go there
 	s4 := again(s)
 	s4.WebDomain = "Dawngate.Example.org"

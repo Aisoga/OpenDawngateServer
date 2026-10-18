@@ -705,11 +705,16 @@ func (f *Front) connect(b Bookmark) (*frontSession, error) {
 		return nil, err
 	}
 	s := &frontSession{b: b}
-	s.c = &tunnel.Client{Log: f.Log, Gateway: gw, Pin: served, TunnelIP: f.TunnelIP, External: true, DialTimeout: f.ConnectTimeout}
+	s.c = &tunnel.Client{Log: f.Log, Gateway: gw, Pin: served, TunnelIP: f.TunnelIP, External: true, DialTimeout: f.ConnectTimeout,
+		Release: f.releaseFor(b, r.version)}
 	s.c.Deliver = f.deliverFor(s)
 	if err := s.c.Start(); err != nil {
 		if errors.Is(err, tunnel.ErrPinMismatch) {
 			return nil, frontErr(FrontErrKeyChanged, "%s's tunnel key changed during the connect: %v", gw, err)
+		}
+		if tunnel.ReleaseRefused(err) {
+			return nil, frontErr(FrontErrVersion, "%s (%s) refused this Start-Client's release %s: %v (its version: %q)", b.Tag, gw,
+				s.c.Release, err, r.version)
 		}
 		return nil, frontErr(FrontErrUnreachable, "the tunnel to %s didn't start: %v", gw, err)
 	}
@@ -805,6 +810,17 @@ func (f *Front) checkVersion(b Bookmark, r probeResult) error {
 	}
 	return frontErr(FrontErrVersion, "%s (%s) runs version %s, this Start-Client is %s: both need the same version, so the "+
 		"login is refused", b.Tag, b.Gateway(), r.version, f.Version)
+}
+
+// releaseFor is the release a session to a server names in its hello: this Start-Client's version for any server,
+// and for This PC the version its gateway told (serverVersion): This PC is never refused, so a folder's running
+// Start-Server of another release still lets its own Start-Client in. (A Start-Server of a release before the release
+// check takes no version 2 hello at all: restarting it with the folder's release helps.)
+func (f *Front) releaseFor(b Bookmark, serverVersion string) string {
+	if b.Tag == ThisPCTag && f.ThisPC != nil && serverVersion != "" {
+		return serverVersion
+	}
+	return f.Version
 }
 
 // trustKey checks a server's key against the trusted one and refuses a changed one (the player can't be asked during

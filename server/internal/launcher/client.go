@@ -17,6 +17,7 @@ import (
 	"dawngate/server/internal/setup"
 	"dawngate/server/internal/setup/certs"
 	"dawngate/server/internal/tunnel"
+	"dawngate/server/internal/update"
 	"dawngate/server/internal/version"
 )
 
@@ -54,6 +55,10 @@ picker = auto
 ; any password (none is checked or stored; only this PC reaches that server). off checks passwords there as any server
 ; does. Not used while this folder's Start-Server.exe serves This PC: it always checks passwords.
 local_trust = on
+
+; Updates: on (the default) asks github.com once at each start whether a newer release is out and, if so, whether to
+; install it (a server plays only with Start-Client of its own release). off never asks.
+update_check = on
 `
 
 // oldClientComments are the tunnel and picker keys' comments that earlier releases wrote into Start-Client.ini (when
@@ -69,7 +74,7 @@ var oldClientComments = map[string][][]string{
 		"; network) can't be picked: Start-Client then plays on it directly."}},
 }
 
-var clientKeys = []string{"server", "folder", "zip", "tunnel", "gateway_port", "picker", "local_trust"}
+var clientKeys = []string{"server", "folder", "zip", "tunnel", "gateway_port", "picker", "local_trust", "update_check"}
 
 // TestParkEnv set to 1 is Start-Client's --test-park (the release's test hook; never needed by a player).
 const TestParkEnv = "DAWNGATE_TEST_PARK"
@@ -87,7 +92,7 @@ func RunClient(args []string, o IO) int {
 	trust := fs.Bool("trust", false, "trust a new server key without asking, with --picker off or --tunnel off (scripts and tests; players confirm the fingerprint)")
 	setupOnly := fs.Bool("setup-only", false, "set up the player copy for the server, then exit without starting the game")
 	check := fs.Bool("check", false, "only report what is missing or stale; change nothing")
-	fs.Bool("non-interactive", false, "never ask anything; for scripts and tests")
+	nonInteractive := fs.Bool("non-interactive", false, "never ask anything (also no update question); for scripts and tests")
 	park := fs.Bool("test-park", os.Getenv(TestParkEnv) == "1", "test hook: keep the game window off the desktop and never activate it, as run_session.ps1 -Background does; also "+TestParkEnv+"=1")
 	zipFlag := fs.String("zip", "", "Dawngate.zip, when the player copy must be made or repaired")
 	tunnelFlag := fs.String("tunnel", "", "the encrypted tunnel: auto or on (every server; the default), off (a server whose Start-Server.ini has tunnel = off)")
@@ -142,6 +147,16 @@ func RunClient(args []string, o IO) int {
 		}
 	}
 	scfg, _ := ReadConfig(filepath.Join(o.ExeDir, ServerConfigName)) // this PC's server, when there is one
+	l := setup.Layout{Root: Resolve(o.ExeDir, clientFolder(ccfg, scfg))}
+	for _, f := range update.CleanOld(o.ExeDir) { // what an update left: the old program, cut-short temporary files
+		fmt.Fprintf(o.Out, "  update   %s deleted (left by the update)\n", f)
+	}
+	if code, ran, err := offerUpdate(o, in, updateOptions{args: args, check: *check, setupOnly: *setupOnly,
+		nonInteractive: *nonInteractive, lane: *lane, setting: ccfg["update_check"], root: l.Root}); err != nil {
+		return o.fail("%v", err)
+	} else if ran {
+		return code
+	}
 	pickerSet, err := pickerSetting(firstNonEmpty(*pickerFlag, ccfg["picker"]))
 	if err != nil {
 		return o.fail("%v", err)
@@ -165,14 +180,6 @@ func RunClient(args []string, o IO) int {
 	if err != nil {
 		return o.fail("%v", err)
 	}
-	folder := ccfg["folder"]
-	if folder == "" && scfg != nil {
-		folder = scfg["folder"]
-	}
-	if folder == "" {
-		folder = DefaultFolder
-	}
-	l := setup.Layout{Root: Resolve(o.ExeDir, folder)}
 	named := *serverFlag
 	if named == "" && len(positional) > 0 {
 		named = positional[0]
@@ -432,6 +439,11 @@ func localTrustSetting(v string) (bool, error) {
 		return false, nil
 	}
 	return false, fmt.Errorf("local_trust = %s: use on or off", v)
+}
+
+// clientFolder is the setup folder: Start-Client.ini's folder, else Start-Server.ini's, else Dawngate-Data.
+func clientFolder(ccfg, scfg Config) string {
+	return firstNonEmpty(ccfg["folder"], scfg["folder"], DefaultFolder)
 }
 
 func firstNonEmpty(s ...string) string {

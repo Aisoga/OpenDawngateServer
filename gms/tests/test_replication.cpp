@@ -11,6 +11,7 @@
 #include "core/replication/fow_data.h"
 #include "core/replication/modifiers.h"
 #include "core/replication/outgoing.h"
+#include "core/vision/fog.h"
 #include "tests/check.h"
 
 using gms::Bytes;
@@ -156,6 +157,106 @@ GMS_TEST(OutgoingRouting) {
   CHECK(c.Empty());
 }
 
+// FOGSOUND: kind 2 by the vision model's answer of this tick. Players 0 and 1 are Mortal (team 1), 2 and 3 Spirit
+// (team 2), 10 a spectator (no team: sees everything).
+GMS_TEST(OutgoingRoutingByVision) {
+  std::vector<gms::vision::FogPlayer> players = {{0, 1}, {1, 1}, {2, 2}, {3, 2}, gms::vision::ObserverFogPlayer(10)};
+  const uint16_t mortalOnly = gms::vision::PlayersForTeams(0x2, players);  // a Mortal object nobody else sees
+  CHECK_EQ(mortalOnly, 0x403);
+  const uint16_t all = gms::vision::PlayersForTeams(0x6, players);
+  CHECK_EQ(all, 0x40F);
+  auto make = [&]() {
+    std::vector<gms::OutgoingRoute> e(7);
+    // 0: a ServerEvent on a Mortal projectile created this tick in the Spirit side's fog: the create set +0x10 for
+    //    everyone (0x40F), the model sees it for Mortal and the spectator only
+    e[0].kind = 2;
+    e[0].object = 0x7C0101B7;
+    e[0].objectAlive = true;
+    e[0].seers = 0x40F;
+    e[0].seeNow = mortalOnly;
+    // 1: an animation state of a Spirit minion everyone sees
+    e[1].kind = 2;
+    e[1].object = 0x7C0201B8;
+    e[1].objectAlive = true;
+    e[1].seers = 0x40F;
+    e[1].seeNow = all;
+    // 2: an object the model doesn't cover (not scanned this tick): the masks alone, as before
+    e[2].kind = 2;
+    e[2].object = 0x7C0301B9;
+    e[2].objectAlive = true;
+    e[2].seers = 0x405;
+    // 3: the impact event of a Mortal projectile that hit and was deleted in the same tick, last seen by Mortal and
+    //    the spectator; 4: its deletion, known to everyone
+    e[3].kind = 2;
+    e[3].object = 0x7C0401BA;
+    e[4].kind = 0;
+    e[4].object = 0x7C0401BA;
+    e[4].recipients = 0x40F;
+    e[4].lastVisible = mortalOnly;
+    // 5: the kill announcement (kind 1, 0x7FFF) and 6: an attached effect's stop to everyone stay as they are
+    e[5].kind = 1;
+    e[5].recipients = 0x7FFF;
+    e[6].kind = 1;
+    e[6].recipients = 0x7FFF;
+    return e;
+  };
+  // the vision rule off: everything as D2g-live routed it, the audit counts who doesn't see it
+  std::vector<gms::OutgoingRoute> off = make();
+  gms::RouteOutgoing(&off, 0x7FFF, false);
+  CHECK_EQ(off[0].players, 0x40F);
+  CHECK_EQ(off[0].unseen, 0x00C);
+  CHECK_EQ(off[1].unseen, 0);
+  CHECK_EQ(off[2].players, 0x405);
+  CHECK_EQ(off[3].players, 0x40F);
+  CHECK(off[3].fromDeletion);
+  CHECK_EQ(off[3].unseen, 0x00C);
+  CHECK_EQ(off[4].players, 0x40F);
+  // on: the Spirit players lose the projectile's event and the impact, the deletion still reaches everyone
+  std::vector<gms::OutgoingRoute> on = make();
+  gms::RouteOutgoing(&on, 0x7FFF, true);
+  CHECK_EQ(on[0].players, 0x403);
+  CHECK_EQ(on[0].unseen, 0x00C);
+  CHECK_EQ(on[1].players, 0x40F);
+  CHECK_EQ(on[2].players, 0x405);
+  CHECK_EQ(on[2].unseen, 0);
+  CHECK_EQ(on[3].players, 0x403);
+  CHECK_EQ(on[4].players, 0x40F);
+  CHECK_EQ(on[5].players, 0x7FFF);
+  CHECK_EQ(on[6].players, 0x7FFF);
+  // the caster's own team always keeps it: the model's answer always holds the object's own team (vision rule 1)
+  CHECK_EQ(on[0].players & 0x3, 0x3);
+  // a deletion without a known visible mask: its known mask, as before
+  std::vector<gms::OutgoingRoute> d(2);
+  d[0].kind = 2;
+  d[0].object = 0x7C0501BB;
+  d[1].kind = 0;
+  d[1].object = 0x7C0501BB;
+  d[1].recipients = 0x5;
+  gms::RouteOutgoing(&d, 0x7FFF, true);
+  CHECK_EQ(d[0].players, 0x5);
+  // PlayerCharacterDeploy (B3) keeps the masks: it names the player's creature and plays nothing
+  std::vector<gms::OutgoingRoute> b3(1);
+  b3[0].kind = 2;
+  b3[0].wire = gms::kGmsPlayerCharacterDeploy;
+  b3[0].object = 0x7C0601BC;
+  b3[0].objectAlive = true;
+  b3[0].seers = 0x40F;
+  b3[0].seeNow = mortalOnly;
+  gms::RouteOutgoing(&b3, 0x7FFF, true);
+  CHECK_EQ(b3[0].players, 0x40F);
+  CHECK_EQ(b3[0].unseen, 0);
+  CHECK(gms::RoutedByVision(gms::kGmsServerEvent));
+  CHECK(gms::RoutedByVision(gms::kGmsSetAnimationState));
+  CHECK(!gms::RoutedByVision(gms::kGmsPlayerCharacterDeploy));
+  // a fogged create leaves out the attached effects and the last animation, nothing else
+  CHECK(gms::SkippedInFoggedCreate(gms::kGmsAttachedEffectUpdate));
+  CHECK(gms::SkippedInFoggedCreate(gms::kGmsInitAnimationInfo));
+  CHECK(!gms::SkippedInFoggedCreate(gms::kGmsObjectCreateBegin));
+  CHECK(!gms::SkippedInFoggedCreate(gms::kGmsObjectCreateComplete));
+  CHECK(!gms::SkippedInFoggedCreate(gms::kGmsAnimationDataUpdate));
+  CHECK(!gms::SkippedInFoggedCreate(gms::kGmsCombatantDataUpdate));
+}
+
 // D9b: a joining player's world creates every object after its owner (the client maps the full state's mOwnerID through
 // its id map, an unknown id becomes 0), otherwise in the object manager's order.
 GMS_TEST(CreateOrderOwnersFirst) {
@@ -206,6 +307,27 @@ GMS_TEST(CreateOrderParentsFirst) {
   };
   const std::vector<size_t> order = gms::CreateOrder(items);
   const std::vector<size_t> expect = {1, 0, 2, 5, 4, 3, 7, 6};
+  CHECK_EQ(order.size(), expect.size());
+  for (size_t k = 0; k < order.size() && k < expect.size(); ++k) CHECK_EQ(order[k], expect[k]);
+}
+
+// ABILVFX: a homing projectile's target (cProjectileData +0x80) is the third dependency. Ashabel's Q in a public match:
+// the projectile 7C84011E (slot 0x11E) aims at the target object 7C820120 (slot 0x120), created the same tick with
+// the warning effect 7C83011F between them; the target now goes out before the projectile.
+GMS_TEST(CreateOrderProjectileTargetFirst) {
+  using gms::CreateOrderItem;
+  const std::vector<CreateOrderItem> items = {
+      {0x7C84011E, 0x7C77012E, 0, 0x7C820120},  // 0 the projectile, owned by the shaper (known), aimed at 2
+      {0x7C83011F, 0, 0, 0},                    // 1 the warning effect
+      {0x7C820120, 0, 0, 0},                    // 2 the target object
+      {0x10, 0x11, 0x12, 0x13},                 // 3 owner, parent, target: in that order
+      {0x13, 0, 0, 0},                          // 4
+      {0x12, 0, 0, 0},                          // 5
+      {0x11, 0, 0, 0},                          // 6
+      {0x20, 0, 0, 0x20},                       // 7 a projectile aimed at itself
+  };
+  const std::vector<size_t> order = gms::CreateOrder(items);
+  const std::vector<size_t> expect = {2, 0, 1, 6, 5, 4, 3, 7};
   CHECK_EQ(order.size(), expect.size());
   for (size_t k = 0; k < order.size() && k < expect.size(); ++k) CHECK_EQ(order[k], expect[k]);
 }

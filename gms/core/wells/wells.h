@@ -416,6 +416,9 @@ class Wells {
     if (!w.moving || !(w.speed > 0.f)) return -1.0;
     return std::max(0.0, (1.0 - w.score) / static_cast<double>(w.speed));
   }
+  // WELLDEF: the living shapers of the capturing team in the well's ring in the last tick, whatever the capture did
+  // (moving, contested by a defender, paused by hits); 0 while the well is locked or unowned.
+  int Capturers(int i) const { return Valid(i) ? wells_[static_cast<size_t>(i)].capturers : 0; }
   std::uint16_t State(int i) const { return Valid(i) ? wells_[static_cast<size_t>(i)].state : kStateNone; }
   double StateSince(int i) const { return Valid(i) ? wells_[static_cast<size_t>(i)].stateSince : 0.0; }
   std::uint32_t WorkerAt(int i, int slot) const {
@@ -517,6 +520,7 @@ class Wells {
     float speed = 0.f;            // d|score|/dt in the last tick
     float captureDuration = 0.f;
     bool moving = false;          // the capture moved forward in the last tick
+    int capturers = 0;            // WELLDEF: living shapers of the capturing team in the ring in the last tick
     double lockedUntil = 0.0;     // match seconds
     float lockDuration = 0.f;
     double capturedAt = -1e30;
@@ -595,6 +599,7 @@ class Wells {
     Well& w = wells_[static_cast<size_t>(i)];
     const bool wasMoving = w.moving;
     w.moving = false;
+    w.capturers = 0;
     w.captureDuration = 0.f;
     if (now < w.lockedUntil || (w.owner != 1 && w.owner != 2)) {  // locked: not capturable (the score is 0 here)
       w.speed = 0.f;
@@ -612,6 +617,7 @@ class Wells {
       else if (s.team == w.owner)
         defenders.push_back(s.player);
     }
+    w.capturers = static_cast<int>(caps.size());
     const float base = table_.base > 0.f ? table_.base : 1.f;
     if (caps.empty()) {  // decay toward 0 [assumed scale: decayRate / base per second, the capture's own unit]
       const float d = tuning_.decayRate / base;

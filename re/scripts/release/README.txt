@@ -83,8 +83,14 @@ don't log in, and ask its operator (see "When something goes wrong"). The list i
 Dawngate-Data\servers\bookmarks.json.
 Your Start-Client.exe and a server must be the same release (this one is @VERSION@; Start-Client.exe --version
 and Start-Server.exe --version print it). Any other version is marked "other version" in the list (a server of a
-release before this check: "version unknown") and its logins are refused; This PC never is. To update, unpack
-the new release into the same folder over the old files: Start-Server.ini, Start-Client.ini and Dawngate-Data stay.
+release before this check: "version unknown") and its logins are refused; This PC never is.
+Updates: at each start a numbered release (such as v0.6) asks github.com once for the newest release and, when
+there is a newer one, asks "Version v0.7 is available (you have v0.6). Update now? [Y/n]". Enter downloads it,
+checks every file against its BUILD.txt, replaces this release's files (the running Start-Client.exe becomes
+Start-Client.old.exe, which the next start deletes) and starts the new Start-Client.exe; Start-Server.ini,
+Start-Client.ini, Dawngate.zip and Dawngate-Data stay. Close Start-Server.exe first if it runs from this folder.
+update_check = off in Start-Client.ini stops the question. To update by hand, unpack the new release into the
+same folder over the old files.
 
 
 Hosting on the internet (use at your own risk)

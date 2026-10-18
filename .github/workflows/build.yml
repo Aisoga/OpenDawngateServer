@@ -2,12 +2,15 @@
 # Linux server's archive. The server's Go code is also tested and built on Linux, and the Linux
 # archive is checked there.
 # A successful build of main (every job green) replaces the rolling "nightly" pre-release (never marked Latest).
+# A pushed tag v<major>.<minor>[.<patch>] on a commit of main builds the same way, with the tag as the
+# release's name and version, and publishes the numbered release <tag> with <tag>.zip and <tag>-linux.tar.gz.
 # Nothing here needs the game's files: tests that read them skip themselves.
 name: build
 
 on:
   push:
     branches: [main]
+    tags: ['v*']
   schedule:
     - cron: '0 3 * * 1' # Mondays 03:00 UTC: catches changes in the runner's toolchain
   workflow_dispatch:
@@ -38,6 +41,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Release name (a version tag)
+        # a tag v* names the release (and its version); its form is checked before anything is built
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if ($env:GITHUB_REF_NAME -cnotmatch '^v[0-9]+\.[0-9]+(\.[0-9]+)?$') {
+            throw "tag $env:GITHUB_REF_NAME`: a release tag is v<major>.<minor> or v<major>.<minor>.<patch> (e.g. v0.6, v1.0.1)"
+          }
+          "RELEASE_NAME=$env:GITHUB_REF_NAME" >> $env:GITHUB_ENV
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -109,11 +121,15 @@ jobs:
       - name: Release zip and Linux archive
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          powershell -NoProfile -ExecutionPolicy Bypass -File re/scripts/make_release.ps1
+          # a tag's build is named after the tag; any other build Dawngate-Restoration-<date>-<commit>
+          $nameArgs = @()
+          if ($env:RELEASE_NAME) { $nameArgs = @('-Name', $env:RELEASE_NAME) }
+          powershell -NoProfile -ExecutionPolicy Bypass -File re/scripts/make_release.ps1 @nameArgs
           $zip = @(Get-ChildItem re/out/release -Filter '*.zip')
           if ($zip.Count -ne 1) { throw "expected one release zip, found $($zip.Count)" }
           $tgz = @(Get-ChildItem re/out/release -Filter '*-linux.tar.gz')
           if ($tgz.Count -ne 1) { throw "expected one Linux archive, found $($tgz.Count)" }
+          if ($env:RELEASE_NAME -and $zip[0].Name -cne "$env:RELEASE_NAME.zip") { throw "the zip is $($zip[0].Name), not $env:RELEASE_NAME.zip" }
           "RELEASE_ZIP=$($zip[0].FullName)" >> $env:GITHUB_ENV
           "RELEASE_TGZ=$($tgz[0].FullName)" >> $env:GITHUB_ENV
 
@@ -246,3 +262,46 @@ jobs:
           EOF
           gh release create nightly "$zip" "$tgz" --repo "$REPO" --target "$SHA" --prerelease --latest=false \
             --title "Nightly build $(date -u +%Y-%m-%d) (${SHA:0:10})" --notes-file notes.md
+
+  release:
+    # a pushed version tag (v<major>.<minor>[.<patch>], checked by the build job) on a commit of main
+    # publishes the numbered release: the tag's name as its title and its files' names, not a pre-release,
+    # marked Latest by GitHub's rule (the newest version); nothing is replaced or deleted
+    needs: [build, linux, linux-release]
+    if: github.repository == 'Aisoga/OpenDawngateServer' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: release
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          zip="release/$TAG.zip"
+          tgz="release/$TAG-linux.tar.gz"
+          ls -l "$zip" "$tgz"
+          # the tag must be on main: a release is built only from the published history
+          status=$(gh api "repos/$REPO/compare/main...$SHA" --jq .status)
+          if [ "$status" != identical ] && [ "$status" != behind ]; then
+            echo "::error::tag $TAG ($SHA) is not on main (compare: $status); push main first, then the tag"; exit 1
+          fi
+          cat > notes.md <<NOTES
+          Dawngate Restoration ${TAG}, built by this repository's build workflow from commit ${SHA}.
+
+          - \`${TAG}.zip\`: Windows 10/11 64-bit. \`Start-Server.exe\` runs a server, \`Start-Client.exe\` plays. Put your own \`Dawngate.zip\` (archive.org) next to \`Start-Server.exe\`; the release contains no game file. See \`README.txt\` in the zip.
+          - \`${TAG}-linux.tar.gz\`: the same server for a 64-bit Linux machine (\`start-server\`, its match hosts under Wine).
+          - Players and servers play together only on the same release: update both to this one.
+          - The programs are unsigned (SmartScreen: *More info*, *Run anyway*).
+          - \`BUILD.txt\` in each archive names the commit it was built from (the source, AGPL-3.0).
+          NOTES
+          gh release create "$TAG" "$zip" "$tgz" --repo "$REPO" --verify-tag \
+            --title "Dawngate Restoration $TAG" --notes-file notes.md

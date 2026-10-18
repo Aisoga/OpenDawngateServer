@@ -291,7 +291,8 @@ this server for your logins too. If they differ, close this page.</p>
 		return
 	}
 	f.forwardPage(c, req, b, page, func() (net.Conn, func(), error) {
-		tc := &tunnel.Client{Log: f.Log, Gateway: b.Gateway(), Pin: info.Pin, TunnelIP: f.TunnelIP, External: true, DialTimeout: f.ConnectTimeout}
+		tc := &tunnel.Client{Log: f.Log, Gateway: b.Gateway(), Pin: info.Pin, TunnelIP: f.TunnelIP, External: true, DialTimeout: f.ConnectTimeout,
+			Release: f.releaseFor(b, info.Version)}
 		if err := tc.Start(); err != nil {
 			return nil, nil, err
 		}

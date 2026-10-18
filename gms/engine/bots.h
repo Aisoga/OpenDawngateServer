@@ -77,6 +77,7 @@ struct Options {
   int campRadius = 9;         // BOTIDLE: dgsim_bots_api.lua's fifth fix-up: IsNearNextCreepCamp's radius (the script's 5; 0 = keep it)
   bool jungle = true;         // BOTJUNGLE: the Hunter takes part (ganks, defends, pushes, wells, the parasite gather)
   bool pingFollow = true;     // BOTJUNGLE: the bots follow their human teammates' minimap pings
+  bool hunterParasiteStand = true;  // PRETUSBOT: the Hunter fights the parasite from its edge, not from its centre
 };
 
 // BOTJUNGLE: a human's minimap ping (the command intake's ping relay, commands.cpp): kept (the last 32) for

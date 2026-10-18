@@ -292,10 +292,28 @@ GMS_TEST(VisionTerrain) {
   es[0].ignoreTerrain = true;                        // a Terrain_Transparent vision object / the shop archons
   CHECK_EQ(Run(m, es, 1, p), kBitSpirit | kBitMortal);
   es[0].ignoreTerrain = false;
-  // a dynamic terrain modifier (nFogOfWar.ModifyTerrain writes a handle bit, here 0x01) blocks too [assumed]
   cells[static_cast<size_t>(32) * 64 + 40] = 0;
   CHECK_EQ(Run(m, es, 1, p), kBitSpirit | kBitMortal);  // a gap in the wall on the ray's row
+  // ABILVFX: a dynamic terrain modifier (nFogOfWar.ModifyTerrain ORs a handle bit into the cells: Kensu's R trail)
+  // opens a wall and never blocks open ground; D2g-fog-core's rule (any non-zero byte blocks) behind the switch
+  cells[static_cast<size_t>(32) * 64 + 40] = 0x01;  // the trail on open ground
+  CHECK_EQ(Run(m, es, 1, p), kBitSpirit | kBitMortal);
+  cells[static_cast<size_t>(32) * 64 + 40] = 0x80 | 0x04;  // the trail across the wall
+  CHECK_EQ(Run(m, es, 1, p), kBitSpirit | kBitMortal);
+  CHECK(!map.BlocksCell(0x01));
+  CHECK(!map.BlocksCell(0x84));
+  CHECK(map.BlocksCell(0x80));
+  CHECK(!map.BlocksCell(0x00));
+  LosMap old = map;
+  old.terrainModsOpen = false;
+  CHECK(old.BlocksCell(0x01));
+  CHECK(old.BlocksCell(0x84));
+  p.terrain = &old;
+  CHECK_EQ(Run(m, es, 1, p), kBitSpirit);
+  p.terrain = &map;
   cells[static_cast<size_t>(32) * 64 + 40] = 0x01;
+  CHECK_EQ(Run(m, es, 1, p), kBitSpirit | kBitMortal);
+  cells[static_cast<size_t>(32) * 64 + 40] = 0x80;  // the modifier released: the wall again
   CHECK_EQ(Run(m, es, 1, p), kBitSpirit);
   // the point query uses the same map
   CHECK_EQ(m.TeamsSeeingPoint(30.f, 0.f, kSpirit, 0.f), kBitSpirit);

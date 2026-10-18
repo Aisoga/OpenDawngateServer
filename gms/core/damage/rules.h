@@ -110,6 +110,19 @@ struct Grant {
   bool lastHit = false;
 };
 
+// ROLEVIM: a role's NPC-kill gold modifiers, RolesTuning role[] +0x08..+0x14 (the data: Gladiator/Carry
+// lastHitMinion 2.0, Tactician/Support proximity 2.0, every other value 1.0). Nothing in the client applies them (its
+// readers fill only the role card's percentages); the stripped server's reward code did.
+struct RoleNpcGold {
+  float lastHitMinion = 1.f;         // lastHitMinionGoldModifier: "the vim gained for scoring the killing blow on lane minions"
+  float lastHitCreature = 1.f;       // lastHitCreatureGoldModifier: the same for a jungle creature
+  float proximity = 1.f;             // proximityToMinionOrCreatureDeathGoldModifier: "being near lane minions when they die"
+  float proximityAllyLastHit = 1.f;  // proximityToAllyLastHitMinionOrCreatureGoldModifier
+};
+// The victim kinds the modifiers distinguish: a lane minion (NPC types 0-2), a jungle creature (3), anything else
+// (workers, objectives, structures, players: no role modifier here; the Predator's worker bonus is its script's).
+enum NpcGoldKind { kNpcOther = 0, kNpcMinion = 1, kNpcCreature = 2 };
+
 // Who gets how much of one reward (XP or gold) [assumed rules, DAMAGE.md *Death handling* 5]:
 //   last hit (and assist): the last hitter gets `amount` (assists aren't tracked yet);
 //   area: everyone in `area` gets amount x NearbyShare(n);
@@ -118,11 +131,31 @@ struct Grant {
 //   team: everyone in `team` gets `amount`;
 //   the titan types: nothing (no player).
 // `lastHitter` is a gameplay index or -1. Zero amounts are dropped.
+// ROLEVIM (gold only; `roles` indexed by gameplay index, `roleCount` entries, nullptr = every factor 1): for a minion or
+// a creature (`kind`), the last-hit part (the whole amount for the last-hit types, amount x lastHitBonusRatio for
+// "area and last hit") x the last hitter's lastHitMinion / lastHitCreature, and each area share x the receiver's
+// proximity, and x its proximityAllyLastHit when another player of its team got the last hit [assumed: the factors
+// multiply; the data's ally factor is 1.0 everywhere, so a Tactician gets its 200 % also beside an ally's last hit, as
+// its text says]. A Gladiator's last hit on a melee minion (gold 4): 4 + 4 x 3 x 2 = 28 instead of 16, the "vim x 6"
+// modifier_Role_Gladiator's storage counts with (lastHitModifier 6 = the fatal-hit ratio 3 x the role's 2).
 inline std::vector<Grant> SplitReward(int type, float amount, const std::vector<int>& area, int lastHitter,
                                       const std::vector<int>& team, const float* shares, int shareCount,
-                                      float lastHitBonusRatio) {
+                                      float lastHitBonusRatio, NpcGoldKind kind = kNpcOther,
+                                      const RoleNpcGold* roles = nullptr, int roleCount = 0) {
   std::vector<Grant> out;
   if (amount <= 0.f) return out;
+  auto role = [&](int player) -> const RoleNpcGold* {
+    return roles && kind != kNpcOther && player >= 0 && player < roleCount ? &roles[player] : nullptr;
+  };
+  auto lastHitFactor = [&]() {
+    const RoleNpcGold* r = role(lastHitter);
+    return !r ? 1.f : kind == kNpcMinion ? r->lastHitMinion : r->lastHitCreature;
+  };
+  auto areaFactor = [&](int player) {
+    const RoleNpcGold* r = role(player);
+    if (!r) return 1.f;
+    return r->proximity * (lastHitter >= 0 && lastHitter != player ? r->proximityAllyLastHit : 1.f);
+  };
   auto add = [&out](int player, float a, bool lastHit) {
     if (player < 0 || a <= 0.f) return;
     for (Grant& g : out)
@@ -140,13 +173,13 @@ inline std::vector<Grant> SplitReward(int type, float amount, const std::vector<
   switch (type) {
     case kRewardLastHit:
     case kRewardLastHitAndAssist:
-      add(lastHitter, amount, true);
+      add(lastHitter, amount * lastHitFactor(), true);
       break;
     case kRewardArea:
     case kRewardAreaAndLastHit: {
       const float share = NearbyShare(shares, shareCount, static_cast<int>(area.size()));
-      for (int p : area) add(p, amount * share, false);
-      if (type == kRewardAreaAndLastHit) add(lastHitter, amount * lastHitBonusRatio, true);
+      for (int p : area) add(p, amount * share * areaFactor(p), false);
+      if (type == kRewardAreaAndLastHit) add(lastHitter, amount * lastHitBonusRatio * lastHitFactor(), true);
       break;
     }
     case kRewardTeam:

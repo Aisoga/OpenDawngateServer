@@ -55,9 +55,14 @@ bool LosMap::Blocked(float x0, float y0, float x1, float y1) const {
       y += sy;
     }
     if (x == bx && y == by) break;  // the end cell is left out
-    if (At(x, y) != 0) return true;
+    if (BlocksCell(At(x, y))) return true;
   }
   return false;
+}
+
+bool LosMap::BlocksCell(uint8_t cell) const {
+  if (!terrainModsOpen) return cell != 0;  // the D2g-fog-core rule: any byte blocks, a modifier's handle bit too
+  return (cell & kLosBlocked) != 0 && (cell & kLosModifierBits) == 0;
 }
 
 uint32_t GrassMap::Raw(float x, float y, uint32_t* packed) const {

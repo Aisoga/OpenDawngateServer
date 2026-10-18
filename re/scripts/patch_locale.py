@@ -95,7 +95,7 @@ ERROR_LINES = {
     0x00E90001: "The server on this PC is still being set up. Log in again when the list says online.",
     0x00EA0001: "The server on this PC didn't start: Start-Client's window says why.",
     0x00EB0001: "This server runs another version than your Start-Client, or doesn't tell its version: both need the "
-                "same one. SERVER above the login shows both versions.",
+                "same one. SERVER above the login shows both versions; restart Start-Client to update.",
     0x00EC0001: "The server was added to your list. Pick it and log in, or use Sign up now! below to make an account "
                 "there first.",
 }

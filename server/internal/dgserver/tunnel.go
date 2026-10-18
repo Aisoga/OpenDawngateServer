@@ -82,7 +82,7 @@ func startGateway(cfg config, log *logging.Log, in *instance, sv services, gmsPo
 	} else if gmsPort > 0 {
 		gmsPorts[gmsPort] = true // B8's logger or an external GMS (--gms-external)
 	}
-	g := &tunnel.Gateway{Log: log, Identity: id, BindIP: bind,
+	g := &tunnel.Gateway{Log: log, Identity: id, BindIP: bind, AllowAnyClient: cfg.allowAnyClient,
 		Forward: func(port int) *net.UDPAddr {
 			if gmsPorts[port] {
 				return &net.UDPAddr{IP: bind, Port: port}

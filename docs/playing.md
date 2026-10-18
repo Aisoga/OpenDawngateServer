@@ -86,7 +86,7 @@ The match runs as in the original game. The server uses the game's own data and 
 - A core grows back after eight minutes, and the Guardian's shield comes back with it.
 - The Guardian defends its base: its attacks go at enemy shapers in its reach before minions, and its special attacks (orbs, laser, fire wall) at shapers.
 
-**Bots.** The bots take their lanes after about a minute. They last-hit minions, cast their abilities, buy items, drink potions, place wards, push towers and fight. They also play as a team: they defend towers, gather for the parasite, capture and defend spirit wells, and join an ally going for a kill. When they have the advantage, after won fights or with the parasite's buff, they group up in one lane and push with their minions until they lose the fight; from about 20 minutes, and whenever enemy cores are down, they siege the enemy base to end the match. Their jungler leaves its camps to gank a lane where an ally is fighting, to defend the base, and to join pushes, well captures and the parasite near it. The bots follow your minimap pings: ping an enemy Binding to push its lane, the parasite to take it together, an enemy spirit well to capture it, or "retreat" to call a push or an objective off; ping one of your own Bindings or wells, an enemy shaper or a spot on the map and the jungler comes, answering with an "on my way" ping. In a practice match they go easier on you, as the original's first-time rules did.
+**Bots.** The bots take their lanes after about a minute. They last-hit minions, cast their abilities, buy items, drink potions, place wards, push towers and fight. They also play as a team: they defend towers, gather for the parasite, capture spirit wells, and join an ally going for a kill. Their Tacticians and jungler come to a well of theirs you are capturing near them and fight you in its ring, unless you outnumber them or they would arrive too late. When they have the advantage, after won fights or with the parasite's buff, they group up in one lane and push with their minions until they lose the fight; from about 20 minutes, and whenever enemy cores are down, they siege the enemy base to end the match. Their jungler leaves its camps to gank a lane where an ally is fighting, to defend the base, and to join pushes, well captures and the parasite near it. The bots follow your minimap pings: ping an enemy Binding to push its lane, the parasite to take it together, an enemy spirit well to capture it, or "retreat" to call a push or an objective off; ping one of your own Bindings or wells, an enemy shaper or a spot on the map and the jungler comes, answering with an "on my way" ping. In a practice match they go easier on you, as the original's first-time rules did.
 
 **Gold and experience.** You start with 500 gold and earn 100 gold a minute from 1:00. Last hits and kills give gold and experience. Each level gives you an ability point to spend with Ctrl + Q/W/E/R:
 
@@ -123,10 +123,10 @@ The match runs as in the original game. The server uses the game's own data and 
 
 **Passives.** Your shaper's passive ability and your role's bonus are always active:
 
-- **Gladiator:** extra gold from nearby minion deaths.
+- **Gladiator:** double the bonus gold for a last hit on a lane minion; a melee Gladiator also stores half the gold of nearby minions it didn't kill and gets it with its next last hit.
 - **Hunter:** bonuses against jungle creeps.
-- **Predator:** double gold from well workers.
-- **Tactician:** gold for hitting enemy shapers.
+- **Predator:** more gold and experience for kills and assists on enemy shapers, double gold from well workers.
+- **Tactician:** double gold for being near lane minions when they die, and 20 gold for hitting an enemy shaper (once every 5 seconds for ranged and for melee hits).
 
 **Voice lines.** The shapers speak their kill, assist and banter lines as in the original. Emotes and quick-chat lines play for your team or for everyone.
 
@@ -144,6 +144,7 @@ The match runs as in the original game. The server uses the game's own data and 
 - **Collection:** your shapers, skins and so on. You buy Spiritstones (perk shapes) and Sparks (gems) here with Destiny.
 - **Loadouts:** your perk pages. Drag a Spiritstone onto the grid, then fill its sockets with Sparks from the *Sparks* tab, and click **Save**.
   - A page only counts in a match when every socket of its Spiritstone holds a matching Spark.
+  - Your first page, **Starter**, comes filled: the Blue Spiritstone of Vigor on the left half of the grid, the Green Spiritstone of Bravery at the top right and two Red Spiritstones of Fervor sharing the bottom-right square, with a Spark in every socket (Health +108, Power +9, Haste +4, Armor +4). Every account owns these Spiritstones and Sparks, also on a server where new accounts start with only the basics. Change or clear the page as you like; once you have saved a page, the server leaves your pages alone. An account from before this page existed gets it at its next login, but only if it has never saved a page.
   - The **+** beside the page tabs buys another page, up to 10.
 - **Leaderboard:** the server's top 200 players with at least 50 games (the server's operator can change the number), ranked by wins, then by fewer games. Every match counts, practice and custom games too. The arrows show how a rank changed since the start of the day (UTC).
 - **Profile:** your career, recent history and all-time statistics.
@@ -171,7 +172,8 @@ Everyone on a server needs their own account. The ways to play together:
 - **Custom games:** under **CUSTOM**, **CREATE GAME** makes a lobby with a name and an optional password; **BROWSE GAMES** lists the server's games (a padlock marks a password), with **JOIN GAME** and **SPECTATE GAME**.
   - In the lobby, **Join Mortal Team**/**Join Spirit Team** and **Join as Spectator** switch your side. The game's creator (the crown) can kick a player with a right-click on their slot and starts the game with **Start Game**.
   - If the creator leaves the lobby, the game closes for everyone.
-  - Empty seats stay empty unless the server's operator has bots fill them.
+  - **Fill open seats with bots**, a check box in the CREATE GAME dialog (under the password field), has bots take every seat no player holds when the game starts. The browser and the lobby then show the game as **[Bots] <name>**. The box starts unticked each time the dialog opens. A name too long for the marker the box adds is shortened to 25 characters.
+  - Without the check box, empty seats stay empty unless the server's operator has bots fill them in every custom game.
 - **Spectating:** a spectator sees both teams and the whole map, and can also join a game that is already running. If a spectator's game closes, **Rejoin** in the main menu brings them back.
 
 ### Playing on someone else's server
@@ -260,9 +262,10 @@ The server only ever sees `alex`.
 
 #### Versions
 
-Your `Start-Client.exe` and the server must be the same release: **any difference refuses the login**, and so does a server that doesn't tell its version (a release from before this check). The list marks such a server **other version** or **version unknown**, and the sentence under the list names the server's version and yours. A refused login says *This server runs another version than your Start-Client, or doesn't tell its version*.
+Your `Start-Client.exe` and the server must be the same release: **any difference refuses the login**, and so does a server that doesn't tell its version (a release from before this check). The list marks such a server **other version** or **version unknown**, and the sentence under the list names the server's version and yours. A refused login says *This server runs another version than your Start-Client, or doesn't tell its version*. The server checks it as well: it lets in only `Start-Client.exe` of its own release, and a `Start-Client.exe` from before that check gets *The server you picked doesn't answer* there.
 
-- `Start-Client.exe --version` prints your version; its window shows it at the start too. A release's version is its name, such as `Dawngate-Restoration-20261016-905ef17f5f`.
+- `Start-Client.exe --version` prints your version; its window shows it at the start too. A release's version is its name, such as `v0.6`.
+- **Updates:** at each start a numbered release asks the project's GitHub page once whether a newer release is out, and if so asks you: *Version v0.7 is available (you have v0.6). Update now? [Y/n]*. Press Enter (or `y`) and it downloads the new release, checks every file, puts it in place of the old one and starts again by itself, with your folder, server list, keys and settings kept. Type `n` to play with your version this time. Close `Start-Server.exe` first if it runs from the same folder. `update_check = off` in `Start-Client.ini` stops the question; without an internet connection `Start-Client.exe` just starts.
 - To play on a server of another version, get the release it runs (ask its operator) and use that release's `Start-Client.exe`. You can unpack it into the same folder over the old files: `Dawngate-Data`, your server list and the trusted keys stay.
 - **This PC** is never refused: it is the server in your own folder.
 - Without the tunnel (`--tunnel off`), `Start-Client.exe` asks the server's version when it starts and doesn't start the game on a server of another version.

@@ -78,6 +78,10 @@ type Gateway struct {
 	// Facts, when set, gives the server's facts the info hello answers with besides the version (asked at each
 	// hello, so a change while the server runs shows): FactSignup, the sign-up mode.
 	Facts func() map[string]string
+	// AllowAnyClient lets in a session whatever release its Start-Client names (dgserver --allow-any-client, for
+	// developers). Without it a session hello must name Version's release: a version 1 hello (a Start-Client from
+	// before the release check, which names none) is answered StatusVersion, another release StatusRelease.
+	AllowAnyClient bool
 
 	listeners map[int]*listener
 	handlers  map[int]PacketHandler
@@ -218,8 +222,12 @@ func (g *Gateway) Port() int {
 // Describe is the gateway's start-up note for the log.
 func (g *Gateway) Describe() string {
 	tcp, udp := g.ports()
-	return fmt.Sprintf("tunnel gateway on %s (TLS 1.3 and UDP), key fingerprint %s; streams to TCP %s, datagrams to UDP %s",
-		g.Addr(), g.Identity.Pin.Fingerprint(), portList(tcp), portList(udp))
+	clients := "sessions only from Start-Client release " + g.Version
+	if g.AllowAnyClient {
+		clients = "sessions from Start-Client of any release (--allow-any-client)"
+	}
+	return fmt.Sprintf("tunnel gateway on %s (TLS 1.3 and UDP), key fingerprint %s; streams to TCP %s, datagrams to UDP %s; %s",
+		g.Addr(), g.Identity.Pin.Fingerprint(), portList(tcp), portList(udp), clients)
 }
 
 func portList(ps []uint16) string {
@@ -314,11 +322,11 @@ func (g *Gateway) serveConn(c *tls.Conn) {
 		c.Close()
 		return
 	}
-	kind, err := readHello(c)
+	ver, kind, err := readHello(c)
 	switch {
 	case errors.Is(err, errVersion):
 		c.Write([]byte{StatusVersion})
-		g.logf("%s: tunnel version not supported", peer)
+		g.logf("%s: tunnel version %d not supported", peer, ver)
 		c.Close()
 		return
 	case err != nil:
@@ -332,7 +340,7 @@ func (g *Gateway) serveConn(c *tls.Conn) {
 	}
 	switch kind {
 	case kindSession:
-		g.serveSession(c, peer)
+		g.serveSession(c, peer, ver)
 	case kindStream:
 		g.serveStream(c, peer)
 	case kindInfo: // the server's version and facts for Start-Client's list and login: no session
@@ -370,12 +378,23 @@ func randomID() (uint64, [16]byte) {
 	return binary.BigEndian.Uint64(b[:8]), tok
 }
 
-// serveSession runs a control connection: a new session or one taken up again, its keys, then the heartbeats.
-func (g *Gateway) serveSession(c *tls.Conn, peer string) {
+// serveSession runs a control connection: a new session or one taken up again, its keys, then the heartbeats. ver is
+// the hello's version: the release check (checkRelease) comes first, for a session taken up again too.
+func (g *Gateway) serveSession(c *tls.Conn, peer string, ver byte) {
 	defer c.Close()
-	h, err := readSessionHello(c)
+	if ver != sessionVersion && !g.AllowAnyClient {
+		c.Write([]byte{StatusVersion})
+		g.logf("%s: session refused: its Start-Client names no release (session hello version %d: a Start-Client from "+
+			"before the release check); this server is release %s and lets in only Start-Client of the same release, "+
+			"so the player updates Start-Client (--allow-any-client lets any in)", peer, ver, g.Version)
+		return
+	}
+	h, err := readSessionHello(c, ver)
 	if err != nil {
 		g.logf("%s: session hello: %v", peer, err)
+		return
+	}
+	if !g.checkRelease(c, peer, ver, h.release) {
 		return
 	}
 	ip := ipOf(h.tunnelIP)
@@ -432,9 +451,37 @@ func (g *Gateway) serveSession(c *tls.Conn, peer string) {
 	if resumed {
 		what = "taken up again, new UDP keys"
 	}
-	g.logf("session %d from %s (%s): tunnel address %s", s.id, peer, what, ip)
+	g.logf("session %d from %s (%s): tunnel address %s, release %s", s.id, peer, what, ip, releaseName(ver, h.release))
 	err = heartbeat(c, g.HeartbeatEvery, g.HeartbeatTimeout, g.done)
 	s.detach(c, err)
+}
+
+// releaseName words a session hello's release for the log.
+func releaseName(ver byte, release string) string {
+	switch {
+	case ver != sessionVersion:
+		return "not named (a Start-Client from before the release check)"
+	case release == "":
+		return "empty"
+	}
+	return release
+}
+
+// checkRelease refuses a session whose Start-Client names another release than the server's, or an empty one
+// (StatusRelease, logged with both names), unless AllowAnyClient; then a difference is only logged.
+func (g *Gateway) checkRelease(c *tls.Conn, peer string, ver byte, release string) bool {
+	if ver == sessionVersion && build.Same(g.Version, release) {
+		return true
+	}
+	if g.AllowAnyClient {
+		g.logf("%s: its Start-Client's release is %s, this server's %s: let in (--allow-any-client)", peer,
+			releaseName(ver, release), g.Version)
+		return true
+	}
+	c.Write([]byte{StatusRelease})
+	g.logf("%s: session refused: its Start-Client is release %s, this server is release %s: both need the same "+
+		"release, so the player updates Start-Client (--allow-any-client lets any in)", peer, releaseName(ver, release), g.Version)
+	return false
 }
 
 // heartbeat sends one byte every every and reads the other side's; it returns when a read fails or times out, or

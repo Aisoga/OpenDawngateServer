@@ -73,13 +73,14 @@ There's no packet capture or egress check here. Logs go to `re\logs\manual_<date
 | `fog_terrain=0`, `fog_grass=0`, `fog_stealth=0` | Walls, tall grass or stealth don't block vision |
 | `fog_pursuit=0` | Units chasing into fog walk to the middle of the map, the older behaviour |
 | `fow_data_by_vision=0` | Enemies' levels and items aren't sent by vision |
+| `fog_events_by_vision=0` | Effects, animations and hits of units you can't see are sent by the older rule, which let some of their sounds through the fog |
 | `wells_lock_first=45` | Spirit wells can be captured after 45 seconds instead of 15 minutes |
 | `wells_damage_pause_any=1` | Any damage pauses a well capture, not just enemy shapers |
 | `surrender_after_s=20` | Surrender is available after 20 seconds |
 | `team_left_surrender_s=N` | A team whose players all left surrenders after N seconds (default 60) |
 | `prepare_flags=1` | Show the "Match Found" accept/decline prompt before a queue match |
 | `move_takeover=0` | Bring back the original's rule that a move waits for an attack-move's first hit |
-| `role_passives=0` | Switch the roles' passives off |
+| `role_passives=0` | Switch the roles' passives and their minion gold bonuses off |
 | `banter=0`, `banter_window=0` | No banter lines, or banter at any time of the match |
 | `test_wave=20` | Spawn test minions after 20 seconds |
 | `grant_xp=2200` | Give each player enough experience to rank all four abilities |

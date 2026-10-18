@@ -1146,6 +1146,14 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   void SetUiBeforeEnterGame(bool on) { uiBeforeEnterGame_ = on; }
   // FARISW: [host] create_order_parents (1: a step's creates after their owners and locomotion parents; 0 = pool order)
   void SetCreateOrderParents(bool on) { createOrderParents_ = on; }
+  // ABILVFX: [host] create_order_targets (1: also after a homing projectile's target, cProjectileData +0x80) and
+  // short_effects (1: a placeable effect made and destroyed in one tick still goes out, BeforeDelete)
+  void SetCreateOrderTargets(bool on) { createOrderTargets_ = on; }
+  void SetShortEffects(bool on, int holdMs) {
+    shortEffects_ = on;
+    shortEffectHoldMs_ = holdMs;
+  }
+  void OnBeforeDelete() { BeforeDelete(); }
   // D14a-live: [host] answers_first (1: every command answer before the tick's replicated messages, the original's
   // order; 0 = only the item transactions' answers first, the others after the replication step, D7-live's order)
   void SetAnswersFirst(bool on) { answersFirst_ = on; }
@@ -1190,6 +1198,32 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   void SetFowDataRouting(bool byVision, int logLimit) {
     fowDataByVision_ = byVision;
     fowDataLogLimit_ = logLimit;
+  }
+
+  // FOGSOUND ([host] fog_events_by_vision 1, fog_events_log_limit 200): with fog of war, the simulator's messages about
+  // an object (kind 2: ServerEvent, SetAnimationState, CombatEvent, ...) only to the players whose team sees it this
+  // tick, and a create for a player that doesn't see the new object without its 92/B1 (core/replication/outgoing.h);
+  // 0 = D2g-live's known & visible masks (the audit still counts what fog would hide).
+  void SetEventRouting(bool byVision, int logLimit) {
+    eventsByVision_ = byVision;
+    evLogLimit_ = logLimit;
+  }
+
+  // FOGSOUND test aid ([host] fog_events_trace = wire bytes in hex, e.g. "a4,af"; fog_events_trace_limit 3000): every
+  // message of these from the simulator's outgoing vector is logged with its recipients ("fog trace:" lines).
+  void SetEventTrace(const char* spec, int limit) {
+    evTrace_.clear();
+    evTraceLimit_ = limit;
+    for (const char* p = spec; *p;) {
+      char* end = nullptr;
+      const unsigned long v = std::strtoul(p, &end, 16);
+      if (end == p) {
+        ++p;
+        continue;
+      }
+      if (v <= 0xFF) evTrace_.insert(static_cast<uint8_t>(v));
+      p = end;
+    }
   }
 
   // D1b-live test aid ([host] test_lua = "<seconds after EnterGame>:<file>[,<seconds>:<file>...]"): each Lua file (in
@@ -1301,8 +1335,11 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
                       creates_, deletes_, updates_, modsRegistered_, modEnds_, it->second.replicated);
         note += "; " + std::string(buf);
         if (fog_) {
-          std::snprintf(buf, sizeof buf, "fog: %d enters, %d exits, %d A3, kind 3 by position %d", fogEnters_,
-                        fogExits_, fogA3_, fogKind3_);
+          std::snprintf(buf, sizeof buf,
+                        "fog: %d enters, %d exits, %d A3, kind 3 by position %d; fog events: %d unseen %s, %d fogged "
+                        "creates",
+                        fogEnters_, fogExits_, fogA3_, fogKind3_, evUnseenMessages_,
+                        eventsByVision_ ? "held back" : "SENT", evFoggedCreates_);
           note += "; " + std::string(buf);
         }
       }
@@ -2024,6 +2061,35 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     return n;
   }
 
+  // FOGSOUND, the audit: a message about an object that reaches ([host] fog_events_by_vision 0) or would have reached
+  // (1: held back) players with the world whose team doesn't see the object. Counted per wire byte for the per-second
+  // "fog events:" line, logged one by one up to fog_events_log_limit.
+  void AuditUnseen(const repl::Outgoing& m, const gms::OutgoingRoute& r, uint16_t to) {
+    const uint16_t unseen = static_cast<uint16_t>(r.unseen & WorldMask());
+    const uint8_t wire = m.msg.empty() ? 0 : m.msg[0];
+    int sends = 0;
+    for (int b = 0; b < 16; ++b) sends += (unseen >> b) & 1;
+    evUnseen_.Add(wire, m.msg.size());
+    ++evUnseenMessages_;
+    evUnseenSends_ += sends;
+    if (++evUnseenLogged_ > evLogLimit_) return;
+    const bool held = (to & unseen) == 0;
+    const auto it = seeNow_.find(m.object);
+    Log("fog events: %02x %s about %08X %s%s %s player(s) 0x%04x, whose team doesn't see it (sent to 0x%04x)", wire,
+        gms::GmsName(wire), m.object, it != seeNow_.end() && it->second.name ? it->second.name : "?",
+        r.fromDeletion ? " (deleted this tick)" : "", held ? "held back from" : "SENT to", unseen, to);
+  }
+
+  // FOGSOUND test aid: one line per traced forward (fog_events_trace), up to fog_events_trace_limit.
+  void TraceEvent(const repl::Outgoing& m, const gms::OutgoingRoute& r, uint16_t to) {
+    if (++evTraced_ > evTraceLimit_) return;
+    const auto it = seeNow_.find(m.object);
+    const bool known = it != seeNow_.end();
+    Log("fog trace: %02x %s kind %d about %08X %s (team %d) -> players 0x%04x (masks 0x%04x, team sees now 0x%04x)", r.wire,
+        gms::GmsName(r.wire), m.kind, m.object, known && it->second.name ? it->second.name : "?", known ? it->second.team : -1,
+        to, m.kind == 2 ? r.seers : r.recipients, r.seeNow);
+  }
+
   // Seam 1 (D2f, with D2g-live's fixes): the outgoing vector's entries to the players they name among those that have
   // the world. Every ModifierCreated/Updated goes into the registry first (whoever gets it); kind 2 of an object
   // deleted in the same tick goes to its deletion's recipients; a deletion drops the object's registry entries.
@@ -2041,10 +2107,19 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       const repl::Outgoing& m = msgs[i];
       gms::OutgoingRoute& r = routes[i];
       r.kind = m.kind;
+      r.wire = m.msg.empty() ? 0 : m.msg[0];
       r.object = m.object;
       r.recipients = m.recipients;
       r.objectAlive = m.objectAlive;
       r.seers = m.seers;
+      // FOGSOUND: the model's answer of this tick for a message about an object, the last visible mask for a deletion
+      if (m.kind == 2 && eventsVisionNow_) {
+        const auto it = seeNow_.find(m.object);
+        if (it != seeNow_.end()) r.seeNow = it->second.players;
+      } else if (m.kind == 0) {
+        const auto it = lastVisible_.find(m.object);
+        if (it != lastVisible_.end()) r.lastVisible = it->second;
+      }
       // D2g-live step 2: with fog a positional message goes to the players whose team sees the point (its line-of-sight
       // record: position, team, radius), handed to the router as kind 1 with that mask
       if (fog_ && fogReady_ && m.kind == 3 && m.hasPoint) {
@@ -2068,19 +2143,31 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       }
     }
     fogPlayersTick_.clear();
-    gms::RouteOutgoing(&routes, kAllPlayers);
+    gms::RouteOutgoing(&routes, kAllPlayers, eventsByVision_ && fog_ && fogReady_);
     const uint16_t world = WorldMask();
     int sent = 0, dropped = 0, viaDeletion = 0;
     for (size_t i = 0; i < msgs.size(); ++i) {
       const repl::Outgoing& m = msgs[i];
       const gms::OutgoingRoute& r = routes[i];
       const uint16_t to = static_cast<uint16_t>(r.players & world);
+      if (r.unseen & world) AuditUnseen(m, r, to);  // FOGSOUND
+      if (!evTrace_.empty() && evTrace_.count(r.wire)) TraceEvent(m, r, to);
       if (m.kind == 0) {
         animShadow_.erase(m.object);
         const int recs = mods_.RemoveCarrier(m.object);
         ++deletes_;
         Log("replication: delete %08X -> ObjectDelete to players 0x%04x (known 0x%04x)%s", m.object, to, r.recipients,
             recs ? (", " + std::to_string(recs) + " modifier record(s) dropped").c_str() : "");
+        // ABILVFX: a short effect's delete waits [host] short_effect_hold_ms, so the client keeps the object (and the
+        // effect attached to it) long enough to play
+        const auto held = shortHeld_.find(m.object);
+        if (held != shortHeld_.end()) {
+          shortHeld_.erase(held);
+          if (to && shortEffectHoldMs_ > 0) {
+            heldDeletes_.push_back({gms::SteadyClock::now() + std::chrono::milliseconds(shortEffectHoldMs_), to, m.msg});
+            continue;
+          }
+        }
       }
       if (r.fromDeletion) ++viaDeletion;
       if (!to) {
@@ -2124,15 +2211,69 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   //   4. modifier ends: ModifierDeleted for every registered instance the server no longer has;
   //   5. fog of war: the per-player transitions (FogStep: 93; 94 + full state + 95; A3) and the visible masks (+0x10).
   // Without fog every object is visible to everyone who knows it (+0x10 = +0xE).
+  // ABILVFX: a placeable effect that a script makes and destroys in one tick (Khagen's Q: nEffect.CreateEffect(true, …)
+  // in its Tick, nEffect.DestroyEffect in the Deactivate of the same tick's end pass) is gone by the replication step:
+  // DeletePending runs before it, and Scan skips what is pending delete anyway, so no player ever got its create and
+  // the effect never showed. Called just before DeletePending: such an effect's create is built now, for the players
+  // that know nothing of it (with fog: whose team sees its point, unless its noun ignores the fog), and those players
+  // are written into its known mask, so DeletePending's ObjectDelete goes to them; ReplicationStep sends the creates
+  // first. [host] short_effects (1).
+  void BeforeDelete() {
+    if (!replicate_ || !shortEffects_) return;
+    const uint16_t world = WorldMask();
+    if (!world) return;
+    BoundTo b(sim_);
+    if (!repl::Init()) return;
+    std::vector<repl::NetObject> objs;
+    if (repl::ScanPendingEffects(sim_, &objs) <= 0) return;
+    std::vector<gms::vision::FogPlayer> fogPlayers;
+    for (const repl::NetObject& o : objs) {
+      if (!repl::Replicated(o, allTypes_) || failedCreates_.count(o.id)) continue;
+      uint16_t to = world;
+      uint8_t team = 0xFF, teams = gms::vision::kAllTeams;
+      if (fog_ && fogReady_ && fow::Fogged(o.object, &team)) {
+        if (fogPlayers.empty()) fogPlayers = FogPlayers();
+        teams = model_.TeamsSeeingPoint(o.pos[0], o.pos[1], team, 0.f);
+        to = static_cast<uint16_t>(world & gms::vision::PlayersForTeams(teams, fogPlayers));
+      }
+      if (!to) continue;
+      std::vector<repl::WorldMessage> msgs;
+      int bytes = 0;
+      if (!repl::BuildCreate(o, true, mods_.RecordsFor(o.id), &msgs, &bytes) || !repl::AddPlayerBits(o.object, to, to)) {
+        failedCreates_.insert(o.id);
+        continue;
+      }
+      for (auto& m : msgs) shortCreates_.push_back({to, std::move(m.msg)});
+      shortHeld_.insert(o.id);
+      ++shortEffectsSent_;
+      if (++shortEffectsLogged_ <= 40)
+        Log("replication: short effect %08X %s at (%.2f, %.2f, %.2f) made and destroyed in this tick -> create to "
+            "players 0x%04x (teams %u), its ObjectDelete follows (ABILVFX)",
+            o.id, o.name, o.pos[0], o.pos[1], o.pos[2], to, teams);
+    }
+  }
+
   void ReplicationStep(gms::ISender& out) {
     BoundTo b(sim_);
     if (!repl::Init()) return;
     const uint16_t world = WorldMask();
+    // ABILVFX: the creates of the effects BeforeDelete caught, before everything else of this step (their deletes come
+    // with the outgoing vector)
+    for (const auto& c : shortCreates_) SendTo(out, static_cast<uint16_t>(c.first & world), c.second, nullptr);
+    shortCreates_.clear();
+    if (!heldDeletes_.empty()) {
+      const auto now = gms::SteadyClock::now();
+      size_t k = 0;
+      for (; k < heldDeletes_.size() && heldDeletes_[k].due <= now; ++k)
+        SendTo(out, static_cast<uint16_t>(heldDeletes_[k].players & world), heldDeletes_[k].msg, nullptr);
+      heldDeletes_.erase(heldDeletes_.begin(), heldDeletes_.begin() + static_cast<std::ptrdiff_t>(k));
+    }
     std::vector<repl::NetObject> objs;
     if (repl::Scan(sim_, &objs) < 0) return;
     std::vector<gms::vision::Entity> ents;
     std::vector<fow::ObjectInfo> info;
     if (fog_) VisionStep(objs, &ents, &info);
+    EventVisionStep(objs, ents);  // FOGSOUND
     std::vector<uint16_t> createdNow(objs.size(), 0);
     int known = 0;
     KindScope traffic(gms::timing::kTrafficCreates);  // Q3c: then forwarded (DrainStep), deltas, players, fog
@@ -2140,8 +2281,9 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     // maps a tObjID it doesn't know yet to 0, and a hologram created before the projectile it rides on stayed behind
     std::vector<gms::CreateOrderItem> order(objs.size());
     for (size_t k = 0; k < objs.size(); ++k)
-      order[k] = createOrderParents_ ? gms::CreateOrderItem{objs[k].id, objs[k].owner, objs[k].parent}
-                                     : gms::CreateOrderItem{objs[k].id, 0, 0};
+      order[k] = gms::CreateOrderItem{objs[k].id, createOrderParents_ ? objs[k].owner : 0u,
+                                      createOrderParents_ ? objs[k].parent : 0u,
+                                      createOrderTargets_ ? objs[k].target : 0u};  // ABILVFX: the projectile's target
     for (const size_t i : gms::CreateOrder(order)) {
       const repl::NetObject& o = objs[i];
       if (!repl::Replicated(o, allTypes_)) continue;
@@ -2155,7 +2297,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
         failedCreates_.insert(o.id);  // logged by BuildCreate; not retried every tick
         continue;
       }
-      for (const auto& m : msgs) SendTo(out, missing, m.msg, nullptr);
+      SendCreate(out, o, missing, msgs);
       createdNow[i] = missing;
       ++creates_;
       ++known;
@@ -2223,6 +2365,8 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     }
     if (fog_ && fogReady_) FogStep(out, objs, ents, info, createdNow);
     if (fowDataByVision_) FowDataStep(out);  // D2h
+    seeNow_.clear();  // FOGSOUND: a drain outside this step has no answer of its own tick
+    eventsVisionNow_ = false;
     knownObjects_ = known;
     ReportCounts();
   }
@@ -2472,6 +2616,42 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     for (size_t k = 0; k < fos.size(); ++k)
       if (after[k] != fos[k].visible && !fow::SetVisibleMask(objs[at[k]].object, after[k]))
         Log("fog: visible mask of %08X not written", fos[k].id);
+    // FOGSOUND: the masks as this step left them, for the messages about an object deleted before the next scan
+    lastVisible_.clear();
+    for (size_t k = 0; k < fos.size() && k < after.size(); ++k) lastVisible_[fos[k].id] = after[k];
+  }
+
+  // FOGSOUND, step 0b: per scanned object the players whose team sees it now (the vision model's answer, spectators
+  // always), which the creates and the drain of this tick route by.
+  void EventVisionStep(const std::vector<repl::NetObject>& objs, const std::vector<gms::vision::Entity>& ents) {
+    seeNow_.clear();
+    eventsVisionNow_ = fog_ && fogReady_;
+    if (!eventsVisionNow_) return;
+    const std::vector<gms::vision::FogPlayer> players = FogPlayers();
+    for (size_t i = 0; i < objs.size() && i < ents.size(); ++i)
+      if (ents[i].id)
+        seeNow_[objs[i].id] = {gms::vision::PlayersForTeams(model_.Bits(i), players), objs[i].name, ents[i].team};
+  }
+
+  // A new object's create messages to the players that don't know it yet. FOGSOUND: a player whose team doesn't see
+  // the object gets them without the attached effects (92) and the last animation (B1), which would start the effects'
+  // sounds before the fog step's 93 (the fog exit sends both after 95).
+  void SendCreate(gms::ISender& out, const repl::NetObject& o, uint16_t missing,
+                  const std::vector<repl::WorldMessage>& msgs) {
+    uint16_t hidden = 0;
+    if (eventsByVision_ && eventsVisionNow_) {
+      const auto it = seeNow_.find(o.id);
+      if (it != seeNow_.end()) hidden = static_cast<uint16_t>(missing & ~it->second.players);
+    }
+    for (const auto& m : msgs) {
+      if (hidden && !m.msg.empty() && gms::SkippedInFoggedCreate(m.msg[0])) {
+        SendTo(out, static_cast<uint16_t>(missing & ~hidden), m.msg, nullptr);
+        ++evFoggedCreateSkips_;
+      } else {
+        SendTo(out, missing, m.msg, nullptr);
+      }
+    }
+    if (hidden & WorldMask()) ++evFoggedCreates_;
   }
 
   // The per-second line: messages per wire byte, plus the registry, the line-of-sight pool and the network-rate
@@ -2485,10 +2665,10 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     repl::LineOfSightPool(sim_, &inUse, &capacity);
     Log("replication: last %.1f s: %d messages, %zu bytes%s%s; %d objects known, %d creates, %d deletes, %d updates, "
         "modifiers %zu registered (%d ended); line-of-sight pool %d/%d (%d released); network-rate ticks %u (200 ms bit "
-        "%u); animation override deltas %d",
+        "%u); animation override deltas %d; short effects %d",
         secs, counts_.Messages(), counts_.TotalBytes(), counts_.Empty() ? "" : ": ", counts_.Format().c_str(),
         knownObjects_, creates_, deletes_, updates_, mods_.Size(), modEnds_, inUse, capacity, released_, netRateTicks_,
-        netRate200_, animDeltas_);
+        netRate200_, animDeltas_, shortEffectsSent_);
     if (fog_ && fogReady_)
       Log("fog: %d enters, %d exits (%d B of full state), %d A3, %d mVisibleToTeam writes, %d mVisionRadius / %d grass-id "
           "writes, %d deltas held back (nobody sees the object), kind 3 by position %d (%d seen by nobody); now %d "
@@ -2501,6 +2681,15 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
           terrainHidden_.size(), fogTerrainHidden_, fogLast_.inGrass, fogLast_.revealed, fogRevealTicks_,
           fogTerrainMaskWrites_, fogLastSeenWrites_, fogLastSeenFresh_, pursuits_.size(), pursuitTicks_,
           pursuitHiddenTicks_, pursuitOriginTicks_, grassEnterEvents_, grassExitEvents_, grassEventFails_);
+    // FOGSOUND: the messages about objects their recipients don't see, when they changed
+    const int evNow = evUnseenMessages_ + evFoggedCreates_;
+    if (fog_ && evNow != evUnseenReported_) {
+      evUnseenReported_ = evNow;
+      Log("fog events: %d message(s) about an object %s %d player send(s) whose team doesn't see it%s%s; %d create(s) "
+          "for players in fog without 92/B1 (%d message(s) left out)",
+          evUnseenMessages_, eventsByVision_ ? "held back from" : "SENT to", evUnseenSends_,
+          evUnseen_.Empty() ? "" : ": ", evUnseen_.Format().c_str(), evFoggedCreates_, evFoggedCreateSkips_);
+    }
     // D2h: the FoW data's sends, when they changed
     const int fowDataNow = fowDataDeltas_ + fowDataFull_ + fowDataDrops_;
     if (fowDataByVision_ && fowDataNow != fowDataReported_) {
@@ -3104,6 +3293,21 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   bool networkRate_ = true;
   int logFirst_ = 3;
   bool createOrderParents_ = true;
+  bool createOrderTargets_ = true;  // ABILVFX
+  bool shortEffects_ = true;        // ABILVFX
+  // ABILVFX: the creates BeforeDelete built for effects made and destroyed in one tick, sent first by the next
+  // ReplicationStep (their ObjectDelete follows in its DrainStep), and their counts for the stats line
+  std::vector<std::pair<uint16_t, gms::Bytes>> shortCreates_;
+  int shortEffectsSent_ = 0, shortEffectsLogged_ = 0;
+  // ABILVFX: their ObjectDeletes, held back [host] short_effect_hold_ms (in due order: one fixed hold)
+  struct HeldDelete {
+    gms::SteadyClock::time_point due;
+    uint16_t players;
+    gms::Bytes msg;
+  };
+  std::set<uint32_t> shortHeld_;
+  std::vector<HeldDelete> heldDeletes_;
+  int shortEffectHoldMs_ = 1000;
   bool uiBeforeEnterGame_ = true;  // X2a
   bool answersFirst_ = true;       // D14a-live
   bool vanityPicks_ = true;        // WARDSKIN
@@ -3150,6 +3354,23 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   std::vector<gms::vision::FogPlayer> fogPlayersTick_;
   int fogEnters_ = 0, fogExits_ = 0, fogExitBytes_ = 0, fogA3_ = 0, fogVisWrites_ = 0, fogRadiusWrites_ = 0;
   int fogGrassWrites_ = 0, fogAdvanced_ = 0, fogKind3_ = 0, fogKind3Hidden_ = 0, fogKind3Logged_ = 0;
+  // FOGSOUND ([host] fog_events_by_vision, 1): messages about an object only to the players that see it now
+  bool eventsByVision_ = true;
+  bool eventsVisionNow_ = false;                       // this tick's drain has the model's answer (seeNow_)
+  struct SeeNow {
+    uint16_t players;  // the players whose team sees the object this tick
+    const char* name;  // its noun's name (the scan's, valid during the replication step)
+    uint8_t team;
+  };
+  std::unordered_map<uint32_t, SeeNow> seeNow_;        // per scanned object
+  std::unordered_map<uint32_t, uint16_t> lastVisible_;  // per object: +0x10 as the last fog step left it
+  gms::WireCounts evUnseen_;                           // messages that reached (off) or would have reached (on) a
+                                                       // player that doesn't see their object, per wire byte
+  int evUnseenMessages_ = 0, evUnseenSends_ = 0, evUnseenLogged_ = 0, evUnseenReported_ = -1;
+  int evFoggedCreates_ = 0, evFoggedCreateSkips_ = 0;  // creates for players that don't see the new object
+  int evLogLimit_ = 200;
+  std::set<uint8_t> evTrace_;  // [host] fog_events_trace: these wire bytes' every forward is logged (a test aid)
+  int evTraceLimit_ = 3000, evTraced_ = 0;
   // D2h: the players' FoW data (AA) by vision (FowDataStep)
   bool fowDataByVision_ = true;
   gms::FowDataRouter fowRouter_;
@@ -3592,6 +3813,18 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   Log("host: a step's creates %s", createOrderParents
           ? "after their owners and locomotion parents ([host] create_order_parents 1, FARISW)"
           : "in pool order ([host] create_order_parents 0: an attached object can lose its parent on the client)");
+  const bool createOrderTargets = HostOptionInt("create_order_targets", 1) != 0,
+             shortEffects = HostOptionInt("short_effects", 1) != 0;
+  g->match->SetCreateOrderTargets(createOrderTargets);
+  int holdMs = HostOptionInt("short_effect_hold_ms", 1000);
+  if (holdMs < 0) holdMs = 0;
+  if (holdMs > 10000) holdMs = 10000;
+  g->match->SetShortEffects(shortEffects, holdMs);
+  Log("host: ABILVFX: a homing projectile's create %s ([host] create_order_targets %d); a placeable effect made and "
+      "destroyed in one tick %s ([host] short_effects %d), its delete held %d ms ([host] short_effect_hold_ms)",
+      createOrderTargets ? "after its target object's" : "in pool order (its target may be unknown to the client)",
+      createOrderTargets ? 1 : 0, shortEffects ? "still goes out (create, then its delete)" : "is never sent",
+      shortEffects ? 1 : 0, holdMs);
   const bool uiBefore = HostOptionInt("ui_before_entergame", 1) != 0;
   g->match->SetUiBeforeEnterGame(uiBefore);
   Log("host: the full UI data (8B/8C/8D) %s (X2a: the client's tower graphics read mNumTowersPerLane at EnterGame)",
@@ -3628,10 +3861,12 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   fo.render = HostOptionInt("fog_render", fog ? 1 : 0) != 0;
   fo.pursuit = HostOptionInt("fog_pursuit", 1) != 0;  // D2g-pursuit: the last-seen pursuit positions (0: the old bug)
   fo.grassEvents = HostOptionInt("grass_events", 1) != 0;  // D3c: OnEnterGrass/OnExitGrass (fow.h FireGrassEvent)
+  fo.terrainMods = HostOptionInt("fog_terrain_mods", 1) != 0;  // ABILVFX: Kensu's trail opens walls, never blocks
   g->match->SetFog(fog && replicate, fo, HostOptionInt("fog_log_limit", 200));
-  Log("host: fog of war (D2g-live step 2): fog %d%s, terrain %d, grass %d, stealth %d, render %d; grass events %d (D3c)",
+  Log("host: fog of war (D2g-live step 2): fog %d%s, terrain %d, grass %d, stealth %d, render %d; grass events %d (D3c); "
+      "terrain modifiers open walls %d (ABILVFX)",
       fog, fog && !replicate ? " (needs replicate: off)" : "", fo.terrain, fo.grass, fo.stealth, fo.render,
-      fo.grass && fo.grassEvents);
+      fo.grass && fo.grassEvents, fo.terrainMods);
   // the strict message check: the engine-free part in the session (so.check), the world's part here
   {
     const bool checkWorld = HostOptionInt("check_world", 1) != 0;
@@ -3645,6 +3880,20 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   // D2h: a player's FoW data (AA) also to the players that see its creature, the whole struct to each new recipient
   const bool fowDataByVision = HostOptionInt("fow_data_by_vision", 1) != 0;
   g->match->SetFowDataRouting(fowDataByVision, HostOptionInt("fow_data_log_limit", 200));
+  // FOGSOUND: the simulator's messages about an object only to the players that see it now
+  const bool eventsByVision = HostOptionInt("fog_events_by_vision", 1) != 0;
+  g->match->SetEventRouting(eventsByVision, HostOptionInt("fog_events_log_limit", 200));
+  {
+    char trace[256];
+    HostOptionString("fog_events_trace", "", trace, sizeof trace);
+    g->match->SetEventTrace(trace, HostOptionInt("fog_events_trace_limit", 3000));
+    if (trace[0]) Log("host: fog_events_trace %s (fog trace: lines)", trace);
+  }
+  Log("host: messages about an object (kind 2) %s",
+      eventsByVision ? "to the players that know it and whose team sees it this tick, creates for players in fog without "
+                       "92/B1 (FOGSOUND, [host] fog_events_by_vision 1)"
+                     : "to the players that know it and see it by its visible mask ([host] fog_events_by_vision 0: "
+                       "D2g-live's rule; the unseen sends are counted)");
   Log("host: the players' FoW data (AA) %s",
       fowDataByVision ? "to the own team, the spectators and every player that sees the player's creature, the whole "
                         "struct to a new recipient (D2h, [host] fow_data_by_vision 1)"
@@ -3816,6 +4065,11 @@ void GmsHostTickNetworkRate() {
   if (!g || !g->match->NetworkRate()) return;
   unsigned mask = 0;
   if (repl::UpdateNetworkRateTimers(GetCurrentSim(), &mask)) g->match->OnNetworkRate(mask);
+}
+
+void GmsHostBeforeDelete() {
+  GmsHost* g = g_gms;
+  if (g) g->match->OnBeforeDelete();
 }
 
 void GmsHostFlush() {

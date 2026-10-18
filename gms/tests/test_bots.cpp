@@ -817,6 +817,283 @@ GMS_TEST(BotReflexJunglers) {
   CHECK_EQ(static_cast<int>(DecideReflex(w).kind), static_cast<int>(kReflexNone));
 }
 
+// PRETUSBOT: a Hunter fresh from a camp meets a full-HP shaper. In HP points (the default) he engages it and fights
+// back; BOTREFLEX's fractions (junglerHpPoints off) let it pass or backed off. Really low or clearly outclassed: still not.
+GMS_TEST(PretusbotJunglerWeakerInHpPoints) {
+  using namespace gms::agents;
+  ReflexConfig on;
+  ReflexConfig off;
+  off.junglerHpPoints = false;
+  // the user's server: Pretus at level 6 with 1185 of 1693 HP (70 %), a full-HP Nissa with 1400 HP 30 away in the jungle
+  ReflexSensors h = Sensors(kReflexRoleHunter);
+  h.hpFrac = 0.7f;
+  h.hp = 1185.f;
+  h.jungleEnemy = true;
+  h.jungleEnemyDist = 30.f;
+  h.jungleEnemyHpFrac = 1.f;
+  h.jungleEnemyHp = 1400.f;
+  ReflexDecision d = DecideReflex(h, on);
+  CHECK_EQ(static_cast<int>(d.kind), static_cast<int>(kReflexFight));
+  CHECK(d.why[0] == 'j');
+  CHECK_EQ(static_cast<int>(DecideReflex(h, off).kind), static_cast<int>(kReflexNone));  // the old rule: passed by
+  h.jungleEnemyDist = 15.f;  // just next to him
+  CHECK_EQ(static_cast<int>(DecideReflex(h, on).kind), static_cast<int>(kReflexFight));
+  CHECK_EQ(static_cast<int>(DecideReflex(h, off).kind), static_cast<int>(kReflexBack));
+  // hit by it: he fights back instead of stepping away
+  h.shaperHitAgeMs = 400;
+  h.attackerHpFrac = 1.f;
+  h.attackerHp = 1400.f;
+  d = DecideReflex(h, on);
+  CHECK_EQ(static_cast<int>(d.kind), static_cast<int>(kReflexFight));
+  CHECK(d.why[0] == 'r');
+  CHECK_EQ(static_cast<int>(DecideReflex(h, off).kind), static_cast<int>(kReflexBack));
+  // clearly outclassed (less than 75 % of its HP points) or under 35 % of his own: weaker, as before
+  h.hp = 1000.f;
+  h.hpFrac = 0.59f;
+  CHECK_EQ(static_cast<int>(DecideReflex(h, on).kind), static_cast<int>(kReflexBack));
+  h.hp = 560.f;
+  h.hpFrac = 0.33f;
+  h.attackerHp = 500.f;  // even against a weaker enemy in points
+  CHECK_EQ(static_cast<int>(DecideReflex(h, on).kind), static_cast<int>(kReflexBack));
+  // outnumbered: backs off whatever the points say
+  h.hp = 1600.f;
+  h.hpFrac = 0.95f;
+  h.enemiesNear = 3;
+  CHECK_EQ(static_cast<int>(DecideReflex(h, on).kind), static_cast<int>(kReflexBack));
+  // unknown points (0) or another role: the fractions decide, as in BotReflexJunglers
+  ReflexSensors u = Sensors(kReflexRoleHunter);
+  u.hpFrac = 0.7f;
+  u.jungleEnemy = true;
+  u.jungleEnemyDist = 30.f;
+  u.jungleEnemyHpFrac = 1.f;
+  u.jungleEnemyHp = 1400.f;
+  CHECK_EQ(static_cast<int>(DecideReflex(u, on).kind), static_cast<int>(kReflexNone));
+  CHECK(ReflexJunglerWeaker(Sensors(0), 1.f, 1400.f, on) == false);  // Gladiator: fractions 1.0 vs 1.0
+  ReflexSensors g = Sensors(0);
+  g.hpFrac = 0.7f;
+  g.hp = 1185.f;
+  CHECK(ReflexJunglerWeaker(g, 1.f, 1400.f, on));  // a Gladiator keeps the fractions: weaker
+}
+
+// ---- WELLDEF: Tacticians, Hunters and Predators defend their spirit wells ---------------------------------------------
+#include "core/agents/welldef.h"
+
+namespace {
+// team 1's top well on SM_Map_v5 (y - x > 0: the top half)
+gms::agents::WellThreatView TopWell(bool moving = true, double left = 10.0) {
+  gms::agents::WellThreatView t;
+  t.well = 1;
+  t.pos[0] = -182.3f;
+  t.pos[1] = 27.9f;
+  t.captureMoving = moving;
+  t.secondsToCapture = moving ? left : -1.0;
+  t.capturers = 1;
+  t.enemiesNear = 1;
+  return t;
+}
+gms::agents::WellDefInputs BotAt(int role, float x, float y, const gms::agents::WellThreatView* t, int n,
+                                 long long nowMs) {
+  gms::agents::WellDefInputs in;
+  in.role = role;
+  in.pos[0] = x;
+  in.pos[1] = y;
+  in.threats = t;
+  in.count = n;
+  in.nowMs = nowMs;
+  return in;
+}
+}  // namespace
+
+// Who answers which well: Tacticians within 120, Hunters and Predators within 220, on the well's half of the map;
+// Gladiators never; the nearest of two.
+GMS_TEST(WelldefWhoAnswersWhichWell) {
+  using namespace gms::agents;
+  const WellThreatView top = TopWell(false);
+  // a Tactician 83 away (-100, 20) sets out; 148 away (-40, 0) it doesn't, a Hunter there does
+  WellDefState st;
+  WellDefDecision d = StepWellDefense(BotAt(kWellRoleTactician, -100.f, 20.f, &top, 1, 1000), st);
+  CHECK(d.defend && d.started);
+  CHECK_EQ(d.well, 1);
+  CHECK_EQ(st.well, 1);
+  WellDefState far;
+  CHECK(!StepWellDefense(BotAt(kWellRoleTactician, -40.f, 0.f, &top, 1, 1000), far).defend);
+  CHECK(StepWellDefense(BotAt(kWellRoleHunter, -40.f, 0.f, &top, 1, 1000), far).defend);
+  WellDefState pred;
+  CHECK(StepWellDefense(BotAt(kWellRolePredator, -40.f, 0.f, &top, 1, 1000), pred).defend);
+  // a Gladiator (role 0) never
+  WellDefState glad;
+  CHECK(!StepWellDefense(BotAt(0, -100.f, 20.f, &top, 1, 1000), glad).defend);
+  // the other half of the map (y - x < 0): not its well, though within a Hunter's 220 (170 away)
+  WellDefState other;
+  CHECK(!StepWellDefense(BotAt(kWellRoleHunter, -120.f, -130.f, &top, 1, 1000), other).defend);
+  WellDefConfig anySide;
+  anySide.sameSide = false;
+  CHECK(StepWellDefense(BotAt(kWellRoleHunter, -120.f, -130.f, &top, 1, 1000), other, anySide).defend);
+  // two threatened wells on its half: the nearer one
+  WellThreatView two[2] = {TopWell(false), TopWell(false)};
+  two[1].well = 2;
+  two[1].pos[0] = -27.6f;
+  two[1].pos[1] = 182.7f;
+  WellDefState both;
+  d = StepWellDefense(BotAt(kWellRoleHunter, -60.f, 140.f, two, 2, 1000), both);
+  CHECK(d.defend);
+  CHECK_EQ(d.well, 2);
+  // too hurt to set out (under 45 %)
+  WellDefState hurt;
+  WellDefInputs in = BotAt(kWellRoleTactician, -100.f, 20.f, &top, 1, 1000);
+  in.hpFrac = 0.4f;
+  CHECK(!StepWellDefense(in, hurt).defend);
+}
+
+// BOTREFLEX lost the threat once its defender contested the ring or hit every capturer (the capture stopped moving).
+// WELLDEF keeps it while capturers stand in the ring, and for memoryMs after the last sign; then the well is safe.
+GMS_TEST(WelldefThreatOutlivesTheContest) {
+  using namespace gms::agents;
+  WellThreatView t = TopWell(true, 12.0);
+  WellDefState st;
+  CHECK(StepWellDefense(BotAt(kWellRoleTactician, -100.f, 20.f, &t, 1, 1000), st).started);
+  // it reached the ring: contested, nothing moves, the capturer still there
+  t.captureMoving = false;
+  t.secondsToCapture = -1.0;
+  WellDefDecision d = StepWellDefense(BotAt(kWellRoleTactician, -178.f, 26.f, &t, 1, 9000), st);
+  CHECK(d.defend && !d.started && !d.ended);
+  CHECK(st.arrived);
+  // the capturer died or slipped into the fog: no threat listed, kept for 4 s
+  d = StepWellDefense(BotAt(kWellRoleTactician, -178.f, 26.f, nullptr, 0, 12000), st);
+  CHECK(d.defend);
+  d = StepWellDefense(BotAt(kWellRoleTactician, -178.f, 26.f, nullptr, 0, 13100), st);
+  CHECK(!d.defend);
+  CHECK(d.ended != nullptr && std::string(d.ended) == "safe");
+  CHECK_EQ(st.well, -1);
+  // safe is no give-up: the next threat there is answered at once
+  t.captureMoving = true;
+  t.secondsToCapture = 15.0;
+  CHECK(StepWellDefense(BotAt(kWellRoleTactician, -178.f, 26.f, &t, 1, 14000), st).started);
+}
+
+// A moving capture it can't reach in time is not taken up (7 units/s from 30 out, 3 s of slack); a contested or paused
+// one, or a worker under attack, always is.
+GMS_TEST(WelldefInTime) {
+  using namespace gms::agents;
+  // 5 s left: from 110 out it needs (110 - 30) / 7 = 11.4 s > 8: no; from 75 out 6.4 s: yes
+  WellThreatView t = TopWell(true, 5.0);
+  t.pos[0] = 0.f;
+  t.pos[1] = 0.f;  // on the diagonal: both halves agree for bots at y > x
+  WellDefState a;
+  CHECK(!StepWellDefense(BotAt(kWellRoleHunter, -77.8f, 77.8f, &t, 1, 0), a).defend);  // 110 away
+  CHECK(StepWellDefense(BotAt(kWellRoleHunter, -53.f, 53.f, &t, 1, 0), a).defend);     // 75 away
+  // the same well standing still (a defender of ours contests it): 110 away is fine
+  t.captureMoving = false;
+  t.secondsToCapture = -1.0;
+  WellDefState b;
+  CHECK(StepWellDefense(BotAt(kWellRoleHunter, -77.8f, 77.8f, &t, 1, 0), b).defend);
+  // a defence under way isn't dropped because the capture runs faster now
+  t.captureMoving = true;
+  t.secondsToCapture = 1.0;
+  CHECK(StepWellDefense(BotAt(kWellRoleHunter, -70.f, 70.f, &t, 1, 2000), b).defend);
+}
+
+// Its own fight first: an enemy shaper it fights nearer than the well, and not at the well, keeps it; one at the well
+// is the well's fight. A defence under way ends for its own fight (no cooldown).
+GMS_TEST(WelldefOwnFightFirst) {
+  using namespace gms::agents;
+  const WellThreatView t = TopWell(false);
+  WellDefInputs in = BotAt(kWellRoleTactician, -100.f, 20.f, &t, 1, 1000);  // 83 from the well
+  in.ownFight = true;
+  in.fightPos[0] = -90.f;  // 14 from it, 92 from the well
+  in.fightPos[1] = 30.f;
+  WellDefState st;
+  CHECK(!StepWellDefense(in, st).defend);
+  in.fightPos[0] = -170.f;  // its enemy is at the well: that is the defence
+  in.fightPos[1] = 25.f;
+  CHECK(StepWellDefense(in, st).started);
+  in.fightPos[0] = -90.f;  // on the way it is drawn into a fight of its own
+  in.fightPos[1] = 30.f;
+  in.nowMs = 3000;
+  const WellDefDecision d = StepWellDefense(in, st);
+  CHECK(!d.defend);
+  CHECK(d.ended != nullptr && std::string(d.ended) == "own fight");
+  CHECK_EQ(st.leftWell, -1);  // not given up: after the fight it may come back
+  in.ownFight = false;
+  in.nowMs = 4000;
+  CHECK(StepWellDefense(in, st).started);
+}
+
+// The give-up rules: outnumbered at the well (by more than one), under 35 % HP, not there within 35 s, on it for 60 s;
+// the well is then left for 20 s.
+GMS_TEST(WelldefGivesUp) {
+  using namespace gms::agents;
+  // numbers: 2 enemies against it alone is a fight; 3 is not; 3 against it and an ally is
+  WellThreatView t = TopWell(false);
+  t.enemiesNear = 2;
+  WellDefState st;
+  CHECK(StepWellDefense(BotAt(kWellRoleTactician, -100.f, 20.f, &t, 1, 1000), st).started);
+  t.enemiesNear = 3;
+  WellDefDecision d = StepWellDefense(BotAt(kWellRoleTactician, -120.f, 22.f, &t, 1, 2000), st);
+  CHECK(!d.defend);
+  CHECK(d.ended != nullptr && std::string(d.ended) == "outnumbered");
+  CHECK_EQ(st.leftWell, 1);
+  CHECK(!StepWellDefense(BotAt(kWellRoleTactician, -120.f, 22.f, &t, 1, 3000), st).defend);  // outnumbered anyway
+  t.alliesNear = 1;
+  CHECK(!StepWellDefense(BotAt(kWellRoleTactician, -120.f, 22.f, &t, 1, 21000), st).defend);  // left for 20 s
+  CHECK(StepWellDefense(BotAt(kWellRoleTactician, -120.f, 22.f, &t, 1, 22100), st).started);
+  // HP: kept down to 35 %, then given up
+  WellThreatView one = TopWell(false);
+  WellDefState hp;
+  WellDefInputs in = BotAt(kWellRoleHunter, -100.f, 20.f, &one, 1, 1000);
+  CHECK(StepWellDefense(in, hp).started);
+  in.hpFrac = 0.36f;
+  in.nowMs = 2000;
+  CHECK(StepWellDefense(in, hp).defend);
+  in.hpFrac = 0.3f;
+  in.nowMs = 3000;
+  d = StepWellDefense(in, hp);
+  CHECK(!d.defend && d.ended != nullptr && std::string(d.ended) == "low hp");
+  // never there 35 s after setting out (stuck, or walking the long way): too slow
+  WellDefState slow;
+  CHECK(StepWellDefense(BotAt(kWellRoleHunter, -40.f, 0.f, &one, 1, 0), slow).started);
+  CHECK(StepWellDefense(BotAt(kWellRoleHunter, -60.f, 5.f, &one, 1, 35000), slow).defend);
+  d = StepWellDefense(BotAt(kWellRoleHunter, -60.f, 5.f, &one, 1, 35100), slow);
+  CHECK(!d.defend && d.ended != nullptr && std::string(d.ended) == "too slow");
+  // there, but the threat never ends (an attacker it never sees): 60 s at most
+  WellDefState lng;
+  CHECK(StepWellDefense(BotAt(kWellRoleHunter, -175.f, 26.f, &one, 1, 0), lng).started);
+  CHECK(StepWellDefense(BotAt(kWellRoleHunter, -175.f, 26.f, &one, 1, 60000), lng).defend);
+  d = StepWellDefense(BotAt(kWellRoleHunter, -175.f, 26.f, &one, 1, 60100), lng);
+  CHECK(!d.defend && d.ended != nullptr && std::string(d.ended) == "too long");
+  CHECK_EQ(lng.leftWell, 1);
+}
+
+// BOTREFLEX's rule 3 with WELLDEF: a Tactician defends (wellTacticians, set by the host's bot_well_defense); a
+// Gladiator doesn't; a Hunter still fights back first when a shaper hits him.
+GMS_TEST(WelldefReflexTakesTacticians) {
+  using namespace gms::agents;
+  ReflexConfig on;
+  on.wellTacticians = true;
+  ReflexSensors s = Sensors(kReflexRoleTactician);
+  s.wellThreat = true;
+  ReflexDecision d = DecideReflex(s, on);
+  CHECK_EQ(static_cast<int>(d.kind), static_cast<int>(kReflexDefend));
+  CHECK_EQ(static_cast<int>(DecideReflex(s).kind), static_cast<int>(kReflexNone));  // BOTREFLEX's: Tacticians don't
+  s.hpFrac = 0.3f;
+  CHECK_EQ(static_cast<int>(DecideReflex(s, on).kind), static_cast<int>(kReflexNone));
+  ReflexSensors g = Sensors(0);
+  g.wellThreat = true;
+  CHECK_EQ(static_cast<int>(DecideReflex(g, on).kind), static_cast<int>(kReflexNone));
+  // a tower's hit still comes first for a Tactician
+  s.hpFrac = 1.f;
+  s.inTowerZone = true;
+  CHECK_EQ(static_cast<int>(DecideReflex(s, on).kind), static_cast<int>(kReflexBack));
+  // a Hunter hit by a shaper fights back first (the attacker is usually the capturer)
+  ReflexSensors h = Sensors(kReflexRoleHunter);
+  h.wellThreat = true;
+  h.shaperHitAgeMs = 500;
+  d = DecideReflex(h, on);
+  CHECK_EQ(static_cast<int>(d.kind), static_cast<int>(kReflexFight));
+  h.shaperHitAgeMs = -1;
+  CHECK_EQ(static_cast<int>(DecideReflex(h, on).kind), static_cast<int>(kReflexDefend));
+}
+
 GMS_TEST(BotsCompositionFreeDrawAnyClassAnySeat) {
   std::set<std::string> seen;
   bool predator = false, noPredator = false;

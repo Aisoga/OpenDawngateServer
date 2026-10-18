@@ -19,6 +19,7 @@
 #include "core/agents/recall.h"
 #include "core/agents/reflex.h"
 #include "core/agents/tower_target.h"
+#include "core/agents/welldef.h"
 #include "core/bots/lanes.h"
 #include "bots.h"
 #include "director.h"
@@ -167,6 +168,12 @@ struct AgentState {
   unsigned long long lastTowerHitMs = 0, lastShaperHitMs = 0;
   int reflexKind = 0;
   unsigned long long reflexLogMs = 0;
+  // WELLDEF: the well it defends (gms/core/agents/welldef.h) and its own walk there: the instance of
+  // ability_Bot_MoveToTarget it started (adopted on the think after the request), so another walk of the same ability
+  // (the plan's, e.g. the Hunter's MoveToNextCamp) is told apart and ended
+  gms::agents::WellDefState wellDef;
+  unsigned wellWalkInst = 0;
+  unsigned long long wellWalkAskedMs = 0;
   // BOTTEMPO: the hold watchdog's window (the instance holding the agent, since when, where the bot stood then)
   unsigned holdInst = 0;
   unsigned long long holdSinceMs = 0;
@@ -2253,6 +2260,10 @@ struct BotStats {
   unsigned recalls = 0;  // BOTRECALL: Back gambits that cast Return to Base instead of walking
   unsigned skipped = 0, skippedThenActed = 0, pursuitStuck = 0, fallbackTries = 0, fallbackActed = 0;
   unsigned holdStuck = 0, staleTargets = 0;  // BOTTEMPO: holds ended by the watchdog, stale mTargets dropped
+  // WELLDEF: defences started per role (Tactician, Hunter, Predator), how they ended, the plans' walks ended for one
+  unsigned wellStarts[3] = {}, wellSafe = 0, wellLowHp = 0, wellOutnumbered = 0, wellSlow = 0, wellTooLong = 0;
+  unsigned wellOwnFight = 0;
+  unsigned wellWalkTakeovers = 0, wellHolds = 0;
 };
 BotStats g_bot;
 constexpr unsigned long long kQuickExitMs = 1000;
@@ -2426,9 +2437,10 @@ constexpr int kNpcTower = 9;                                   // nNPCType.Tower
 constexpr float kNearShapers = 35.f;                           // shapers counted for "outnumbered"
 constexpr float kAttackerReach = 45.f;                         // an attacker farther than this no longer counts
 constexpr float kWellSideReach = 220.f;                        // wells farther than this are not "on its side"
-// A retreat or a walk to a well is made in steps: ability_Bot_MoveToTarget holds the agent until it arrives and the
-// brain does not think meanwhile (BotBrainStep returns on the AbilityHoldsAgent leaf), so a long walk would blind the
-// bot to the next attack. ability_Bot_Back walks to the base: not used.
+// A retreat or a walk to a well is made in steps: ability_Bot_MoveToTarget holds the agent until it arrives, and a new
+// request of it is refused (-0x270B) while it runs, so a long walk would not be re-aimed. (The brain does think during
+// it: the tree's leaf is UseAbility, not AbilityHoldsAgent; PRETUSBOT checked it in the logs.) ability_Bot_Back walks
+// to the base: not used.
 constexpr float kRetreatStep = 30.f;
 constexpr float kWellStep = 25.f;
 
@@ -2555,15 +2567,159 @@ bool RecallPossible(const AgentState& st, const ObjInfo& self, const char* phase
   return gms::agents::RecallAllowed(in, kRecall);
 }
 
+// WELLDEF (gms/core/agents/welldef.h): the walk ends this far short of a defended well's centre, on the bot's side: inside
+// the capture ring (12), where a defender contests a capture [assumed: the dais is walkable there; the workers drop
+// their Vim 4 from the centre]. Its own log budget: BOTREFLEX's lines share the idle budget, spent early in a match.
+constexpr float kWellStand = 5.f;
+unsigned g_wellLogLines = 0;
+bool WellLogBudget() {
+  ++g_wellLogLines;
+  return g_wellLogLines <= 400 || g_wellLogLines % 20 == 0;
+}
+
+// WELLDEF: the wells of the bot's team under threat, measured for StepWellDefense (the shapers within its crew range
+// of each, the enemies only when the bot's team sees them), and its own fight (its target, an enemy shaper it sees
+// within kNearShapers, else the shaper that hit it within the hit window). True when it defends a well; `out` = that well.
+bool WellDefenseStep(void* o, AgentState& st, const ObjInfo& self, const gms::agents::ReflexSensors& s,
+                     std::uint32_t mtarget, const Snap* attacker, long long hitWindowMs, unsigned long long nowMs,
+                     ::wells::Threat* out) {
+  const gms::agents::WellDefConfig wc;
+  ::wells::Threat th[4];
+  const int n = ::wells::Threats(self.team, th, 4);
+  gms::agents::WellThreatView views[4];
+  for (int i = 0; i < n; ++i) {
+    gms::agents::WellThreatView& w = views[i];
+    w.well = th[i].well;
+    w.pos[0] = th[i].pos[0];
+    w.pos[1] = th[i].pos[1];
+    w.captureMoving = th[i].moving;
+    w.secondsToCapture = th[i].secondsToCapture;
+    w.capturers = th[i].capturers;
+    w.workerHit = th[i].workerPlayerHit;
+    for (const Snap& p : g_snapPlayers) {
+      if (p.id == self.id || !(p.hp > 0.f) || Dist2(p.pos, th[i].pos) > wc.crewRange) continue;
+      if (p.team == self.team)
+        ++w.alliesNear;
+      else if (SehVisible(o, p.obj))
+        ++w.enemiesNear;
+    }
+  }
+  // the threats WELLDEF counts: enemies in the ring, a moving capture, a worker hit by an enemy shaper
+  int m = 0;
+  for (int i = 0; i < n; ++i)
+    if (views[i].capturers > 0 || views[i].captureMoving || views[i].workerHit) {
+      views[m] = views[i];
+      th[m] = th[i];
+      ++m;
+    }
+  gms::agents::WellDefInputs in;
+  in.role = s.role;
+  in.hpFrac = s.hpFrac;
+  in.pos[0] = self.pos[0];
+  in.pos[1] = self.pos[1];
+  const Snap* fight = nullptr;
+  if (const Snap* t = mtarget ? FindSnap(g_snapPlayers, mtarget) : nullptr)
+    if (t->team != self.team && t->hp > 0.f && Dist2(t->pos, self.pos) <= kNearShapers && SehVisible(o, t->obj))
+      fight = t;
+  if (!fight && attacker && s.shaperHitAgeMs >= 0 && s.shaperHitAgeMs <= hitWindowMs) fight = attacker;
+  if (fight) {
+    in.ownFight = true;
+    in.fightPos[0] = fight->pos[0];
+    in.fightPos[1] = fight->pos[1];
+  }
+  in.threats = views;
+  in.count = m;
+  in.nowMs = static_cast<long long>(nowMs);
+  const long long since = st.wellDef.sinceMs;
+  const gms::agents::WellDefDecision d = gms::agents::StepWellDefense(in, st.wellDef, wc);
+  const gms::agents::WellThreatView* v = nullptr;
+  for (int i = 0; i < m; ++i)
+    if (views[i].well == d.well) v = &views[i];
+  if (d.started) {
+    const int r = s.role - gms::agents::kWellRoleTactician;
+    if (r >= 0 && r < 3) ++g_bot.wellStarts[r];
+    st.wellWalkInst = 0;
+    st.wellWalkAskedMs = 0;
+    if (WellLogBudget())
+      Log("agents: bot %08X %s defends well %d at (%.1f, %.1f), %.0f units away: capture %s (%.1f s left), capturers "
+          "%d, worker hit %d, enemies %d allies %d there; hp %.0f%%, role %d (WELLDEF) (t %.2f s)",
+          self.id, st.noun, d.well, static_cast<double>(d.pos[0]), static_cast<double>(d.pos[1]),
+          static_cast<double>(gms::agents::WellDist2D(in.pos, d.pos)), v && v->captureMoving ? "moving" : "still",
+          v ? v->secondsToCapture : -1.0, v ? v->capturers : 0, v && v->workerHit ? 1 : 0, v ? v->enemiesNear : 0,
+          v ? v->alliesNear : 0, static_cast<double>(s.hpFrac * 100.f), s.role, static_cast<double>(nowMs) / 1000.0);
+  } else if (d.ended) {
+    const char* e = d.ended;
+    const std::string why = e;
+    ++(why == "safe" ? g_bot.wellSafe
+       : why == "low hp" ? g_bot.wellLowHp
+       : why == "outnumbered" ? g_bot.wellOutnumbered
+       : why == "own fight" ? g_bot.wellOwnFight
+       : why == "too long" ? g_bot.wellTooLong
+                           : g_bot.wellSlow);
+    if (WellLogBudget())
+      Log("agents: bot %08X %s leaves well %d: %s, after %.1f s (arrived %d); hp %.0f%%, role %d (WELLDEF) (t %.2f s)",
+          self.id, st.noun, d.well, e, static_cast<double>(in.nowMs - since) / 1000.0, st.wellDef.arrived ? 1 : 0,
+          static_cast<double>(s.hpFrac * 100.f), s.role, static_cast<double>(nowMs) / 1000.0);
+  }
+  if (!d.defend) return false;
+  *out = ::wells::Threat();
+  out->well = d.well;
+  out->pos[0] = d.pos[0];
+  out->pos[1] = d.pos[1];
+  out->pos[2] = self.pos[2];
+  for (int i = 0; i < m; ++i)
+    if (th[i].well == d.well) *out = th[i];
+  return true;
+}
+
+// WELLDEF: the walk to a defended well with nobody to fight there: steps of kWellStep, the last one to the point
+// kWellStand short of the centre on the bot's side; standing there it holds (no request: the plan's gambits stay off
+// while the defence lasts). A walk of the same ability that isn't its own (the plan's, e.g. the Hunter's
+// MoveToNextCamp) answers every request with -0x270B and would carry the bot elsewhere: it is ended, and the request
+// repeated on the next think. Returns BOTREFLEX's result codes (1 walking, 2 holding).
+int WellDefenseWalk(void* o, AgentState& st, const ObjInfo& self, const ::wells::Threat& w, unsigned long long nowMs) {
+  const float dist = Dist2(self.pos, w.pos);
+  if (dist <= kWellStand + 2.f) {
+    ++g_bot.wellHolds;
+    return 2;
+  }
+  float goal[3];
+  if (dist > kWellStep + kWellStand)
+    StepPoint(self.pos, w.pos, kWellStep, true, self.team, goal);
+  else
+    StepPoint(w.pos, self.pos, kWellStand, true, self.team, goal);  // kWellStand from the centre toward the bot
+  goal[2] = self.pos[2];
+  const int res = SehBotRequest(kAbilityBotMoveToTarget, -1, self.id, 0, goal, 1);
+  if (res == 1 || res == 2) {
+    st.wellWalkAskedMs = nowMs;
+    st.wellWalkInst = 0;
+    return 1;
+  }
+  if (res != gms::agents::kResultHoldsAgent) return res;
+  unsigned hid = 0;
+  const char* hname = nullptr;
+  if (!SehHeldAbility(o, &hid, &hname) || hid == st.wellWalkInst) return 1;  // its own walk goes on
+  if (!st.wellWalkInst && st.wellWalkAskedMs && nowMs - st.wellWalkAskedMs <= 1500) {
+    st.wellWalkInst = hid;  // the walk it asked for just now
+    return 1;
+  }
+  if (SehEndAbility(hid)) ++g_bot.wellWalkTakeovers;  // someone else's walk
+  st.wellWalkInst = 0;
+  st.wellWalkAskedMs = 0;
+  return 1;
+}
+
 // Returns true when a reflex acted this think (the plan's gambits are skipped).
 bool BotReflexStep(void* o, AgentState& st, const ObjInfo& self, const BotView& v, const BotPlayerView& pv,
                    std::uint32_t mtarget, unsigned long long nowMs) {
   const float maxHp = SehMaxHp(o);
   if (!(maxHp > 0.f) || self.hp <= 0.f) return false;
-  const gms::agents::ReflexConfig cfg;
+  gms::agents::ReflexConfig cfg;
+  cfg.junglerHpPoints = g_opt.botJungleFight;  // PRETUSBOT
   gms::agents::ReflexSensors s;
   s.role = BotRoleOf(self.id);
   s.hpFrac = self.hp / maxHp;
+  s.hp = self.hp;
   // the tower that hit it last, while it stands and the bot is still within its reach
   const Snap* hitTower = nullptr;
   if (st.lastTowerHitMs && nowMs - st.lastTowerHitMs <= static_cast<unsigned long long>(cfg.towerZoneMs))
@@ -2611,20 +2767,26 @@ bool BotReflexStep(void* o, AgentState& st, const ObjInfo& self, const BotView& 
   if (attacker && st.lastShaperHitMs) {
     s.shaperHitAgeMs = static_cast<long long>(nowMs - st.lastShaperHitMs);
     s.attackerHpFrac = attacker->HpFrac();
+    s.attackerHp = attacker->hp;
   }
   if (jungle) {
     s.jungleEnemy = true;
     s.jungleEnemyHpFrac = jungle->HpFrac();
+    s.jungleEnemyHp = jungle->hp;
     s.jungleEnemyDist = jungleDist;
   }
   // a well of its team on its side of the map under attack
   ::wells::Threat wellPos;
   bool wellThreat = false;
-  if (gms::agents::ReflexIsJungler(s.role)) {
+  if (g_opt.botWellDefense) {
+    cfg.wellTacticians = true;
+    wellThreat = WellDefenseStep(o, st, self, s, mtarget, attacker, cfg.hitWindowMs, nowMs, &wellPos);
+  } else if (gms::agents::ReflexIsJungler(s.role)) {  // BOTREFLEX's rule
     ::wells::Threat th[4];
     const int n = ::wells::Threats(self.team, th, 4);
     float best = kWellSideReach;
     for (int i = 0; i < n; ++i) {
+      if (!th[i].moving && !th[i].workerHit) continue;  // WELLDEF's contested and paused captures: not BOTREFLEX's
       if (gms::bots::LaneByDiagonal(th[i].pos[0], th[i].pos[1]) !=
           gms::bots::LaneByDiagonal(self.pos[0], self.pos[1]))
         continue;
@@ -2664,6 +2826,8 @@ bool BotReflexStep(void* o, AgentState& st, const ObjInfo& self, const BotView& 
     }
     if (tgt) {
       res = ReflexAttack(o, self, pv, mtarget, *tgt);
+    } else if (g_opt.botWellDefense) {
+      res = WellDefenseWalk(o, st, self, wellPos, nowMs);
     } else {
       float goal[3];
       StepPoint(self.pos, wellPos.pos, kWellStep, true, self.team, goal);
@@ -2699,8 +2863,10 @@ bool BotReflexStep(void* o, AgentState& st, const ObjInfo& self, const BotView& 
 
 void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) {
   if (st.leaf == kLeafDeath || st.leaf == kLeafDeathAbility || st.leaf == kLeafDeathAbilityDefault ||
-      st.leaf == 0x0141E1B8 || st.leaf == 0x0141DE90)
+      st.leaf == 0x0141E1B8 || st.leaf == 0x0141DE90) {
+    st.wellDef.well = -1;  // WELLDEF: a death ends a well's defence
     return;
+  }
   if (nowMs < st.botNextThinkMs) return;
   st.botNextThinkMs = nowMs + static_cast<unsigned long long>(g_opt.botThinkMs > 0 ? g_opt.botThinkMs : 200);
   ObjInfo self;
@@ -3744,9 +3910,13 @@ void FormatStats(char* buf, std::size_t size) {
     std::snprintf(buf + len, size - len,
                   "; bot idle fixes (BOTIDLE): refusals passed to the next gambit %u (then acted %u), pursuits dropped "
                   "as stuck %u, idle fallback tries %u (acted %u); recalls instead of walking home (BOTRECALL) %u, short steps instead of the walk (BOTBACK) %u; "
-                  "BOTTEMPO: holds ended on one spot %u, stale targets dropped %u",
+                  "BOTTEMPO: holds ended on one spot %u, stale targets dropped %u; WELLDEF: well defences started by "
+                  "Tacticians %u, Hunters %u, Predators %u, ended: safe %u, low hp %u, outnumbered %u, too slow %u, too "
+                  "long %u, own fight %u; the plan's walks ended for one %u, thinks holding at a well %u",
                   g_bot.skipped, g_bot.skippedThenActed, g_bot.pursuitStuck, g_bot.fallbackTries, g_bot.fallbackActed,
-                  g_bot.recalls, g_bot.backSteps, g_bot.holdStuck, g_bot.staleTargets);
+                  g_bot.recalls, g_bot.backSteps, g_bot.holdStuck, g_bot.staleTargets, g_bot.wellStarts[0],
+                  g_bot.wellStarts[1], g_bot.wellStarts[2], g_bot.wellSafe, g_bot.wellLowHp, g_bot.wellOutnumbered,
+                  g_bot.wellSlow, g_bot.wellTooLong, g_bot.wellOwnFight, g_bot.wellWalkTakeovers, g_bot.wellHolds);
 }
 
 bool FormatNpcStats(char* buf, std::size_t size) {

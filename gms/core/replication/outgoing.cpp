@@ -2,29 +2,38 @@
 #include "core/replication/outgoing.h"
 
 #include <cstdio>
+#include <utility>
 
 namespace gms {
 
-void RouteOutgoing(std::vector<OutgoingRoute>* entries, uint16_t everyone) {
-  // the deletions in this drain, by object (the last one wins; an id is deleted once)
-  std::map<uint32_t, uint16_t> deleted;
+void RouteOutgoing(std::vector<OutgoingRoute>* entries, uint16_t everyone, bool byVision) {
+  // the deletions in this drain, by object (the last one wins; an id is deleted once): known mask, last visible mask
+  std::map<uint32_t, std::pair<uint16_t, uint16_t>> deleted;
   for (const OutgoingRoute& e : *entries)
-    if (e.kind == 0) deleted[e.object] = e.recipients;
+    if (e.kind == 0) deleted[e.object] = {e.recipients, e.lastVisible};
   for (OutgoingRoute& e : *entries) {
     e.fromDeletion = false;
+    e.unseen = 0;
     switch (e.kind) {
       case 0:
       case 1:
         e.players = e.recipients;
         break;
       case 2: {
+        uint16_t sees = kRouteUnknown;
+        const bool limited = RoutedByVision(e.wire);
         if (e.objectAlive) {
           e.players = e.seers;
-          break;
+          sees = e.seeNow;
+        } else {
+          auto it = deleted.find(e.object);
+          e.players = it != deleted.end() ? it->second.first : 0;
+          e.fromDeletion = it != deleted.end();
+          if (e.fromDeletion) sees = it->second.second;
         }
-        auto it = deleted.find(e.object);
-        e.players = it != deleted.end() ? it->second : 0;
-        e.fromDeletion = it != deleted.end();
+        if (!limited) break;
+        e.unseen = static_cast<uint16_t>(e.players & ~sees);
+        if (byVision) e.players = static_cast<uint16_t>(e.players & sees);
         break;
       }
       case 3:

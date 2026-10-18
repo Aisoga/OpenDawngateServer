@@ -159,5 +159,8 @@ func Write(dir string) error {
 	if err := os.WriteFile(filepath.Join(data, "LoginScreen.snap"), LoginScreen(), 0o644); err != nil {
 		return err
 	}
+	if err := os.WriteFile(filepath.Join(data, "Battlegrounds.snap"), Battlegrounds(), 0o644); err != nil {
+		return err
+	}
 	return os.WriteFile(filepath.Join(data, "Locale", "en-us", "Locale.package"), Locale(), 0o644)
 }

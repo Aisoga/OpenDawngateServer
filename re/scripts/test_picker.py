@@ -1,9 +1,11 @@
-"""Tests of the server picker's movie patcher (re/scripts/patch_login_movie.py) and its committed bytes.
+"""Tests of the movie patcher of the server picker and the bot check box (re/scripts/patch_login_movie.py) and their
+committed bytes.
 
 The made-up movie and its patched form have the SHA-256s that server/internal/setup/moviepatch's Go tests pin (the
 Go port writes the same bytes); the encoder and archive writer the ones server/internal/setup/snap's tests pin. With
 the game's files (client/ia_Dawngate/Dawngate, or DAWNGATE_GAME) the player's own LoginScreen.snap is patched too and
-read back. --compile also checks that the committed ABC and tags are what the source compiles to (build_picker.py
+read back, and its Battlegrounds.snap with the bot check box (with DAWNGATE_MATCHOPTIONS_GO naming the file that Go's
+TestBuildMatchOptions854 wrote with DAWNGATE_MATCHOPTIONS_OUT, compared byte for byte). --compile also checks that the committed ABC and tags are what the source compiles to (build_picker.py
 check; needs the Flex SDK and Java).
 
 Usage:
@@ -112,7 +114,42 @@ def main(argv):
     codes = [c for c, *_ in plm.tags_of(tags, 0, len(tags))]
     check(codes == [39, 82, 76, 70], f"picker_tags.hex: DefineSprite, DoABC, SymbolClass, PlaceObject3 ({codes})")
 
+    # the CREATE GAME dialog's bot check box: the same patcher with its spec
+    mo = plm.SPECS["matchoptions"]
+    mtags = plm.read_tags(mo.tags)
+    mt = plm.tags_of(mtags, 0, len(mtags))
+    check([c for c, *_ in mt] == [39, 82, 76, 70] and mt[-1][3] == len(mtags),
+          "matchoptions_tags.hex: DefineSprite, DoABC, SymbolClass, PlaceObject3")
+    check(plm._pairs(mtags, mt[2][2], mt[2][3]) == [(2000, "BotCheckbox")], "its SymbolClass: 2000 -> BotCheckbox")
+    check(mtags[mt[3][2]:mt[3][3]] == bytes([0x06, 0]) + struct.pack("<HH", 2000, 2000) + b"\0",
+          "its PlaceObject3: character 2000 at depth 2000, no name")
+    once = plm.patch_movie(m, mtags, mo)
+    check(plm.patch_movie(m, b"OURTAGS", mo) == out, "the spec patches as the picker's (the same bytes)")
+    try:
+        plm.patch_movie(once, mtags, mo)
+        check(False, "refused: the bot check box twice")
+    except plm.MovieError as e:
+        check("the bot check box already" in str(e), f"refused: the bot check box twice ({e})")
+    with open(os.path.join(REPO, "client_ui", "matchoptions", "BotCheckbox.as"), encoding="utf-8") as f:
+        check('MARKER:String = "~#bots"' in f.read(), "the class's marker is the server's ~#bots")
+
     game = game_dir()
+    if game:
+        bsrc = os.path.join(game, "game", "Data", "Battlegrounds.snap")
+        bbuilt = plm.build(bsrc, spec=mo)
+        tmp = tempfile.NamedTemporaryFile(suffix=".snap", delete=False)
+        tmp.write(bbuilt)
+        tmp.close()
+        back = snap.Snap(tmp.name)
+        braw = back.read(back.entries[0])
+        os.remove(tmp.name)
+        ids, names, depths, _ = plm.scan(zlib.decompress(braw[8:]))
+        check(back.entries[0].name == mo.movie_path and "BotCheckbox" in names and "maxis.MatchOptionsUI" in names and
+              2000 in ids and 2000 in depths,
+              f"the player's own CREATE GAME movie patched ({len(bbuilt)} bytes, SHA-256 {sha(bbuilt)[:16]})")
+        if os.environ.get("DAWNGATE_MATCHOPTIONS_GO"):  # moviepatch's TestBuildMatchOptions854 output
+            with open(os.environ["DAWNGATE_MATCHOPTIONS_GO"], "rb") as f:
+                check(f.read() == bbuilt, "the Go setup's zz_MatchOptions.snap is the same")
     if game:
         src = os.path.join(game, "game", "Data", "LoginScreen.snap")
         built = plm.build(src)

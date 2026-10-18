@@ -11,16 +11,25 @@
 //               unless it is diving for a kill (its target is a weak enemy shaper under the tower and it is healthy).
 //   2. (Hunter, Predator) hit by an enemy shaper within the last seconds -> fight back, unless it is the weaker one or
 //               outnumbered -> back off.
-//   3. (Hunter, Predator) a spirit well of its team is attacked or being captured on its side of the map -> defend it
-//               (fight whoever attacks, else walk to the well).
+//   3. (Hunter, Predator; since WELLDEF also Tacticians) a spirit well of its team is attacked or being captured on its
+//               side of the map -> defend it (fight whoever attacks, else walk to the well). Since WELLDEF (host
+//               `bot_well_defense`, on) which well, how far, for how long and when to give up is welldef.h's
+//               StepWellDefense; `wellThreat` is its answer. A Tactician has no rules 2 and 4: its plans fight shapers.
 //   4. (Hunter, Predator) an enemy shaper in the jungle within reach -> engage it, unless it is the weaker one or
 //               outnumbered: then back off when the enemy is close, else leave it.
+//
+// "The weaker one" (PRETUSBOT, 2026-10-18): BOTREFLEX compared HP fractions with a 15-point margin, so a Hunter fresh
+// from a camp (60-85 %) was the weaker one against every full-HP shaper and let it pass (46 % of the user's server's
+// snapshots with an enemy bot within 20 of a Hunter). With `junglerHpPoints` (host `bot_jungle_fight`, on) a jungler
+// compares HP points, which carry the levels and items: weaker below `weakAbsolute` of its own HP, or with less than
+// `weakHpRatio` of the enemy's current HP [assumed thresholds].
 #pragma once
 
 namespace gms {
 namespace agents {
 
-constexpr int kReflexRoleHunter = 2;    // RolesTuning.role[] index (mRole)
+constexpr int kReflexRoleTactician = 1;  // RolesTuning.role[] index (mRole)
+constexpr int kReflexRoleHunter = 2;
 constexpr int kReflexRolePredator = 3;
 
 enum ReflexKind : int { kReflexNone = 0, kReflexBack = 1, kReflexFight = 2, kReflexDefend = 3 };
@@ -39,12 +48,16 @@ struct ReflexConfig {
   float jungleEngageRange = 38.f;   // an enemy shaper in the jungle is engaged from this far
   float retreatRange = 26.f;        // a stronger enemy in the jungle this close makes the bot back off
   float jungleLaneDistance = 22.f;  // farther than this from every lane = jungle (lane minions stay 20+ from creeps)
+  bool junglerHpPoints = true;      // PRETUSBOT: a jungler's "weaker" compares HP points (false: fractions, BOTREFLEX)
+  float weakHpRatio = 0.75f;        // ... weaker with less than this share of the enemy's current HP points
+  bool wellTacticians = false;      // WELLDEF: Tacticians take rule 3 too (the host sets it with bot_well_defense)
 };
 
 // What the host measured for one bot at one think.
 struct ReflexSensors {
   int role = 0;                    // mRole
   float hpFrac = 1.f;              // own HP / max HP
+  float hp = 0.f;                  // own HP points (PRETUSBOT; 0 = unknown: the fractions decide)
   bool inTowerZone = false;        // within towerRange of a standing tower that hit the bot within towerZoneMs
   bool targetIsShaper = false;     // its current target (mTarget / best target) is an enemy shaper
   float targetHpFrac = 1.f;
@@ -54,12 +67,15 @@ struct ReflexSensors {
   float targetTowerHpFrac = 1.f;
   long long shaperHitAgeMs = -1;   // since an enemy shaper last hit it (-1 = never / dead / out of reach)
   float attackerHpFrac = 1.f;
+  float attackerHp = 0.f;          // its HP points (PRETUSBOT; 0 = unknown)
   bool jungleEnemy = false;        // a visible enemy shaper in the jungle within jungleEngageRange
   float jungleEnemyHpFrac = 1.f;
+  float jungleEnemyHp = 0.f;       // its HP points (PRETUSBOT; 0 = unknown)
   float jungleEnemyDist = 0.f;
   int enemiesNear = 0;             // enemy shapers within 35 (visible)
   int alliesNear = 0;              // allied shapers within 35 (not itself)
-  bool wellThreat = false;         // a well of its team on its side of the map is attacked or being captured
+  bool wellThreat = false;         // a well of its team on its side of the map is attacked or being captured (WELLDEF:
+                                   // StepWellDefense says defend)
 };
 
 struct ReflexDecision {
@@ -72,6 +88,15 @@ inline bool ReflexIsJungler(int role) { return role == kReflexRoleHunter || role
 // The bot would lose the fight: low in itself, or clearly lower than the enemy's.
 inline bool ReflexWeaker(float mine, float theirs, const ReflexConfig& c) {
   return mine < c.weakAbsolute || mine + c.weakMargin < theirs;
+}
+
+// PRETUSBOT: a jungler (Hunter, Predator) against one enemy shaper. With junglerHpPoints and both HP points known it is
+// the weaker one below weakAbsolute of its own HP or with less than weakHpRatio of the enemy's current HP points;
+// otherwise (another role, the option off, a value unknown) BOTREFLEX's fractions decide.
+inline bool ReflexJunglerWeaker(const ReflexSensors& s, float theirsFrac, float theirsHp, const ReflexConfig& c) {
+  if (!c.junglerHpPoints || !ReflexIsJungler(s.role) || !(s.hp > 0.f) || !(theirsHp > 0.f))
+    return ReflexWeaker(s.hpFrac, theirsFrac, c);
+  return s.hpFrac < c.weakAbsolute || s.hp < c.weakHpRatio * theirsHp;
 }
 
 inline bool ReflexOutnumbered(const ReflexSensors& s) { return s.enemiesNear > s.alliesNear + 1; }
@@ -90,9 +115,15 @@ inline ReflexDecision DecideReflex(const ReflexSensors& s, const ReflexConfig& c
     d.why = "tower";
     return d;
   }
-  if (!ReflexIsJungler(s.role)) return d;
+  if (!ReflexIsJungler(s.role)) {
+    if (c.wellTacticians && s.role == kReflexRoleTactician && s.wellThreat && s.hpFrac >= c.weakAbsolute) {
+      d.kind = kReflexDefend;
+      d.why = "well";
+    }
+    return d;
+  }
   if (s.shaperHitAgeMs >= 0 && s.shaperHitAgeMs <= c.hitWindowMs) {
-    if (ReflexWeaker(s.hpFrac, s.attackerHpFrac, c) || ReflexOutnumbered(s)) {
+    if (ReflexJunglerWeaker(s, s.attackerHpFrac, s.attackerHp, c) || ReflexOutnumbered(s)) {
       d.kind = kReflexBack;
       d.why = "outmatched";
     } else {
@@ -107,7 +138,7 @@ inline ReflexDecision DecideReflex(const ReflexSensors& s, const ReflexConfig& c
     return d;
   }
   if (s.jungleEnemy && s.jungleEnemyDist <= c.jungleEngageRange) {
-    if (ReflexWeaker(s.hpFrac, s.jungleEnemyHpFrac, c) || ReflexOutnumbered(s)) {
+    if (ReflexJunglerWeaker(s, s.jungleEnemyHpFrac, s.jungleEnemyHp, c) || ReflexOutnumbered(s)) {
       if (s.jungleEnemyDist <= c.retreatRange) {
         d.kind = kReflexBack;
         d.why = "jungle outmatched";

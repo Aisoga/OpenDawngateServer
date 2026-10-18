@@ -2,6 +2,7 @@ package blaze
 
 import (
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -639,5 +640,134 @@ func TestCustomGameBots(t *testing.T) {
 	wantReply(t, "create", a.gm(CmdGameManagerResetDedicatedServer, golden.Bytes(t, decodeCase(t, g, "resetdedicatedserver_custom_request"))))
 	if cg := <-host.created; cg.FillTeams != 5 || cg.Mode != gmshost.ModeCustom {
 		t.Errorf("createGame fillTeams %d, mode %s", cg.FillTeams, cg.Mode)
+	}
+}
+
+// createRequest is the custom create request with its GameFlags attribute and, when name isn't "", its GNAM replaced.
+func createRequest(t *testing.T, g *golden.Data, flags, name string) []byte {
+	t.Helper()
+	st, err := tdf.Decode(golden.Bytes(t, decodeCase(t, g, "resetdedicatedserver_custom_request")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := tdf.NewWriter()
+	for _, f := range st.Fields {
+		if m, ok := f.Value.(*tdf.Map); ok && f.Label == "ATTR" {
+			for i, e := range m.Entries {
+				if e.Key == "GameFlags" {
+					m.Entries[i].Value = flags
+				}
+			}
+		}
+		if f.Label == "GNAM" && name != "" {
+			f.Value = name
+		}
+		w.Value(f.Label, f.Type, f.Value)
+	}
+	return w.Bytes()
+}
+
+// practiceGroupRequest is the custom create request as a practice group sends it: GameFlags 0x412 (1042).
+func practiceGroupRequest(t *testing.T, g *golden.Data) []byte {
+	t.Helper()
+	return createRequest(t, g, "1042", "")
+}
+
+// A practice group's players are all on team 0, the group's own, whatever TIDX their join asks for (VPSLIVE: a client
+// answering a stale invite asked for TIDX 1 and played against its group, unseen in the group's lobby); the admin's
+// swap can't move one off it; a sixth player finds the team full; the host's start has the five on team 1.
+func TestPracticeGroupTeams(t *testing.T) {
+	ts, host := newCustomHostServer(t, nil)
+	g := golden.Load(t)
+	a := ts.client("alpha@example.com")
+	wantReply(t, "create", a.gm(CmdGameManagerResetDedicatedServer, practiceGroupRequest(t, g)))
+	if cg := <-host.created; cg.Descriptors != 0x412 || cg.Roster[0].Team != 1 {
+		t.Fatalf("createGame %+v", cg)
+	}
+	a.note(ComponentGameManager, NotifyGameSetupID)
+
+	var others []*tcpClient
+	for i, tidx := range []int64{1, 0, 0xFFFF, 1} { // the stale invite's TIDX 1 first
+		c := ts.client(fmt.Sprintf("p%d@example.com", i))
+		others = append(others, c)
+		wantReply(t, fmt.Sprintf("join %d (TIDX %d)", i, tidx),
+			c.gm(CmdGameManagerJoinGame, tdf.NewWriter().Int("GID", 1).Int("TIDX", tidx).Bytes()))
+		pj := decode(t, a.note(ComponentGameManager, NotifyPlayerJoiningID))
+		pdat, _ := pj.Sub("PDAT")
+		if team, _ := pdat.Int("TIDX"); team != 0 {
+			t.Errorf("player %d (asked TIDX %d): team %d", i, tidx, team)
+		}
+	}
+	f := ts.client("full@example.com")
+	wantError(t, "a sixth joins", f.gm(CmdGameManagerJoinGame, tdf.NewWriter().Int("GID", 1).Int("TIDX", 1).Bytes()), ErrTeamFull)
+
+	swap := tdf.NewWriter().Int("GID", 1).List("LGAM", tdf.TypeStruct, []*tdf.Writer{
+		tdf.NewWriter().Int("PID", others[0].id).Int("TIDX", 1)})
+	wantReply(t, "swap to team 1", a.gm(CmdGameManagerSwapPlayersTeam, swap.Bytes()))
+	a.none(ComponentGameManager, NotifyGamePlayerTeamChangeID, 50*time.Millisecond)
+
+	wantReply(t, "start", a.gm(CmdGameManagerAdvanceGameState, golden.Bytes(t, decodeCase(t, g, "advancegamestate_request"))))
+	sg := hostNext[gmshost.StartGame](t, host)
+	if len(sg.Roster) != 5 {
+		t.Fatalf("startGame roster %s", describeRoster(sg.Roster))
+	}
+	for _, e := range sg.Roster {
+		if e.Team != 1 || e.Spectator {
+			t.Errorf("startGame roster %s", describeRoster(sg.Roster))
+			break
+		}
+	}
+	log := ts.log.String()
+	for _, want := range []string{`a practice group game (GameFlags 0x412`,
+		"joinGame: game 1: player 2000000002 asked for team 1; a practice group's players join team 0",
+		"joinGame: game 1: team 0 full; error reply",
+		"game 1: 1 moves off team 0 ignored (a practice group)"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("log lacks %q", want)
+		}
+	}
+}
+
+// The create dialog's bot checkbox (BOTBOX) ends the name in BotFillMarker: the server strips it, names the game
+// "[Bots] <name>" (NotifyGameSetup, the browser) and the host fills the open seats (createGame's fillTeams = the team
+// size). Without the marker nothing changes; a practice group loses the marker and keeps its own bot rule.
+func TestCustomGameBotFillMarker(t *testing.T) {
+	g := golden.Load(t)
+	for _, tc := range []struct {
+		what, flags, name, want string
+		fill                    int
+	}{
+		{"ticked", "2", "Friday Night" + BotFillMarker, "[Bots] Friday Night", 5},
+		{"unticked", "2", "Friday Night", "Friday Night", 0},
+		{"only the marker", "2", BotFillMarker, "[Bots] alpha's Game", 5},
+		{"a practice group", "1042", "Friday Night" + BotFillMarker, "Friday Night", 0},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			ts, host := newCustomHostServer(t, nil)
+			a, b := ts.client("alpha@example.com"), ts.client("bravo@example.com")
+			wantReply(t, "create", a.gm(CmdGameManagerResetDedicatedServer, createRequest(t, g, tc.flags, tc.name)))
+			if cg := <-host.created; cg.FillTeams != tc.fill {
+				t.Errorf("createGame fillTeams %d, want %d", cg.FillTeams, tc.fill)
+			}
+			game, _ := decode(t, a.note(ComponentGameManager, NotifyGameSetupID)).Sub("GAME")
+			if name, _ := game.Str("GNAM"); name != tc.want {
+				t.Errorf("NotifyGameSetup GNAM %q, want %q", name, tc.want)
+			}
+			if tc.flags != "2" {
+				return // a practice group isn't in the browser
+			}
+			wantReply(t, "game list", b.gm(CmdGameManagerGetGameListSubscription,
+				golden.Bytes(t, decodeCase(t, g, "getgamelistsubscription_request"))))
+			up := decode(t, b.note(ComponentGameManager, NotifyGameListUpdateID))
+			u, _ := up.Get("UPDT")
+			items := u.Value.(*tdf.List).Items
+			if len(items) != 1 {
+				t.Fatalf("browser: %d games", len(items))
+			}
+			gam, _ := items[0].(*tdf.Struct).Sub("GAM")
+			if name, _ := gam.Str("GNAM"); name != tc.want {
+				t.Errorf("browser GNAM %q, want %q", name, tc.want)
+			}
+		})
 	}
 }

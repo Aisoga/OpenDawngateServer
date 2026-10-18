@@ -115,6 +115,55 @@ GMS_TEST(DamageRewardSplit) {
   CHECK(SplitReward(kRewardEnemyTitans, 10.f, {0}, 0, {0}, nullptr, 0, 0.f).empty());
 }
 
+// ROLEVIM: RolesTuning's NPC-kill gold modifiers (Gladiator lastHitMinion 2.0, Tactician proximity 2.0, the rest 1.0).
+GMS_TEST(DamageRoleNpcGold) {
+  const float minionGoldShare[5] = {1.f, 1.f, 1.f, 1.f, 1.f};
+  RoleNpcGold roles[10];
+  roles[0].lastHitMinion = 2.f;  // player 0 the Gladiator
+  roles[3].proximity = 2.f;      // player 3 the Tactician
+  // the Gladiator's last hit on a melee minion (4 gold), alone: 4 + 4 x 3 x 2 = 28 (16 without the role)
+  std::vector<Grant> g =
+      SplitReward(kRewardAreaAndLastHit, 4.f, {0}, 0, {0}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 10);
+  CHECK_EQ(g.size(), static_cast<size_t>(1));
+  CHECK_EQ(g[0].amount, 28.f);
+  CHECK(g[0].lastHit);
+  // the Gladiator last-hits beside the Tactician: 28 for it, 4 x 2 = 8 for the Tactician (ally factor 1.0)
+  g = SplitReward(kRewardAreaAndLastHit, 4.f, {0, 3}, 0, {0, 3}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 10);
+  CHECK_EQ(g.size(), static_cast<size_t>(2));
+  CHECK_EQ(g[0].amount, 28.f);
+  CHECK_EQ(g[1].amount, 8.f);
+  CHECK(!g[1].lastHit);
+  // a minion killed by minions beside the Tactician and a Gladiator: 8 and 4, nobody's last hit
+  g = SplitReward(kRewardAreaAndLastHit, 4.f, {0, 3}, -1, {0, 3}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 10);
+  CHECK_EQ(g.size(), static_cast<size_t>(2));
+  CHECK_EQ(g[0].amount, 4.f);
+  CHECK_EQ(g[1].amount, 8.f);
+  // the Tactician's own last hit: its area share doubled, the fatal-hit bonus not: 8 + 12 = 20
+  g = SplitReward(kRewardAreaAndLastHit, 4.f, {3}, 3, {3}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 10);
+  CHECK_EQ(g[0].amount, 20.f);
+  // the ally factor multiplies when another player of the team got the last hit (1.0 in the data)
+  roles[3].proximityAllyLastHit = 0.5f;
+  g = SplitReward(kRewardAreaAndLastHit, 4.f, {0, 3}, 0, {0, 3}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 10);
+  CHECK_EQ(g[1].amount, 4.f);
+  g = SplitReward(kRewardAreaAndLastHit, 4.f, {3}, 3, {3}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 10);
+  CHECK_EQ(g[0].amount, 20.f);  // its own last hit: no ally factor
+  roles[3].proximityAllyLastHit = 1.f;
+  // a jungle creature (last player to hit) uses lastHitCreature, not lastHitMinion
+  roles[0].lastHitCreature = 1.5f;
+  g = SplitReward(kRewardLastHit, 10.f, {0}, 0, {0}, nullptr, 0, 1.f, kNpcCreature, roles, 10);
+  CHECK_EQ(g[0].amount, 15.f);
+  roles[0].lastHitCreature = 1.f;
+  g = SplitReward(kRewardLastHit, 10.f, {0}, 0, {0}, nullptr, 0, 1.f, kNpcCreature, roles, 10);
+  CHECK_EQ(g[0].amount, 10.f);
+  // a worker (area, kNpcOther) or a structure: no role factor; nor without the role table or outside it
+  g = SplitReward(kRewardArea, 6.f, {3}, 0, {3}, minionGoldShare, 5, 0.f, kNpcOther, roles, 10);
+  CHECK_EQ(g[0].amount, 6.f);
+  g = SplitReward(kRewardAreaAndLastHit, 4.f, {0}, 0, {0}, minionGoldShare, 5, 3.f, kNpcMinion, nullptr, 0);
+  CHECK_EQ(g[0].amount, 16.f);
+  g = SplitReward(kRewardAreaAndLastHit, 4.f, {0}, 0, {0}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 0);
+  CHECK_EQ(g[0].amount, 16.f);
+}
+
 // MATCH_FLOW.md R12: 500 at deploy (the host's), then 100 per minute from 60 s in whole units.
 GMS_TEST(DamagePassiveGold) {
   PassiveGold pg;

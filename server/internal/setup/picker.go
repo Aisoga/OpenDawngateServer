@@ -18,30 +18,43 @@ import (
 // (Setup.Picker); without it the archive is removed (removePicker), since the picker's list file is then missing
 // and the login screen is the game's own.
 func (s *Setup) stepPicker(step, copy string) bool {
-	src := filepath.Join(copy, filepath.FromSlash(moviepatch.Source))
-	added := filepath.Join(copy, filepath.FromSlash(moviepatch.Rel))
-	login, err := os.ReadFile(src)
+	return s.stepMovie(step, copy, moviepatch.Picker, "the login screen's server picker", "an older picker")
+}
+
+// stepMatchOptions installs the CREATE GAME dialog's "Fill open seats with bots" check box,
+// game\Data\zz_MatchOptions.snap: the copy's own MatchOptionsUI movie (from Battlegrounds.snap, which must be the
+// build's) with the check box's class added (moviepatch.MatchOptions). Every player copy gets it: ticked, the class
+// ends the game's name with the marker the server reads (blaze.BotFillMarker); unticked it changes nothing.
+func (s *Setup) stepMatchOptions(step, copy string) bool {
+	return s.stepMovie(step, copy, moviepatch.MatchOptions, "the create dialog's bot check box", "an older check box")
+}
+
+// stepMovie writes spec's added archive into the copy when it isn't byte for byte what moviepatch makes now.
+func (s *Setup) stepMovie(step, copy string, spec moviepatch.Spec, what, older string) bool {
+	src := filepath.Join(copy, filepath.FromSlash(spec.Source))
+	added := filepath.Join(copy, filepath.FromSlash(spec.Rel))
+	source, err := os.ReadFile(src)
 	if err != nil {
 		if s.Check {
 			return s.report(Missing, step, fmt.Sprintf("%s (the copy is incomplete)", s.show(src)))
 		}
 		return s.report(Failed, step, err.Error())
 	}
-	if h := sha256.Sum256(login); hex.EncodeToString(h[:]) != s.untouched(moviepatch.Source) {
+	if h := sha256.Sum256(source); hex.EncodeToString(h[:]) != s.untouched(spec.Source) {
 		return s.report(Failed, step, fmt.Sprintf("%s is not the untouched build-854 file (docs/file_manifest.csv); "+
 			"delete %s and start again (it is extracted anew)", s.show(src), copy))
 	}
-	want, err := moviepatch.Build(login)
+	want, err := spec.Build(source)
 	if err != nil {
 		return s.report(Failed, step, err.Error())
 	}
 	h := sha256.Sum256(want)
-	line := fmt.Sprintf("%s: the login screen's server picker (%s)", s.show(added), hex.EncodeToString(h[:])[:16])
+	line := fmt.Sprintf("%s: %s (%s)", s.show(added), what, hex.EncodeToString(h[:])[:16])
 	have, err := os.ReadFile(added)
 	if err == nil && bytes.Equal(have, want) {
 		return s.report(OK, step, line)
 	}
-	why := "an older picker"
+	why := older
 	if err != nil {
 		why = "not there"
 	}

@@ -33,6 +33,15 @@ Its first setup took longer than the login waits (50 seconds), on a slow disk fo
 **The game closes right away**
 Only one Dawngate client can run at a time. Close the other one, including any that's still open from an earlier session.
 
+**"The update to v… failed"**
+`Start-Client.exe` keeps the release you have and starts it; the message says why (no connection, a damaged download, a file in use). To update by hand, close every Dawngate program of the folder, unpack the release zip (the one the message names in `Dawngate-Data\update\`, or one downloaded from the project's releases page) over your folder and replace the files it asks about; your `Start-*.ini`, `Dawngate.zip` and `Dawngate-Data` aren't in the zip and stay. The next start brings the game copies up to date.
+
+**"Start-Server.exe runs from this folder: close it … to update"**
+An update replaces `Start-Server.exe` too, which Windows doesn't allow while it runs. Close the `Start-Server` window, then start `Start-Client.exe` again.
+
+**`Start-Client.old.exe` in the folder**
+The previous version, left by an update. The next start of `Start-Client.exe` deletes it (it can't while it still runs).
+
 **SmartScreen or antivirus warnings**
 The programs aren't signed. Click *More info*, then *Run anyway*.
 
@@ -69,13 +78,13 @@ That's your first login to this server: its key isn't trusted yet. Click OK, ope
 Every server has a tunnel key, and `Start-Client.exe` remembers the key of each server you have logged in to. A different key means that the operator made new keys or moved the server, or that someone else answers at its address. Open the server list on the login screen: it shows the key you trusted and the one the server shows now. Ask the operator which fingerprint their server window shows. Only if it matches the new one, delete the file `Dawngate-Data\servers\<server address>\gateway.pin` and log in again. That login trusts the new key. If it doesn't match, don't log in to that server.
 
 **"The server you picked doesn't answer", or offline in the server list**
-The server is offline, or its address in your list is wrong. The list checks every server again every few seconds while the login screen is open, so the server turns green by itself when it is back. If it stays offline, check the address with its operator. An operator of a server on the internet forwards TCP and UDP 42128 to it.
+The server is offline, or its address in your list is wrong. The list checks every server again every few seconds while the login screen is open, so the server turns green by itself when it is back. If it stays offline, check the address with its operator. An operator of a server on the internet forwards TCP and UDP 42128 to it. If the list shows the server online and only the login says this, your `Start-Client.exe` is older than the server's release: the server refuses a `Start-Client.exe` that can't name its release (its log says so). Get the release the server runs, as for *another version* below.
 
 **"Something answers at that address, but no Dawngate server with the tunnel on"**
 The server runs without its tunnel (`tunnel = off`, an option for developers), or it is an older release. Ask the operator to set `tunnel = auto` in `Start-Server.ini` and to use a current release; or play on it with `Start-Client.exe <address> --tunnel off`.
 
 **"This server runs another version than your Start-Client, or doesn't tell its version", or other version / version unknown in the server list**
-A server and your `Start-Client.exe` must be the same release; any difference refuses the login. Open the server list on the login screen: the sentence under it names the server's version and yours (`Start-Client.exe --version` prints yours). Ask the server's operator which release the server runs and use that release's `Start-Client.exe`; unpacking it into your folder over the old files keeps your game copy, server list and trusted keys. *version unknown* means the server runs a release from before this check: only its operator can fix that, by updating the server. If you run the server yourself, update `Start-Server.exe` and `Start-Client.exe` together (they come in the same release). This PC, the server in your own folder, is never refused.
+A server and your `Start-Client.exe` must be the same release; any difference refuses the login, by `Start-Client.exe` and by the server. Open the server list on the login screen: the sentence under it names the server's version and yours (`Start-Client.exe --version` prints yours). Ask the server's operator which release the server runs and use that release's `Start-Client.exe`; unpacking it into your folder over the old files keeps your game copy, server list and trusted keys. *version unknown* means the server runs a release from before this check: only its operator can fix that, by updating the server. If you run the server yourself, update `Start-Server.exe` and `Start-Client.exe` together (they come in the same release). This PC, the server in your own folder, is never refused.
 
 **"That server isn't in your list"**
 The login name had a `#` with a server that isn't in your list. Type only your login name and pick the server with SERVER above the login panel.

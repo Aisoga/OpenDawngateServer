@@ -70,6 +70,11 @@ void GmsHostTickCommands();
 // locomotion tick ([host] network_rate, 1).
 void GmsHostTickNetworkRate();
 
+// ABILVFX: every server tick just before DeletePending: the creates of the placeable effects a script made and destroyed
+// in this tick (Khagen's Q), built while the objects still exist and sent first by the next replication step ([host]
+// short_effects, 1).
+void GmsHostBeforeDelete();
+
 // ADR-2's loop steps 4-5, after the simulation: the replication step (D2g-live: creates, the outgoing vector (seam 1),
 // updates, modifier ends), what the send stub caught (the sixth seam), the ping relay, test-side commands due
 // ([host] commands_file) and the test wave ([host] test_wave), sent to the players.

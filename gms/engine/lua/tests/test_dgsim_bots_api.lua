@@ -821,7 +821,8 @@ test('composition: the Hunter treats the parasite as a camp, only in the kill ph
   check(select(2, condition_Bot_NextCreepCamp[1](hunter)) == -59, 'the team gathers: he keeps farming')
   B.TeamStateOf(1).phase = 'kill'
   local ok2, px, py = condition_Bot_NextCreepCamp[1](hunter)
-  check(ok2 == true and px == -3 and py == 3, 'the kill phase: the parasite is his camp (' .. tostring(px) .. ', ' .. tostring(py) .. ')')
+  check(ok2 == true and math.abs(math.sqrt((px + 3) ^ 2 + (py - 3) ^ 2) - 6) < 0.01 and px < -3,
+        'the kill phase: the parasite (its edge on his side, PRETUSBOT) is his camp (' .. tostring(px) .. ', ' .. tostring(py) .. ')')
   check(condition_Bot_IsNearNextCreepCamp[1](hunter) == false, 'the near test uses the parasite too')
   check(select(1, condition_nearest_objective[1](hunter)) == true, 'on the parasite: ClearCamp may hit it')
   W.kill(para)
@@ -830,6 +831,50 @@ test('composition: the Hunter treats the parasite as a camp, only in the kill ph
   B.teamWanted = nil
   roles[hunter] = 1
   check(select(2, condition_Bot_NextCreepCamp[1](hunter)) == -59, 'a Tactician never goes (the host asks BotRole)')
+end)
+
+test('composition: the Hunter fights the parasite from its edge (PRETUSBOT)', function()
+  local B = dgsim_bots
+  local roles = compositionWorld()
+  -- the script's own near test: the camp position within its radius (9 with the camp-radius fix-up)
+  condition_Bot_IsNearNextCreepCamp = { radius = 9, [1] = function(bot)
+    local p = nGameObject.GetPosition(bot)
+    return nVector.distance(nDirector.GetClosestCampPosition(1, p, false), p) < condition_Bot_IsNearNextCreepCamp.radius
+  end }
+  local hunter = shaper('hunter', 1, -64, -4, { bot = true, maxhp = 700 })
+  roles[hunter] = 2
+  local para = W.add({ name = 'parasite', team = 0, npc = nNPCType.ObjectiveMajor, pos = P(0, 0), maxhp = 5000 })
+  nDirector.GetParasiteID = function() return para end
+  B.ApplyFixups()
+  B.teamWanted = true
+  B.TeamStateOf(1).call, B.TeamStateOf(1).phase = 'parasite', 'kill'
+  -- from the rally point: the walk ends 6 short of the centre on his side, not on the centre
+  local ok, x, y = condition_Bot_NextCreepCamp[1](hunter)
+  local d = math.sqrt(x * x + y * y)
+  check(ok == true and math.abs(d - 6) < 0.01 and x < 0, string.format('the stand point (%.2f, %.2f), %.2f from the centre', x, y, d))
+  check(condition_Bot_IsNearNextCreepCamp[1](hunter) == false, '64 away: not near, MoveToNextCamp walks')
+  -- at the stand point, and after his W threw him 13 units out: still near, so ClearCamp keeps fighting
+  W.get(hunter).pos = P(-5.9, -0.4)
+  check(condition_Bot_IsNearNextCreepCamp[1](hunter) == true, 'at the stand point: near')
+  W.get(hunter).pos = P(13, 0)
+  check(condition_Bot_IsNearNextCreepCamp[1](hunter) == true, '13 out after a jump: still near (was a walk back)')
+  W.get(hunter).pos = P(0, 0)
+  check(condition_Bot_IsNearNextCreepCamp[1](hunter) == true, 'on the centre: near')
+  W.get(hunter).pos = P(0, 22)
+  check(condition_Bot_IsNearNextCreepCamp[1](hunter) == false, '22 out (knocked away): walks back')
+  local _, sx, sy = condition_Bot_NextCreepCamp[1](hunter)
+  check(math.abs(sx) < 0.02 and math.abs(sy - 6) < 0.01, string.format('back to his side of it (%.2f, %.2f)', sx, sy))
+  -- the option off: the centre as before
+  B.hunterParasiteStand = false
+  W.get(hunter).pos = P(13, 0)
+  local _, cx, cy = condition_Bot_NextCreepCamp[1](hunter)
+  check(math.abs(cx) < 0.02 and math.abs(cy) < 0.02, 'off: the centre (the 0.01 of a zero coordinate)')
+  check(condition_Bot_IsNearNextCreepCamp[1](hunter) == false, 'off: 13 out is not near (radius 9)')
+  B.hunterParasiteStand = nil
+  -- not the team's parasite time: the camps, the spot rule doesn't apply
+  B.TeamStateOf(1).phase = 'gather'
+  check(select(2, condition_Bot_NextCreepCamp[1](hunter)) == -59, 'the gather: the camps')
+  B.teamWanted = nil
 end)
 
 test('composition: off unless the host wants it; lanes are kept', function()
@@ -1600,7 +1645,8 @@ test('jungle: the Hunter answers the team calls', function()
   W.matchTime = 702
   B.TeamTick()
   check(B.hunterTasks[hu] ~= nil and B.hunterTasks[hu].kind == 'parasite', 'the kill: the parasite')
-  check(select(2, condition_Bot_NextCreepCamp[1](hu)) == -3, 'to the parasite')
+  local _, px, py = condition_Bot_NextCreepCamp[1](hu)
+  check(math.abs(math.sqrt((px + 3) ^ 2 + (py - 3) ^ 2) - 6) < 0.01, 'to the parasite (its edge, PRETUSBOT)')
   -- a push: he joins, standing off the target toward his base
   W.kill(para)
   st.call, st.phase, st.target, st.lane, st.since, st.lastAdvantage, st.lastProgress = 'push', nil, ids[10], nLaneID.Bottom, 800, 800, 800

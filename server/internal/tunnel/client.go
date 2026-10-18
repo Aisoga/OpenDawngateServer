@@ -13,7 +13,26 @@ import (
 	"time"
 
 	"dawngate/server/internal/logging"
+	build "dawngate/server/internal/version"
 )
+
+// RefusedError is a gateway's refusal of a session (its status: StatusVersion, StatusRelease, StatusAddress, ...).
+type RefusedError struct {
+	Gateway string
+	Status  byte
+}
+
+func (e *RefusedError) Error() string {
+	return fmt.Sprintf("the tunnel gateway at %s refused the session: %s", e.Gateway, StatusText(e.Status))
+}
+
+// ReleaseRefused reports whether err is a gateway's refusal of this Start-Client's release: another release than the
+// server's (StatusRelease), or a session hello the gateway doesn't take (StatusVersion: a gateway of a release before
+// the release check, or this hello's version unknown to it).
+func ReleaseRefused(err error) bool {
+	var r *RefusedError
+	return errors.As(err, &r) && (r.Status == StatusRelease || r.Status == StatusVersion)
+}
 
 // RedirectorPort is the redirector's port, compiled into the client: the one TCP port whose TLS 1.1 the client side
 // of the tunnel ends itself (Client.RedirectorTLS).
@@ -50,6 +69,10 @@ type Client struct {
 	// Deliver takes a datagram from the gateway in External mode: port is the server port it comes from, dst the
 	// game socket on this PC it is for (always a loopback address).
 	Deliver func(port int, dst *net.UDPAddr, payload []byte)
+	// Release is the release name the session hello names ("" at Start: version.String(), this build's). The
+	// gateway lets in only its own release (unless it allows any); Start-Client's front names the server's own for
+	// This PC, which is never refused.
+	Release string
 
 	HeartbeatEvery, HeartbeatTimeout, Keepalive, DialTimeout time.Duration
 
@@ -119,6 +142,9 @@ func (c *Client) Start() error {
 	}
 	if c.DialTimeout == 0 {
 		c.DialTimeout = 10 * time.Second
+	}
+	if c.Release == "" {
+		c.Release = build.String()
 	}
 	c.started = time.Now()
 	c.tlsCfg = ClientTLS(c.Pin, tls.NewLRUClientSessionCache(64))
@@ -228,7 +254,7 @@ func (c *Client) connect(resumeID uint64, resumeToken [16]byte) (*clientSession,
 		return nil, rep, fmt.Errorf("the tunnel gateway at %s: %w", c.Gateway, err)
 	}
 	conn.SetDeadline(time.Now().Add(c.DialTimeout))
-	h := sessionHello{tunnelIP: ip4(c.TunnelIP), resumeID: resumeID, resumeToken: resumeToken}
+	h := sessionHello{tunnelIP: ip4(c.TunnelIP), resumeID: resumeID, resumeToken: resumeToken, release: c.Release}
 	if _, err := conn.Write(h.encode()); err != nil {
 		conn.Close()
 		return nil, rep, err
@@ -239,7 +265,7 @@ func (c *Client) connect(resumeID uint64, resumeToken [16]byte) (*clientSession,
 	}
 	if rep.status != StatusOK {
 		conn.Close()
-		return nil, rep, fmt.Errorf("the tunnel gateway at %s refused the session: %s", c.Gateway, StatusText(rep.status))
+		return nil, rep, &RefusedError{Gateway: c.Gateway, Status: rep.status}
 	}
 	conn.SetDeadline(time.Time{})
 	keys, err := DeriveKeys(conn.ConnectionState(), rep.session)

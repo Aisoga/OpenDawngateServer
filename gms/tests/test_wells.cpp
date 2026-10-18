@@ -652,6 +652,45 @@ GMS_TEST(WellsSecondsToCapture) {
   CHECK_EQ(g.wells.SecondsToCapture(0), -1.0);
 }
 
+// WELLDEF: the capturers in the ring are counted whatever the capture does (moving, contested by a defender, paused by
+// a hit), so the bots' threat outlives the contest their defender makes; none while nobody of the other team is there,
+// for a dead capturer, or once the well is captured and locked.
+GMS_TEST(WellsCapturersCountedWhateverTheCapture) {
+  Tuning t;
+  t.transitionSeconds = 0.f;
+  Host h(t);
+  h.Run(900, 1);
+  CHECK_EQ(h.wells.Capturers(0), 0);
+  CHECK_EQ(h.wells.Capturers(-1), 0);
+  const WellDef w0 = V5Wells()[0];
+  Shaper cap = At(0x100, 6, 2, w0);
+  const Shaper cap2 = At(0x101, 7, 2, w0, 1.f);
+  h.Run(902, 10, {cap, cap2});
+  CHECK_EQ(h.wells.Capturers(0), 2);
+  CHECK(h.wells.SecondsToCapture(0) >= 0.0);
+  // contested: the capture stands still, the capturers are still there
+  const Shaper def = At(0x200, 1, 1, w0, -3.f);
+  h.Run(903, 10, {cap, cap2, def});
+  CHECK_EQ(h.wells.SecondsToCapture(0), -1.0);
+  CHECK_EQ(h.wells.Capturers(0), 2);
+  // paused by a hit (one capturer, hit): still counted
+  Host g(t);
+  g.Run(900, 1);
+  cap.lastPlayerHitAt = 1e9;
+  g.Run(901, 10, {cap});
+  CHECK_EQ(g.wells.SecondsToCapture(0), -1.0);
+  CHECK_EQ(g.wells.Capturers(0), 1);
+  // a dead one, one outside the ring, the owner's own shaper: none
+  Shaper dead = At(0x100, 6, 2, w0);
+  dead.alive = false;
+  g.Run(902, 10, {dead, At(0x102, 8, 2, w0, 12.5f), def});
+  CHECK_EQ(g.wells.Capturers(0), 0);
+  // captured: locked, none
+  h.Run(930, 10, {At(0x100, 6, 2, w0), cap2});
+  CHECK_EQ(h.acc.captures.size(), static_cast<size_t>(1));
+  CHECK_EQ(h.wells.Capturers(0), 0);
+}
+
 // The well gold: 1.5 per worker per minute per player of the owner, paid each second in whole units; the team GPM.
 GMS_TEST(WellsGold) {
   Host h;

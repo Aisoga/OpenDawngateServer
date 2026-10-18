@@ -353,6 +353,7 @@ func (s *Setup) Client(server string, ca []byte) error {
 		s.stepConfig("client config", s.ClientCopy(), server)
 		s.stepLocale("client texts", s.ClientCopy(), server)
 		s.stepBotProfiles("client bots", s.ClientCopy())
+		s.stepMatchOptions("bot check box", s.ClientCopy())
 		if s.Picker {
 			s.stepPicker("server picker", s.ClientCopy())
 		} else {

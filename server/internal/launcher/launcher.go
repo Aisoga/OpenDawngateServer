@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -107,11 +108,27 @@ func (c Config) Bool(key string, def bool) (bool, error) {
 	return def, fmt.Errorf("%s = %q: use on or off", key, c[key])
 }
 
+// iniNewline is a new config file's line end: Windows' on Windows, else "\n" (on Linux a "\r" at every line's end
+// stops sed's and grep's "$" from matching, VPSLIVE).
+var iniNewline = map[bool]string{true: "\r\n", false: "\n"}[runtime.GOOS == "windows"]
+
+// newlineOf is the line end a config file's content uses (its first line's), iniNewline for one without any; a rewrite
+// keeps it.
+func newlineOf(b []byte) string {
+	s := string(b)
+	if i := strings.IndexByte(s, '\n'); i > 0 && s[i-1] == '\r' {
+		return "\r\n"
+	} else if i >= 0 {
+		return "\n"
+	}
+	return iniNewline
+}
+
 // LoadOrCreate reads the config file at path; a missing file is written with text (the defaults with their comments)
-// first. created says so.
+// first, with iniNewline. created says so.
 func LoadOrCreate(path, text string) (c Config, created bool, err error) {
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		if err := os.WriteFile(path, []byte(strings.ReplaceAll(text, "\n", "\r\n")), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(strings.ReplaceAll(text, "\n", iniNewline)), 0o644); err != nil {
 			return nil, false, err
 		}
 		created = true
@@ -121,7 +138,7 @@ func LoadOrCreate(path, text string) (c Config, created bool, err error) {
 }
 
 // SetKey writes key = value into the config file at path: an existing "key =" line is replaced, else the line is
-// appended (the file is made when it is missing).
+// appended (the file is made when it is missing). The file keeps its line ends.
 func SetKey(path, key, value string) error {
 	b, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -142,7 +159,7 @@ func SetKey(path, key, value string) error {
 		}
 		lines = append(lines, key+" = "+value, "")
 	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\r\n")), 0o644)
+	return os.WriteFile(path, []byte(strings.Join(lines, newlineOf(b))), 0o644)
 }
 
 // commentOf is the comment block right above a key's line in a config text (its ; lines up to the blank line before
@@ -190,7 +207,7 @@ func migrateComment(path string, olds [][]string, cur []string) (bool, error) {
 				continue
 			}
 			out := append(append(append([]string(nil), lines[:i]...), cur...), lines[i+len(old):]...)
-			return true, os.WriteFile(path, []byte(strings.Join(out, "\r\n")), 0o644)
+			return true, os.WriteFile(path, []byte(strings.Join(out, newlineOf(b))), 0o644)
 		}
 	}
 	return false, nil

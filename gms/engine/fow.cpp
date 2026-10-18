@@ -29,6 +29,7 @@ constexpr std::uintptr_t kOriginY = 0x20;
 constexpr std::uintptr_t kScaleX = 0x24;     // f32 cells per unit
 constexpr std::uintptr_t kScaleY = 0x28;
 constexpr std::uintptr_t kPool = 0x1A030;    // record pointers; the first `in use` are the live ones
+constexpr std::uintptr_t kModifierHandles = 0x1A03C;  // u8: the terrain modifier handles in use (ABILVFX)
 }  // namespace mgr
 namespace rec {
 constexpr std::uintptr_t kObject = 0x00;
@@ -87,6 +88,8 @@ vision::LosMap g_terrain;
 vision::GrassMap g_grassMap;
 bool g_haveTerrain = false, g_haveGrass = false, g_mapLogged = false;
 unsigned long long g_terrainCopiedMs = 0;
+std::uint8_t g_modifierHandles = 0;  // ABILVFX: manager +0x1A03C at the last copy
+int g_modifierLogged = 0;
 
 struct Geometry {
   int width, height;
@@ -122,9 +125,32 @@ bool SehCopy(void* dst, const void* src, std::size_t n) {
   }
 }
 
-void RefreshMaps(void* sim) {
+// ABILVFX: the terrain modifier handles in use (LineOfSight_AllocTerrainModHandle 0x00917720: manager +0x1A03C, a bit per
+// handle); 0xFF on an exception.
+std::uint8_t SehModifierHandles(void* sim) {
+  __try {
+    char* m = Field<char*>(sim, los::kOfSim);
+    return m ? Field<std::uint8_t>(m, mgr::kModifierHandles) : 0;
+  } __except (SehNote(GetExceptionInformation(), "modifier handles")) {
+    return 0xFF;
+  }
+}
+
+void RefreshMaps(void* sim, bool terrainMods) {
   const unsigned long long now = GetTickCount64();
-  if (g_haveTerrain && g_haveGrass && now - g_terrainCopiedMs < 1000) return;
+  // ABILVFX: while a terrain modifier is active (or right after its release) the copy follows it every tick, so
+  // Kensu's trail opens its walls at once rather than up to a second late (the copy is 256 KiB)
+  bool modsChanged = false;
+  if (terrainMods) {
+    const std::uint8_t handles = SehModifierHandles(sim);
+    modsChanged = handles != 0 || handles != g_modifierHandles;
+    if (handles != g_modifierHandles && ++g_modifierLogged <= 40)
+      Log("fog: terrain modifier handles 0x%02X -> 0x%02X (nFogOfWar.ModifyTerrain; a modifier opens the walls it covers, "
+          "ABILVFX)",
+          g_modifierHandles, handles);
+    g_modifierHandles = handles;
+  }
+  if (g_haveTerrain && g_haveGrass && now - g_terrainCopiedMs < 1000 && !modsChanged) return;
   Geometry g{};
   if (!SehGeometry(sim, &g) || g.width <= 0 || g.height <= 0 || g.width > 4096 || g.height > 4096) return;
   const std::size_t cells = static_cast<std::size_t>(g.width) * static_cast<std::size_t>(g.height);
@@ -135,7 +161,8 @@ void RefreshMaps(void* sim) {
   geom.originY = g.oy;
   geom.scaleX = g.sx;
   geom.scaleY = g.sy;
-  if (g.los && (now - g_terrainCopiedMs >= 1000 || !g_haveTerrain)) {
+  geom.terrainModsOpen = terrainMods;
+  if (g.los && (now - g_terrainCopiedMs >= 1000 || !g_haveTerrain || modsChanged)) {
     g_los.resize(cells);
     if (SehCopy(g_los.data(), g.los, cells)) {
       g_terrain = geom;
@@ -417,7 +444,7 @@ bool Read(void* sim, const std::vector<repl::NetObject>& objs, const Options& op
   *counts = ReadCounts{};
   entities->clear();
   info->assign(objs.size(), ObjectInfo());
-  RefreshMaps(sim);
+  RefreshMaps(sim, options.terrainMods);
   if (!g_haveTerrain) return false;
   const bool writeRadius = options.render, writeGrass = options.render || options.grass;
   entities->reserve(objs.size() + 16);
@@ -506,6 +533,18 @@ bool FireGrassEvent(void* object, bool enter) {
     FireEvent(container, enter ? kEventOnEnterGrass : kEventOnExitGrass, nullptr, 0);
     return true;
   } __except (SehNote(GetExceptionInformation(), enter ? "OnEnterGrass" : "OnExitGrass")) {
+    return false;
+  }
+}
+
+bool Fogged(void* object, std::uint8_t* team) {
+  __try {
+    *team = Field<std::uint8_t>(object, gobj::kTeam);
+    if (!Field<char*>(object, kRecordOfObject)) return false;
+    void* noun = Field<void*>(object, gobj::kNoun);
+    char* nd = noun ? Field<char*>(noun, noun::kData) : nullptr;
+    return !nd || Field<std::uint8_t>(nd, kNounControlsVisibility) != 0;
+  } __except (SehNote(GetExceptionInformation(), "Fogged")) {
     return false;
   }
 }

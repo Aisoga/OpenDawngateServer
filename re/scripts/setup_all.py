@@ -790,6 +790,38 @@ class Setup:
                                              "(is the game running from this copy?)")
         return self.report(DONE, step, f"{line} (was: {why})")
 
+    def step_match_options(self, step, copy):
+        """a client copy's added archive game/Data/zz_MatchOptions.snap (patch_login_movie.py --spec matchoptions: the
+        CREATE GAME dialog's movie with our "Fill open seats with bots" check box), made from the copy's own
+        Battlegrounds.snap; current means byte for byte what patch_login_movie.py makes (the Go setup's
+        moviepatch.MatchOptions, the same bytes). Every client copy."""
+        import patch_login_movie as plm
+        spec = plm.SPECS["matchoptions"]
+        src = os.path.join(copy, *spec.source.split("/"))
+        added = os.path.join(copy, *spec.rel.split("/"))
+        if not os.path.isfile(src):
+            return self.report(MISSING, step, f"{self.show(src)} (the copy is incomplete)")
+        if sha256(src) != self.orig_sha(spec.source):
+            return self.report(FAILED, step, f"{self.show(src)} is not the untouched build-854 file "
+                                             "(docs/file_manifest.csv); delete the copy and run this again")
+        try:
+            want = plm.build(src, spec=spec)
+        except (plm.MovieError, ValueError) as e:
+            return self.report(FAILED, step, str(e))
+        line = f"{self.show(added)}: the create dialog's bot check box ({hashlib.sha256(want).hexdigest()[:16]})"
+        have = read(added) if os.path.isfile(added) else None
+        if have == want:
+            return self.report(OK, step, line)
+        why = "not there" if have is None else "an older check box"
+        if self.check:
+            return self.report(MISSING if have is None else STALE, step, f"{self.show(added)}: {why}")
+        self.never_pristine(added)
+        if self.script("patch_login_movie.py", "--spec", "matchoptions", src, added) or not os.path.isfile(added) or \
+                read(added) != want:
+            return self.report(FAILED, step, f"patch_login_movie.py didn't write the expected {self.show(added)} "
+                                             "(is the game running from this copy?)")
+        return self.report(DONE, step, f"{line} (was: {why})")
+
     # -- RakNet and the builds
     def step_raknet(self):
         step = "RakNet"
@@ -1069,6 +1101,7 @@ class Setup:
             config = self.step_config("client config", self.client, LOCAL)
             self.step_locale("client texts", self.client, LOCAL)
             self.step_bot_profiles("client bots", self.client)
+            self.step_match_options("bot check box", self.client)
             client = bool(exe and config)
         raknet = self.step_raknet()
         gms = self.step_gms(raknet)
@@ -1114,6 +1147,7 @@ class Setup:
             self.step_config("client config", self.client, host)
             self.step_locale("client texts", self.client, host)
             self.step_bot_profiles("client bots", self.client)
+            self.step_match_options("bot check box", self.client)
 
     def finish(self):
         bad = [r for r in self.results if r[0] in BAD]

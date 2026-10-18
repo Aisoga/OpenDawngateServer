@@ -13,6 +13,11 @@
 // its hologram and then the projectile it rides on; with the hologram in the lower slot the client got a parent it
 // didn't know yet, mapped it to 0 and left the hologram where it was made while the projectile flew. So the creates of
 // a replication step use the same order, with the parent as a second dependency.
+//
+// ABILVFX: and for cProjectileData's +0x80 mTargetObjectId (a tObjID member of the 9D a projectile's create carries,
+// sent only then). Ashabel's Q creates a target object at the aimed point and then a homing projectile that flies to
+// it, and the projectile usually had the lower pool slot (9 of 12 casts in one public match): its 9D named a target the
+// client didn't know yet, so the client's projectile had none. The target is the third dependency.
 #pragma once
 
 #include <cstddef>
@@ -27,11 +32,12 @@ struct CreateOrderItem {
   std::uint32_t id = 0;
   std::uint32_t owner = 0;   // 0 = none
   std::uint32_t parent = 0;  // the locomotion's +8 (attach parent, follow target); 0 = none
+  std::uint32_t target = 0;  // the projectile data's +0x80 (mTargetObjectId, a homing projectile's target); 0 = none
 };
 
-// Indices into `items` in create order: the input order, except that an item's owner and parent that come after it
-// are moved up to just before it (so every item follows its owner and its parent when they are among `items`; the
-// owner first). Dependency chains are followed to any depth; a cycle (or an item that names itself) is broken in input
+// Indices into `items` in create order: the input order, except that an item's owner, parent and target that come
+// after it are moved up to just before it (so every item follows its owner, its parent and its target when they are
+// among `items`; in that order). Dependency chains are followed to any depth; a cycle (or an item that names itself) is broken in input
 // order.
 inline std::vector<std::size_t> CreateOrder(const std::vector<CreateOrderItem>& items) {
   const std::size_t n = items.size();
@@ -42,7 +48,7 @@ inline std::vector<std::size_t> CreateOrder(const std::vector<CreateOrderItem>& 
   std::vector<char> state(n, 0);  // 0 not placed, 1 being placed (on the stack), 2 placed
   std::vector<std::size_t> out;
   out.reserve(n);
-  // an explicit stack of (item, next dependency to look at): 0 owner, 1 parent, 2 done
+  // an explicit stack of (item, next dependency to look at): 0 owner, 1 parent, 2 target, 3 done
   std::vector<std::pair<std::size_t, int>> stack;
   for (std::size_t start = 0; start < n; ++start) {
     if (state[start]) continue;
@@ -51,13 +57,14 @@ inline std::vector<std::size_t> CreateOrder(const std::vector<CreateOrderItem>& 
     while (!stack.empty()) {
       auto& top = stack.back();
       const std::size_t cur = top.first;
-      if (top.second >= 2) {
+      if (top.second >= 3) {
         state[cur] = 2;
         out.push_back(cur);
         stack.pop_back();
         continue;
       }
-      const std::uint32_t dep = top.second == 0 ? items[cur].owner : items[cur].parent;
+      const std::uint32_t dep =
+          top.second == 0 ? items[cur].owner : top.second == 1 ? items[cur].parent : items[cur].target;
       ++top.second;
       if (!dep || dep == items[cur].id) continue;
       const auto it = index.find(dep);

@@ -37,7 +37,8 @@
 //      stealth against the original (D2g-rest)*):
 //        - terrain: no blocked cell of the level's line-of-sight map between s and o, unless s ignores terrain
 //          (fowIgnoreTerrainTest) [data: SM_Map_v5's map is 512 x 512 bytes, 128 = blocks, 0 = open; bits 0-6 are
-//          nFogOfWar.ModifyTerrain's handles; the ray rule is assumed: it agrees with the client's outline shadows
+//          nFogOfWar.ModifyTerrain's handles, which open a wall (ABILVFX, LosMap below; assumed); the ray rule is
+//          assumed: it agrees with the client's outline shadows
 //          for 97.9 % of pairs on open ground within 38.3 units, re/scripts/fow_outlines.py rays];
 //        - grass: o in a grass patch (grass map alpha != 0; the patch is the cell value's low 24 bits) and concealed
 //          from T (record +0x1F) is seen only from the same patch or by a source that ignores grass, and with the
@@ -105,19 +106,36 @@ struct Entity {
 // file order of images/8bit/<level>_lineOfSight.tga), +0xC width, +0x10 height, +0x1C/+0x20 the pixel of the world
 // origin (width/2, height/2), +0x24/+0x28 pixels per unit (width / levelSize.x, height / levelSize.y). A world point's
 // cell is ROUND(origin + coordinate x scale), clamped to the map (LineOfSight_IsInGrass 0x009185E0 and
-// LineOfSight_UpdateGrassId 0x00918500 address the grass map the same way). A non-zero byte blocks [assumed for the
-// handle bits 0-6].
+// LineOfSight_UpdateGrassId 0x00918500 address the grass map the same way). 128 blocks; the handle bits 0-6 below.
+//
+// ABILVFX: the low seven bits are nFogOfWar.ModifyTerrain's handles. LineOfSight_AllocTerrainModHandle (0x00917720)
+// hands out one free bit of 0x7F (the used ones in manager +0x1A03C), LineOfSight_ModifyTerrain (0x009186E0) ORs it into
+// every cell of a convex polygon (LineOfSightMap_DrawLine 0x00916C30 and _FloodFill: cell |= handle), and
+// LineOfSight_ReleaseTerrainModHandle (0x00918430) clears it again. The only user is Kensu's R (ability_Savage_R_StunArrow),
+// whose trail also lays a dynamic navmesh along the arrow's path (nLocomotion.CreateDynamicNavmeshInBox) so his allies can
+// walk it through walls: the trail opens the walls it crosses for vision too [assumed: the reader, the stripped
+// visibility pass, is gone], and it never blocks open ground. D2g-fog-core counted any non-zero byte as a wall, so on
+// the host the trail itself was a wall: a shaper inside or behind it in a lane went into the fog for the other team
+// (the players' "shaper models flash or disappear when you enter the trail").
+constexpr uint8_t kLosBlocked = 0x80;
+constexpr uint8_t kLosModifierBits = 0x7F;
+
 struct LosMap {
   const uint8_t* cells = nullptr;
   int width = 0, height = 0;
   float originX = 0.f, originY = 0.f;
   float scaleX = 0.f, scaleY = 0.f;
+  // ABILVFX: a cell blocks only with bit 7 and no modifier bit (a terrain modifier opens a wall); false = the old rule
+  // (any non-zero byte blocks; [host] fog_terrain_mods=0)
+  bool terrainModsOpen = true;
 
   // A map of width x height over a level of levelSizeX x levelSizeY centred on the origin, as InitMaps sets it up.
   static LosMap ForLevel(const uint8_t* cells, int width, int height, float levelSizeX, float levelSizeY);
   bool Valid() const { return cells && width > 0 && height > 0; }
   void CellOf(float x, float y, int* cx, int* cy) const;
   uint8_t At(int cx, int cy) const;
+  // Whether a cell's byte blocks the line of sight (the rule above).
+  bool BlocksCell(uint8_t cell) const;
   // Whether a blocking cell lies on the line between the two points' cells (Bresenham; both end cells left out, so
   // a unit standing at a wall's edge isn't hidden by its own cell) [assumed].
   bool Blocked(float x0, float y0, float x1, float y1) const;

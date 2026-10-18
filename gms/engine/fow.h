@@ -37,6 +37,9 @@ struct Options {
   bool render = true;    // [host] fog_render: write mVisionRadius and the grass ids for the client's fog renderer
   bool pursuit = true;   // [host] fog_pursuit: write the records' per-team last-seen pursuit positions (D2g-pursuit)
   bool grassEvents = true;  // [host] grass_events: OnEnterGrass/OnExitGrass at an mbInGrass change (D3c; needs grass)
+  // [host] fog_terrain_mods (ABILVFX): a terrain modifier's handle bit (nFogOfWar.ModifyTerrain, Kensu's R trail) opens
+  // a wall instead of blocking, and the map copy follows a modifier every tick while one is active (else every 1 s)
+  bool terrainMods = true;
 };
 
 // What the fog step needs per scanned object beside its vision::Entity.
@@ -103,6 +106,11 @@ int WriteVisibility(const std::vector<repl::NetObject>& objs, const std::vector<
 
 // The network component's visible mask (+0x10) = mask. False without a network component.
 bool SetVisibleMask(void* object, std::uint16_t mask);
+
+// ABILVFX: whether fog can hide the object (a line-of-sight record, +0x858, and a noun with
+// fowControlsObjectVisibility; LuaJobObjectWithGraphicsNonFogOfWar.Noun has none), and its team (+0x4D). False on an
+// exception (team untouched).
+bool Fogged(void* object, std::uint8_t* team);
 
 // D2g-pursuit (docs/GMS_PROTOCOL.md *The last-seen pursuit position (D2g-pursuit)*; the rule in
 // gms/core/vision/pursuit.h): the line-of-sight record's per-team last-seen pursuit position (+0x2C + team x 8 = x,

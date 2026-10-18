@@ -37,8 +37,19 @@ func TestConfigFiles(t *testing.T) {
 		t.Errorf("defaults %v", c)
 	}
 	raw, _ := os.ReadFile(path)
-	if !bytes.Contains(raw, []byte("\r\naddress = 127.0.0.1\r\n")) {
-		t.Error("the file isn't written with Windows line ends")
+	if nl := iniNewline; !bytes.Contains(raw, []byte(nl+"address = 127.0.0.1"+nl)) || (nl == "\n" && bytes.Contains(raw, []byte("\r"))) {
+		t.Errorf("the file isn't written with the system's line ends (%q)", nl)
+	}
+	// a rewrite keeps the file's line ends, whichever they are
+	for _, nl := range []string{"\r\n", "\n"} {
+		p := filepath.Join(t.TempDir(), "keep.ini")
+		os.WriteFile(p, []byte("; c"+nl+"address = 1.2.3.4"+nl), 0o644)
+		if err := SetKey(p, "web_port", "8095"); err != nil {
+			t.Fatal(err)
+		}
+		if b, _ := os.ReadFile(p); string(b) != "; c"+nl+"address = 1.2.3.4"+nl+"web_port = 8095"+nl {
+			t.Errorf("SetKey on a file with %q: %q", nl, b)
+		}
 	}
 	if c, created, _ = LoadOrCreate(path, "address = 1.2.3.4\n"); created || c["address"] != "127.0.0.1" {
 		t.Error("an existing file was replaced")

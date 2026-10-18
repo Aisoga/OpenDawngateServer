@@ -53,6 +53,8 @@ struct Stats {
   unsigned itemPassivesKept;  // Q3
   unsigned abilitiesKeptReleased;  // D6c: agent abilities that had released the agent, left running at the death
   unsigned rewardBuffs, rewardBuffsRefused;  // D14: CharacterRewardData.buffs granted / refused by the engine
+  unsigned roleGoldGrants, goldHandlerChanges;  // ROLEVIM: grants a role's modifier changed; OnGrantGold changes
+  double roleGold;                              // ROLEVIM: the gold the roles' modifiers added
   // D1h
   unsigned playerKills, playerDeathsCounted, assists, creeps, firstBlood, killReports, recapHits, recaps,
       playerKillGrants, assisterGrants;
@@ -1205,6 +1207,14 @@ float __cdecl OnGrantGoldHook(std::uint32_t creature, float amount, std::uint32_
     const float r = CallInstanceHandler(ids[i], fns::kOnGrantGold, amount, f, 3, target, &called);
     if (called) {
       ++g_st.goldHandlers;
+      if (r >= 0.f && r != amount) {
+        // ROLEVIM: a handler that changed the amount (the Gladiator's stored last hits, the Predator's workers, ...)
+        ++g_st.goldHandlerChanges;
+        if (LogBudget()) {
+          Log("death: OnGrantGold creature %08X modifier %08X: %.2f -> %.2f (target %08X, killer %08X)", creature, ids[i],
+              amount, r, target, killer);
+        }
+      }
       if (r >= 0.f) amount = r;
     }
   }
@@ -1235,14 +1245,37 @@ int SehNearby(const float* pos, float radius, std::uint32_t skipA, std::uint32_t
   }
 }
 
-std::string Grants(const std::vector<dmg::Grant>& g) {
+// `base` (optional): the same split without the roles' modifiers; a grant that differs shows "role +x" (ROLEVIM).
+std::string Grants(const std::vector<dmg::Grant>& g, const std::vector<dmg::Grant>* base = nullptr) {
   std::string s;
-  char b[48];
+  char b[80];
   for (const dmg::Grant& x : g) {
-    std::snprintf(b, sizeof b, " p%d +%.2f%s", x.player, x.amount, x.lastHit ? " (last hit)" : "");
+    float before = x.amount;
+    if (base)
+      for (const dmg::Grant& y : *base)
+        if (y.player == x.player) before = y.amount;
+    char role[32] = "";
+    if (std::fabs(x.amount - before) > 0.001f) std::snprintf(role, sizeof role, "role %+.2f", x.amount - before);
+    std::snprintf(b, sizeof b, " p%d +%.2f%s%s%s%s", x.player, x.amount, x.lastHit || role[0] ? " (" : "",
+                  x.lastHit ? "last hit" : "", x.lastHit && role[0] ? ", " : "", role[0] ? role : "");
     s += b;
+    if (x.lastHit || role[0]) s += ")";
   }
   return s.empty() ? " -" : s;
+}
+
+// ROLEVIM: RolesTuning role[`role`]'s NPC-kill gold modifiers (1.0 each without the tuning or for an unknown role).
+void SehRoleNpcGold(unsigned role, dmg::RoleNpcGold* out) {
+  const Tuning& t = g_tuning;
+  if (!t.roles || static_cast<int>(role) >= t.roleCount) return;
+  __try {
+    const char* r = t.roles + role * roleTuning::kSize;
+    out->lastHitMinion = *reinterpret_cast<const float*>(r + roleTuning::kLastHitMinionGold);
+    out->lastHitCreature = *reinterpret_cast<const float*>(r + roleTuning::kLastHitCreatureGold);
+    out->proximity = *reinterpret_cast<const float*>(r + roleTuning::kProximityGold);
+    out->proximityAllyLastHit = *reinterpret_cast<const float*>(r + roleTuning::kProximityAllyLastHitGold);
+  } __except (SehNote(GetExceptionInformation(), "RolesTuning NPC gold")) {
+  }
 }
 
 void Rewards(void* victim, const ObjInfo& v, const ObjInfo* killer, int creditIndex, std::string* line) {
@@ -1271,7 +1304,29 @@ void Rewards(void* victim, const ObjInfo& v, const ObjInfo* killer, int creditIn
   const Shares gs = cls == 0 ? t.playerGold : cls == 2 ? t.jungleGold : t.minionGold;
   const float ratio = cls == 2 ? t.jungleFatalRatio : cls == 1 ? t.minionFatalRatio : 0.f;
   const std::vector<dmg::Grant> xg = dmg::SplitReward(xpType, xp, area, lastHitter, team, xs.p, xs.n, 0.f);
-  const std::vector<dmg::Grant> gg = dmg::SplitReward(goldType, gold, area, lastHitter, team, gs.p, gs.n, ratio);
+  // ROLEVIM: the roles' gold modifiers for a lane minion or a jungle creature ([host] role_passives)
+  const dmg::NpcGoldKind kind = v.player ? dmg::kNpcOther
+                                : v.npcType <= 2 ? dmg::kNpcMinion
+                                : v.npcType == 3 ? dmg::kNpcCreature
+                                                 : dmg::kNpcOther;
+  dmg::RoleNpcGold roles[dmg::kMaxPlayers];
+  const bool useRoles = g_opt.roleGold && kind != dmg::kNpcOther && t.roles;
+  if (useRoles)
+    for (int idx : team) {
+      PlayerFacts f;
+      if (idx >= 0 && idx < dmg::kMaxPlayers && SehPlayerCounters(idx, &f)) SehRoleNpcGold(f.role, &roles[idx]);
+    }
+  const std::vector<dmg::Grant> gg0 = dmg::SplitReward(goldType, gold, area, lastHitter, team, gs.p, gs.n, ratio);
+  const std::vector<dmg::Grant> gg = useRoles ? dmg::SplitReward(goldType, gold, area, lastHitter, team, gs.p, gs.n,
+                                                                 ratio, kind, roles, dmg::kMaxPlayers)
+                                              : gg0;
+  if (useRoles)
+    for (const dmg::Grant& g : gg)
+      for (const dmg::Grant& g0 : gg0)
+        if (g.player == g0.player && g.amount != g0.amount) {
+          ++g_st.roleGoldGrants;
+          g_st.roleGold += g.amount - g0.amount;
+        }
   std::uint32_t lastHitterCreature = 0;
   for (const PlayerView& p : players)
     if (p.index == lastHitter) lastHitterCreature = p.creature;
@@ -1294,7 +1349,7 @@ void Rewards(void* victim, const ObjInfo& v, const ObjInfo* killer, int creditIn
   char b[200];
   std::snprintf(b, sizeof b, " rewards: xp %.2f (type %d), gold %.2f (type %d), radius %.2f, team %d, area %zu, last hitter %d;",
                 xp, xpType, gold, goldType, radius, receiving, area.size(), lastHitter);
-  *line = std::string(b) + " xp" + Grants(xg) + "; gold" + Grants(gg);
+  *line = std::string(b) + " xp" + Grants(xg) + "; gold" + Grants(gg, useRoles ? &gg0 : nullptr);
   // D14: the reward buffs (the jungle majors' Green/Blue/Orange to the last player to hit, the parasite's stage 2/3
   // buffs to the team), to living receivers only (gms::damage::BuffReceivers).
   if (!g_opt.rewardBuffs) return;
@@ -1892,7 +1947,7 @@ void FormatStats(char* buf, std::size_t size) {
                 "deaths %u (damage %u, kill %u; players %u), OnNearbyDeath %u (nearby objects %u), OnKill %u, player events "
                 "%u; rewarded deaths %u: xp grants %u (%.0f), gold grants %u (%.0f), D14 reward buffs %u (refused %u); "
                 "OnGrantGold calls %u (handlers %u, "
-                "%.0f -> %.0f); start gold %.0f, passive grants %u (%.0f); ends: modifiers %u (item passives kept %u), "
+                "%.0f -> %.0f, changed %u); role gold (ROLEVIM) %u grants (%+.0f); start gold %.0f, passive grants %u (%.0f); ends: modifiers %u (item passives kept %u), "
                 "abilities interrupted %u (left running, released the agent: %u), deaths done %u, pending %zu; death "
                 "timers %u, respawns %u (failed %u, dropped %u, waiting %zu); D1h: "
                 "player deaths counted %u (%u before the report), player kills %u (first blood %u), assists %u, creeps "
@@ -1900,7 +1955,8 @@ void FormatStats(char* buf, std::size_t size) {
                 "exceptions %u",
                 g_st.deaths, g_st.byDamage, g_st.byKill, g_st.playerDeaths, g_st.nearbyEvents, g_st.nearbyObjects,
                 g_st.killEvents, g_st.playerEvents, g_st.rewardDeaths, g_st.xpGrants, g_st.xp, g_st.goldGrants, g_st.gold,
-                g_st.rewardBuffs, g_st.rewardBuffsRefused, g_st.goldHookCalls, g_st.goldHandlers, g_st.goldHookIn, g_st.goldHookOut, g_st.startGold, g_st.passiveGrants,
+                g_st.rewardBuffs, g_st.rewardBuffsRefused, g_st.goldHookCalls, g_st.goldHandlers, g_st.goldHookIn, g_st.goldHookOut, g_st.goldHandlerChanges,
+                g_st.roleGoldGrants, g_st.roleGold, g_st.startGold, g_st.passiveGrants,
                 g_st.passiveGold, g_st.modifiersEnded, g_st.itemPassivesKept, g_st.abilitiesInterrupted,
                 g_st.abilitiesKeptReleased, g_st.pendingDone, g_pending.size(),
                 g_st.deathTimers, g_st.respawns, g_st.respawnsFailed, g_st.respawnsDropped, g_respawns.size(),

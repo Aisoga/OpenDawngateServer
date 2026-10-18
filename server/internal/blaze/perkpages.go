@@ -272,15 +272,37 @@ func loadoutPages(a store.Account, c *content.Content) uint32 {
 
 // ensurePages gives the account a perk page per loadout-page item it owns (a new account owns one: its
 // first page, R11: "a new account needs a page"); accounts made before B7c get theirs at their next
-// login. Without content nothing happens.
+// login. Then, if the content has the starter page's parts and no page was ever saved (starterDue), the
+// first page becomes the starter page and the account owns at least the items it uses; so a new account
+// starts with it and an older one gets it once. Without content nothing happens.
 func (s *Server) ensurePages(acct store.Account) store.Account {
-	if s.Content.Empty() || uint32(len(acct.PerkPages)) >= loadoutPages(acct, s.Content) {
+	if s.Content.Empty() {
+		return acct
+	}
+	starter, haveStarter := StarterPage(s.Content)
+	due := func(a store.Account) (pages, page bool) {
+		return uint32(len(a.PerkPages)) < loadoutPages(a, s.Content), haveStarter && starterDue(a.PerkPages)
+	}
+	if pages, page := due(acct); !pages && !page {
 		return acct
 	}
 	var added []uint32
+	var starterID uint32
 	got, err := s.Store.Update(acct.UserID, func(a *store.Account) {
+		added, starterID = nil, 0
 		for uint32(len(a.PerkPages)) < loadoutPages(*a, s.Content) {
 			added = append(added, a.AddPage().ID)
+		}
+		if _, page := due(*a); page {
+			first := &a.PerkPages[0]
+			first.Name, first.Shapes = starter.Name, store.ClonePages([]store.PerkPage{starter})[0].Shapes
+			if a.Items == nil {
+				a.Items = map[uint32]uint32{}
+			}
+			for id, n := range s.Content.StarterComponents() {
+				a.Items[id] = max(a.Items[id], n)
+			}
+			starterID = first.ID
 		}
 	})
 	if err != nil {
@@ -289,6 +311,46 @@ func (s *Server) ensurePages(acct store.Account) store.Account {
 			return acct
 		}
 	}
-	s.Log.Logf("blaze", "   account %d: perk pages %v created", got.UserID, added)
+	if len(added) > 0 {
+		s.Log.Logf("blaze", "   account %d: perk pages %v created", got.UserID, added)
+	}
+	if starterID != 0 {
+		s.Log.Logf("blaze", "   account %d: perk page %d is the starter page %q", got.UserID, starterID, starter.Name)
+	}
 	return got
+}
+
+// StarterPage is the starter Spiritstone page built from the content (content.StarterPage: the Starter_ shapes
+// with a Spark in every socket, so each shape is complete), as page 1, version 1, status 1. false when the
+// content lacks its parts (content.StarterParts).
+func StarterPage(c *content.Content) (store.PerkPage, bool) {
+	parts, err := c.StarterParts()
+	if err != nil {
+		return store.PerkPage{}, false
+	}
+	p := store.PerkPage{ID: 1, Name: content.StarterPageName, Version: 1, Status: 1}
+	for _, part := range parts {
+		shape := store.PerkShape{ID: part.ShapeID, Cell: part.Cell, Rotation: part.Rotation}
+		for i := 0; i < part.Sockets; i++ {
+			shape.Gems = append(shape.Gems, store.PerkGem{ID: part.GemID, Socket: uint8(i)})
+		}
+		p.Shapes = append(p.Shapes, shape)
+	}
+	return p, true
+}
+
+// starterDue says whether the account's first page should become the starter page: no page was ever saved by
+// the player (every page still empty at version 1: the client sends version 2 or more with its first save, and
+// a saved page keeps any version it had) and the first is still the default "Page 1". A page a player saved,
+// emptied or renamed is never touched, and the starter page itself has shapes, so it is given once.
+func starterDue(pages []store.PerkPage) bool {
+	if len(pages) == 0 || pages[0].Name != "Page 1" {
+		return false
+	}
+	for _, p := range pages {
+		if p.Version > 1 || len(p.Shapes) > 0 {
+			return false
+		}
+	}
+	return true
 }

@@ -125,6 +125,8 @@ The key is in `Dawngate-Data\certs\<address>\`. Keep it private, and keep it. If
 
 Every release has a version, its name, such as `Dawngate-Restoration-20261016-905ef17f5f`. The server window shows it at the start and when the server runs (`Version …: players need Start-Client.exe of the same release`), and `Start-Server.exe --version` prints it. A player's `Start-Client.exe` logs in only on a server of exactly the same version: any difference refuses the login, and their server list shows your server as **other version**. A server of a release from before this check doesn't tell its version, and every current `Start-Client.exe` refuses it (**version unknown**).
 
+Your server checks it too: each player's `Start-Client.exe` names its release when it connects, and the server lets in only its own release. A `Start-Client.exe` from before that check (or one changed to skip its own) can't name one and is refused; that player sees *The server you picked doesn't answer*, and your server's log says why (`session refused: its Start-Client names no release …` or `… is release X, this server is release Y …`). For tests with mixed builds, `server_flags = --allow-any-client` in `Start-Server.ini` lets every release in.
+
 So when you update the server, tell your players which release it runs now, and publish it next to your key's fingerprint. To update:
 
 1. Stop the server (Ctrl+C, or close its window). This ends running matches.

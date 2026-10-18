@@ -21,6 +21,8 @@ references are computed with the Go setup's own ca_modulus.bin):
   server picker  the client copy's game\\Data\\zz_ServerPicker.snap (Start-Client's picker mode) =
                  patch_login_movie.build(its own LoginScreen.snap), when it is there or with --picker; the server
                  list's archive zz_ServerList.snap (written by Start-Client before each game start) isn't compared
+  bot check box  the client copy's game\\Data\\zz_MatchOptions.snap = patch_login_movie.build(its own
+                 Battlegrounds.snap, spec matchoptions); the host copy has none
 
 A Start-Server with the tunnel makes no client copy (Start-Client does), and a player's folder has no host copy and
 no server certificates: the checks of a copy that isn't there are left out (one of the two must be there).
@@ -203,6 +205,19 @@ def main(argv):
     else:
         r.line("client: no server picker (not set up in picker mode)")
 
+    print("bot check box")
+    mo = patch_login_movie.SPECS["matchoptions"]
+    if not have_client:
+        r.line("no client copy")
+    else:
+        want = patch_login_movie.build(j(client, *mo.source.split("/")), spec=mo)
+        p = j(client, *mo.rel.split("/"))
+        got = read(p) if os.path.isfile(p) else b""
+        r.check(got == want, "client zz_MatchOptions.snap = patch_login_movie.py --spec matchoptions",
+                f"{sha(got)[:16]} vs {sha(want)[:16]}")
+        r.check(not os.path.isfile(j(host, *mo.rel.split("/"))), "the host copy has no bot check box")
+        print(f"client zz_MatchOptions.snap: {sha(got)}  ({'equal' if got == want else 'DIFFERENT'})")
+
     if have_host:
         print("host DLL")
         game = j(host, "game")
@@ -239,7 +254,8 @@ def main(argv):
                 rel = os.path.relpath(j(dp, f), copy).replace("\\", "/")
                 if rel not in untouched and not rel.endswith(".orig") and rel != bot_profiles.REL and not (
                         label == "host" and (rel.startswith("game/dgsim") or rel == "game/PhysXLoader_orig.dll")) and not (
-                        label == "client" and rel in (patch_locale.REL, patch_login_movie.REL, LIST_ARCHIVE)):
+                        label == "client" and rel in (patch_locale.REL, patch_login_movie.REL, LIST_ARCHIVE,
+                                                      patch_login_movie.SPECS["matchoptions"].rel)):
                     extra.append(rel)
         r.line(f"{label}: extra files {extra[:5] if extra else 'none'}")
 

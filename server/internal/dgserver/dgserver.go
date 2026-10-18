@@ -99,6 +99,7 @@ type config struct {
 	// --tunnel-pin-cert)
 	tunnel, gatewayKey                                    string
 	gatewayPort                                           int
+	allowAnyClient                                        bool // --allow-any-client: the gateway lets in any release
 	tunnelClient, tunnelAddress, tunnelPin, tunnelPinCert string
 	// --tunnel-front <folder> (with --tunnel-client): Start-Client's picker front instead of one tunnel, its server
 	// list and trusted keys in <folder>, the login screen's list written into --front-copy
@@ -1033,6 +1034,7 @@ func Run(args []string, h Hooks) int {
 	fs.StringVar(&cfg.tunnel, "tunnel", TunnelOff, `the encrypted tunnel's gateway: "on" serves it on --bind:--gateway-port (TCP and UDP) beside the plain ports, "auto" = on for a public --public-host, "off"`)
 	fs.IntVar(&cfg.gatewayPort, "gateway-port", tunnel.DefaultPort, "the tunnel gateway's port, TCP and UDP (the only port a public server forwards, with the website's)")
 	fs.StringVar(&cfg.gatewayKey, "gateway-key", "", `folder of the gateway's key (`+tunnel.CertFile+`, `+tunnel.KeyFile+`; made at the first start); default --certs`)
+	fs.BoolVar(&cfg.allowAnyClient, "allow-any-client", false, "the tunnel gateway lets in a Start-Client of any release (for developers); without it only Start-Client of this server's release logs in, and an older or other one is refused")
 	fs.StringVar(&cfg.tunnelClient, "tunnel-client", "", "test aid: run only the player's side of the tunnel to this gateway (host:port), listening on --tunnel-address; the game's TLS to the redirector ends here with --certs (CN = --tunnel-address)")
 	fs.StringVar(&cfg.tunnelAddress, "tunnel-address", "127.0.0.1", "--tunnel-client: the loopback address the player copy is patched for")
 	fs.StringVar(&cfg.tunnelPin, "tunnel-pin", "", "--tunnel-client: the gateway key's pin (64 hex digits)")

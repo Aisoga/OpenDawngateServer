@@ -62,6 +62,7 @@ struct Worker {
   bool checked = false;
 };
 std::map<std::uint32_t, Worker> g_workers;
+std::map<int, double> g_workerPlayerHitAt;  // WELLDEF: the same, an enemy player's creature or pet only
 std::map<int, double> g_workerHitAt;  // BOTREFLEX: well index -> match seconds of the last enemy hit on one of its workers
 
 double g_lastSecond = -1.0, g_lastTrace = -1.0;
@@ -985,7 +986,10 @@ void OnDamaged(void* target, void* attacker, float dealt) {
   if (!SehHit(target, attacker, dealt, &h, &targetId, &attackerId, noun, sizeof noun)) return;
   {  // BOTREFLEX: an enemy hit on a well's worker (the bots defend the well)
     auto w = g_workers.find(targetId);
-    if (w != g_workers.end() && h.attacker && !h.sameTeam && !h.self) g_workerHitAt[w->second.well] = g_now;
+    if (w != g_workers.end() && h.attacker && !h.sameTeam && !h.self) {
+      g_workerHitAt[w->second.well] = g_now;
+      if (core::IsPlayerHit(h)) g_workerPlayerHitAt[w->second.well] = g_now;  // WELLDEF: a shaper's (or its pet's)
+    }
   }
   auto seen = g_shapers.find(targetId);
   if (seen == g_shapers.end()) return;  // not a player's creature
@@ -1028,10 +1032,20 @@ int Threats(int team, Threat* out, int max) {
     if (g_core.Owner(i) != team || g_core.IsLocked(i) || static_cast<size_t>(i) >= g_info.size()) continue;
     const auto hit = g_workerHitAt.find(i);
     const bool attacked = hit != g_workerHitAt.end() && g_now - hit->second <= 5.0;
-    const bool captured = g_core.SecondsToCapture(i) >= 0.0;
-    if (!attacked && !captured) continue;
-    out[n].object = g_info[static_cast<size_t>(i)].object;
-    for (int k = 0; k < 3; ++k) out[n].pos[k] = g_info[static_cast<size_t>(i)].pos[k];
+    const auto playerHit = g_workerPlayerHitAt.find(i);
+    const double toCapture = g_core.SecondsToCapture(i);
+    const int capturers = g_core.Capturers(i);
+    if (!attacked && toCapture < 0.0 && capturers <= 0) continue;
+    Threat& t = out[n];
+    t = Threat();
+    t.object = g_info[static_cast<size_t>(i)].object;
+    t.well = i;
+    for (int k = 0; k < 3; ++k) t.pos[k] = g_info[static_cast<size_t>(i)].pos[k];
+    t.moving = toCapture >= 0.0;
+    t.secondsToCapture = toCapture;
+    t.capturers = capturers;
+    t.workerHit = attacked;
+    t.workerPlayerHit = playerHit != g_workerPlayerHitAt.end() && g_now - playerHit->second <= 5.0;
     ++n;
   }
   return n;

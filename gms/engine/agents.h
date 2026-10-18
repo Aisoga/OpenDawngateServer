@@ -97,6 +97,8 @@ struct Options {
   // BOTREFLEX (gms/core/agents/reflex.h): towers' hits are fled, Hunters and Predators fight back, engage shapers in the
   // jungle and defend their wells
   bool botReflex = true;             // [host] bot_reflex
+  bool botJungleFight = true;        // [host] bot_jungle_fight: a jungler's "weaker" compares HP points (PRETUSBOT)
+  bool botWellDefense = true;        // [host] bot_well_defense: Tacticians, Hunters, Predators defend their wells (WELLDEF)
   bool botBackStep = true;           // [host] bot_back_step: the lane phases' Back gambit is a short step, not a walk home
   bool botRecall = true;             // [host] bot_recall: a bot sent home casts Return to Base when it is quiet and far away
   // BOTTEMPO (gms/core/agents/brain.h HoldStuck, TargetStale): no bot stands for minutes under its own walk to an

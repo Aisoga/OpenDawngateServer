@@ -17,7 +17,9 @@ in docs/RUNNING_THE_CLIENT.md *How to start it*, or by setup_all.py); this scrip
               patch_locale.py --host 127.0.0.N (game/Data/Locale/en-us/AA_Server.package: the login texts, the
               links at the lane's dgserver pages; also in the copies e, f and lan below), and bot_profiles.py
               (game/Data/zz_BotProfiles.snap: the bot profiles, a Warden with the Predator role; also in the host
-              copy and the copies e, f, h and lan).
+              copy and the copies e, f, h and lan), and patch_login_movie.py --spec matchoptions
+              (game/Data/zz_MatchOptions.snap: the CREATE GAME dialog's bot check box; also in the copies e, f and
+              lan, not in the host copy).
   certs       server/certs/lane_X (make_certs.py, CN=127.0.0.N: the client checks the CN against the redirector
               host it connected to).
   host copy   client/run_854_server/Dawngate's twin client/run_854_server_X/Dawngate (setup_server_copy.py from
@@ -77,6 +79,7 @@ sys.path.insert(0, HERE)  # -I drops the script folder
 import patch_client  # noqa: E402
 import bot_profiles  # noqa: E402
 import patch_locale  # noqa: E402
+import patch_login_movie  # noqa: E402
 
 # One entry per lane; run_session.ps1 has the same table ($LaneTable; test_a6.py checks they agree).
 LANES = {
@@ -217,6 +220,23 @@ def bot_profiles_step(data_dir, check_only, missing):
     run([sys.executable, "-I", os.path.join(HERE, "bot_profiles.py"), data_dir])
 
 
+def match_options_step(data_dir, check_only, missing):
+    """a client copy's added CREATE GAME dialog with the bot check box (patch_login_movie.py --spec matchoptions:
+    game/Data/zz_MatchOptions.snap), byte for byte what it makes from the copy's own Battlegrounds.snap."""
+    spec = patch_login_movie.SPECS["matchoptions"]
+    src = os.path.join(data_dir, *spec.source.split("/")[2:])
+    added = os.path.join(data_dir, *spec.rel.split("/")[2:])
+    want = patch_login_movie.build(src, spec=spec)
+    if os.path.isfile(added):
+        with open(added, "rb") as f:
+            if f.read() == want:
+                return
+    if check_only:
+        missing.append(f"{added} (patch_login_movie.py --spec matchoptions)")
+        return
+    run([sys.executable, "-I", os.path.join(HERE, "patch_login_movie.py"), "--spec", "matchoptions", src, added])
+
+
 def run(cmd):
     print("  $ " + " ".join(cmd))
     r = subprocess.run(cmd)
@@ -289,6 +309,7 @@ def setup(lane, dll, with_host, check_only, root=None):
                 run([py, "-I", os.path.join(HERE, "patch_config.py"), data_dir, "--host", cfg["address"]])
         locale_step(data_dir, cfg["address"], check_only, missing)
         bot_profiles_step(data_dir, check_only, missing)
+        match_options_step(data_dir, check_only, missing)
     # 4. the match-host copy with the harness (setup_server_copy.py copies the lane's client copy once)
     host_keys = HOST_KEYS if lane == "a" else None
     if with_host:
@@ -450,6 +471,7 @@ def setup_extra(name, check_only, root=None):
                 run([py, "-I", os.path.join(HERE, "patch_config.py"), data_dir, "--host", lane["address"]])
         locale_step(data_dir, lane["address"], check_only, missing)
         bot_profiles_step(data_dir, check_only, missing)
+        match_options_step(data_dir, check_only, missing)
     return finish(f"copy {name}", missing, check_only)
 
 
@@ -505,6 +527,7 @@ def setup_lan(address, check_only, new_certs=False, root=None):
                 run([py, "-I", os.path.join(HERE, "patch_config.py"), data_dir, "--host", address])
         locale_step(data_dir, address, check_only, missing)
         bot_profiles_step(data_dir, check_only, missing)
+        match_options_step(data_dir, check_only, missing)
     return finish("lan copy", missing, check_only)
 
 

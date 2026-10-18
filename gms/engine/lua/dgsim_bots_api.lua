@@ -26,7 +26,7 @@
 
 dgsim_bots = dgsim_bots or {}
 local B = dgsim_bots
-B.version = '9'  -- 9: BOTJUNGLE's Hunter tasks and ping following; 8: BOTTEAM's team calls; 7: BOTCOMP's composition rules (Predator harass, Hunter parasite, lane lock); 2: D6b's script fix-ups; 3: D6c's BailOnKill fix-up; 4: D6e's GetClosestCampPosition; 5: BOTPARA's parasite fix-up; 6: BOTIDLE's camp radius
+B.version = '10'  -- 10: PRETUSBOT's stand at the parasite; 9: BOTJUNGLE's Hunter tasks and ping following; 8: BOTTEAM's team calls; 7: BOTCOMP's composition rules (Predator harass, Hunter parasite, lane lock); 2: D6b's script fix-ups; 3: D6c's BailOnKill fix-up; 4: D6e's GetClosestCampPosition; 5: BOTPARA's parasite fix-up; 6: BOTIDLE's camp radius
 B.config = B.config or {
   scanSeconds = 5,            -- game seconds between walks of the object pool (structures, wells)
   scanLimit = 4096,           -- pool slots walked at most
@@ -1184,6 +1184,36 @@ function B.HunterParasitePos(bot)
   return nil
 end
 
+-- PRETUSBOT (2026-10-18): the Hunter "keeps dancing around the parasite without doing anything" (the user). The camp
+-- trick above gave the Farm plan the parasite's centre as the camp: MoveToNextCamp walked him onto it (39 of the 49
+-- snapshots of an idle Hunter on the parasite on the user's server were within 2 units of the centre), and from there
+-- his W (ability_Artificer_W_DelaySwing, a Position jump of range 13.24 aimed at the target's position = his own feet)
+-- jumps the way he faces (a point cast of zero length), 12-19 units out, beyond the camp test's radius 9; Farm's
+-- first link (!IsNearNextCreepCamp) then walked him back to the centre with ability_Bot_MoveToTarget, which holds him
+-- until he arrives (no attack on the way), and the next W sent him out again: re-walks of 12.0, 18.6, 12.0 units every
+-- 7-8 s. Now (B.hunterParasiteStand, [host] bot_hunter_parasite 1) the walk ends parasiteStandOff short of the centre
+-- on his side, and the near test passes anywhere within parasiteNear of it, so a jump or a knock-back inside the fight
+-- keeps him in ClearCamp (its gambits look 30 around; the basic attack walks up through the Pursue leaf) [assumed:
+-- the distances]. B.hunterParasiteStand = false walks him to the centre as before.
+B.parasiteStandConfig = B.parasiteStandConfig or { standOff = 6, near = 20 }
+
+-- The point the camp conditions get for Hunter `bot` at the parasite `centre`: `kind` 'near'
+-- (condition_Bot_IsNearNextCreepCamp, which tests distance < its radius) gets his own position while he is within
+-- `near` of the centre (passes) and the centre otherwise (fails, as near >= the radius); 'next' (the walk) the point
+-- standOff from the centre toward him.
+function B.HunterParasiteSpot(bot, centre, kind)
+  local cfg = B.parasiteStandConfig
+  local p = nGameObject.GetPosition(bot)
+  local dx, dy = p.x - centre.x, p.y - centre.y
+  local d = math.sqrt(dx * dx + dy * dy)
+  if kind == 'near' then
+    if d < cfg.near then return p end
+    return centre
+  end
+  if d <= cfg.standOff then return p end
+  return vec(centre.x + dx * cfg.standOff / d, centre.y + dy * cfg.standOff / d, centre.z)
+end
+
 -- B.CompositionTick (about once a second, after the mission tick): end the harass missions of Predators whose team has
 -- not outnumbered the enemy in their lane for harassHold seconds. Returns the number of missions ended.
 function B.CompositionTick()
@@ -1286,10 +1316,11 @@ function B.ApplyCompositionFixup()
   end
   for _, n in ipairs({ 'condition_Bot_NextCreepCamp', 'condition_Bot_IsNearNextCreepCamp' }) do
     local original = t[n][1]
+    local kind = n == 'condition_Bot_NextCreepCamp' and 'next' or 'near'
     t[n][1] = function(bot, ...)
-      B.campAsker = bot
+      B.campAsker, B.campAskerKind = bot, kind
       local ok, a, b, c, d, e, g = pcall(original, bot, ...)
-      B.campAsker = nil
+      B.campAsker, B.campAskerKind = nil, nil
       if not ok then error(a, 0) end
       return a, b, c, d, e, g
     end
@@ -1314,6 +1345,9 @@ function B.ApplyCompositionFixup()
       if bot ~= nil then
         -- the parasite (the team's kill phase), else BOTJUNGLE's task (a gank, a defence, a push, a ping, ...)
         local p = B.HunterParasitePos(bot)
+        if p ~= nil and B.hunterParasiteStand ~= false then
+          p = B.HunterParasiteSpot(bot, p, B.campAskerKind)  -- PRETUSBOT: his side of it, not its centre
+        end
         if p == nil and type(B.HunterTaskPos) == 'function' then p = B.HunterTaskPos(bot) end
         if p ~= nil then
           -- condition_Bot_NextCreepCamp treats a zero coordinate as "no camp"

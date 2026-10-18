@@ -65,6 +65,8 @@ Because the game's own code and data run the match, every shaper, ability and it
 
 **This PC** is the list's fixed first entry, so that a player needs only `Start-Client.exe`. `Start-Client.exe` contains the whole server, as `Start-Server.exe` does. At the first login to This PC it sets up the match host's copy of the game and starts the server in its own process, with the tunnel, on a loopback address of its own (`127.0.1.11`); the front then connects there like to any other server, and the server stops when the game ends. If `Start-Server.exe` already runs the server of the same folder, This PC is that one: a small lock file in the folder says which program runs the folder's server, so one folder never has two.
 
+**Updates** keep players on the newest numbered release, since a server plays only with `Start-Client.exe` of its own release. At its start `Start-Client.exe` contacts github.com once: it asks the project's repository for its latest release (nothing about the player is sent beyond what any web request carries). When that release is newer and the player agrees, it downloads the release's zip, checks every file against the release's list of SHA-256 hashes (`BUILD.txt`), and swaps the files in. Windows doesn't let a running program be replaced, but it lets it be renamed, so the running `Start-Client.exe` steps aside as `Start-Client.old.exe` and starts the new one; the next start deletes the old file. Its setup then refreshes the game copies from the new release's files.
+
 ## Why three languages
 
 - **Go** for the server and the release's two programs: a single program file with no installation, modern TLS, and enough flexibility to also speak the client's old TLS 1.1 handshake.

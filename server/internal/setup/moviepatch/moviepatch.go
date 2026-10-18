@@ -5,9 +5,13 @@
 // game\Data\zz_ServerPicker.snap that replaces the movie's path. The game's own tags and bytecode are kept as they
 // are; nothing of the game is shipped (the movie is made from the player's files).
 //
+// The CREATE GAME dialog's bot check box (client_ui/matchoptions, matchoptions_tags.hex) goes into its movie the same
+// way: UI/Scaleform/Battlegrounds/MatchOptionsUI.gfx from game\Data\Battlegrounds.snap into game\Data\zz_MatchOptions.snap.
+// A Spec names one such movie (Picker, MatchOptions).
+//
 // The output is deterministic: the movie keeps its CFX header (the version, the u32 length as stored plus the tags'
 // size) and its body is a zlib stream of stored blocks (65,535 bytes each, the last one final), which the archive
-// compresses (Snappy, snap.Encode). The picker's character id and depth (2000 each) must be free in the movie.
+// compresses (Snappy, snap.Encode). The class's character id and depth (2000 each) must be free in the movie.
 package moviepatch
 
 import (
@@ -52,6 +56,32 @@ const (
 	CharID    = 2000
 	Depth     = 2000
 	ClassName = "ServerPicker"
+)
+
+// MatchOptionsTags are the bot check box's four tags: DefineSprite 2000, DoABC (the class), SymbolClass 2000 ->
+// BotCheckbox, PlaceObject3 of 2000 at depth 2000 without an instance name.
+var MatchOptionsTags = mustHex(matchOptionsTagsHex)
+
+//go:embed matchoptions_tags.hex
+var matchOptionsTagsHex string
+
+// Spec is one added class: the archive in a copy its movie comes from (Source), the added archive (Rel), the movie's
+// path in both, the class's tags, its name, character id and root depth.
+type Spec struct {
+	What                          string // for messages: "the server picker"
+	Source, Rel, MoviePath, Class string
+	CharID, Depth                 int
+	Tags                          []byte
+}
+
+var (
+	// Picker is the login screen's server picker (Start-Client's picker mode).
+	Picker = Spec{What: "the server picker", Source: Source, Rel: Rel, MoviePath: MoviePath, Class: ClassName,
+		CharID: CharID, Depth: Depth, Tags: PickerTags}
+	// MatchOptions is the CREATE GAME dialog's "Fill open seats with bots" check box (every player copy).
+	MatchOptions = Spec{What: "the bot check box", Source: "game/Data/Battlegrounds.snap",
+		Rel: "game/Data/zz_MatchOptions.snap", MoviePath: "UI/Scaleform/Battlegrounds/MatchOptionsUI.gfx",
+		Class: "BotCheckbox", CharID: 2000, Depth: 2000, Tags: MatchOptionsTags}
 )
 
 // defining are the tags whose first u16 is the character id they define (standard SWF and Scaleform's 1001-1009).
@@ -231,8 +261,16 @@ func ZlibStored(data []byte) []byte {
 	return binary.BigEndian.AppendUint32(out, adler32.Checksum(data))
 }
 
-// PatchMovie returns the login movie (a CFX file) with tags inserted before the root timeline's first ShowFrame.
+// PatchMovie returns the login movie (a CFX file) with tags inserted before the root timeline's first ShowFrame (the
+// server picker's checks; Spec.PatchMovie for another movie).
 func PatchMovie(raw, tags []byte) ([]byte, error) {
+	sp := Picker
+	sp.Tags = tags
+	return sp.PatchMovie(raw)
+}
+
+// PatchMovie returns the movie (a CFX file) with the spec's tags inserted before the root timeline's first ShowFrame.
+func (sp Spec) PatchMovie(raw []byte) ([]byte, error) {
 	if len(raw) < 8 || (string(raw[:3]) != "CFX" && string(raw[:3]) != "CWS") {
 		return nil, errors.New("not a compressed Scaleform movie (CFX)")
 	}
@@ -250,15 +288,16 @@ func PatchMovie(raw, tags []byte) ([]byte, error) {
 		return nil, err
 	}
 	switch {
-	case s.names[ClassName]:
-		return nil, errors.New("the movie has the server picker already")
-	case s.ids[CharID]:
-		return nil, fmt.Errorf("the movie uses character id %d", CharID)
-	case s.depths[Depth]:
-		return nil, fmt.Errorf("the movie uses depth %d on its root timeline", Depth)
+	case s.names[sp.Class]:
+		return nil, fmt.Errorf("the movie has %s already", sp.What)
+	case s.ids[sp.CharID]:
+		return nil, fmt.Errorf("the movie uses character id %d", sp.CharID)
+	case s.depths[sp.Depth]:
+		return nil, fmt.Errorf("the movie uses depth %d on its root timeline", sp.Depth)
 	case s.firstShow < 0:
 		return nil, errors.New("no ShowFrame on the root timeline")
 	}
+	tags := sp.Tags
 	nb := make([]byte, 0, len(body)+len(tags))
 	nb = append(append(append(nb, body[:s.firstShow]...), tags...), body[s.firstShow:]...)
 	out := append([]byte(nil), raw[:4]...)
@@ -267,24 +306,27 @@ func PatchMovie(raw, tags []byte) ([]byte, error) {
 }
 
 // Build returns zz_ServerPicker.snap's bytes from the player's LoginScreen.snap.
-func Build(loginSnap []byte) ([]byte, error) {
-	a, err := snap.Parse(loginSnap)
+func Build(loginSnap []byte) ([]byte, error) { return Picker.Build(loginSnap) }
+
+// Build returns the added archive's bytes (Rel) from the player's own Source archive.
+func (sp Spec) Build(source []byte) ([]byte, error) {
+	a, err := snap.Parse(source)
 	if err != nil {
 		return nil, err
 	}
 	for _, e := range a.Entries {
-		if e.Name != MoviePath {
+		if e.Name != sp.MoviePath {
 			continue
 		}
 		raw, err := a.Read(e)
 		if err != nil {
 			return nil, err
 		}
-		movie, err := PatchMovie(raw, PickerTags)
+		movie, err := sp.PatchMovie(raw)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", MoviePath, err)
+			return nil, fmt.Errorf("%s: %w", sp.MoviePath, err)
 		}
-		return snap.Pack([]snap.File{{Name: MoviePath, Data: movie}}), nil
+		return snap.Pack([]snap.File{{Name: sp.MoviePath, Data: movie}}), nil
 	}
-	return nil, fmt.Errorf("no %s in the archive", MoviePath)
+	return nil, fmt.Errorf("no %s in the archive", sp.MoviePath)
 }

@@ -20,9 +20,9 @@
      from tools\raknet\RakNet and a note on this project's RakNet patches (gms\cmake\raknet_patches),
      Go's LICENSE and (ADR-4) the licence files of every outside Go module the two programs link, from the
      module cache: modernc.org/sqlite and its dependencies, golang.org/x/crypto, golang.org/x/sys),
-     BUILD.txt (commit, Go version, every file's SHA-256). The server picker's compiled class is checked to be in
-     the SWF tags Start-Client.exe embeds (picker_tags.hex), and those in the built Start-Client.exe; the notices name
-     its AGPL source and the development-only tools (the Flex SDK compiler, FFDec), which aren't shipped.
+     BUILD.txt (commit, Go version, every file's SHA-256). The compiled classes of the server picker and the bot check box
+     are checked to be in the SWF tags Start-Client.exe embeds (picker_tags.hex, matchoptions_tags.hex), and those in
+     the built Start-Client.exe; the notices name their AGPL sources and the development-only tools (the Flex SDK compiler, FFDec), which aren't shipped.
      The folder <Out>\<Name>-linux\ (unless -NoLinux): start-server, the same host\ files, dawngate.service (the
      systemd unit) and README.txt (re\scripts\release\README-Linux.txt), LICENSE.txt, THIRD-PARTY-NOTICES.txt (for
      start-server's own modules) and BUILD.txt, every text with LF line ends.
@@ -126,27 +126,34 @@ try {
 }
 $goVersion = "$(& $go version)".Trim()
 
-# the server picker: its compiled class (client_ui\serverpicker\ServerPicker.abc.hex) must be inside the four SWF tags
-# that Start-Client.exe embeds (server\internal\setup\moviepatch\picker_tags.hex, go:embed), and those tags' text
-# must be in the built Start-Client.exe (the release ships no other picker file)
+# our classes in the game's UI movies, the server picker and the CREATE GAME dialog's bot check box: each compiled
+# class (client_ui\<folder>\<Class>.abc.hex) must be inside the four SWF tags that Start-Client.exe embeds
+# (server\internal\setup\moviepatch\<name>_tags.hex, go:embed), and those tags' text must be in the built
+# Start-Client.exe (the release ships no other file of them)
 function Read-HexFile([string]$path) {
     $t = ([IO.File]::ReadAllText($path)) -replace '\s', ''
     $b = New-Object byte[] ($t.Length / 2)
     for ($i = 0; $i -lt $b.Length; $i++) { $b[$i] = [Convert]::ToByte($t.Substring(2 * $i, 2), 16) }
     , $b
 }
-$tagsHex = Join-Path $Repo 'server\internal\setup\moviepatch\picker_tags.hex'
-$abcHex = Join-Path $Repo 'client_ui\serverpicker\ServerPicker.abc.hex'
-foreach ($f in @($tagsHex, $abcHex, (Join-Path $Repo 'client_ui\serverpicker\ServerPicker.as'))) { if (-not (Test-Path $f)) { Fail "the server picker: no $f" } }
-$tagsBytes = Read-HexFile $tagsHex; $abcBytes = Read-HexFile $abcHex
-if (-not $latin1.GetString($tagsBytes).Contains($latin1.GetString($abcBytes))) {
-    Fail "the server picker: picker_tags.hex doesn't hold ServerPicker.abc.hex's class (rebuild both with re\scripts\build_picker.py build)"
+function Test-UiClass([string]$what, [string]$tagsName, [string]$folder, [string]$class) {
+    $tagsHex = Join-Path $Repo "server\internal\setup\moviepatch\$tagsName"
+    $abcHex = Join-Path $Repo "client_ui\$folder\$class.abc.hex"
+    foreach ($f in @($tagsHex, $abcHex, (Join-Path $Repo "client_ui\$folder\$class.as"))) { if (-not (Test-Path $f)) { Fail "${what}: no $f" } }
+    $tb = Read-HexFile $tagsHex; $ab = Read-HexFile $abcHex
+    if (-not $latin1.GetString($tb).Contains($latin1.GetString($ab))) {
+        Fail "${what}: $tagsName doesn't hold $class.abc.hex's class (rebuild both with re\scripts\build_picker.py build)"
+    }
+    $first = ([IO.File]::ReadAllLines($tagsHex) | Where-Object { $_.Trim() } | Select-Object -First 1).Trim()
+    if (-not ([IO.File]::ReadAllText((Join-Path $dir 'Start-Client.exe'), $latin1)).Contains($first)) {
+        Fail "${what}: Start-Client.exe does not embed $tagsName"
+    }
+    Write-Host "${what}: its class ($($ab.Length) bytes) in the tags ($($tb.Length) bytes), embedded in Start-Client.exe" -ForegroundColor Green
+    @{ Bytes = $tb; First = $first }
 }
-$firstLine = ([IO.File]::ReadAllLines($tagsHex) | Where-Object { $_.Trim() } | Select-Object -First 1).Trim()
-if (-not ([IO.File]::ReadAllText((Join-Path $dir 'Start-Client.exe'), $latin1)).Contains($firstLine)) {
-    Fail 'the server picker: Start-Client.exe does not embed picker_tags.hex'
-}
-Write-Host "the server picker: its class ($($abcBytes.Length) bytes) in the tags ($($tagsBytes.Length) bytes), embedded in Start-Client.exe" -ForegroundColor Green
+$picker = Test-UiClass 'the server picker' 'picker_tags.hex' 'serverpicker' 'ServerPicker'
+$botBox = Test-UiClass 'the bot check box' 'matchoptions_tags.hex' 'matchoptions' 'BotCheckbox'
+$tagsBytes = $picker.Bytes; $firstLine = $picker.First
 # start-server links the setup with the tags too (only Start-Client.exe uses them); its notice names them if it holds them
 $linuxPicker = $Linux -and ([IO.File]::ReadAllText((Join-Path $ldir 'start-server'), $latin1)).Contains($firstLine)
 
@@ -222,23 +229,25 @@ function New-Notices([string]$sep, [string]$programs, [string]$contain, [string[
     }
     $n += @('', 'The MSVC static runtime in dgsim.dll needs no notice.')
     if ($pickerFirst) {
-        $n += @('', '---- The server picker on the login screen ----', '',
+        $n += @('', '---- The server picker on the login screen and the bot check box of CREATE GAME ----', '',
             $pickerFirst,
-            "this project's own code under the GNU AGPL v3 (LICENSE.txt); its source is client_ui/serverpicker/ServerPicker.as",
-            'in the source repository, published with the rest of the code. On the player''s PC, Start-Client adds these tags to',
-            'a copy of the login screen''s movie taken from the player''s own game files; no file of the game is in this release.',
-            'Two tools are used only during development, to compile and inspect that class; nothing of them is in this release',
-            'and none of their code is in the compiled class: the Apache Flex SDK compiler (mxmlc, Apache License 2.0) and',
+            "this project's own code under the GNU AGPL v3 (LICENSE.txt); their sources are client_ui/serverpicker/ServerPicker.as",
+            'and client_ui/matchoptions/BotCheckbox.as in the source repository, published with the rest of the code. On the',
+            'player''s PC, Start-Client adds these tags to copies of the login screen''s and the CREATE GAME dialog''s movies taken',
+            'from the player''s own game files; no file of the game is in this release.',
+            'Two tools are used only during development, to compile and inspect those classes; nothing of them is in this release',
+            'and none of their code is in the compiled classes: the Apache Flex SDK compiler (mxmlc, Apache License 2.0) and',
             'JPEXS Free Flash Decompiler (FFDec, GNU GPL v3).')
     }
     , $n
 }
 $tagsKB = [int][Math]::Ceiling($tagsBytes.Length / 1024)
+$botKB = [int][Math]::Ceiling($botBox.Bytes.Length / 1024)
 $notices = New-Notices '\' 'Start-Server.exe and Start-Client.exe' 'contain' $modules `
-    "Start-Client.exe embeds the compiled ActionScript 3 class of the server picker (four SWF tags, $tagsKB KB). It is"
+    "Start-Client.exe embeds the compiled ActionScript 3 classes of the server picker and the bot check box (four SWF tags each, $tagsKB KB and $botKB KB). They are"
 [IO.File]::WriteAllText((Join-Path $dir 'THIRD-PARTY-NOTICES.txt'), (($notices -join "`r`n") + "`r`n"))
 if ($Linux) {
-    $pf = if ($linuxPicker) { "start-server holds the compiled ActionScript 3 class of the server picker (four SWF tags, $tagsKB KB; only the Windows Start-Client.exe uses them). It is" } else { $null }
+    $pf = if ($linuxPicker) { "start-server holds the compiled ActionScript 3 classes of the server picker and the bot check box (four SWF tags each, $tagsKB KB and $botKB KB; only the Windows Start-Client.exe uses them). They are" } else { $null }
     $notices = New-Notices '/' 'start-server' 'contains' $linuxModules $pf
     [IO.File]::WriteAllText((Join-Path $ldir 'THIRD-PARTY-NOTICES.txt'), (($notices -join "`n") + "`n"))
 }

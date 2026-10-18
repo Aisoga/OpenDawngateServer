@@ -84,7 +84,16 @@ Start-Client.exe [<server address or tag>] [options]
 | `--version` | Print the release's version and exit. It plays only on servers of the same version. |
 | `--local-trust on\|off` | This PC without passwords: `on` (the default) lets any login name in on the server `Start-Client.exe` runs for This PC, with any password; `off` checks passwords there. |
 
-`Start-Client.ini` has the keys `server` (empty: the server list), `folder`, `tunnel`, `gateway_port`, `picker` (`auto`, `on`, `off`) and `local_trust` (`on`, `off`). An older `Start-Client.ini` keeps working: its `server` becomes the first server of a new list, and its comments are updated.
+`Start-Client.ini` has the keys `server` (empty: the server list), `folder`, `tunnel`, `gateway_port`, `picker` (`auto`, `on`, `off`), `local_trust` (`on`, `off`) and `update_check` (`on`, `off`). An older `Start-Client.ini` keeps working: its `server` becomes the first server of a new list, and its comments are updated.
+
+**Updates.** A numbered release (`v0.6`, `v1.2.3`) asks once at each start for the project's latest release (one HTTPS request to `api.github.com`, at most 5 seconds; no answer: it starts as usual). When that one is newer (`v0.10` is newer than `v0.9`), it asks *Version v0.6 is available (you have v0.5). Update now? [Y/n]*; Enter or `y` updates:
+
+1. The release's `<version>.zip` is downloaded into `Dawngate-Data\update\`, unpacked there, and every file is checked against the SHA-256 in its `BUILD.txt`; the new `Start-Client.exe` must say it is that version.
+2. It refuses while the folder's `Start-Server.exe` runs (close it and start `Start-Client.exe` again).
+3. The release's files replace the old ones (the programs, `README.txt`, the licences, `BUILD.txt`, `host\`); files only the old release had are removed. The running `Start-Client.exe` becomes `Start-Client.old.exe`, which the next start deletes. `Start-Client.ini`, `Start-Server.ini`, `Dawngate.zip` and `Dawngate-Data` are never touched. If a file can't be replaced, the files replaced so far are put back.
+4. The new `Start-Client.exe` starts in the same window with the same options; its setup brings the game copy and the match-host copy up to date (they are made from the release's files).
+
+It doesn't ask with `update_check = off`, `--check`, `--setup-only` or `--non-interactive`, without a console window, or in a build that isn't a numbered release (a nightly or a build from source). A failed update says why, keeps the old release and starts it; the downloaded zip stays in `Dawngate-Data\update\` when it was complete.
 
 **This PC.** The server list's first entry, tag `pc`, is the server on this PC; it can't be removed. A login to it goes to the server of `Start-Server.exe` in the same folder while that runs (`Dawngate-Data\server.lock` says which program runs the folder's server, its address and its key). Otherwise `Start-Client.exe` runs the server itself, in its own process, until the game ends:
 
@@ -149,14 +158,14 @@ The refusals the list can show at LOGIN, besides the server's own:
 | `00E80001` | This PC is always in the list: it can't be removed. |
 | `00E90001` | The server on this PC is still being set up. Log in again when the list says online. |
 | `00EA0001` | The server on this PC didn't start: Start-Client's window says why. |
-| `00EB0001` | This server runs another version than your Start-Client, or doesn't tell its version: both need the same one. |
+| `00EB0001` | This server runs another version than your Start-Client, or doesn't tell its version: both need the same one. SERVER above the login shows both versions; restart Start-Client to update. |
 | `00EC0001` | The server was added to your list. |
 
 A server whose sign-up isn't open refuses an unknown login name and a wrong password alike with `000B0001`: *The login name or password you entered is incorrect. No account on this server yet? Make one first: Sign up now! below.* (An open server refuses a wrong password with `000C0001`, without the second sentence.)
 
 **Sign-up and the login screen's links.** The list shows each server's sign-up mode (`open`, `invite only`, `closed`, `no password` for This PC without passwords), which the server answers inside its tunnel with its version. *Sign up now!* and *Forgot Password?* open the selected server's page through `Start-Client.exe` (`http://127.0.0.1:18080/dawngate/pick/<n>/signup` and `…/password`, where `<n>` is the server's place in the list for this run; the game's own links `/dawngate/signup` and `/dawngate/password` open a page that lists the servers). `Start-Client.exe` reaches a server for its page through a short tunnel session of its own, without a login; a key that isn't trusted yet is shown on the page with its fingerprint and trusted only when you confirm it there, and a changed key is refused. The server answers with its own page, or sends the browser on to its website. The start page and the legal links go to the server of your last login, else to the list.
 
-**Versions.** Every release has a version, its name (`Start-Client.exe --version` and `Start-Server.exe --version` print it; both windows show it at the start). A login is refused with `00EB0001` before it reaches a server whose version differs from `Start-Client.exe`'s in any way, or that doesn't tell its version (a release from before this check); This PC never is. The server answers its version inside the tunnel, without opening a session, and the list asks it with each status check. A server without the tunnel answers it on its HTTP port (`/dawngate/version.txt`); `Start-Client.exe --tunnel off` asks it at its start and doesn't start the game on another version. A build made from the source without the release script names its commit instead (`dev-<commit>`, `+dirty` with uncommitted changes).
+**Versions.** Every release has a version, its name (`Start-Client.exe --version` and `Start-Server.exe --version` print it; both windows show it at the start). A login is refused with `00EB0001` before it reaches a server whose version differs from `Start-Client.exe`'s in any way, or that doesn't tell its version (a release from before this check); This PC never is. The server answers its version inside the tunnel, without opening a session, and the list asks it with each status check. A server without the tunnel answers it on its HTTP port (`/dawngate/version.txt`); `Start-Client.exe --tunnel off` asks it at its start and doesn't start the game on another version. The server checks the other side: `Start-Client.exe` names its release when it opens a tunnel session (and again when the session reconnects), and the server refuses a session of another release or of none (a `Start-Client.exe` from before this check, which then shows *The server you picked doesn't answer*, `00E10001`; the server's log names both). This PC's session names the folder's server's own release, so it is never refused. `--allow-any-client` (in `server_flags`) lets every release in, for tests with mixed builds. A build made from the source without the release script names its commit instead (`dev-<commit>`, `+dirty` with uncommitted changes).
 
 ## Extra server options (server_flags)
 
@@ -164,7 +173,7 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 
 | Option | Default | Effect |
 |---|---|---|
-| `--owned all\|starter` | `all` | What new accounts own: everything, or only the starter items. |
+| `--owned all\|starter` | `all` | What new accounts own: everything, or only the starter items (the always-owned items, a few shapers, a perk page, and the Spiritstones and Sparks of the filled starter page). |
 | `--ftue-required` | off | Bring back the original's first-time screen, where new accounts can only play practice. |
 | `--free-rotation <names>` | none | Shapers everyone can pick in shaper select, comma-separated (for example `Fenmore`). |
 | `--shaper-timers <ms>,<ms>,<ms>,<ms>` | the game's | The lengths of shaper select's four phases. |
@@ -183,6 +192,7 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 | `--gms-runner auto\|none\|<command>` | `auto` | What starts the match hosts' `Dawngate.exe`: `auto` starts it directly on Windows and through `wine` on other systems, `none` always directly, or a command such as `/opt/wine-stable/bin/wine`. |
 | `--limits auto\|on\|off` | `auto` | The limits: `auto` turns them on for a public address. |
 | `--status-check <time>` | `5s` | How often the server rechecks logged-in accounts, so that a disabled account is taken out quickly. |
+| `--allow-any-client` | off | Let in a `Start-Client.exe` of any release, also one from before the release check (for tests with mixed builds). Without it only the server's own release logs in. |
 
 ## The Dawngate-Data folder
 
@@ -196,6 +206,7 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 | `servers\` | `Start-Client.exe`'s server list `bookmarks.json`, and per server `<address>\` the trusted tunnel key `gateway.pin` or the trusted certificate authority. |
 | `host\` | The game copy the match hosts run, with `dgsim.dll`. `Start-Server.exe` makes it, or `Start-Client.exe` at the first login to This PC. |
 | `server.lock` | Which program runs the folder's server (`Start-Server.exe`, or `Start-Client.exe` for This PC), while it runs. |
+| `update\` | An update's download while it is installed; after a failed one, the release zip if it arrived whole. |
 
 Never share the game copies: they are the game's files.
 

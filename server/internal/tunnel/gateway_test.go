@@ -394,7 +394,7 @@ func TestProbeInfo(t *testing.T) {
 			}
 			go func() {
 				defer c.Close()
-				if kind, err := readHello(c); err == nil && kind != kindSession && kind != kindStream {
+				if _, kind, err := readHello(c); err == nil && kind != kindSession && kind != kindStream {
 					return // "unknown hello kind": closed
 				}
 			}()
@@ -474,7 +474,7 @@ func TestTunnelRefusals(t *testing.T) {
 	if st := rawHello(t, e.g, streamHello{session: s.id, token: s.token, port: 10040}.encode()); st != StatusPort {
 		t.Errorf("stream to the control port: %s", StatusText(st))
 	}
-	if st := rawHello(t, e.g, sessionHello{tunnelIP: [4]byte{192, 168, 1, 2}}.encode()); st != StatusAddress {
+	if st := rawHello(t, e.g, sessionHello{tunnelIP: [4]byte{192, 168, 1, 2}, release: e.g.Version}.encode()); st != StatusAddress {
 		t.Errorf("session for a LAN tunnel address: %s", StatusText(st))
 	}
 	h := sessionHello{tunnelIP: [4]byte{127, 0, 0, 1}}.encode()

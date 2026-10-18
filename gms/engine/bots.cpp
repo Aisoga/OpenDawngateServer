@@ -1342,7 +1342,9 @@ void LoadApi(void* sim) {
                           " dgsim_bots.teamStatusEvery = " + std::to_string(g_opt.teamStatusS) +
                           " dgsim_bots.hunterGank = " + (g_opt.hunterGank ? "true" : "false") +
                           " dgsim_bots.jungleWanted = " + (g_opt.jungle ? "true" : "false") +
-                          " dgsim_bots.pingWanted = " + (g_opt.pingFollow ? "true" : "false") + " return 'ok'";
+                          " dgsim_bots.pingWanted = " + (g_opt.pingFollow ? "true" : "false") +
+                          " dgsim_bots.hunterParasiteStand = " + (g_opt.hunterParasiteStand ? "true" : "false") +
+                          " return 'ok'";
   SehRunLua(sim, pre.c_str(), static_cast<unsigned>(pre.size()), "dgsim_bots_pre", out, sizeof out);
   const bool ok = SehRunLua(sim, chunk.c_str(), static_cast<unsigned>(chunk.size()), "dgsim_bots_api.lua", out, sizeof out);
   Log("bots: dgsim_bots_api.lua (%zu bytes) on the server's lua_State: %s %s", chunk.size(), ok ? "ok" : "FAILED", out);
@@ -1432,12 +1434,13 @@ void Configure(const Options& o) {
   g_opt.teamStatusS = HostOptionInt("bot_team_status_s", o.teamStatusS);         // BOTTEMPO
   g_opt.jungle = HostOptionInt("bot_jungle", o.jungle ? 1 : 0) != 0;             // BOTJUNGLE
   g_opt.pingFollow = HostOptionInt("bot_ping_follow", o.pingFollow ? 1 : 0) != 0;  // BOTJUNGLE
+  g_opt.hunterParasiteStand = HostOptionInt("bot_hunter_parasite", o.hunterParasiteStand ? 1 : 0) != 0;  // PRETUSBOT
   if (g_opt.teamStatusS < 0) g_opt.teamStatusS = 0;
   if (g_opt.missionMs < 100) g_opt.missionMs = 100;
   Log("bots (D6a, D6b): bots %d%s, allies %d, classes '%s', lua %d, lanes %d, ftue %d, log limit %d; missions %d (every "
       "%d ms), shopping %d (potions %d), fire tracker %d, script fix-ups %d; BOTCOMP composition %d (drop '%s'), harass "
       "workers %d..%d, Hunter gank %d; BOTTEAM team layer %d, pings %d; BOTTEMPO %d, team status every %d s; "
-      "BOTJUNGLE jungler %d, ping following %d; BOTPROFILE profiles %d",
+      "BOTJUNGLE jungler %d, ping following %d; PRETUSBOT Hunter stand at the parasite %d; BOTPROFILE profiles %d",
       g_opt.teamSize,
       g_opt.teamSize < 0
           ? " (auto: createGame's fillTeams a team, else 5 a team when the game's descriptors have BotsFillTeams 0x400)"
@@ -1446,7 +1449,7 @@ void Configure(const Options& o) {
       g_opt.missionMs, g_opt.shopping, g_opt.potions, g_opt.fireTracker, g_opt.fixups, g_opt.composition,
       g_opt.compositionDrop.c_str(), g_opt.harassStartWorkers, g_opt.harassEndWorkers, g_opt.hunterGank,
       g_opt.team && g_opt.laneFixes, g_opt.teamPings, g_opt.tempo, g_opt.teamStatusS, g_opt.jungle, g_opt.pingFollow,
-      g_opt.profiles);
+      g_opt.hunterParasiteStand, g_opt.profiles);
 }
 
 void OnHumanPing(int team, std::uint32_t pinger, std::uint32_t target, const float* pos, int type) {

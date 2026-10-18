@@ -13,10 +13,13 @@ import (
 
 // The hellos at the start of every TLS connection to the gateway (all integers big-endian):
 //
-//	client -> gateway: "DGTN", version uint8 (1), kind uint8, then by kind:
+//	client -> gateway: "DGTN", version uint8 (2 for a session, 1 for the others), kind uint8, then by kind:
 //	  1 session: tunnel address [4] (the loopback address the player copy is patched for), resume id uint64,
 //	             resume token [16] (zeros for a new session; a session that lost its control connection is taken
-//	             up again within Grace, with new UDP keys)
+//	             up again within Grace, with new UDP keys), then (version 2) the release length uint8 + the
+//	             Start-Client's release name (version.String, at most version.MaxLen bytes). The gateway refuses a
+//	             version 1 session hello (a Start-Client from before the release check) with StatusVersion and one
+//	             naming another release than its own with StatusRelease, unless Gateway.AllowAnyClient
 //	  2 stream:  session id uint64, token [16], port uint16 (the server port it opens), the game socket's
 //	             address [4] and port uint16
 //	  3 info:    nothing more (no session: Start-Client's list and login ask the server's version this way; a gateway
@@ -34,7 +37,10 @@ import (
 // heartbeats (one byte 0 every HeartbeatEvery, both ways); it ends the session's life, after Grace.
 const (
 	magic   = "DGTN"
-	version = 1
+	version = 1 // the stream and info hellos'
+	// sessionVersion is the session hello's version: 2 adds the Start-Client's release name after version 1's 28
+	// bytes (a gateway of an earlier release answers it StatusVersion).
+	sessionVersion = 2
 
 	kindSession byte = 1
 	kindStream  byte = 2
@@ -49,6 +55,7 @@ const (
 	StatusPort        byte = 3 // the port isn't one the gateway serves
 	StatusAddress     byte = 4 // the tunnel address isn't a loopback address
 	StatusUnavailable byte = 5 // the gateway is closing or full
+	StatusRelease     byte = 6 // the session hello names another release than the server's (or an empty name)
 )
 
 // StatusText names a status for log lines and errors.
@@ -66,6 +73,8 @@ func StatusText(s byte) string {
 		return "tunnel address not a loopback address"
 	case StatusUnavailable:
 		return "gateway unavailable"
+	case StatusRelease:
+		return "another release than the server's"
 	}
 	return fmt.Sprintf("status %d", s)
 }
@@ -74,6 +83,8 @@ type sessionHello struct {
 	tunnelIP    [4]byte
 	resumeID    uint64
 	resumeToken [16]byte
+	// release is the Start-Client's release name (version 2; "" in a version 1 hello)
+	release string
 }
 
 type streamHello struct {
@@ -93,11 +104,17 @@ type sessionReply struct {
 	tcp, udp   []uint16
 }
 
+// encode writes a version 2 session hello (the release name cut to version.MaxLen bytes).
 func (h sessionHello) encode() []byte {
-	b := append([]byte(magic), version, kindSession)
+	b := append([]byte(magic), sessionVersion, kindSession)
 	b = append(b, h.tunnelIP[:]...)
 	b = binary.BigEndian.AppendUint64(b, h.resumeID)
-	return append(b, h.resumeToken[:]...)
+	b = append(b, h.resumeToken[:]...)
+	r := h.release
+	if len(r) > build.MaxLen {
+		r = r[:build.MaxLen]
+	}
+	return append(append(b, byte(len(r))), r...)
 }
 
 func (h streamHello) encode() []byte {
@@ -204,32 +221,46 @@ func readInfoReply(r io.Reader) (string, map[string]string, error) {
 
 var errMagic = errors.New("not a Dawngate tunnel hello")
 
-// readHello reads a hello's head; it returns the kind, or StatusVersion as the error's status.
-func readHello(r io.Reader) (kind byte, err error) {
+// readHello reads a hello's head; it returns its version (version or sessionVersion) and kind, or errVersion for any
+// other version (answered StatusVersion). Which version a kind needs is the gateway's check.
+func readHello(r io.Reader) (ver, kind byte, err error) {
 	var head [6]byte
 	if _, err := io.ReadFull(r, head[:]); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if string(head[:4]) != magic {
-		return 0, errMagic
+		return 0, 0, errMagic
 	}
-	if head[4] != version {
-		return head[5], errVersion
+	if head[4] != version && head[4] != sessionVersion {
+		return head[4], head[5], errVersion
 	}
-	return head[5], nil
+	return head[4], head[5], nil
 }
 
 var errVersion = errors.New("unsupported tunnel version")
 
-func readSessionHello(r io.Reader) (sessionHello, error) {
-	var b [4 + 8 + 16]byte
+// readSessionHello reads a session hello after its head: version 1's 28 bytes, and for sessionVersion the release
+// name too (cleaned: version.Clean).
+func readSessionHello(r io.Reader, ver byte) (sessionHello, error) {
+	var b [4 + 8 + 16 + 1]byte
 	var h sessionHello
-	if _, err := io.ReadFull(r, b[:]); err != nil {
+	n := len(b) - 1
+	if ver == sessionVersion {
+		n = len(b)
+	}
+	if _, err := io.ReadFull(r, b[:n]); err != nil {
 		return h, err
 	}
 	copy(h.tunnelIP[:], b[:4])
 	h.resumeID = binary.BigEndian.Uint64(b[4:])
-	copy(h.resumeToken[:], b[12:])
+	copy(h.resumeToken[:], b[12:28])
+	if ver == sessionVersion {
+		name := make([]byte, b[28])
+		if _, err := io.ReadFull(r, name); err != nil {
+			return h, err
+		}
+		h.release = build.Clean(string(name))
+	}
 	return h, nil
 }
 

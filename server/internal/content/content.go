@@ -434,7 +434,7 @@ func (c *Content) Write(path string) error {
 // Grant policies for a new account's inventory (dgserver --owned).
 const (
 	OwnAll     = "all"     // every inventory item except testing-only shapers and their skins
-	OwnStarter = "starter" // always-owned items, loadout pages, the default avatar, one shaper per archetype
+	OwnStarter = "starter" // always-owned items, loadout pages, the default avatar, one shaper per archetype, the starter page's parts
 )
 
 // Grant returns the inventory (catalogID -> count) a new account gets under the policy, and its
@@ -442,7 +442,8 @@ const (
 //
 //   - OwnAll: every item with an item type that isn't testing-only, MaxOwnable of each.
 //   - OwnStarter: the items whose specialStatus is alwaysOwned, the loadout pages, the default avatar,
-//     and for each shaper archetype the non-testing shaper with the lowest catalogID.
+//     for each shaper archetype the non-testing shaper with the lowest catalogID, and the shapes and gems of
+//     the starter perk page (StarterComponents) as many as the page uses.
 func (c *Content) Grant(policy string) (map[uint32]uint32, uint32, error) {
 	items := map[uint32]uint32{}
 	if c.Empty() {
@@ -464,6 +465,9 @@ func (c *Content) Grant(policy string) (map[uint32]uint32, uint32, error) {
 			if it.Status == StatusAlwaysOwned || it.ItemType == ItemLoadoutPage {
 				items[it.CatalogID] = max(it.MaxOwnable, 1)
 			}
+		}
+		for id, n := range c.StarterComponents() { // the starter page's shapes and sparks
+			items[id] = max(items[id], n)
 		}
 		if avatar != 0 {
 			items[avatar] = 1

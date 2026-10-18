@@ -600,7 +600,10 @@ void TickWorld() {
   WorldTickFn fn = reinterpret_cast<WorldTickFn>((*static_cast<void***>(world))[3]);
   fn(world, GetDt(g_sim));
 }
-void TickDelete() { DeletePending(); }
+void TickDelete() {
+  if (GmsHostActive()) GmsHostBeforeDelete();  // ABILVFX: effects made and destroyed in this tick still go out
+  DeletePending();
+}
 void TickFow() { FowTick(static_cast<char*>(g_sim) + sim::kFow); }
 // D1b-live (agents.h, docs/AGENT_AI.md §5): the agent step the stripped server update ran per frame, after the command
 // intake (and the director) and before the Lua scheduler: every agent's behavior tree with the frame's dt.
@@ -937,6 +940,8 @@ void ReadConfig() {
     }
     ao.parasiteReach = static_cast<float>(HostOptionInt("parasite_reach", 40));
     ao.botReflex = HostOptionInt("bot_reflex", 1) != 0 && HostOptionInt("bot_fixups", 1) != 0;  // BOTREFLEX
+    ao.botJungleFight = HostOptionInt("bot_jungle_fight", 1) != 0;  // PRETUSBOT
+    ao.botWellDefense = HostOptionInt("bot_well_defense", 1) != 0;  // WELLDEF
     ao.botRecall = HostOptionInt("bot_recall", 1) != 0;  // BOTRECALL
     ao.botHoldStuckMs = HostOptionInt("bot_hold_stuck_ms", ao.botHoldStuckMs);  // BOTTEMPO
     if (ao.botHoldStuckMs < 0) ao.botHoldStuckMs = 0;
@@ -1356,6 +1361,7 @@ void ExperimentInstall(const char* gameDir, unsigned long mainThreadId) {
     o.keepItemPassives = opt("death_keep_item_passives", 1) != 0;  // Q3
     o.respawnFeedback = opt("respawn_feedback", 1) != 0;         // D11: PlayerRespawned at the respawn
     o.rewardBuffs = opt("reward_buffs", 1) != 0;                 // D14: the jungle buffs, the parasite's team buffs
+    o.roleGold = opt("role_passives", 1) != 0;                   // ROLEVIM: the roles' minion/creature gold modifiers
     death::Install(o);
   }
   {  // D1j: the ability data containers' release at an object's destroy, and the server pools' census (components.h)

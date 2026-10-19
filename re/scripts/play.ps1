@@ -15,6 +15,7 @@
     tools        .venv (Python), Go (builds the server), Wireshark's dumpcap/tshark (unless -NoCapture)  -> prints the setup
     certificates server\certs\server_cert.pem, server_key.pem, ca_modulus.bin                            -> prints make_certs.py
     client copy  client\run_854\Dawngate patched by patch_client.py and patch_config.py, with our CA      -> prints the copy/patch commands
+    bot box      its game\Data\zz_MatchOptions.snap is current (CREATE GAME's bot check box, BOTBOX)      -> installs it (setup_lane.py's step)
     host copy    client\run_854_server\Dawngate patched, with the harness installed                     -> prints setup_server_copy.py
     gms build    gms\build\Release\dgsim.dll's last build newer than gms\host, gms\engine, gms\core, gms\script -> builds it (cmake), if gms\build is configured
                  (G5: its build stamp dgsim.dll.stamp; re\scripts\gms_stale.ps1)
@@ -133,9 +134,37 @@ function Find-CMake {
     if ($onPath) { return $onPath.Source }
     $null
 }
+function Get-LastLogLine([string]$log) {
+    # the log's last non-empty line, read beside the writer (it holds the file open)
+    try {
+        $fs = [IO.File]::Open($log, 'Open', 'Read', 'ReadWrite')
+        try {
+            $fs.Seek([Math]::Max(0, $fs.Length - 2048), 'Begin') | Out-Null
+            $text = (New-Object IO.StreamReader($fs)).ReadToEnd()
+        } finally { $fs.Dispose() }
+        $last = $text -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -Last 1
+        if ($last) { $last.Trim() } else { '' }
+    } catch { '' }
+}
 function Invoke-Logged([string]$exe, [string[]]$argList, [string]$log) {
-    $p = Start-Process -FilePath $exe -ArgumentList $argList -WorkingDirectory $RepoRoot -NoNewWindow -Wait -PassThru `
+    # the output goes to $log; meanwhile one line ticks with the time taken and the log's last line, so a long build
+    # doesn't look like a hang (a redirected output gets a line every 15 s instead)
+    $p = Start-Process -FilePath $exe -ArgumentList $argList -WorkingDirectory $RepoRoot -NoNewWindow -PassThru `
         -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+    $null = $p.Handle   # keeps the exit code readable after the process has ended
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $live = -not [Console]::IsOutputRedirected
+    $width = if ($live) { [Math]::Max(40, [Console]::WindowWidth - 1) } else { 0 }
+    $next = 15
+    while (-not $p.WaitForExit(1000)) {
+        $t = $sw.Elapsed
+        $line = '           {0}:{1:00}  {2}' -f [int][Math]::Floor($t.TotalMinutes), $t.Seconds, (Get-LastLogLine $log)
+        if ($live) { Write-Host ("`r" + $line.PadRight($width).Substring(0, $width)) -NoNewline -ForegroundColor Gray }
+        elseif ($t.TotalSeconds -ge $next) { Write-Host $line; $next += 15 }
+    }
+    $p.WaitForExit()
+    if ($live) { Write-Host ("`r" + ''.PadRight($width) + "`r") -NoNewline }
+    Write-Host ('           done in {0:0} s' -f $sw.Elapsed.TotalSeconds) -ForegroundColor Gray
     $p.ExitCode
 }
 
@@ -177,6 +206,22 @@ try {
     $pack = Join-Path $ClientDir 'game\Data\Config_Pack.package'
     if ((Test-Path $pack) -and (-not (Test-Path "$pack.orig") -or (Get-FileHash $pack).Hash -eq (Get-FileHash "$pack.orig").Hash)) {
         Info "Config_Pack.package is not patched (B6), so the main menu's home page stays empty: $($patchCmds[1])"
+    }
+    # BOTBOX: CREATE GAME's "Fill open seats with bots" box is the added game\Data\zz_MatchOptions.snap, byte for byte what
+    # setup_lane.py's match_options_step makes from the copy's own Battlegrounds.snap (setup_all.py's step too)
+    if ((Test-Path $Python) -and (Test-Path (Join-Path $ClientDir 'game\Data\Battlegrounds.snap'))) {
+        $data = Join-Path $ClientDir 'game\Data'
+        $boxCode = "import sys; sys.path.insert(0, sys.argv[1]); import setup_lane; m = []; setup_lane.match_options_step(sys.argv[2], sys.argv[3] == 'check', m); sys.exit(1 if m else 0)"
+        & $Python -I -c $boxCode $PSScriptRoot $data 'check'
+        if ($LASTEXITCODE -eq 0) { Ok 'bot check box (game\Data\zz_MatchOptions.snap)' }
+        else {
+            Write-Host '  install  the CREATE GAME dialog''s bot check box (game\Data\zz_MatchOptions.snap)' -ForegroundColor Yellow
+            & $Python -I -c $boxCode $PSScriptRoot $data 'install' | ForEach-Object { Write-Host "           $_" -ForegroundColor Gray }
+            & $Python -I -c $boxCode $PSScriptRoot $data 'check'
+            if ($LASTEXITCODE -eq 0) { Ok 'bot check box (game\Data\zz_MatchOptions.snap)' }
+            else { Missing 'installing the bot check box failed (is the game running from client\run_854?)' @(
+                '.venv\Scripts\python -I re\scripts\patch_login_movie.py --spec matchoptions client\run_854\Dawngate\game\Data\Battlegrounds.snap client\run_854\Dawngate\game\Data\zz_MatchOptions.snap') }
+        }
     }
 
     # ---- the host copy and the match-host build

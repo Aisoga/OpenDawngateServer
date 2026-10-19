@@ -89,16 +89,26 @@ GMS_TEST(DamageRewardSplit) {
   CHECK_EQ(NearbyShare(minionXpShare, 5, 9), 0.26f);
   CHECK_EQ(NearbyShare(nullptr, 0, 3), 1.f);
   CHECK_EQ(NearbyShare(minionXpShare, 5, 0), 0.f);
-  // a melee minion (4 gold, area and last hit, ratio 3) last-hit by player 0 alone: 4 + 12
+  // a melee minion (4 gold, area and last hit, ratio 3) last-hit by player 0 alone: the fatal-hit bonus 12 only, no
+  // area share for the last hitter (the user's rule, ROLEVIM-2)
   std::vector<Grant> g = SplitReward(kRewardAreaAndLastHit, 4.f, {0}, 0, {0}, minionGoldShare, 5, 3.f);
   CHECK_EQ(g.size(), static_cast<size_t>(1));
-  CHECK_EQ(g[0].amount, 16.f);
+  CHECK_EQ(g[0].amount, 12.f);
   CHECK(g[0].lastHit);
-  // two nearby, the other one last-hit: 4 each, 12 more for the last hitter
+  CHECK(!g[0].role);
+  // two nearby, the other one last-hit: 4 for player 0, 12 for the last hitter
   g = SplitReward(kRewardAreaAndLastHit, 4.f, {0, 3}, 3, {0, 3}, minionGoldShare, 5, 3.f);
   CHECK_EQ(g.size(), static_cast<size_t>(2));
+  CHECK_EQ(g[0].player, 0);
   CHECK_EQ(g[0].amount, 4.f);
-  CHECK_EQ(g[1].amount, 16.f);
+  CHECK(!g[0].lastHit);
+  CHECK_EQ(g[1].player, 3);
+  CHECK_EQ(g[1].amount, 12.f);
+  CHECK(g[1].lastHit);
+  // the last hitter out of the area: the bonus all the same
+  g = SplitReward(kRewardAreaAndLastHit, 4.f, {0}, 3, {0, 3}, minionGoldShare, 5, 3.f);
+  CHECK_EQ(g.size(), static_cast<size_t>(2));
+  CHECK_EQ(g[1].amount, 12.f);
   // XP: area with two nearby, 58 x 0.65 each
   g = SplitReward(kRewardArea, 58.f, {0, 3}, 0, {0, 3}, minionXpShare, 5, 3.f);
   CHECK_EQ(g.size(), static_cast<size_t>(2));
@@ -115,53 +125,170 @@ GMS_TEST(DamageRewardSplit) {
   CHECK(SplitReward(kRewardEnemyTitans, 10.f, {0}, 0, {0}, nullptr, 0, 0.f).empty());
 }
 
-// ROLEVIM: RolesTuning's NPC-kill gold modifiers (Gladiator lastHitMinion 2.0, Tactician proximity 2.0, the rest 1.0).
+// ROLEVIM: RolesTuning's NPC-kill gold modifiers (Gladiator lastHitMinion 2.0, Tactician proximity 2.0, the rest 1.0);
+// ROLEVIM-2 (the user's rules of 2026-10-18): the last hitter gets no area share, and a role's part is its own grant.
+static void CheckGrant(const Grant& g, int player, float amount, bool lastHit, bool role) {
+  CHECK_EQ(g.player, player);
+  CHECK_EQ(g.amount, amount);
+  CHECK_EQ(g.lastHit, lastHit);
+  CHECK_EQ(g.role, role);
+}
+
 GMS_TEST(DamageRoleNpcGold) {
   const float minionGoldShare[5] = {1.f, 1.f, 1.f, 1.f, 1.f};
   RoleNpcGold roles[10];
   roles[0].lastHitMinion = 2.f;  // player 0 the Gladiator
   roles[3].proximity = 2.f;      // player 3 the Tactician
-  // the Gladiator's last hit on a melee minion (4 gold), alone: 4 + 4 x 3 x 2 = 28 (16 without the role)
+  // player 1 has no role modifier (a Hunter or a Predator)
+  // the Gladiator's last hit on a melee minion (4 gold), alone: 12 (the bonus) + 12 (the role's own grant) = 24
   std::vector<Grant> g =
       SplitReward(kRewardAreaAndLastHit, 4.f, {0}, 0, {0}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 10);
+  CHECK_EQ(g.size(), static_cast<size_t>(2));
+  CheckGrant(g[0], 0, 12.f, true, false);
+  CheckGrant(g[1], 0, 12.f, true, true);
+  // another role's last hit: 12, one grant
+  g = SplitReward(kRewardAreaAndLastHit, 4.f, {1}, 1, {1}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 10);
   CHECK_EQ(g.size(), static_cast<size_t>(1));
-  CHECK_EQ(g[0].amount, 28.f);
-  CHECK(g[0].lastHit);
-  // the Gladiator last-hits beside the Tactician: 28 for it, 4 x 2 = 8 for the Tactician (ally factor 1.0)
-  g = SplitReward(kRewardAreaAndLastHit, 4.f, {0, 3}, 0, {0, 3}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 10);
-  CHECK_EQ(g.size(), static_cast<size_t>(2));
-  CHECK_EQ(g[0].amount, 28.f);
-  CHECK_EQ(g[1].amount, 8.f);
-  CHECK(!g[1].lastHit);
-  // a minion killed by minions beside the Tactician and a Gladiator: 8 and 4, nobody's last hit
+  CheckGrant(g[0], 1, 12.f, true, false);
+  // the Gladiator last-hits beside the Tactician and player 1: the Tactician 4 + 4 (role), player 1 4, the Gladiator
+  // 12 + 12 (role); the shares first, then the last hitter's grants
+  g = SplitReward(kRewardAreaAndLastHit, 4.f, {0, 1, 3}, 0, {0, 1, 3}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 10);
+  CHECK_EQ(g.size(), static_cast<size_t>(5));
+  CheckGrant(g[0], 1, 4.f, false, false);
+  CheckGrant(g[1], 3, 4.f, false, false);
+  CheckGrant(g[2], 3, 4.f, false, true);
+  CheckGrant(g[3], 0, 12.f, true, false);
+  CheckGrant(g[4], 0, 12.f, true, true);
+  // a minion killed by minions beside the Tactician and the Gladiator: 4 + 4 (role) and 4, nobody's last hit
   g = SplitReward(kRewardAreaAndLastHit, 4.f, {0, 3}, -1, {0, 3}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 10);
+  CHECK_EQ(g.size(), static_cast<size_t>(3));
+  CheckGrant(g[0], 0, 4.f, false, false);
+  CheckGrant(g[1], 3, 4.f, false, false);
+  CheckGrant(g[2], 3, 4.f, false, true);
+  // the Tactician's own last hit: 12, one grant (no area share, so nothing for its factor)
+  g = SplitReward(kRewardAreaAndLastHit, 4.f, {0, 3}, 3, {0, 3}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 10);
   CHECK_EQ(g.size(), static_cast<size_t>(2));
-  CHECK_EQ(g[0].amount, 4.f);
-  CHECK_EQ(g[1].amount, 8.f);
-  // the Tactician's own last hit: its area share doubled, the fatal-hit bonus not: 8 + 12 = 20
-  g = SplitReward(kRewardAreaAndLastHit, 4.f, {3}, 3, {3}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 10);
-  CHECK_EQ(g[0].amount, 20.f);
-  // the ally factor multiplies when another player of the team got the last hit (1.0 in the data)
+  CheckGrant(g[0], 0, 4.f, false, false);
+  CheckGrant(g[1], 3, 12.f, true, false);
+  // the ally factor multiplies when another player of the team got the last hit (1.0 in the data): 2 x 0.5 = 1, so no
+  // role grant; below 1 it scales the share itself
   roles[3].proximityAllyLastHit = 0.5f;
   g = SplitReward(kRewardAreaAndLastHit, 4.f, {0, 3}, 0, {0, 3}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 10);
-  CHECK_EQ(g[1].amount, 4.f);
-  g = SplitReward(kRewardAreaAndLastHit, 4.f, {3}, 3, {3}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 10);
-  CHECK_EQ(g[0].amount, 20.f);  // its own last hit: no ally factor
+  CHECK_EQ(g.size(), static_cast<size_t>(3));
+  CheckGrant(g[0], 3, 4.f, false, false);
+  roles[3].proximityAllyLastHit = 0.25f;
+  g = SplitReward(kRewardAreaAndLastHit, 4.f, {0, 3}, 0, {0, 3}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 10);
+  CheckGrant(g[0], 3, 2.f, false, false);
   roles[3].proximityAllyLastHit = 1.f;
-  // a jungle creature (last player to hit) uses lastHitCreature, not lastHitMinion
+  // a jungle creature (last player to hit) uses lastHitCreature, not lastHitMinion: 10 + 5 (role)
   roles[0].lastHitCreature = 1.5f;
   g = SplitReward(kRewardLastHit, 10.f, {0}, 0, {0}, nullptr, 0, 1.f, kNpcCreature, roles, 10);
-  CHECK_EQ(g[0].amount, 15.f);
+  CHECK_EQ(g.size(), static_cast<size_t>(2));
+  CheckGrant(g[0], 0, 10.f, true, false);
+  CheckGrant(g[1], 0, 5.f, true, true);
   roles[0].lastHitCreature = 1.f;
   g = SplitReward(kRewardLastHit, 10.f, {0}, 0, {0}, nullptr, 0, 1.f, kNpcCreature, roles, 10);
+  CHECK_EQ(g.size(), static_cast<size_t>(1));
   CHECK_EQ(g[0].amount, 10.f);
-  // a worker (area, kNpcOther) or a structure: no role factor; nor without the role table or outside it
+  // a worker (area, kNpcOther) or a structure: no role factor; nor without the role table (role_passives=0) or
+  // outside it: the Gladiator's last hit 12, the Tactician's share 4
   g = SplitReward(kRewardArea, 6.f, {3}, 0, {3}, minionGoldShare, 5, 0.f, kNpcOther, roles, 10);
+  CHECK_EQ(g.size(), static_cast<size_t>(1));
   CHECK_EQ(g[0].amount, 6.f);
-  g = SplitReward(kRewardAreaAndLastHit, 4.f, {0}, 0, {0}, minionGoldShare, 5, 3.f, kNpcMinion, nullptr, 0);
-  CHECK_EQ(g[0].amount, 16.f);
+  g = SplitReward(kRewardAreaAndLastHit, 4.f, {0, 3}, 0, {0, 3}, minionGoldShare, 5, 3.f, kNpcMinion, nullptr, 0);
+  CHECK_EQ(g.size(), static_cast<size_t>(2));
+  CheckGrant(g[0], 3, 4.f, false, false);
+  CheckGrant(g[1], 0, 12.f, true, false);
   g = SplitReward(kRewardAreaAndLastHit, 4.f, {0}, 0, {0}, minionGoldShare, 5, 3.f, kNpcMinion, roles, 0);
-  CHECK_EQ(g[0].amount, 16.f);
+  CHECK_EQ(g.size(), static_cast<size_t>(1));
+  CHECK_EQ(g[0].amount, 12.f);
+}
+
+// ROLEVIM-2: PushWithRole, the normal grant then the role's part
+GMS_TEST(DamageRoleGrantSplit) {
+  std::vector<Grant> g;
+  PushWithRole(&g, 2, 300.f, 1.5f, true);
+  CHECK_EQ(g.size(), static_cast<size_t>(2));
+  CheckGrant(g[0], 2, 300.f, true, false);
+  CheckGrant(g[1], 2, 150.f, true, true);
+  g.clear();
+  PushWithRole(&g, 2, 300.f, 1.f, false);
+  CHECK_EQ(g.size(), static_cast<size_t>(1));
+  PushWithRole(&g, -1, 300.f, 2.f, false);  // nobody
+  PushWithRole(&g, 4, 0.f, 2.f, false);     // nothing
+  CHECK_EQ(g.size(), static_cast<size_t>(1));
+}
+
+// VIMPOPUP: the role's part rides on its player's normal grant as LabsPlayer_GrantGold's bonus (one event, two popups).
+GMS_TEST(DamageGoldEventsBonus) {
+  // the user's log: a Tactician's share beside a Gladiator's last hit: p0 +4 +4 (role) p3 +12 (last hit) +12 (role)
+  std::vector<Grant> g;
+  PushWithRole(&g, 0, 4.f, 2.f, false);
+  PushWithRole(&g, 3, 12.f, 2.f, true);
+  PushWithRole(&g, 1, 4.f, 1.f, false);  // another role: no bonus
+  const std::vector<GoldEvent> e = GoldEvents(g);
+  CHECK_EQ(e.size(), static_cast<size_t>(3));
+  CHECK_EQ(e[0].player, 0);
+  CHECK(Near(e[0].amount, 4.0, 1e-6));
+  CHECK(Near(e[0].bonus, 4.0, 1e-6));
+  CHECK(!e[0].lastHit);
+  CHECK_EQ(e[1].player, 3);
+  CHECK(Near(e[1].amount, 12.0, 1e-6));
+  CHECK(Near(e[1].bonus, 12.0, 1e-6));
+  CHECK(e[1].lastHit);
+  CHECK_EQ(e[2].player, 1);
+  CHECK(Near(e[2].bonus, 0.0, 1e-6));
+  // the totals stay the grants' totals
+  float a = 0.f, b = 0.f;
+  for (const Grant& x : g) a += x.amount;
+  for (const GoldEvent& x : e) b += x.amount + x.bonus;
+  CHECK(Near(a, b, 1e-5));
+  // a Predator's kill: 300 + 150 (role)
+  g.clear();
+  PushWithRole(&g, 2, 300.f, 1.5f, true);
+  const std::vector<GoldEvent> k = GoldEvents(g);
+  CHECK_EQ(k.size(), static_cast<size_t>(1));
+  CHECK(Near(k[0].bonus, 150.0, 1e-5));
+  // a role grant without its normal grant stays its own event
+  Grant lone;
+  lone.player = 5;
+  lone.amount = 7.f;
+  lone.role = true;
+  const std::vector<GoldEvent> l = GoldEvents({lone});
+  CHECK_EQ(l.size(), static_cast<size_t>(1));
+  CHECK(Near(l[0].amount, 7.0, 1e-6));
+  CHECK(Near(l[0].bonus, 0.0, 1e-6));
+}
+
+// VIMPOPUP: LabsPlayer_AddGold's CombatEvent and CombatEvent_Gold.lua's two popups.
+GMS_TEST(DamageGoldPopups) {
+  GoldPopups p = PopupsOf(4.f, 4.f, 8.f);  // the Tactician's share
+  CHECK(p.event);
+  CHECK_EQ(p.bonusShown, 4);
+  CHECK_EQ(p.baseShown, 4);
+  p = PopupsOf(4.03f, 4.03f, 8.06f);  // a later wave: floored
+  CHECK_EQ(p.bonusShown, 4);
+  CHECK_EQ(p.baseShown, 4);
+  p = PopupsOf(3.03f, 3.03f, 6.06f);
+  CHECK_EQ(p.bonusShown, 3);
+  CHECK_EQ(p.baseShown, 3);
+  p = PopupsOf(12.f, 12.f, 48.f);  // a melee Gladiator's last hit with two stored (the handler adds 24 to the bonus)
+  CHECK_EQ(p.bonusShown, 36);
+  CHECK_EQ(p.baseShown, 12);
+  p = PopupsOf(12.f, 0.f, 36.f);  // ROLEVIM-2's normal grant with the storage: 24 + 12
+  CHECK_EQ(p.bonusShown, 24);
+  CHECK_EQ(p.baseShown, 12);
+  p = PopupsOf(4.f, 0.f, 4.f);  // a plain share: one popup
+  CHECK_EQ(p.bonusShown, 0);
+  CHECK_EQ(p.baseShown, 4);
+  p = PopupsOf(300.f, 150.f, 450.f);  // a Predator's kill
+  CHECK_EQ(p.bonusShown, 150);
+  CHECK_EQ(p.baseShown, 300);
+  p = PopupsOf(0.f, 5.f, 5.f);  // a bonus equal to the whole is sent as 0
+  CHECK_EQ(p.bonusShown, 0);
+  CHECK_EQ(p.baseShown, 5);
+  p = PopupsOf(0.5f, 0.f, 0.5f);  // under 1: no event
+  CHECK(!p.event);
 }
 
 // MATCH_FLOW.md R12: 500 at deploy (the host's), then 100 per minute from 60 s in whole units.

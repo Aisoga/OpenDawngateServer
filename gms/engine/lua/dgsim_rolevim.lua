@@ -1,16 +1,17 @@
 -- ROLEVIM probe: the roles' NPC-kill gold, RolesTuning's lastHitMinionGoldModifier
 -- (Gladiator 2.0) and proximityToMinionOrCreatureDeathGoldModifier (Tactician 2.0) that the host applies since ROLEVIM
--- ([host] role_passives), and the Tactician's shaper-hit vim (modifier_Role_Tactician). The human is the Gladiator
+-- ([host] role_passives; since ROLEVIM-2 the role's part is its own grant and a last hitter gets no area share), and
+-- the Tactician's shaper-hit vim (modifier_Role_Tactician). The human is the Gladiator
 -- (role 0 without shaper select; a melee shaper for the storage part: [host] noun=0x1A0C443C, warden.Noun); the
 -- Tactician is a bot of role 1 (the practice game's Guardian, Artist, Warden or TidalQueen).
 -- test_lua=<T>:dgsim_rolevim.lua,<T+2>:(the same),<T+4>:(the same). Parts:
 --   part 1, the Gladiator: three enemy melee minions next to the human; two die by KillObject without a killer (its
 --     area share each, the role's storage: modifier_Role_Gladiator_Counter 2 stacks), then the human's lethal hit on
---     the third: expected gold + 13 x vim (4: +52) = the last hit's own 1 x vim (area) + 3 x 2 x vim (the fatal-hit
---     bonus x the role's 2.0) + the stored 2 x vim x 6 x 0.5; without ROLEVIM's modifiers + 10 x vim (40);
+--     the third: expected gold + 12 x vim (4: +48) = the fatal-hit bonus 3 x vim + the role's own grant 3 x vim + the
+--     stored 2 x vim x 6 x 0.5 (no area share for the last hitter); with role_passives=0 + 3 x vim (12);
 --   part 2, the Tactician's proximity: an enemy minion next to the Tactician bot dies by KillObject without a killer:
---     expected + 2 x vim (8; 1 x without); then its own lethal hit on another: expected + 5 x vim (2 x area + 3 x the
---     bonus: 20; 16 without);
+--     expected + 2 x vim (8 = 4 + the role's own 4; 1 x without); then its own lethal hit on another: expected + 3 x vim
+--     (the fatal-hit bonus only: 12, as any role without a last-hit modifier, with or without);
 --   part 3, the Tactician's shaper hits: 1 damage on an enemy shaper with the Tactician's basic ability's snapshot,
 --     without IsMelee: expected + 20 (ranged when the basic's effective range > 351 / 34 = 10.32, else the melee
 --     marker); again at once: expected + 0 (5-s marker); then with IsMelee: expected + 20 (build 854's meleeVim; a
@@ -84,9 +85,9 @@ local ok, err = pcall(function()
     local s, dealt = lethal(human, m[3])
     local g2 = gold(humanPid)
     p(string.format('rolevim 1 Gladiator: vim per minion %s; two deaths by nobody: gold +%.2f (expected %s = 2 x vim), counter %s '
-      .. '(expected 2 for a melee shaper); the last hit -> %s dealt %s: gold +%.2f (expected %s = 13 x vim with the role\'s 2.0; '
-      .. '%s = 10 x vim without), counter %s (expected none)', f2(vim), g1 - g0, f2(2 * vim), counter(), tostring(s), f2(dealt),
-      g2 - g1, f2(13 * vim), f2(10 * vim), counter()))
+      .. '(expected 2 for a melee shaper); the last hit -> %s dealt %s: gold +%.2f (expected %s = 12 x vim: bonus, role grant, '
+      .. 'storage; %s = 3 x vim with role_passives=0), counter %s (expected none)', f2(vim), g1 - g0, f2(2 * vim), counter(),
+      tostring(s), f2(dealt), g2 - g1, f2(12 * vim), f2(3 * vim), counter()))
   elseif part == 2 then
     if not tact then p('rolevim 2 Tactician: no living role-1 player') return end
     local m1 = spawnMinion(tact, 1)
@@ -98,8 +99,8 @@ local ok, err = pcall(function()
     local s, dealt = lethal(tact, m2)
     local g2 = gold(tactPid)
     p(string.format('rolevim 2 Tactician: vim per minion %s; a death by nobody beside it: gold +%.2f (expected %s = 2 x vim; %s '
-      .. 'without); its own last hit -> %s dealt %s: gold +%.2f (expected %s = 5 x vim; %s without)', f2(vim), g1 - g0,
-      f2(2 * vim), f2(vim), tostring(s), f2(dealt), g2 - g1, f2(5 * vim), f2(4 * vim)))
+      .. 'without); its own last hit -> %s dealt %s: gold +%.2f (expected %s = 3 x vim, with or without)', f2(vim), g1 - g0,
+      f2(2 * vim), f2(vim), tostring(s), f2(dealt), g2 - g1, f2(3 * vim)))
   else
     if not tact then p('rolevim 3 Tactician: no living role-1 player') return end
     local victim

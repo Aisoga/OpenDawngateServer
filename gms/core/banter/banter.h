@@ -229,6 +229,23 @@ inline unsigned HearingTeams(const Shaper& s) {
   if (s.team == 1 || s.team == 2) bits |= 1u << s.team;
   return bits;
 }
+
+// VOICELINE-fix: who hears a shaper's own-voice line, a 2-D sound with no position that plays at full volume as if the
+// hearer's own shaper spoke it (PlayerRespawned's Play_<PC>_VO_respawn): the player it is about alone, and nobody for a bot (no connection)
+// [assumed: the original's recipients aren't shown]. `excludePlayers` leaves every other gameplay-index bit out of the
+// team's mask.
+struct OwnVoiceAudience {
+  bool send = false;
+  unsigned excludePlayers = 0;
+};
+inline OwnVoiceAudience OwnVoiceLine(int index, bool bot) {
+  OwnVoiceAudience a;
+  if (bot || index < 0 || index > 31) return a;
+  a.send = true;
+  a.excludePlayers = ~(1u << index);
+  return a;
+}
+
 inline bool Sees(const Shaper& viewerTeamOf, const Shaper& seen) {
   return viewerTeamOf.team >= 0 && viewerTeamOf.team < 8 && ((seen.seenBy >> viewerTeamOf.team) & 1u) != 0;
 }

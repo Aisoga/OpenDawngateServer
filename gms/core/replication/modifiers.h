@@ -89,4 +89,27 @@ class ModifierRegistry {
   uint64_t nextOrder_ = 0;
 };
 
+// BUFFICON test aid ([host] modifier_trace): which modifier messages to log one by one. The spec is a list of static
+// ability GUIDs in hex ("108B48DA,0x33B6C2B7"; any separator) or "all". An AB whose ability is traced makes its
+// instance traced, until its AD; an AC or AD is traced when its instance is.
+class ModifierTrace {
+ public:
+  // Replaces the set; returns how many GUIDs it names (-1 for "all", 0 = off).
+  int Configure(const char* spec);
+  bool On() const { return all_ || !guids_.empty(); }
+  // AB's body: true if the record's ability is traced (its instance is remembered).
+  bool OnCreated(const uint8_t* body, size_t n);
+  // AC's body (or any body that starts with u32 carrier, u32 instance): true if the instance is traced.
+  bool OnUpdated(const uint8_t* body, size_t n) const;
+  // The instance ended (the host's AD): true if it was traced (it is forgotten).
+  bool OnDeleted(uint32_t instance);
+  // The traced ability of an instance (0 if not traced).
+  uint32_t AbilityOf(uint32_t instance) const;
+
+ private:
+  bool all_ = false;
+  std::vector<uint32_t> guids_;
+  std::map<uint32_t, uint32_t> instances_;  // instance -> ability GUID
+};
+
 }  // namespace gms

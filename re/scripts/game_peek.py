@@ -45,16 +45,28 @@ account data's FLAG (bit 0, set by C1 04's FTUE byte), the inventory counts of t
 the stats snapshot the client took at C1 01 (the records the game-end screen and the After Action Review show).
 
 Usage (64-bit Python from .venv; the game runs as the same user, no admin needed):
-    .venv/Scripts/python -I re/scripts/game_peek.py <pid> [--all] [--vision] [--out FILE]
+    .venv/Scripts/python -I re/scripts/game_peek.py <pid> [--all] [--vision] [--mods [--names CSV]] [--out FILE]
     .venv/Scripts/python -I re/scripts/game_peek.py <pid> --postgame [0x10A4638F 0x10A46383] [--out FILE]
   --all also lists the objects without a network component (the client's own level objects; ~7,000 lines).
   --vision (D2g-rest) adds the vision fields: vis = mVisibleToTeam, vr = mVisionRadius, grass s<server id>/c<the
   client's own id>@<server cell>, STEALTHED (mStealthed), IN-GRASS (mbInGrass).
 Since CAMPICONS a "camps" line: the client's camp list as 8D left it (each camp's spawn marker id and its
 mCampVisibleToTeam byte), so a live check reads which camp icons the minimap draws for the client's team.
+Since BUFFICON a "buff bar" line: what the player's buff bar holds (cBuffs, vtable 0x011BB714, found among the
+gameplay UI's components: the UI root [0x0148DDB4] +0x1C4 cGameplayUI, components vector +4..+8): +0x98 enabled,
++0x1D40 the movie's button count (BuffButtons, at most 12), and its entries (+0xA0..+0xA4, 0x30 bytes each: +0 kind 1
+buff / 2 debuff / 0 neither, +4 modifier instance, +8 button index, +0xC stacks, +0x10 duration ms, +0x20 the icon
+path); cBuffs_Update 0x0040D210 rebuilds them from the creature's agent summary: modifiers whose static ability has an
+icon and isn't IsPassive; entries past the button count aren't shown. With `--mods` each player-controlled creature's
+row is followed by its agent summary in detail ("mods of"): per modifier the instance, the static ability (GUID, and
+its script name with `--names <csv>`, a ServerData script index with `key` and `name` columns), stacks and duration,
+read from the summary component pool
+(type 0xB405A5D9 in the client simulator's component manager, sim +0x550: +4 a hash {+4 buckets, +8 count} of type ->
+pool; entry +4 instance, +8 ability, +0x20 duration, +0x24 stacks; AgentSummary_OnModifierCreated 0x00658480).
 Exit code: 0 ok, 2 process not readable or no client simulator yet.
 """
 import argparse
+import csv
 import ctypes
 import ctypes.wintypes as wt
 import struct
@@ -131,6 +143,78 @@ def hash_map(p, buckets_ptr, count, key_size=4, limit=100000):
             out.append((key, p.u32(node + 4)))
             node = p.u32(node + 8)
     return out
+
+
+MODIFIER_SUMMARY_TYPE = 0xB405A5D9  # the agent summary's modifier component (0x00657480)
+BUFFS_VTABLE = 0x011BB714           # cBuffs, SP_UI/cBuffs (constructor 0x0040CED0)
+UI_ROOT = 0x0148DDB4                # the UI object; +0x1C4 its cGameplayUI (0x004A9750)
+
+
+def lua_names(path):
+    """GUID -> script name from a CSV with `key` (Type-Group-Instance hex, the instance the name's FNV-1) and `name`."""
+    names = {}
+    if not path:
+        return names
+    try:
+        with open(path, encoding='utf-8', newline='') as f:
+            for row in csv.DictReader(f):
+                try:
+                    names[int(row['key'].rsplit('-', 1)[1], 16) & 0xFFFFFFFF] = row['name']
+                except (KeyError, ValueError, IndexError):
+                    continue
+    except OSError:
+        pass
+    return names
+
+
+def component_pool(p, sim, type_id):
+    """The simulator's component pool of a type (ComponentManager_GetPool 0x0087F010 on the manager at sim +0x550)."""
+    h = p.u32(sim + 0x550 + 4)
+    if not h:
+        return 0
+    for k, v in hash_map(p, p.u32(h + 4), p.u32(h + 8)):
+        if k == type_id:
+            return v
+    return 0
+
+
+def pool_entry(p, pool, handle):
+    """ObjectPool_TryToGet: the slot of a handle (data +0, slots used +0x14, stride +0x18) if it still holds it."""
+    if not pool:
+        return 0
+    data, used, stride = p.u32(pool), p.u32(pool + 0x14), p.u32(pool + 0x18)
+    slot = handle & 0xFFFF
+    if not data or not stride or slot >= used:
+        return 0
+    e = data + stride * slot
+    return e if p.u32(e) == handle else 0
+
+
+def buff_bar(p, say):
+    """BUFFICON: the player's buff bar (cBuffs) as the client holds it."""
+    root = p.u32(UI_ROOT)
+    gp = p.u32(root + 0x1C4) if root else 0
+    if not gp:
+        say('buff bar: no gameplay UI')
+        return
+    b, e = p.u32(gp + 4), p.u32(gp + 8)
+    raw = p.read(b, e - b) if b and b < e <= b + 4 * 256 else None
+    buffs = next((c for (c,) in struct.iter_unpack('<I', raw or b'') if c and p.u32(c) == BUFFS_VTABLE), 0)
+    if not buffs:
+        say(f'buff bar: no cBuffs among the gameplay UI 0x{gp:08x}\'s {(e - b) // 4 if b and e > b else 0} components')
+        return
+    eb, ee = p.u32(buffs + 0xA0), p.u32(buffs + 0xA4)
+    n = (ee - eb) // 0x30 if eb and ee >= eb else 0
+    buttons = p.u32(buffs + 0x1D40)
+    items = []
+    for k in range(min(n, 64)):
+        x = eb + 0x30 * k
+        kind, inst, idx, stacks, dur = struct.unpack('<IIIII', p.read(x, 20) or bytes(20))
+        icon = p.cstr(p.u32(x + 0x20), 160).rsplit('/', 1)[-1]
+        items.append(f'{inst:08x} {("-", "buff", "debuff")[kind] if kind < 3 else kind} x{stacks}'
+                     f'{f" {dur} ms" if dur else ""} {icon}{"" if idx < buttons else " (NOT SHOWN: past the buttons)"}')
+    say(f'buff bar: cBuffs 0x{buffs:08x} enabled {p.u8(buffs + 0x98)}, {buttons} buttons, {n} entr'
+        f'{"y" if n == 1 else "ies"}: [{"; ".join(items)}]')
 
 
 def describe_recap(p, data):
@@ -233,6 +317,9 @@ def main():
     ap.add_argument('pid', type=int)
     ap.add_argument('--all', action='store_true')
     ap.add_argument('--vision', action='store_true')
+    ap.add_argument('--mods', action='store_true',
+                    help='BUFFICON: after each player-controlled creature its agent summary in detail (ability, stacks)')
+    ap.add_argument('--names', metavar='CSV', help='--mods: script names from this CSV (columns key, name)')
     ap.add_argument('--out')
     ap.add_argument('--postgame', nargs='*', metavar='CATALOGID',
                     help='D8-live: the account FLAG, the inventory counts of these catalogIDs and the post-game '
@@ -375,6 +462,9 @@ def main():
     cam = [struct.unpack('<3f', p.read(a, 12) or bytes(12)) for a in (0x013F5724, 0x013F5730, 0x013F5744)]
     say('camera globals: anchor ({:.2f},{:.2f},{:.2f}), follow pos ({:.2f},{:.2f},{:.2f}), '
         'eye target ({:.2f},{:.2f},{:.2f})'.format(*cam[0], *cam[1], *cam[2]))
+    buff_bar(p, say)
+    mpool = component_pool(p, sim, MODIFIER_SUMMARY_TYPE) if a.mods else 0
+    names = lua_names(a.names) if a.mods else {}
 
     blob = p.read(data, maxc * stride) if data and stride and maxc < 1 << 16 else None
     if not blob and data and stride and maxc < 1 << 16:
@@ -429,10 +519,22 @@ def main():
         # pool handle, next}; AgentSummary_OnModifierCreated 0x00658480 adds, _OnModifierDeleted 0x00657F40 erases on AD)
         summ = struct.unpack_from('<I', blob, i * stride + 0x8C8)[0] if stride > 0x8CC else 0
         mods = ''
+        detail = None
         if summ and nc:
-            inst = sorted(k for k, _ in hash_map(p, p.u32(summ + 0xC), p.u32(summ + 0x10)))
-            if inst:
-                mods = ' mods [' + ' '.join(f'{k:08x}' for k in inst) + ']'
+            pairs = sorted(hash_map(p, p.u32(summ + 0xC), p.u32(summ + 0x10)))
+            if pairs:
+                mods = ' mods [' + ' '.join(f'{k:08x}' for k, _ in pairs) + ']'
+            # BUFFICON (--mods): each summary entry of a player-controlled creature, from the summary pool
+            if a.mods and blob[i * stride + 0x56]:
+                parts = []
+                for k, h in pairs:
+                    e = pool_entry(p, mpool, h)
+                    if not e or p.u32(e + 4) != k:
+                        parts.append(f'{k:08x} ? (handle 0x{h:08x} not in the summary pool)')
+                        continue
+                    guid, dur, stacks = p.u32(e + 8), p.u32(e + 0x20), p.u32(e + 0x24)
+                    parts.append(f'{k:08x} {names.get(guid, "?")} ({guid:08x}) x{stacks}{f" {dur} ms" if dur else ""}')
+                detail = f'    mods of 0x{oid:08x}: {len(pairs)}: ' + ('; '.join(parts) if parts else '-')
         # D2g-live step 3: the used attached-effect slots (+0x90 + 0x38 i, asset at +0x10; AttachedEffectUpdate 92 and
         # the attach ServerEvents fill them)
         fx = [k for k in range(16) if struct.unpack_from('<I', blob, i * stride + 0x90 + 0x38 * k + 0x10)[0]]
@@ -453,6 +555,8 @@ def main():
         rows.append(f'  0x{oid:08x} server 0x{sid:08x}{"" if not nc or mapped == sid else " (UNMAPPED)"} '
                     f'{name:40s} pos ({x:8.2f},{y:8.2f},{z:6.2f}) team {team} flags 0x{flags:x} '
                     f'visible {visible} model {"yes" if gfx else "no"} hp {hp}/{mx}{res}{bar}{pctl}{fxs}{mods}{vis}')
+        if detail:
+            rows.append(detail)
     say(f'objects: {live} live, {net} with a network component')
     lines += rows
     text = '\n'.join(lines)

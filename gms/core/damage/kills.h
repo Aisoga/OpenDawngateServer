@@ -235,6 +235,9 @@ struct PlayerKillRewards {
 //   XP ("area"): killXpPercent x the victim's level step, shared by the killer's team's players in the area plus the
 //     killer and the assisters (playerXPRewardNearbyShare[n - 1] each), each x its level multiplier and role's XP
 //     modifier.
+// ROLEVIM-2: a role's kill or assist gold modifier above 1 (the Predator's 1.5 and 2.0) is its own grant right after
+// the normal one (PushWithRole: 300, then 150 for a level-even Predator's kill). The XP modifier stays inside the one
+// XP grant [assumed: no XP popup to split], since the client's own OnGrantXP dispatch would run on both parts.
 // `receivers` are the killer's team's players (the killer and the assisters among them).
 inline PlayerKillRewards ComputePlayerKillRewards(const PlayerKillTuning& t, const KillOutcome& o, int victimLevel,
                                                   float victimStepXp, const std::vector<KillReceiver>& receivers) {
@@ -254,18 +257,14 @@ inline PlayerKillRewards ComputePlayerKillRewards(const PlayerKillTuning& t, con
     if (k.player < 0) continue;
     const bool killer = k.player == o.killer, assister = isAssister(k.player);
     if (killer) {
-      Grant g;
-      g.player = k.player;
-      g.amount = r.baseGold * LevelMultiplier(t.lowerLevelGold, t.higherLevelGold, k.level, victimLevel) *
-                 k.killGoldModifier;
-      g.lastHit = true;
-      if (g.amount > 0.f) r.gold.push_back(g);
+      PushWithRole(&r.gold, k.player,
+                   r.baseGold * LevelMultiplier(t.lowerLevelGold, t.higherLevelGold, k.level, victimLevel),
+                   k.killGoldModifier, true);
     } else if (assister && assistTotal > 0.f) {
-      Grant g;
-      g.player = k.player;
-      g.amount = assistTotal / static_cast<float>(nAssist) *
-                 LevelMultiplier(t.lowerLevelGold, t.higherLevelGold, k.level, victimLevel) * k.assistGoldModifier;
-      if (g.amount > 0.f) r.gold.push_back(g);
+      PushWithRole(&r.gold, k.player,
+                   assistTotal / static_cast<float>(nAssist) *
+                       LevelMultiplier(t.lowerLevelGold, t.higherLevelGold, k.level, victimLevel),
+                   k.assistGoldModifier, false);
     }
     if (killer || assister || k.inArea) xpTakers.push_back(&k);
   }

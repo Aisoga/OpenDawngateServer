@@ -143,4 +143,54 @@ int ModifierRegistry::CountFor(uint32_t carrier) const {
   return n;
 }
 
+int ModifierTrace::Configure(const char* spec) {
+  all_ = false;
+  guids_.clear();
+  instances_.clear();
+  if (!spec) return 0;
+  for (const char* p = spec; *p;) {
+    if ((p[0] == 'a' || p[0] == 'A') && (p[1] == 'l' || p[1] == 'L') && (p[2] == 'l' || p[2] == 'L')) {
+      all_ = true;
+      p += 3;
+      continue;
+    }
+    if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) p += 2;
+    uint32_t v = 0;
+    int digits = 0;
+    for (;; ++p, ++digits) {
+      const char c = *p;
+      int d;
+      if (c >= '0' && c <= '9') d = c - '0';
+      else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+      else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+      else break;
+      v = (v << 4) | static_cast<uint32_t>(d);
+    }
+    if (digits > 0 && digits <= 8 && v != 0 && std::find(guids_.begin(), guids_.end(), v) == guids_.end())
+      guids_.push_back(v);
+    if (digits == 0) ++p;  // a separator
+  }
+  return all_ ? -1 : static_cast<int>(guids_.size());
+}
+
+bool ModifierTrace::OnCreated(const uint8_t* body, size_t n) {
+  ModifierRecord r;
+  if (!On() || !ParseModifierRecord(body, n, &r) || r.instance == 0) return false;
+  if (!all_ && std::find(guids_.begin(), guids_.end(), r.ability) == guids_.end()) return false;
+  instances_[r.instance] = r.ability;
+  return true;
+}
+
+bool ModifierTrace::OnUpdated(const uint8_t* body, size_t n) const {
+  if (!body || n < 8 || instances_.empty()) return false;
+  return instances_.count(GetU32LE(body + 4)) != 0;
+}
+
+bool ModifierTrace::OnDeleted(uint32_t instance) { return instances_.erase(instance) != 0; }
+
+uint32_t ModifierTrace::AbilityOf(uint32_t instance) const {
+  const auto it = instances_.find(instance);
+  return it == instances_.end() ? 0 : it->second;
+}
+
 }  // namespace gms

@@ -1362,6 +1362,7 @@ void ExperimentInstall(const char* gameDir, unsigned long mainThreadId) {
     o.respawnFeedback = opt("respawn_feedback", 1) != 0;         // D11: PlayerRespawned at the respawn
     o.rewardBuffs = opt("reward_buffs", 1) != 0;                 // D14: the jungle buffs, the parasite's team buffs
     o.roleGold = opt("role_passives", 1) != 0;                   // ROLEVIM: the roles' minion/creature gold modifiers
+    o.roleGoldBonus = opt("role_gold_bonus", 1) != 0;            // VIMPOPUP: the role's part as the grant's bonus
     death::Install(o);
   }
   {  // D1j: the ability data containers' release at an object's destroy, and the server pools' census (components.h)

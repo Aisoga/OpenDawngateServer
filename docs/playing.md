@@ -88,7 +88,7 @@ The match runs as in the original game. The server uses the game's own data and 
 
 **Bots.** The bots take their lanes after about a minute. They last-hit minions, cast their abilities, buy items, drink potions, place wards, push towers and fight. They also play as a team: they defend towers, gather for the parasite, capture spirit wells, and join an ally going for a kill. Their Tacticians and jungler come to a well of theirs you are capturing near them and fight you in its ring, unless you outnumber them or they would arrive too late. When they have the advantage, after won fights or with the parasite's buff, they group up in one lane and push with their minions until they lose the fight; from about 20 minutes, and whenever enemy cores are down, they siege the enemy base to end the match. Their jungler leaves its camps to gank a lane where an ally is fighting, to defend the base, and to join pushes, well captures and the parasite near it. The bots follow your minimap pings: ping an enemy Binding to push its lane, the parasite to take it together, an enemy spirit well to capture it, or "retreat" to call a push or an objective off; ping one of your own Bindings or wells, an enemy shaper or a spot on the map and the jungler comes, answering with an "on my way" ping. In a practice match they go easier on you, as the original's first-time rules did.
 
-**Gold and experience.** You start with 500 gold and earn 100 gold a minute from 1:00. Last hits and kills give gold and experience. Each level gives you an ability point to spend with Ctrl + Q/W/E/R:
+**Gold and experience.** You start with 500 gold and earn 100 gold a minute from 1:00. Last hits and kills give gold and experience. A lane minion pays its last hitter three times its gold (12 for a melee minion at the start), and every other shaper of the team nearby its gold once (4). A role's extra gold arrives as its own gold event. Each level gives you an ability point to spend with Ctrl + Q/W/E/R:
 
 - Q, W and E go up to rank 5.
 - R ranks up at levels 6, 11 and 16.
@@ -123,10 +123,10 @@ The match runs as in the original game. The server uses the game's own data and 
 
 **Passives.** Your shaper's passive ability and your role's bonus are always active:
 
-- **Gladiator:** double the bonus gold for a last hit on a lane minion; a melee Gladiator also stores half the gold of nearby minions it didn't kill and gets it with its next last hit.
+- **Gladiator:** double gold for a last hit on a lane minion (12 + 12 for a melee minion at the start); a melee Gladiator also stores half the gold of nearby minions it didn't kill and gets it with its next last hit.
 - **Hunter:** bonuses against jungle creeps.
 - **Predator:** more gold and experience for kills and assists on enemy shapers, double gold from well workers.
-- **Tactician:** double gold for being near lane minions when they die, and 20 gold for hitting an enemy shaper (once every 5 seconds for ranged and for melee hits).
+- **Tactician:** double gold for being near lane minions when another player or a minion gets the last hit (4 + 4), and 20 gold for hitting an enemy shaper (once every 5 seconds for ranged and for melee hits).
 
 **Voice lines.** The shapers speak their kill, assist and banter lines as in the original. Emotes and quick-chat lines play for your team or for everyone.
 

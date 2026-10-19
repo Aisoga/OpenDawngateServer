@@ -370,3 +370,22 @@ GMS_TEST(BanterEmotesAndPresence) {
   const Say r = Book::PlayerReconnected(3, 0);
   CHECK(r.line == Line::kPlayerReconnected && r.variant == 3u && r.excludePlayers == 0x8u);
 }
+
+// VOICELINE-fix: the respawn line (a 2-D own-voice line) only for the human who respawns. Team 1 holds the human 0, a
+// second human 3 and the bots 1, 2, 4 (mask 0x1F); team 2 the players 5-9.
+GMS_TEST(BanterOwnVoiceLine) {
+  const unsigned team1 = 0x1Fu, team2 = 0x3E0u;
+  const OwnVoiceAudience h0 = OwnVoiceLine(0, false);
+  CHECK(h0.send);
+  CHECK_EQ(team1 & ~h0.excludePlayers, 0x1u);
+  CHECK_EQ((team1 | team2) & ~h0.excludePlayers, 0x1u);
+  const OwnVoiceAudience h3 = OwnVoiceLine(3, false);
+  CHECK(h3.send);
+  CHECK_EQ(team1 & ~h3.excludePlayers, 0x8u);
+  const OwnVoiceAudience h9 = OwnVoiceLine(9, false);
+  CHECK_EQ(team2 & ~h9.excludePlayers, 0x200u);
+  CHECK_EQ(team1 & ~h9.excludePlayers, 0u);  // never another team's
+  for (int bot : {1, 2, 4}) CHECK(!OwnVoiceLine(bot, true).send);
+  CHECK(!OwnVoiceLine(-1, false).send);
+  CHECK(!OwnVoiceLine(32, false).send);
+}

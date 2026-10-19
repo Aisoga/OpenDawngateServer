@@ -79,9 +79,10 @@ struct Options {
   bool respawn = true;          // D1g: the death timer and the respawn
   float respawnSeconds = 0.f;   // D1g: 0 = LevelGameplayTuning's formula, > 0 a fixed wait
   bool keepItemPassives = true;  // Q3: step 5 leaves the passives of a player's items alone (death.cpp)
-  bool respawnFeedback = true;  // D11: PlayerRespawned (the shaper's "respawn" voice line) to the team at the respawn
+  bool respawnFeedback = true;  // D11: PlayerRespawned (the shaper's "respawn" voice line) at the respawn, to the respawned human alone (VOICELINE-fix)
   bool rewardBuffs = true;      // D14: CharacterRewardData.buffs (the jungle buffs, the parasite's team buffs) in step 4
   bool roleGold = true;         // ROLEVIM: RolesTuning's NPC-kill gold modifiers in step 4 ([host] role_passives)
+  bool roleGoldBonus = true;    // VIMPOPUP: a role's part as its grant's bonus (its own popup); 0 = its own grant (ROLEVIM-2)
 };
 
 // DllMain time: the GameObject_Kill detour and the OnGrantGold replacement.

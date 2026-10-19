@@ -144,12 +144,30 @@ GMS_TEST(KillsPlayerRewards) {
   CHECK_EQ(r.baseGold, 300.f);
   CHECK_EQ(r.firstBloodGold, 100.f);
   CHECK(Near(r.xpBase, 156.0, 1e-4));
-  CHECK_EQ(r.gold.size(), static_cast<size_t>(2));
+  // the predator killer: 300, then its role's 150 (300 x 0.5) as a separate grant (ROLEVIM-2)
+  CHECK_EQ(r.gold.size(), static_cast<size_t>(3));
   CHECK_EQ(r.gold[0].player, 0);
   CHECK(r.gold[0].lastHit);
-  CHECK(Near(r.gold[0].amount, 450.0, 1e-4));  // 300 x 1.5
-  CHECK_EQ(r.gold[1].player, 1);
-  CHECK(Near(r.gold[1].amount, 210.0, 1e-4));  // 300 x 0.7 / 1
+  CHECK(!r.gold[0].role);
+  CHECK(Near(r.gold[0].amount, 300.0, 1e-4));
+  CHECK_EQ(r.gold[1].player, 0);
+  CHECK(r.gold[1].role);
+  CHECK(Near(r.gold[1].amount, 150.0, 1e-4));
+  CHECK_EQ(r.gold[2].player, 1);
+  CHECK(!r.gold[2].role);
+  CHECK(Near(r.gold[2].amount, 210.0, 1e-4));  // 300 x 0.7 / 1
+  // a predator assister (assist gold 2.0): 210, then 210 more as its role's grant; the XP stays one grant
+  std::vector<KillReceiver> rc2 = rc;
+  rc2[1].assistGoldModifier = 2.f;
+  rc2[1].xpModifier = 1.3f;
+  const PlayerKillRewards r2 = ComputePlayerKillRewards(t, o, 1, LevelStepXp(kXpRequired, 6, 1), rc2);
+  CHECK_EQ(r2.gold.size(), static_cast<size_t>(4));
+  CHECK_EQ(r2.gold[3].player, 1);
+  CHECK(r2.gold[3].role);
+  CHECK(!r2.gold[3].lastHit);
+  CHECK(Near(r2.gold[3].amount, 210.0, 1e-4));
+  CHECK_EQ(r2.xp.size(), static_cast<size_t>(3));
+  CHECK(Near(r2.xp[1].amount, 156.0 * 0.4333 * 1.3, 1e-3));
   CHECK_EQ(r.xp.size(), static_cast<size_t>(3));
   // three takers: share 0.4333; the killer is a level above the victim (lower[1] 0.9) and x 1.3
   CHECK(Near(r.xp[0].amount, 156.0 * 0.4333 * 0.9 * 1.3, 1e-3));

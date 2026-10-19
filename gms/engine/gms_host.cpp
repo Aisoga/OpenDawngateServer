@@ -38,6 +38,7 @@
 #include "core/surrender/team_left.h"
 #include "core/vision/fog.h"
 #include "core/vision/vision.h"
+#include "abilities.h"
 #include "agents.h"
 #include "banter.h"
 #include "bots.h"
@@ -1226,6 +1227,14 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     }
   }
 
+  // BUFFICON test aid ([host] modifier_trace = static ability GUIDs in hex, or "all"; modifier_trace_limit 3000): every
+  // AB of those abilities and every AC/AD of their instances is logged with its fields and recipients ("modifier
+  // trace:" lines). Returns how many GUIDs (-1 all).
+  int SetModifierTrace(const char* spec, int limit) {
+    modTraceLimit_ = limit;
+    return modTrace_.Configure(spec);
+  }
+
   // D1b-live test aid ([host] test_lua = "<seconds after EnterGame>:<file>[,<seconds>:<file>...]"): each Lua file (in
   // the game folder unless absolute; gms/engine/lua's dgsim_*.lua are installed there) runs once on the server
   // simulator's lua_State at its time, like the test wave's chunk; its string result is logged line by line.
@@ -2090,6 +2099,34 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
         to, m.kind == 2 ? r.seers : r.recipients, r.seeNow);
   }
 
+  // BUFFICON test aid: one line per traced modifier message ([host] modifier_trace), up to modifier_trace_limit: the
+  // instance, its ability, the decoded fields and who gets it ("to" = with the world, "route" = before that).
+  void TraceModifier(const gms::Bytes& msg, uint16_t to, uint16_t route) {
+    if (msg.size() < 9 || ++modTraced_ > modTraceLimit_) return;
+    // the instance: AB's record +12 (after carrier, caster, ability), AC's +4. Only a real instance id may go to
+    // LabsAbilities_GetInstance: another id (such as the carrier) asserts in the pool (ComponentConfig.cpp 317,
+    // "TryToGet: Index ... larger than our max size")
+    int type = -1;
+    if (msg[0] == gms::kGmsModifierCreated) {
+      gms::ModifierRecord r;
+      if (!gms::ParseModifierRecord(msg.data() + 1, msg.size() - 1, &r)) return;
+      const char* name = AbilityInstanceName(r.instance, &type);
+      Log("modifier trace: ab inst %08X %s (ability %08X) on %08X caster %08X: stacks %u, duration %u ms, rank %u, "
+          "start %llu, holds %u, feedback 0x%x -> players 0x%04x (route 0x%04x)",
+          r.instance, name, r.ability, r.carrier, r.caster, r.stacks, r.durationMs, r.rank,
+          static_cast<unsigned long long>(r.startMs), r.holdsAgent, r.feedback, to, route);
+    } else if (msg[0] == gms::kGmsModifierUpdated) {
+      gms::ModifierUpdate u;
+      if (!gms::ParseModifierUpdate(msg.data() + 1, msg.size() - 1, &u)) return;
+      const char* name = AbilityInstanceName(u.instance, &type);
+      Log("modifier trace: ac inst %08X %s (ability %08X) on %08X: stacks %u, duration %u ms, start %s%llu, holds %u "
+          "-> players 0x%04x (route 0x%04x)",
+          u.instance, name, modTrace_.AbilityOf(u.instance), u.carrier, u.stacks, u.durationMs,
+          u.startMs == ~0ull ? "kept " : "", u.startMs == ~0ull ? 0ull : static_cast<unsigned long long>(u.startMs),
+          u.holdsAgent, to, route);
+    }
+  }
+
   // Seam 1 (D2f, with D2g-live's fixes): the outgoing vector's entries to the players they name among those that have
   // the world. Every ModifierCreated/Updated goes into the registry first (whoever gets it); kind 2 of an object
   // deleted in the same tick goes to its deletion's recipients; a deletion drops the object's registry entries.
@@ -2103,6 +2140,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     released_ += dc.released;
     if (dc.entries == 0) return;
     std::vector<gms::OutgoingRoute> routes(msgs.size());
+    std::vector<bool> traced(msgs.size(), false);  // BUFFICON: [host] modifier_trace
     for (size_t i = 0; i < msgs.size(); ++i) {
       const repl::Outgoing& m = msgs[i];
       gms::OutgoingRoute& r = routes[i];
@@ -2137,9 +2175,20 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       if (m.msg.size() > 1 && m.msg[0] == gms::kGmsModifierCreated) {
         if (mods_.OnCreated(m.msg.data() + 1, m.msg.size() - 1)) ++modsRegistered_;
         else Log("replication: ModifierCreated of %zu B not registered: %s", m.msg.size() - 1, gms::Hex(m.msg).c_str());
+        if (modTrace_.OnCreated(m.msg.data() + 1, m.msg.size() - 1)) traced[i] = true;
       } else if (m.msg.size() > 1 && m.msg[0] == gms::kGmsModifierUpdated) {
-        if (!mods_.OnUpdated(m.msg.data() + 1, m.msg.size() - 1) && ++unknownUpdates_ <= 20)
-          Log("replication: ModifierUpdated for an unregistered instance: %s", gms::Hex(m.msg).c_str());
+        if (!mods_.OnUpdated(m.msg.data() + 1, m.msg.size() - 1)) {
+          // BUFFICON: an AC without an AB is an ability's (type 0): LabsAbilities_ReleaseAgent and nAbility.BindAgent
+          // send it for an agent ability's instance, which the client ignores (GameClient_ApplyModifierUpdate finds no
+          // summary entry); counted by type on the per-second line
+          int type = -1;
+          const char* name = m.msg.size() >= 9 ? AbilityInstanceName(gms::GetU32LE(m.msg.data() + 5), &type) : "?";
+          ++(type == 0 ? unknownUpdatesAbility_ : unknownUpdatesOther_);
+          if (++unknownUpdates_ <= 20)
+            Log("replication: ModifierUpdated for an unregistered instance (%s, %s): %s", name,
+                type == 0 ? "an ability" : type == 1 ? "a modifier" : "gone", gms::Hex(m.msg).c_str());
+        }
+        if (modTrace_.OnUpdated(m.msg.data() + 1, m.msg.size() - 1)) traced[i] = true;
       }
     }
     fogPlayersTick_.clear();
@@ -2150,6 +2199,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       const repl::Outgoing& m = msgs[i];
       const gms::OutgoingRoute& r = routes[i];
       const uint16_t to = static_cast<uint16_t>(r.players & world);
+      if (traced[i]) TraceModifier(m.msg, to, r.players);
       if (r.unseen & world) AuditUnseen(m, r, to);  // FOGSOUND
       if (!evTrace_.empty() && evTrace_.count(r.wire)) TraceEvent(m, r, to);
       if (m.kind == 0) {
@@ -2362,6 +2412,9 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       ++modEnds_;
       Log("replication: modifier %08X on %08X ended -> ModifierDeleted to players 0x%04x%s; registry %zu", inst, carrier,
           to, alive ? "" : " (carrier gone: not sent)", mods_.Size());
+      const uint32_t tracedAbility = modTrace_.AbilityOf(inst);
+      if (modTrace_.OnDeleted(inst) && ++modTraced_ <= modTraceLimit_)
+        Log("modifier trace: ad inst %08X (ability %08X) on %08X -> players 0x%04x", inst, tracedAbility, carrier, to);
     }
     if (fog_ && fogReady_) FogStep(out, objs, ents, info, createdNow);
     if (fowDataByVision_) FowDataStep(out);  // D2h
@@ -2664,11 +2717,11 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     int inUse = -1, capacity = -1;
     repl::LineOfSightPool(sim_, &inUse, &capacity);
     Log("replication: last %.1f s: %d messages, %zu bytes%s%s; %d objects known, %d creates, %d deletes, %d updates, "
-        "modifiers %zu registered (%d ended); line-of-sight pool %d/%d (%d released); network-rate ticks %u (200 ms bit "
-        "%u); animation override deltas %d; short effects %d",
+        "modifiers %zu registered (%d ended; AC without AB: %d of abilities, %d other); line-of-sight pool %d/%d (%d "
+        "released); network-rate ticks %u (200 ms bit %u); animation override deltas %d; short effects %d",
         secs, counts_.Messages(), counts_.TotalBytes(), counts_.Empty() ? "" : ": ", counts_.Format().c_str(),
-        knownObjects_, creates_, deletes_, updates_, mods_.Size(), modEnds_, inUse, capacity, released_, netRateTicks_,
-        netRate200_, animDeltas_, shortEffectsSent_);
+        knownObjects_, creates_, deletes_, updates_, mods_.Size(), modEnds_, unknownUpdatesAbility_,
+        unknownUpdatesOther_, inUse, capacity, released_, netRateTicks_, netRate200_, animDeltas_, shortEffectsSent_);
     if (fog_ && fogReady_)
       Log("fog: %d enters, %d exits (%d B of full state), %d A3, %d mVisibleToTeam writes, %d mVisionRadius / %d grass-id "
           "writes, %d deltas held back (nobody sees the object), kind 3 by position %d (%d seen by nobody); now %d "
@@ -3317,6 +3370,9 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   std::map<uint8_t, int> firstLogged_;
   std::set<uint32_t> failedCreates_;
   int creates_ = 0, deletes_ = 0, updates_ = 0, modsRegistered_ = 0, modEnds_ = 0, unknownUpdates_ = 0;
+  int unknownUpdatesAbility_ = 0, unknownUpdatesOther_ = 0;  // BUFFICON: ACs without an AB, by the instance's type
+  gms::ModifierTrace modTrace_;                               // BUFFICON: [host] modifier_trace
+  int modTraced_ = 0, modTraceLimit_ = 3000;                  // [host] modifier_trace_limit
   int released_ = 0, forwardedViaDeletion_ = 0, knownObjects_ = 0;
   unsigned netRateTicks_ = 0, netRate200_ = 0;
   struct WaveMinion {
@@ -3888,6 +3944,12 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
     HostOptionString("fog_events_trace", "", trace, sizeof trace);
     g->match->SetEventTrace(trace, HostOptionInt("fog_events_trace_limit", 3000));
     if (trace[0]) Log("host: fog_events_trace %s (fog trace: lines)", trace);
+  }
+  {
+    char spec[512];
+    HostOptionString("modifier_trace", "", spec, sizeof spec);
+    const int n = g->match->SetModifierTrace(spec, HostOptionInt("modifier_trace_limit", 3000));
+    if (n) Log("host: modifier_trace %s (%d GUID(s), -1 = all; modifier trace: lines)", spec, n);
   }
   Log("host: messages about an object (kind 2) %s",
       eventsByVision ? "to the players that know it and whose team sees it this tick, creates for players in fog without "

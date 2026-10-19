@@ -113,6 +113,34 @@ GMS_TEST(ModifierRegistryCreateUpdateDelete) {
   CHECK_EQ(reg.Size(), static_cast<size_t>(0));
 }
 
+// BUFFICON: [host] modifier_trace. A live session's Gladiator counter AB (modifier_Role_Gladiator_Counter 108B48DA on
+// the human 7C77012E, instance 8441003F) and its ResetDuration AC.
+GMS_TEST(ModifierTraceByGuid) {
+  const Bytes counter = FromHex("2e01777c2e01777cda488b103f00418400000000010000000100000026710000000000000000000000");
+  const Bytes reset = FromHex("2e01777c3f0041842671000000000000000000000100000000");
+  const Bytes shop = FromHex(kCreatedShop), upd = FromHex(kUpdatedBinding);
+  gms::ModifierTrace t;
+  CHECK(!t.On());
+  CHECK(!t.OnCreated(counter.data(), counter.size()));
+  CHECK_EQ(t.Configure("108B48DA, 0x33b6c2b7;108b48da"), 2);  // any separator, a GUID once
+  CHECK(t.On());
+  CHECK(!t.OnCreated(shop.data(), shop.size()));  // another ability
+  CHECK(!t.OnCreated(counter.data(), 40));        // not one record
+  CHECK(!t.OnUpdated(reset.data(), reset.size()));  // not yet created
+  CHECK(t.OnCreated(counter.data(), counter.size()));
+  CHECK_EQ(t.AbilityOf(0x8441003F), 0x108B48DAu);
+  CHECK(t.OnUpdated(reset.data(), reset.size()));
+  CHECK(!t.OnUpdated(upd.data(), upd.size()));  // an instance not traced
+  CHECK(t.OnDeleted(0x8441003F));
+  CHECK(!t.OnDeleted(0x8441003F));
+  CHECK(!t.OnUpdated(reset.data(), reset.size()));
+  CHECK_EQ(t.Configure("all"), -1);
+  CHECK(t.OnCreated(shop.data(), shop.size()));
+  CHECK_EQ(t.Configure(""), 0);
+  CHECK(!t.On());
+  CHECK_EQ(t.Configure("0x123456789"), 0);  // more than 8 digits: no GUID
+}
+
 GMS_TEST(OutgoingRouting) {
   std::vector<gms::OutgoingRoute> e(6);
   // a ModifierCreated about a live object known to players 0 and 2

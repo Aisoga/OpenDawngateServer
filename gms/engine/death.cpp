@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "control/messages.h"
+#include "core/banter/banter.h"
 #include "core/damage/kills.h"
 #include "core/damage/pipeline.h"
 #include "core/damage/recap.h"
@@ -53,8 +54,9 @@ struct Stats {
   unsigned itemPassivesKept;  // Q3
   unsigned abilitiesKeptReleased;  // D6c: agent abilities that had released the agent, left running at the death
   unsigned rewardBuffs, rewardBuffsRefused;  // D14: CharacterRewardData.buffs granted / refused by the engine
-  unsigned roleGoldGrants, goldHandlerChanges;  // ROLEVIM: grants a role's modifier changed; OnGrantGold changes
-  double roleGold;                              // ROLEVIM: the gold the roles' modifiers added
+  unsigned roleGoldGrants, goldHandlerChanges;  // ROLEVIM-2: the roles' own grants; OnGrantGold changes
+  unsigned roleGrantsBare;                      // ROLEVIM-2: OnGrantGold calls of a role grant (no handler run)
+  double roleGold;                              // ROLEVIM: the gold the roles' grants added
   // D1h
   unsigned playerKills, playerDeathsCounted, assists, creeps, firstBlood, killReports, recapHits, recaps,
       playerKillGrants, assisterGrants;
@@ -493,9 +495,12 @@ float SehAvailableGold(void* player) {
   }
 }
 
-bool SehGrantGold(void* player, float amount, unsigned source, bool hide, std::uint32_t target, std::uint32_t killer) {
+// `bonus` is LabsPlayer_GrantGold's second gold source (0x13 = nGoldSourceType.Role): added to the grant and shown by
+// the client as its own combattext_gold_bonus popup (VIMPOPUP).
+bool SehGrantGold(void* player, float amount, unsigned source, bool hide, std::uint32_t target, std::uint32_t killer,
+                  float bonus = 0.f) {
   __try {
-    game::GrantGold(player, amount, 0.f, hide, source, target, killer, 0);
+    game::GrantGold(player, amount, bonus, hide, source, target, killer, 0);
     return true;
   } __except (SehNote(GetExceptionInformation(), "LabsPlayer_GrantGold")) {
     return false;
@@ -1083,12 +1088,21 @@ void RespawnDue() {
     // D3c: the perk page's modifiers that ended with the death (perks.h; [host] perk_respawn)
     perks::AtRespawn(g_sim, static_cast<unsigned>(r.index));
     if (g_opt.respawnFeedback) {
-      // D11: the shaper's respawn voice line (PlayerRespawned, character channel, attached to the creature), to the
-      // team as ability_returntobase sends its PlayerStartedReturnToBase [recipients assumed by that analogy]
-      const unsigned mask =
-          cmds::SendFeedback(g_sim, "PlayerRespawned.ClientFeedbackDef", r.creature, 1u << (r.team & 7u), 0);
-      Log("respawn: player %d's %08X: ClientFeedbackEvent PlayerRespawned to team %u -> %s (players 0x%04x)", r.index,
-          r.creature, r.team, mask ? "queued" : "FAILED", mask & 0xFFFFu);
+      // D11: the shaper's respawn voice line (PlayerRespawned, character channel, attached to the creature). Since
+      // VOICELINE-fix only to the respawned human: its _VO_respawn is 2-D (no position), so a teammate heard an ally's
+      // line, often a bot's, as if its own shaper spoke; a bot gets none (core/banter OwnVoiceLine). The def has no
+      // text and no ping, so the teammates' UI loses nothing (the ally's timer and portrait come from the replication).
+      const gms::banter::OwnVoiceAudience who = gms::banter::OwnVoiceLine(r.index, bots::IsBotIndex(r.index));
+      if (!who.send) {
+        Log("respawn: player %d's %08X: ClientFeedbackEvent PlayerRespawned skipped (a bot) (players 0x0000)", r.index,
+            r.creature);
+      } else {
+        const unsigned mask = cmds::SendFeedback(g_sim, "PlayerRespawned.ClientFeedbackDef", r.creature,
+                                                 1u << (r.team & 7u), 0, 0, who.excludePlayers);
+        Log("respawn: player %d's %08X: ClientFeedbackEvent PlayerRespawned to the player alone (team %u) -> %s "
+            "(players 0x%04x)",
+            r.index, r.creature, r.team, mask ? "queued" : "FAILED", mask & 0xFFFFu);
+      }
     }
     Watch w;
     w.creature = r.creature;
@@ -1191,12 +1205,22 @@ int SehModifierIds(std::uint32_t creature, std::uint32_t* ids, int cap) {
   }
 }
 
+// ROLEVIM-2: set while a role's own grant (dmg::Grant::role) is granted. Its OnGrantGold runs no handler, so a handler
+// that pays on a grant (the Gladiator's stored minions, the Predator's workers, the Hunter's procs) pays once, on the
+// normal grant before it.
+bool g_roleGrantNow = false;
+
 float __cdecl OnGrantGoldHook(std::uint32_t creature, float amount, std::uint32_t target, std::uint32_t killer,
                               std::uint32_t unknown) {
   (void)unknown;
   if (!Ours()) return 0.f;  // the client build's answer
   ++g_st.goldHookCalls;
   g_st.goldHookIn += amount;
+  if (g_roleGrantNow) {
+    ++g_st.roleGrantsBare;
+    g_st.goldHookOut += amount;
+    return amount;
+  }
   std::uint32_t ids[64];
   const int n = SehModifierIds(creature, ids, 64);
   for (int i = 0; i < n; ++i) {
@@ -1245,23 +1269,62 @@ int SehNearby(const float* pos, float radius, std::uint32_t skipA, std::uint32_t
   }
 }
 
-// `base` (optional): the same split without the roles' modifiers; a grant that differs shows "role +x" (ROLEVIM).
-std::string Grants(const std::vector<dmg::Grant>& g, const std::vector<dmg::Grant>* base = nullptr) {
+// One entry per grant: ` p5 +4.00 p6 +12.00 (last hit) +12.00 (role)`; a role's part (ROLEVIM-2) follows its player's
+// normal grant without repeating the player: "(role)" as its own grant ([host] role_gold_bonus 0), "(role bonus)" as
+// that grant's bonus (VIMPOPUP, the default).
+std::string Grants(const std::vector<dmg::Grant>& g) {
   std::string s;
   char b[80];
+  int prev = -1;
   for (const dmg::Grant& x : g) {
-    float before = x.amount;
-    if (base)
-      for (const dmg::Grant& y : *base)
-        if (y.player == x.player) before = y.amount;
-    char role[32] = "";
-    if (std::fabs(x.amount - before) > 0.001f) std::snprintf(role, sizeof role, "role %+.2f", x.amount - before);
-    std::snprintf(b, sizeof b, " p%d +%.2f%s%s%s%s", x.player, x.amount, x.lastHit || role[0] ? " (" : "",
-                  x.lastHit ? "last hit" : "", x.lastHit && role[0] ? ", " : "", role[0] ? role : "");
+    if (x.role && x.player == prev)
+      std::snprintf(b, sizeof b, " +%.2f (role%s)", x.amount, g_opt.roleGoldBonus ? " bonus" : "");
+    else
+      std::snprintf(b, sizeof b, " p%d +%.2f%s", x.player, x.amount,
+                    x.role ? " (role)" : x.lastHit ? " (last hit)" : "");
     s += b;
-    if (x.lastHit || role[0]) s += ")";
+    prev = x.player;
   }
   return s.empty() ? " -" : s;
+}
+
+// Grants one gold grant through LabsPlayer_GrantGold; a role's own grant runs no OnGrantGold handler (g_roleGrantNow).
+bool GrantGoldPart(void* player, const dmg::Grant& g, unsigned source, std::uint32_t target, std::uint32_t killer) {
+  g_roleGrantNow = g.role;
+  const bool ok = SehGrantGold(player, g.amount, source, false, target, killer);
+  g_roleGrantNow = false;
+  if (ok && g.role) {
+    ++g_st.roleGoldGrants;
+    g_st.roleGold += g.amount;
+  }
+  return ok;
+}
+
+// VIMPOPUP ([host] role_gold_bonus 1): one grant per player, the role's part as LabsPlayer_GrantGold's bonus, so the
+// client shows it as its own combattext_gold_bonus popup (gms::damage::GoldEvents). The OnGrantGold handlers run once,
+// on the total (they all add: the Gladiator's storage, the Hunter's proc; the Predator's x 2 is for workers, which get
+// no role part). `each` is called per granted event with its total. 0: ROLEVIM-2's separate role grants (GrantGoldPart).
+template <class Each>
+void GrantGoldAll(const std::vector<dmg::Grant>& grants, const std::vector<PlayerView>& players, Each each,
+                  unsigned sourceFor0, unsigned sourceFor1, std::uint32_t target, std::uint32_t killer) {
+  // sourceFor1 is used for a last-hit grant, sourceFor0 for the others
+  if (!g_opt.roleGoldBonus) {
+    for (const dmg::Grant& g : grants)
+      for (const PlayerView& p : players)
+        if (p.index == g.player && GrantGoldPart(p.player, g, g.lastHit ? sourceFor1 : sourceFor0, target, killer))
+          each(g.lastHit, g.amount);
+    return;
+  }
+  for (const dmg::GoldEvent& e : dmg::GoldEvents(grants))
+    for (const PlayerView& p : players)
+      if (p.index == e.player &&
+          SehGrantGold(p.player, e.amount, e.lastHit ? sourceFor1 : sourceFor0, false, target, killer, e.bonus)) {
+        if (e.bonus > 0.f) {
+          ++g_st.roleGoldGrants;
+          g_st.roleGold += e.bonus;
+        }
+        each(e.lastHit, e.amount + e.bonus);
+      }
 }
 
 // ROLEVIM: RolesTuning role[`role`]'s NPC-kill gold modifiers (1.0 each without the tuning or for an unknown role).
@@ -1316,17 +1379,8 @@ void Rewards(void* victim, const ObjInfo& v, const ObjInfo* killer, int creditIn
       PlayerFacts f;
       if (idx >= 0 && idx < dmg::kMaxPlayers && SehPlayerCounters(idx, &f)) SehRoleNpcGold(f.role, &roles[idx]);
     }
-  const std::vector<dmg::Grant> gg0 = dmg::SplitReward(goldType, gold, area, lastHitter, team, gs.p, gs.n, ratio);
-  const std::vector<dmg::Grant> gg = useRoles ? dmg::SplitReward(goldType, gold, area, lastHitter, team, gs.p, gs.n,
-                                                                 ratio, kind, roles, dmg::kMaxPlayers)
-                                              : gg0;
-  if (useRoles)
-    for (const dmg::Grant& g : gg)
-      for (const dmg::Grant& g0 : gg0)
-        if (g.player == g0.player && g.amount != g0.amount) {
-          ++g_st.roleGoldGrants;
-          g_st.roleGold += g.amount - g0.amount;
-        }
+  const std::vector<dmg::Grant> gg = dmg::SplitReward(goldType, gold, area, lastHitter, team, gs.p, gs.n, ratio, kind,
+                                                      useRoles ? roles : nullptr, useRoles ? dmg::kMaxPlayers : 0);
   std::uint32_t lastHitterCreature = 0;
   for (const PlayerView& p : players)
     if (p.index == lastHitter) lastHitterCreature = p.creature;
@@ -1337,19 +1391,19 @@ void Rewards(void* victim, const ObjInfo& v, const ObjInfo* killer, int creditIn
         ++g_st.xpGrants;
         g_st.xp += g.amount;
       }
-  for (const dmg::Grant& g : gg)
-    for (const PlayerView& p : players)
-      if (p.index == g.player &&
-          SehGrantGold(p.player, g.amount, static_cast<unsigned>(GoldSource(v)) + kGoldSourceOffset, false, v.id,
-                       killer ? killer->id : 0)) {
+  const unsigned goldSource = static_cast<unsigned>(GoldSource(v)) + kGoldSourceOffset;
+  GrantGoldAll(
+      gg, players,
+      [](bool, float amount) {
         ++g_st.goldGrants;
-        g_st.gold += g.amount;
-      }
+        g_st.gold += amount;
+      },
+      goldSource, goldSource, v.id, killer ? killer->id : 0);
   if (!xg.empty() || !gg.empty()) ++g_st.rewardDeaths;
   char b[200];
   std::snprintf(b, sizeof b, " rewards: xp %.2f (type %d), gold %.2f (type %d), radius %.2f, team %d, area %zu, last hitter %d;",
                 xp, xpType, gold, goldType, radius, receiving, area.size(), lastHitter);
-  *line = std::string(b) + " xp" + Grants(xg) + "; gold" + Grants(gg, useRoles ? &gg0 : nullptr);
+  *line = std::string(b) + " xp" + Grants(xg) + "; gold" + Grants(gg);
   // D14: the reward buffs (the jungle majors' Green/Blue/Orange to the last player to hit, the parasite's stage 2/3
   // buffs to the team), to living receivers only (gms::damage::BuffReceivers).
   if (!g_opt.rewardBuffs) return;
@@ -1423,13 +1477,13 @@ void PlayerKillRewards(const ObjInfo& v, int victimIndex, const dmg::KillOutcome
   }
   const float step = dmg::LevelStepXp(t.levelXp.data(), static_cast<int>(t.levelXp.size()), static_cast<int>(vf.level));
   const dmg::PlayerKillRewards r = dmg::ComputePlayerKillRewards(t.kill, o, static_cast<int>(vf.level), step, rc);
-  for (const dmg::Grant& g : r.gold)
-    for (const PlayerView& p : players)
-      if (p.index == g.player &&
-          SehGrantGold(p.player, g.amount, (g.lastHit ? 2u : 3u) + kGoldSourceOffset, false, v.id, killerCreature)) {
-        ++(g.lastHit ? g_st.playerKillGrants : g_st.assisterGrants);
-        g_st.playerKillGold += g.amount;
-      }
+  GrantGoldAll(
+      r.gold, players,
+      [](bool lastHit, float amount) {
+        ++(lastHit ? g_st.playerKillGrants : g_st.assisterGrants);
+        g_st.playerKillGold += amount;
+      },
+      3u + kGoldSourceOffset, 2u + kGoldSourceOffset, v.id, killerCreature);
   if (r.firstBloodGold > 0.f)
     for (const PlayerView& p : players)
       if (p.index == o.killer && SehGrantGold(p.player, r.firstBloodGold, 2u + kGoldSourceOffset, false, v.id, killerCreature))
@@ -1535,12 +1589,15 @@ bool Install(const Options& options) {
   }
   g_installed = true;
   Log("death (D1f-live): GameObject_Kill detour %s, OnGrantGold stub %s; nearby events %d, rewards %d, ends after %d "
-      "scheduler run(s), interrupts %d, starting gold %d, passive gold %d; D1g death timer and respawn %d (%s)",
+      "scheduler run(s), interrupts %d, starting gold %d, passive gold %d; D1g death timer and respawn %d (%s); role gold "
+      "%d, its part %s",
       g_opt.killHook ? (g_killHooked ? "installed" : "FAILED") : "off",
       g_opt.goldHook ? (g_goldHooked ? "replaced" : "FAILED") : "kept", g_opt.nearby, g_opt.rewards, g_opt.endRuns,
       g_opt.interrupt, g_opt.startGold, g_opt.passiveGold, g_opt.respawn,
       g_opt.respawnSeconds > 0.f ? ("fixed " + std::to_string(g_opt.respawnSeconds) + " s").c_str()
-                                 : "LevelGameplayTuning's formula");
+                                 : "LevelGameplayTuning's formula",
+      g_opt.roleGold,
+      g_opt.roleGoldBonus ? "as the grant's bonus (VIMPOPUP)" : "as its own grant ([host] role_gold_bonus=0, ROLEVIM-2)");
   return true;
 }
 
@@ -1947,7 +2004,7 @@ void FormatStats(char* buf, std::size_t size) {
                 "deaths %u (damage %u, kill %u; players %u), OnNearbyDeath %u (nearby objects %u), OnKill %u, player events "
                 "%u; rewarded deaths %u: xp grants %u (%.0f), gold grants %u (%.0f), D14 reward buffs %u (refused %u); "
                 "OnGrantGold calls %u (handlers %u, "
-                "%.0f -> %.0f, changed %u); role gold (ROLEVIM) %u grants (%+.0f); start gold %.0f, passive grants %u (%.0f); ends: modifiers %u (item passives kept %u), "
+                "%.0f -> %.0f, changed %u); role gold (ROLEVIM) %u grants (%+.0f, OnGrantGold without handlers %u); start gold %.0f, passive grants %u (%.0f); ends: modifiers %u (item passives kept %u), "
                 "abilities interrupted %u (left running, released the agent: %u), deaths done %u, pending %zu; death "
                 "timers %u, respawns %u (failed %u, dropped %u, waiting %zu); D1h: "
                 "player deaths counted %u (%u before the report), player kills %u (first blood %u), assists %u, creeps "
@@ -1956,7 +2013,7 @@ void FormatStats(char* buf, std::size_t size) {
                 g_st.deaths, g_st.byDamage, g_st.byKill, g_st.playerDeaths, g_st.nearbyEvents, g_st.nearbyObjects,
                 g_st.killEvents, g_st.playerEvents, g_st.rewardDeaths, g_st.xpGrants, g_st.xp, g_st.goldGrants, g_st.gold,
                 g_st.rewardBuffs, g_st.rewardBuffsRefused, g_st.goldHookCalls, g_st.goldHandlers, g_st.goldHookIn, g_st.goldHookOut, g_st.goldHandlerChanges,
-                g_st.roleGoldGrants, g_st.roleGold, g_st.startGold, g_st.passiveGrants,
+                g_st.roleGoldGrants, g_st.roleGold, g_st.roleGrantsBare, g_st.startGold, g_st.passiveGrants,
                 g_st.passiveGold, g_st.modifiersEnded, g_st.itemPassivesKept, g_st.abilitiesInterrupted,
                 g_st.abilitiesKeptReleased, g_st.pendingDone, g_pending.size(),
                 g_st.deathTimers, g_st.respawns, g_st.respawnsFailed, g_st.respawnsDropped, g_respawns.size(),

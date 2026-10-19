@@ -1474,7 +1474,8 @@ constexpr unsigned char kKillObjectBytes[] = {0x56, 0x8B, 0x74, 0x24, 0x08};  //
 // 0x008FF440 / 0x008FF2E0).
 constexpr std::uintptr_t kOnGrantGoldStub = 0x008FE500;
 constexpr unsigned char kOnGrantGoldStubBytes[] = {0x68, 0xFE, 0x15, 0x00, 0x00, 0x68, 0x28, 0xF2, 0x24, 0x01};
-// LabsPlayer_GrantGold (0x00912790, cdecl): (player, amount, bonus (source 0x13), hide the combat event, internal source
+// LabsPlayer_GrantGold (0x00912790, cdecl): (player, amount, bonus (source 0x13 = nGoldSourceType.Role; the client shows
+// it as its own combattext_gold_bonus popup, VIMPOPUP), hide the combat event, internal source
 // (nGoldSourceType + 7, table 0x0143E2D8), target id, killer id, ?) -> LabsPlayer_AddGold (thiscall, 0x00912440):
 // mAvailableGold +0xA8, mTotalGold +0xAC, the stub above, the gold combat event (0x200000) unless hidden.
 using GrantGoldFn = void(__cdecl*)(void* player, float amount, float bonus, bool hide, unsigned source, unsigned target,

@@ -108,7 +108,79 @@ struct Grant {
   int player = -1;    // the gameplay index
   float amount = 0.f;
   bool lastHit = false;
+  bool role = false;  // ROLEVIM-2: a role's part, granted as its own event right after the player's normal grant
 };
+
+// ROLEVIM-2: a normal grant and a role's part of it as two grants (two gold events in the client, as the user decided
+// on 2026-10-18): `base` to `player`, then base x (factor - 1) as a separate role grant when the factor is above 1. A
+// factor below 1 (none in the data) scales the normal grant instead, since a grant can't be negative.
+inline void PushWithRole(std::vector<Grant>* out, int player, float base, float factor, bool lastHit) {
+  if (player < 0 || base <= 0.f) return;
+  Grant g;
+  g.player = player;
+  g.amount = factor < 1.f ? base * factor : base;
+  g.lastHit = lastHit;
+  if (g.amount > 0.f) out->push_back(g);
+  if (factor > 1.f) {
+    g.amount = base * (factor - 1.f);
+    g.role = true;
+    out->push_back(g);
+  }
+}
+
+// VIMPOPUP: one LabsPlayer_GrantGold call per player and kill, the role's part passed as the grant's bonus.
+// LabsPlayer_GrantGold (0x00912790) takes (amount, bonus) as two gold sources (the second is source 0x13 =
+// nGoldSourceType.Role 12 + 7: the role's gold),
+// LabsPlayer_AddGold (0x00912440) adds both in one gold CombatEvent: integerGoldChange = the total,
+// integerBonusGoldChange = the bonus (plus whatever an OnGrantGold handler added). The client's own
+// CombatEvents!CombatEvent_Gold.lua then shows two popups, combattext_gold_bonus with the bonus and combattext_gold
+// with the rest. Two separate grants make two combattext_gold popups of the same def on the same object in the same
+// frame, and the user's client showed only one of them (the Tactician's 4 + 4, VIMPOPUP).
+struct GoldEvent {
+  int player = -1;
+  float amount = 0.f;  // the normal grant
+  float bonus = 0.f;   // the role's part (0: none)
+  bool lastHit = false;
+};
+
+// A role grant right after its player's normal grant (PushWithRole's order) becomes that grant's bonus; any other
+// grant is its own event (a role grant without its normal grant keeps its amount as the normal part, bonus 0).
+inline std::vector<GoldEvent> GoldEvents(const std::vector<Grant>& grants) {
+  std::vector<GoldEvent> out;
+  for (const Grant& g : grants) {
+    if (g.role && !out.empty() && out.back().player == g.player && out.back().bonus == 0.f) {
+      out.back().bonus = g.amount;
+      continue;
+    }
+    GoldEvent e;
+    e.player = g.player;
+    e.amount = g.amount;
+    e.lastHit = g.lastHit;
+    out.push_back(e);
+  }
+  return out;
+}
+
+// What the client's popups show for one grant (LabsPlayer_AddGold + CombatEvent_Gold.lua): `granted` is the total
+// after the OnGrantGold handlers (amount + bonus without one). The handlers' change is added to the bonus; a bonus
+// equal to the whole total is sent as 0; under 1 vim no event at all (hidden). Both numbers are floored
+// (CombatEvent.cpp's setters). bonusShown 0 = no combattext_gold_bonus popup.
+struct GoldPopups {
+  bool event = false;
+  int bonusShown = 0;  // combattext_gold_bonus
+  int baseShown = 0;   // combattext_gold: integerGoldChange - integerBonusGoldChange
+};
+inline GoldPopups PopupsOf(float amount, float bonus, float granted) {
+  GoldPopups p;
+  if (!(granted >= 1.f)) return p;
+  p.event = true;
+  float b = bonus + (granted - (amount + bonus));
+  if (b == granted || b < 0.f) b = 0.f;
+  const int total = static_cast<int>(std::floor(granted));
+  p.bonusShown = static_cast<int>(std::floor(b));
+  p.baseShown = total - p.bonusShown;
+  return p;
+}
 
 // ROLEVIM: a role's NPC-kill gold modifiers, RolesTuning role[] +0x08..+0x14 (the data: Gladiator/Carry
 // lastHitMinion 2.0, Tactician/Support proximity 2.0, every other value 1.0). Nothing in the client applies them (its
@@ -126,8 +198,10 @@ enum NpcGoldKind { kNpcOther = 0, kNpcMinion = 1, kNpcCreature = 2 };
 // Who gets how much of one reward (XP or gold) [assumed rules, DAMAGE.md *Death handling* 5]:
 //   last hit (and assist): the last hitter gets `amount` (assists aren't tracked yet);
 //   area: everyone in `area` gets amount x NearbyShare(n);
-//   area and last hit: the same, and the last hitter gets amount x lastHitBonusRatio on top
-//     (RewardsTuning.playerMinionFatalHitGoldBonusRatio 3.0 / playerJungleFatalHitGoldBonusRatio 1.0);
+//   area and last hit: the last hitter gets amount x lastHitBonusRatio (RewardsTuning.playerMinionFatalHitGoldBonusRatio
+//     3.0 / playerJungleFatalHitGoldBonusRatio 1.0) and no area share; everyone else in `area` gets amount x
+//     NearbyShare(n), n counting the whole area (the user's rule of 2026-10-18, ROLEVIM-2: the share compensates those
+//     who didn't get the last hit; a melee minion pays its last hitter 12, each other player nearby 4);
 //   team: everyone in `team` gets `amount`;
 //   the titan types: nothing (no player).
 // `lastHitter` is a gameplay index or -1. Zero amounts are dropped.
@@ -135,9 +209,9 @@ enum NpcGoldKind { kNpcOther = 0, kNpcMinion = 1, kNpcCreature = 2 };
 // a creature (`kind`), the last-hit part (the whole amount for the last-hit types, amount x lastHitBonusRatio for
 // "area and last hit") x the last hitter's lastHitMinion / lastHitCreature, and each area share x the receiver's
 // proximity, and x its proximityAllyLastHit when another player of its team got the last hit [assumed: the factors
-// multiply; the data's ally factor is 1.0 everywhere, so a Tactician gets its 200 % also beside an ally's last hit, as
-// its text says]. A Gladiator's last hit on a melee minion (gold 4): 4 + 4 x 3 x 2 = 28 instead of 16, the "vim x 6"
-// modifier_Role_Gladiator's storage counts with (lastHitModifier 6 = the fatal-hit ratio 3 x the role's 2).
+// multiply; the data's ally factor is 1.0 everywhere]. Each role part is its own grant (PushWithRole, ROLEVIM-2): a
+// Gladiator's last hit on a melee minion (gold 4) is 12 + 12 (role), a Tactician's share 4 + 4 (role), its own last
+// hit 12.
 inline std::vector<Grant> SplitReward(int type, float amount, const std::vector<int>& area, int lastHitter,
                                       const std::vector<int>& team, const float* shares, int shareCount,
                                       float lastHitBonusRatio, NpcGoldKind kind = kNpcOther,
@@ -156,34 +230,22 @@ inline std::vector<Grant> SplitReward(int type, float amount, const std::vector<
     if (!r) return 1.f;
     return r->proximity * (lastHitter >= 0 && lastHitter != player ? r->proximityAllyLastHit : 1.f);
   };
-  auto add = [&out](int player, float a, bool lastHit) {
-    if (player < 0 || a <= 0.f) return;
-    for (Grant& g : out)
-      if (g.player == player) {
-        g.amount += a;
-        g.lastHit = g.lastHit || lastHit;
-        return;
-      }
-    Grant g;
-    g.player = player;
-    g.amount = a;
-    g.lastHit = lastHit;
-    out.push_back(g);
-  };
   switch (type) {
     case kRewardLastHit:
     case kRewardLastHitAndAssist:
-      add(lastHitter, amount * lastHitFactor(), true);
+      PushWithRole(&out, lastHitter, amount, lastHitFactor(), true);
       break;
     case kRewardArea:
     case kRewardAreaAndLastHit: {
+      const bool lastHitPart = type == kRewardAreaAndLastHit;
       const float share = NearbyShare(shares, shareCount, static_cast<int>(area.size()));
-      for (int p : area) add(p, amount * share * areaFactor(p), false);
-      if (type == kRewardAreaAndLastHit) add(lastHitter, amount * lastHitBonusRatio * lastHitFactor(), true);
+      for (int p : area)
+        if (!lastHitPart || p != lastHitter) PushWithRole(&out, p, amount * share, areaFactor(p), false);
+      if (lastHitPart) PushWithRole(&out, lastHitter, amount * lastHitBonusRatio, lastHitFactor(), true);
       break;
     }
     case kRewardTeam:
-      for (int p : team) add(p, amount, false);
+      for (int p : team) PushWithRole(&out, p, amount, 1.f, false);
       break;
     default:
       break;

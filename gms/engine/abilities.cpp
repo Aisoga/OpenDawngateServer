@@ -618,6 +618,19 @@ void AbilityLuaContext(char* buf, std::size_t size) {
   }
 }
 
+const char* AbilityInstanceName(unsigned id, int* type) {
+  if (type) *type = -1;
+  if (!id) return "gone";
+  __try {
+    void* in = GetInstance(id);
+    if (!in) return "gone";
+    if (type) *type = Field<int>(in, inst::kType);
+    return InstName(in);
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return "gone";
+  }
+}
+
 void AbilityTickSetSim(void* sim) { g_sim = sim; }
 
 void AbilityTickBeforeScheduler() { g_inScheduler = true; }

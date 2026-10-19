@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "game.h"
@@ -95,6 +96,50 @@ struct RoleStats {
 } g_role;
 int g_roleEnabled = -1;  // [host] role_passives, read at the first call
 
+// VIMPOPUP test aid ([host] test_roles = "<player>:<role>[,<player>:<role>...]", roles 0-3: Gladiator, Tactician,
+// Hunter, Predator): the server player's mRole written before its role passive at the deploy and each respawn, so a
+// session without shaper select can make the human (player 0, role 0 there) a Tactician or a Predator for the role
+// gold's rules. Only the server's player changes (the client keeps its role card).
+int g_testRole[16];
+bool g_testRolesRead = false;
+
+void ReadTestRoles() {
+  g_testRolesRead = true;
+  for (int& r : g_testRole) r = -1;
+  char spec[128] = {};
+  HostOptionString("test_roles", "", spec, sizeof spec);
+  for (const char* p = spec; *p;) {
+    char* end = nullptr;
+    const long idx = std::strtol(p, &end, 10);
+    if (end == p || *end != ':') {
+      ++p;
+      continue;
+    }
+    const char* q = end + 1;
+    const long role = std::strtol(q, &end, 10);
+    if (end == q) {
+      p = q;
+      continue;
+    }
+    if (idx >= 0 && idx < 16 && role >= 0 && role <= 3) {
+      g_testRole[idx] = static_cast<int>(role);
+      Log("passives: test_roles: player %ld's mRole -> %ld at the deploy and each respawn", idx, role);
+    }
+    p = end;
+  }
+}
+
+bool SehWriteRole(void* sim, unsigned index, unsigned char role) {
+  __try {
+    void* player = GetPlayerByIndex(sim, index);
+    if (!player) return false;
+    Field<unsigned char>(player, player::kRole) = role;
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
 void ActivateRole(void* sim, unsigned index, const char* why) {
   if (g_roleEnabled < 0) {
     // On by default since D13-live (docs/DAMAGE.md *The roles' passives live (D13-live)*).
@@ -102,6 +147,9 @@ void ActivateRole(void* sim, unsigned index, const char* why) {
     Log("passives (D13): the roles' passives (RolesTuning.role[mRole].rolePassive) at the deploy and each respawn: %s",
         g_roleEnabled ? "on" : "off ([host] role_passives=0)");
   }
+  if (!g_testRolesRead) ReadTestRoles();
+  if (sim && index < 16 && g_testRole[index] >= 0)
+    SehWriteRole(sim, index, static_cast<unsigned char>(g_testRole[index]));
   if (!g_roleEnabled || !sim) return;
   Result r;
   unsigned role = 0xFF;

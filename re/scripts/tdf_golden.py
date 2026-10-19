@@ -1730,6 +1730,34 @@ def lbfix_petition_request():  # FilePetitionRequest 0x012FC350 (made-up names a
     return bytes(w)
 
 
+# DISCORD3a: the launcher's join codes (component 0x7D00, ours; server/internal/blaze/joincodes.go) and the invites
+# the server sends a code's redeemer in the leader's or owner's name: as the inviter's client builds them
+# (GameEntryInviteManager 0x0067F100: FLAG 0, ATTR 0xB0000 the name, 0xB0003 the PGID or 0xB0004 the GID, 0xB0005
+# the invite number, from 1,000,000,000 for the server's, 0xB0006 "0"), from the first persona to the second.
+DISCORD3A_CODE = "q83vEjRWeJCrze8SNFZ4kA"  # 16 bytes, base64url without padding
+DISCORD3A_NUMBER = "1000000000"
+
+
+def discord3a_invite(mgid, mtype, id_key, target_id):
+    attrs = [(0xB0000, B5_NAME), (id_key, str(target_id)), (0xB0005, DISCORD3A_NUMBER), (0xB0006, "0")]
+    return notify_message(mgid, B5_NAME, B5_PID, attrs, 0, [B11_SECOND_PID], B10C_USER, mtype)
+
+
+DISCORD3A_CASES = {
+    # issueJoinCode's reply {CODE, JOIN, KIND, MAX, RSN, SIZE}: a party of 2 of 5, joinable; a private custom game
+    # (KIND 3, RSN 6), no code
+    "issuejoincode_reply": lambda: bytes(tdf.Writer().string("CODE", DISCORD3A_CODE).int("JOIN", 1).int("KIND", 1)
+                                         .int("MAX", 5).int("RSN", 0).int("SIZE", 2)),
+    "issuejoincode_private_reply": lambda: bytes(tdf.Writer().string("CODE", "").int("JOIN", 0).int("KIND", 3)
+                                                 .int("MAX", 10).int("RSN", 6).int("SIZE", 1)),
+    # redeemJoinCode's reply {ID, KIND, RSN}
+    "redeemjoincode_reply": lambda: bytes(tdf.Writer().int("ID", 1).int("KIND", 1).int("RSN", 0)),
+    "notifymessage_joincode_party_notification": lambda: discord3a_invite(5, 0x176A0D2B, 0xB0003, 1),
+    "notifymessage_joincode_practice_notification": lambda: discord3a_invite(6, 0x237748AA, 0xB0004, 7),
+    "notifymessage_joincode_custom_notification": lambda: discord3a_invite(7, 0x8FBFA37C, 0xB0004, 7),
+}
+
+
 LBFIX_CASES = {
     "getleaderboard_reply": lambda: lbfix_leaderboard([(B11_SECOND_PID, B11_SECOND_NAME, 4, 3, LBFIX_SHAPER),
                                                        (B5_PID, B5_NAME, 5, 3, 0)]),
@@ -1772,6 +1800,7 @@ WRITER_CASES = {
     **B15_CASES,
     **PH5B_CASES,
     **LBFIX_CASES,
+    **DISCORD3A_CASES,
 }
 
 

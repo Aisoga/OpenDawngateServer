@@ -115,6 +115,8 @@ type Server struct {
 	browser gameBrowser
 	// the logged-in connections by account (kick.go)
 	live liveSessions
+	// the launcher's join codes and the invites sent in a leader's name (joincodes.go)
+	joins joinCodes
 
 	handlers map[key]Handler
 }
@@ -329,7 +331,8 @@ func NewServer(log *logging.Log, host string, qosPort int) *Server {
 	registerGameManager(s)
 	registerReconnect(s) // G3: getGameDataFromId, joinGame
 	registerPlaygroups(s)
-	applyLimits(s) // login, game starts and queues (limits.go)
+	registerJoinCodes(s) // the launcher's join codes (joincodes.go)
+	applyLimits(s)       // login, game starts and queues (limits.go)
 	return s
 }
 

@@ -326,7 +326,8 @@ func pinOwnServer(o IO, l setup.Layout, bm *Bookmarks, addrs []string, pin tunne
 
 // startFront runs the front for the game (its log in Dawngate-Data\logs\front-<time>.log) and writes the login
 // screen's server list into the player copy.
-func startFront(o IO, l setup.Layout, bm *Bookmarks, tunnelIP string, tlsCfg *tls.Config, preselect string, pc *thisPC) (func(), error) {
+func startFront(o IO, l setup.Layout, bm *Bookmarks, tunnelIP string, tlsCfg *tls.Config, preselect string, pc *thisPC,
+	tracker *presenceTracker, dc discordConfig) (func(), *logging.Log, *Front, error) {
 	var log *logging.Log
 	var f *os.File
 	path := ""
@@ -337,12 +338,12 @@ func startFront(o IO, l setup.Layout, bm *Bookmarks, tunnelIP string, tlsCfg *tl
 		}
 	}
 	front := &Front{Log: log, Layout: l, Bookmarks: bm, TunnelIP: net.ParseIP(tunnelIP), RedirectorTLS: tlsCfg, Default: preselect,
-		ThisPC: pc}
+		ThisPC: pc, Presence: tracker, DiscordJoin: dc.join && tracker != nil, JoinLoopback: dc.hook != ""}
 	if err := front.Start(); err != nil {
 		if f != nil {
 			f.Close()
 		}
-		return nil, err
+		return nil, nil, nil, err
 	}
 	// the login screen's list, with each server's status now (the movie reads it at the game's start)
 	if err := front.WriteServerList(l.ClientCopy()); err != nil {
@@ -364,5 +365,5 @@ func startFront(o IO, l setup.Layout, bm *Bookmarks, tunnelIP string, tlsCfg *tl
 		if f != nil {
 			f.Close()
 		}
-	}, nil
+	}, log, front, nil
 }

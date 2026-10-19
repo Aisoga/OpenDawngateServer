@@ -123,6 +123,20 @@ type Front struct {
 	// Version is this Start-Client's version ("": version.String()): a login to a server of another version, or of
 	// none it can tell, is refused with FrontErrVersion (This PC never).
 	Version string
+	// Presence follows the relayed Blaze frames for the player's Discord status (presence.go; nil: none). It only
+	// reads them.
+	Presence *presenceTracker
+	// DiscordJoin turns Join from Discord on (front_join.go; needs Presence): the player's join code in the activity,
+	// a friend's Join taken (DiscordJoinSecret). JoinLoopback lets a loopback server address into a join secret (the
+	// test hook: two clients on one PC). JoinRefresh and JoinSettle are joinLoop's timings (0: the defaults).
+	DiscordJoin, JoinLoopback bool
+	// JoinAfterLists and JoinAnswerWait: the first invite's delay after the game's friends lists, the wait for the
+	// game's answer before inviting again (0: the consts).
+	JoinRefresh, JoinSettle, JoinAfterLists, JoinAnswerWait time.Duration
+
+	join   frontJoin
+	defMu  sync.Mutex // Default (setDefault, preselected)
+	authed *blazeConn // the game's connection logged in on the current server (f.mu)
 
 	qos       *web.QoS
 	httpLocal *web.HTTP
@@ -278,6 +292,14 @@ func (f *Front) Start() error {
 	}
 	f.wg.Add(1)
 	go f.refreshLoop()
+	if f.DiscordJoin && f.Presence != nil {
+		f.join.wake = make(chan struct{}, 1)
+		f.Presence.mu.Lock()
+		f.Presence.changed = f.wakeJoin
+		f.Presence.mu.Unlock()
+		f.wg.Add(1)
+		go f.joinLoop()
+	}
 	f.logf("the server picker's front on %s: redirector %d, Blaze %d, QoS %d (TCP and UDP), HTTP %d, telemetry %d; %d server(s) in %s",
 		f.TunnelIP, f.Ports.Redirector, f.Ports.Blaze, f.Ports.QoS, f.Ports.HTTP, f.Ports.Telemetry, len(f.Bookmarks.List()), f.Bookmarks.path)
 	return nil
@@ -873,8 +895,8 @@ func (f *Front) resolve(tag string) (Bookmark, error) {
 		}
 		// the current server was removed from the list: as before the first login
 	}
-	if f.Default != "" {
-		if b, ok := f.Bookmarks.Find(f.Default); ok {
+	if def := f.preselected(); def != "" {
+		if b, ok := f.Bookmarks.Find(def); ok {
 			return b, nil
 		}
 	}

@@ -685,6 +685,36 @@
    "name": "selectcategoryupdates_reply",
    "hex": "db7a640000",
    "pretty": "    VWID: 0"
+  },
+  {
+   "name": "issuejoincode_reply",
+   "hex": "8ef925011771383376456a5257654a43727a6538534e465a346b4100aafa6e0001ae9ba40001b61e000005cb3b800000ce9ea50002",
+   "pretty": "    CODE: 'q83vEjRWeJCrze8SNFZ4kA'\n    JOIN: 1\n    KIND: 1\n    MAX: 5\n    RSN: 0\n    SIZE: 2"
+  },
+  {
+   "name": "issuejoincode_private_reply",
+   "hex": "8ef925010100aafa6e0000ae9ba40003b61e00000acb3b800006ce9ea50001",
+   "pretty": "    CODE: ''\n    JOIN: 0\n    KIND: 3\n    MAX: 10\n    RSN: 6\n    SIZE: 1"
+  },
+  {
+   "name": "redeemjoincode_reply",
+   "hex": "a640000001ae9ba40001cb3b800000",
+   "pretty": "    ID: 1\n    KIND: 1\n    RSN: 0"
+  },
+  {
+   "name": "notifymessage_joincode_party_notification",
+   "hex": "9ac8670000b67a640005ba1b650107706c6179657200c39b2403874d320500010480805807706c61796572008380580231008580580b31303030303030303030008680580230009ac8670000cf48740000d219c00000d2993304000182d0acf30ed34e700882e00301d39c2500abb4d0f60200cf28e50982e0030181d0acf30ed29b650083b0b5ac0d",
+   "pretty": "    FLAG: 0\n    MGID: 5\n    NAME: 'player'\n    PYLD: \n      ATTR: \n        720896: 'player'\n        720899: '1'\n        720901: '1000000000'\n        720902: '0'\n      FLAG: 0\n      STAT: 0\n      TAG: 0\n      TIDS: \n        - 2000000002\n      TTYP: \n        (30722, 1)\n      TYPE: 392826155\n    SRCE: \n      (30722, 1, 2000000001)\n    TIME: 1791405059"
+  },
+  {
+   "name": "notifymessage_joincode_practice_notification",
+   "hex": "9ac8670000b67a640006ba1b650107706c6179657200c39b2403874d320500010480805807706c61796572008480580237008580580b31303030303030303030008680580230009ac8670000cf48740000d219c00000d2993304000182d0acf30ed34e700882e00301d39c2500aaa2bab70400cf28e50982e0030181d0acf30ed29b650083b0b5ac0d",
+   "pretty": "    FLAG: 0\n    MGID: 6\n    NAME: 'player'\n    PYLD: \n      ATTR: \n        720896: 'player'\n        720900: '7'\n        720901: '1000000000'\n        720902: '0'\n      FLAG: 0\n      STAT: 0\n      TAG: 0\n      TIDS: \n        - 2000000002\n      TTYP: \n        (30722, 1)\n      TYPE: 595019946\n    SRCE: \n      (30722, 1, 2000000001)\n    TIME: 1791405059"
+  },
+  {
+   "name": "notifymessage_joincode_custom_notification",
+   "hex": "9ac8670000b67a640007ba1b650107706c6179657200c39b2403874d320500010480805807706c61796572008480580237008580580b31303030303030303030008680580230009ac8670000cf48740000d219c00000d2993304000182d0acf30ed34e700882e00301d39c2500bc8dfdfb1100cf28e50982e0030181d0acf30ed29b650083b0b5ac0d",
+   "pretty": "    FLAG: 0\n    MGID: 7\n    NAME: 'player'\n    PYLD: \n      ATTR: \n        720896: 'player'\n        720900: '7'\n        720901: '1000000000'\n        720902: '0'\n      FLAG: 0\n      STAT: 0\n      TAG: 0\n      TIDS: \n        - 2000000002\n      TTYP: \n        (30722, 1)\n      TYPE: 2411701116\n    SRCE: \n      (30722, 1, 2000000001)\n    TIME: 1791405059"
   }
  ],
  "decode": [

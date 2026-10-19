@@ -59,6 +59,20 @@ local_trust = on
 ; Updates: on (the default) asks github.com once at each start whether a newer release is out and, if so, whether to
 ; install it (a server plays only with Start-Client of its own release). off never asks.
 update_check = on
+
+; Discord status: on (the default) shows your friends on Discord what you do in Dawngate (the menu, the queue, shaper
+; select, a match and its time, your party's size; no names) while the game runs. It needs the Discord app on this PC.
+; off never.
+discord = on
+
+; Join from Discord: on (the default) lets your Discord friends click Join on your profile while you are in a party,
+; a practice group or a custom lobby that has room and no password; Start-Client then sends them the game's invite in
+; the leader's name. Your own Join clicks arrive the same way: Discord starts Start-Client when it doesn't run (it is
+; registered for that at each start). Needs discord = on. off never.
+discord_join = on
+
+; The Discord application the status is shown as (its id, a number). Empty: the one built into this release.
+discord_app_id =
 `
 
 // oldClientComments are the tunnel and picker keys' comments that earlier releases wrote into Start-Client.ini (when
@@ -74,7 +88,8 @@ var oldClientComments = map[string][][]string{
 		"; network) can't be picked: Start-Client then plays on it directly."}},
 }
 
-var clientKeys = []string{"server", "folder", "zip", "tunnel", "gateway_port", "picker", "local_trust", "update_check"}
+var clientKeys = []string{"server", "folder", "zip", "tunnel", "gateway_port", "picker", "local_trust", "update_check",
+	DiscordKey, DiscordAppIDKey, DiscordJoinKey}
 
 // TestParkEnv set to 1 is Start-Client's --test-park (the release's test hook; never needed by a player).
 const TestParkEnv = "DAWNGATE_TEST_PARK"
@@ -106,6 +121,8 @@ func RunClient(args []string, o IO) int {
 	showVersion := fs.Bool("version", false, "print this release's version and exit (it plays only on servers of the same version)")
 	localTrustFlag := fs.String("local-trust", "", "This PC without passwords: on (the default) lets any login name in on the server Start-Client runs for This PC, "+
 		"with any password; off checks passwords there (Start-Client.ini local_trust)")
+	discordFlag := fs.String("discord", "", "your Discord status while the game runs: on (the default) or off (Start-Client.ini discord)")
+	discordJoinFlag := fs.String("discord-join", "", "Join from Discord: on (the default) or off (Start-Client.ini discord_join)")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -127,6 +144,12 @@ func RunClient(args []string, o IO) int {
 	}
 	in := bufio.NewReader(o.In)
 	fmt.Fprintf(o.Out, "Dawngate Restoration: Start-Client, version %s\n", version.String())
+	if *lane == "" && !*check && clientRunning() {
+		// a second Start-Client (e.g. Discord starting it for a Join while the game runs) changes nothing: the running
+		// one keeps the server list in memory and would write over what this one wrote
+		return o.fail("A Dawngate client is already running (only one can run at a time): close it, then start " +
+			"Start-Client.exe again. A Join from Discord goes to the running game while its Discord status is on.")
+	}
 
 	clientIni := filepath.Join(o.ExeDir, ClientConfigName)
 	ccfg, err := ReadConfig(clientIni)
@@ -163,6 +186,15 @@ func RunClient(args []string, o IO) int {
 	}
 	localTrust, err := localTrustSetting(firstNonEmpty(*localTrustFlag, ccfg["local_trust"]))
 	if err != nil {
+		return o.fail("%v", err)
+	}
+	// the Discord status: never the player's from a test run (only the test hook's fake app)
+	dc, err := discordSetting(*discordFlag, ccfg, *lane != "" || *park || *nonInteractive, discordEnv)
+	if err != nil {
+		return o.fail("%v", err)
+	}
+	joinWhy := ""
+	if dc.join, joinWhy, err = discordJoinSetting(*discordJoinFlag, ccfg, dc); err != nil {
 		return o.fail("%v", err)
 	}
 	mode, err := tunnelMode(firstNonEmpty(*tunnelFlag, ccfg["tunnel"]))
@@ -352,12 +384,22 @@ func RunClient(args []string, o IO) int {
 			return o.fail("The server list of an earlier start can't be removed: %v (is the game running?)", err)
 		}
 	}
+	var tracker *presenceTracker // the front's view of the game for the Discord status
+	var joinFront *Front         // the front that takes a friend's Join from Discord
+	presenceLog := func(format string, a ...any) { fmt.Fprintf(o.Out, "  "+format+"\n", a...) }
 	if picker {
-		stop, err := startFront(o, l, bookmarks, patchFor, tunnelTLS, preselect, pc)
+		if dc.on {
+			tracker = newPresenceTracker(nil)
+		}
+		stop, flog, front, err := startFront(o, l, bookmarks, patchFor, tunnelTLS, preselect, pc, tracker, dc)
 		if err != nil {
 			return o.fail("The server picker didn't start: %v", err)
 		}
 		defer stop()
+		joinFront = front
+		if flog != nil {
+			presenceLog = func(format string, a ...any) { flog.Logf(frontWho, format, a...) }
+		}
 	} else if tunnelled {
 		_, stop, err := startTunnel(o, l, gw, pin, patchFor, tunnelTLS)
 		if err != nil {
@@ -369,7 +411,22 @@ func RunClient(args []string, o IO) int {
 	if *lane != "" {
 		gameArgs = "-multipleInstances"
 	}
-	return play(o, l, *park, gameArgs)
+	fmt.Fprintf(o.Out, "  discord  %s\n", dc.why)
+	var onJoin func(string)
+	if dc.join && tracker != nil && joinFront != nil {
+		fmt.Fprintf(o.Out, "  discord  %s\n", joinWhy)
+		onJoin = joinFront.DiscordJoinSecret
+		registerLaunch(o, dc)
+	} else if joinWhy != "" && dc.join {
+		fmt.Fprintf(o.Out, "  discord  Join not used (it needs the server picker)\n")
+	} else if joinWhy != "" {
+		fmt.Fprintf(o.Out, "  discord  %s\n", joinWhy)
+	}
+	var presence func(pid int) func()
+	if dc.on {
+		presence = func(pid int) func() { return startPresence(dc, pid, tracker, presenceLog, onJoin) }
+	}
+	return play(o, l, *park, gameArgs, presence)
 }
 
 // ownServerDomain is the web domain the player copy's login links use: Start-Server.ini's web_domain when the
@@ -514,14 +571,18 @@ func remoteCA(o IO, in *bufio.Reader, l setup.Layout, server, caFile string, tru
 	return served, nil
 }
 
-// play starts the game and waits for it; Ctrl+C or closing the window closes the game.
-func play(o IO, l setup.Layout, park bool, args string) int {
+// play starts the game and waits for it; Ctrl+C or closing the window closes the game. presence (nil: none) starts
+// the Discord status for the game's process; the function it returns clears it when the game has ended.
+func play(o IO, l setup.Layout, park bool, args string, presence func(pid int) func()) int {
 	prev := ForegroundWindow() // the test hook gives the foreground back to it (Park)
 	g, err := StartGame(l.ClientCopy(), StartOptions{Args: args, NoActivate: park})
 	if err != nil {
 		return o.fail("The game didn't start: %v", err)
 	}
 	defer g.Release()
+	if presence != nil {
+		defer presence(g.Pid)()
+	}
 	fmt.Fprintf(o.Out, "\nThe game starts (game pid %d; its window opens in a few seconds).\n", g.Pid)
 	fmt.Fprintln(o.Out, "  Log in with your login name and password (with open sign-up the first login makes the account), then PLAY and PRACTICE DAWNGATE (README.txt).")
 	fmt.Fprintln(o.Out, "  This window closes when the game ends; Ctrl+C here closes the game.")

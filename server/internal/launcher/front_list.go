@@ -219,8 +219,10 @@ func (f *Front) ServerList() []byte {
 	var sb strings.Builder
 	sb.WriteString(listMagic + "\n")
 	pre := ""
-	if b, ok := f.Bookmarks.Find(f.Default); ok && f.Default != "" {
-		pre = b.Tag
+	if def := f.preselected(); def != "" {
+		if b, ok := f.Bookmarks.Find(def); ok {
+			pre = b.Tag
+		}
 	}
 	last := ""
 	if b, ok := f.Bookmarks.Last(); ok && b.LastUsed != "" {
@@ -354,6 +356,7 @@ func (f *Front) setAtLogin(on bool) {
 	was := f.atLogin
 	f.atLogin = on
 	f.listMu.Unlock()
+	f.Presence.atLogin(on)
 	if on && !was {
 		f.wantList()
 	}

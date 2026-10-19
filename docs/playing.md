@@ -270,6 +270,25 @@ Your `Start-Client.exe` and the server must be the same release: **any differenc
 - **This PC** is never refused: it is the server in your own folder.
 - Without the tunnel (`--tunnel off`), `Start-Client.exe` asks the server's version when it starts and doesn't start the game on a server of another version.
 
+## Discord status
+
+If the Discord app runs on the same PC, your friends on Discord see *Playing OpenDawngate* on your profile while the game runs, with what you do: *In the menu*, *In queue · PvP* with the time in the queue, *Shaper select · Practice vs bots*, *In match · PvP* with the match's time, *Post-game*, and *In a party (3 of 5)* when you are in a party. It never shows your name, your shaper or the server. It clears when the game ends, and it follows Discord if you start or restart Discord while you play.
+
+- To switch it off, put `discord = off` into `Start-Client.ini` (or start `Start-Client.exe --discord off`).
+- Discord shows it only while *Display current activity as a status message* is on in Discord's *Activity Privacy* settings.
+- The full list of what it shows: [reference.md](reference.md#start-clientexe-and-start-clientini).
+
+### Join from Discord
+
+While you are in a party, a practice group or a custom game's lobby with a free seat and no password, your Discord friends see a *Join* button on your profile. A friend who clicks it gets the game's usual invite in your name (the leader's or the lobby owner's) and joins with *YES*:
+
+- If the friend's game isn't running, Discord starts `Start-Client.exe` for them (after they started it once themselves).
+- If your server isn't in the friend's list yet, it is added with its key and preselected; the friend logs in (or signs up) there, and the invite follows.
+- If the friend is logged in on another server, a line in the game's chat asks them to log out and log in on yours.
+- You can also post Discord's own *Invite to join* (the + button beside a channel's or a direct message's text field): anyone who sees it can join the same way while your party or lobby is open.
+- The *Join* goes away when the party or lobby is full, while your party is in the queue and when the match starts (friends can still watch a custom game through its list).
+- To switch Join off, put `discord_join = off` into `Start-Client.ini` (or start `Start-Client.exe --discord-join off`). Details: [reference.md](reference.md#start-clientexe-and-start-clientini).
+
 ## Known limitations
 
 - The loot bag click after a win hasn't been confirmed in a real game yet. If you don't click the bag, the game returns to the main menu about 105 seconds after the end anyway.

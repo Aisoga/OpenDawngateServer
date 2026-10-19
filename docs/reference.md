@@ -83,8 +83,36 @@ Start-Client.exe [<server address or tag>] [options]
 | `--setup-only` | Prepare the game copy for the server without starting the game. |
 | `--version` | Print the release's version and exit. It plays only on servers of the same version. |
 | `--local-trust on\|off` | This PC without passwords: `on` (the default) lets any login name in on the server `Start-Client.exe` runs for This PC, with any password; `off` checks passwords there. |
+| `--discord on\|off` | Your Discord status while the game runs: `on` (the default) or `off`. |
+| `--discord-join on\|off` | Join from Discord: `on` (the default) or `off`. Needs the Discord status. |
 
-`Start-Client.ini` has the keys `server` (empty: the server list), `folder`, `tunnel`, `gateway_port`, `picker` (`auto`, `on`, `off`), `local_trust` (`on`, `off`) and `update_check` (`on`, `off`). An older `Start-Client.ini` keeps working: its `server` becomes the first server of a new list, and its comments are updated.
+`Start-Client.ini` has the keys `server` (empty: the server list), `folder`, `tunnel`, `gateway_port`, `picker` (`auto`, `on`, `off`), `local_trust` (`on`, `off`), `update_check` (`on`, `off`), `discord` (`on`, `off`), `discord_join` (`on`, `off`) and `discord_app_id`. An older `Start-Client.ini` keeps working: its `server` becomes the first server of a new list, and its comments are updated. The option on the command line wins over the key.
+
+**Discord status.** While the game runs, `Start-Client.exe` shows your friends on Discord what you do in Dawngate, through the Discord app on the same PC (its local connection; nothing goes over the network, and nothing happens without the app). Your profile shows *Playing OpenDawngate* with the project's logo and the status below it, which shows only the state, the mode, a timer and your party's size, never a name or a server:
+
+| You are | The status |
+|---|---|
+| at the login screen | *At the login screen* |
+| in the main menu | *In the menu* |
+| in a party | *In a party (2 of 5)* below the line above |
+| in the queue | *In queue · PvP*, with the time in the queue |
+| in shaper select | *Shaper select · PvP*, *· Practice vs bots*, *· Practice group* or *· Custom game* |
+| in a custom game's lobby | *In the lobby · Custom game* |
+| in a match | *In match · PvP*, with the time since the match started |
+| after the match | *Post-game · PvP* |
+
+With `--picker off` or `--tunnel off` (one server, without the server list) the status is only *In the game* with the time since the game started. It changes at most once every 4 seconds (Discord's limit), clears when the game ends, and comes back by itself when Discord starts after the game or restarts while it runs. `discord = off` (or `--discord off`) turns it off. `discord_app_id` is the Discord application the status is shown as (its numeric id); empty, the project's own (*OpenDawngate*).
+
+**Join from Discord.** While you are in a party, a practice group's lobby or a custom game's lobby that has a free seat and no password, your Discord profile gets a *Join* button for your Discord friends, and the status shows the seats (*In a party (2 of 5)*, *Open to join (3 of 10)*). It goes away when the party or lobby is full, while your party is in the queue, when the match starts (a started custom game has no Join; friends can still watch it through the custom games list) and outside these screens. A friend who clicks *Join*:
+
+- needs `Start-Client.exe` with the Discord app on the friend's own PC. If the game isn't running, Discord starts `Start-Client.exe` (it works after the friend started `Start-Client.exe` once, which registers it with Discord).
+- gets the server added to the server list with its key (no fingerprint to confirm) and preselected, when it isn't in the list yet. Logged in on that server, the friend gets the game's usual invite pop-up in your name (the party's leader's, the lobby's owner's) right after the login (after the game's news panel, when it shows, is closed), and *YES* joins; when the game doesn't answer it, the invite comes again after half a minute (three times at most). Not logged in yet: the invite comes after the login there.
+- logged in on another server: a line in the game's chat says to log out and log in on that server (it is selected in the list then).
+- a refused join (the party is full or gone, the match started, the friend blocked you) is a line in the chat too.
+
+Discord's own *Invite to join* in a channel or a direct message (the + button beside the message field) carries the same join, so anyone who sees that invite can use it while the party or lobby is open. The join tells the friend's `Start-Client.exe` the server's address and key and a code for the party; the code works only while somebody who was in the party when it was made is still in it, and the server never puts a player into a party by itself: the friend's *YES* does. The server on This PC that `Start-Client.exe` runs itself listens on this PC only, so it has no Join; a `Start-Server.exe` on the same folder that runs on a network address has. `discord_join = off` (or `--discord-join off`) turns Join off both ways: no *Join* button for others and none of your clicks taken; a server of an older version has no Join either.
+
+To let Discord start the game, each start with Join on writes `HKEY_CURRENT_USER\Software\Classes\discord-<application id>` (for the built-in application `discord-1561733580789514310`): `URL Protocol`, `DefaultIcon` and `shell\open\command` = `"<the folder>\Start-Client.exe"`, only when the path changed. It is your own user's registry (no administrator); to remove it, delete that key with `regedit`, or run `reg delete HKCU\Software\Classes\discord-1561733580789514310 /f`. While a game runs, a second `Start-Client.exe` stops at once and changes nothing; a Join then goes to the running game.
 
 **Updates.** A numbered release (`v0.6`, `v1.2.3`) asks once at each start for the project's latest release (one HTTPS request to `api.github.com`, at most 5 seconds; no answer: it starts as usual). When that one is newer (`v0.10` is newer than `v0.9`), it asks *Version v0.6 is available (you have v0.5). Update now? [Y/n]*; Enter or `y` updates:
 

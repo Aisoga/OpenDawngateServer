@@ -14,6 +14,7 @@ import (
 const childEnv = "DG_LAUNCHER_TEST_CHILD"
 
 func TestMain(m *testing.M) {
+	discordRegistry = &memRegistry{} // no test writes the real registry
 	if code := os.Getenv(childEnv); code != "" {
 		var n int
 		fmt.Sscan(code, &n)

@@ -597,6 +597,16 @@ func registerMessaging(s *Server) {
 			r.Fail(ErrMessagingInvalidParam)
 			return nil
 		}
+		if r.Server.joins.takeAnswer(sess.Persona.ID, msg, r.Server.Now()) {
+			// the answer to an invite the server sent in another user's name (joincodes.go): that user's client never
+			// sent it, so it doesn't get the answer
+			answer, _ := msg.Attr(MsgAttrInviteAnswer)
+			inviteNo, _ := msg.Attr(MsgAttrInviteID)
+			id := r.Server.msgs.newID()
+			r.Server.Log.Logf("blaze", "   message %d from %d: answer %q to the server's invite %s in the name of %d; dropped",
+				id, sess.Persona.ID, answer, inviteNo, msg.Targets[0])
+			return SendMessageReply(id, nil)
+		}
 		res := r.Server.relay(sess.Persona, msg)
 		desc := fmt.Sprintf("%s %#x, flags %#x, to %s %v", messageTypeName(msg.Type), msg.Type, msg.Flags,
 			targetTypeName(msg.TargetType), msg.Targets)

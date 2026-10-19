@@ -50,6 +50,20 @@ type blazeConn struct {
 	// leaves the login screen; after the server's refusal (a wrong password) the login screen still shows
 	loginID   uint32
 	loginWait bool
+
+	upw sync.Mutex // whole frames to the server (the game's and the front's own, writeUp)
+
+	// Join from Discord (front_join.go): the front's own requests waiting for their replies, the login's progress
+	imu         sync.Mutex
+	waiting     map[uint32]chan fire.Frame
+	injected    uint32
+	personaAt   time.Time // the persona's login (or a resumed session) answered
+	listsAt     time.Time // the friends lists answered after it
+	noJoinCodes bool      // the server answered a join-code request with an error (an older server)
+	inviteDue   bool      // a redeem's invite comes next (seenInvite logs it)
+	persona     int64     // the own persona (the loginPersona reply's PDTL.PID)
+	news        int       // the news overlay: newsUnknown, newsClear, newsSet (watchLogin, watchGame)
+	newsAt      time.Time // when it was found set
 }
 
 // readFrame reads one Fire frame: its bytes as sent and the frame.
@@ -71,6 +85,7 @@ func (f *Front) serveBlaze(gc net.Conn) {
 	bc := &blazeConn{f: f, gc: gc, src: tcpAddr(gc.RemoteAddr()), peer: logging.Peer(gc.RemoteAddr())}
 	f.logf("Blaze connection from %s", bc.peer)
 	defer bc.closeUp()
+	defer f.setAuthed(bc, false)
 	r := bufio.NewReader(gc)
 	for {
 		raw, fr, err := readFrame(r)
@@ -81,12 +96,21 @@ func (f *Front) serveBlaze(gc net.Conn) {
 			f.logf("Blaze %s closed", bc.peer)
 			return
 		}
+		f.Presence.fromGame(fr) // the Discord status: reads the frame only
+		if f.DiscordJoin {
+			f.watchAnswer(fr) // the game's answer to the server's invite (Join from Discord): reads it only
+			bc.watchGame(fr)  // the news overlay's dismissal: reads it only
+		}
+		if fr.Type == fire.Request && fr.Component == blaze.ComponentAuthentication && fr.Command == blaze.CmdAuthLogout {
+			bc.loggedOut()
+			f.setAuthed(bc, false)
+		}
 		if fr.Type == fire.Request && fr.Component == blaze.ComponentAuthentication && fr.Command == blaze.CmdAuthLogin {
 			bc.login(fr, raw)
 			continue
 		}
 		if up := bc.upstream(); up != nil {
-			if _, err := up.Write(raw); err != nil {
+			if err := bc.writeUp(up, raw); err != nil {
 				f.logf("Blaze %s: the server's connection failed: %v", bc.peer, err)
 				return
 			}
@@ -230,7 +254,7 @@ func (bc *blazeConn) login(fr fire.Frame, raw []byte) {
 	f.logf("Blaze %s: login as %q (typed %q) to %s (%s)", bc.peer, name, mail, b.Tag, b.Gateway())
 	if up, s := bc.upstreamOf(); up != nil && s == f.current() && s.b.Tag == b.Tag && s.b.Gateway() == b.Gateway() {
 		bc.awaitLogin(fr.ID)
-		if _, err := up.Write(out); err != nil {
+		if err := bc.writeUp(up, out); err != nil {
 			f.logf("Blaze %s: the server's connection failed: %v", bc.peer, err)
 			bc.gc.Close()
 		}
@@ -340,7 +364,14 @@ func (bc *blazeConn) setUp(up net.Conn, s *frontSession) {
 			if err != nil {
 				break
 			}
+			if fr.Component == blaze.ComponentJoinCodes && fr.Type != fire.Notification {
+				bc.injectedReply(fr) // the reply to a request of the front's (Join): never the game's
+				continue
+			}
 			bc.loginAnswered(fr, s)
+			bc.watchLogin(fr)
+			bc.seenInvite(fr)
+			bc.f.Presence.fromServer(fr) // the Discord status: reads the frame only
 			if bc.write(raw) != nil {
 				break
 			}
@@ -385,6 +416,7 @@ func (bc *blazeConn) loginAnswered(fr fire.Frame, s *frontSession) {
 	}
 	if fr.Type == fire.Reply {
 		bc.f.setAtLogin(false)
+		bc.f.setAuthed(bc, true)
 		return
 	}
 	bc.f.logf("Blaze %s: %s refused the login (error %#04x); the login screen still shows", bc.peer, s.b.Tag, fr.Error)
@@ -400,6 +432,8 @@ func (bc *blazeConn) closeUp() {
 	if up != nil {
 		up.Close()
 		<-done
+		bc.loggedOut()
+		bc.f.setAuthed(bc, false)
 	}
 }
 

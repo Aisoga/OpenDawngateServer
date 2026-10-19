@@ -143,6 +143,14 @@ func (p *thisPC) describe() string {
 	return fmt.Sprintf("%s: the server on this PC, run by Start-Client on %s (it %s)", ThisPCName, p.address, what)
 }
 
+// running is the folder's Start-Server while it serves This PC (its lock: the players' address, the gateway port);
+// false while Start-Client's own server serves it, which listens on this PC only.
+func (p *thisPC) running() (setup.RunLock, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.other, p.otherHeld && p.other.State == setup.RunRunning && p.other.GatewayPort > 0
+}
+
 func (p *thisPC) say(format string, a ...any) {
 	if p.out != nil {
 		fmt.Fprintf(p.out, "  This PC  "+format+"\n", a...)

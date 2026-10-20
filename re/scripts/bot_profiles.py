@@ -9,6 +9,21 @@ shipped one and change only its role:
 
   PC_Warden_Predator.BotClass   PC_Warden.BotClass with role predator (3): the Warden's AI (BOT_warden_Tactician),
                                 noun, skill and spell order unchanged
+  PC_Golem_Hunter.BotClass      HUNTERBOT: Faris (golem.Noun) as a Hunter (2) on PC_Artificer's AI
+                                (BOT_Artificer_Hunter), with a skill order of his own and Petrus's spells
+  PC_Survivor_Hunter.BotClass   HUNTERBOT: Freia (survivor.Noun) as a Hunter on the same AI, her own skill order
+  PC_Desecrator_Tactician.BotClass  Desecrator (desecrator.Noun) as a Tactician (1) on PC_Guardian's AI
+                                (BOT_Guardian_Tactician), with his own skill order and spells (Drain, Tailwind, Wither)
+  PC_MerchantPrincess_Gladiator.BotClass  MIKELLABOT: Mikella (merchant_princess.Noun) as a Gladiator (0) on
+                                PC_HighHuntress's AI (BOT_HighHuntress_Gladiator), her own skill order and spells
+                                (Dispel, Blitz, Blink)
+  PC_Otter_Hunter.BotClass      MOYABOT: Moya (otter.Noun) as a Hunter on PC_Artificer's AI, with a 2014 player guide's
+                                skill order and spells (Vanquish, Blitz, Wither)
+A borrowed-AI profile (HUNTERBOT, `ai` set) is written field by field: the noun from its base (PC_Golem.BotClass,
+which ships without an AI), the AI definition, skill order and spell order from the `ai` BotClass unless the table
+gives its own; the pointer words (non-zero = present; the client sets them from its cursor) are the `ai` file's. The
+Hunter and Tactician AIs' gambits name ability slots (Q, W, E, R, basic, spell1-3, consume1), not abilities, so a
+slot casts the bot's own shaper's ability (the host's gms/core/bots/kits.h says which slots fit which shaper).
 
 How the client finds them (the game's own loader): `AssetData.snap` holds `AssetData/Binary/<Name>.<Class>.bin` and the
 index `AssetData/Binary/catalog_153.bin` (class Catalog: one CatalogEntry per asset). At start the client loads every
@@ -53,9 +68,58 @@ BOTCLASS_ROLE = 0x08
 BOTCLASS_TYPECRC = 0xDF9D7C39  # the client's checksum of its BotClass reflection table (docs/data/assetdata_types.txt)
 ROLES = {"gladiator": 0, "tactician": 1, "hunter": 2, "predator": 3}
 
-# name, base BotClass, role (RolesTuning.role[] index). The order is the archive's; append new profiles at the end.
+
+class Profile(tuple):
+    """(name, base, role, ai, skills, spells): `ai` = the BotClass whose AI definition (and, unless given, skill and
+    spell order) the profile borrows; None = the base's own file with only the role changed."""
+    __slots__ = ()
+
+    def __new__(cls, name, base, role, ai=None, skills=None, spells=None):
+        return tuple.__new__(cls, (name, base, role, ai, skills, spells))
+
+    name = property(lambda self: self[0])
+    base = property(lambda self: self[1])
+    role = property(lambda self: self[2])
+    ai = property(lambda self: self[3])
+    skills = property(lambda self: self[4])
+    spells = property(lambda self: self[5])
+
+
+# The skill orders: the ability slot ranked at each level 1-18 (3 Q, 4 W, 5 E, 6 R; R at 6, 10, 15 as in every shipped
+# BotClass). Faris: Q maxed first, though the host never casts it for him (gms/core/bots/kits.h): its ranks are his
+# basic attack's power (ability_Golem_Basic adds Q_BasicSwitch's 10-30 magic damage, 2 % of the target's HP up to 30-170
+# against creeps, and 15-35 % attack speed), then W (Sentinel), E (the dash). Freia: Q (Bleed) maxed, W (Dash)
+# second, E (SlowStun) last. [assumed]
+GOLEM_SKILLS = [3, 4, 5, 3, 3, 6, 3, 4, 3, 6, 4, 4, 4, 5, 6, 5, 5, 5]
+SURVIVOR_SKILLS = [3, 4, 5, 3, 3, 6, 3, 4, 3, 6, 4, 4, 4, 5, 6, 5, 5, 5]
+# Desecrator: a 2014 player guide's order (Q maxed first, E second, W last; R at entries 6, 10, 15 = levels 6, 11, 16:
+# the 18 entries are the ability points of levels 1-9 and 11-19), the same as PC_Artist's; his spells in that guide's
+# order, Drain at level 1, Tailwind at 10, Wither at 20 (the spell points of levels 1, 10, 20).
+DESECRATOR_SKILLS = [3, 5, 4, 3, 3, 6, 3, 5, 3, 6, 5, 5, 5, 4, 6, 4, 4, 4]
+DESECRATOR_SPELLS = ["Spell_Drain.Item", "Spell_Tailwind.Item", "Spell_Wither.Item"]
+# MIKELLABOT: Mikella as a Gladiator, a 2014 player guide's order (`qeqwqrqeqreeewrwww`: Q maxed first, E second, W
+# last; R at levels 6, 11, 16). The guide's spells are Dispel (level 1), Blink (10) and Blitz (20); here Blitz is the
+# second and Blink the third, so each sits where the High Huntress AI casts that kind of spell (spell2 on a big hit:
+# a self cast; spell3 toward the base in Flee: Blink) [assumed].
+MERCHANTPRINCESS_SKILLS = [3, 5, 3, 4, 3, 6, 3, 5, 3, 6, 5, 5, 5, 4, 6, 4, 4, 4]
+MERCHANTPRINCESS_SPELLS = ["Spell_Dispel.Item", "Spell_Blitz.Item", "Spell_Blink.Item"]
+# Moya: mcscrag's guide (moba-champion.com 143, 2014-04-18), `qewqqrqeqrwwwwreee`: Q maxed first, two points in E early
+# (her sustain in the jungle), then W, E last; R at entries 6, 10, 15. Spells: the guide's first set, Vanquish in slot 1
+# (the Hunter AI's camp spell), Blitz in slot 2 (its gank spell), Wither third.
+OTTER_SKILLS = [3, 5, 4, 3, 3, 6, 3, 5, 3, 6, 4, 4, 4, 4, 6, 5, 5, 5]
+OTTER_SPELLS = ["Spell_Vanquish.Item", "Spell_Blitz.Item", "Spell_Wither.Item"]
+
+# The table (gms/core/bots/profiles.h and server/internal/setup/botprofiles hold the same). The order is the archive's;
+# append new profiles at the end.
 PROFILES = [
-    ("PC_Warden_Predator", "PC_Warden", "predator"),
+    Profile("PC_Warden_Predator", "PC_Warden", "predator"),
+    Profile("PC_Golem_Hunter", "PC_Golem", "hunter", ai="PC_Artificer", skills=GOLEM_SKILLS),
+    Profile("PC_Survivor_Hunter", "PC_Survivor", "hunter", ai="PC_Artificer", skills=SURVIVOR_SKILLS),
+    Profile("PC_Desecrator_Tactician", "PC_Desecrator", "tactician", ai="PC_Guardian", skills=DESECRATOR_SKILLS,
+            spells=DESECRATOR_SPELLS),
+    Profile("PC_MerchantPrincess_Gladiator", "PC_MerchantPrincess", "gladiator", ai="PC_HighHuntress",
+            skills=MERCHANTPRINCESS_SKILLS, spells=MERCHANTPRINCESS_SPELLS),
+    Profile("PC_Otter_Hunter", "PC_Otter", "hunter", ai="PC_Artificer", skills=OTTER_SKILLS, spells=OTTER_SPELLS),
 ]
 
 
@@ -162,6 +226,86 @@ def build_botclass(base, role):
     return bytes(out)
 
 
+def parse_botclass(data):
+    """A BotClass file's fields: {words (the 7 fixed u32), noun, ai, skills, spells, spell_words}, checking that the
+    walk ends on the last byte. Out of line, in member order: nounDef's name, aiDefinition's name, skillOrder's
+    count x u32, spellOrder's count x 4 pointer words, then each name."""
+    if len(data) < BOTCLASS_SIZE:
+        raise ProfileError("BotClass: shorter than its fixed part")
+    words = list(struct.unpack_from("<7I", data, 0))
+    noun_p, ai_p, role, _, skill_n, _, spell_n = words
+    pos = BOTCLASS_SIZE
+    noun = ai = None
+    if noun_p:
+        noun, pos = _cstr(data, pos)
+    if ai_p:
+        ai, pos = _cstr(data, pos)
+    if skill_n * 4 > len(data) - pos or spell_n * 4 > len(data) - pos:
+        raise ProfileError("BotClass: an array exceeds the file")
+    skills = list(struct.unpack_from(f"<{skill_n}I", data, pos)) if skill_n else []
+    pos += 4 * skill_n
+    spell_words = list(struct.unpack_from(f"<{spell_n}I", data, pos)) if spell_n else []
+    pos += 4 * spell_n
+    spells = []
+    for w in spell_words:
+        if not w:
+            raise ProfileError("BotClass: a spell without a name")  # no shipped BotClass has one
+        name, pos = _cstr(data, pos)
+        spells.append(name)
+    if pos != len(data):
+        raise ProfileError(f"BotClass: the walk ends at {pos:#x}, the file at {len(data):#x}")
+    if role not in ROLES.values():
+        raise ProfileError(f"BotClass: role {role} is not a role")
+    return {"words": words, "noun": noun, "ai": ai, "skills": skills, "spells": spells, "spell_words": spell_words}
+
+
+def write_botclass(f):
+    """The file of the fields `f` (parse_botclass's): its inverse."""
+    noun_p, ai_p, role, skill_p, _, spell_p, _ = f["words"]
+    out = bytearray(struct.pack("<7I", noun_p if f["noun"] else 0, ai_p if f["ai"] else 0, role,
+                                skill_p if f["skills"] else 0, len(f["skills"]), spell_p if f["spells"] else 0,
+                                len(f["spells"])))
+    for s in (f["noun"], f["ai"]):
+        if s:
+            out += s.encode("utf-8") + b"\0"
+    out += struct.pack(f"<{len(f['skills'])}I", *f["skills"])
+    out += struct.pack(f"<{len(f['spells'])}I", *f["spell_words"])
+    for s in f["spells"]:
+        out += s.encode("utf-8") + b"\0"
+    return bytes(out)
+
+
+def build_borrowed(base, donor, role, skills=None, spells=None):
+    """A borrowed-AI profile: the base BotClass's noun on the donor's AI definition with `role`; the skill and spell
+    order the given ones, else the donor's; the pointer words the donor's (a spell beyond the donor's count gets the
+    previous word + 0xE8: any non-zero word reads as present)."""
+    b, d = parse_botclass(base), parse_botclass(donor)
+    if not b["noun"] or not d["ai"]:
+        raise ProfileError("BotClass: the base has no noun or the donor no AI definition")
+    skills = list(skills if skills is not None else d["skills"])
+    spells = list(spells if spells is not None else d["spells"])
+    words = list(d["words"])
+    words[2] = role
+    if (skills and not words[3]) or (spells and not words[5]):
+        raise ProfileError("BotClass: the donor has no pointer word for a member the profile fills")
+    if any(s not in (3, 4, 5, 6) for s in skills):
+        raise ProfileError("BotClass: a skill order entry is not a ranked slot (3-6)")
+    sw = list(d["spell_words"][:len(spells)])
+    while len(sw) < len(spells):
+        sw.append(((sw[-1] if sw else words[5]) + 0xE8) & 0xFFFFFFFF)
+    out = write_botclass({"words": words, "noun": b["noun"], "ai": d["ai"], "skills": skills, "spells": spells,
+                          "spell_words": sw})
+    parse_botclass(out)
+    return out
+
+
+def build_profile(p, read):
+    """The profile's BotClass file; `read(name)` gives a shipped BotClass file by its asset name (without .BotClass)."""
+    if p.ai is None:
+        return build_botclass(read(p.base), ROLES[p.role])
+    return build_borrowed(read(p.base), read(p.ai), ROLES[p.role], p.skills, p.spells)
+
+
 def build(assetdata_snap):
     """The archive's bytes, made from the path of a copy's AssetData.snap (the build's)."""
     s = snap.Snap(assetdata_snap)
@@ -173,11 +317,11 @@ def build(assetdata_snap):
             raise ProfileError(f"{assetdata_snap}: no {rel}")
         return s.read(e)
 
-    catalog = build_catalog(read(CATALOG), [(n + ".BotClass", b + ".BotClass") for n, b, _ in PROFILES])
+    catalog = build_catalog(read(CATALOG), [(p.name + ".BotClass", p.base + ".BotClass") for p in PROFILES])
     files = [(CATALOG, catalog)]
-    for name, base, role in PROFILES:
-        files.append((BINARY.format(name + ".BotClass"), build_botclass(read(BINARY.format(base + ".BotClass")),
-                                                                          ROLES[role])))
+    for p in PROFILES:
+        files.append((BINARY.format(p.name + ".BotClass"),
+                      build_profile(p, lambda n: read(BINARY.format(n + ".BotClass")))))
     return snap.pack_bytes(files)
 
 
@@ -202,9 +346,10 @@ def main(argv):
     g.add_argument("--build", nargs=2, metavar=("ASSETDATA_SNAP", "OUT"), help="write the archive made from that file")
     a = ap.parse_args(argv)
     if a.print:
-        for name, base, role in PROFILES:
-            print(f"{name}.BotClass  {fnv1(name + '.BotClass'):08X}  = {base}.BotClass "
-                  f"({fnv1(base + '.BotClass'):08X}) with role {role} ({ROLES[role]})")
+        for p in PROFILES:
+            print(f"{p.name}.BotClass  {fnv1(p.name + '.BotClass'):08X}  = {p.base}.BotClass "
+                  f"({fnv1(p.base + '.BotClass'):08X}) with role {p.role} ({ROLES[p.role]})"
+                  + (f" on {p.ai}.BotClass's AI" if p.ai else ""))
         return 0
     if a.build:
         refuse_pristine(a.build[1])

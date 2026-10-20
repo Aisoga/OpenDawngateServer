@@ -14,16 +14,25 @@
 
 #include "core/agents/aggro.h"
 #include "core/agents/brain.h"
+#include "core/agents/campfinish.h"
+#include "core/agents/desecrator.h"
+#include "core/agents/killfinish.h"
 #include "core/agents/leash.h"
+#include "core/agents/lost.h"
+#include "core/agents/mikella.h"
 #include "core/agents/minion_target.h"
+#include "core/agents/nullpos.h"
 #include "core/agents/recall.h"
 #include "core/agents/reflex.h"
 #include "core/agents/tower_target.h"
 #include "core/agents/welldef.h"
+#include "core/bots/kits.h"
 #include "core/bots/lanes.h"
+#include "core/bots/route.h"
 #include "bots.h"
 #include "director.h"
 #include "game.h"
+#include "hunterroute.h"
 #include "log.h"
 #include "wells.h"
 
@@ -174,6 +183,50 @@ struct AgentState {
   gms::agents::WellDefState wellDef;
   unsigned wellWalkInst = 0;
   unsigned long long wellWalkAskedMs = 0;
+  // HUNTERBOT: the shaper's kit rules (gms/core/bots/kits.h; looked up once from the noun) and the finisher's next try
+  bool kitRead = false;
+  const gms::bots::ShaperKit* kit = nullptr;
+  unsigned long long finisherNextMs = 0;
+  int finisherResult = 0x7FFFFFFF;
+  unsigned long long kitENextMs = 0;
+  int kitEResult = 0x7FFFFFFF;
+  // CAMPFINISH (gms/core/agents/campfinish.h): the Hunter's camp fight, sampled at its thinks in the Farm plan; the hold
+  // of the Flee link (since when, on which camp, the HP then; 0 = none)
+  gms::agents::CampFightTrack campTrack;
+  ::director::CampFight campFight;  // the camp fight at the last sample (alive 0: none)
+  float campFullHp = 0.f;         // the most max HP its living members had together in this fight
+  unsigned long long campHoldSinceMs = 0;
+  int campHoldCamp = -1;
+  float campHoldHp = 0.f;
+  bool campFled = false;  // the Flee link fired on this fight (its end is no "left otherwise")
+  // round 3: he finishes this nearly dead camp first (the Lua's tasks wait, the camp conditions answer its last creature;
+  // gms::agents::CampFinishingWanted), since when (0 = not yet in this fight)
+  bool campFinishing = false;
+  unsigned long long campFinishingSinceMs = 0;
+  // DESECBOT-3: the Desecrator's kit layer (gms/core/agents/desecrator.h): its memory (the E's target, the corpses),
+  // his spell slots (7-9; -1 none) as of the last think
+  gms::agents::DesecMemory desec;
+  int desecDrainSlot = -1, desecWitherSlot = -1;
+  int desecResult = 0x7FFFFFFF;  // the layer's last request result (logged on change)
+  // MIKELLABOT: Mikella's kit layer (gms/core/agents/mikella.h): its retry times and the R's channel hold
+  gms::agents::MikMemory mik;
+  int mikResult = 0x7FFFFFFF;  // the layer's last request result (logged on change)
+  // KILLFINISH (gms/core/agents/killfinish.h): this think's decision in an EngageForKill plan (kfThinkMs: the think it
+  // is for; 0 none), its sensors and target, the first hold of this plan visit, the open episode (1 held, 2 let go on
+  // a low target, 3 held then let go: its target and start) and the last reason the Lua's BailOnKill gave
+  gms::agents::KillFinishDecision kf;
+  gms::agents::KillFinishSensors kfSensors;
+  std::uint32_t kfTarget = 0;
+  unsigned long long kfThinkMs = 0, kfHoldSinceMs = 0, kfExitLoggedVisit = ~0ull;
+  int kfEpisode = 0;
+  std::uint32_t kfEpisodeTarget = 0;
+  unsigned long long kfEpisodeMs = 0;
+  std::string bailWhy;
+  unsigned long long bailWhyMs = 0;
+  // BOTCYCLE: the EngageForKill plan was entered by a KillShaper join (a mission link from a lane plan); a join that
+  // failed at once (and every engage left at once) blocks the next engages until kfEngageBlockUntilMs
+  bool kfEnteredByJoin = false;
+  unsigned long long kfEngageBlockUntilMs = 0;
   // BOTTEMPO: the hold watchdog's window (the instance holding the agent, since when, where the bot stood then)
   unsigned holdInst = 0;
   unsigned long long holdSinceMs = 0;
@@ -216,6 +269,14 @@ struct AgentState {
   // defended-against shapers
   int towerRule = -1;
   gms::agents::TowerDefend towerDefend;
+  // BACKTOACTION (gms/core/agents/lost.h): the Pursue leaf after a point pursuit, the net's windows; the centre stand's
+  // start for the stats (0 = not on the centre without a target)
+  gms::agents::LostState lost;
+  unsigned long long centreStandSinceMs = 0, centreStandLastMs = 0;
+  bool centreStandParasite = false;  // the stand had a think in a parasite plan or phase (its gather, contest, kill)
+  // NULLPOS (gms/core/agents/nullpos.h): when the last point pursuit ended and its point (for the lines)
+  unsigned long long pointEndedMs = 0;
+  float pointEnded[2] = {};
 };
 std::unordered_map<std::uint32_t, AgentState> g_agents;  // by object id
 gms::agents::LeashGroupDrops g_leashDrops;                // LEASH: what a camp or a well's workers dropped together
@@ -1572,6 +1633,8 @@ static_assert(sizeof(ConditionOut) == 0x20, "ConditionOut layout");
 // NPCTARGET (`ownTarget`, NPCs): a passing, not negated condition's target counts when the condition returned it with
 // useTarget (its 6th value) true, without the data's useTargetInfo, which no NPC condition record sets
 // (condition_Parasite_EnemyInMelee: `return true, 0, 0, 0, target, true`); the first one given.
+void ReportConditionNullPos(std::uint32_t self, std::uint32_t conditionGuid);  // NULLPOS, below
+bool ConditionTargetDead(std::uint32_t self, std::uint32_t conditionGuid, std::uint32_t target);  // DEADTARGET, below
 bool SehCondition(char* rec, std::uint32_t self, gms::agents::ConditionResult* r, std::uint32_t* target,
                   bool anyTarget, float* pos, std::int32_t* linkValue, bool* pointOnly, bool ownTarget) {
   __try {
@@ -1582,8 +1645,11 @@ bool SehCondition(char* rec, std::uint32_t self, gms::agents::ConditionResult* r
     ConditionOut out = {};
     r->pass = guid ? ConditionEvaluate(guid, self, &out, Field<void*>(rec, 0x18), Field<int>(rec, 0x1C)) : true;
     if (out.target && ((useTargetInfo && out.useTarget) || (anyTarget && r->pass && !*target) ||
-                       (ownTarget && out.useTarget && r->pass && !r->negate && !*target)))
-      *target = out.target;
+                       (ownTarget && out.useTarget && r->pass && !r->negate && !*target))) {
+      // DEADTARGET at the source (a bot's gambit, `pointOnly` given): a condition that names a dead object (the
+      // parasite in its death, a creep killed this frame) gives no target; the request falls back as with none
+      if (!(pointOnly && ConditionTargetDead(self, guid, out.target))) *target = out.target;
+    }
     // D6b: a passing, not negated link condition's 3rd value (condition_Bot_IsMissionAvailable: the mission id), the
     // first one given
     if (linkValue && r->pass && !r->negate && out.linkValue > 0 && *linkValue <= 0) *linkValue = out.linkValue;
@@ -1596,6 +1662,11 @@ bool SehCondition(char* rec, std::uint32_t self, gms::agents::ConditionResult* r
     if (pointOnly && useTargetInfo && out.useTarget && !out.target && r->pass && !r->negate &&
         (out.x != 0.f || out.y != 0.f))
       *pointOnly = true;
+    // NULLPOS: a passing condition that aims its gambit at its point alone (target info, no object) and gives (0, 0):
+    // it handed over no point at all (the request then falls back to mTarget or the bot, D6d's rule)
+    if (pointOnly && useTargetInfo && out.useTarget && !out.target && r->pass && !r->negate &&
+        gms::agents::IsNullPos(out.x, out.y))
+      ReportConditionNullPos(self, guid);
     ++g_st.conditionsRun;
     return true;
   } __except (SehNote(GetExceptionInformation(), "AIConditions_Evaluate")) {
@@ -2188,6 +2259,7 @@ const char* RefusalName(int r) {
     case -0x2706: return "blocked by an attribute";
     case -0x270C: return "out of range, no pursuit";
     case gms::agents::kResultItemRefused: return "item refused";
+    case gms::agents::kResultNullPos: return "NULLPOS: the goal is the null position";
     default: return "refused";
   }
 }
@@ -2219,6 +2291,93 @@ void SehSetTargetPosition(void* o, const float* p) {
   }
 }
 
+bool SehTargetPosition(void* o, float* out) {
+  __try {
+    char* bb = Field<char*>(o, agent::kOfObject);
+    if (!bb) return false;
+    for (int i = 0; i < 3; ++i) out[i] = Field<float>(bb, agent::kTargetPosition + 4 * i);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "read the target position")) {
+    return false;
+  }
+}
+
+// D6d/NULLPOS: "no point" in the blackboard is the engine's own zero vector (the constructor's, what the Pursue leaf's
+// scorer compares with); the only write of the null position the host makes.
+void ClearTargetPosition(void* o) {
+  static const float kZero[3] = {};
+  SehSetTargetPosition(o, kZero);
+}
+
+// ---- NULLPOS (gms/core/agents/nullpos.h) -------------------------------------------------------------------------------
+gms::agents::NullPosCounts g_nullpos;
+unsigned g_nullposLines = 0;
+std::uint32_t g_forcedFollowId = 0;  // test_nullpos_follow's bot while its zero vector is written (ForcedFollowStep)
+
+void NoteNullPos(const char* who, gms::agents::NullPosWhere kind, const char* where, const char* detail) {
+  g_nullpos.Note(kind);
+  ++g_nullposLines;
+  if (!gms::agents::NullPosLogBudget(g_nullposLines, g_opt.botNullPosStrict)) return;
+  char line[512];
+  gms::agents::FormatNullPos(line, sizeof line, who, kind, where, detail);
+  Log("%s", line);
+}
+
+void NoteBotNullPos(std::uint32_t id, const char* noun, gms::agents::NullPosWhere kind, const char* where,
+                    const char* detail) {
+  char who[96];
+  std::snprintf(who, sizeof who, "bot %08X %s", id, noun ? noun : "?");
+  NoteNullPos(who, kind, where, detail);
+}
+
+void ReportConditionNullPos(std::uint32_t self, std::uint32_t conditionGuid) {
+  const auto it = g_agents.find(self);
+  const AgentState* st = it != g_agents.end() ? &it->second : nullptr;
+  char detail[128];
+  std::snprintf(detail, sizeof detail, "condition %08X in phase %d, its target info without an object", conditionGuid,
+                st ? st->botPhase : -1);
+  NoteBotNullPos(self, st ? st->noun : "?", gms::agents::NullPosWhere::kCondition, "gambit condition", detail);
+}
+
+void ReportNullPosImpl(std::uint32_t object, int kind, const char* who, const char* where) {
+  const auto w = kind >= 0 && kind < static_cast<int>(gms::agents::NullPosWhere::kCount)
+                     ? static_cast<gms::agents::NullPosWhere>(kind)
+                     : gms::agents::NullPosWhere::kRequest;
+  if (!object) {
+    NoteNullPos(who ? who : "?", w, where, "");
+    return;
+  }
+  const auto it = g_agents.find(object);
+  const AgentState* st = it != g_agents.end() ? &it->second : nullptr;
+  char detail[192] = "";
+  if (st && w == gms::agents::NullPosWhere::kFollow) {
+    // where the Follow's goal came from: a point pursuit that ended (D6d writes the zero vector back), or not ours
+    char how[96] = "no point pursuit of the host's ended for it";
+    if (object == g_forcedFollowId)
+      std::snprintf(how, sizeof how, "test_nullpos_follow's forced case (the host wrote the zero vector under it)");
+    else if (st->pointEndedMs)
+      std::snprintf(how, sizeof how, "the point pursuit at (%.1f, %.1f) ended %.1f s ago (bot_point_follow_fix %s)",
+                    static_cast<double>(st->pointEnded[0]), static_cast<double>(st->pointEnded[1]),
+                    g_sim ? static_cast<double>(NowMs(g_sim) - st->pointEndedMs) / 1000.0 : -1.0,
+                    g_opt.botPointFollowFix ? "on" : "off");
+    std::snprintf(detail, sizeof detail, "running nBehavior_Follow without an object, plan %d phase %d; %s", st->botPlan,
+                  st->botPhase, how);
+  }
+  if (w == gms::agents::NullPosWhere::kHiddenPursuit) {
+    // the recovery: the follow ends (request 0x400), as MINPURSUE and BACKTOACTION end theirs
+    void* fo = SehFind(object);
+    const char* held = nullptr;
+    const bool ok = fo && !SehHeldByUninterruptible(fo, &held) && SehResetDefaultBehavior(fo);
+    std::snprintf(detail, sizeof detail, "%s%s", who ? who : "", ok ? "" : " (restart failed or held)");
+    char obj[96];  // a minion or creep as well as a bot
+    std::snprintf(obj, sizeof obj, "%s %08X %s", st && st->isBot == 1 ? "bot" : "agent", object,
+                  st ? st->noun : (fo ? NounName(fo) : "?"));
+    NoteNullPos(obj, w, where, detail);
+    return;
+  }
+  NoteBotNullPos(object, st ? st->noun : (who ? who : "?"), w, where, detail);
+}
+
 int SehBotRequest(std::uint32_t guid, int slot, std::uint32_t self, std::uint32_t target, const float* pos, int rank) {
   __try {
     int instance = 0;
@@ -2226,6 +2385,88 @@ int SehBotRequest(std::uint32_t guid, int slot, std::uint32_t self, std::uint32_
   } __except (SehNote(GetExceptionInformation(), "LabsAbilities_RequestAbility (bot)")) {
     return -0x7FFF;
   }
+}
+
+bool SehPendingDelete(void* o) {
+  __try {
+    return Field<unsigned char>(o, obj::kPendingDelete) != 0;
+  } __except (SehNote(GetExceptionInformation(), "pending delete")) {
+    return true;
+  }
+}
+
+// What a request's object is right now (DEADTARGET, NULLPOS): read fresh from the engine.
+gms::agents::RequestObject ReadRequestObject(std::uint32_t target) {
+  gms::agents::RequestObject ob;
+  void* tobj = target ? SehFind(target) : nullptr;
+  ObjInfo t;
+  if (tobj && SehObjInfo(tobj, &t)) {
+    ob.found = true;
+    ob.hasHp = t.hasHp;
+    ob.hp = t.hp;
+    ob.pendingDelete = SehPendingDelete(tobj);
+    ob.noun = NounName(tobj);
+  }
+  return ob;
+}
+
+unsigned g_deadTargetLines = 0;
+unsigned g_deadConditionLines = 0;
+
+// DEADTARGET at the source: true (counted, the first 100 logged, lower case: not a DEADTARGET line) when a bot's gambit
+// condition named an object that is dead, pending delete or gone.
+bool ConditionTargetDead(std::uint32_t self, std::uint32_t conditionGuid, std::uint32_t target) {
+  const gms::agents::RequestObject ob = ReadRequestObject(target);
+  if (!gms::agents::ObjectDead(ob)) return false;
+  ++g_nullpos.deadConditions;
+  if (++g_deadConditionLines <= 100) {
+    const auto it = g_agents.find(self);
+    Log("agents: bot %08X %s: deadtarget source: condition %08X named %08X %s (%s); left out (phase %d)", self,
+        it != g_agents.end() ? it->second.noun : "?", conditionGuid, target, ob.noun ? ob.noun : "?",
+        !ob.found ? "gone" : ob.pendingDelete ? "pending delete" : "hp 0", it != g_agents.end() ? it->second.botPhase : -1);
+  }
+  return true;
+}
+
+// NULLPOS and DEADTARGET: every request the host makes for a bot goes through here. A request at an object that is
+// dead, pending delete or gone is refused (kResultNullPos, a refusal: the list goes on) with a "DEADTARGET:" line; a
+// position at (0, 0) in any form is refused with a "NULLPOS:" line. No offset, no exception: nothing living stands on
+// (0, 0) (the parasite spawns at (0, -1), director.cpp).
+int BotRequest(const char* noun, const char* where, gms::agents::NullPosUse use, std::uint32_t guid, int slot,
+               std::uint32_t self, std::uint32_t target, const float* pos, int rank) {
+  const float p[3] = {pos ? pos[0] : 0.f, pos ? pos[1] : 0.f, pos ? pos[2] : 0.f};
+  const gms::agents::RequestObject ob = target ? ReadRequestObject(target) : gms::agents::RequestObject();
+  char detail[192];
+  switch (gms::agents::CheckRequest(target, p, use, ob)) {
+    case gms::agents::RequestVerdict::kDeadTarget: {
+      ++g_nullpos.deadTargets;
+      ++g_deadTargetLines;
+      if (gms::agents::NullPosLogBudget(g_deadTargetLines, g_opt.botNullPosStrict)) {
+        char who[96], line[512];
+        std::snprintf(who, sizeof who, "bot %08X %s", self, noun ? noun : "?");
+        std::snprintf(detail, sizeof detail, "ability %08X slot %d at (%.1f, %.1f)", guid, slot, static_cast<double>(p[0]),
+                      static_cast<double>(p[1]));
+        gms::agents::FormatDeadTarget(line, sizeof line, who, where, target, ob, detail);
+        Log("%s", line);
+      }
+      return gms::agents::kResultNullPos;
+    }
+    case gms::agents::RequestVerdict::kNullPos:
+      std::snprintf(detail, sizeof detail, "ability %08X slot %d, no object", guid, slot);
+      NoteBotNullPos(self, noun, gms::agents::NullPosWhere::kRequest, where, detail);
+      return gms::agents::kResultNullPos;
+    case gms::agents::RequestVerdict::kObjectAtOrigin:
+      std::snprintf(detail, sizeof detail, "ability %08X slot %d, object %08X %s (hp %.0f) stands exactly on (0, 0)", guid,
+                    slot, target, ob.noun ? ob.noun : "?", static_cast<double>(ob.hp));
+      NoteBotNullPos(self, noun, gms::agents::NullPosWhere::kObjectAtOrigin, where, detail);
+      return gms::agents::kResultNullPos;
+    case gms::agents::RequestVerdict::kSelfAtOrigin:
+      std::snprintf(detail, sizeof detail, "ability %08X slot %d, the bot stands exactly on (0, 0)", guid, slot);
+      NoteBotNullPos(self, noun, gms::agents::NullPosWhere::kSelfAtOrigin, where, detail);
+      return gms::agents::kResultNullPos;
+    default: break;
+  }
+  return SehBotRequest(guid, slot, self, target, p, rank);
 }
 
 // A consumable (potion): LabsPlayer_CanUseItem, then LabsPlayer_UseItem (it requests the item's ability and takes one
@@ -2247,6 +2488,7 @@ struct BotStats {
   // within kQuickExitMs of entering them, the back-and-forth among them (into the plan left within kQuickExitMs), and
   // for quick exits from a requestMission plan (EngageForKill) the bot's distance to its mTarget then
   unsigned planTimersKept = 0, phaseTimersKept = 0, quickExits = 0, bounces = 0;
+  unsigned passThroughs = 0;  // BOTCYCLE: plans left in the think they were entered (bot_plan_chain; not quick exits)
   unsigned heldThinks = 0;  // thinks without gambits: an uninterruptible ability held the agent
   unsigned quickExitNear = 0, quickExitMid = 0, quickExitFar = 0, quickExitNoTarget = 0;  // < 30, 30-55, > 55, none
   // D6d: requests aimed at a point only, pursuits of a point (mTarget cleared for them), how they ended: the gambit
@@ -2264,6 +2506,35 @@ struct BotStats {
   unsigned wellStarts[3] = {}, wellSafe = 0, wellLowHp = 0, wellOutnumbered = 0, wellSlow = 0, wellTooLong = 0;
   unsigned wellOwnFight = 0;
   unsigned wellWalkTakeovers = 0, wellHolds = 0;
+  // HUNTERBOT: gambits left out by a kit (Faris's Q), the finisher's R requests and the ones that started; the idle
+  // watchdog's attacks (a Hunter standing in his Farm plan) and the ones that started or pursued
+  unsigned kitWSkips = 0;  // DESECBOT: W gambits left out without an enemy shaper near (also counted in kitSkips)
+  unsigned kitWStarted = 0;  // DESECBOT: W started by a kit with wNear, and the farthest nearest enemy shaper then
+  float kitWFarthest = -1.f;
+  unsigned kitSkips = 0, finisherTries = 0, finisherStarted = 0, idleHunterTries = 0, idleHunterActed = 0;
+  unsigned kitETries = 0, kitEStarted = 0;  // the kit's E at the target (Faris, Freia)
+  // MOYABOT: W gambits and reflex W left out with the target beyond the kit's wReach (also in kitSkips for gambits);
+  // W started by a kit with wReach, and the farthest target then
+  unsigned kitWFar = 0, kitWReachStarted = 0;
+  float kitWReachFarthest = -1.f;
+  // CAMPFINISH: the Hunters' Flee links that opened in a camp fight (those with the camp under 25 % of its living
+  // members' max HP), the holds and how they ended, the links that fired at once by reason, the deaths in a camp fight
+  unsigned campEvents = 0, campEventsLow = 0;  // first openings per fight (a hold started or an immediate leave)
+  unsigned campLeaves = 0, campLeavesLow = 0;  // the link fired in a camp fight (at once or after a hold)
+  unsigned campHolds = 0, campHoldFinished = 0, campHoldLeft = 0, campHoldDied = 0;
+  unsigned campHoldOther = 0;  // a hold that ended otherwise (the camp out of reach, another plan, healed and gone)
+  unsigned campLeft[static_cast<int>(gms::agents::CampFinishWhy::kCount)] = {};
+  unsigned campWouldStay = 0;  // [host] bot_camp_finish=0: links the rule would have held
+  unsigned campDeaths = 0;     // Hunters that died in a camp fight (a sample within the last 3 s), once per death
+  unsigned campFinishFights = 0, campFinishDone = 0;  // round 3: fights he was finishing, those that ended cleared
+  unsigned campOther = 0, campOtherLow = 0;  // fights left otherwise (a task, a plan, a reflex, another camp), the camp
+                                             // still alive and hurt; those with the camp under 25 %
+  unsigned campLogged = 0;
+  // BACKTOACTION (gms/core/agents/lost.h): Pursue leaves restarted after their point pursuit ended (the root fix) and
+  // without anything to follow (the net), bots lost on the centre (walks to the lane front requested, started), the
+  // longest such stand seen and the bot-seconds spent there (every think counted)
+  unsigned pointFollowRestarts = 0, noTargetRestarts = 0, lostWalks = 0, lostWalksStarted = 0, lostNoFront = 0;
+  double lostCentreSeconds = 0.0, lostLongestS = 0.0, lostLongestParasiteS = 0.0;
 };
 BotStats g_bot;
 constexpr unsigned long long kQuickExitMs = 1000;
@@ -2281,6 +2552,7 @@ void BotEnterPlan(AgentState& st, const BotView& v, int plan, unsigned long long
   }
   st.botPlan = plan;
   st.planEnteredMs = nowMs;
+  st.kfHoldSinceMs = 0;  // KILLFINISH: a hold lasts one visit of the plan
   const auto kept = g_opt.keepNodeTimers ? st.nodeTimers.find(plan) : st.nodeTimers.end();
   if (kept != st.nodeTimers.end() && kept->second.linkReady.size() == v.nodeLinks.size() &&
       kept->second.phaseLinkReady.size() == v.phaseLinks.size()) {
@@ -2366,7 +2638,15 @@ float Distance2D(const float* a, const float* b) {
 // target), so a new point restarts it through request 0x400 (leaf 9 preempts it and redecides).
 void BeginPointPursuit(void* o, AgentState& st, const ObjInfo& self, const BotView& v, int gambit, const float* p,
                        unsigned long long nowMs) {
+  // NULLPOS: a point pursuit at (0, 0) would be the Follow's walk to the map's centre
+  if (gms::agents::IsNullPos(p)) {
+    char detail[96];
+    std::snprintf(detail, sizeof detail, "phase %d (%s) gambit %d", st.botPhase, v.phaseName ? v.phaseName : "?", gambit);
+    NoteBotNullPos(self.id, st.noun, gms::agents::NullPosWhere::kPointPursuit, "D6d point pursuit", detail);
+    return;
+  }
   SehSetTargetPosition(o, p);
+  gms::agents::LostNotePointBegun(st.lost);  // its point replaced one an ended pursuit left there
   const std::uint32_t old = SehRawTarget(o);
   if (old) {
     SehSetTarget(o, 0);
@@ -2397,12 +2677,26 @@ void BeginPointPursuit(void* o, AgentState& st, const ObjInfo& self, const BotVi
 
 // D6d: the pursuit of a point ends: the gambit started (`startedAt`: its point, the pursued one or another the
 // condition chose meanwhile) or the bot chose something else. The target position goes back to the zero vector (the
-// constructor's), so the Pursue leaf has nothing left to walk to.
+// constructor's), so the Pursue leaf's scorer finds no point. BACKTOACTION: a Follow that still runs re-reads it every
+// pass and walks to the zero vector, the map's centre; the next think restarts the leaf (gms/core/agents/lost.h).
+// NULLPOS: with bot_point_follow_fix on and `deferClear` the point stays in the blackboard until that next think, which
+// writes the zero vector back right before the restart (or when the leaf has changed), so no running Follow ever reads
+// (0, 0); a path that won't reach BackToActionStep next think (no phase) clears at once and restarts a running Pursue.
 void EndPointPursuit(void* o, AgentState& st, const ObjInfo& self, int r, const float* startedAt,
-                     unsigned long long nowMs) {
-  static const float kZero[3] = {};
-  SehSetTargetPosition(o, kZero);
+                     unsigned long long nowMs, bool deferClear = true) {
+  const bool keep = deferClear && g_opt.botPointFollowFix;
+  if (!keep) {
+    ClearTargetPosition(o);
+    const char* held = nullptr;
+    if (!deferClear && g_opt.botPointFollowFix && st.leaf == kLeafPursue && !SehHeldByUninterruptible(o, &held) &&
+        SehResetDefaultBehavior(o))
+      ++g_bot.pointFollowRestarts;
+  }
   st.pointPursuit = false;
+  st.pointEndedMs = nowMs;
+  st.pointEnded[0] = st.point[0];
+  st.pointEnded[1] = st.point[1];
+  gms::agents::LostNotePointEnded(st.lost, keep);
   ++(startedAt ? g_bot.pointReached : g_bot.pointDropped);
   if (!PointLogBudget()) return;
   char how[96];
@@ -2454,6 +2748,51 @@ struct Snap {
 };
 std::vector<Snap> g_snapPlayers, g_snapTowers, g_snapObjectives;  // objectives: NPC type 8 (the parasite)
 
+// DESECBOT-3: each shaper's motion and recent damage (the frame snapshot) and its last shaper hits (OnDamaged), for the
+// Desecrator's kit layer
+struct ShaperTrack {
+  gms::agents::DesecMotion motion;
+  gms::agents::DesecRecentDamage damage;
+  std::uint32_t lastAttacker = 0;  // the enemy shaper that hit it last, and when
+  unsigned long long lastAttackerMs = 0;
+  int lastVictimTeam = 0;  // the team of the shaper it hit last, and when
+  unsigned long long lastVictimMs = 0;
+  int archetype = -2;  // PlayerClass.CharacterArchetype (-2 not read yet, -1 unknown)
+  // KILLFINISH: the damage it dealt lately (OnDamaged), and the shaper whose hit killed it last, and when
+  gms::agents::KillFinishDealt dealt;
+  std::uint32_t killedBy = 0;
+  unsigned long long killedMs = 0;
+};
+std::unordered_map<std::uint32_t, ShaperTrack> g_tracks;
+
+struct DesecStats {
+  unsigned eLed = 0;           // E requests aimed with the lead (started)
+  double eLeadSum = 0.0;       // ... the lead distances' sum
+  unsigned eStarted = 0;       // every started E at an enemy shaper
+  unsigned qHeld = 0;          // Q gambits or reflex Qs left out while an E waited for its root
+  unsigned comboTries = 0, comboStarted = 0;  // the combo's Q at the rooted target
+  unsigned comboMissed = 0;    // E windows that ended without a root (or without a Q)
+  double comboDelaySum = 0.0;  // the started combo Qs' seconds after their E
+  unsigned rGambitsOut = 0, witherGambitsOut = 0;  // the plan's R and Wither gambits left out
+  unsigned rTries = 0, rStarted[3] = {}, rCluster = 0, rLocked = 0, rSpread = 0;
+  unsigned rHeld = 0;          // thinks with corpses left, R ready and no enemy to spread to
+  float rMinSpread = -1.f;     // the smallest distance of a 2nd or 3rd corpse from the earlier ones
+  unsigned drainTries = 0, drainStarted = 0, witherTries = 0, witherStarted = 0, witherGlad = 0, witherBruiser = 0;
+  unsigned peelTries = 0, peelStarted = 0;
+  unsigned earlyNoDive = 0;    // tower back-offs a level 1-3 Desecrator took where the dive rule would have let him on
+};
+DesecStats g_desec;
+
+// MIKELLABOT: Mikella's kit layer's counts ("stats mikella:")
+struct MikStats {
+  unsigned tries[gms::agents::kMikKinds] = {}, started[gms::agents::kMikKinds] = {};
+  unsigned rAssassinate = 0, rPoke = 0;  // started Rs by why
+  unsigned eGambitsOut = 0, rGambitsOut = 0, wGambitsOut = 0;  // the plan's (and BOTREFLEX's) left out
+  unsigned wStarted = 0;  // every started W of hers (the plan's and the layer's)
+  unsigned holds = 0;     // thinks held for the R's channel
+};
+MikStats g_mik;
+
 float SehMaxHp(void* o) {
   __try {
     return MaxHitPoints(o);
@@ -2486,16 +2825,268 @@ int BotRoleOf(std::uint32_t creature) {
   return -1;
 }
 
-// The bot attacks `tgt`: its Q, W, E (as far as ranked), else its basic attack; 1 started, 5 out of range (the Pursue
-// leaf follows mTarget), 0 nothing worked.
-int ReflexAttack(void* o, const ObjInfo& self, const BotPlayerView& pv, std::uint32_t mtarget, const Snap& tgt) {
+// HUNTERBOT: the bot's kit rules (gms/core/bots/kits.h), looked up once from its noun; nullptr = none.
+const gms::bots::ShaperKit* KitOf(AgentState& st) {
+  if (!st.kitRead && st.noun && st.noun[0] != '?') {
+    st.kitRead = true;
+    st.kit = gms::bots::KitForNoun(st.noun);
+  }
+  return st.kit;
+}
+
+// Whether the host may request `slot` for this bot ([host] bot_kits=0: every slot, as before).
+bool KitAllows(AgentState& st, int slot) { return !g_opt.botKits || gms::bots::KitAllowsSlot(KitOf(st), slot); }
+
+// DESECBOT: the distance to the nearest living enemy shaper the bot sees; -1 none.
+float NearestEnemyShaper(void* o, const ObjInfo& self) {
+  float best = -1.f;
+  for (const Snap& p : g_snapPlayers) {
+    if (p.team == self.team || p.id == self.id || p.hp <= 0.f) continue;
+    const float d = Dist2(p.pos, self.pos);
+    if ((best < 0.f || d < best) && SehVisible(o, p.obj)) best = d;
+  }
+  return best;
+}
+
+// DESECBOT-3: whether the bot's kit layer is on (the Desecrator's, [host] bot_desec_kit).
+bool DesecLayer(AgentState& st) {
+  if (!g_opt.botDesecKit || !g_opt.botKits) return false;
+  const gms::bots::ShaperKit* kit = KitOf(st);
+  return kit && kit->desecLayer;
+}
+
+// MIKELLABOT: whether the bot's kit layer is Mikella's and on ([host] bot_mikella_kit).
+bool MikLayer(AgentState& st) {
+  if (!g_opt.botMikellaKit || !g_opt.botKits) return false;
+  const gms::bots::ShaperKit* kit = KitOf(st);
+  return kit && kit->mikLayer;
+}
+
+// KitAllows, and (DESECBOT) a W that is a burst around the bot only with an enemy shaper near (kits.h KitAllowsW);
+// (DESECBOT-3) the Desecrator's Q waits while his E waits for its root, his R and Wither are the kit layer's only.
+bool KitAllowsNow(void* o, AgentState& st, const ObjInfo& self, int slot, unsigned long long nowMs) {
+  if (!KitAllows(st, slot)) return false;
+  if (!g_opt.botKits) return true;
+  if (DesecLayer(st)) {
+    static const gms::agents::DesecConfig kCfg;
+    if (slot == gms::agents::kSlotQ &&
+        gms::agents::DesecQHeld(st.desec, static_cast<long long>(nowMs), kCfg, false)) {
+      ++g_desec.qHeld;
+      return false;
+    }
+    if (slot == gms::agents::kSlotR) {
+      ++g_desec.rGambitsOut;
+      return false;
+    }
+    if (slot >= gms::agents::kSlotSpell1 && slot == st.desecWitherSlot) {
+      ++g_desec.witherGambitsOut;
+      return false;
+    }
+  }
+  if (MikLayer(st)) {  // MIKELLABOT: her E and R are the layer's, her W only near
+    if (gms::agents::MikellaAllowsSlot(slot, slot == gms::agents::kSlotQ + 1 ? NearestEnemyShaper(o, self) : -1.f))
+      return true;
+    ++(slot == gms::agents::kSlotR ? g_mik.rGambitsOut
+                                   : slot == gms::agents::kSlotQ + 2 ? g_mik.eGambitsOut : g_mik.wGambitsOut);
+    return false;
+  }
+  const gms::bots::ShaperKit* kit = KitOf(st);
+  if (!kit || kit->wNear <= 0.f || slot != gms::agents::kSlotQ + 1) return true;
+  if (gms::bots::KitAllowsW(kit, slot, NearestEnemyShaper(o, self))) return true;
+  ++g_bot.kitWSkips;
+  return false;
+}
+
+// MOYABOT: whether a kit with wReach (a W that empowers the next hits for a few seconds) may cast its W at `target` (the
+// gambit's, else mTarget) now; a W without a living target within reach is left out ([host] bot_kits=0: always).
+bool KitAllowsWNear(AgentState& st, const ObjInfo& self, int slot, std::uint32_t target, float* dist = nullptr) {
+  if (dist) *dist = -1.f;
+  if (!g_opt.botKits) return true;
+  const gms::bots::ShaperKit* kit = KitOf(st);
+  if (!kit || kit->wReach <= 0.f || slot != gms::agents::kSlotQ + 1) return true;
+  float d = -1.f;
+  ObjInfo t;
+  void* tobj = target ? SehFind(target) : nullptr;
+  if (tobj && SehObjInfo(tobj, &t) && (!t.hasHp || t.hp > 0.f)) d = Distance2D(t.pos, self.pos);
+  if (dist) *dist = d;
+  if (gms::bots::KitAllowsWAt(kit, slot, d)) return true;
+  ++g_bot.kitWFar;
+  return false;
+}
+
+// MOYABOT: a started W of a kit with wReach, its target's distance logged (the live check: no W beyond reach); `where`
+// the gambit's phase or "reflex".
+void NoteKitWReach(AgentState& st, const ObjInfo& self, int slot, int res, std::uint32_t target, const char* where,
+                   unsigned long long nowMs) {
+  if (!(res == 1 || res == 2) || slot != gms::agents::kSlotQ + 1 || !g_opt.botKits) return;
+  const gms::bots::ShaperKit* kit = KitOf(st);
+  if (!kit || kit->wReach <= 0.f) return;
+  float d = -1.f;
+  ObjInfo t;
+  void* tobj = target ? SehFind(target) : nullptr;
+  if (tobj && SehObjInfo(tobj, &t)) d = Distance2D(t.pos, self.pos);
+  ++g_bot.kitWReachStarted;
+  if (d > g_bot.kitWReachFarthest) g_bot.kitWReachFarthest = d;
+  static unsigned logged = 0;  // its own budget: the first 300, then every 10th
+  if (++logged <= 300 || logged % 10 == 0)
+    Log("agents: bot %08X %s kit W started in %s at %08X (%s), %.1f units away (MOYABOT) (t %.2f s)", self.id, st.noun,
+        where ? where : "?", target, tobj ? SehNounName(tobj) : "none", static_cast<double>(d),
+        static_cast<double>(nowMs) / 1000.0);
+}
+
+// DESECBOT: a started W of a kit with wNear, its nearest enemy shaper logged (the live check's evidence: no W without
+// one within reach); `where` the gambit's phase or "reflex".
+void NoteKitW(void* o, AgentState& st, const ObjInfo& self, int slot, int res, const char* where,
+              unsigned long long nowMs) {
+  if (!(res == 1 || res == 2) || slot != gms::agents::kSlotQ + 1) return;
+  if (MikLayer(st)) ++g_mik.wStarted;  // MIKELLABOT: the plan's and BOTREFLEX's Ws of hers
+  const gms::bots::ShaperKit* kit = KitOf(st);
+  if (!kit || kit->wNear <= 0.f) return;
+  const float d = NearestEnemyShaper(o, self);
+  ++g_bot.kitWStarted;
+  if (d > g_bot.kitWFarthest) g_bot.kitWFarthest = d;
+  // its own budget (the idle fixes' is spent within minutes in a bot match): the first 500, then every 10th
+  static unsigned logged = 0;
+  if (++logged <= 500 || logged % 10 == 0)
+    Log("agents: bot %08X %s kit W started in %s, nearest enemy shaper %.1f units (DESECBOT) (t %.2f s)", self.id,
+        st.noun, where ? where : "?", static_cast<double>(d), static_cast<double>(nowMs) / 1000.0);
+}
+
+// ---- DESECBOT-3: the Desecrator's kit layer (gms/core/agents/desecrator.h) ------------------------------------------
+
+constexpr int kSlotE = gms::agents::kSlotQ + 2;
+
+bool DesecLogBudget() {  // its own: the first 600 lines, then every 10th
+  static unsigned n = 0;
+  return ++n <= 600 || n % 10 == 0;
+}
+
+// The Desecrator's modifiers on an object (live instances only): 1 E_Root, 2 Q_Knockup, 4 R_MortarIcon.
+unsigned SehDesecFlags(void* o) {
+  __try {
+    char* c = Field<char*>(o, obj::kAbilityData);
+    if (!c) return 0;
+    unsigned f = 0;
+    for (const std::uint32_t* p = Field<const std::uint32_t*>(c, container::kModifiersBegin);
+         p && p != Field<const std::uint32_t*>(c, container::kModifiersEnd); ++p) {
+      void* in = GetInstance(*p);
+      if (!in || Field<unsigned char>(in, inst::kEndPending)) continue;
+      char* sa = Field<char*>(in, inst::kStatic);
+      const char* n = sa ? *reinterpret_cast<const char**>(sa) : nullptr;
+      if (!n || std::strncmp(n, "modifier_Desecrator_", 20) != 0) continue;
+      const char* r = n + 20;
+      if (!std::strcmp(r, "E_Root")) f |= 1u;
+      else if (!std::strcmp(r, "Q_Knockup")) f |= 2u;
+      else if (!std::strcmp(r, "R_MortarIcon")) f |= 4u;
+    }
+    return f;
+  } __except (SehNote(GetExceptionInformation(), "Desecrator modifiers")) {
+    return 0;
+  }
+}
+
+// A shaper's mRole (its server player's), -1 unknown.
+int SehShaperRole(void* o) {
+  __try {
+    if (!g_sim) return -1;
+    void* p = GetPlayerByIndex(g_sim, Field<unsigned char>(o, gobj::kPlayerIndex));
+    return p ? static_cast<int>(Field<unsigned char>(p, player::kRole)) : -1;
+  } __except (SehNote(GetExceptionInformation(), "shaper role")) {
+    return -1;
+  }
+}
+
+// A shaper's PlayerClass.CharacterArchetype (1 bruiser), from its noun's playerClassData; -1 unknown.
+int SehShaperArchetype(void* o) {
+  __try {
+    void* na = Field<void*>(o, gobj::kNoun);
+    char* nd = na ? Field<char*>(na, noun::kData) : nullptr;
+    void* pa = nd ? Field<void*>(nd, kNounPlayerClass) : nullptr;
+    char* pc = pa ? Field<char*>(pa, asset::kData) : nullptr;
+    return pc ? Field<int>(pc, playerclass::kArchetype) : -1;
+  } __except (SehNote(GetExceptionInformation(), "shaper archetype")) {
+    return -1;
+  }
+}
+
+int SehPlayerLevel(void* player) {
+  __try {
+    return player ? static_cast<int>(Field<unsigned>(player, player::kLevel)) : -1;
+  } __except (SehNote(GetExceptionInformation(), "player level")) {
+    return -1;
+  }
+}
+
+// Whether the item asset's name contains `part` (the spells: "Spell_Drain.Item", "Spell_Wither.Item").
+bool SehItemNamed(void* item, const char* part) {
+  __try {
+    const char* n = item ? Field<const char*>(item, 0) : nullptr;
+    return n && std::strstr(n, part) != nullptr;
+  } __except (SehNote(GetExceptionInformation(), "item name")) {
+    return false;
+  }
+}
+
+// The E's point at an enemy shaper `t` with the lead (core LeadPoint, its velocity from the frame snapshots); false
+// when `t` is no enemy shaper in range (the request keeps its own point).
+bool DesecLead(const ObjInfo& self, std::uint32_t t, float* out, float* leadDist) {
+  const Snap* s = t ? FindSnap(g_snapPlayers, t) : nullptr;
+  if (!s || s->team == self.team || s->hp <= 0.f) return false;
+  const auto it = g_tracks.find(t);
+  static const float kZero[2] = {};
+  static const gms::agents::DesecConfig kCfg;
+  float p[2];
+  if (!gms::agents::LeadPoint(self.pos, s->pos, it != g_tracks.end() ? it->second.motion.vel : kZero, kCfg, p))
+    return false;
+  out[0] = p[0];
+  out[1] = p[1];
+  out[2] = s->pos[2];
+  *leadDist = gms::agents::DesecDist(p, s->pos);
+  return true;
+}
+
+// A request of slot `slot` at `target` ended with `res`: the layer's memory (an E at an enemy shaper opens the combo's
+// window, a Q closes it) and the counters.
+void DesecNoteRequest(AgentState& st, int selfTeam, int slot, std::uint32_t target, int res, bool led, float leadDist,
+                      unsigned long long nowMs) {
+  if (!(res == 1 || res == 2)) return;
+  if (slot == kSlotE) {
+    const Snap* s = target ? FindSnap(g_snapPlayers, target) : nullptr;
+    if (s && s->team != selfTeam) {
+      gms::agents::DesecNoteE(st.desec, target, static_cast<long long>(nowMs));
+      ++g_desec.eStarted;
+      if (led) {
+        ++g_desec.eLed;
+        g_desec.eLeadSum += leadDist;
+      }
+    }
+  } else if (slot == gms::agents::kSlotQ) {
+    gms::agents::DesecNoteQ(st.desec);
+  }
+}
+
+// The bot attacks `tgt`: its Q, W, E (as far as ranked and its kit allows), else its basic attack; 1 started, 5 out of
+// range (the Pursue leaf follows mTarget), 0 nothing worked. DESECBOT-3: the Desecrator's E first (led), then Q, W.
+int ReflexAttack(void* o, AgentState& st, const ObjInfo& self, const BotPlayerView& pv, std::uint32_t mtarget,
+                 const Snap& tgt, unsigned long long nowMs) {
   if (tgt.id != mtarget && SehHostile(self.team, tgt.id)) SehSetTarget(o, tgt.id);
-  static const int kSlots[] = {gms::agents::kSlotQ, gms::agents::kSlotQ + 1, gms::agents::kSlotQ + 2,
-                               gms::agents::kSlotBasic};
-  for (int slot : kSlots) {
+  const bool desec = DesecLayer(st);
+  // MOYABOT: the order by the kit (kits.h ReflexSlots): Q, W, E, basic; the Desecrator's E first; Moya's W, Q, basic
+  const std::vector<int> slots = gms::bots::ReflexSlots(g_opt.botKits ? KitOf(st) : nullptr, desec);
+  for (int slot : slots) {
     const bool ranked = slot >= gms::agents::kSlotQ;
     if (ranked && pv.ranks[slot] <= 0) continue;
-    const int res = SehBotRequest(0, slot, self.id, tgt.id, tgt.pos, ranked ? pv.ranks[slot] : 1);
+    if (!KitAllowsNow(o, st, self, slot, nowMs)) continue;  // HUNTERBOT: Faris's stance Q; DESECBOT: his W only near
+    if (!KitAllowsWNear(st, self, slot, tgt.id)) continue;  // MOYABOT: her W only with the target within reach
+    float pos[3] = {tgt.pos[0], tgt.pos[1], tgt.pos[2]};
+    float lead = 0.f;
+    const bool led = desec && slot == kSlotE && DesecLead(self, tgt.id, pos, &lead);
+    // a led E goes to its point alone [assumed: a TerrainPoint request with an object aims at the object]
+    const int res = BotRequest(st.noun, "reflex attack", gms::agents::NullPosUse::kGoal, 0, slot, self.id,
+                               led ? 0u : tgt.id, pos, ranked ? pv.ranks[slot] : 1);
+    if (desec) DesecNoteRequest(st, self.team, slot, tgt.id, res, led, lead, nowMs);
+    NoteKitW(o, st, self, slot, res, "reflex", nowMs);
+    NoteKitWReach(st, self, slot, res, tgt.id, "reflex", nowMs);
     if (res == 1 || res == 2) return 1;
     if (res == 5) return 5;
     if (res == gms::agents::kResultHoldsAgent) return 1;
@@ -2518,6 +3109,236 @@ void StepPoint(const float* from, const float* other, float step, bool toward, i
   out[0] = from[0] + dx * k;
   out[1] = from[1] + dy * k;
   out[2] = from[2];
+}
+
+// ---- KILLFINISH (gms/core/agents/killfinish.h) ------------------------------------------------------------------------
+// A bot in a fight plan (an EngageForKill plan: requestMission, missionType KillShaper; or a PlayerCombat plan) stays to
+// finish a won trade: its exit links (to Flee by Bot_HealthLow / Bot_VeryOutnumbered, to its lane plan by
+// Bot_BailOnKill or PlayerCombat's own), its FleeTowerTargeting phase link, its Back gambit and BOTREFLEX's tower
+// back-off are left out while DecideKillFinish says finish. The decision is
+// made once per think in such a plan from the frame snapshot (BOTREFLEX's) and the damage trackers, whether [host]
+// bot_kill_finish applies it or not (off, the exits are still logged with what it would have done). An exit on a low
+// target (held or let go) opens an episode that ends with the target's death (the bot's kill or another's), the bot's
+// death, or after kKfEpisodeMs.
+constexpr int kMissionKillShaper = 8;               // nMissionType.KillShaper
+constexpr long long kKfWindowMs = 4000;             // the bot's damage rate over this
+constexpr long long kKfMinSpanMs = 2000;            // ... over at least this span
+constexpr float kKfNear = 30.f;                     // shapers counted around the bot
+constexpr unsigned long long kKfEpisodeMs = 8000;   // an episode's watch
+const gms::agents::KillFinishConfig kKillFinish;
+
+struct KillFinishStats {
+  unsigned thinks = 0, finishThinks = 0;   // thinks in an EngageForKill plan with a decision; ... that said finish
+  unsigned exits = 0, exitsLow = 0;        // exit links whose conditions passed (every think); ... on a low target
+  unsigned heldThinks = 0, holds = 0;      // exits held; plan visits with a hold
+  unsigned letGo = 0, letGoLow = 0;        // exits taken; ... on a low target
+  unsigned letGoWhy[gms::agents::kKfWhyCount] = {};  // why the low ones were let go (kKfFinish: the option was off)
+  unsigned heldKill = 0, heldKillOther = 0, heldBotDied = 0, heldSurvived = 0, heldThenLetGo = 0;  // held episodes
+  unsigned lowKill = 0, lowKillOther = 0, lowBotDied = 0, lowSurvived = 0;  // let-go-low episodes
+  unsigned reflexDives = 0, backSkipped = 0, towerPhaseSkipped = 0, retargets = 0;
+  unsigned luaQueries = 0, luaHolds = 0;   // the Lua's questions (KillShaper joins, EngageForKill) and the yeses
+  // BOTCYCLE: KillShaper joins taken, left again within the quick-exit time (each blocks the next), refused while
+  // blocked (the Lua asks nBotHost.EngageBlocked); stance links back into the plan just left, held (PlanBounceHeld)
+  unsigned joins = 0, joinsFailed = 0, joinsBlocked = 0, dwellHeld = 0;
+  unsigned engagesFailed = 0;  // every engage left within the quick-exit time (each blocks the next ones)
+  double ttkSum = 0.0;                     // the holds' time to kill at their first hold
+};
+KillFinishStats g_kf;
+
+bool KillFinishLogBudget() {  // its own: the first 3000 lines, then every 10th
+  static unsigned n = 0;
+  return ++n <= 3000 || n % 10 == 0;
+}
+
+bool IsEngagePlan(const BotView& v) { return v.planOk && v.requestMission && v.missionType == kMissionKillShaper; }
+// A fight with shapers: an EngageForKill plan, or a PlayerCombat plan (entered on RecentPlayerDamage; it leaves to the
+// lane plan on Bot_HealthLow / Bot_VeryOutnumbered as well)
+bool IsFightPlan(const BotView& v) {
+  return IsEngagePlan(v) || (v.planOk && v.planName && std::strstr(v.planName, "PlayerCombat"));
+}
+bool IsFightOrFleePlan(const BotView& v) {
+  return IsFightPlan(v) || (v.planOk && v.planName && std::strstr(v.planName, "Flee"));
+}
+// BOTCYCLE (round 3): a plan that takes the bot away from danger: Flee, the Gladiators' cautious stances
+// (Creature_Gladiator_Lane_Cautious, HighHuntress_Gladiator_Main_MatrixOfLeadership: entered on HealthMedium or
+// Outnumbered). A link into one is never held.
+bool IsDefensivePlan(const BotView& v) {
+  return v.planOk && v.planName &&
+         (std::strstr(v.planName, "Flee") || std::strstr(v.planName, "Cautious") ||
+          std::strstr(v.planName, "MatrixOfLeadership"));
+}
+
+// The sensors for one bot at one think; `target` gets the enemy shaper it would finish (its best target when that is
+// one, else the lowest visible one in reach; 0 none).
+void KillFinishSense(void* o, const AgentState& st, const ObjInfo& self, std::uint32_t mtarget, unsigned long long nowMs,
+                     gms::agents::KillFinishSensors* s, std::uint32_t* target) {
+  *s = gms::agents::KillFinishSensors();
+  *target = 0;
+  const long long now = static_cast<long long>(nowMs);
+  s->selfHp = self.hp;
+  s->selfMaxHp = SehMaxHp(o);
+  if (!(s->selfMaxHp > 0.f)) s->selfMaxHp = self.hp > 0.f ? self.hp : 1.f;
+  const Snap* t = nullptr;
+  if (const Snap* p = mtarget ? FindSnap(g_snapPlayers, mtarget) : nullptr)
+    if (p->team != self.team) t = p;
+  if (!t) {
+    float best = 2.f;
+    for (const Snap& p : g_snapPlayers) {
+      if (p.team == self.team || p.id == self.id || Dist2(p.pos, self.pos) > kKillFinish.reach) continue;
+      if (p.HpFrac() < best && SehVisible(o, p.obj)) {
+        best = p.HpFrac();
+        t = &p;
+      }
+    }
+  }
+  if (t) {
+    *target = t->id;
+    s->target = true;
+    s->targetVisible = SehVisible(o, t->obj);
+    s->targetHp = t->hp;
+    s->targetMaxHp = t->maxHp;
+    s->dist = Dist2(t->pos, self.pos);
+  }
+  const auto it = g_tracks.find(self.id);
+  if (it != g_tracks.end()) {
+    it->second.dealt.Rates(now, kKfWindowMs, kKfMinSpanMs, &s->dpsShapers, &s->dpsAll);
+    s->takenDps = it->second.damage.Fraction(s->selfMaxHp, now, 3000) * s->selfMaxHp / 3.f;
+  }
+  const float towerReach = gms::agents::ReflexConfig().towerRange;
+  for (const Snap& tw : g_snapTowers)
+    if (tw.team != self.team && (Dist2(tw.pos, self.pos) <= towerReach || (t && Dist2(tw.pos, t->pos) <= towerReach)))
+      s->underTower = true;
+  s->towerHitting = st.lastTowerHitMs && nowMs - st.lastTowerHitMs <= 3000;
+  for (const Snap& p : g_snapPlayers) {
+    if (p.id == self.id || (t && p.id == t->id) || Dist2(p.pos, self.pos) > kKfNear) continue;
+    if (p.team == self.team) ++s->alliesNear;
+    else if (SehVisible(o, p.obj)) ++s->enemiesNear;
+  }
+  s->heldMs = st.kfHoldSinceMs ? static_cast<long long>(nowMs - st.kfHoldSinceMs) : -1;
+}
+
+// This think's decision for a bot in an EngageForKill plan (none in another plan, or without the snapshot).
+void KillFinishThink(void* o, AgentState& st, const ObjInfo& self, const BotView& v, unsigned long long nowMs) {
+  st.kfThinkMs = 0;
+  if (!g_opt.botReflex || !IsFightPlan(v)) return;
+  AgentInfo ai;
+  const std::uint32_t mtarget = SehAgentInfo(o, &ai) ? SehBestTarget(ai.agent) : 0;
+  KillFinishSense(o, st, self, mtarget, nowMs, &st.kfSensors, &st.kfTarget);
+  st.kf = gms::agents::DecideKillFinish(st.kfSensors, kKillFinish);
+  st.kfThinkMs = nowMs;
+  ++g_kf.thinks;
+  if (st.kf.finish) ++g_kf.finishThinks;
+}
+
+// Whether KILLFINISH keeps the bot in its fight this think (decided this think, and the option applies it).
+bool KillFinishing(const AgentState& st, unsigned long long nowMs) {
+  return g_opt.botKillFinish && st.kfThinkMs == nowMs && st.kf.finish;
+}
+
+bool KillFinishLow(const gms::agents::KillFinishSensors& s) {
+  return s.target && s.targetMaxHp > 0.f && s.targetHp / s.targetMaxHp <= kKillFinish.targetMaxFrac;
+}
+
+// A hold: the first of this visit starts its clock and the episode; the bot's target becomes the one it finishes.
+void KillFinishHold(void* o, AgentState& st, const ObjInfo& self, unsigned long long nowMs) {
+  if (!st.kfHoldSinceMs) {
+    st.kfHoldSinceMs = nowMs;
+    ++g_kf.holds;
+    g_kf.ttkSum += st.kf.ttk;
+    if (st.kfEpisode == 0 || st.kfEpisodeTarget != st.kfTarget) {
+      st.kfEpisode = 1;
+      st.kfEpisodeTarget = st.kfTarget;
+      st.kfEpisodeMs = nowMs;
+    }
+  }
+  AgentInfo ai;
+  if (st.kfTarget && SehAgentInfo(o, &ai) && SehBestTarget(ai.agent) != st.kfTarget &&
+      SehHostile(self.team, st.kfTarget)) {
+    SehSetTarget(o, st.kfTarget);
+    ++g_kf.retargets;
+  }
+}
+
+// An exit link of an EngageForKill plan passed its conditions: true = held (the bot stays). Counted, logged, and the
+// episode opened or marked.
+bool KillFinishExit(void* o, AgentState& st, const ObjInfo& self, const BotView& v, const BotView& next,
+                    std::size_t link, unsigned long long nowMs) {
+  if (st.kfThinkMs != nowMs) return false;  // no decision this think
+  const gms::agents::KillFinishSensors& s = st.kfSensors;
+  const bool low = KillFinishLow(s);
+  ++g_kf.exits;
+  if (low) ++g_kf.exitsLow;
+  const bool hold = KillFinishing(st, nowMs);
+  const bool first = hold && st.kfExitLoggedVisit != st.planEnteredMs;
+  if (first) st.kfExitLoggedVisit = st.planEnteredMs;
+  if (hold) {
+    ++g_kf.heldThinks;
+    KillFinishHold(o, st, self, nowMs);
+  } else {
+    ++g_kf.letGo;
+    if (low) {
+      ++g_kf.letGoLow;
+      ++g_kf.letGoWhy[st.kf.why >= 0 && st.kf.why < gms::agents::kKfWhyCount ? st.kf.why : 0];
+    }
+    if (st.kfEpisode == 1) {
+      st.kfEpisode = 3;
+      ++g_kf.heldThenLetGo;
+    } else if (st.kfEpisode == 0 && low) {
+      st.kfEpisode = 2;
+      st.kfEpisodeTarget = st.kfTarget;
+      st.kfEpisodeMs = nowMs;
+    }
+  }
+  // the held exits once per visit (its first), every let-go exit
+  if ((hold && !first) || !KillFinishLogBudget()) return hold;
+  const bool flee = next.planName && std::strstr(next.planName, "Flee");
+  const bool engage = IsEngagePlan(v);
+  const char* rule = flee ? "HealthLow or VeryOutnumbered" : engage ? "BailOnKill" : "no recent player damage or HealthLow";
+  const bool bailNoted = engage && !flee && !st.bailWhy.empty() && nowMs - st.bailWhyMs <= 300;
+  void* tobj = st.kfTarget ? SehFind(st.kfTarget) : nullptr;
+  Log("killfinish: bot %08X %s %s: plan %d (%s) link %zu -> %s by %s%s%s%s: hp %.0f/%.0f (%.0f%%), target %08X %s hp "
+      "%.0f/%.0f (%.0f%%) at %.1f units, dps %.0f (shapers %.0f, all %.0f), taken %.0f/s, ttk %.2f s, ttd %.2f s, "
+      "enemies %d allies %d%s%s -> %s (KILLFINISH) (t %.2f s)",
+      self.id, st.noun, hold ? "holds" : !g_opt.botKillFinish && st.kf.finish ? "lets go (would hold: off)" : "lets go",
+      st.botPlan, v.planName, link, next.planName, rule,
+      bailNoted ? " (" : "", bailNoted ? st.bailWhy.c_str() : "", bailNoted ? ")" : "", static_cast<double>(s.selfHp),
+      static_cast<double>(s.selfMaxHp), static_cast<double>(100.f * s.selfHp / s.selfMaxHp), st.kfTarget,
+      tobj ? SehNounName(tobj) : "none", static_cast<double>(s.targetHp), static_cast<double>(s.targetMaxHp),
+      static_cast<double>(s.targetMaxHp > 0.f ? 100.f * s.targetHp / s.targetMaxHp : 0.f), static_cast<double>(s.dist),
+      static_cast<double>(st.kf.dps), static_cast<double>(s.dpsShapers), static_cast<double>(s.dpsAll),
+      static_cast<double>(s.takenDps), static_cast<double>(st.kf.ttk),
+      static_cast<double>(st.kf.ttd > 1.0e8f ? -1.f : st.kf.ttd), s.enemiesNear, s.alliesNear,
+      s.underTower ? ", under a tower" : "", s.towerHitting ? " (hit by it)" : "",
+      gms::agents::KillFinishWhyName(st.kf.why), static_cast<double>(nowMs) / 1000.0);
+  return hold;
+}
+
+// An open episode's end: the target's death (the bot's kill or another's), the bot's death, or the watch's end.
+void KillFinishEpisodeStep(AgentState& st, std::uint32_t self, bool selfDead, unsigned long long nowMs) {
+  if (!st.kfEpisode || !g_opt.botReflex) return;
+  const int kind = st.kfEpisode;
+  int end = 0;  // 1 the bot's kill, 2 another's, 3 the bot died, 4 the target lived
+  if (selfDead) {
+    end = 3;
+  } else if (!FindSnap(g_snapPlayers, st.kfEpisodeTarget)) {  // dead (the snapshot keeps living shapers only)
+    const auto it = g_tracks.find(st.kfEpisodeTarget);
+    end = it != g_tracks.end() && it->second.killedBy == self && it->second.killedMs >= st.kfEpisodeMs ? 1 : 2;
+  } else if (nowMs - st.kfEpisodeMs > kKfEpisodeMs) {
+    end = 4;
+  }
+  if (!end) return;
+  if (kind == 2) {
+    ++(end == 1 ? g_kf.lowKill : end == 2 ? g_kf.lowKillOther : end == 3 ? g_kf.lowBotDied : g_kf.lowSurvived);
+  } else {
+    ++(end == 1 ? g_kf.heldKill : end == 2 ? g_kf.heldKillOther : end == 3 ? g_kf.heldBotDied : g_kf.heldSurvived);
+  }
+  if (KillFinishLogBudget())
+    Log("killfinish: bot %08X %s %s on %08X: %s after %.1f s (KILLFINISH) (t %.2f s)", self, st.noun,
+        kind == 1 ? "held" : kind == 2 ? "let go" : "held, then let go", st.kfEpisodeTarget,
+        end == 1 ? "killed it" : end == 2 ? "the target died (another's kill)" : end == 3 ? "the bot died"
+                                                                                       : "the target lived",
+        static_cast<double>(nowMs - st.kfEpisodeMs) / 1000.0, static_cast<double>(nowMs) / 1000.0);
+  st.kfEpisode = 0;
 }
 
 // BOTRECALL / BOTBACK (gms/core/agents/recall.h): a Flee phase's walk home becomes the shop's Return to Base once the
@@ -2543,6 +3364,257 @@ bool BotStartPoint(const ObjInfo& self, float* out) {
 
 bool InFleePhase(const char* phaseName) {
   return phaseName && std::strstr(phaseName, "Flee") && !std::strstr(phaseName, "TowerTargeting");
+}
+
+// ---- CAMPFINISH (gms/core/agents/campfinish.h) -------------------------------------------------------------------------
+// BOT_Artificer_Hunter's Farm plan links to Flee on condition_Bot_HealthLow (below 30 % HP) whatever the camp has left.
+// At every think of a Hunter in his Farm plan the host samples his camp fight (the camp with a living member within 30:
+// its members' HP, his HP); when the Flee link's conditions pass in a camp fight, the link is held while the Hunter wins
+// the trade ([host] bot_camp_finish, 1). The "camp finish:" lines log every opening, hold and end (their own budget).
+constexpr unsigned long long kCampDeathWindowMs = 3000;  // a death this soon after a camp-fight sample was in the fight
+constexpr float kCampLowFrac = 0.25f;                    // "the camp was nearly dead": under this share of its full HP
+constexpr unsigned long long kCampHeldSampleMs = 200;     // the samples while an ability holds the agent (the thinks' pace)
+
+// The nearest visible enemy shaper within `range` of the bot (-1: none), from the frame's snapshot.
+float CampEnemyShaper(void* o, const ObjInfo& self, float range) {
+  float best = -1.f;
+  for (const Snap& p : g_snapPlayers) {
+    if (p.team == self.team || p.id == self.id) continue;
+    const float d = Dist2(p.pos, self.pos);
+    if (d <= range && (best < 0.f || d < best) && SehVisible(o, p.obj)) best = d;
+  }
+  return best;
+}
+
+bool CampLogDue() {
+  ++g_bot.campLogged;
+  return g_bot.campLogged <= static_cast<unsigned>(g_opt.campFinishLogLimit) || g_bot.campLogged % 10 == 0;
+}
+
+float CampFrac(const AgentState& st) {
+  return st.campFullHp > 0.f ? st.campFight.hp / st.campFullHp : 1.f;
+}
+
+// The hold ends: `how` is "finished" (its camp cleared), "left" (the rule says leave; counted by the caller) or another
+// reason (counted as other).
+void CampHoldEnd(AgentState& st, std::uint32_t id, float hp, float maxHp, const char* how, unsigned long long nowMs) {
+  if (!st.campHoldSinceMs) return;
+  const double held = static_cast<double>(nowMs - st.campHoldSinceMs) / 1000.0;
+  if (std::strcmp(how, "finished") == 0) ++g_bot.campHoldFinished;
+  else if (std::strcmp(how, "died") == 0) ++g_bot.campHoldDied;
+  else if (std::strcmp(how, "left") != 0) ++g_bot.campHoldOther;
+  if (CampLogDue())
+    Log("agents: bot %08X %s camp finish: hold on camp %d ended (%s) after %.1f s; hp %.0f/%.0f (%.0f %%), %.0f at its "
+        "start (CAMPFINISH) (t %.2f s)",
+        id, st.noun, st.campHoldCamp, how, held, static_cast<double>(hp), static_cast<double>(maxHp),
+        maxHp > 0.f ? static_cast<double>(hp / maxHp * 100.f) : 0.0, static_cast<double>(st.campHoldHp),
+        static_cast<double>(nowMs) / 1000.0);
+  st.campHoldSinceMs = 0;
+  st.campHoldCamp = -1;
+}
+
+// The fight on camp st.campTrack.Camp() ended without the Flee link, a hold or a death: logged and counted when the
+// camp still lives and he had hurt it (a camp he only walked past is no fight). `why` says what took him away.
+void CampLeftOtherwise(AgentState& st, const ObjInfo& self, float maxHp, const char* why, unsigned long long nowMs) {
+  if (st.campHoldSinceMs || st.campFled || st.campTrack.Camp() < 0 || !(st.campTrack.Dealt() > 0.0)) return;
+  const int alive = ::director::CampAlive(st.campTrack.Camp());
+  if (alive <= 0) return;  // cleared: finished
+  const float frac = CampFrac(st);
+  ++g_bot.campOther;
+  if (frac < kCampLowFrac) ++g_bot.campOtherLow;
+  if (CampLogDue())
+    Log("agents: bot %08X %s camp finish: left camp %d %s otherwise (%s%s%s): hp %.0f/%.0f (%.0f %%), camp hp %.0f of "
+        "%.0f (%.0f %%, %d alive) (CAMPFINISH) (t %.2f s)",
+        self.id, st.noun, st.campTrack.Camp(), st.campFight.name, why, st.reflexKind ? ", reflex " : "",
+        st.reflexKind == gms::agents::kReflexBack    ? "back"
+        : st.reflexKind == gms::agents::kReflexFight ? "fight"
+        : st.reflexKind == gms::agents::kReflexDefend ? "defend"
+                                                      : "",
+        static_cast<double>(self.hp),
+        static_cast<double>(maxHp), maxHp > 0.f ? static_cast<double>(self.hp / maxHp * 100.f) : 0.0,
+        static_cast<double>(st.campFight.hp), static_cast<double>(st.campFullHp), static_cast<double>(frac * 100.f),
+        st.campFight.alive, static_cast<double>(nowMs) / 1000.0);
+}
+
+// A sample of a Hunter's camp fight at a think (false: not a Hunter in his Farm plan, or no camp near). `v` null: an
+// ability holds the agent (no think; the plan is the one of the last think).
+bool CampFinishSample(void* o, AgentState& st, const ObjInfo& self, float maxHp, const BotView* v,
+                      unsigned long long nowMs) {
+  const bool farm = (!v || (v->planOk && v->planName && std::strstr(v->planName, "_Farm"))) &&
+                    BotRoleOf(self.id) == gms::agents::kReflexRoleHunter;
+  const gms::agents::CampFinishConfig cfg;
+  ::director::CampFight f;
+  if (!farm || !::director::CampFightNear(self.pos[0], self.pos[1], cfg.campRadius, &f)) {
+    if (st.campHoldSinceMs) {
+      const int alive = ::director::CampAlive(st.campHoldCamp);
+      CampHoldEnd(st, self.id, self.hp, maxHp, alive == 0 ? "finished" : !farm ? "another plan" : "the camp out of reach",
+                  nowMs);
+    } else {
+      char why[96];
+      if (!farm)
+        std::snprintf(why, sizeof why, "plan %s", v && v->planName ? v->planName : "?");
+      else
+        std::snprintf(why, sizeof why, "out of reach in phase %s", v && v->phaseName ? v->phaseName : "?");
+      CampLeftOtherwise(st, self, maxHp, why, nowMs);
+    }
+    if (st.campFinishingSinceMs && st.campTrack.Camp() >= 0 && ::director::CampAlive(st.campTrack.Camp()) == 0)
+      ++g_bot.campFinishDone;
+    st.campTrack.Reset();
+    st.campFight = ::director::CampFight();
+    st.campFullHp = 0.f;
+    st.campFled = false;
+    st.campFinishing = false;
+    st.campFinishingSinceMs = 0;
+    return false;
+  }
+  if (st.campHoldSinceMs && f.camp != st.campHoldCamp)  // the held camp is behind him: cleared or left
+    CampHoldEnd(st, self.id, self.hp, maxHp, ::director::CampAlive(st.campHoldCamp) == 0 ? "finished" : "another camp",
+                nowMs);
+  else if (st.campTrack.Camp() >= 0 && f.camp != st.campTrack.Camp())
+    CampLeftOtherwise(st, self, maxHp, "another camp", nowMs);
+  if (f.camp != st.campTrack.Camp()) {
+    if (st.campFinishingSinceMs && st.campTrack.Camp() >= 0 && ::director::CampAlive(st.campTrack.Camp()) == 0)
+      ++g_bot.campFinishDone;
+    st.campFled = false;
+    st.campFinishing = false;
+    st.campFinishingSinceMs = 0;
+  }
+  gms::agents::CampMemberHp m[::director::CampFight::kMembers];
+  for (int i = 0; i < f.count; ++i) {
+    m[i].id = f.ids[i];
+    m[i].hp = f.hps[i];
+  }
+  st.campTrack.Note(static_cast<long long>(nowMs), self.hp, f.camp, m, f.count, cfg);
+  st.campFullHp = f.fullHp > 0.f ? f.fullHp : f.maxHp;  // the camp's full HP (the director's, across the fights)
+  st.campFight = f;
+  // round 3: finishing it first? (a fight of his: he hurt the camp; [host] bot_camp_finish)
+  bool fin = false;
+  if (g_opt.botCampFinish && st.campTrack.Dealt() > 0.0 && maxHp > 0.f) {
+    const gms::agents::CampFinishConfig cfg2;
+    float dealt = 0.f, taken = 0.f;
+    long long span = 0;
+    const bool rates = st.campTrack.Rates(cfg2, &dealt, &taken, &span);
+    const long long since = st.campFinishingSinceMs ? static_cast<long long>(nowMs - st.campFinishingSinceMs) : 0;
+    fin = gms::agents::CampFinishingWanted(f.alive, CampFrac(st), rates, dealt, f.hp, self.hp / maxHp,
+                                           CampEnemyShaper(o, self, cfg2.enemyShaperRange) >= 0.f, since);
+    if (fin && !st.campFinishingSinceMs) {
+      st.campFinishingSinceMs = nowMs;
+      ++g_bot.campFinishFights;
+      if (CampLogDue())
+        Log("agents: bot %08X %s camp finish: finishing camp %d %s first: hp %.0f/%.0f (%.0f %%), camp hp %.0f of %.0f "
+            "(%.0f %%, %d alive) (CAMPFINISH) (t %.2f s)",
+            self.id, st.noun, f.camp, f.name, static_cast<double>(self.hp), static_cast<double>(maxHp),
+            static_cast<double>(self.hp / maxHp * 100.f), static_cast<double>(f.hp), static_cast<double>(st.campFullHp),
+            static_cast<double>(CampFrac(st) * 100.f), f.alive, static_cast<double>(nowMs) / 1000.0);
+    }
+  }
+  st.campFinishing = fin;
+  return true;
+}
+
+// round 3: the Hunter's camp fight for the Lua (nBotHost.CampFight): the nearest living creature's position, the camp's
+// share of its full HP and whether he finishes it first. False without a current fight.
+bool CampFightOf(std::uint32_t bot, float* pos, float* frac, bool* finishing) {
+  auto it = g_agents.find(bot);
+  if (it == g_agents.end() || !g_sim) return false;
+  const AgentState& st = it->second;
+  const long long last = st.campTrack.LastMs();
+  if (st.campTrack.Camp() < 0 || st.campFight.alive <= 0 || last < 0 ||
+      static_cast<long long>(NowMs(g_sim)) - last > 1000)
+    return false;
+  std::memcpy(pos, st.campFight.nearestPos, sizeof st.campFight.nearestPos);
+  *frac = CampFrac(st);
+  *finishing = st.campFinishing;
+  return true;
+}
+
+// The Farm plan's link to `outputNode` passed its conditions: a Hunter's Flee link in a camp fight is held (true) while
+// he wins the trade. Counts and logs each opening.
+bool CampFinishHolds(void* o, AgentState& st, const ObjInfo& self, int outputNode, unsigned long long nowMs) {
+  if (st.campTrack.Camp() < 0 || st.campFight.alive <= 0 ||
+      st.campTrack.LastMs() != static_cast<long long>(nowMs))  // this think's sample: a Hunter in a camp fight
+    return false;
+  BotView next;
+  if (!SehReadBotView(o, outputNode, -1, &next) || !next.planOk || !next.planName || !std::strstr(next.planName, "Flee"))
+    return false;
+  const gms::agents::CampFinishConfig cfg;
+  const float maxHp = SehMaxHp(o);
+  gms::agents::CampFinishInputs in;
+  in.hp = self.hp;
+  in.maxHp = maxHp;
+  in.campAlive = st.campFight.alive;
+  in.campHp = st.campFight.hp;
+  in.campMaxHp = st.campFullHp;
+  in.haveRates = st.campTrack.Rates(cfg, &in.dealtPerS, &in.takenPerS, &in.spanMs);
+  const float enemyDist = CampEnemyShaper(o, self, cfg.enemyShaperRange);
+  in.enemyShaperNear = enemyDist >= 0.f;
+  in.heldMs = st.campHoldSinceMs ? static_cast<long long>(nowMs - st.campHoldSinceMs) : 0;
+  const gms::agents::CampFinishDecision d = gms::agents::DecideCampFinish(in, cfg);
+  const bool hold = d.stay && g_opt.botCampFinish;
+  const float frac = CampFrac(st);
+  const bool first = !st.campHoldSinceMs;  // a new opening (not a hold's re-check)
+  if (first) {
+    ++g_bot.campEvents;
+    if (frac < kCampLowFrac) ++g_bot.campEventsLow;
+  }
+  if (!hold) {
+    ++g_bot.campLeaves;
+    if (frac < kCampLowFrac) ++g_bot.campLeavesLow;
+    ++g_bot.campLeft[static_cast<int>(d.why)];
+    if (d.stay) ++g_bot.campWouldStay;
+  } else if (first) {
+    ++g_bot.campHolds;
+  }
+  if ((first || !hold) && CampLogDue()) {
+    char rates[96] = "rates not measured";
+    if (in.haveRates)
+      std::snprintf(rates, sizeof rates, "camp loses %.0f/s, he %.0f/s over %.1f s", static_cast<double>(in.dealtPerS),
+                    static_cast<double>(in.takenPerS), static_cast<double>(in.spanMs) / 1000.0);
+    char enemy[40] = "";
+    if (in.enemyShaperNear) std::snprintf(enemy, sizeof enemy, ", enemy shaper at %.0f", static_cast<double>(enemyDist));
+    Log("agents: bot %08X %s camp finish: %s camp %d %s (%s%s): hp %.0f/%.0f (%.0f %%), camp hp %.0f of %.0f (%.0f %%, %d "
+        "alive); %s; kill %.1f s, die %.1f s%s (CAMPFINISH) (t %.2f s)",
+        self.id, st.noun,
+        hold ? "holds the Flee link on" : st.campHoldSinceMs ? "leaves after a hold" : "leaves", st.campFight.camp,
+        st.campFight.name, gms::agents::CampFinishWhyName(d.why), enemy, static_cast<double>(self.hp),
+        static_cast<double>(maxHp), maxHp > 0.f ? static_cast<double>(self.hp / maxHp * 100.f) : 0.0,
+        static_cast<double>(in.campHp), static_cast<double>(st.campFullHp), static_cast<double>(frac * 100.f),
+        in.campAlive, rates, static_cast<double>(d.killS), static_cast<double>(d.dieS),
+        d.stay && !g_opt.botCampFinish ? "; bot_camp_finish 0: the rule would hold" : "",
+        static_cast<double>(nowMs) / 1000.0);
+  }
+  if (hold) {
+    if (first) {
+      st.campHoldSinceMs = nowMs;
+      st.campHoldCamp = st.campFight.camp;
+      st.campHoldHp = self.hp;
+    }
+    return true;
+  }
+  if (st.campHoldSinceMs) {
+    ++g_bot.campHoldLeft;
+    CampHoldEnd(st, self.id, self.hp, maxHp, "left", nowMs);
+  }
+  st.campFled = true;  // the Flee link fires: not "left otherwise"
+  return false;
+}
+
+// A Hunter's death: in a camp fight when its last sample is recent (counted once; the history ends).
+void CampFinishDeath(AgentState& st, std::uint32_t id, unsigned long long nowMs) {
+  const long long last = st.campTrack.LastMs();
+  if (st.campTrack.Camp() >= 0 && last >= 0 && nowMs - static_cast<unsigned long long>(last) <= kCampDeathWindowMs) {
+    ++g_bot.campDeaths;
+    if (CampLogDue())
+      Log("agents: bot %08X %s camp finish: died in a camp fight on camp %d %s (camp hp %.0f of %.0f, %d alive)%s "
+          "(CAMPFINISH) (t %.2f s)",
+          id, st.noun, st.campFight.camp, st.campFight.name, static_cast<double>(st.campFight.hp),
+          static_cast<double>(st.campFullHp), st.campFight.alive, st.campHoldSinceMs ? " while holding" : "",
+          static_cast<double>(nowMs) / 1000.0);
+  }
+  CampHoldEnd(st, id, 0.f, 0.f, "died", nowMs);
+  st.campTrack.Reset();
+  st.campFight = ::director::CampFight();
+  st.campFullHp = 0.f;
 }
 
 // The recall rule's inputs from the per-frame snapshots (BOTREFLEX's: players, towers, the parasite) and OnDamaged.
@@ -2689,7 +3761,8 @@ int WellDefenseWalk(void* o, AgentState& st, const ObjInfo& self, const ::wells:
   else
     StepPoint(w.pos, self.pos, kWellStand, true, self.team, goal);  // kWellStand from the centre toward the bot
   goal[2] = self.pos[2];
-  const int res = SehBotRequest(kAbilityBotMoveToTarget, -1, self.id, 0, goal, 1);
+  const int res = BotRequest(st.noun, "well defence walk", gms::agents::NullPosUse::kGoal, kAbilityBotMoveToTarget, -1,
+                             self.id, 0, goal, 1);
   if (res == 1 || res == 2) {
     st.wellWalkAskedMs = nowMs;
     st.wellWalkInst = 0;
@@ -2716,6 +3789,12 @@ bool BotReflexStep(void* o, AgentState& st, const ObjInfo& self, const BotView& 
   if (!(maxHp > 0.f) || self.hp <= 0.f) return false;
   gms::agents::ReflexConfig cfg;
   cfg.junglerHpPoints = g_opt.botJungleFight;  // PRETUSBOT
+  // DESECBOT-3: a Desecrator at level 1-3 never stays under an enemy tower for a shaper (DESECBOT-1's early deaths)
+  constexpr int kDesecEarlyLevel = 3;
+  if (DesecLayer(st)) {
+    const int level = SehPlayerLevel(pv.player);
+    cfg.noShaperDive = level >= 1 && level <= kDesecEarlyLevel;
+  }
   gms::agents::ReflexSensors s;
   s.role = BotRoleOf(self.id);
   s.hpFrac = self.hp / maxHp;
@@ -2799,8 +3878,22 @@ bool BotReflexStep(void* o, AgentState& st, const ObjInfo& self, const BotView& 
     }
   }
   s.wellThreat = wellThreat;
+  s.finishing = KillFinishing(st, nowMs);  // KILLFINISH: a won trade's finish under the tower is a dive
 
   const gms::agents::ReflexDecision d = gms::agents::DecideReflex(s, cfg);
+  if (s.finishing && s.inTowerZone && d.kind != gms::agents::kReflexBack) {
+    gms::agents::ReflexSensors plain = s;
+    plain.finishing = false;
+    if (gms::agents::DecideReflex(plain, cfg).kind == gms::agents::kReflexBack) {
+      ++g_kf.reflexDives;
+      KillFinishHold(o, st, self, nowMs);
+    }
+  }
+  if (cfg.noShaperDive && d.kind == gms::agents::kReflexBack && d.why[0] == 't') {
+    gms::agents::ReflexConfig dive = cfg;
+    dive.noShaperDive = false;
+    if (gms::agents::DecideReflex(s, dive).kind != gms::agents::kReflexBack) ++g_desec.earlyNoDive;
+  }
   if (d.kind == gms::agents::kReflexNone) {
     st.reflexKind = 0;
     return false;
@@ -2811,11 +3904,12 @@ bool BotReflexStep(void* o, AgentState& st, const ObjInfo& self, const BotView& 
     const float* from = d.why[0] == 't' && hitTower ? hitTower->pos : attacker ? attacker->pos : jungle ? jungle->pos : nullptr;
     float goal[3];
     StepPoint(self.pos, from ? from : self.pos, kRetreatStep, false, self.team, goal);
-    res = SehBotRequest(kAbilityBotMoveToTarget, -1, self.id, 0, goal, 1);
+    res = BotRequest(st.noun, "reflex back-off", gms::agents::NullPosUse::kGoal, kAbilityBotMoveToTarget, -1, self.id,
+                     0, goal, 1);
     if (res == gms::agents::kResultHoldsAgent) res = 1;
   } else if (d.kind == gms::agents::kReflexFight) {
     const Snap* tgt = d.why[0] == 'r' ? attacker : jungle;  // "retaliate" / "jungle"
-    if (tgt) res = ReflexAttack(o, self, pv, mtarget, *tgt);
+    if (tgt) res = ReflexAttack(o, st, self, pv, mtarget, *tgt, nowMs);
   } else {  // defend: whoever attacks the well, else walk to it
     const Snap* tgt = nullptr;
     float best = 30.f;
@@ -2825,14 +3919,15 @@ bool BotReflexStep(void* o, AgentState& st, const ObjInfo& self, const BotView& 
       tgt = &p;
     }
     if (tgt) {
-      res = ReflexAttack(o, self, pv, mtarget, *tgt);
+      res = ReflexAttack(o, st, self, pv, mtarget, *tgt, nowMs);
     } else if (g_opt.botWellDefense) {
       res = WellDefenseWalk(o, st, self, wellPos, nowMs);
     } else {
       float goal[3];
       StepPoint(self.pos, wellPos.pos, kWellStep, true, self.team, goal);
       if (Dist2(self.pos, wellPos.pos) <= kWellStep) std::memcpy(goal, wellPos.pos, sizeof goal);
-      res = SehBotRequest(kAbilityBotMoveToTarget, -1, self.id, 0, goal, 1);
+      res = BotRequest(st.noun, "reflex walk to a well", gms::agents::NullPosUse::kGoal, kAbilityBotMoveToTarget, -1,
+                       self.id, 0, goal, 1);
       if (res == gms::agents::kResultHoldsAgent) res = 1;
     }
   }
@@ -2861,16 +3956,663 @@ bool BotReflexStep(void* o, AgentState& st, const ObjInfo& self, const BotView& 
   return true;
 }
 
+constexpr int kRoleHunterIndex = 2;  // RolesTuning.role[] index (gms/core/bots/composition.h kRoleHunter)
+
+// HUNTERBOT: the finisher. No Hunter phase casts the R (kits.h); a Hunter casts it at a visible enemy shaper within its
+// kit's reach at or below its HP threshold, tried at most once a second. True when the R started (the think ends).
+bool HunterFinisherStep(void* o, AgentState& st, const ObjInfo& self, const BotPlayerView& pv, std::uint32_t mtarget,
+                        unsigned long long nowMs) {
+  if (nowMs < st.finisherNextMs || self.hp <= 0.f) return false;
+  st.finisherNextMs = nowMs + 1000;
+  if (BotRoleOf(self.id) != kRoleHunterIndex) return false;
+  const gms::bots::ShaperKit* kit = KitOf(st);
+  const int rank = pv.ranks[gms::agents::kSlotR];
+  if (!kit || rank <= 0) return false;
+  std::vector<gms::bots::FinisherCandidate> cands;
+  std::vector<const Snap*> who;
+  for (const Snap& p : g_snapPlayers) {
+    if (p.team == self.team || p.id == self.id || p.hp <= 0.f) continue;
+    const float d = Dist2(p.pos, self.pos);
+    if (d > kit->rReach) continue;
+    cands.push_back({d, p.HpFrac(), SehVisible(o, p.obj)});
+    who.push_back(&p);
+  }
+  const int i = gms::bots::FinisherTarget(kit, rank, cands);
+  if (i < 0) return false;
+  const Snap& t = *who[static_cast<std::size_t>(i)];
+  const bool around = kit->rTarget == gms::bots::kKitTargetAround;
+  if (!around && t.id != mtarget && SehHostile(self.team, t.id)) SehSetTarget(o, t.id);
+  ++g_bot.finisherTries;
+  const int res = BotRequest(st.noun, "Hunter finisher R",
+                             around ? gms::agents::NullPosUse::kSelf : gms::agents::NullPosUse::kGoal, 0,
+                             gms::agents::kSlotR, self.id, around ? 0 : t.id, around ? self.pos : t.pos, rank);
+  const bool started = res == 1 || res == 2;
+  if (started) ++g_bot.finisherStarted;
+  if ((started || res != st.finisherResult) && IdleLogBudget())
+    Log("agents: bot %08X %s finisher: R (rank %d) at %08X, %.1f units away at %.0f%% HP -> %d%s (HUNTERBOT) (t %.2f s)",
+        self.id, st.noun, rank, t.id, static_cast<double>(cands[static_cast<std::size_t>(i)].dist),
+        static_cast<double>(t.HpFrac() * 100.f), res, started ? " started" : "", static_cast<double>(nowMs) / 1000.0);
+  st.finisherResult = res;
+  return started;
+}
+
+// HUNTERBOT: the E of a kit that doesn't spin (Faris's dash, Freia's stun) at the bot's target in ClearCamp and
+// GankThings, which have no E gambit (the AI's E is SpinToWin's, which the Lua turns off for them); tried once a second,
+// after a start the kit's eWaitMs. MOYABOT: Moya's self-cast E (she keeps SpinToWin too) at her camp creature, in
+// ClearCamp only and between two hits (kits.h KitEPhaseAllows). True when the E started (the think ends).
+bool HunterKitEStep(void* o, AgentState& st, const ObjInfo& self, const BotPlayerView& pv, std::uint32_t mtarget,
+                    const char* phaseName, unsigned long long nowMs) {
+  if (!g_opt.botKits || nowMs < st.kitENextMs || self.hp <= 0.f || !mtarget || !phaseName) return false;
+  const bool camp = std::strstr(phaseName, "ClearCamp") != nullptr;
+  const bool gank = std::strstr(phaseName, "GankThings") != nullptr;
+  if (!camp && !gank) return false;
+  const gms::bots::ShaperKit* kit = KitOf(st);
+  if (!kit || !kit->castsE) return false;
+  // MOYABOT: her E in ClearCamp only, between two hits (tried again at the next think while a swing runs)
+  if (!gms::bots::KitEPhaseAllows(kit, camp, gank, st.leaf == kLeafIdleDefault)) return false;
+  st.kitENextMs = nowMs + 1000;
+  if (BotRoleOf(self.id) != kRoleHunterIndex) return false;
+  const int rank = pv.ranks[gms::agents::kSlotQ + 2];
+  void* tobj = SehFind(mtarget);
+  ObjInfo t;
+  const bool live = tobj && SehObjInfo(tobj, &t) && t.hasHp && t.hp > 0.f && t.team != self.team &&
+                    SehHostile(self.team, mtarget);
+  const float d = live ? Distance2D(t.pos, self.pos) : 1e9f;
+  if (!gms::bots::KitEWanted(kit, rank, live, d)) return false;
+  ++g_bot.kitETries;
+  const int res = BotRequest(st.noun, "Hunter kit E", gms::agents::NullPosUse::kGoal, 0, gms::agents::kSlotQ + 2,
+                             self.id, mtarget, t.pos, rank);
+  const bool started = res == 1 || res == 2;
+  if (started) {
+    ++g_bot.kitEStarted;
+    st.kitENextMs = nowMs + static_cast<unsigned long long>(kit->eWaitMs);
+  }
+  if ((started || res != st.kitEResult) && IdleLogBudget())
+    Log("agents: bot %08X %s phase %d (%s) kit E (rank %d) at %08X (%s), %.1f units away -> %d%s (HUNTERBOT) (t %.2f s)",
+        self.id, st.noun, st.botPhase, phaseName, rank, mtarget, SehNounName(tobj), static_cast<double>(d), res,
+        started ? " started" : "", static_cast<double>(nowMs) / 1000.0);
+  st.kitEResult = res;
+  return started;
+}
+
+// HUNTERROUTE: a laner's pull at the Hunter's first buff (hunterroute.cpp, gms/core/bots/route.h PullGoesOn): a bot
+// that isn't a Hunter, chosen by the pull, basic-attacks the camp's biggest creature while the pull lasts. True while
+// it does (the think ends: its plan's gambits wait).
+bool HunterPullStep(void* o, AgentState& st, const ObjInfo& self, std::uint32_t mtarget) {
+  if (hunterroute::Opts().pull <= 0 || self.hp <= 0.f) return false;
+  const int role = BotRoleOf(self.id);
+  if (role < 0 || role == kRoleHunterIndex) return false;
+  const float maxHp = SehMaxHp(o);
+  const std::uint32_t target =
+      hunterroute::PullTarget(self.id, st.noun, self.team, self.pos, maxHp > 0.f ? self.hp / maxHp : 1.f);
+  if (!target) return false;
+  void* tobj = SehFind(target);
+  ObjInfo t;
+  if (!tobj || !SehObjInfo(tobj, &t) || (t.hasHp && t.hp <= 0.f)) return false;
+  if (target != mtarget && SehHostile(self.team, target)) SehSetTarget(o, target);
+  const int res = BotRequest(st.noun, "Hunter pull", gms::agents::NullPosUse::kGoal, 0, gms::agents::kSlotBasic,
+                             self.id, target, t.pos, 1);
+  hunterroute::NotePullRequest(self.id, target, res);
+  return true;
+}
+
+// HUNTERROUTE: the host's Vanquish rule (gms/core/bots/route.h VanquishPick): a Hunter with Vanquish in a spell slot
+// casts it at a creature of his camp fight that it kills (the mediums and majors; any at low HP), besides the data's
+// gambit (the buff and pig majors only). True when it started (the think ends).
+bool HunterVanquishStep(void* o, AgentState& st, const ObjInfo& self, const BotPlayerView& pv,
+                        unsigned long long nowMs) {
+  if (self.hp <= 0.f || !hunterroute::VanquishDue(self.id, nowMs) || BotRoleOf(self.id) != kRoleHunterIndex)
+    return false;
+  int slot = -1;
+  for (int s = gms::agents::kSlotSpell1; s <= gms::agents::kSlotSpell3 && slot < 0; ++s)
+    if (SehItemNamed(pv.items[gms::agents::SlotInventoryIndex(s)], "Vanquish")) slot = s;
+  if (slot < 0) return false;
+  static const gms::bots::VanquishConfig cfg;
+  director::CampFight f;
+  if (!director::CampFightNear(self.pos[0], self.pos[1], cfg.reach + 3.f, &f) || f.camp < 0) return false;
+  std::vector<gms::bots::VanquishCandidate> cands;
+  std::vector<std::uint32_t> ids;
+  std::vector<ObjInfo> infos;
+  for (int k = 0; k < f.count && k < director::CampFight::kMembers; ++k) {
+    if (!(f.hps[k] > 0.f)) continue;
+    void* m = SehFind(f.ids[k]);
+    ObjInfo mi;
+    if (!m || !SehObjInfo(m, &mi)) continue;
+    const int npc = SehNpcType(m);
+    gms::bots::VanquishCandidate c;
+    c.hp = f.hps[k];
+    c.maxHp = SehMaxHp(m);
+    c.dist = Distance2D(mi.pos, self.pos);
+    c.objective = npc >= 6 && npc <= 8;  // nNPCType ObjectiveMinor/Medium/Major
+    cands.push_back(c);
+    ids.push_back(f.ids[k]);
+    infos.push_back(mi);
+  }
+  const float maxHp = SehMaxHp(o);
+  const int i = gms::bots::VanquishPick(cands, SehPlayerLevel(pv.player), maxHp > 0.f ? self.hp / maxHp : 1.f, cfg);
+  if (i < 0) return false;
+  const std::size_t u = static_cast<std::size_t>(i);
+  const int res = BotRequest(st.noun, "Hunter Vanquish", gms::agents::NullPosUse::kGoal, 0, slot, self.id, ids[u],
+                             infos[u].pos, 1);
+  hunterroute::NoteVanquish(self.id, true, res, cands[u].objective, ids[u], SehNounName(infos[u].obj), cands[u].hp,
+                            nowMs);
+  return res == 1 || res == 2;
+}
+
+// DESECBOT-3: the Desecrator's kit layer, once per think after BOTREFLEX: the combo's Q at his E's rooted target, in
+// the fight phases R (the corpses spread), Drain at a low enemy, Wither on a Gladiator or a diving bruiser, in the fights
+// and the lane the peel for a hurt ally (gms/core/agents/desecrator.h DecideDesecrator). True when a cast started (the
+// think ends); the plan's gambits run otherwise, his E led and his Q held for the root (KitAllowsNow, the request).
+bool DesecratorKitStep(void* o, AgentState& st, const ObjInfo& self, const BotPlayerView& pv, std::uint32_t mtarget,
+                       const char* phaseName, unsigned long long nowMs) {
+  if (!DesecLayer(st) || self.hp <= 0.f) return false;
+  static const gms::agents::DesecConfig cfg;
+  const long long now = static_cast<long long>(nowMs);
+  gms::agents::DesecMemory& m = st.desec;
+  // the spells in his slots (spell1-3: inventory 6-8)
+  st.desecDrainSlot = st.desecWitherSlot = -1;
+  for (int slot = gms::agents::kSlotSpell1; slot <= gms::agents::kSlotSpell3; ++slot) {
+    void* item = pv.items[gms::agents::SlotInventoryIndex(slot)];
+    if (!item) continue;
+    if (SehItemNamed(item, "Wither")) st.desecWitherSlot = slot;
+    else if (SehItemNamed(item, "Drain")) st.desecDrainSlot = slot;
+  }
+  // an E window that closed without its Q: the E missed (or the Q could not follow)
+  if (m.eTarget && !gms::agents::DesecComboOpen(m, now, cfg)) {
+    ++g_desec.comboMissed;
+    if (DesecLogBudget())
+      Log("agents: bot %08X %s kit combo: no Q at %08X rooted within %.1f s of the E (DESECBOT-3) (t %.2f s)",
+          self.id, st.noun, m.eTarget, static_cast<double>(cfg.comboQMs) / 1000.0,
+          static_cast<double>(nowMs) / 1000.0);
+    gms::agents::DesecNoteQ(m);
+  }
+  gms::agents::DesecSelf s;
+  s.pos[0] = self.pos[0];
+  s.pos[1] = self.pos[1];
+  s.phaseClass = gms::agents::DesecPhaseClassOf(phaseName);
+  s.nowMs = now;
+  s.rankQ = pv.ranks[gms::agents::kSlotQ];
+  s.rankE = pv.ranks[kSlotE];
+  s.rankR = pv.ranks[gms::agents::kSlotR];
+  s.hasDrain = st.desecDrainSlot >= 0;
+  s.hasWither = st.desecWitherSlot >= 0;
+  std::vector<gms::agents::DesecEnemy> enemies;
+  std::vector<const Snap*> who;
+  std::vector<gms::agents::DesecAlly> allies;
+  constexpr float kLook = 55.f;  // R's 50 and a margin
+  for (const Snap& p : g_snapPlayers) {
+    if (p.id == self.id || p.hp <= 0.f) continue;
+    const float d = Dist2(p.pos, self.pos);
+    if (d > kLook) continue;
+    auto& tr = g_tracks[p.id];
+    if (p.team == self.team) {
+      gms::agents::DesecAlly a;
+      a.id = p.id;
+      a.dist = d;
+      a.recentDamage = tr.damage.Fraction(p.maxHp, now);
+      a.attacker = tr.lastAttacker;
+      a.attackerAgeMs = tr.lastAttackerMs ? static_cast<long long>(nowMs - tr.lastAttackerMs) : -1;
+      allies.push_back(a);
+      continue;
+    }
+    gms::agents::DesecEnemy e;
+    e.id = p.id;
+    e.pos[0] = p.pos[0];
+    e.pos[1] = p.pos[1];
+    e.vel[0] = tr.motion.vel[0];
+    e.vel[1] = tr.motion.vel[1];
+    e.dist = d;
+    e.hpFrac = p.HpFrac();
+    e.visible = SehVisible(o, p.obj);
+    if (e.visible) {
+      const unsigned f = SehDesecFlags(p.obj);
+      e.rooted = (f & 1u) != 0;
+      e.knockedUp = (f & 2u) != 0;
+      e.mortared = (f & 4u) != 0;
+    }
+    e.role = SehShaperRole(p.obj);
+    if (tr.archetype == -2) tr.archetype = SehShaperArchetype(p.obj);
+    e.archetype = tr.archetype;
+    e.hitAllyAgeMs = tr.lastVictimMs && tr.lastVictimTeam == self.team ? static_cast<long long>(nowMs - tr.lastVictimMs) : -1;
+    enemies.push_back(e);
+    who.push_back(&p);
+  }
+  const gms::agents::DesecAction a = gms::agents::DecideDesecrator(s, enemies, allies, m, cfg);
+  if (a.kind == gms::agents::kDesecNone) {
+    if (s.phaseClass == gms::agents::kDesecPhaseFight && s.rankR > 0 && gms::agents::DesecRWindowOpen(m, now, cfg) &&
+        now >= m.nextTryMs[gms::agents::kDesecR])
+      ++g_desec.rHeld;
+    return false;
+  }
+  const gms::agents::DesecEnemy& t = enemies[static_cast<std::size_t>(a.enemy)];
+  const Snap& ts = *who[static_cast<std::size_t>(a.enemy)];
+  int slot = 0;
+  bool atPoint = false;  // TerrainPoint casts go to their point alone [assumed, as the led E]
+  switch (a.kind) {
+    case gms::agents::kDesecComboQ:
+    case gms::agents::kDesecPeelQ: slot = gms::agents::kSlotQ; break;
+    case gms::agents::kDesecPeelE: slot = kSlotE; atPoint = true; break;
+    case gms::agents::kDesecR: slot = gms::agents::kSlotR; atPoint = true; break;
+    case gms::agents::kDesecDrain: slot = st.desecDrainSlot; break;
+    default: slot = st.desecWitherSlot; break;
+  }
+  if (slot <= 0) return false;
+  const int rank = gms::agents::SlotIsRanked(slot) ? pv.ranks[slot] : 1;
+  const float pos[3] = {a.point[0], a.point[1], ts.pos[2]};
+  if (!atPoint && t.id != mtarget && SehHostile(self.team, t.id)) SehSetTarget(o, t.id);
+  const int res = BotRequest(st.noun, "Desecrator kit", gms::agents::NullPosUse::kGoal, 0, slot, self.id,
+                             atPoint ? 0u : t.id, pos, rank);
+  const bool started = res == 1 || res == 2;
+  const int corpse = m.rCorpses;  // before this one, of the open cast (0 a new cast)
+  const bool newCast = !gms::agents::DesecRWindowOpen(m, now, cfg);
+  const float spread = newCast ? -1.f : gms::agents::DesecNearestCorpse(m, a.point);
+  const double sinceE = m.eCastMs >= 0 ? static_cast<double>(now - m.eCastMs) / 1000.0 : -1.0;
+  switch (a.kind) {
+    case gms::agents::kDesecComboQ:
+      ++g_desec.comboTries;
+      if (started) {
+        ++g_desec.comboStarted;
+        g_desec.comboDelaySum += sinceE;
+      }
+      break;
+    case gms::agents::kDesecR:
+      ++g_desec.rTries;
+      if (started) {
+        const int n = newCast ? 0 : corpse;
+        if (n >= 0 && n < 3) ++g_desec.rStarted[n];
+        if (std::strcmp(a.why, "cluster") == 0) ++g_desec.rCluster;
+        else if (std::strcmp(a.why, "spread") == 0) ++g_desec.rSpread;
+        else ++g_desec.rLocked;
+        if (spread >= 0.f && (g_desec.rMinSpread < 0.f || spread < g_desec.rMinSpread)) g_desec.rMinSpread = spread;
+        gms::agents::DesecNoteR(m, a.point, now, cfg);
+      }
+      break;
+    case gms::agents::kDesecDrain:
+      ++g_desec.drainTries;
+      if (started) ++g_desec.drainStarted;
+      break;
+    case gms::agents::kDesecWither:
+      ++g_desec.witherTries;
+      if (started) {
+        ++g_desec.witherStarted;
+        ++(t.role == 0 && std::strstr(a.why, "Gladiator") ? g_desec.witherGlad : g_desec.witherBruiser);
+      }
+      break;
+    default:
+      ++g_desec.peelTries;
+      if (started) ++g_desec.peelStarted;
+      break;
+  }
+  float lead = 0.f;
+  if (a.kind == gms::agents::kDesecPeelE) lead = gms::agents::DesecDist(a.point, t.pos);
+  DesecNoteRequest(st, self.team, slot, t.id, res, a.kind == gms::agents::kDesecPeelE, lead, nowMs);
+  // a refusal: tried again after retryMs, after 5 s when on cooldown (-9999: Drain's 180 s, the plan's gambits cast it
+  // too: in a live match all of the layer's Drain requests were refused so)
+  constexpr int kOnCooldown = -9999;
+  if (!started) m.nextTryMs[a.kind] = now + (res == kOnCooldown ? 5000 : cfg.retryMs);
+  if ((started || res != st.desecResult) && DesecLogBudget()) {
+    char extra[160] = "";
+    if (a.kind == gms::agents::kDesecR && spread < 0.f)
+      std::snprintf(extra, sizeof extra, ", corpse 1, %d enemy shaper(s) in its field", a.count);
+    else if (a.kind == gms::agents::kDesecR)
+      std::snprintf(extra, sizeof extra, ", corpse %d, %d enemy shaper(s) in its field, %.1f from the earlier corpses",
+                    corpse + 1, a.count, static_cast<double>(spread));
+    if (a.kind == gms::agents::kDesecComboQ)
+      std::snprintf(extra, sizeof extra, ", %.2f s after the E", sinceE);
+    if (a.kind == gms::agents::kDesecWither)
+      std::snprintf(extra, sizeof extra, ", role %d, archetype %d", t.role, t.archetype);
+    Log("agents: bot %08X %s phase %d (%s) kit %s (%s) at %08X, %.1f units away at %.0f%% HP, point (%.1f, %.1f)%s -> "
+        "%d%s (DESECBOT-3) (t %.2f s)",
+        self.id, st.noun, st.botPhase, phaseName ? phaseName : "?", gms::agents::DesecKindName(a.kind), a.why, t.id,
+        static_cast<double>(t.dist), static_cast<double>(t.hpFrac * 100.f), static_cast<double>(a.point[0]),
+        static_cast<double>(a.point[1]), extra, res, started ? " started" : "", static_cast<double>(nowMs) / 1000.0);
+  }
+  st.desecResult = res;
+  if (!started) return false;
+  st.idleSinceMs = 0;
+  return true;
+}
+
+bool MikLogBudget() {  // its own: the first 600 lines, then every 10th
+  static unsigned n = 0;
+  return ++n <= 600 || n % 10 == 0;
+}
+
+// MIKELLABOT: Mikella's kit layer, once per think after BOTREFLEX: the escape E in Flee, R to assassinate or before or
+// after a fight, the trade W at her target, the kite E away from a shaper too close, the chase E at a low target
+// (gms/core/agents/mikella.h DecideMikella). True when a cast started or her R channels (the think ends); the plan's
+// gambits run otherwise, without her E and R and with her W only near (KitAllowsNow).
+bool MikellaKitStep(void* o, AgentState& st, const ObjInfo& self, const BotPlayerView& pv, std::uint32_t mtarget,
+                    const char* phaseName, unsigned long long nowMs) {
+  if (!MikLayer(st) || self.hp <= 0.f) return false;
+  static const gms::agents::MikellaConfig cfg;
+  const long long now = static_cast<long long>(nowMs);
+  gms::agents::MikMemory& m = st.mik;
+  if (gms::agents::MikHolding(m, now)) {
+    ++g_mik.holds;
+    return true;
+  }
+  gms::agents::MikSelf s;
+  s.pos[0] = self.pos[0];
+  s.pos[1] = self.pos[1];
+  s.phaseClass = gms::agents::MikellaPhaseClassOf(phaseName);
+  s.nowMs = now;
+  s.rankW = pv.ranks[gms::agents::kSlotQ + 1];
+  s.rankE = pv.ranks[gms::agents::kSlotQ + 2];
+  s.rankR = pv.ranks[gms::agents::kSlotR];
+  if (s.phaseClass == gms::agents::kMikPhaseOther) return false;
+  std::vector<gms::agents::MikEnemy> enemies;
+  std::vector<const Snap*> who;
+  constexpr float kLook = 55.f;  // R's 50 and a margin
+  for (const Snap& p : g_snapPlayers) {
+    if (p.id == self.id || p.hp <= 0.f || p.team == self.team) continue;
+    const float d = Dist2(p.pos, self.pos);
+    if (d > kLook) continue;
+    gms::agents::MikEnemy e;
+    e.id = p.id;
+    e.pos[0] = p.pos[0];
+    e.pos[1] = p.pos[1];
+    e.dist = d;
+    e.hpFrac = p.HpFrac();
+    e.visible = SehVisible(o, p.obj);
+    if (p.id == mtarget) s.target = static_cast<int>(enemies.size());
+    enemies.push_back(e);
+    who.push_back(&p);
+  }
+  const gms::agents::MikAction a = gms::agents::DecideMikella(s, enemies, m, cfg);
+  if (a.kind == gms::agents::kMikNone) return false;
+  const gms::agents::MikEnemy& t = enemies[static_cast<std::size_t>(a.enemy)];
+  int slot = gms::agents::kSlotQ + 2;  // the Es
+  std::uint32_t target = 0;            // the E at its point alone [assumed, as the Desecrator's led E]
+  gms::agents::NullPosUse use = gms::agents::NullPosUse::kGoal;
+  float pos[3] = {a.point[0], a.point[1], self.pos[2]};
+  if (a.kind == gms::agents::kMikR) {
+    slot = gms::agents::kSlotR;
+    target = t.id;
+    pos[2] = who[static_cast<std::size_t>(a.enemy)]->pos[2];
+    if (t.id != mtarget && SehHostile(self.team, t.id)) SehSetTarget(o, t.id);
+  } else if (a.kind == gms::agents::kMikTradeW) {
+    slot = gms::agents::kSlotQ + 1;
+    use = gms::agents::NullPosUse::kSelf;  // a self cast: her own position is no goal
+  }
+  const int rank = pv.ranks[slot];
+  const int res = BotRequest(st.noun, "Mikella kit", use, 0, slot, self.id, target, pos, rank);
+  const bool started = res == 1 || res == 2;
+  ++g_mik.tries[a.kind];
+  if (started) {
+    ++g_mik.started[a.kind];
+    if (a.kind == gms::agents::kMikR) ++(t.hpFrac <= cfg.rLowHp ? g_mik.rAssassinate : g_mik.rPoke);
+    if (a.kind == gms::agents::kMikTradeW) ++g_mik.wStarted;
+  }
+  constexpr int kOnCooldown = -9999;
+  gms::agents::MikNoteResult(&m, a, started, now, cfg, res == kOnCooldown);
+  if ((started || res != st.mikResult) && MikLogBudget())
+    Log("agents: bot %08X %s phase %d (%s) kit %s (%s) at %08X, %.1f units away at %.0f%% HP, point (%.1f, %.1f) -> "
+        "%d%s (MIKELLABOT) (t %.2f s)",
+        self.id, st.noun, st.botPhase, phaseName ? phaseName : "?", gms::agents::MikKindName(a.kind), a.why, t.id,
+        static_cast<double>(t.dist), static_cast<double>(t.hpFrac * 100.f), static_cast<double>(pos[0]),
+        static_cast<double>(pos[1]), res, started ? " started" : "", static_cast<double>(nowMs) / 1000.0);
+  st.mikResult = res;
+  if (!started) return false;
+  st.idleSinceMs = 0;
+  return true;
+}
+
+// ---- NULLPOS: the forced case ([host] test_nullpos_follow, a test aid) -----------------------------------------------
+// Proves the Follow guard live: at the option's match second the first bot that thinks (alive, not held, over 30 from
+// the centre) is taken out of the brain: its Pursue leaf is started on a point alone, (0.5, 0.5) inside the parasite's
+// lair (not walkable to 0.5, so the Follow loops and re-reads the point every pass), mTarget cleared, flag 8 on. Once
+// it is within 12 of the centre (or after 60 s) the host writes the zero vector under the running Follow and turns
+// flag 8 off, as D6d's old EndPointPursuit did (BACKTOACTION's bug). The Follow's next pass must give a "NULLPOS: ...
+// [Follow]" line, and the Follow must end (the leaf leaves 12 Pursue). After 15 s, or once it ended, the bot goes back
+// to its brain. One "test_nullpos_follow:" line per step and a result line.
+struct ForcedFollow {
+  int phase = 0;  // 0 waiting, 1 walking to the point, 2 the zero vector written, 3 done
+  std::uint32_t id = 0;
+  unsigned long long sinceMs = 0, zeroMs = 0, lastKickMs = 0;
+  unsigned followHitsBefore = 0;
+  std::uintptr_t leafAtZero = 0;
+};
+ForcedFollow g_forced;
+
+void ForcedFollowDone(void* o, AgentState& st, const char* how, unsigned long long nowMs) {
+  const unsigned hits = g_nullpos.by[static_cast<int>(gms::agents::NullPosWhere::kFollow)] - g_forced.followHitsBefore;
+  Log("agents: test_nullpos_follow: result: bot %08X %s: %s; NULLPOS [Follow] lines since the zero vector %u, leaf now "
+      "%s (t %.2f s)",
+      g_forced.id, st.noun, how, hits, LeafName(st.leaf), static_cast<double>(nowMs) / 1000.0);
+  g_forced.phase = 3;
+  g_forcedFollowId = 0;
+  st.pursue = false;
+  SehSetTreeFlag(o, 8, false);
+  SehResetDefaultBehavior(o);
+}
+
+// True while the forced case holds this bot's think.
+bool ForcedFollowStep(void* o, AgentState& st, const ObjInfo& self, unsigned long long nowMs) {
+  if (g_opt.testNullPosFollowS <= 0 || g_forced.phase == 3) return false;
+  const float point[3] = {0.5f, 0.5f, self.pos[2]};
+  const float fromCentre = std::sqrt(self.pos[0] * self.pos[0] + self.pos[1] * self.pos[1]);
+  if (g_forced.phase == 0) {
+    const char* held = nullptr;
+    if (nowMs < static_cast<unsigned long long>(g_opt.testNullPosFollowS) * 1000ull || fromCentre <= 30.f ||
+        SehHeldByUninterruptible(o, &held))
+      return false;
+    g_forced.phase = 1;
+    g_forced.id = self.id;
+    g_forced.sinceMs = g_forced.lastKickMs = nowMs;
+    if (st.pointPursuit) EndPointPursuit(o, st, self, 0, nullptr, nowMs, false);
+    SehSetTarget(o, 0);
+    SehSetTargetPosition(o, point);
+    st.pursue = true;
+    SehSetTreeFlag(o, 8, true);
+    const bool ok = SehResetDefaultBehavior(o);
+    Log("agents: test_nullpos_follow: bot %08X %s at (%.1f, %.1f), %.1f from the centre, leaf %s: Pursue started on the "
+        "point (0.5, 0.5) alone (restart %s) (t %.2f s)",
+        self.id, st.noun, static_cast<double>(self.pos[0]), static_cast<double>(self.pos[1]),
+        static_cast<double>(fromCentre), LeafName(st.leaf), ok ? "ok" : "failed", static_cast<double>(nowMs) / 1000.0);
+    return true;
+  }
+  if (self.id != g_forced.id) return false;
+  if (self.hasHp && self.hp <= 0.f) {
+    ForcedFollowDone(o, st, "the bot died", nowMs);
+    return false;
+  }
+  if (g_forced.phase == 1) {
+    SehSetTarget(o, 0);  // nothing to follow but the point
+    if (st.leaf != kLeafPursue && nowMs - g_forced.lastKickMs >= 1000) {
+      g_forced.lastKickMs = nowMs;
+      SehSetTargetPosition(o, point);
+      SehSetTreeFlag(o, 8, true);
+      SehResetDefaultBehavior(o);
+    }
+    if ((st.leaf == kLeafPursue && fromCentre <= 12.f) || nowMs - g_forced.sinceMs >= 60000) {
+      g_forced.phase = 2;
+      g_forced.zeroMs = nowMs;
+      g_forced.leafAtZero = st.leaf;
+      g_forced.followHitsBefore = g_nullpos.by[static_cast<int>(gms::agents::NullPosWhere::kFollow)];
+      g_forcedFollowId = self.id;
+      ClearTargetPosition(o);  // under the running Follow, no restart: the old EndPointPursuit
+      st.pursue = false;
+      SehSetTreeFlag(o, 8, false);
+      Log("agents: test_nullpos_follow: bot %08X %s at (%.1f, %.1f), %.1f from the centre, leaf %s after %.1f s: the zero "
+          "vector written under it, flag 8 off, no restart (t %.2f s)",
+          self.id, st.noun, static_cast<double>(self.pos[0]), static_cast<double>(self.pos[1]),
+          static_cast<double>(fromCentre), LeafName(st.leaf), static_cast<double>(nowMs - g_forced.sinceMs) / 1000.0,
+          static_cast<double>(nowMs) / 1000.0);
+    }
+    return true;
+  }
+  // phase 2: the guard must end the Follow
+  SehSetTarget(o, 0);
+  const unsigned hits = g_nullpos.by[static_cast<int>(gms::agents::NullPosWhere::kFollow)] - g_forced.followHitsBefore;
+  char how[160];
+  if (g_forced.leafAtZero == kLeafPursue && st.leaf != kLeafPursue) {
+    std::snprintf(how, sizeof how, "RECOVERED: the Follow ended %.1f s after the zero vector (leaf 12 Pursue -> %s)",
+                  static_cast<double>(nowMs - g_forced.zeroMs) / 1000.0, LeafName(st.leaf));
+    ForcedFollowDone(o, st, how, nowMs);
+    return false;
+  }
+  if (nowMs - g_forced.zeroMs >= 15000) {
+    std::snprintf(how, sizeof how, "%s after 15 s (leaf at the zero vector %s)",
+                  g_forced.leafAtZero != kLeafPursue ? "NOT SET UP: no Pursue leaf ran"
+                  : hits ? "NOT RECOVERED: the guard fired but the leaf stayed" : "NOT RECOVERED: no guard line",
+                  LeafName(g_forced.leafAtZero));
+    ForcedFollowDone(o, st, how, nowMs);
+    return false;
+  }
+  return true;
+}
+
+// ---- BACKTOACTION (gms/core/agents/lost.h) ----------------------------------------------------------------------------
+unsigned g_lostLogLines = 0;
+bool LostLogBudget() {
+  ++g_lostLogLines;
+  return g_lostLogLines <= 400 || g_lostLogLines % 20 == 0;
+}
+constexpr float kLostStandRadius = 20.f;               // the stand the stats measure: near the centre, no mTarget
+constexpr unsigned long long kLostStandLogMs = 10000;  // a stand this long gets its own line when it ends
+
+// Once per think, before the held check (so a hold defers a restart): the root fix and the safety net. True when it
+// requested the walk to the lane front (the think ends there).
+bool BackToActionStep(void* o, AgentState& st, const ObjInfo& self, const BotView& v, bool held,
+                      unsigned long long nowMs) {
+  const std::uint32_t raw = SehRawTarget(o);
+  const bool pursueLeaf = st.leaf == kLeafPursue;
+  const bool idleLeaf = st.leaf == kLeafIdleDefault;
+  const bool parasite = gms::agents::ParasiteTaskName(v.planName) || gms::agents::ParasiteTaskName(v.phaseName);
+  // the stand the stats measure (every leaf, the option on or off): near the centre without mTarget or a point
+  const bool standing = !raw && !st.pointPursuit && gms::agents::NearCentre(self.pos[0], self.pos[1], kLostStandRadius);
+  if (standing) {
+    if (!st.centreStandSinceMs) st.centreStandSinceMs = nowMs;
+    const unsigned long long thinkMs = static_cast<unsigned long long>(g_opt.botThinkMs > 0 ? g_opt.botThinkMs : 200);
+    if (st.centreStandLastMs && nowMs - st.centreStandLastMs <= 4 * thinkMs)
+      g_bot.lostCentreSeconds += static_cast<double>(nowMs - st.centreStandLastMs) / 1000.0;
+    st.centreStandLastMs = nowMs;
+    const double s = static_cast<double>(nowMs - st.centreStandSinceMs) / 1000.0;
+    if (parasite) st.centreStandParasite = true;
+    double& longest = st.centreStandParasite ? g_bot.lostLongestParasiteS : g_bot.lostLongestS;
+    if (s > longest) longest = s;
+  }
+  if (!standing && st.centreStandSinceMs) {
+    const unsigned long long len = st.centreStandLastMs - st.centreStandSinceMs;
+    if (len >= kLostStandLogMs && LostLogBudget())
+      Log("agents: bot %08X %s stood %.1f s within %.0f of the map's centre without a target (t %.2f-%.2f s; plan %d "
+          "%s, phase %d %s)%s (BACKTOACTION)",
+          self.id, st.noun, static_cast<double>(len) / 1000.0, static_cast<double>(kLostStandRadius),
+          static_cast<double>(st.centreStandSinceMs) / 1000.0, static_cast<double>(st.centreStandLastMs) / 1000.0,
+          st.botPlan, v.planName ? v.planName : "?", st.botPhase, v.phaseName ? v.phaseName : "?",
+          st.centreStandParasite ? ", a parasite task" : "");
+    st.centreStandSinceMs = st.centreStandLastMs = 0;
+    st.centreStandParasite = false;
+  }
+
+  gms::agents::LostOptions lo;
+  lo.pointFollowFix = g_opt.botPointFollowFix;
+  lo.lostMs = g_opt.botLostMs;
+  gms::agents::LostInput in;
+  in.nowMs = nowMs;
+  in.x = self.pos[0];
+  in.y = self.pos[1];
+  in.leaf = pursueLeaf ? gms::agents::LostLeaf::kPursue
+                       : idleLeaf ? gms::agents::LostLeaf::kIdleDefault : gms::agents::LostLeaf::kOther;
+  in.hasTarget = raw != 0;
+  in.pointPursuit = st.pointPursuit;
+  in.parasiteTask = parasite;
+  in.held = held;
+  bool clearPoint = false;
+  const gms::agents::LostAction act = gms::agents::LostStep(st.lost, in, lo, &clearPoint);
+  // NULLPOS: the ended pursuit's point leaves the blackboard now, before any restart (EndPointPursuit kept it)
+  if (clearPoint) ClearTargetPosition(o);
+  // NULLPOS: the blackboard's target position is only ever the zero vector or a pursuit's point; (0, 0) with a height
+  // (not the engine's "none": the scorer would start a Follow to the centre) is a NULLPOS
+  float tp[3];
+  if (!st.pointPursuit && SehTargetPosition(o, tp) && gms::agents::IsNullPos(tp) && tp[2] != 0.f) {
+    char detail[64];
+    std::snprintf(detail, sizeof detail, "+0x1E64 = (0, 0, %.2f)", static_cast<double>(tp[2]));
+    NoteBotNullPos(self.id, st.noun, gms::agents::NullPosWhere::kTargetPosition, "blackboard check", detail);
+    ClearTargetPosition(o);
+  }
+  if (act == gms::agents::LostAction::kNone) return false;
+  if (act == gms::agents::LostAction::kRestartPointFollow || act == gms::agents::LostAction::kRestartNoTarget) {
+    const bool point = act == gms::agents::LostAction::kRestartPointFollow;
+    const bool ok = SehResetDefaultBehavior(o);
+    if (ok) ++(point ? g_bot.pointFollowRestarts : g_bot.noTargetRestarts);
+    if (LostLogBudget())
+      Log("agents: bot %08X %s phase %d (%s): the Pursue leaf %s at (%.1f, %.1f), %.1f from the centre: restarted%s "
+          "(BACKTOACTION) (t %.2f s)",
+          self.id, st.noun, st.botPhase, v.phaseName ? v.phaseName : "?",
+          point ? "outlived its point pursuit" : "had nothing to follow", static_cast<double>(self.pos[0]),
+          static_cast<double>(self.pos[1]),
+          static_cast<double>(std::sqrt(self.pos[0] * self.pos[0] + self.pos[1] * self.pos[1])), ok ? "" : " (failed)",
+          static_cast<double>(nowMs) / 1000.0);
+    return false;  // the think goes on: the gambits may act at once
+  }
+  // the walk to the lane front
+  ++g_bot.lostWalks;
+  float front[3];
+  int lane = 0;
+  if (!bots::LaneFrontOf(self.id, self.team, front, &lane)) {
+    ++g_bot.lostNoFront;
+    const bool ok = SehResetDefaultBehavior(o);
+    if (LostLogBudget())
+      Log("agents: bot %08X %s phase %d (%s) lost %.1f s on the centre at (%.1f, %.1f): no lane front, default "
+          "behavior restarted%s (BACKTOACTION) (t %.2f s)",
+          self.id, st.noun, st.botPhase, v.phaseName ? v.phaseName : "?",
+          static_cast<double>(g_opt.botLostMs) / 1000.0, static_cast<double>(self.pos[0]),
+          static_cast<double>(self.pos[1]), ok ? "" : " (failed)", static_cast<double>(nowMs) / 1000.0);
+    return false;
+  }
+  front[2] = self.pos[2];
+  const int res = BotRequest(st.noun, "BACKTOACTION walk to the lane front", gms::agents::NullPosUse::kGoal,
+                             kAbilityBotMoveToTarget, -1, self.id, 0, front, 1);
+  const bool started = res == 1 || res == 2;
+  if (started) ++g_bot.lostWalksStarted;
+  if (LostLogBudget())
+    Log("agents: bot %08X %s phase %d (%s) lost %.1f s on the centre at (%.1f, %.1f) in leaf %s without a target: walk "
+        "to the lane-%d front (%.1f, %.1f), %.1f units -> %d%s (BACKTOACTION) (t %.2f s)",
+        self.id, st.noun, st.botPhase, v.phaseName ? v.phaseName : "?", static_cast<double>(g_opt.botLostMs) / 1000.0,
+        static_cast<double>(self.pos[0]), static_cast<double>(self.pos[1]), LeafName(st.leaf), lane,
+        static_cast<double>(front[0]), static_cast<double>(front[1]), static_cast<double>(Distance2D(front, self.pos)),
+        res, started ? " started" : "", static_cast<double>(nowMs) / 1000.0);
+  return started;
+}
+
 void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) {
-  if (st.leaf == kLeafDeath || st.leaf == kLeafDeathAbility || st.leaf == kLeafDeathAbilityDefault ||
-      st.leaf == 0x0141E1B8 || st.leaf == 0x0141DE90) {
+  const bool dying = st.leaf == kLeafDeath || st.leaf == kLeafDeathAbility || st.leaf == kLeafDeathAbilityDefault;
+  if (dying || st.leaf == 0x0141E1B8 || st.leaf == 0x0141DE90) {
     st.wellDef.well = -1;  // WELLDEF: a death ends a well's defence
+    ObjInfo dead;  // KILLFINISH: a death ends an open episode (these leaves also run without one: HP 0 decides)
+    if (st.kfEpisode && SehObjInfo(o, &dead) && dead.hasHp && dead.hp <= 0.f)
+      KillFinishEpisodeStep(st, dead.id, true, nowMs);
+    st.kfHoldSinceMs = 0;
+    if (dying) {  // HUNTERROUTE: a Hunter's death (counted once; HP 0 decides, as for KILLFINISH)
+      ObjInfo d;
+      if (SehObjInfo(o, &d) && d.hasHp && d.hp <= 0.f) hunterroute::BotDying(d.id);
+    }
+    // CAMPFINISH: a death in a camp fight ends it; while an ability holds the agent (leaves 3 and D3: a cast, a spin)
+    // the fight goes on and is sampled (round 1 took those leaves for deaths: 2 of 4 holds "died", 6 of 12 leaves
+    // were "not measured")
+    if (st.campTrack.Camp() >= 0 || st.campHoldSinceMs) {
+      ObjInfo self;
+      if (SehObjInfo(o, &self)) {
+        if (dying || (self.hasHp && self.hp <= 0.f)) {
+          CampFinishDeath(st, self.id, nowMs);
+        } else if (st.campTrack.LastMs() < 0 ||
+                   nowMs >= static_cast<unsigned long long>(st.campTrack.LastMs()) + kCampHeldSampleMs) {
+          CampFinishSample(o, st, self, SehMaxHp(o), nullptr, nowMs);
+        }
+      }
+    }
     return;
   }
   if (nowMs < st.botNextThinkMs) return;
   st.botNextThinkMs = nowMs + static_cast<unsigned long long>(g_opt.botThinkMs > 0 ? g_opt.botThinkMs : 200);
   ObjInfo self;
-  if (!SehObjInfo(o, &self) || (self.hasHp && self.hp <= 0.f) || GameOver(sim)) return;
+  if (!SehObjInfo(o, &self) || GameOver(sim)) return;
+  if (self.hasHp && self.hp <= 0.f) {
+    hunterroute::BotDying(self.id);  // HUNTERROUTE
+    return;
+  }
   BotView v;
   if (st.botPlan == -2) {  // first sight: the start plan AgentBrain_InitBot chose
     if (!SehReadBotView(o, -1, -1, &v)) return;
@@ -2884,31 +4626,87 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
     return;
   }
   ++g_bot.thinks;
+  KillFinishEpisodeStep(st, self.id, false, nowMs);  // KILLFINISH: an open episode's end
+  if (ForcedFollowStep(o, st, self, nowMs)) return;  // NULLPOS's forced case (a test aid, off by default)
   const double inPlan = static_cast<double>(nowMs - st.planEnteredMs) / 1000.0;
+  // CAMPFINISH: a Hunter's camp fight, sampled at every think in his Farm plan
+  if (st.campTrack.Camp() >= 0 || st.campHoldSinceMs || (v.planOk && v.planName && std::strstr(v.planName, "_Farm")))
+    CampFinishSample(o, st, self, SehMaxHp(o), &v, nowMs);
+  // HUNTERROUTE: a Hunter's level, HP and plan for his opening route and its stats
+  if (BotRoleOf(self.id) == kRoleHunterIndex) {
+    BotPlayerView hv;
+    const float maxHp = SehMaxHp(o);
+    if (SehBotPlayer(sim, o, &hv))
+      hunterroute::HunterThink(self.id, st.noun, self.team, SehPlayerLevel(hv.player),
+                               maxHp > 0.f ? self.hp / maxHp : 1.f, self.pos,
+                               v.planOk && v.planName && std::strstr(v.planName, "_Flee") != nullptr);
+  }
 
-  // 1. the plan node's links to other plans (prioritized list)
-  if (v.planOk) {
+  // KILLFINISH: this think's decision (an EngageForKill plan only)
+  KillFinishThink(o, st, self, v, nowMs);
+  // 1. the plan node's links to other plans (prioritized list). BOTCYCLE ([host] bot_plan_chain): a plan entered in this
+  // think whose own link fires at once is passed through (kPlanChainHops changes per think at most, never back into a
+  // plan visited in it), so a one-think visit such as EngageForKill -> Lane -> Lane_Cautious is no quick exit
+  constexpr int kPlanChainHops = 2;
+  int visited[kPlanChainHops + 1] = {st.botPlan, -1, -1};
+  int visitedCount = 1;
+  for (int hop = 0; hop < kPlanChainHops && v.planOk; ++hop) {
+    const double inPlanNow = hop == 0 ? inPlan : 0.0;
+    bool changed = false;
     for (std::size_t i = 0; i < v.nodeLinks.size() && i < st.nodeLinkReady.size(); ++i) {
       const BotLink& l = v.nodeLinks[i];
+      if (!gms::agents::PlanChainAllows(visited, visitedCount, l.outputNode, hop, kPlanChainHops)) continue;
       if (nowMs < st.nodeLinkNext[i]) continue;
       if (l.interval > 0) st.nodeLinkNext[i] = nowMs + static_cast<unsigned long long>(l.interval * 1000.0f);
-      gms::agents::LinkView lv = BotLinkView(l, inPlan, st.nodeLinkReady[i], st.nodeLinkFired[i] != 0, nowMs);
+      gms::agents::LinkView lv = BotLinkView(l, inPlanNow, st.nodeLinkReady[i], st.nodeLinkFired[i] != 0, nowMs);
       if (!gms::agents::LinkOpen(lv)) continue;
       std::uint32_t unused = 0;
       std::int32_t linkMission = 0;  // D6b: condition_Bot_IsMissionAvailable's mission id (ConditionOut::linkValue)
       if (!Conditions(l.conditions, l.conditionCount, self.id, &unused, false, nullptr, &linkMission)) continue;
       bool isPlan = false, isPhase = false;
       if (!SehNodeKind(o, l.outputNode, &isPlan, &isPhase) || !isPlan) continue;
+      // CAMPFINISH: a Hunter's Flee link is held while he wins the trade against his camp
+      if (CampFinishHolds(o, st, self, l.outputNode, nowMs)) continue;
+      BotView next;
+      if (!SehReadBotView(o, l.outputNode, -1, &next) || !next.planOk) break;
+      // KILLFINISH: an exit from a fight plan while the bot wins its trade is held (the link stays unfired)
+      if (IsFightPlan(v) && !IsFightPlan(next) && KillFinishExit(o, st, self, v, next, i, nowMs)) continue;
+      // BOTCYCLE: no stance flip back into the plan left a moment ago (Lane <-> Lane_Cautious, Main <-> Matrix)
+      if (gms::agents::PlanBounceHeld(
+              l.outputNode == st.prevPlan,
+              st.prevPlanLeftMs ? static_cast<long long>(nowMs - st.prevPlanLeftMs) : -1LL,
+              static_cast<long long>(g_opt.botPlanDwellMs), IsFightOrFleePlan(v),
+              IsFightOrFleePlan(next) || IsDefensivePlan(next))) {
+        ++g_kf.dwellHeld;
+        static unsigned dwellLogged = 0;
+        if (++dwellLogged <= 300 || dwellLogged % 50 == 0)
+          Log("agents: bot %08X %s plan %d (%s) -> %d (%s) by link %zu held: back into the plan left %.2f s ago "
+              "(BOTCYCLE) (t %.2f s)",
+              self.id, st.noun, st.botPlan, v.planName, l.outputNode, next.planName, i,
+              static_cast<double>(nowMs - st.prevPlanLeftMs) / 1000.0, static_cast<double>(nowMs) / 1000.0);
+        continue;
+      }
       st.nodeLinkFired[i] = 1;
       st.nodeLinkReady[i] =
           nowMs + static_cast<unsigned long long>(gms::agents::LinkCooldownSeconds(l.cooldown, l.maxCooldown, Random01()) *
                                                   1000.0);
-      BotView next;
-      if (!SehReadBotView(o, l.outputNode, -1, &next) || !next.planOk) break;
       ++g_bot.planChanges;
-      // D6c: a quick exit (the plan left within kQuickExitMs) and a bounce (back into the plan left just before)
-      const bool quick = nowMs - st.planEnteredMs < kQuickExitMs;
-      const bool bounce = l.outputNode == st.prevPlan && nowMs - st.prevPlanLeftMs < kQuickExitMs;
+      // D6c: a quick exit (the plan left within kQuickExitMs) and a bounce (back into the plan left just before);
+      // BOTCYCLE: a plan left in the think it was entered is a pass-through, neither
+      const bool passed = hop > 0;
+      const bool quick = !passed && nowMs - st.planEnteredMs < kQuickExitMs;
+      const bool bounce = !passed && l.outputNode == st.prevPlan && nowMs - st.prevPlanLeftMs < kQuickExitMs;
+      if (passed) ++g_bot.passThroughs;
+      // BOTCYCLE: an engage (a KillShaper join or the EngageForKill condition) left again at once blocks the bot's
+      // next engages for a while (the Lua asks nBotHost.EngageBlocked; KILLFINISH's "would finish" still passes)
+      if (quick && IsEngagePlan(v) && !IsEngagePlan(next)) {
+        ++g_kf.engagesFailed;
+        if (st.kfEnteredByJoin) ++g_kf.joinsFailed;
+        if (g_opt.botEngageBlockMs > 0)
+          st.kfEngageBlockUntilMs = nowMs + static_cast<unsigned long long>(g_opt.botEngageBlockMs);
+      }
+      st.kfEnteredByJoin = IsEngagePlan(next) && linkMission > 0 && !IsFightPlan(v);
+      if (st.kfEnteredByJoin) ++g_kf.joins;
       float targetDist = -2.f;
       if (quick) {
         ++g_bot.quickExits;
@@ -2926,9 +4724,9 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
           std::snprintf(extra, sizeof extra, "; quick exit, mTarget at %.1f units", static_cast<double>(targetDist));
         else if (targetDist == -1.f)
           std::snprintf(extra, sizeof extra, "; quick exit, no mTarget");
-        Log("agents: bot %08X %s plan %d (%s) -> %d (%s) by link %zu after %.2f s%s%s (t %.2f s)", self.id, st.noun,
-            st.botPlan, v.planName, l.outputNode, next.planName, i, inPlan, bounce ? ", a bounce" : "", extra,
-            static_cast<double>(nowMs) / 1000.0);
+        Log("agents: bot %08X %s plan %d (%s) -> %d (%s) by link %zu after %.2f s%s%s%s (t %.2f s)", self.id, st.noun,
+            st.botPlan, v.planName, l.outputNode, next.planName, i, inPlanNow, bounce ? ", a bounce" : "",
+            passed ? ", passed through (BOTCYCLE)" : "", extra, static_cast<double>(nowMs) / 1000.0);
       }
       st.prevPlan = st.botPlan;
       st.prevPlanLeftMs = nowMs;
@@ -2941,8 +4739,13 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
                           linkMission > 0 ? static_cast<std::uint32_t>(linkMission) : 0u, mtarget, st.noun,
                           next.planName);
       v = next;
+      changed = true;
       break;
     }
+    if (!changed) break;
+    KillFinishThink(o, st, self, v, nowMs);  // the plan entered: its own decision (an EngageForKill plan)
+    if (!g_opt.botPlanChain) break;
+    visited[visitedCount++] = st.botPlan;
   }
   // D6b: a requestMission plan (EngageForKill) keeps its own mission open while the bot stays in it
   if (v.planOk && v.requestMission && v.missionType > 0) {
@@ -2970,6 +4773,16 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
       if (!gms::agents::LinkOpen(lv, current)) continue;
       std::uint32_t unused = 0;
       if (!Conditions(l.conditions, l.conditionCount, self.id, &unused, false)) continue;
+      // KILLFINISH: no FleeTowerTargeting (its GoBack) while the bot finishes a won trade: the next link decides
+      if (KillFinishing(st, nowMs)) {
+        BotView fv;
+        if (SehReadBotView(o, st.botPlan, l.outputNode, &fv) && fv.phaseOk && fv.phaseName &&
+            std::strstr(fv.phaseName, "Flee")) {
+          ++g_kf.towerPhaseSkipped;
+          KillFinishHold(o, st, self, nowMs);
+          continue;
+        }
+      }
       chosen = static_cast<int>(i);
       break;
     }
@@ -3003,7 +4816,7 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
     if (!SehReadBotView(o, st.botPlan, st.botPhase, &v) || !v.phaseOk) {
       st.idleSinceMs = 0;  // BOTIDLE: the Idle plan's standing is the script's
       SehSetTreeFlag(o, 0x40, false);
-      if (st.pointPursuit) EndPointPursuit(o, st, self, 0, nullptr, nowMs);  // D6d
+      if (st.pointPursuit) EndPointPursuit(o, st, self, 0, nullptr, nowMs, false);  // D6d; NULLPOS: clear now
       return;
     }
   }
@@ -3066,7 +4879,13 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
   // D6c: while an uninterruptible ability holds the agent (a cast before its ReleaseAgent, a dodge, a channel) the bot
   // neither requests a gambit nor restarts its default behavior: either would abort the ability (SehHeldByUninterruptible)
   const char* held = nullptr;
-  if (g_opt.respectCanInterrupt && SehHeldByUninterruptible(o, &held)) {
+  const bool heldUninterruptible = g_opt.respectCanInterrupt && SehHeldByUninterruptible(o, &held);
+  // BACKTOACTION: a Pursue leaf that outlived its point pursuit, one with nothing to follow, a bot lost on the centre
+  if (BackToActionStep(o, st, self, v, heldUninterruptible, nowMs)) {
+    st.idleSinceMs = 0;
+    return;
+  }
+  if (heldUninterruptible) {
     ++g_bot.heldThinks;
     st.idleSinceMs = 0;  // BOTIDLE: an ability holds the agent, the bot is not idle
     return;
@@ -3086,8 +4905,32 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
   AgentInfo a;
   if (!SehAgentInfo(o, &a)) return;
   const std::uint32_t mtarget = SehBestTarget(a.agent);
+  // HUNTERBOT: a Hunter's R at a low enemy shaper first
+  if (g_opt.botHunterUlt && HunterFinisherStep(o, st, self, pv, mtarget, nowMs)) {
+    st.idleSinceMs = 0;
+    return;
+  }
+  // HUNTERROUTE: a laner's pull at the Hunter's first buff
+  if (HunterPullStep(o, st, self, mtarget)) {
+    st.idleSinceMs = 0;
+    return;
+  }
   // BOTREFLEX: danger and opportunity before the plan's own gambits
   if (g_opt.botReflex && BotReflexStep(o, st, self, v, pv, mtarget, nowMs)) return;
+  // HUNTERROUTE: a Hunter's Vanquish at a camp creature it kills
+  if (HunterVanquishStep(o, st, self, pv, nowMs)) {
+    st.idleSinceMs = 0;
+    return;
+  }
+  // DESECBOT-3: the Desecrator's kit layer (the combo's Q, R, Drain, Wither, the peel)
+  if (DesecratorKitStep(o, st, self, pv, mtarget, v.phaseName, nowMs)) return;
+  // MIKELLABOT: Mikella's kit layer (her E and R, the trade W)
+  if (MikellaKitStep(o, st, self, pv, mtarget, v.phaseName, nowMs)) return;
+  // HUNTERBOT: Faris's and Freia's E at their target (no SpinToWin for them)
+  if (HunterKitEStep(o, st, self, pv, mtarget, v.phaseName, nowMs)) {
+    st.idleSinceMs = 0;
+    return;
+  }
   std::vector<gms::agents::GambitView> views(v.gambits.size());
   std::vector<std::uint32_t> targets(v.gambits.size(), 0);
   std::vector<float> spots(v.gambits.size() * 3, 0.f);
@@ -3115,8 +4958,10 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
     ObjInfo t;
     void* tobj = SehFind(target);
     float pos[3] = {self.pos[0], self.pos[1], self.pos[2]};
+    bool ownPos = false;
     if (hasSpot) std::memcpy(pos, spot, sizeof pos);  // the condition's position first
     else if (tobj && SehObjInfo(tobj, &t)) std::memcpy(pos, t.pos, sizeof pos);
+    else ownPos = true;
     ++g_bot.requests;
     int res;
     if (gms::agents::SlotIsConsumable(g.slot)) {
@@ -3137,7 +4982,8 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
         // the walk home that nothing ends
         if (!flee && g_opt.botBackStep && BotStartPoint(self, base) &&
             gms::agents::BackStepGoal(self.pos, base, kRecall, goal)) {
-          res = SehBotRequest(kAbilityBotMoveToTarget, -1, self.id, 0, goal, 1);
+          res = BotRequest(st.noun, "back step", gms::agents::NullPosUse::kGoal, kAbilityBotMoveToTarget, -1, self.id,
+                           0, goal, 1);
           if (res == gms::agents::kResultHoldsAgent) res = 1;  // the last step still runs
           if (res == 1 || res == 2) ++g_bot.backSteps;
         }
@@ -3145,14 +4991,28 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
         // already (ours or the data's own Flee gambit) answers -0x270B and counts as started, never as a refusal that
         // falls through to the walk (the walk would abort it)
         if (flee && g_opt.botRecall && RecallPossible(st, self, v.phaseName, nowMs)) {
+          // NULLPOS: the one request with the zero vector on purpose: Return to Base takes no position, and the zero
+          // vector is the engine's own "none" [assumed: BOTRECALL's live recalls worked with it]; not a goal, so it skips
+          // BotRequest's check (an offset or the bot's own position could become a destination)
           static const float kZero3[3] = {};
           const int raw = SehBotRequest(kAbilityReturnToBase, -1, self.id, 0, kZero3, 1);
           res = gms::agents::RecallRequestResult(raw);
           if (raw == 1 || raw == 2) ++g_bot.recalls;
         }
       }
-      if (res != 1 && res != 2) res = SehBotRequest(g.guid, slot, self.id, target, pos, rank);
+      if (res != 1 && res != 2) {
+        // DESECBOT-3: the Desecrator's E at an enemy shaper goes where it will stand when the hands strike, to that
+        // point alone [assumed: a TerrainPoint request with an object aims at the object]
+        float lead = 0.f;
+        const bool led = slot == kSlotE && g.guid == 0 && DesecLayer(st) && DesecLead(self, target, pos, &lead);
+        // NULLPOS: the bot's own position (no spot, no object: a self cast) is not a goal
+        res = BotRequest(st.noun, "gambit", ownPos && !led ? gms::agents::NullPosUse::kSelf : gms::agents::NullPosUse::kGoal,
+                         g.guid, slot, self.id, led ? 0u : target, pos, rank);
+        if (DesecLayer(st)) DesecNoteRequest(st, self.team, g.guid == 0 ? slot : -1, target, res, led, lead, nowMs);
+      }
     }
+    NoteKitW(o, st, self, g.slot, res, v.phaseName, nowMs);
+    NoteKitWReach(st, self, g.slot, res, target, v.phaseName, nowMs);
     if (res == 1 || res == 2) {
       ++g_bot.started;
       st.gambitReadyMs[static_cast<std::size_t>(idx)] =
@@ -3201,12 +5061,27 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
       gv.weight = g.weight;
       gv.conditionsPass = false;
       if (!GambitAvailable(g, pv)) continue;
+      if (!KitAllowsNow(o, st, self, g.slot, nowMs)) {  // HUNTERBOT: a slot the kit leaves out; DESECBOT: W only near
+        ++g_bot.kitSkips;
+        continue;
+      }
       if (gv.coolingDown && !(prioritized && g.waitOnCondition)) continue;
       bool po = false;
       gv.conditionsPass =
           Conditions(g.conditions, g.conditionCount, self.id, &targets[i], true, &spots[i * 3], nullptr, &po);
       pointOnly[i] = po ? 1 : 0;
       ++g_bot.conditions;
+      // MOYABOT: a W that empowers the next hits only with the gambit's target (else mTarget) within the kit's reach
+      if (gv.conditionsPass && !KitAllowsWNear(st, self, g.slot, targets[i] ? targets[i] : mtarget)) {
+        gv.conditionsPass = false;
+        ++g_bot.kitSkips;
+      }
+      // KILLFINISH: no Back step away from a won trade (the EngageForKill phases' Back on an enemy shaper close)
+      if (gv.conditionsPass && g.guid == kAbilityBotBack && KillFinishing(st, nowMs) && !InFleePhase(v.phaseName)) {
+        gv.conditionsPass = false;
+        ++g_kf.backSkipped;
+        KillFinishHold(o, st, self, nowMs);
+      }
       if (prioritized && gv.conditionsPass) {
         chosen = gv.coolingDown ? -1 : static_cast<int>(i);  // a waiting gambit holds the list while it cools down
         break;
@@ -3221,6 +5096,19 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
     if (from >= v.gambits.size()) break;
   }
   if (skips > 0 && chosen >= 0 && (r == 1 || r == 2 || r == 5)) ++g_bot.skippedThenActed;
+  // HUNTERROUTE: the plan's own Vanquish (ClearCamp's condition_Bot_VanquishTarget gambit), counted per Hunter
+  if (chosen >= 0 && (r == 1 || r == 2)) {
+    const int cs = v.gambits[static_cast<std::size_t>(chosen)].slot;
+    if (cs >= gms::agents::kSlotSpell1 && cs <= gms::agents::kSlotSpell3 &&
+        SehItemNamed(pv.items[gms::agents::SlotInventoryIndex(cs)], "Vanquish")) {
+      void* tobj = aim.target ? SehFind(aim.target) : nullptr;
+      const int npc = tobj ? SehNpcType(tobj) : -1;
+      ObjInfo ti;
+      const float thp = tobj && SehObjInfo(tobj, &ti) && ti.hasHp ? ti.hp : -1.f;
+      hunterroute::NoteVanquish(self.id, false, r, npc >= 6 && npc <= 8, aim.target, tobj ? SehNounName(tobj) : "none",
+                                thp, nowMs);
+    }
+  }
   // D6d: the pursuit of a point: the point into the blackboard, mTarget cleared; cleared again when it ends
   const bool startedAtPoint = chosen >= 0 && aim.atPoint && (r == 1 || r == 2);
   if (g_opt.botPursuePoint) {
@@ -3330,6 +5218,31 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
           st.fallbackResult = fr;
         }
       }
+    }
+  }
+  // HUNTERBOT (the Hunter's idle watchdog, [host] bot_hunter_idle_ms): a Hunter that has stood on the tree's IdleDefault
+  // with nothing acting for the window while his mTarget is a living hostile non-player within 20 (a camp creep his
+  // plan's gambits passed over; the snapshots of the user's "random idle stands") hits it, walking up on 5; restarts
+  // the window either way
+  if (g_opt.botHunterIdleMs > 0 && g_opt.botIdleFallbackMs > 0 && !acted && st.idleSinceMs && mtarget &&
+      nowMs - st.idleSinceMs >= static_cast<unsigned long long>(g_opt.botHunterIdleMs) &&
+      BotRoleOf(self.id) == kRoleHunterIndex) {
+    void* tobj = SehFind(mtarget);
+    ObjInfo t;
+    if (tobj && SehObjInfo(tobj, &t) && t.hasHp && t.hp > 0.f && t.team != self.team && !t.player &&
+        Distance2D(t.pos, self.pos) <= 20.f && SehHostile(self.team, mtarget)) {
+      ++g_bot.idleHunterTries;
+      const int fr = SehBotRequest(0, gms::agents::kSlotBasic, self.id, mtarget, t.pos, 1);
+      if (fr == 1 || fr == 2 || fr == 5) {
+        ++g_bot.idleHunterActed;
+        if (fr == 5) pursue = true;
+      }
+      if (IdleLogBudget())
+        Log("agents: bot %08X %s phase %d (%s) stood %.1f s with %08X (%s) %.1f units away: basic attack -> %d (HUNTERBOT "
+            "idle watchdog) (t %.2f s)",
+            self.id, st.noun, st.botPhase, v.phaseName, static_cast<double>(nowMs - st.idleSinceMs) / 1000.0, mtarget,
+            SehNounName(tobj), static_cast<double>(Distance2D(t.pos, self.pos)), fr, static_cast<double>(nowMs) / 1000.0);
+      st.idleSinceMs = nowMs;
     }
   }
   if (pursue != st.pursue) {
@@ -3616,7 +5529,8 @@ void Tick(void* sim, float dt) {
   g_snapPlayers.clear();
   g_snapTowers.clear();
   g_snapObjectives.clear();
-  if (g_opt.botReflex && g_opt.botBrain) {  // BOTREFLEX: the players' creatures and the standing towers, once per frame
+  if ((g_opt.botReflex || g_opt.botCampFinish) && g_opt.botBrain) {  // BOTREFLEX, CAMPFINISH: the players' creatures
+                                                                       // and the standing towers, once per frame
     for (void* o : objs) {
       ObjInfo i;
       if (!SehObjInfo(o, &i) || !i.hasHp || i.hp <= 0.f) continue;
@@ -3632,6 +5546,11 @@ void Tick(void* sim, float dt) {
       sn.maxHp = SehMaxHp(o);
       if (!(sn.maxHp > 0.f)) sn.maxHp = i.hp;
       (tower ? g_snapTowers : npcType == kNpcObjective ? g_snapObjectives : g_snapPlayers).push_back(sn);
+      if (i.player) {  // DESECBOT-3: the shapers' motion and recent damage (also KILLFINISH's damage taken)
+        ShaperTrack& tr = g_tracks[i.id];
+        tr.motion.Note(i.pos, static_cast<long long>(nowMs));
+        tr.damage.Note(i.hp, static_cast<long long>(nowMs));
+      }
     }
   }
   for (void* o : objs) {
@@ -3690,10 +5609,19 @@ void Tick(void* sim, float dt) {
   if (g_st.tickMsLastFrame > g_st.tickMsMax) g_st.tickMsMax = g_st.tickMsLastFrame;
 }
 
-void OnDamaged(void* victim, void* attacker, unsigned descLo, unsigned descHi, bool lethal) {
+void OnDamaged(void* victim, void* attacker, unsigned descLo, unsigned descHi, bool lethal, float dealt) {
   if (!g_installed || !g_opt.blackboard || !g_blackboardOk || !victim || !attacker || victim == attacker) return;
   ObjInfo v, at;
   if (!SehObjInfo(victim, &v) || !SehObjInfo(attacker, &at) || v.team == at.team) return;
+  if (g_opt.botReflex && at.player && g_sim) {  // KILLFINISH: a shaper's damage rate, and who killed a shaper
+    const unsigned long long now = NowMs(g_sim);
+    g_tracks[at.id].dealt.Note(dealt, v.player, static_cast<long long>(now));
+    if (lethal && v.player) {
+      ShaperTrack& tv = g_tracks[v.id];
+      tv.killedBy = at.id;
+      tv.killedMs = now;
+    }
+  }
   if ((g_opt.botIdleFallbackMs > 0 || g_opt.botRecall) && v.player && g_sim) {  // BOTIDLE/BOTRECALL: who hit a bot last, and when
     auto it = g_agents.find(v.id);
     if (it != g_agents.end() && it->second.isBot == 1) {
@@ -3712,6 +5640,15 @@ void OnDamaged(void* victim, void* attacker, unsigned descLo, unsigned descHi, b
         it->second.lastTowerHitMs = NowMs(g_sim);
       }
     }
+  }
+  if (g_opt.botDesecKit && v.player && at.player && g_sim) {  // DESECBOT-3: who hit which shaper (the peel, Wither)
+    const unsigned long long now = NowMs(g_sim);
+    ShaperTrack& tv = g_tracks[v.id];
+    tv.lastAttacker = at.id;
+    tv.lastAttackerMs = now;
+    ShaperTrack& ta = g_tracks[at.id];
+    ta.lastVictimTeam = v.team;
+    ta.lastVictimMs = now;
   }
   AgentInfo a;
   if (!SehAgentInfo(victim, &a)) return;
@@ -3918,6 +5855,181 @@ void FormatStats(char* buf, std::size_t size) {
                   g_bot.wellStarts[1], g_bot.wellStarts[2], g_bot.wellSafe, g_bot.wellLowHp, g_bot.wellOutnumbered,
                   g_bot.wellSlow, g_bot.wellTooLong, g_bot.wellOwnFight, g_bot.wellWalkTakeovers, g_bot.wellHolds);
 }
+
+bool HunterCampFight(std::uint32_t bot, float* pos, float* frac, bool* finishing) {
+  return CampFightOf(bot, pos, frac, finishing);
+}
+
+bool FormatHunterStats(char* buf, std::size_t size) {
+  if (!g_st.brainSteps) return false;
+  std::snprintf(buf, size,
+                "HUNTERBOT: gambits left out by a kit %u, kit E requests %u (started %u), finisher R requests %u "
+                "(started %u), idle Hunter attacks %u (acted %u); DESECBOT: W left out without an enemy shaper near %u, "
+                "W started %u (the farthest nearest enemy shaper %.1f); MOYABOT: W left out with the target beyond "
+                "reach %u, W started %u (the farthest target %.1f)",
+                g_bot.kitSkips, g_bot.kitETries, g_bot.kitEStarted, g_bot.finisherTries, g_bot.finisherStarted,
+                g_bot.idleHunterTries, g_bot.idleHunterActed, g_bot.kitWSkips, g_bot.kitWStarted,
+                static_cast<double>(g_bot.kitWFarthest), g_bot.kitWFar, g_bot.kitWReachStarted,
+                static_cast<double>(g_bot.kitWReachFarthest));
+  return true;
+}
+
+bool FormatCampFinishStats(char* buf, std::size_t size) {
+  if (!g_st.brainSteps) return false;
+  using W = gms::agents::CampFinishWhy;
+  const unsigned* l = g_bot.campLeft;
+  std::snprintf(buf, size,
+                "CAMPFINISH (bot_camp_finish %d): Flee links opened in a camp fight %u (camp under 25 %% %u), holds %u "
+                "(finished %u, left %u, died %u, other %u), leaves %u (camp under 25 %% %u; would hold %u) by reason: "
+                "no camp %u, enemy shaper %u, too low %u, held too long %u, not measured %u, no damage %u, slow kill %u, "
+                "losing %u, winning %u, unhurt %u; Hunter deaths in a camp fight %u; fights left otherwise %u (camp under "
+                "25 %% %u); finishing a camp first %u (cleared %u)",
+                g_opt.botCampFinish ? 1 : 0, g_bot.campEvents, g_bot.campEventsLow, g_bot.campHolds,
+                g_bot.campHoldFinished, g_bot.campHoldLeft, g_bot.campHoldDied, g_bot.campHoldOther, g_bot.campLeaves,
+                g_bot.campLeavesLow, g_bot.campWouldStay, l[static_cast<int>(W::kNoCamp)],
+                l[static_cast<int>(W::kEnemyShaper)], l[static_cast<int>(W::kTooLow)],
+                l[static_cast<int>(W::kHeldTooLong)], l[static_cast<int>(W::kNotMeasured)],
+                l[static_cast<int>(W::kNoDamage)], l[static_cast<int>(W::kSlowKill)], l[static_cast<int>(W::kLosing)],
+                l[static_cast<int>(W::kStayWinning)], l[static_cast<int>(W::kStayUnhurt)], g_bot.campDeaths,
+                g_bot.campOther, g_bot.campOtherLow, g_bot.campFinishFights, g_bot.campFinishDone);
+  return true;
+}
+
+bool FormatDesecStats(char* buf, std::size_t size) {
+  const DesecStats& d = g_desec;
+  if (!d.eStarted && !d.qHeld && !d.rTries && !d.rGambitsOut && !d.drainTries && !d.witherTries && !d.peelTries)
+    return false;
+  std::snprintf(buf, size,
+                "DESECBOT-3: E started at an enemy shaper %u (led %u, mean lead %.1f units); Q gambits held for the "
+                "root %u; combo Q %u (started %u, mean %.2f s after the E), E windows without the combo's Q %u; R gambits "
+                "left out %u, R requests %u, corpses started 1st %u 2nd %u 3rd %u (cluster %u, locked %u, spread %u; "
+                "the closest spread corpse %.1f from an earlier one), thinks holding a corpse %u; Drain %u (started "
+                "%u); Wither %u (started %u: Gladiator %u, bruiser %u), Wither gambits left out %u; peel %u (started "
+                "%u); tower dives refused at level 1-3 %u",
+                d.eStarted, d.eLed, d.eLed ? d.eLeadSum / d.eLed : 0.0, d.qHeld, d.comboTries, d.comboStarted,
+                d.comboStarted ? d.comboDelaySum / d.comboStarted : 0.0, d.comboMissed, d.rGambitsOut, d.rTries,
+                d.rStarted[0], d.rStarted[1], d.rStarted[2], d.rCluster, d.rLocked, d.rSpread,
+                static_cast<double>(d.rMinSpread), d.rHeld, d.drainTries, d.drainStarted, d.witherTries,
+                d.witherStarted, d.witherGlad, d.witherBruiser, d.witherGambitsOut, d.peelTries, d.peelStarted,
+                d.earlyNoDive);
+  return true;
+}
+
+bool FormatMikellaStats(char* buf, std::size_t size) {
+  const MikStats& k = g_mik;
+  unsigned any = k.eGambitsOut + k.rGambitsOut + k.wGambitsOut + k.wStarted;
+  for (int i = 1; i < gms::agents::kMikKinds; ++i) any += k.tries[i];
+  if (!any) return false;
+  using namespace gms::agents;
+  std::snprintf(buf, size,
+                "MIKELLABOT: escape E %u (started %u), kite E %u (%u), chase E %u (%u), R %u (%u: assassinate %u, "
+                "before or after a fight %u), trade W %u (%u); her Ws started in all %u; the plan's gambits left out: "
+                "E %u, R %u, W without an enemy shaper near %u; thinks held for the R's channel %u",
+                k.tries[kMikEscapeE], k.started[kMikEscapeE], k.tries[kMikKiteE], k.started[kMikKiteE],
+                k.tries[kMikChaseE], k.started[kMikChaseE], k.tries[kMikR], k.started[kMikR], k.rAssassinate, k.rPoke,
+                k.tries[kMikTradeW], k.started[kMikTradeW], k.wStarted, k.eGambitsOut, k.rGambitsOut, k.wGambitsOut,
+                k.holds);
+  return true;
+}
+
+bool KillFinishWouldHold(std::uint32_t bot) {
+  if (!g_installed || !g_opt.botKillFinish || !g_opt.botReflex || !g_sim || !bot) return false;
+  void* o = SehFind(bot);
+  const auto it = g_agents.find(bot);
+  ObjInfo self;
+  if (!o || it == g_agents.end() || !SehObjInfo(o, &self) || self.hp <= 0.f) return false;
+  AgentInfo ai;
+  const std::uint32_t mtarget = SehAgentInfo(o, &ai) ? SehBestTarget(ai.agent) : 0;
+  gms::agents::KillFinishSensors s;
+  std::uint32_t target = 0;
+  KillFinishSense(o, it->second, self, mtarget, NowMs(g_sim), &s, &target);
+  s.heldMs = -1;  // a new engage
+  ++g_kf.luaQueries;
+  const bool hold = gms::agents::DecideKillFinish(s, kKillFinish).finish;
+  if (hold) ++g_kf.luaHolds;
+  return hold;
+}
+
+bool KillFinishEngageBlocked(std::uint32_t bot) {
+  if (!g_installed || !g_sim || !bot) return false;
+  const auto it = g_agents.find(bot);
+  if (it == g_agents.end()) return false;
+  const bool blocked = gms::agents::EngageBlocked(static_cast<long long>(NowMs(g_sim)),
+                                                static_cast<long long>(it->second.kfEngageBlockUntilMs));
+  if (blocked) ++g_kf.joinsBlocked;
+  return blocked;
+}
+
+void NoteBailWhy(std::uint32_t bot, const char* why) {
+  const auto it = g_agents.find(bot);
+  if (it == g_agents.end() || !why || !g_sim) return;
+  it->second.bailWhy = why;
+  it->second.bailWhyMs = NowMs(g_sim);
+}
+
+bool FormatKillFinishStats(char* buf, std::size_t size) {
+  const KillFinishStats& k = g_kf;
+  if (!k.thinks && !k.luaQueries && !g_bot.passThroughs && !k.dwellHeld && !k.joins) return false;
+  std::string why;
+  for (int i = 0; i < gms::agents::kKfWhyCount; ++i) {
+    if (!k.letGoWhy[i]) continue;
+    char one[64];
+    std::snprintf(one, sizeof one, "%s%s %u", why.empty() ? "" : ", ",
+                  i == gms::agents::kKfFinish ? "would hold (off)" : gms::agents::KillFinishWhyName(i), k.letGoWhy[i]);
+    why += one;
+  }
+  std::snprintf(buf, size,
+                "KILLFINISH %s: engage thinks %u (finish %u); exits passed %u (low target %u): held %u (engages held %u, "
+                "mean ttk %.2f s), let go %u (low target %u: %s); held engages ended: killed %u, another's kill %u, the "
+                "bot died %u, the target lived %u, then let go %u; let go on a low target: the bot's kill later %u, "
+                "another's %u, the bot died %u, the target lived %u; tower dives %u, Back steps left out %u, "
+                "FleeTowerTargeting left out %u, retargets %u; Lua asked %u (yes %u); BOTCYCLE: plans passed through "
+                "%u%s, stance flips held %u, engages left at once %u, KillShaper joins %u (left at once %u), engages "
+                "refused while blocked %u",
+                g_opt.botKillFinish ? "on" : "off (logged only)", k.thinks, k.finishThinks, k.exits, k.exitsLow,
+                k.heldThinks, k.holds, k.holds ? k.ttkSum / k.holds : 0.0, k.letGo, k.letGoLow,
+                why.empty() ? "none" : why.c_str(), k.heldKill, k.heldKillOther, k.heldBotDied, k.heldSurvived,
+                k.heldThenLetGo, k.lowKill, k.lowKillOther, k.lowBotDied, k.lowSurvived, k.reflexDives, k.backSkipped,
+                k.towerPhaseSkipped, k.retargets, k.luaQueries, k.luaHolds, g_bot.passThroughs,
+                g_opt.botPlanChain ? "" : " (chain off)", k.dwellHeld, k.engagesFailed, k.joins, k.joinsFailed,
+                k.joinsBlocked);
+  return true;
+}
+
+bool FormatLostStats(char* buf, std::size_t size) {
+  if (!g_bot.thinks) return false;
+  int now = 0;
+  double nowLongest = 0.0;
+  for (const auto& kv : g_agents) {
+    const AgentState& a = kv.second;
+    if (!a.centreStandSinceMs) continue;
+    ++now;
+    const double s = static_cast<double>(a.centreStandLastMs - a.centreStandSinceMs) / 1000.0;
+    if (s > nowLongest) nowLongest = s;
+  }
+  std::snprintf(buf, size,
+                "BACKTOACTION: point-follow fix %s, net %s; Pursue restarted after a point pursuit %u, with nothing to "
+                "follow %u; lost on the centre: walks to the lane front %u (started %u, no front %u); bots within %.0f "
+                "of the centre without a target now %d (longest now %.1f s), longest stand %.1f s (in a parasite task "
+                "%.1f s), bot-seconds %.1f",
+                g_opt.botPointFollowFix ? "on" : "off", g_opt.botLostMs > 0 ? "on" : "off", g_bot.pointFollowRestarts,
+                g_bot.noTargetRestarts, g_bot.lostWalks, g_bot.lostWalksStarted, g_bot.lostNoFront,
+                static_cast<double>(kLostStandRadius), now, nowLongest, g_bot.lostLongestS, g_bot.lostLongestParasiteS,
+                g_bot.lostCentreSeconds);
+  return true;
+}
+
+bool FormatNullPosStats(char* buf, std::size_t size) {
+  if (!g_bot.thinks && !g_nullpos.total) return false;
+  gms::agents::FormatNullPosStats(buf, size, g_nullpos, g_opt.botNullPosStrict);
+  return true;
+}
+
+void ReportNullPos(std::uint32_t object, int kind, const char* who, const char* where) {
+  ReportNullPosImpl(object, kind, who, where);
+}
+
+void NoteFollowPointRead() { ++g_nullpos.followReads; }
 
 bool FormatNpcStats(char* buf, std::size_t size) {
   if (!g_st.brainSteps) return false;

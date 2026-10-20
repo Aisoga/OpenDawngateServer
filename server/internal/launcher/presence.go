@@ -22,7 +22,8 @@ import (
 //	the menu       the login reply (Authentication::login; the own persona id from PLST, loginPersona's PDTL),
 //	               NotifyPlayerRemoved (GameManager 0x28) for the own id, a cancelled or failed queue
 //	in a party     NotifyJoinPlaygroup 0x33 / MemberJoined 0x34 / MemberRemoved 0x35 / Destroy 0x32 of a playgroup
-//	               without a chat key (the game's chats GG-<id>, TG-<id>-<team> are playgroups too), leavePlaygroup
+//	               without a chat key (the game's chats GG-<id>, TG-<id>-<team> are playgroups too), leavePlaygroup;
+//	               in the menu with a party the game shows the PvP lobby ("In the lobby · PvP")
 //	in queue       startMatchmaking (0x0D; out on cancelMatchmaking 0x0E, its error reply or NotifyMatchmakingFailed
 //	               0x0A); a party's guests by the leader's MatchmakingStatus attribute (NotifyPlaygroupAttributesSet)
 //	shaper select  NotifyGameSetup (0x14) in PRE_GAME; a custom game's or practice group's: its lobby
@@ -128,6 +129,9 @@ func (t *presenceTracker) activity() *discord.Activity {
 		return a
 	case psMenu:
 		a.Details = "In the menu"
+		if t.party() != nil { // the game shows the PvP lobby while it holds a party (alone too)
+			a.Details = "In the lobby · PvP"
+		}
 	case psQueue:
 		a.Details, a.Start = with("In queue"), t.since
 	case psLobby:

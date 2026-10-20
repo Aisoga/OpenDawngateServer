@@ -12,8 +12,11 @@
 #include <unordered_map>
 #include <vector>
 
+#include "core/agents/nullpos.h"
+#include "core/bots/jungle.h"
 #include "core/matchflow/camps.h"
 #include "core/matchflow/flow.h"
+#include "agents.h"
 #include "crowd.h"
 #include "game.h"
 #include "host/host.h"
@@ -292,6 +295,7 @@ struct Camp {
   bool buffClass = false;  // a buff camp or the Boar camp: the 60-s reveal window (else the small camps' 10 s)
   flow::CampKnowledge know;
   int truthBits = -1;
+  float fullHp = 0.f;  // CAMPFINISH: the most max HP its living members had together (CampFightNear)
 };
 
 std::vector<Lane> g_lanes;
@@ -551,6 +555,16 @@ int SehMemberState(std::uint32_t id, float* hp, float* pos, std::uint32_t* splin
     return (c && *hp <= 0.f) ? 0 : 1;
   } __except (SehNote(GetExceptionInformation(), "MemberState")) {
     return -1;
+  }
+}
+
+// CAMPFINISH: an object's max HP (0 when it is gone)
+float SehMaxHpOf(std::uint32_t id) {
+  __try {
+    void* o = GetObjectById(id);
+    return o ? MaxHitPoints(o) : 0.f;
+  } __except (SehNote(GetExceptionInformation(), "MaxHitPoints")) {
+    return 0.f;
   }
 }
 
@@ -866,6 +880,20 @@ void SpawnCamp(Camp& c, double t) {
       if (i < static_cast<int>(spot.size()) && spot[i] >= 0) {
         pos = c.spots[spot[i]].pos;
         rot = c.spots[spot[i]].rot;
+      }
+      // NULLPOS: the parasite's creature marker is exactly the map's origin, the bots' null position; it spawns
+      // parasite_offset_y (-1) along y instead, so nothing living stands on (0, 0). Its later stages are created at its
+      // initial position (modifier_Parasite_Passive_RankUpTimer: nGameObject.GetInitialPosition), so they follow.
+      float moved[3];
+      if (c.parasite && g_opt.parasiteOffsetY != 0.f && gms::agents::IsNullPos(pos)) {
+        moved[0] = pos[0];
+        moved[1] = pos[1] + g_opt.parasiteOffsetY;
+        moved[2] = pos[2];
+        Log("director: nullpos: the parasite's creature marker is at (%.2f, %.2f), the null position: it spawns at "
+            "(%.2f, %.2f) ([host] parasite_offset_y %.2f)",
+            static_cast<double>(pos[0]), static_cast<double>(pos[1]), static_cast<double>(moved[0]),
+            static_cast<double>(moved[1]), static_cast<double>(g_opt.parasiteOffsetY));
+        pos = moved;
       }
       Created cr;
       if (!SehCreate(c.def.creeps[k], 0, pos, rot, 0, &cr)) {
@@ -1432,10 +1460,13 @@ std::vector<CampView> CampViews() {
     v.respawnAt = c.timer.Alive() ? -1.0 : c.timer.DueAt();
     v.knownRespawnAt[0] = c.know.KnownRespawnAt(1);
     v.knownRespawnAt[1] = c.know.KnownRespawnAt(2);
+    v.spawns = c.timer.Spawns();
     out.push_back(v);
   }
   return out;
 }
+
+double MatchNow() { return g_now; }
 
 std::vector<std::uint32_t> IconCampMarkers() {
   std::vector<std::uint32_t> out;
@@ -1483,7 +1514,7 @@ bool LaneKnots(int laneId, int team, std::vector<float>* xyz) {
   return false;
 }
 
-bool ClosestCampPosition(float x, float y, float* out) {
+bool ClosestCampPosition(float x, float y, float* out, int team, float enemySidePenalty) {
   int best = -1;
   float bd = 3.0e38f;
   for (int i = 0; i < static_cast<int>(g_camps.size()); ++i) {
@@ -1500,8 +1531,17 @@ bool ClosestCampPosition(float x, float y, float* out) {
     // cleared and waiting for its respawn: no. Not spawned yet (no members at all): yes, so a Hunter walks to the nearest
     // camp before the first spawn (90 s) and is there when it comes
     if (!any && !c.members.empty()) continue;
+    // NULLPOS: a camp marker at the map's origin is not a place the camp conditions can tell from "no camp" (only the
+    // parasite's is there, and it is left out above)
+    if (gms::agents::IsNullPos(c.pos)) {
+      char who[48];
+      std::snprintf(who, sizeof who, "camp %d", i);
+      agents::ReportNullPos(0, static_cast<int>(gms::agents::NullPosWhere::kCamp), who, "ClosestCampPosition");
+      continue;
+    }
     const float dx = c.pos[0] - x, dy = c.pos[1] - y;
-    const float d = dx * dx + dy * dy;
+    // HUNTERBOT: his own half's camps first (gms/core/bots/jungle.h); without a team or penalty the nearest
+    const float d = gms::bots::CampRouteCost(std::sqrt(dx * dx + dy * dy), c.pos[0], c.pos[1], team, enemySidePenalty);
     if (d < bd) {
       bd = d;
       best = i;
@@ -1512,6 +1552,59 @@ bool ClosestCampPosition(float x, float y, float* out) {
   out[1] = g_camps[best].pos[1];
   out[2] = g_camps[best].pos[2];
   return true;
+}
+
+bool CampFightNear(float x, float y, float radius, CampFight* out) {
+  *out = CampFight();
+  int best = -1;
+  float bd = radius;
+  for (int i = 0; i < static_cast<int>(g_camps.size()); ++i) {
+    const Camp& c = g_camps[i];
+    if (c.parasite) continue;
+    for (std::uint32_t id : c.members) {
+      float hp = 0.f, pos[3] = {};
+      if (SehMemberState(id, &hp, pos, nullptr) != 1) continue;
+      const float dx = pos[0] - x, dy = pos[1] - y;
+      const float d = std::sqrt(dx * dx + dy * dy);
+      if (d <= bd) {
+        bd = d;
+        best = i;
+        std::memcpy(out->nearestPos, pos, sizeof pos);
+      }
+    }
+  }
+  if (best < 0) return false;
+  Camp& c = g_camps[best];
+  out->camp = best;
+  out->name = c.name.c_str();
+  out->nearest = bd;
+  for (std::uint32_t id : c.members) {
+    float hp = 0.f;
+    const bool alive = SehMemberState(id, &hp, nullptr, nullptr) == 1;
+    if (out->count < CampFight::kMembers) {
+      out->ids[out->count] = id;
+      out->hps[out->count] = alive ? hp : 0.f;
+      ++out->count;
+    }
+    if (!alive) continue;
+    ++out->alive;
+    out->hp += hp;
+    const float mx = SehMaxHpOf(id);
+    out->maxHp += mx > 0.f ? mx : hp;
+  }
+  if (out->maxHp > c.fullHp) c.fullHp = out->maxHp;  // the creatures grow with the match: only up
+  out->fullHp = c.fullHp;
+  return out->alive > 0;
+}
+
+int CampAlive(int camp) {
+  if (camp < 0 || camp >= static_cast<int>(g_camps.size())) return -1;
+  int n = 0;
+  for (std::uint32_t id : g_camps[camp].members) {
+    float hp = 0.f;
+    if (SehMemberState(id, &hp, nullptr, nullptr) == 1) ++n;
+  }
+  return n;
 }
 
 std::uint32_t ObjectOfMarker(std::uint32_t marker) {

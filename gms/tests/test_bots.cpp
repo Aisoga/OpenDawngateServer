@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "core/agents/desecrator.h"
 #include "core/bots/bots.h"
 #include "tests/check.h"
 
@@ -1243,4 +1244,495 @@ GMS_TEST(BotsCompositionShuffleVariesTheTeams) {
   }
   CHECK(tacticians.size() >= 3);
   CHECK_EQ(static_cast<int>(topGladiators.size()), 2);
+}
+
+// HUNTERBOT: Faris and Freia as Hunters on Petrus's AI
+#include "core/bots/jungle.h"
+#include "core/bots/kits.h"
+
+GMS_TEST(HunterbotProfilesAndTheHunterList) {
+  CHECK(BaseClass("PC_Golem_Hunter") == "PC_Golem" && AiClass("PC_Golem_Hunter") == "PC_Artificer");
+  CHECK(BaseClass("PC_Survivor_Hunter") == "PC_Survivor" && AiClass("PC_Survivor_Hunter") == "PC_Artificer");
+  CHECK(AiClass("PC_Warden_Predator") == "PC_Warden" && AiClass("PC_Guardian") == "PC_Guardian");
+  CHECK(ProfileFor("PC_Golem", kRoleHunter) == "PC_Golem_Hunter" && IsProfile("PC_Survivor_Hunter"));
+  CHECK_EQ(AltRoles("PC_Golem_Hunter"), 0u);
+  // [host] bot_hunters
+  CHECK(ParseHunterList("") == DefaultHunters() && ParseHunterList("default") == DefaultHunters());
+  CHECK(ParseHunterList("all") == HunterClasses());
+  CHECK(DefaultHunters() == (std::vector<std::string>{"PC_Artificer", "PC_Survivor_Hunter"}));  // Faris: not yet
+  CHECK(ParseHunterList("golem") == std::vector<std::string>{"PC_Golem_Hunter"});
+  CHECK(ParseHunterList("Freia, faris") == (std::vector<std::string>{"PC_Survivor_Hunter", "PC_Golem_Hunter"}));
+  CHECK(ParseHunterList("off") == std::vector<std::string>{"PC_Artificer"});
+  CHECK(ParseHunterList("petrus,PC_Golem_Hunter,golem") == (std::vector<std::string>{"PC_Artificer", "PC_Golem_Hunter"}));
+  CHECK(ParseHunterList("nobody") == std::vector<std::string>{"PC_Artificer"});
+}
+
+// DESECBOT: Desecrator as a Tactician on the Guardian's AI
+GMS_TEST(DesecbotProfileTheTacticianPinAndTheDraw) {
+  CHECK(BaseClass("PC_Desecrator_Tactician") == "PC_Desecrator" && AiClass("PC_Desecrator_Tactician") == "PC_Guardian");
+  CHECK(ProfileFor("PC_Desecrator", kRoleTactician) == "PC_Desecrator_Tactician" && IsProfile("PC_Desecrator_Tactician"));
+  CHECK_EQ(AltRoles("PC_Desecrator_Tactician"), 0u);
+  const std::vector<std::string> tact = TacticianClasses();
+  CHECK(tact.size() == 6 && tact.front() == "PC_Guardian" && tact.back() == "PC_Desecrator_Tactician");
+  // [host] bot_tacticians
+  CHECK(ParseTacticianList("").empty() && ParseTacticianList("default").empty() && ParseTacticianList("nobody").empty());
+  CHECK(ParseTacticianList("desecrator") == std::vector<std::string>{"PC_Desecrator_Tactician"});
+  CHECK(ParseTacticianList("PC_Desecrator_Tactician, pc_desecrator") == std::vector<std::string>{"PC_Desecrator_Tactician"});
+  CHECK(ParseTacticianList("Guardian,desecrator,warden") ==
+        (std::vector<std::string>{"PC_Guardian", "PC_Desecrator_Tactician", "PC_Warden"}));
+  std::set<std::string> avail = AllBotClasses();
+  avail.insert("PC_Desecrator_Tactician");
+  const std::vector<int> drop = ParseDropOrder("");
+  // the fixed setup: unpinned the Guardian as before (the profile keeps its place at the list's end), pinned the profile
+  std::vector<ComposedSeat> seats = ComposeTeam(WantedSeats(5, {}, drop), avail, PlanClassNames());
+  CHECK(seats[1].role == kRoleTactician && seats[1].botClass == "PC_Guardian");
+  seats = ComposeTeam(WantedSeats(5, {}, drop), avail, PlanClassNames(), 0, "", "PC_Desecrator_Tactician");
+  CHECK(seats[1].role == kRoleTactician && seats[1].botClass == "PC_Desecrator_Tactician" && seats[1].lane == kLaneTop);
+  // the free draw: the profile turns up as a Tactician; pinned it is the top flex seat in every match
+  bool drawn = false;
+  for (unsigned seed = 1; seed < 200; ++seed) {
+    for (const ComposedSeat& s : ComposeTeamFree(5, avail, seed))
+      if (s.botClass == "PC_Desecrator_Tactician") {
+        CHECK(s.role == kRoleTactician && !s.roleOverride);
+        drawn = true;
+      }
+    const std::vector<ComposedSeat> t = ComposeTeamFree(5, avail, seed, {}, "", "PC_Desecrator_Tactician");
+    CHECK(t.size() == 5 && t[1].botClass == "PC_Desecrator_Tactician" && t[1].role == kRoleTactician &&
+          t[1].lane == kLaneTop);
+    int des = 0;
+    for (const ComposedSeat& s : t) des += BaseClass(s.botClass) == "PC_Desecrator";
+    CHECK_EQ(des, 1);
+    // a pinned Warden is a Tactician, never the coin flip's Predator
+    const std::vector<ComposedSeat> w = ComposeTeamFree(5, avail, seed, {}, "", "PC_Warden");
+    CHECK(w[1].botClass == "PC_Warden" && w[1].role == kRoleTactician && !w[1].roleOverride);
+  }
+  CHECK(drawn);
+  // a copy without the profile: the pin finds nothing, the draw as before
+  CHECK(DrawPerTeam(ParseTacticianList("desecrator"), AllBotClasses(), 0, 2, 1u) == (std::vector<std::string>{"", ""}));
+  // the planner: both teams' first Tactician, both setups
+  for (unsigned seed : {0u, 5u, 11u}) {
+    const std::vector<BotPlayer> bots = PlanBotPlayersComposed({}, 5, {1, 2}, avail, PlanClassNames(), drop, 0, seed,
+                                                               {"PC_Artificer"}, ParseTacticianList("desecrator"));
+    int n = 0;
+    for (const BotPlayer& b : bots)
+      if (b.botClass == "PC_Desecrator_Tactician") {
+        CHECK(b.role == kRoleTactician && b.lane == kLaneTop);
+        ++n;
+      }
+    CHECK_EQ(n, 2);
+  }
+}
+
+GMS_TEST(DesecbotKitTheWOnlyNear) {
+  const ShaperKit* des = KitForNoun("desecrator.Noun");
+  CHECK(des != nullptr && des->castsQ && !des->castsE && des->rTarget == kKitTargetNone);
+  const int kW = gms::agents::kSlotQ + 1;
+  CHECK(KitAllowsSlot(des, kW) && KitAllowsSlot(des, gms::agents::kSlotQ));
+  CHECK(!KitAllowsW(des, kW, -1.f));    // nobody near
+  CHECK(!KitAllowsW(des, kW, 12.5f));   // beyond 12
+  CHECK(KitAllowsW(des, kW, 12.f) && KitAllowsW(des, kW, 3.f));
+  CHECK(KitAllowsW(des, gms::agents::kSlotQ, -1.f));  // other slots: always
+  CHECK(KitAllowsW(KitForNoun("guardian"), kW, -1.f) && KitAllowsW(nullptr, kW, -1.f));
+  CHECK(KitAllowsW(KitForNoun("survivor"), kW, -1.f));  // the Hunters' kits have no wNear
+}
+
+namespace {
+gms::agents::DesecEnemy Enemy(std::uint32_t id, float x, float y, const float* self, float hp = 1.f) {
+  gms::agents::DesecEnemy e;
+  e.id = id;
+  e.pos[0] = x;
+  e.pos[1] = y;
+  e.dist = std::sqrt((x - self[0]) * (x - self[0]) + (y - self[1]) * (y - self[1]));
+  e.hpFrac = hp;
+  e.visible = true;
+  return e;
+}
+}  // namespace
+
+GMS_TEST(DesecbotThreeTheLayerIsTheDesecratorsOnly) {
+  CHECK(KitForNoun("desecrator.Noun")->desecLayer);
+  CHECK(!KitForNoun("guardian") || !KitForNoun("guardian")->desecLayer);
+  CHECK(!KitForNoun("artificer")->desecLayer && !KitForNoun("survivor")->desecLayer && !KitForNoun("golem")->desecLayer);
+  using namespace gms::agents;
+  CHECK_EQ(DesecPhaseClassOf("Guardian_Tactician_EngageForKill.Phase"), static_cast<int>(kDesecPhaseFight));
+  CHECK_EQ(DesecPhaseClassOf("Guardian_Tactician_Self-Defense.Phase"), static_cast<int>(kDesecPhaseFight));
+  CHECK_EQ(DesecPhaseClassOf("Guardian_Tactician_HarassWithE.Phase"), static_cast<int>(kDesecPhaseFight));
+  CHECK_EQ(DesecPhaseClassOf("Guardian_Tactician_WellFight.Phase"), static_cast<int>(kDesecPhaseFight));
+  CHECK_EQ(DesecPhaseClassOf("Guardian_Tactician_FightParasite.Phase"), static_cast<int>(kDesecPhaseFight));
+  CHECK_EQ(DesecPhaseClassOf("Guardian_Tactician_BaseDefend.Phase"), static_cast<int>(kDesecPhaseFight));
+  CHECK_EQ(DesecPhaseClassOf("Guardian_Tactician_CautiousLaning.Phase"), static_cast<int>(kDesecPhaseLane));
+  CHECK_EQ(DesecPhaseClassOf("Guardian_Tactician_TowerPush.Phase"), static_cast<int>(kDesecPhaseLane));
+  CHECK_EQ(DesecPhaseClassOf("Guardian_Tactician_Flee.Phase"), static_cast<int>(kDesecPhaseOther));
+  CHECK_EQ(DesecPhaseClassOf("Guardian_Tactician_Ward.Phase"), static_cast<int>(kDesecPhaseOther));
+  CHECK_EQ(DesecPhaseClassOf(nullptr), static_cast<int>(kDesecPhaseOther));
+  // the early Desecrator: BOTREFLEX's tower rule allows him no dive for a shaper, a worn tower still
+  ReflexSensors s;
+  s.role = 1;
+  s.inTowerZone = true;
+  s.targetIsShaper = true;
+  s.targetInTowerZone = true;
+  s.targetHpFrac = 0.2f;
+  s.hpFrac = 0.9f;
+  ReflexConfig c;
+  CHECK_EQ(static_cast<int>(DecideReflex(s, c).kind), static_cast<int>(kReflexNone));  // the dive
+  c.noShaperDive = true;
+  CHECK_EQ(static_cast<int>(DecideReflex(s, c).kind), static_cast<int>(kReflexBack));
+  s.targetIsShaper = false;
+  s.targetIsTower = true;
+  s.targetTowerHpFrac = 0.3f;
+  CHECK_EQ(static_cast<int>(DecideReflex(s, c).kind), static_cast<int>(kReflexNone));  // finishing a tower
+}
+
+GMS_TEST(DesecbotThreeTheELeadAndTheTrackers) {
+  using namespace gms::agents;
+  const DesecConfig c;
+  const float self[2] = {0.f, 0.f};
+  float out[2];
+  // a target walking across at 8 u/s, 10 away: the point is 8 ahead
+  const float t[2] = {10.f, 0.f}, v[2] = {0.f, 8.f};
+  CHECK(LeadPoint(self, t, v, c, out));
+  CHECK(Near(out[0], 10.f, 1e-4f) && Near(out[1], 8.f, 1e-4f));
+  // standing (or rooted): its position
+  const float zero[2] = {};
+  CHECK(LeadPoint(self, t, zero, c, out) && Near(out[0], 10.f, 1e-4f) && Near(out[1], 0.f, 1e-4f));
+  // a dash of 30 u/s: the lead at most 11
+  const float fast[2] = {0.f, 30.f};
+  CHECK(LeadPoint(self, t, fast, c, out) && Near(out[1], 11.f, 1e-3f));
+  // fleeing outward near the edge: pulled back to the range
+  const float edge[2] = {20.f, 0.f}, away[2] = {10.f, 0.f};
+  CHECK(LeadPoint(self, edge, away, c, out));
+  CHECK(Near(std::sqrt(out[0] * out[0] + out[1] * out[1]), c.eRange, 0.01f) && out[0] > 20.f);
+  // out of range: no lead
+  const float far[2] = {30.f, 0.f};
+  CHECK(!LeadPoint(self, far, v, c, out) && Near(out[0], 30.f, 1e-4f));
+  // the motion: 1 unit per 100 ms -> 10 u/s (smoothed), a jump resets
+  DesecMotion m;
+  float p[2] = {0.f, 0.f};
+  for (int i = 0; i <= 10; ++i) {
+    p[0] = static_cast<float>(i);
+    m.Note(p, 1000 + 100 * i);
+  }
+  CHECK(Near(m.vel[0], 10.f, 0.05f) && Near(m.vel[1], 0.f, 1e-4f));
+  m.Note(p, 2050);  // too soon: kept
+  CHECK(Near(m.vel[0], 10.f, 0.05f));
+  p[0] = 200.f;  // a recall
+  m.Note(p, 2200);
+  CHECK(Near(m.vel[0], 0.f, 1e-4f));
+  // the recent damage: 100 then 50 lost of 1000, a heal doesn't count, the window forgets
+  DesecRecentDamage d;
+  d.Note(1000.f, 0);
+  d.Note(900.f, 300);
+  d.Note(950.f, 600);
+  d.Note(900.f, 900);
+  CHECK(Near(d.Fraction(1000.f, 900), 0.15f, 1e-4f));
+  d.Note(900.f, 3500);
+  CHECK(Near(d.Fraction(1000.f, 3500), 0.05f, 1e-4f));  // the first loss (300 ms) left the 3-s window
+  CHECK(Near(d.Fraction(1000.f, 9000), 0.f, 1e-4f));
+  CHECK(Near(d.Fraction(0.f, 900), 0.f, 1e-6f));
+}
+
+GMS_TEST(DesecbotThreeTheComboEThenQ) {
+  using namespace gms::agents;
+  const DesecConfig c;
+  DesecSelf s;
+  s.rankQ = s.rankE = 1;
+  s.phaseClass = kDesecPhaseFight;
+  DesecMemory m;
+  std::vector<DesecEnemy> e = {Enemy(7, 10.f, 0.f, s.pos)};
+  std::vector<DesecAlly> none;
+  // no E yet: Q free, nothing to do
+  CHECK(!DesecQHeld(m, 1000, c, false));
+  s.nowMs = 1000;
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecNone));
+  // the E at 7: every Q waits until the root, the layer too
+  DesecNoteE(m, 7, 1000);
+  s.nowMs = 1400;
+  CHECK(DesecQHeld(m, 1400, c, false) && DesecEPending(m, 1400, c));
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecNone));
+  // the root lands at 1 s: the combo's Q at it (in any phase)
+  e[0].rooted = true;
+  s.nowMs = 2050;
+  s.phaseClass = kDesecPhaseOther;
+  DesecAction a = DecideDesecrator(s, e, none, m, c);
+  CHECK_EQ(a.kind, static_cast<int>(kDesecComboQ));
+  CHECK(a.enemy == 0 && Near(a.point[0], 10.f, 1e-4f));
+  // another enemy rooted (by an ally's E?): not the combo's
+  e[0].id = 8;
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecNone));
+  e[0].id = 7;
+  // rooted but beyond the Q's line
+  e[0].dist = 29.f;
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecNone));
+  e[0].dist = 10.f;
+  // Q not learned: none; after a refusal the retry waits
+  s.rankQ = 0;
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecNone));
+  s.rankQ = 1;
+  m.nextTryMs[kDesecComboQ] = 2500;
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecNone));
+  m.nextTryMs[kDesecComboQ] = 0;
+  // the Q done: the window closes
+  DesecNoteQ(m);
+  CHECK(!DesecQHeld(m, 2050, c, false) && !DesecEPending(m, 2050, c));
+  // an E that missed: the hold ends at 1.3 s
+  DesecNoteE(m, 7, 5000);
+  CHECK(DesecQHeld(m, 6299, c, false));
+  CHECK(!DesecQHeld(m, 6300, c, false));
+  CHECK(!DesecQHeld(m, 5500, c, true));  // a rooted target: the gambits may Q too
+  // a root that lands late (1.2 s) still gets the combo's Q while it lasts, up to 2.3 s after the E
+  s.nowMs = 7200;
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecComboQ));
+  s.nowMs = 7300;
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecNone));
+  CHECK(DesecComboOpen(m, 7299, c) && !DesecComboOpen(m, 7300, c));
+}
+
+GMS_TEST(DesecbotThreeTheCorpsesSpread) {
+  using namespace gms::agents;
+  const DesecConfig c;
+  DesecSelf s;
+  s.rankR = 1;
+  s.phaseClass = kDesecPhaseFight;
+  s.nowMs = 10000;
+  DesecMemory m;
+  std::vector<DesecAlly> none;
+  // one enemy standing free: no 1st corpse
+  std::vector<DesecEnemy> e = {Enemy(1, 30.f, 0.f, s.pos)};
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecNone));
+  // two within one field: the 1st corpse between them
+  e.push_back(Enemy(2, 34.f, 0.f, s.pos));
+  DesecAction a = DecideDesecrator(s, e, none, m, c);
+  CHECK_EQ(a.kind, static_cast<int>(kDesecR));
+  CHECK(std::strcmp(a.why, "cluster") == 0 && a.count == 2 && Near(a.point[0], 32.f, 1e-4f));
+  // not in a lane phase, nor out of reach
+  s.phaseClass = kDesecPhaseLane;
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecNone));
+  s.phaseClass = kDesecPhaseFight;
+  // a lone rooted enemy: the 1st corpse at it
+  std::vector<DesecEnemy> lone = {Enemy(3, 20.f, 5.f, s.pos)};
+  lone[0].rooted = true;
+  a = DecideDesecrator(s, lone, none, m, c);
+  CHECK(a.kind == kDesecR && std::strcmp(a.why, "rooted") == 0);
+  lone[0].rooted = false;
+  lone[0].knockedUp = true;
+  a = DecideDesecrator(s, lone, none, m, c);
+  CHECK(a.kind == kDesecR && std::strcmp(a.why, "knocked up") == 0);
+  lone[0].dist = 51.f;  // beyond the 50
+  CHECK_EQ(DecideDesecrator(s, lone, none, m, c).kind, static_cast<int>(kDesecNone));
+  // the 1st corpse at (32, 0): the 2nd only at an enemy outside every field and 14 away
+  const float p1[2] = {32.f, 0.f};
+  DesecNoteR(m, p1, 10000, c);
+  CHECK(DesecRWindowOpen(m, 10500, c));
+  s.nowMs = 10500;
+  e[0].mortared = e[1].mortared = true;
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecNone));  // hold: both in the field
+  e[0].mortared = false;  // 2 units from the corpse, out of the field's modifier for a moment: still too close
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecNone));
+  e.push_back(Enemy(4, 20.f, 20.f, s.pos));  // 23.3 from the corpse
+  e.push_back(Enemy(5, 40.f, 15.f, s.pos, 0.4f));  // 17 from it, hurt
+  a = DecideDesecrator(s, e, none, m, c);
+  CHECK(a.kind == kDesecR && std::strcmp(a.why, "spread") == 0 && e[static_cast<std::size_t>(a.enemy)].id == 5);
+  e[2].knockedUp = true;  // a locked-down one first
+  a = DecideDesecrator(s, e, none, m, c);
+  CHECK(a.kind == kDesecR && e[static_cast<std::size_t>(a.enemy)].id == 4);
+  DesecNoteR(m, a.point, 10700, c);
+  // the 3rd: 14 from both earlier corpses
+  e[2].mortared = true;
+  a = DecideDesecrator(s, e, none, m, c);
+  CHECK(a.kind == kDesecR && e[static_cast<std::size_t>(a.enemy)].id == 5);
+  CHECK(DesecNearestCorpse(m, a.point) >= c.rSpread);
+  DesecNoteR(m, a.point, 10900, c);
+  CHECK_EQ(m.rCorpses, 3);
+  // three thrown: the cast is over; a new cast starts from a cluster again
+  CHECK(!DesecRWindowOpen(m, 11000, c));
+  // the window: 14 s after the 1st corpse a 2nd one is a new cast
+  DesecMemory w;
+  DesecNoteR(w, p1, 0, c);
+  CHECK(DesecRWindowOpen(w, 13999, c) && !DesecRWindowOpen(w, 14000, c));
+  const float p2[2] = {0.f, 40.f};
+  DesecNoteR(w, p2, 15000, c);
+  CHECK(w.rCorpses == 1 && w.rFirstMs == 15000);
+}
+
+GMS_TEST(DesecbotThreeDrainWitherAndThePeel) {
+  using namespace gms::agents;
+  const DesecConfig c;
+  DesecSelf s;
+  s.rankQ = s.rankE = 1;
+  s.phaseClass = kDesecPhaseFight;
+  s.nowMs = 50000;
+  DesecMemory m;
+  std::vector<DesecAlly> none;
+  // Drain: under 25 % within 16.18
+  std::vector<DesecEnemy> e = {Enemy(1, 10.f, 0.f, s.pos, 0.3f), Enemy(2, 12.f, 0.f, s.pos, 0.2f)};
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecNone));  // no Drain in his slots
+  s.hasDrain = true;
+  DesecAction a = DecideDesecrator(s, e, none, m, c);
+  CHECK(a.kind == kDesecDrain && a.enemy == 1);
+  e[1].dist = 17.f;
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecNone));
+  s.hasDrain = false;
+  // Wither: only a Gladiator or a bruiser that just hit an ally
+  s.hasWither = true;
+  e = {Enemy(1, 10.f, 0.f, s.pos), Enemy(2, 8.f, 0.f, s.pos)};
+  e[0].role = 1;  // a Tactician
+  e[1].role = 2;  // a Hunter, a bruiser
+  e[1].archetype = 1;
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecNone));
+  e[1].hitAllyAgeMs = 4000;  // too long ago
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecNone));
+  e[1].hitAllyAgeMs = 500;
+  a = DecideDesecrator(s, e, none, m, c);
+  CHECK(a.kind == kDesecWither && a.enemy == 1 && std::strstr(a.why, "bruiser") != nullptr);
+  e[1].hitAllyAgeMs = -1;
+  e[0].role = 0;  // the Gladiator
+  a = DecideDesecrator(s, e, none, m, c);
+  CHECK(a.kind == kDesecWither && a.enemy == 0 && std::strstr(a.why, "Gladiator") != nullptr);
+  e[0].dist = 16.5f;  // out of reach
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecNone));
+  s.phaseClass = kDesecPhaseLane;  // Wither only in a fight
+  e[0].dist = 10.f;
+  CHECK_EQ(DecideDesecrator(s, e, none, m, c).kind, static_cast<int>(kDesecNone));
+  s.hasWither = false;
+  // the peel (lane too): an ally within 20 hurt by more than 10 % in the last seconds -> E at its attacker
+  std::vector<DesecAlly> al(1);
+  al[0].id = 9;
+  al[0].dist = 12.f;
+  al[0].recentDamage = 0.15f;
+  al[0].attacker = 2;
+  al[0].attackerAgeMs = 800;
+  e[1].vel[1] = 5.f;
+  a = DecideDesecrator(s, e, al, m, c);
+  CHECK(a.kind == kDesecPeelE && a.enemy == 1 && Near(a.point[1], 5.f, 1e-3f));
+  m.nextTryMs[kDesecPeelE] = 60000;  // the E refused (cooling down): the Q
+  a = DecideDesecrator(s, e, al, m, c);
+  CHECK(a.kind == kDesecPeelQ && a.enemy == 1);
+  m.nextTryMs[kDesecPeelE] = 0;
+  al[0].recentDamage = 0.08f;
+  CHECK_EQ(DecideDesecrator(s, e, al, m, c).kind, static_cast<int>(kDesecNone));
+  al[0].recentDamage = 0.15f;
+  al[0].dist = 21.f;
+  CHECK_EQ(DecideDesecrator(s, e, al, m, c).kind, static_cast<int>(kDesecNone));
+  al[0].dist = 12.f;
+  al[0].attackerAgeMs = 3500;
+  CHECK_EQ(DecideDesecrator(s, e, al, m, c).kind, static_cast<int>(kDesecNone));
+  al[0].attackerAgeMs = 800;
+  s.phaseClass = kDesecPhaseOther;  // a Flee, a walk: no peel
+  CHECK_EQ(DecideDesecrator(s, e, al, m, c).kind, static_cast<int>(kDesecNone));
+  // an invisible attacker: none
+  s.phaseClass = kDesecPhaseLane;
+  e[1].visible = false;
+  CHECK_EQ(DecideDesecrator(s, e, al, m, c).kind, static_cast<int>(kDesecNone));
+}
+
+GMS_TEST(HunterbotDrawDistinctPerMatchAndFallsBack) {
+  std::set<std::string> avail = AllBotClasses();
+  avail.insert("PC_Golem_Hunter");
+  avail.insert("PC_Survivor_Hunter");
+  // the fixed draw (seed 0): the list's order, team 1 the first, team 2 the second; one entry pins both
+  CHECK(DrawHunters(HunterClasses(), avail, 0, 2) == (std::vector<std::string>{"PC_Artificer", "PC_Golem_Hunter"}));
+  CHECK(DrawHunters(ParseHunterList("golem,survivor"), avail, 0, 2) ==
+        (std::vector<std::string>{"PC_Golem_Hunter", "PC_Survivor_Hunter"}));
+  CHECK(DrawHunters(ParseHunterList("survivor"), avail, 0, 2) ==
+        (std::vector<std::string>{"PC_Survivor_Hunter", "PC_Survivor_Hunter"}));
+  // drawn: always two different ones, every class in some match
+  std::set<std::string> seen;
+  for (unsigned seed = 1; seed < 80; ++seed) {
+    const std::vector<std::string> d = DrawHunters(HunterClasses(), avail, seed, 2);
+    CHECK(d.size() == 2 && d[0] != d[1]);
+    seen.insert(d[0]);
+    seen.insert(d[1]);
+  }
+  CHECK_EQ(static_cast<int>(seen.size()), 3);
+  // an older copy (no profiles in its catalog): PC_Artificer for both
+  CHECK(DrawHunters(HunterClasses(), AllBotClasses(), 7, 2) == (std::vector<std::string>{"PC_Artificer", "PC_Artificer"}));
+  CHECK(DrawHunters(ParseHunterList("golem"), AllBotClasses(), 0, 2) == (std::vector<std::string>{"", ""}));
+  // the planner, both setups: the Hunter seats take the draw; without the profiles PC_Artificer
+  for (unsigned seed : {0u, 5u, 11u}) {
+    const std::vector<BotPlayer> bots =
+        PlanBotPlayersComposed({}, 5, {1, 2}, avail, PlanClassNames(), ParseDropOrder(""), 0, seed,
+                               ParseHunterList("golem,survivor"));
+    std::vector<std::string> hunters;
+    for (const BotPlayer& b : bots)
+      if (b.role == kRoleHunter) hunters.push_back(b.botClass);
+    CHECK(hunters.size() == 2 && hunters[0] != hunters[1]);
+    for (const std::string& c : hunters) CHECK(c == "PC_Golem_Hunter" || c == "PC_Survivor_Hunter");
+    const std::vector<BotPlayer> old =
+        PlanBotPlayersComposed({}, 5, {1, 2}, AllBotClasses(), PlanClassNames(), ParseDropOrder(""), 0, seed,
+                               ParseHunterList("golem,survivor"));
+    for (const BotPlayer& b : old)
+      if (b.role == kRoleHunter) CHECK(b.botClass == "PC_Artificer");
+  }
+  // the default argument keeps the old single Hunter
+  for (const BotPlayer& b : PlanBotPlayersComposed({}, 5, {1, 2}, avail, PlanClassNames(), ParseDropOrder("")))
+    if (b.role == kRoleHunter) CHECK(b.botClass == "PC_Artificer");
+}
+
+GMS_TEST(HunterbotKitsAndTheFinisher) {
+  const ShaperKit* faris = KitForNoun("golem.Noun");
+  const ShaperKit* freia = KitForNoun("SURVIVOR");
+  const ShaperKit* petrus = KitForNoun("artificer.noun");
+  CHECK(faris && freia && petrus && KitForNoun("warden.Noun") == nullptr);
+  CHECK(!KitAllowsSlot(faris, gms::agents::kSlotQ) && KitAllowsSlot(faris, gms::agents::kSlotQ + 1));
+  CHECK(KitAllowsSlot(freia, gms::agents::kSlotQ) && KitAllowsSlot(nullptr, gms::agents::kSlotQ));
+  CHECK(petrus->eSpin && !faris->eSpin && !freia->eSpin);
+  // the E outside SpinToWin: Faris's dash within 16, Freia's stun within 5; never Petrus's (his spin is SpinToWin's)
+  CHECK(KitEWanted(faris, 1, true, 15.f) && !KitEWanted(faris, 1, true, 17.f) && !KitEWanted(faris, 0, true, 5.f));
+  CHECK(KitEWanted(freia, 2, true, 4.f) && !KitEWanted(freia, 2, true, 6.f) && !KitEWanted(freia, 2, false, 1.f));
+  CHECK(!KitEWanted(petrus, 3, true, 1.f) && !KitEWanted(nullptr, 3, true, 1.f));
+  CHECK(faris->eWaitMs > 4000 && freia->eWaitMs <= 1000);
+  // the finisher: the lowest within reach at or below the threshold, seen; none without R
+  std::vector<FinisherCandidate> c = {{5.f, 0.40f, true}, {7.f, 0.20f, true}, {6.f, 0.10f, false}, {12.f, 0.05f, true}};
+  CHECK_EQ(FinisherTarget(petrus, 1, c), 1);   // 8.08 reach: the 12-unit one is out, the hidden one unseen
+  CHECK_EQ(FinisherTarget(faris, 1, c), 3);    // 17.65 reach
+  CHECK_EQ(FinisherTarget(petrus, 0, c), -1);  // R not learned
+  CHECK_EQ(FinisherTarget(freia, 2, {{5.f, 0.5f, true}}), -1);  // not low enough
+  CHECK_EQ(FinisherTarget(freia, 2, {{8.f, 0.3f, true}}), 0);
+  CHECK_EQ(FinisherTarget(nullptr, 3, c), -1);
+}
+
+GMS_TEST(HunterbotCampRouteCost) {
+  // team 1's half is x + y < 0: its own camp keeps its distance, one on the other half costs the penalty more
+  CHECK(Near(CampRouteCost(50.f, -100.f, 20.f, 1, 90.f), 50.f, 1e-4f));
+  CHECK(Near(CampRouteCost(50.f, 100.f, 20.f, 1, 90.f), 140.f, 1e-4f));
+  CHECK(Near(CampRouteCost(50.f, 100.f, 20.f, 2, 90.f), 50.f, 1e-4f));
+  CHECK(Near(CampRouteCost(50.f, -100.f, 20.f, 2, 90.f), 140.f, 1e-4f));
+  CHECK(Near(CampRouteCost(50.f, 5.f, 5.f, 1, 90.f), 50.f, 1e-4f));  // the river: nobody's
+  CHECK(Near(CampRouteCost(50.f, 100.f, 20.f, 0, 90.f), 50.f, 1e-4f) && Near(CampRouteCost(50.f, 100.f, 20.f, 1, 0.f), 50.f, 1e-4f));
+  // so from the river a camp of his 120 away beats one of theirs 60 away, one of theirs 20 away beats his 120
+  CHECK(CampRouteCost(120.f, -90.f, -30.f, 1, 90.f) < CampRouteCost(60.f, 60.f, 30.f, 1, 90.f));
+  CHECK(CampRouteCost(20.f, 60.f, 30.f, 1, 90.f) < CampRouteCost(120.f, -90.f, -30.f, 1, 90.f));
+}
+
+// BACKTOACTION: the seat of the user's match (team 2's PC_Warden as the bottom Tactician beside PC_Creature) with
+// `bot_hunters=freia;bot_tacticians=desecrator` and a fixed `bot_shuffle` seed, for the live check
+namespace {
+std::vector<BotPlayer> BacktoactionPlan(unsigned seed) {
+  HumanPlayer h;
+  h.index = 0;
+  h.team = 1;
+  h.shaper = T("mage", "ranged", "magical");
+  std::set<std::string> available = AllBotClasses();
+  for (const char* p : {"PC_Desecrator_Tactician", "PC_Warden_Predator", "PC_Golem_Hunter", "PC_Survivor_Hunter"})
+    available.insert(p);
+  return PlanBotPlayersComposed({h}, 5, {1, 2}, available, PlanClassNames(),
+                                ParseDropOrder("predator,hunter,tactician,gladiator"), 0, seed,
+                                ParseHunterList("freia"), ParseTacticianList("desecrator"));
+}
+bool WardenBottomTactician(const std::vector<BotPlayer>& bots) {
+  for (const BotPlayer& b : bots)
+    if (b.team == 2 && b.botClass == "PC_Warden" && b.role == kRoleTactician && b.lane == kLaneBottom) return true;
+  return false;
+}
+}  // namespace
+
+GMS_TEST(BacktoactionTheWardenSeatHasASeed) {
+  // bot_shuffle=45 is the first seed from 2 that gives it (a search over 2-44 finds none)
+  for (unsigned seed = 2; seed < 45; ++seed) CHECK(!WardenBottomTactician(BacktoactionPlan(seed)));
+  const std::vector<BotPlayer> bots = BacktoactionPlan(45);
+  CHECK(WardenBottomTactician(bots));
+  std::string team2;
+  for (const BotPlayer& b : bots)
+    if (b.team == 2) team2 += b.botClass + "/" + std::to_string(b.role) + "/" + std::to_string(b.lane) + " ";
+  std::printf("  BACKTOACTION: bot_shuffle=45, team 2: %s\n", team2.c_str());
 }

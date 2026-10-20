@@ -35,6 +35,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <random>
 #include <set>
@@ -58,7 +59,35 @@ struct ShaperPickPlan {
   uint8_t role = 0;    // its intention: shown from the start (record, and a preferred-role toggle when phase 2 begins);
                        // locked once every connected human has locked its role, or at the phase-2 timer
   uint8_t altRoles = 0;  // roles (bit per role) it may take instead when its teammates already fill `role`
+  // BOTDRAFT: no pick of its own yet: its record stays empty ("selecting", no role) until the match's draft
+  // (ShaperSelectConfig::draft) gives it its noun, role and altRoles; pickMs/lockMs then count from the draft
+  bool draft = false;
 };
+
+// BOTDRAFT: what the draft learns of a human (any player that isn't scripted): its record's shaper (0 = none yet), its
+// preferred-role toggles (C8 06, bit per role) and the role card it chose on its own role page (-1 = none: a C8 07
+// that changed its record's role, or any C8 07 after the first one, which the client sends by itself).
+struct ShaperDraftHuman {
+  uint8_t gameplayIndex = 0;
+  uint8_t team = 0;
+  uint32_t shaper = 0;
+  uint8_t preferredRoles = 0;
+  int roleCard = -1;
+};
+struct ShaperDraftBot {
+  uint8_t gameplayIndex = 0;
+  uint8_t team = 0;
+};
+// The draft's answer per bot: its shaper (a default-skin Noun) and its role; a bot without an answer takes the first
+// free entry at its lock.
+struct ShaperDraftPick {
+  uint8_t gameplayIndex = 0;
+  uint32_t noun = 0;
+  uint8_t role = 0;
+  uint8_t altRoles = 0;
+};
+using ShaperDraftFn =
+    std::function<std::vector<ShaperDraftPick>(const std::vector<ShaperDraftHuman>&, const std::vector<ShaperDraftBot>&)>;
 
 struct PerkPage {
   uint32_t id = 0;       // the loadout manager's page id (page +8): the store's SUMM.PID
@@ -107,6 +136,12 @@ struct ShaperSelectConfig {
   // up) or this many ms after its C8 02; from phase 4 on none are sent (no skin page follows). 0 = the old behaviour:
   // at once at its C8 02 (a C8 0B there crashed a rejoining client).
   int lateSkinsHoldMs = 3000;
+  // BOTDRAFT (a custom game's bots pick after the humans): called once in phase 1 for the scripted players whose plan
+  // says `draft`, when every connected human has locked its shaper and has said its role (preferred-role toggles or a
+  // role card) or draftGraceMs passed since the last of those locks; at the phase-1 timer at the latest (after the
+  // timer's locks of the humans). Unset: such players pick nothing (the lock takes the first free entry).
+  ShaperDraftFn draft;
+  int draftGraceMs = 10000;
 };
 
 // A player's result (phase 4), in gameplay-index order.
@@ -223,6 +258,8 @@ class ShaperSelect {
     bool skinChosen = false;
     bool skinFinal = false;
     uint8_t preferredRoles = 0;  // C8 06 toggles, one bit per role
+    int roleCards = 0;           // BOTDRAFT: its C8 07s so far
+    int roleCard = -1;           // BOTDRAFT: the role card it chose (ShaperDraftHuman::roleCard)
     uint32_t pageVersion = 0;
     uint32_t ward = 0, announcer = 0;
     bool knowsAll = true;        // G3a: no SetKnown yet: every index counts as known
@@ -267,6 +304,9 @@ class ShaperSelect {
   void ClientAhead(Player& p, int phase, const char* why);
   void LogClientAhead(Player& p);
   void SendSkins(Player& p, bool mayHold, ISender& out);
+  bool DraftReady(int64_t now) const;
+  void RunDraft(int64_t now, ISender& out);
+  void AnnounceDraftRole(uint8_t index, ISender& out);
   void ReleaseSkins(Player& p, const char* why, ISender& out);
 
   ShaperSelectTimers timers_;
@@ -279,6 +319,12 @@ class ShaperSelect {
   int phase_ = 0;
   uint64_t phaseStart_ = 0, phaseEnd_ = 0;
   int64_t nextRepeat_ = 0;
+  // BOTDRAFT
+  ShaperDraftFn draftFn_;
+  int draftGraceMs_ = 10000;
+  bool draftPending_ = false;
+  int64_t draftAt_ = 0;
+  int64_t lastHumanLock_ = 0;
 };
 
 }  // namespace gms

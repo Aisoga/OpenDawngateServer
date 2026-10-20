@@ -117,13 +117,13 @@ func TestTrackerFlow(t *testing.T) {
 
 	r.notify(blaze.ComponentPlaygroups, blaze.NotifyJoinPlaygroupID,
 		blaze.JoinPlaygroupNotification(party(7, ""), []blaze.PlaygroupMember{member(ownID), member(guestID)}, ownID))
-	r.expect("party", "In the menu", "In a party", 2, time.Time{})
+	r.expect("party", "In the lobby · PvP", "In a party", 2, time.Time{})
 	n = len(r.sent)
 	r.notify(blaze.ComponentPlaygroups, blaze.NotifyJoinPlaygroupID, // the game's chat: not a party
 		blaze.JoinPlaygroupNotification(party(8, "GG-1"), []blaze.PlaygroupMember{member(ownID)}, ownID))
 	r.unchanged("chat playgroup", n)
 	r.notify(blaze.ComponentPlaygroups, blaze.NotifyMemberJoinedPlaygroupID, blaze.MemberJoinedPlaygroupNotification(7, member(thirdID)))
-	r.expect("third member", "In the menu", "In a party", 3, time.Time{})
+	r.expect("third member", "In the lobby · PvP", "In a party", 3, time.Time{})
 
 	queued := r.clock
 	r.game(blaze.ComponentGameManager, blaze.CmdGameManagerStartMatchmaking, 21, matchmakingRequest("1"))
@@ -131,7 +131,7 @@ func TestTrackerFlow(t *testing.T) {
 	r.clock = r.clock.Add(30 * time.Second)
 	r.notify(blaze.ComponentGameManager, blaze.NotifyMatchmakingFailedID,
 		blaze.MatchmakingFailedNotification(blaze.MatchmakingContext{Session: 1, User: ownID, Result: 4}))
-	r.expect("queue failed", "In the menu", "In a party", 3, time.Time{})
+	r.expect("queue failed", "In the lobby · PvP", "In a party", 3, time.Time{})
 	queued = r.clock
 	r.game(blaze.ComponentGameManager, blaze.CmdGameManagerStartMatchmaking, 22, matchmakingRequest("1"))
 	r.expect("queue again", "In queue · PvP", "In a party", 3, queued)
@@ -154,10 +154,10 @@ func TestTrackerFlow(t *testing.T) {
 	r.notify(blaze.ComponentGameManager, blaze.NotifyGameStateChangeID, blaze.GameStateChangeNotification(5, blaze.GameStatePostGame))
 	r.expect("post-game", "Post-game · PvP", "In a party", 3, time.Time{})
 	r.notify(blaze.ComponentGameManager, blaze.NotifyPlayerRemovedID, blaze.PlayerRemovedNotification(5, ownID, blaze.RemovedGameEnded))
-	r.expect("removed", "In the menu", "In a party", 3, time.Time{})
+	r.expect("removed", "In the lobby · PvP", "In a party", 3, time.Time{})
 
 	r.notify(blaze.ComponentPlaygroups, blaze.NotifyMemberRemovedFromPlaygroupID, blaze.MemberRemovedFromPlaygroupNotification(7, thirdID, 0))
-	r.expect("a member left", "In the menu", "In a party", 2, time.Time{})
+	r.expect("a member left", "In the lobby · PvP", "In a party", 2, time.Time{})
 	r.game(blaze.ComponentPlaygroups, blaze.CmdPlaygroupsLeavePlaygroup, 30, tdf.NewWriter().Int("PGID", 7).Bytes())
 	r.expect("left the party", "In the menu", "", 0, time.Time{})
 
@@ -214,7 +214,7 @@ func TestTrackerQueueEnds(t *testing.T) {
 	r.expect("guest queued", "In queue · PvP", "In a party", 2, r.clock)
 	r.notify(blaze.ComponentPlaygroups, blaze.NotifyPlaygroupAttributesSetID,
 		blaze.PlaygroupAttributesSetNotification(4, []tdf.Pair{tdf.KV("MatchmakingStatus", "0|4|1F4")}))
-	r.expect("guest out", "In the menu", "In a party", 2, time.Time{})
+	r.expect("guest out", "In the lobby · PvP", "In a party", 2, time.Time{})
 	r.notify(blaze.ComponentPlaygroups, blaze.NotifyDestroyPlaygroupID, blaze.DestroyPlaygroupNotification(4, 0))
 	r.expect("destroyed", "In the menu", "", 0, time.Time{})
 }
@@ -241,7 +241,7 @@ func TestTrackerMalformed(t *testing.T) {
 		r.game(blaze.ComponentPlaygroups, blaze.CmdPlaygroupsLeavePlaygroup, 1, p)
 	}
 	r.unchanged("malformed", n)
-	if a := r.tr.Activity(); a.Details != "In the menu" || a.PartySize != 1 {
+	if a := r.tr.Activity(); a.Details != "In the lobby · PvP" || a.PartySize != 1 {
 		t.Errorf("after the malformed frames: %s", a)
 	}
 	// a nil tracker (the status off) takes every hook

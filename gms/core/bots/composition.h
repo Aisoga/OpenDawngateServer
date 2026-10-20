@@ -6,10 +6,14 @@
 // (mRole): 0 Gladiator ("Carry"), 1 Tactician ("Support"), 2 Hunter ("Jungler"), 3 Predator ("Roamer") [data].
 //
 // BotClass assets with an AIDefinition (AssetData BotClass.json; the others, e.g. PC_Alpha, have none and idle):
-//   Gladiator  PC_HighHuntress (carry ranged), PC_Creature (carry ranged)
+//   Gladiator  PC_HighHuntress (carry ranged), PC_Creature (carry ranged); MIKELLABOT: our profile
+//              PC_MerchantPrincess_Gladiator (Mikella on the High Huntress's AI), only by [host] bot_gladiators
 //   Tactician  PC_Guardian (tank melee), PC_Artist (support ranged), PC_TidalQueen (mage ranged), PC_Sculptor
-//              (support melee), PC_Warden (bruiser melee)
-//   Hunter     PC_Artificer (bruiser melee)
+//              (support melee), PC_Warden (bruiser melee); DESECBOT: our profile PC_Desecrator_Tactician (Desecrator,
+//              tank melee, on the Guardian's AI: profiles.h), in the draw when the copy has it ([host] bot_tacticians)
+//   Hunter     PC_Artificer (bruiser melee); HUNTERBOT: our profiles PC_Golem_Hunter (Faris) and PC_Survivor_Hunter
+//              (Freia) on his AI (profiles.h), drawn per match (DrawHunters, [host] bot_hunters); MOYABOT:
+//              PC_Otter_Hunter (Moya), in "all" and a list naming her, not yet in the default draw
 //   Predator   none shipped. BOTPROFILE: our profile PC_Warden_Predator (profiles.h: PC_Warden's BotClass, AI
 //              warden_Tactician, a bruiser with a Well plan and a Harass phase, with role Predator) when the copy has
 //              it; else PC_Warden's own with the player's mRole set to 3 after LabsPlayer_ReflectBotData [assumed: the
@@ -75,12 +79,170 @@ inline std::vector<ClassChoice> ClassPreference(int role) {
   switch (role) {
     case kRoleGladiator: return {{"PC_HighHuntress", false}, {"PC_Creature", false}};
     case kRoleTactician:
-      return {{"PC_Guardian", false}, {"PC_Artist", false}, {"PC_TidalQueen", false}, {"PC_Sculptor", false},
-              {"PC_Warden", false}};
+      return {{"PC_Guardian", false},  {"PC_Artist", false}, {"PC_TidalQueen", false},
+              {"PC_Sculptor", false},  {"PC_Warden", false}, {"PC_Desecrator_Tactician", false}};
     case kRoleHunter: return {{"PC_Artificer", false}};
     case kRolePredator: return {{"PC_Warden_Predator", false}, {"PC_Warden", true}};
   }
   return {};
+}
+
+// HUNTERBOT: the classes the Hunter seat draws from: Petrus's own and the profiles on his AI (profiles.h; MOYABOT:
+// Moya's, PC_Otter_Hunter).
+inline const std::vector<std::string>& HunterClasses() {
+  static const std::vector<std::string> k = {"PC_Artificer", "PC_Golem_Hunter", "PC_Survivor_Hunter",
+                                             "PC_Otter_Hunter"};
+  return k;
+}
+
+// The default draw: Petrus and Freia. Faris (PC_Golem_Hunter) stays out until his camp clear works: at level 1 he
+// can't kill the Ugger camp his route starts with and fell 6-11 levels behind in the live matches; "all" or a list
+// naming him brings him in. MOYABOT: Moya (PC_Otter_Hunter) likewise until a live match shows her clear.
+inline const std::vector<std::string>& DefaultHunters() {
+  static const std::vector<std::string> k = {"PC_Artificer", "PC_Survivor_Hunter"};
+  return k;
+}
+
+// [host] bot_hunters: "" or "default" = DefaultHunters(); "all" = every Hunter class (HunterClasses' order); else a
+// comma list in the listed order, each a class or profile name, a shaper's name or its noun's (artificer/petrus,
+// golem/faris, survivor/freia, otter/moya; any case); "0", "off" and "none" = PC_Artificer alone (the old single Hunter). Unknown
+// names are ignored; nothing left = PC_Artificer.
+inline std::vector<std::string> ParseHunterList(const std::string& text) {
+  auto lower = [](std::string s) {
+    for (char& c : s) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+    return s;
+  };
+  const std::string all = lower(text);
+  if (all.empty() || all == "default" || all == "1") return DefaultHunters();
+  if (all == "all") return HunterClasses();
+  std::vector<std::string> out;
+  size_t pos = 0;
+  while (pos <= all.size()) {
+    size_t comma = all.find(',', pos);
+    if (comma == std::string::npos) comma = all.size();
+    std::string w = all.substr(pos, comma - pos);
+    while (!w.empty() && w.front() == ' ') w.erase(w.begin());
+    while (!w.empty() && w.back() == ' ') w.pop_back();
+    pos = comma + 1;
+    std::string cls;
+    if (w == "artificer" || w == "petrus" || w == "pretus" || w == "pc_artificer" || w == "0" || w == "off" ||
+        w == "none")
+      cls = "PC_Artificer";
+    else if (w == "golem" || w == "faris" || w == "pc_golem" || w == "pc_golem_hunter")
+      cls = "PC_Golem_Hunter";
+    else if (w == "survivor" || w == "freia" || w == "pc_survivor" || w == "pc_survivor_hunter")
+      cls = "PC_Survivor_Hunter";
+    else if (w == "otter" || w == "moya" || w == "pc_otter" || w == "pc_otter_hunter")  // MOYABOT
+      cls = "PC_Otter_Hunter";
+    if (!cls.empty() && std::find(out.begin(), out.end(), cls) == out.end()) out.push_back(cls);
+  }
+  if (out.empty()) out.push_back("PC_Artificer");
+  return out;
+}
+
+// The class of one seat for each of `teams` teams (index = the team's place in the plan), from `wanted` as far as
+// `available` has them, team i taking entry i mod n: seed 0 in the listed order (reproducible: team 1 the first, team
+// 2 the second; a list of one pins it for both), else shuffled once per match with the seat's own `salt` (the other
+// draws stay unchanged). So the two teams of a match get different classes whenever two are available. "" = none.
+inline std::vector<std::string> DrawPerTeam(const std::vector<std::string>& wanted, const std::set<std::string>& available,
+                                            unsigned seed, int teams, unsigned salt) {
+  std::vector<std::string> have;
+  for (const std::string& c : wanted)
+    if (available.count(c)) have.push_back(c);
+  std::vector<std::string> out(static_cast<size_t>(teams > 0 ? teams : 0));
+  if (have.empty()) return out;
+  if (seed != 0) {
+    std::mt19937 rng(seed ^ salt);
+    std::shuffle(have.begin(), have.end(), rng);
+  }
+  for (size_t i = 0; i < out.size(); ++i) out[i] = have[i % have.size()];
+  return out;
+}
+
+// The Hunter class of each team, from `wanted` (ParseHunterList); "" = none available (the seat takes PC_Artificer's
+// path).
+inline std::vector<std::string> DrawHunters(const std::vector<std::string>& wanted, const std::set<std::string>& available,
+                                            unsigned seed, int teams) {
+  return DrawPerTeam(wanted, available, seed, teams, 0x48554E54u);  // "HUNT"
+}
+
+// DESECBOT: the classes with the Tactician AI the flex seats draw from (BOTVARY), the composition's Tactician list.
+inline std::vector<std::string> TacticianClasses() {
+  std::vector<std::string> out;
+  for (const ClassChoice& c : ClassPreference(kRoleTactician)) out.push_back(c.botClass);
+  return out;
+}
+
+// [host] bot_tacticians: "" or "default" = no pin (the draw as it is); else a comma list in the listed order, each a
+// class or profile name or a shaper's noun name (guardian, artist, tidalqueen, sculptor, warden, desecrator; any case),
+// pinning each team's first Tactician seat (the top lane's, beside Gladiator 1): team i takes entry i mod n (DrawPerTeam).
+// Unknown names are ignored; nothing left = no pin.
+inline std::vector<std::string> ParseTacticianList(const std::string& text) {
+  auto lower = [](std::string s) {
+    for (char& c : s) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+    return s;
+  };
+  const std::string all = lower(text);
+  std::vector<std::string> out;
+  if (all.empty() || all == "default") return out;
+  const std::vector<std::string> classes = TacticianClasses();
+  size_t pos = 0;
+  while (pos <= all.size()) {
+    size_t comma = all.find(',', pos);
+    if (comma == std::string::npos) comma = all.size();
+    std::string w = all.substr(pos, comma - pos);
+    while (!w.empty() && w.front() == ' ') w.erase(w.begin());
+    while (!w.empty() && w.back() == ' ') w.pop_back();
+    pos = comma + 1;
+    for (const std::string& c : classes) {
+      const std::string base = lower(BaseClass(c));  // "pc_desecrator"
+      if (w == lower(c) || w == base || "pc_" + w == base) {
+        if (std::find(out.begin(), out.end(), c) == out.end()) out.push_back(c);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+// MIKELLABOT: the classes a Gladiator seat may be pinned to: the two shipped Gladiator AIs and our profile on the High
+// Huntress's (profiles.h). The draw itself stays the two shipped ones (BOTVARY); the profile comes only by the pin.
+inline std::vector<std::string> GladiatorClasses() {
+  return {"PC_HighHuntress", "PC_Creature", "PC_MerchantPrincess_Gladiator"};
+}
+
+// [host] bot_gladiators: "" or "default" = no pin; else a comma list in the listed order, each a class or profile name
+// or a shaper's noun or name (highhuntress/nissa, creature/vex, merchantprincess/merchant_princess/mikella; any case),
+// pinning each team's first Gladiator seat (the top lane's in the fixed setup and the free draw): team i takes entry
+// i mod n (DrawPerTeam). Unknown names are ignored; nothing left = no pin.
+inline std::vector<std::string> ParseGladiatorList(const std::string& text) {
+  auto lower = [](std::string s) {
+    for (char& c : s) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+    return s;
+  };
+  const std::string all = lower(text);
+  std::vector<std::string> out;
+  if (all.empty() || all == "default") return out;
+  size_t pos = 0;
+  while (pos <= all.size()) {
+    size_t comma = all.find(',', pos);
+    if (comma == std::string::npos) comma = all.size();
+    std::string w = all.substr(pos, comma - pos);
+    while (!w.empty() && w.front() == ' ') w.erase(w.begin());
+    while (!w.empty() && w.back() == ' ') w.pop_back();
+    pos = comma + 1;
+    if (w == "nissa") w = "highhuntress";
+    else if (w == "vex") w = "creature";
+    else if (w == "mikella" || w == "merchant_princess") w = "merchantprincess";
+    for (const std::string& c : GladiatorClasses()) {
+      const std::string base = lower(BaseClass(c));  // "pc_merchantprincess"
+      if (w == lower(c) || w == base || "pc_" + w == base) {
+        if (std::find(out.begin(), out.end(), c) == out.end()) out.push_back(c);
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 // The roles (bit per role) a BotClass may play besides its seat's, when the human teammates fill the seat's role: the
@@ -152,8 +314,11 @@ inline std::vector<WantedSeat> WantedSeats(int botSeats, const std::vector<int>&
 // `anyClass` (fallback = true), or stays empty. Output order = wanted order.
 // `seed` != 0 shuffles each role's preference list first (varied teams from game to game: which Gladiator takes the top
 // lane, which Tactician comes); 0 keeps the fixed order.
+// HUNTERBOT: `hunterClass` (DrawHunters' entry for this team) is the Hunter seat's first choice, PC_Artificer its
+// fallback. DESECBOT: `tacticianClass` (a [host] bot_tacticians pin) is the first Tactician seat's first choice.
 inline std::vector<ComposedSeat> ComposeTeam(const std::vector<WantedSeat>& wanted, const std::set<std::string>& available,
-                                             const std::vector<std::string>& anyClass, unsigned seed = 0) {
+                                             const std::vector<std::string>& anyClass, unsigned seed = 0,
+                                             const std::string& hunterClass = "", const std::string& tacticianClass = "") {
   std::mt19937 rng(seed);
   std::vector<ComposedSeat> out(wanted.size());
   std::set<std::string> used;
@@ -161,13 +326,24 @@ inline std::vector<ComposedSeat> ComposeTeam(const std::vector<WantedSeat>& want
     out[i].role = wanted[i].role;
     out[i].lane = wanted[i].lane;
   }
+  bool tacticianPinned = false;
   for (int role : {kRolePredator, kRoleHunter, kRoleGladiator, kRoleTactician}) {
     for (size_t i = 0; i < wanted.size(); ++i) {
       if (wanted[i].role != role) continue;
       std::vector<ClassChoice> prefs = ClassPreference(role);
       if (seed != 0) std::shuffle(prefs.begin(), prefs.end(), rng);
-      // a profile before its base class: the class that says the seat's role itself
-      std::stable_partition(prefs.begin(), prefs.end(), [](const ClassChoice& c) { return IsProfile(c.botClass); });
+      if (role == kRoleHunter && !hunterClass.empty()) prefs.insert(prefs.begin(), ClassChoice{hunterClass, false});
+      // a profile before its base class: the class that says the seat's role itself (a profile whose base class
+      // isn't in the list, e.g. the Desecrator's, keeps its place)
+      std::set<std::string> listed;
+      for (const ClassChoice& c : prefs) listed.insert(c.botClass);
+      std::stable_partition(prefs.begin(), prefs.end(), [&listed](const ClassChoice& c) {
+        return IsProfile(c.botClass) && listed.count(BaseClass(c.botClass)) != 0;
+      });
+      if (role == kRoleTactician && !tacticianClass.empty() && !tacticianPinned) {
+        prefs.insert(prefs.begin(), ClassChoice{tacticianClass, false});
+        tacticianPinned = true;
+      }
       for (const ClassChoice& c : prefs) {
         if (available.count(c.botClass) && !used.count(BaseClass(c.botClass))) {
           out[i].botClass = c.botClass;
@@ -193,21 +369,30 @@ inline std::vector<ComposedSeat> ComposeTeam(const std::vector<WantedSeat>& want
 
 // BOTVARY (free draw, seed != 0): every team gets exactly 2 Gladiators (both Gladiator classes, one per lane), 1 Hunter
 // (PC_Artificer) and 2 flex seats, each a Tactician or a Predator (the user's rule, 2026-10-11): the flex seats draw two
-// distinct classes of the 5 with the Tactician AI (Guardian, Artist, TidalQueen, Sculptor, Warden); PC_Warden is the
-// Predator (its PC_Warden_Predator profile when available, else mRole 3 on its own Tactician class) or, by a coin
-// flip, a Tactician, so a team has 0 or 1 Predator. Lanes as the
+// distinct classes of those with a Tactician AI (Guardian, Artist, TidalQueen, Sculptor, Warden, Desecrator);
+// PC_Warden is the Predator (its PC_Warden_Predator profile when available, else mRole 3 on its own Tactician class)
+// or, by a coin flip, a Tactician, so a team has 0 or 1 Predator. Lanes as the
 // default setup: Gladiator + flex on top, Gladiator + flex + Hunter at the bottom (the Hunter's lane only matters until it
 // leaves for the camps); which Gladiator takes the top lane is drawn. A human of known role (`humanRoles`, the team's
 // humans' mRole, -1 unknown) takes that role's seat; with still fewer seats the flex seats go first, then the Hunter,
 // then the second Gladiator. Output order = top Gladiator, top flex, bottom Gladiator, bottom flex, Hunter.
+// DESECBOT: the flex classes are TacticianClasses() (the five above and PC_Desecrator_Tactician, as far as the copy
+// has it); `tacticianClass` (a [host] bot_tacticians pin) takes the first flex seat as a Tactician.
 inline std::vector<ComposedSeat> ComposeTeamFree(int seats, const std::set<std::string>& available, unsigned seed,
-                                                 const std::vector<int>& humanRoles = {}) {
+                                                 const std::vector<int>& humanRoles = {},
+                                                 const std::string& hunterClass = "",
+                                                 const std::string& tacticianClass = "") {
   std::mt19937 rng(seed);
   std::vector<std::string> glad = {"PC_HighHuntress", "PC_Creature"};
-  std::vector<std::string> flex = {"PC_Guardian", "PC_Artist", "PC_TidalQueen", "PC_Sculptor", "PC_Warden"};
+  std::vector<std::string> flex = TacticianClasses();
   std::shuffle(glad.begin(), glad.end(), rng);
   std::shuffle(flex.begin(), flex.end(), rng);
   auto have = [&](const std::string& c) { return available.count(c) != 0; };
+  if (!tacticianClass.empty() && have(tacticianClass)) {
+    flex.erase(std::remove(flex.begin(), flex.end(), tacticianClass), flex.end());
+    flex.insert(flex.begin(), tacticianClass);
+  }
+  const std::string pinned = !tacticianClass.empty() && have(tacticianClass) ? tacticianClass : "";
   auto seat = [&](const std::string& cls, int role, int lane) {
     ComposedSeat s;
     s.botClass = cls;
@@ -222,7 +407,7 @@ inline std::vector<ComposedSeat> ComposeTeamFree(int seats, const std::set<std::
     if (f.size() >= 2) break;
     if (!have(c)) continue;
     ComposedSeat s = seat(c, kRoleTactician, f.empty() ? kLaneTop : kLaneBottom);
-    if (c == "PC_Warden" && (rng() & 1u)) {
+    if (c == "PC_Warden" && c != pinned && (rng() & 1u)) {
       s.role = kRolePredator;
       const std::string profile = ProfileFor(c, kRolePredator);
       if (!profile.empty() && have(profile)) s.botClass = profile;  // BOTPROFILE: the class itself says Predator
@@ -230,7 +415,8 @@ inline std::vector<ComposedSeat> ComposeTeamFree(int seats, const std::set<std::
     }
     f.push_back(s);
   }
-  if (have("PC_Artificer")) h.push_back(seat("PC_Artificer", kRoleHunter, kLaneBottom));
+  if (!hunterClass.empty() && have(hunterClass)) h.push_back(seat(hunterClass, kRoleHunter, kLaneBottom));  // HUNTERBOT
+  else if (have("PC_Artificer")) h.push_back(seat("PC_Artificer", kRoleHunter, kLaneBottom));
   // BOTTEAM: a human of known role takes that role's seat (a human Hunter: no bot Hunter; a human Gladiator: the bottom
   // Gladiator's seat; a human Tactician or Predator: a flex seat), as WantedSeats does for the fixed setup
   for (int role : humanRoles) {
@@ -256,6 +442,44 @@ inline std::vector<ComposedSeat> ComposeTeamFree(int seats, const std::set<std::
   add(g, 0); add(f, 0); add(g, 1); add(f, 1); add(h, 0);
   if (static_cast<int>(out.size()) > seats) out.resize(static_cast<size_t>(seats));
   return out;
+}
+
+// The BotClass names the host looks up in the copy's catalog before it composes the teams (gms/engine/bots.cpp): every
+// role list, the Hunter and Gladiator classes and every profile of profiles.h, each once. A class missing here is never
+// "available", so a pin or draw of it finds nothing (MIKELLABOT's first live run: the Gladiator pin said "(missing)").
+inline std::vector<std::string> CatalogCandidates() {
+  std::vector<std::string> out;
+  auto add = [&out](const std::string& n) {
+    if (std::find(out.begin(), out.end(), n) == out.end()) out.push_back(n);
+  };
+  for (int role = 0; role < 4; ++role)
+    for (const ClassChoice& c : ClassPreference(role)) add(c.botClass);
+  for (const std::string& h : HunterClasses()) add(h);
+  for (const std::string& g : GladiatorClasses()) add(g);
+  for (const Profile& p : Profiles()) add(p.name);
+  return out;
+}
+
+// MIKELLABOT: a team's first Gladiator seat takes `gladiatorClass` (a [host] bot_gladiators pin; "" or a class the copy
+// lacks: unchanged). A team seat that already holds the same shaper gets the replaced class instead (one shaper per
+// team). True when the pin changed a seat.
+inline bool PinGladiator(std::vector<ComposedSeat>& seats, const std::string& gladiatorClass,
+                         const std::set<std::string>& available) {
+  if (gladiatorClass.empty() || !available.count(gladiatorClass)) return false;
+  auto first = std::find_if(seats.begin(), seats.end(), [](const ComposedSeat& s) {
+    return s.role == kRoleGladiator && !s.botClass.empty();
+  });
+  if (first == seats.end() || first->botClass == gladiatorClass) return false;
+  const std::string old = first->botClass;
+  for (ComposedSeat& s : seats)
+    if (&s != &*first && !s.botClass.empty() && BaseClass(s.botClass) == BaseClass(gladiatorClass)) {
+      s.botClass = old;
+      s.roleOverride = false;
+    }
+  first->botClass = gladiatorClass;
+  first->roleOverride = false;
+  first->fallback = false;
+  return true;
 }
 
 }  // namespace gms::bots

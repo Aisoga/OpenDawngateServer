@@ -55,6 +55,9 @@ struct Options {
   int shapeWaves = 2;            // D1k: trace the first N waves of every spawner
   double shapeForS = 40.0;       // D1k: for N s after the wave's first minion
   bool campMajorSpot = true;     // D14: a buff camp's major on its scale-2.0 marker (gms::flow::AssignCampSpots)
+  // NULLPOS: the parasite spawns this far along y from its creature marker when the marker is the map's origin, so
+  // nothing living stands on (0, 0), the bots' null position ([host] parasite_offset_y; 0 = on the marker)
+  float parasiteOffsetY = -1.f;
   int campIcons = 3;             // PARAMAP: the camps' minimap icons (gms::flow::CampIconBits): 0 off (the director's
                                  // NPC bit), 1 the parasite's camp while the parasite is alive and born, 2 every camp
                                  // while a member lives [assumed]; CAMPICONS: 3 the jungle camps by each team's
@@ -108,8 +111,12 @@ struct CampView {
   bool alive = false;            // spawned and not cleared
   double respawnAt = -1.0;       // the next spawn while cleared (< 0: none)
   double knownRespawnAt[2] = {-1.0, -1.0};  // team 1, team 2 (< 0: unknown)
+  int spawns = 0;                // HUNTERROUTE: spawns so far (0: not up yet)
 };
 std::vector<CampView> CampViews();
+
+// HUNTERROUTE: the match seconds of the director's last tick (the camps' clock).
+double MatchNow();
 
 // When the first wave is due (match seconds; < 0 = no waves).
 double FirstWaveTime();
@@ -151,7 +158,9 @@ bool LaneKnots(int laneId, int team, std::vector<float>* xyz);
 
 // D6e: the nearest creep camp (not the parasite's) with a living creature, by its marker position; false when
 // every camp is empty (cleared, waiting for the respawn, or not spawned yet). Backs nDirector.GetClosestCampPosition.
-bool ClosestCampPosition(float x, float y, float* out);
+// HUNTERBOT: with `team` (1, 2) and a penalty, a camp on that team's enemy half costs the penalty more
+// (gms/core/bots/jungle.h CampRouteCost).
+bool ClosestCampPosition(float x, float y, float* out, int team = 0, float enemySidePenalty = 0.f);
 
 // The server level's LevelGameplayTuning (Level +0x614, read at OnLevelStarted; the defaults are SM_Map_v5's values).
 struct Tuning {
@@ -165,6 +174,25 @@ const Tuning& LevelTuning();
 
 // The object id that came from a marker (object +0x84), 0 if none (scanned at OnLevelStarted).
 std::uint32_t ObjectOfMarker(std::uint32_t marker);
+
+// CAMPFINISH: the jungle camp (not the parasite's) with a living member nearest (x, y) within `radius`: its index and
+// name, each listed member's id and HP (dead ones 0; at most kMembers), and the living members' count, HP and max HP.
+struct CampFight {
+  static constexpr int kMembers = 8;
+  int camp = -1;
+  const char* name = "";
+  int count = 0;
+  std::uint32_t ids[kMembers] = {};
+  float hps[kMembers] = {};
+  int alive = 0;
+  float hp = 0.f, maxHp = 0.f;
+  float fullHp = 0.f;   // the most max HP its living members had together (the camp's full HP while it lives)
+  float nearest = 0.f;  // the nearest living member's distance
+  float nearestPos[3] = {};  // ... and its position (CAMPFINISH round 3: the camp's last creature for the camp conditions)
+};
+bool CampFightNear(float x, float y, float radius, CampFight* out);
+// CAMPFINISH: the living members of camp `camp` (CampFight::camp); -1 for no such camp.
+int CampAlive(int camp);
 
 void FormatStats(char* buf, std::size_t size);
 

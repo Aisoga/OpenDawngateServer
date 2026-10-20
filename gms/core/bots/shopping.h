@@ -22,6 +22,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <utility>
@@ -92,12 +93,15 @@ class ShopPlanner {
  public:
   ShopPlanner(const ItemCatalog* catalog, std::vector<std::uint32_t> build) : catalog_(catalog), build_(std::move(build)) {}
 
-  // The next step of the build (false when the build is done, blocked by full slots, or unknown items).
-  bool Next(const Inventory& inv, Purchase* out) const {
-    for (std::uint32_t item : build_) {
+  // The next step of the build (false when the build is done, blocked by full slots, or unknown items); `index` (if
+  // given) gets the build position of the item the step serves (DESECBOT-2: guidebuild.h maps it to its entry).
+  bool Next(const Inventory& inv, Purchase* out, int* index = nullptr) const {
+    for (std::size_t i = 0; i < build_.size(); ++i) {
+      const std::uint32_t item = build_[i];
       const ItemDef* d = catalog_->Find(item);
       if (!d || d->consumable) continue;
       if (Done(inv, item)) continue;
+      if (index) *index = static_cast<int>(i);
       return Step(inv, item, out, 0);
     }
     return false;

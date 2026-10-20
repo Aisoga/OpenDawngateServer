@@ -18,6 +18,9 @@
 //     ends an agent ability (instance type 0) before its Tick finished: the behavior tree's aborts, the command queue,
 //     the MarkForDelete bindings, an event function, the host's death path or end pass (the "stats abilities" line
 //     counts them by cause). A projectile's "ability has already been destroyed" assert follows such an end.
+//   - DISCIPLINE: the end pass also charges a running agent ability's upkeep (cStaticAbility +0x340 by rank, every
+//     +0x360 seconds) from its agent's resource and ends the ability when a tick finds less than the cost; nothing
+//     else in the client spends it (Raina's W, ability_Guardian_W_ConeShield, drains 12.5 Discipline a second).
 // All functions run on the game's main thread; the tick functions with our simulator bound.
 #pragma once
 
@@ -30,6 +33,8 @@ struct AbilityTickOptions {
   int holdRunning = 1;    // D10: hold an instance "in use" (+0x230) while its Tick thread is resumed (see abilities.cpp)
   int endTrace = 1;       // D6c: detour EndAbility/InterruptAbility and log who ends an agent ability before its Tick did
   int luaContext = 1;     // D12: detour GearsLua_CallFunction and track the resumed Tick (AbilityLuaContext)
+  int upkeep = 1;         // DISCIPLINE: a running agent ability pays its upkeepResourcePointCost every tick rate, and
+                          // ends when it can't (Raina's W; see abilities.cpp, gms/core/damage/upkeep.h)
 };
 
 // Installs both detours (DllMain time, before the level loads). Returns false if a prologue differs.

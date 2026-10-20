@@ -49,6 +49,7 @@
 #include "host/headless.h"
 #include "host/host.h"
 #include "host/watchdog.h"
+#include "hunterroute.h"
 #include "log.h"
 #include "match.h"
 #include "passives.h"
@@ -718,6 +719,14 @@ void Stats(unsigned now, bool histo) {
     if (agents::FormatNpcStats(ag, sizeof ag)) Log("stats npc: %s", ag);          // NPCTARGET
     if (agents::FormatLeashStats(ag, sizeof ag)) Log("stats leash: %s", ag);      // LEASH
     if (agents::FormatTowerStats(ag, sizeof ag)) Log("stats towers: %s", ag);     // TOWERAGGRO
+    if (agents::FormatHunterStats(ag, sizeof ag)) Log("stats hunters: %s", ag);   // HUNTERBOT
+    if (hunterroute::FormatStats(ag, sizeof ag)) Log("stats hunterroute: %s", ag);  // HUNTERROUTE
+    if (agents::FormatCampFinishStats(ag, sizeof ag)) Log("stats campfinish: %s", ag);  // CAMPFINISH
+    if (agents::FormatDesecStats(ag, sizeof ag)) Log("stats desecrator: %s", ag);  // DESECBOT-3
+    if (agents::FormatMikellaStats(ag, sizeof ag)) Log("stats mikella: %s", ag);    // MIKELLABOT
+    if (agents::FormatLostStats(ag, sizeof ag)) Log("stats lost: %s", ag);         // BACKTOACTION
+    if (agents::FormatNullPosStats(ag, sizeof ag)) Log("stats nullpos: %s", ag);   // NULLPOS
+    if (agents::FormatKillFinishStats(ag, sizeof ag)) Log("stats killfinish: %s", ag);  // KILLFINISH
   }
   if (g_damage && histo) {
     char dm[640];
@@ -942,11 +951,30 @@ void ReadConfig() {
     ao.botReflex = HostOptionInt("bot_reflex", 1) != 0 && HostOptionInt("bot_fixups", 1) != 0;  // BOTREFLEX
     ao.botJungleFight = HostOptionInt("bot_jungle_fight", 1) != 0;  // PRETUSBOT
     ao.botWellDefense = HostOptionInt("bot_well_defense", 1) != 0;  // WELLDEF
+    ao.botKits = HostOptionInt("bot_kits", 1) != 0;                 // HUNTERBOT
+    ao.botHunterUlt = HostOptionInt("bot_hunter_ult", 1) != 0 && ao.botReflex;  // HUNTERBOT
+    ao.botDesecKit = HostOptionInt("bot_desec_kit", 1) != 0 && ao.botReflex && ao.botKits;  // DESECBOT-3
+    ao.botMikellaKit = HostOptionInt("bot_mikella_kit", 1) != 0 && ao.botKits;               // MIKELLABOT
+    ao.botHunterIdleMs = HostOptionInt("bot_hunter_idle_ms", ao.botHunterIdleMs);  // HUNTERBOT
+    if (ao.botHunterIdleMs < 0) ao.botHunterIdleMs = 0;
+    ao.botCampFinish = HostOptionInt("bot_camp_finish", 1) != 0;  // CAMPFINISH
+    ao.campFinishLogLimit = HostOptionInt("camp_finish_log_limit", ao.campFinishLogLimit);
     ao.botRecall = HostOptionInt("bot_recall", 1) != 0;  // BOTRECALL
     ao.botHoldStuckMs = HostOptionInt("bot_hold_stuck_ms", ao.botHoldStuckMs);  // BOTTEMPO
     if (ao.botHoldStuckMs < 0) ao.botHoldStuckMs = 0;
     ao.botStaleTarget = HostOptionInt("bot_stale_target", 1) != 0;  // BOTTEMPO
+    ao.botPointFollowFix = HostOptionInt("bot_point_follow_fix", 1) != 0;  // BACKTOACTION
+    ao.botLostMs = HostOptionInt("bot_lost_ms", ao.botLostMs);             // BACKTOACTION
+    if (ao.botLostMs < 0) ao.botLostMs = 0;
+    ao.botNullPosStrict = HostOptionInt("bot_nullpos_strict", 0) != 0;     // NULLPOS
+    ao.testNullPosFollowS = HostOptionInt("test_nullpos_follow", 0);       // NULLPOS: the forced case (test aid)
     ao.botBackStep = HostOptionInt("bot_back_step", 1) != 0 && ao.botReflex;  // BOTBACK
+    ao.botKillFinish = HostOptionInt("bot_kill_finish", 1) != 0 && ao.botReflex;  // KILLFINISH
+    ao.botPlanChain = HostOptionInt("bot_plan_chain", 1) != 0 && HostOptionInt("bot_fixups", 1) != 0;  // BOTCYCLE
+    ao.botPlanDwellMs = HostOptionInt("bot_fixups", 1) != 0 ? HostOptionInt("bot_plan_dwell_ms", ao.botPlanDwellMs) : 0;
+    if (ao.botPlanDwellMs < 0) ao.botPlanDwellMs = 0;
+    ao.botEngageBlockMs = HostOptionInt("bot_engage_block_ms", ao.botEngageBlockMs);  // BOTCYCLE
+    if (ao.botEngageBlockMs < 0) ao.botEngageBlockMs = 0;
     ao.npcConditionTarget = HostOptionInt("npc_condition_target", 1) != 0;    // NPCTARGET
     ao.npcLazyConditions = HostOptionInt("npc_lazy_conditions", 1) != 0;      // NPCTARGET
     ao.npcRangeFallthrough = HostOptionInt("npc_range_fallthrough", 1) != 0;  // NPCTARGET
@@ -973,16 +1001,30 @@ void ReadConfig() {
     ao.towerTarget.enabled = HostOptionInt("tower_target", 1) != 0;          // TOWERAGGRO
     ao.towerLogLimit = HostOptionInt("tower_log_limit", ao.towerLogLimit);
     // LEASH: jungle creatures and well workers (gms/core/agents/leash.h)
-    ao.creepLeash.ownLimit = static_cast<float>(HostOptionInt("creep_leash", 15));
+    // CAMPFINISH round 3 (the user: players found the leash "a bit strong"): the engine's own tether for a jungle
+    // creature is 22 around its spot, tested on the target (AgentBlackboard_GetTetherCircle 0x008AAB10, type 3 without
+    // the footprint), so the target leash is 18 + 4 = 22 (LEASH: 15 + 4), the chase clock runs from 10 out (6) and
+    // lasts 5 s for creeps (3) [assumed]
+    ao.creepLeash.ownLimit = static_cast<float>(HostOptionInt("creep_leash", 18));
     ao.creepLeash.enabled = ao.creepLeash.ownLimit > 0.f;
     ao.creepLeash.targetMargin = static_cast<float>(HostOptionInt("creep_leash_reach", 4));
-    ao.creepLeash.homeRadius = static_cast<float>(HostOptionInt("creep_leash_home", 6));
+    ao.creepLeash.homeRadius = static_cast<float>(HostOptionInt("creep_leash_home", 10));
     ao.workerLeash.ownLimit = static_cast<float>(HostOptionInt("worker_leash", 2));
     ao.workerLeash.enabled = ao.workerLeash.ownLimit > 0.f;
     ao.workerLeash.targetMargin = static_cast<float>(HostOptionInt("worker_leash_reach", 2));
-    ao.creepLeash.chaseMs = ao.workerLeash.chaseMs = HostOptionInt("leash_chase_ms", 3000);
+    const int chaseMs = HostOptionInt("leash_chase_ms", -1);  // both, when given (the workers' default 3000)
+    ao.workerLeash.chaseMs = chaseMs >= 0 ? chaseMs : 3000;
+    ao.creepLeash.chaseMs = HostOptionInt("creep_leash_chase_ms", chaseMs >= 0 ? chaseMs : 5000);
     ao.creepLeash.ignoreMs = ao.workerLeash.ignoreMs = HostOptionInt("leash_ignore_ms", 2000);
     ao.leashLogLimit = HostOptionInt("leash_log_limit", ao.leashLogLimit);
+    {  // HUNTERROUTE: the Hunters' opening route, Vanquish rule and the first buff's pull (bot_hunter_route=0: all off)
+      hunterroute::Options ho;
+      ho.route = HostOptionInt("bot_hunter_route", 1) != 0;
+      ho.vanquish = HostOptionInt("bot_hunter_vanquish", 1) != 0;
+      ho.pull = HostOptionInt("bot_hunter_pull", ho.pull);
+      ho.logLimit = HostOptionInt("hunter_route_log_limit", ho.logLimit);
+      hunterroute::Configure(ho);
+    }
     agents::Install(ao);
   } else {
     Log("agent step off (tick_agents / [host] agents = 0)");
@@ -1038,6 +1080,11 @@ void ReadConfig() {
     HostOptionString("wave_shape_for_s", "40", v, sizeof v);
     mo.director.shapeForS = std::atof(v);
     mo.director.campMajorSpot = HostOptionInt("camp_major_spot", 1) != 0;  // D14: a buff major on its scale-2.0 marker
+    {
+      char py[32];  // NULLPOS: the parasite off the map's origin
+      HostOptionString("parasite_offset_y", "-1", py, sizeof py);
+      mo.director.parasiteOffsetY = static_cast<float>(std::atof(py));
+    }
     mo.director.campIcons = HostOptionInt("camp_icons", 3);  // CAMPICONS: each team's knowledge (director::Configure reads it too)
     crowd::Options co;  // D1k: NavPower's constraint solver for the server space
     co.constraintSolver = HostOptionInt("navpower_constraint_solver", 1) != 0;
@@ -1122,6 +1169,7 @@ void Drive() {
         match::SetGameId(static_cast<unsigned long long>(game.gameId));
         if (game.descriptors) match::SetDescriptors(static_cast<std::uint32_t>(game.descriptors));  // D8-live
         if (game.fillTeams) bots::SetFillTeams(static_cast<int>(game.fillTeams));  // B10d: the open seats' bots
+        bots::SetGameMode(game.mode);  // BOTDRAFT: a custom game's bots draw after the humans
         Log("createGame: level %s, seed %u, game id %lld", g_cfg.level, g_cfg.seed, static_cast<long long>(game.gameId));
       }
       Log("phase 2: level %s", g_cfg.level);
@@ -1315,9 +1363,11 @@ void ExperimentInstall(const char* gameDir, unsigned long mainThreadId) {
     o.holdRunning = GetPrivateProfileIntA("dgsim", "ability_hold_running", o.holdRunning, g_ini);  // D10
     o.endTrace = GetPrivateProfileIntA("dgsim", "ability_end_trace", o.endTrace, g_ini);         // D6c
     o.luaContext = GetPrivateProfileIntA("dgsim", "lua_context", o.luaContext, g_ini);         // D12
+    o.upkeep = GetPrivateProfileIntA("dgsim", "ability_upkeep", o.upkeep, g_ini);              // DISCIPLINE
     if (HostGet().enabled) {  // D12: a host run may override these (DGGMS_OPTIONS)
       o.logLimit = HostOptionInt("ability_log_limit", o.logLimit);
       o.luaContext = HostOptionInt("lua_context", o.luaContext);
+      o.upkeep = HostOptionInt("ability_upkeep", o.upkeep);
     }
     g_abilityTick = AbilityTickInstall(o);
   } else {

@@ -12,6 +12,7 @@
 
 #include "agents.h"
 #include "core/matchflow/flow.h"
+#include "core/matchflow/guardcore.h"
 #include "crowd.h"
 #include "death.h"
 #include "game.h"
@@ -49,6 +50,7 @@ struct Guardian {
   std::string noun;
   std::uint32_t shield = 0;  // D14: its modifier_Tower_Immunity instance while a core of its team lives
   int livingCores = -1;      // D14: at the last shield step (logged on a change)
+  int coreMask = -1;         // GUARDCORE: bit i = Core A+i of its team alive (HP > 0); -1 before the first look
 };
 std::vector<Guardian> g_guardians;
 
@@ -65,6 +67,7 @@ struct Nub {
   std::uint32_t id = 0;
   std::string noun;
   int team = 0;
+  int core = -1;  // GUARDCORE: 0..4 for Core A..E (gms::flow::NubCoreIndex), -1 if the noun has no letter
 };
 std::vector<Nub> g_nubs;
 
@@ -80,6 +83,7 @@ struct Stats {
   unsigned baseMarked = 0, baseEmpty = 0;
   unsigned levelChecks = 0, levelUps = 0, exceptions = 0, towersDestroyed = 0, handlerCalls = 0, announcer = 0;
   unsigned shieldsOn = 0, shieldsOff = 0, shieldsRefused = 0;  // D14: the Guardian's shield
+  unsigned coresLost = 0, coresBack = 0;                         // GUARDCORE: Core deaths and resurrects seen
 } g_st;
 
 bool LogBudget() {
@@ -728,6 +732,41 @@ void UpdateGuardianShields(const char* why) {
   }
 }
 
+// GUARDCORE: which of its team's five Cores each Guardian has, and so which specials its scripts still allow
+// (gms/core/matchflow/guardcore.h). Only watched and logged: the gate itself is the game's scripts
+// (ability_BaseNub_Death's modifier_Guardian_Nub<X>_Destroyed, read by each special's condition). A change logs
+//   match: GUARDCORE <noun> <id> (team N): core <X> (<special>, <name>, <place>) destroyed|restored at match T s (t S s);
+//   cores A-CDE, specials <list>, special cooldown <n> s
+// (t = the server clock of the agents' `npc target:` lines). Every tick, also with [host] guardian_shield 0.
+void UpdateGuardianCores(const char* why) {
+  if (g_ended) return;
+  const double clockS = static_cast<double>(SehClockMs(g_sim)) / 1000.0;
+  for (Guardian& g : g_guardians) {
+    unsigned mask = 0;
+    for (const Nub& n : g_nubs) {
+      float nhp = 0.f;
+      if (n.team == g.team && n.core >= 0 && SehHp(n.id, &nhp) == 1) mask |= 1u << n.core;
+    }
+    if (g.coreMask < 0) {
+      Log("match: GUARDCORE %s %08X (team %d) at %s: cores %s, specials %s, special cooldown %.0f s", g.noun.c_str(),
+          g.id, g.team, why, flow::CoreMaskString(mask).c_str(), flow::SpecialsOf(mask).c_str(),
+          flow::SpecialCooldownSeconds(mask));
+    } else if (static_cast<unsigned>(g.coreMask) != mask) {
+      for (int i = 0; i < flow::kGuardianCores; ++i) {
+        const bool was = (static_cast<unsigned>(g.coreMask) >> i) & 1u, is = (mask >> i) & 1u;
+        if (was == is) continue;
+        ++(is ? g_st.coresBack : g_st.coresLost);
+        const flow::GuardianCore& c = flow::GuardianCoreAt(i);
+        Log("match: GUARDCORE %s %08X (team %d): core %c (%s, %s, %s) %s at match %.2f s (t %.2f s); cores %s, specials "
+            "%s, special cooldown %.0f s",
+            g.noun.c_str(), g.id, g.team, c.letter, c.special, c.name, c.place, is ? "restored" : "destroyed", g_t, clockS,
+            flow::CoreMaskString(mask).c_str(), flow::SpecialsOf(mask).c_str(), flow::SpecialCooldownSeconds(mask));
+      }
+    }
+    g.coreMask = static_cast<int>(mask);
+  }
+}
+
 void EverySecond(double t) {
   // mGameTime: whole match seconds (the HUD clock, the post-game duration); frozen at the end
   if (!g_ended) SehSetGameTime(g_sim, static_cast<int>(t));
@@ -882,6 +921,7 @@ void OnLevelStarted(void* sim) {
       nb.noun = raw[i].noun;
       nb.team = flow::NubTeam(nb.noun);
       if (!nb.team) nb.team = raw[i].team;
+      nb.core = flow::NubCoreIndex(nb.noun);
       g_nubs.push_back(nb);
       char b[96];
       std::snprintf(b, sizeof b, "%s%08X %s team %d (%.1f, %.1f)", list.empty() ? "" : "; ", nb.id, nb.noun.c_str(),
@@ -891,6 +931,7 @@ void OnLevelStarted(void* sim) {
     Log("match: base structures: %d nubs [%s] and %zu Guardians", n, list.c_str(), g_guardians.size());
   }
   UpdateGuardianShields("the level load");  // D14: invincible while a core lives
+  UpdateGuardianCores("the level load");    // GUARDCORE: which specials its Cores allow
   // D9: the spirit wells (wells.h; replaces D1c-live's minimal wells, R10 §4.3)
   if (g_opt.wells) wells::OnLevelStarted(sim);
   g_levelDone = true;
@@ -917,6 +958,7 @@ void Tick(void* sim) {
   g_t = SehMatchSeconds(sim);
   HandleDestroyed();
   UpdateGuardianShields("the tick");  // D14: before the HP check, so the last core's death lifts it this tick
+  UpdateGuardianCores("the tick");    // GUARDCORE: a Core's death or resurrect (logged only)
   CheckGuardians();
   if (!g_ended && g_opt.endAfterS > 0 && g_t >= g_opt.endAfterS) EndByFixture();  // D8-live
   if (!g_ended) {
@@ -987,9 +1029,11 @@ void FormatStats(char* buf, std::size_t size) {
   for (const Guardian& g : g_guardians) {
     float hp = 0.f;
     const int st = SehHp(g.id, &hp);
-    char b[96];
-    std::snprintf(b, sizeof b, " %08X team %d hp %.0f%s, cores %d, shield %s", g.id, g.team, hp, st < 0 ? " gone" : "",
-                  g.livingCores, g.shield ? "on" : "off");
+    char b[128];
+    std::snprintf(b, sizeof b, " %08X team %d hp %.0f%s, cores %d (%s), shield %s", g.id, g.team, hp,
+                  st < 0 ? " gone" : "", g.livingCores,
+                  g.coreMask < 0 ? "?" : flow::CoreMaskString(static_cast<unsigned>(g.coreMask)).c_str(),
+                  g.shield ? "on" : "off");
     gs += b;
   }
   if (g_sim) SetCurrentSim(prev);
@@ -998,11 +1042,13 @@ void FormatStats(char* buf, std::size_t size) {
   std::snprintf(buf, size,
                 "%s, match %.1f s; Guardians%s; towers destroyed %u; lua calls guardian %u, destroyed %u, energy %u, nub "
                 "tuning %u, base structures %u (marked some %u, none %u); level checks %u (ups %u); announcer %u; "
-                "Guardian shield on %u, off %u, refused %u (D14); exceptions %u; director: %s",
+                "Guardian shield on %u, off %u, refused %u (D14); cores lost %u, restored %u (GUARDCORE); exceptions "
+                "%u; director: %s",
                 g_ended ? "ENDED" : g_started ? "running" : "not started", g_t, gs.empty() ? " none" : gs.c_str(),
                 g_st.towersDestroyed, g_st.luaCalls[0], g_st.luaCalls[1], g_st.luaCalls[2], g_st.luaCalls[3],
                 g_st.luaCalls[4], g_st.baseMarked, g_st.baseEmpty, g_st.levelChecks, g_st.levelUps, g_st.announcer,
-                g_st.shieldsOn, g_st.shieldsOff, g_st.shieldsRefused, g_st.exceptions, dir);
+                g_st.shieldsOn, g_st.shieldsOff, g_st.shieldsRefused, g_st.coresLost, g_st.coresBack, g_st.exceptions,
+                dir);
 }
 
 }  // namespace match

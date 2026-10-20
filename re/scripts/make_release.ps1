@@ -12,7 +12,9 @@
   2. Start-Server.exe and Start-Client.exe: go build of server\cmd\start-server and server\cmd\start-client from this
      checkout (windows/amd64, -trimpath, GOTOOLCHAIN=local, CGO off), with the release's name as their version
      (-X dawngate/server/internal/version.release=<Name>): a player's Start-Client logs in only on servers of the same
-     version, so two releases with different names never play together. The Linux server start-server is the same
+     version, so two releases with different names never play together. Their icon is linked from each command's
+     rsrc_windows_amd64.syso (made from server\cmd\assets\dawngate.ico); the script checks that both programs hold
+     every image of that .ico. The Linux server start-server is the same
      build of server\cmd\start-server for linux/amd64 with the same version (not <Name>-linux: Start-Client.exe
      refuses a server of any other version).
   3. The folder <Out>\<Name>\: the two programs, host\dgsim.dll, host\lua\*.lua, README.txt (re\scripts\release),
@@ -99,12 +101,20 @@ $listModules = {
 }
 try {
     $env:GOOS = 'windows'; $env:GOARCH = 'amd64'; $env:CGO_ENABLED = '0'; $env:GOTOOLCHAIN = 'local'
+    $ico = [IO.File]::ReadAllBytes((Join-Path $Repo 'server\cmd\assets\dawngate.ico'))
     foreach ($p in @(@('Start-Server.exe', './cmd/start-server'), @('Start-Client.exe', './cmd/start-client'))) {
         Write-Host "building $($p[0]) ..." -ForegroundColor Cyan
         & $go build -C (Join-Path $Repo 'server') -trimpath -ldflags "-s -w -X dawngate/server/internal/version.release=$Name" -o (Join-Path $dir $p[0]) $p[1]
         if ($LASTEXITCODE -ne 0) { Fail "go build $($p[1]) failed" }
         $said = "$(& (Join-Path $dir $p[0]) --version)".Trim()
         if ($said -ne $Name) { Fail "$($p[0]) --version says '$said', not its version $Name (the linker's -X)" }
+        # the program's icon: the linker links the command's rsrc_windows_amd64.syso (made from this .ico by
+        # go generate); every image of the .ico must be in the program
+        $exe = $latin1.GetString([IO.File]::ReadAllBytes((Join-Path $dir $p[0])))
+        for ($i = 0; $i -lt [BitConverter]::ToUInt16($ico, 4); $i++) {
+            $img = $latin1.GetString($ico, [BitConverter]::ToUInt32($ico, 18 + 16 * $i), [BitConverter]::ToUInt32($ico, 14 + 16 * $i))
+            if (-not $exe.Contains($img)) { Fail "$($p[0]) lacks image $i of server\cmd\assets\dawngate.ico (its .syso: go generate ./cmd/... in server\)" }
+        }
     }
     $modules = & $listModules @('./cmd/start-server', './cmd/start-client')
     if ($Linux) {

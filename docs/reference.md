@@ -94,7 +94,7 @@ Start-Client.exe [<server address or tag>] [options]
 |---|---|
 | at the login screen | *At the login screen* |
 | in the main menu | *In the menu* |
-| in a party | *In a party (2 of 5)* below the line above |
+| in a party, or in the PvP lobby | *In the lobby · PvP* in the menu, and *In a party (2 of 5)* below the line in the queue and the match too |
 | in the queue | *In queue · PvP*, with the time in the queue |
 | in shaper select | *Shaper select · PvP*, *· Practice vs bots*, *· Practice group* or *· Custom game* |
 | in a custom game's lobby | *In the lobby · Custom game* |
@@ -210,7 +210,7 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 | `--mm-fill-after <time>` | `15s` | How long the queue waits for full teams before starting a smaller match. |
 | `--mm-max-wait <time>` | `0` (no limit) | The longest a player waits in the queue before being told it timed out. |
 | `--mm-bots=false` | on | Leave the empty seats of a queue match empty instead of filling them with bots. |
-| `--custom-bots` | off | Fill a custom game's empty seats with bots. |
+| `--custom-bots` | off | Fill a custom game's empty seats with bots. In shaper select a custom game's bots pick their shapers and roles after the players have chosen. |
 | `--leaderboard-min-games N` | `50` | The fewest games a player needs to appear on the Leaderboard (the screen says 50). Every game counts, practice and custom games included. |
 | `--kill-switches <names>` | `WalletTopUp` | Client features to switch off, comma-separated: `Matchmaking`, `WalletTopUp` (the add-funds button), `EUGameServers`, `PracticeSoloGames`, `FTUESoloGames`, `PurchaseWithWaypoints`, `PracticeGroupGames`, `CustomGames`, `ForwardRenderer`. `none` switches nothing off. |
 | `--broadcast <text>` | none | One announcement, in addition to `broadcast.txt`. |

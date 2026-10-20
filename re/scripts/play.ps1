@@ -16,7 +16,9 @@
     certificates server\certs\server_cert.pem, server_key.pem, ca_modulus.bin                            -> prints make_certs.py
     client copy  client\run_854\Dawngate patched by patch_client.py and patch_config.py, with our CA      -> prints the copy/patch commands
     bot box      its game\Data\zz_MatchOptions.snap is current (CREATE GAME's bot check box, BOTBOX)      -> installs it (setup_lane.py's step)
+    bot profiles its game\Data\zz_BotProfiles.snap is current (bot_profiles.py --check; PLAYPROF)        -> installs it (bot_profiles.py)
     host copy    client\run_854_server\Dawngate patched, with the harness installed                     -> prints setup_server_copy.py
+    bot profiles the host copy's game\Data\zz_BotProfiles.snap is current, as for the client copy        -> installs it (bot_profiles.py)
     gms build    gms\build\Release\dgsim.dll's last build newer than gms\host, gms\engine, gms\core, gms\script -> builds it (cmake), if gms\build is configured
                  (G5: its build stamp dgsim.dll.stamp; re\scripts\gms_stale.ps1)
     host DLL     the host copy's PhysXLoader.dll is that dgsim.dll                                      -> installs it (setup_server_copy.py)
@@ -167,6 +169,27 @@ function Invoke-Logged([string]$exe, [string[]]$argList, [string]$log) {
     Write-Host ('           done in {0:0} s' -f $sw.Elapsed.TotalSeconds) -ForegroundColor Gray
     $p.ExitCode
 }
+function Update-BotProfiles([string]$copy, [string]$what) {
+    # PLAYPROF: the copy's added game\Data\zz_BotProfiles.snap (the project's own bot profiles: the bots' shaper, role and
+    # name), byte for byte what bot_profiles.py makes now from the copy's own AssetData.snap; a newer profile table makes
+    # an older archive stale, so it is rewritten here (setup_lane.py's bot_profiles_step, setup_all.py's step too)
+    $data = Join-Path $copy 'game\Data'
+    $script = Join-Path $PSScriptRoot 'bot_profiles.py'
+    $label = "bot profiles ($what, game\Data\zz_BotProfiles.snap)"
+    $show = $data.Replace("$RepoRoot\", '')
+    $fix = ".venv\Scripts\python -I re\scripts\bot_profiles.py $show"
+    if (-not (Test-Path (Join-Path $data 'AssetData.snap'))) {
+        Missing "$label`: $show\AssetData.snap is missing (an incomplete copy)" @('make the copy again: .venv\Scripts\python -I re\scripts\setup_all.py', "then: $fix")
+        return
+    }
+    $out = @(& $Python -I $script $data --check)
+    if ($LASTEXITCODE -eq 0) { Ok $label; return }
+    Write-Host "  install  $label ($(if ("$($out | Select-Object -Last 1)" -match '^missing:') { 'not there' } else { 'older profiles' }))" -ForegroundColor Yellow
+    & $Python -I $script $data | ForEach-Object { Write-Host "           $_" -ForegroundColor Gray }
+    $null = & $Python -I $script $data --check
+    if ($LASTEXITCODE -eq 0) { Ok $label }
+    else { Missing "installing the $label failed (is the game running from the $what?)" @($fix) }
+}
 
 Push-Location $RepoRoot
 try {
@@ -223,6 +246,8 @@ try {
                 '.venv\Scripts\python -I re\scripts\patch_login_movie.py --spec matchoptions client\run_854\Dawngate\game\Data\Battlegrounds.snap client\run_854\Dawngate\game\Data\zz_MatchOptions.snap') }
         }
     }
+    # PLAYPROF: the client shows the bots' shaper, role and name from these profiles
+    if ((Test-Path $Python) -and (Test-Path (Join-Path $ClientDir 'game\Dawngate.exe'))) { Update-BotProfiles $ClientDir 'client copy' }
 
     # ---- the host copy and the match-host build
     $hostSetup = '.venv\Scripts\python -I re\scripts\setup_server_copy.py client\run_854\Dawngate client\run_854_server\Dawngate gms\build\Release\dgsim.dll'
@@ -234,6 +259,8 @@ try {
         Missing 'the host copy is not patched' @('.venv\Scripts\python -I re\scripts\patch_client.py client\run_854_server\Dawngate\game\Dawngate.exe server\certs\ca_modulus.bin 127.0.0.1',
             '.venv\Scripts\python -I re\scripts\patch_config.py client\run_854_server\Dawngate\game\Data')
     } else { $hostReady = $true }
+    # PLAYPROF: the match host loads the bots' profiles (BotClass assets) from the host copy's own archive
+    if ((Test-Path $Python) -and (Test-Path (Join-Path $HostCopy 'game\Dawngate.exe'))) { Update-BotProfiles $HostCopy 'host copy' }
 
     $stale = Get-StaleGmsSource
     if ($stale) {

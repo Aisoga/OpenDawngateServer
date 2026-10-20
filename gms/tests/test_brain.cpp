@@ -626,3 +626,125 @@ GMS_TEST(NpcGuardianTargetsAndRandomFallthrough) {
   CHECK_EQ(r.fallthroughs, 1);
   CHECK_EQ(r.evaluated, 5);  // a random phase evaluates every gambit (unchanged)
 }
+
+// ---- BACKTOACTION (gms/core/agents/lost.h) ---------------------------------------------------------------------------
+#include "core/agents/lost.h"
+
+namespace {
+gms::agents::LostInput LostAt(unsigned long long ms, float x, float y, gms::agents::LostLeaf leaf, bool target = false,
+                              bool point = false) {
+  gms::agents::LostInput in;
+  in.nowMs = ms;
+  in.x = x;
+  in.y = y;
+  in.leaf = leaf;
+  in.hasTarget = target;
+  in.pointPursuit = point;
+  return in;
+}
+}  // namespace
+
+// The user's match: the Warden's ward pursuit to (78, 20) ended at 131.37 s with the ward placed while the Pursue leaf
+// ran; the Follow then walked to the zero vector and stood there 208 s.
+GMS_TEST(BacktoactionThePursueLeafOutlivesItsPointPursuit) {
+  using namespace gms::agents;
+  const LostOptions o;
+  LostState s;
+  CHECK(LostStep(s, LostAt(128130, 60.f, 10.f, LostLeaf::kPursue, false, true), o) == LostAction::kNone);
+  LostNotePointEnded(s);  // the ward started at 131.37 s
+  CHECK(LostStep(s, LostAt(131570, 64.f, 8.f, LostLeaf::kPursue), o) == LostAction::kRestartPointFollow);
+  CHECK(!s.pendingPointFollow);
+  CHECK(LostStep(s, LostAt(131770, 64.f, 8.f, LostLeaf::kOther), o) == LostAction::kNone);  // the phase default
+
+  // an uninterruptible hold defers the restart; the next think without it restarts
+  LostState h;
+  LostNotePointEnded(h);
+  LostInput in = LostAt(1000, 50.f, 0.f, LostLeaf::kPursue);
+  in.held = true;
+  CHECK(LostStep(h, in, o) == LostAction::kNone);
+  CHECK(h.pendingPointFollow);
+  in.nowMs = 1200;
+  in.held = false;
+  CHECK(LostStep(h, in, o) == LostAction::kRestartPointFollow);
+
+  // the leaf changed first (the ward's UseAbility, the phase default): the Follow is over, nothing to restart
+  LostState c;
+  LostNotePointEnded(c);
+  CHECK(LostStep(c, LostAt(1000, 50.f, 0.f, LostLeaf::kOther), o) == LostAction::kNone);
+  CHECK(!c.pendingPointFollow);
+  CHECK(LostStep(c, LostAt(1200, 50.f, 0.f, LostLeaf::kPursue, true), o) == LostAction::kNone);  // a new object pursuit
+
+  // a new point pursuit began (D6d restarts the leaf for the new point itself)
+  LostState n;
+  LostNotePointEnded(n);
+  CHECK(LostStep(n, LostAt(1000, 50.f, 0.f, LostLeaf::kPursue, false, true), o) == LostAction::kNone);
+  CHECK(!n.pendingPointFollow);
+}
+
+GMS_TEST(BacktoactionTheNetRestartsAPursueWithNothingToFollow) {
+  using namespace gms::agents;
+  LostOptions o;
+  o.pointFollowFix = false;  // the root fix off: the net alone
+  LostState s;
+  LostNotePointEnded(s);
+  CHECK(LostStep(s, LostAt(131570, 64.f, 8.f, LostLeaf::kPursue), o) == LostAction::kNone);
+  CHECK(LostStep(s, LostAt(133000, 40.f, 5.f, LostLeaf::kPursue), o) == LostAction::kNone);
+  CHECK(LostStep(s, LostAt(133570, 30.f, 4.f, LostLeaf::kPursue), o) == LostAction::kRestartNoTarget);  // 2 s
+  CHECK(LostStep(s, LostAt(133770, 30.f, 4.f, LostLeaf::kPursue), o) == LostAction::kNone);  // a new window
+  // with mTarget or a point the Pursue leaf has something to follow
+  LostState t;
+  CHECK(LostStep(t, LostAt(0, 64.f, 8.f, LostLeaf::kPursue, true), o) == LostAction::kNone);
+  CHECK(LostStep(t, LostAt(5000, 64.f, 8.f, LostLeaf::kPursue, true), o) == LostAction::kNone);
+  CHECK(LostStep(t, LostAt(9000, 64.f, 8.f, LostLeaf::kPursue, false, true), o) == LostAction::kNone);
+  // both off: the old behaviour (the Warden stays)
+  o.lostMs = 0;
+  LostState off;
+  LostNotePointEnded(off);
+  bool any = false;
+  for (unsigned long long ms = 131570; ms < 350000; ms += 200)
+    any = any || LostStep(off, LostAt(ms, 3.f, 1.f, LostLeaf::kPursue), o) != LostAction::kNone;
+  CHECK(!any);
+}
+
+GMS_TEST(BacktoactionTheNetWalksABotLostOnTheCentre) {
+  using namespace gms::agents;
+  const LostOptions o;  // 10 s within 20 of the centre, a walk at most every 15 s
+  LostState s;
+  CHECK(LostStep(s, LostAt(142000, 3.f, 1.f, LostLeaf::kIdleDefault), o) == LostAction::kNone);
+  CHECK(LostStep(s, LostAt(151800, -2.f, 4.f, LostLeaf::kIdleDefault), o) == LostAction::kNone);
+  CHECK(LostStep(s, LostAt(152000, 4.f, 3.f, LostLeaf::kIdleDefault), o) == LostAction::kWalkToFront);
+  CHECK(LostStep(s, LostAt(162000, 4.f, 3.f, LostLeaf::kIdleDefault), o) == LostAction::kNone);  // the cooldown
+  CHECK(LostStep(s, LostAt(167000, 4.f, 3.f, LostLeaf::kIdleDefault), o) == LostAction::kWalkToFront);
+  // not lost: a target, the parasite's plans, farther than 20, another leaf
+  auto never = [&](LostInput in) {
+    LostState x;
+    bool acted = false;
+    for (in.nowMs = 0; in.nowMs <= 30000; in.nowMs += 200) acted = acted || LostStep(x, in, o) != LostAction::kNone;
+    return !acted;
+  };
+  CHECK(never(LostAt(0, 3.f, 1.f, LostLeaf::kIdleDefault, true)));
+  LostInput para = LostAt(0, 3.f, 1.f, LostLeaf::kIdleDefault);
+  para.parasiteTask = true;
+  CHECK(never(para));
+  CHECK(never(LostAt(0, 18.f, 12.f, LostLeaf::kIdleDefault)));  // 21.6 from the centre
+  CHECK(never(LostAt(0, 3.f, 1.f, LostLeaf::kOther)));          // UseAbility, PhaseDefault: something runs
+  LostInput held = LostAt(0, 3.f, 1.f, LostLeaf::kIdleDefault);
+  held.held = true;
+  CHECK(never(held));
+  // the Pursue leaf on the centre without a target: the net restarts it at 2 s, then walks it at 10 s
+  LostState w;
+  int restarts = 0, walks = 0;
+  for (unsigned long long ms = 1000; ms <= 11000; ms += 200) {
+    const LostAction a = LostStep(w, LostAt(ms, 3.f, 1.f, LostLeaf::kPursue), o);
+    if (a == LostAction::kRestartNoTarget) ++restarts;
+    if (a == LostAction::kWalkToFront) ++walks;
+  }
+  CHECK_EQ(restarts, 4);  // at 3, 5.2, 7.4, 9.6 s (each a new 2-s window)
+  CHECK_EQ(walks, 1);
+  CHECK(ParasiteTaskName("Guardian_Tactician_GatherForParasite.Phase"));
+  CHECK(ParasiteTaskName("warden_Tactician_KillParasite.Plan"));
+  CHECK(!ParasiteTaskName("warden_Tactician_BackToAction.Phase"));
+  CHECK(!ParasiteTaskName(nullptr));
+  CHECK(NearCentre(3.f, 1.f, 20.f));
+  CHECK(!NearCentre(100.f, -36.f, 20.f));
+}

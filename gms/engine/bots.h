@@ -66,6 +66,17 @@ struct Options {
   bool composition = true;    // BOTCOMP: the preferred 5v5 setup (2 Gladiators, Tactician, Predator, Hunter); 0 = Tuning.BotPlan's fill
   std::string compositionDrop = "predator,hunter,tactician,gladiator";  // BOTCOMP: the roles' order of giving up a seat
   bool profiles = true;  // BOTPROFILE: our own BotClass profiles (PC_Warden_Predator) when the copy's catalog lists them
+  std::string hunters = "default";  // HUNTERBOT: [host] bot_hunters, the Hunter seat's classes (composition.h ParseHunterList)
+  std::string tacticians;  // DESECBOT: [host] bot_tacticians, each team's first Tactician seat (ParseTacticianList); "" = drawn
+  std::string gladiators;  // MIKELLABOT: [host] bot_gladiators, each team's first Gladiator seat (ParseGladiatorList); "" = drawn
+  bool guideBuilds = true;  // DESECBOT-2: [host] bot_guide_builds, a profile's own build (core/bots/guidebuild.h); 0 = its ItemBuild
+  bool kits = true;             // HUNTERBOT: [host] bot_kits, the shapers' kit rules (the Lua's E spin rule; kits.h)
+  bool hunterFix = true;        // HUNTERBOT: [host] bot_hunter_fix, the shared Hunter changes (hold, push, defend, waves, route)
+  bool campFinish = true;       // CAMPFINISH: [host] bot_camp_finish (the Lua's half: a Hunter finishes a nearly dead camp first)
+  bool engageFix = true;        // DESECBOT-3: [host] bot_engage_fix, no EngageForKill that BailOnKill would leave at once
+  bool joinFix = true;          // BOTCYCLE: [host] bot_join_fix, a KillShaper join takes the mission's target and only
+                                // when BailOnKill would stay (or the host would finish: KILLFINISH)
+  bool desecKit = true;         // DESECBOT-3: [host] bot_desec_kit, the Desecrator's early no-dive, no-chase rule (Lua)
   int harassStartWorkers = 4; // BOTCOMP: a well's workers above which the Predator may harass it (the script's HarassWell: 16)
   int harassEndWorkers = 2;   // BOTCOMP: ... and below which the harass ends (the script's 4)
   bool team = true;           // BOTTEAM: the team layer (one call per team: farm, parasite, contest, well, push, defend)
@@ -78,6 +89,7 @@ struct Options {
   bool jungle = true;         // BOTJUNGLE: the Hunter takes part (ganks, defends, pushes, wells, the parasite gather)
   bool pingFollow = true;     // BOTJUNGLE: the bots follow their human teammates' minimap pings
   bool hunterParasiteStand = true;  // PRETUSBOT: the Hunter fights the parasite from its edge, not from its centre
+  int draft = -1;  // BOTDRAFT: [host] bot_draft, -1 auto (a custom game's bots draw after the humans), 0 off, 1 always
 };
 
 // BOTJUNGLE: a human's minimap ping (the command intake's ping relay, commands.cpp): kept (the last 32) for
@@ -89,6 +101,8 @@ void Configure(const Options& o);
 // B10d: createGame's fillTeams (the seats a team dgserver asks the host to fill with bots; 0 = not asked), for the
 // `bots` auto rule. Called at createGame, before the first HelloReq plans the bots.
 void SetFillTeams(int seats);
+// BOTDRAFT: createGame's mode ("custom" turns the draft on with [host] bot_draft -1). Called at createGame.
+void SetGameMode(const std::string& mode);
 
 // After GameSimulator_Init, before the level (server simulator bound): nBotHost on the shared lua_State.
 void OnSimulatorCreated(void* sim);
@@ -123,9 +137,36 @@ struct Bot {
 const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& humans, const std::vector<Human>& waiting);
 const std::vector<Bot>& Players();
 bool IsBotIndex(int index);
+// BACKTOACTION: the front of the bot's lane (nBot.AssignLane's, else its first lane) for `team`, as
+// nBotHost.LaneCenterAndDirection returns it; false without lanes or fronts. `laneOut` (optional) gets the lane.
+bool LaneFrontOf(std::uint32_t creature, int team, float* out, int* laneOut = nullptr);
 // Shaper select moved a bot to another role (its mRole is written by the host's pick write; this keeps our list, which
 // the Lua shims' BotRole answers from, in step).
 void SetRole(int index, int role);
+
+// BOTDRAFT (gms/core/bots/draft.h): in a custom game the bots get their classes in
+// shaper select, after the humans have chosen. BeginDraft (shaper select set up, the bots created) says whether the
+// draft runs; from then until RevealDrafted the bots' player updates carry no bot data, noun or role (DraftHidden) and
+// their status lacks 0x100, so the clients show "BOT n" with an empty slot. Draft draws every bot's class from the
+// humans' shapers and intended roles, writes it into the server players (LabsPlayer_ReflectBotData again) and returns
+// what shaper select announces; RevealDrafted (the reveal) sets 0x100 and lets the bot data go out.
+struct DraftHumanIn {
+  int index = -1;
+  int team = 0;
+  std::uint32_t shaper = 0;  // its record's shaper (default-skin Noun asset id), 0 = none
+  unsigned preferred = 0;    // preferred-role toggles, bit per role
+  int roleCard = -1;         // the role card it chose, -1 = none
+};
+struct DraftOut {
+  int index = -1;
+  std::uint32_t noun = 0;
+  int role = 0;
+  unsigned altRoles = 0;
+};
+bool BeginDraft(void* sim);
+bool DraftHidden();
+std::vector<DraftOut> Draft(void* sim, const std::vector<DraftHumanIn>& humans);
+void RevealDrafted(void* sim);
 
 // Deploys every bot's creature once (the replication must be initialized: repl::Init). Returns how many were deployed
 // by this call. Bound inside.

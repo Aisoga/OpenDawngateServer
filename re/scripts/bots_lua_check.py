@@ -9,12 +9,14 @@ Checks gms/engine/lua/dgsim_bots_api.lua (and its probe and tests) without the g
   4. with --callers <dir> (the decompiled scripts, re/out/serverdata_lua/lua: game content, never committed) also runs
      tests/callers_smoke.lua: every live script that calls nBot or a bot-only nBattlegrounds getter, loaded with the
      real GlobalDefinitions/Global/Table/BotUtils and called against the shims in a stub world. Its per-script lines are
-     printed; script bugs the docs list are expected there.
+     printed; script bugs the docs list are expected there. With --callers also tests/test_guardcore_scripts.lua
+     (GUARDCORE): the Guardian's special conditions and special cooldown against the Cores' Destroyed modifiers, for
+     all 32 sets of living Cores; it must pass ("N checks, 0 failed").
 
 Usage (from the repo root; tools/ is gitignored, so in a worktree pass the main checkout's jars or let the script find
 them through the git common dir):
     python -I re/scripts/bots_lua_check.py [--callers re/out/serverdata_lua/lua] [--java <java.exe>] [--luaj <jar>]
-Exit code 0 when 1-3 pass (4 is informational).
+Exit code 0 when 1-3 pass (4 is informational; its GUARDCORE test counts).
 """
 import argparse
 import glob
@@ -40,6 +42,8 @@ FILES = [
     os.path.join(TESTS, "stub_bound_api.lua"),
     os.path.join(TESTS, "test_dgsim_bots_api.lua"),
     os.path.join(TESTS, "callers_smoke.lua"),
+    os.path.join(LUA_DIR, "dgsim_gcore.lua"),  # GUARDCORE's probe and its scripts test
+    os.path.join(TESTS, "test_guardcore_scripts.lua"),
 ]
 # the tier-3 functions whose callers the smoke test runs (docs/data/server_lua_missing_api.csv)
 TIER3_GETTERS = {"GetNumTowers", "GetOuterTower", "GetVulnerableStructures", "GetClosestBaseStructure",
@@ -166,6 +170,15 @@ def main():
             out = run_lua(args.java, args.luaj, [os.path.join(TESTS, "callers_smoke.lua"), TESTS, FILES[0],
                                                  os.path.abspath(args.callers), lst])
         print(out.rstrip())
+        # GUARDCORE: the Cores' gates in the game's own scripts (each special's condition, the special cooldown)
+        out = run_lua(args.java, args.luaj, [os.path.join(TESTS, "test_guardcore_scripts.lua"),
+                                             os.path.abspath(args.callers)])
+        m = re.search(r"(\d+) checks, (\d+) failed", out)
+        passed = bool(m) and m.group(2) == "0"
+        print(f"guardcore: {m.group(0) if m else 'no result'}")
+        if not passed:
+            print(out.strip())
+        ok &= passed
 
     print("result: " + ("ok" if ok else "FAILED"))
     return 0 if ok else 1

@@ -26,7 +26,7 @@
 
 dgsim_bots = dgsim_bots or {}
 local B = dgsim_bots
-B.version = '10'  -- 10: PRETUSBOT's stand at the parasite; 9: BOTJUNGLE's Hunter tasks and ping following; 8: BOTTEAM's team calls; 7: BOTCOMP's composition rules (Predator harass, Hunter parasite, lane lock); 2: D6b's script fix-ups; 3: D6c's BailOnKill fix-up; 4: D6e's GetClosestCampPosition; 5: BOTPARA's parasite fix-up; 6: BOTIDLE's camp radius
+B.version = '17'  -- 17: HUNTERROUTE's opening route (nBotHost.HunterRoute); 16: KILLFINISH's BailOnKill reasons, BOTCYCLE's KillShaper join (fix-up 3c) and engage block; 15: CAMPFINISH's camp finishing (nBotHost.CampFight); 14: NULLPOS's Follow guard and lane-centre check; 13: DESECBOT-3's EngageForKill fix-up 3b and the early Desecrator; 12: DESECBOT's Tactician kit (Desecrator's W); 11: HUNTERBOT's kits (Faris, Freia) and the shared Hunter fixes; 10: PRETUSBOT's stand at the parasite; 9: BOTJUNGLE's Hunter tasks and ping following; 8: BOTTEAM's team calls; 7: BOTCOMP's composition rules (Predator harass, Hunter parasite, lane lock); 2: D6b's script fix-ups; 3: D6c's BailOnKill fix-up; 4: D6e's GetClosestCampPosition; 5: BOTPARA's parasite fix-up; 6: BOTIDLE's camp radius
 B.config = B.config or {
   scanSeconds = 5,            -- game seconds between walks of the object pool (structures, wells)
   scanLimit = 4096,           -- pool slots walked at most
@@ -583,7 +583,12 @@ function B.LaneCenter(lane, team)
     if type(cx) == 'number' then return vec(cx, cy, cz), vec(dx, dy, dz) end
   end
   local s = B.staticFronts[lane]
-  if s == nil then return vec(0, 0, 0), vec(0, 0, 0) end
+  if s == nil then
+    -- NULLPOS: no lane, no centre; the zero vector would send a bot standing behind it to the map's centre. The top
+    -- lane's static front instead [assumed: never seen, every caller names Top or Bottom]
+    B.ReportNullPos(kObjIDNone, B.NULLPOS_LANE_CENTRE, num(lane, -1))
+    s = B.staticFronts[1]
+  end
   local sign = 1
   if team == nTeamID.Spirit then sign = -1 end
   return vec(s.x, s.y, 0), vec(sign * s.dx, sign * s.dy, 0)
@@ -898,10 +903,203 @@ local function bailOnKillCheck(original)
     local ok, a, b, c, d, e = pcall(original, bot, ...)
     nBotUtils.IsEnemyPlayerNear = near
     if not ok then error(a, 0) end
+    -- DESECBOT-3: an early Desecrator leaves a target beyond his E or under its tower (B.EarlyDesecRefuses)
+    if a ~= true and type(B.EarlyDesecRefuses) == 'function' then
+      local why = B.EarlyDesecRefuses(bot, nAgent.GetBestTarget(bot))
+      if why then
+        count('BailOnKill (' .. why .. ')')
+        B.NoteBail(bot, why)
+        return true
+      end
+    end
+    if a == true then B.NoteBail(bot) end  -- KILLFINISH: which test it was
     return a, b, c, d, e
   end
 end
 B.bailOnKillCheck = bailOnKillCheck
+
+-- KILLFINISH: which of BailOnKill's tests sends the bot out (the script answers only true): the first that fails in
+-- the script's order, on the enemy nBotUtils.IsEnemyPlayerNear finds within fix-up 3's radius. Counted, and handed to
+-- the host for its disengage lines (nBotHost.BailWhy). The tests: no target; no living enemy shaper near; that enemy
+-- above 0.49 + 0.12 per ally - 0.09 per enemy; more enemies than allies; its HP fraction above the bot's own (+ 0.06
+-- per ally beyond the first); its level more than 2 above the bot's; an allied tower within 25 of it.
+function B.BailWhy(bot)
+  local c = global('condition_Bot_BailOnKill')
+  if type(c) ~= 'table' then return 'unknown' end
+  if nAgent.GetBestTarget(bot) == kObjIDNone then return 'no target' end
+  local engage = global('condition_Bot_EngageForKill')
+  local r = (type(engage) == 'table' and tonumber(engage.enemySearchRadius)) or c.enemySearchRadius
+  local near, enemy = nBotUtils.IsEnemyPlayerNear(bot, r)
+  if not near or not nGameObject.IsAlive(enemy) then return 'no enemy shaper near' end
+  local allies, enemies = nBot.GetNumPlayersNearPosition(nGameObject.GetTeam(bot), nGameObject.GetPosition(enemy),
+    nGameObject.GetPosition(bot), c.searchRadius, c.enemySearchRadius, c.lowHealthThreshold, c.lowHealthThreshold,
+    c.enemySearchHistory)
+  allies, enemies = tonumber(allies) or 0, tonumber(enemies) or 0
+  local function frac(o)
+    local m = tonumber(nGameObject.GetMaxHitPoints(o)) or 0
+    if m <= 0 then return 1 end
+    return (tonumber(nGameObject.GetHitPoints(o)) or 0) / m
+  end
+  local mine, theirs = frac(bot), frac(enemy)
+  if theirs > c.enemyHealthThreshold + allies * c.increasedThresholdPerAlly - enemies * c.decreasedThresholdPerEnemy then
+    return 'the enemy not low'
+  end
+  if enemies > allies then return 'outnumbered' end
+  if theirs > mine + (allies - 1) * c.increasedThresholdPerAlly * c.braveryFactor then return 'its HP above the bot\'s' end
+  local lvl = nPlayer.IsPlayerControlledObject(enemy) and (tonumber(nGameObject.GetPlayerLevel(enemy)) or 0) or 0
+  if lvl - (tonumber(nGameObject.GetPlayerLevel(bot)) or 0) > c.levelGapCutoff then return 'level gap' end
+  if nBotUtils.IsAllyTowerNear(enemy, c.towerSearchRadius) then return 'its tower near' end
+  return 'another rule'
+end
+
+function B.NoteBail(bot, why)
+  if why == nil then
+    local ok, w = pcall(B.BailWhy, bot)
+    why = ok and tostring(w) or 'unknown'
+    count('BailOnKill true (' .. why .. ')')
+  end
+  local f = hostfn('BailWhy')
+  if f then pcall(f, bot, why) end
+end
+
+-- BOTCYCLE: whether the host blocks this bot's engages now (it left its last engage at once; nBotHost.EngageBlocked)
+function B.EngageBlocked(bot)
+  local f = hostfn('EngageBlocked')
+  if not f then return false end
+  local ok, r = pcall(f, bot)
+  return ok and r == true
+end
+
+-- KILLFINISH: whether the host would keep the bot in a fight with its target now (nBotHost.KillFinish; false without
+-- the host function or with [host] bot_kill_finish=0).
+function B.KillFinishHolds(bot)
+  local f = hostfn('KillFinish')
+  if not f then return false end
+  local ok, r = pcall(f, bot)
+  return ok and r == true
+end
+
+--   3b. (DESECBOT-3) The bounce fix 3 left: the two conditions still judge different enemies by different numbers.
+--      condition_Bot_EngageForKill takes the first enemy shaper within 55 (nBot.GetEnemyPlayersNearPosition), counts
+--      allies and enemies within 40 and 55 and refuses a target inside its own Binding's range by the level tags
+--      (BindingRange and the team's tag); condition_Bot_BailOnKill judges the enemy nBotUtils.IsEnemyPlayerNear
+--      finds (the nearest), counts within 50 and 30, and bails when that enemy has an allied tower within 25
+--      (nBotUtils.IsAllyTowerNear). A bot sent in by the first left at its next think: in a live match the Desecrator
+--      bounced every 0.23 s for 6 s on a low Warden 16 units off near the Warden's outer Binding and died there at
+--      135 s (38 bounces in the match, the Guardian 13), attacking in every other think. Fix ([host] bot_engage_fix):
+--      EngageForKill passes only when BailOnKill, asked at once about the target it chose, would stay; a refused
+--      engage puts the bot's previous target back (the condition set it). [assumed: the original's think cadence is
+--      unknown; that its EngageForKill entries lasted is inferred from the plan's gambits]
+--      The Desecrator ([host] bot_desec_kit, B.tacticianKits.desecrator): at level 1-3 (earlyLevel) he neither engages
+--      nor stays engaged on a target farther than earlyChase (22, his E's range) or within towerReach (34, BOTREFLEX's
+--      tower reach) of a tower of its own team (DESECBOT-1: two of his six deaths before 5 minutes).
+function B.EarlyDesecRefuses(bot, target)
+  if B.desecKitWanted == false or type(B.TacticianKitOf) ~= 'function' then return nil end
+  local kit = B.TacticianKitOf(bot)
+  if kit == nil or kit.earlyLevel == nil or not exists(target) then return nil end
+  local level = tonumber(nGameObject.GetPlayerLevel(bot)) or 0
+  if level < 1 or level > kit.earlyLevel then return nil end
+  if nVector.distance(nGameObject.GetPosition(bot), nGameObject.GetPosition(target)) > kit.earlyChase then
+    return 'early Desecrator: the target beyond his E'
+  end
+  if type(nBotUtils) == 'table' and type(nBotUtils.IsAllyTowerNear) == 'function' and
+      nBotUtils.IsAllyTowerNear(target, kit.towerReach) then
+    return 'early Desecrator: the target under its tower'
+  end
+  return nil
+end
+
+local function engageCheck(original)
+  return function(bot, ...)
+    local before = nAgent.GetBestTarget(bot)
+    local ok, a, b, c, d, e = pcall(original, bot, ...)
+    if not ok then error(a, 0) end
+    if a ~= true then return a, b, c, d, e end
+    local why = B.EarlyDesecRefuses(bot, e)
+    -- BOTCYCLE: the host blocks the engages of a bot that left its last one at once ([host] bot_engage_block_ms)
+    if why == nil and B.engageFixWanted ~= false and B.EngageBlocked(bot) and not B.KillFinishHolds(bot) then
+      why = 'blocked: the last engage ended at once'
+    end
+    if why == nil and B.engageFixWanted ~= false then
+      local bail = global('condition_Bot_BailOnKill')
+      if type(bail) == 'table' and type(bail[1]) == 'function' then
+        local okb, leave = pcall(bail[1], bot)
+        if okb and leave == true then why = 'BailOnKill would leave at once' end
+      end
+      -- KILLFINISH: the host would hold the exit (the bot wins the trade): no bounce, the engage may start
+      if why ~= nil and B.KillFinishHolds(bot) then
+        count('EngageForKill kept (the host would finish)')
+        why = nil
+      end
+    end
+    if why == nil then return a, b, c, d, e end
+    count('EngageForKill refused (' .. why .. ')')
+    if before ~= nil and nAgent.GetBestTarget(bot) ~= before then nGameObject.SetTargetID(bot, before) end
+    return false
+  end
+end
+B.engageCheck = engageCheck
+
+--   3c. (BOTCYCLE, KILLFINISH) The Gladiators' cautious lane plans (Creature_Gladiator_Lane_Cautious, the HighHuntress's
+--      Main_MatrixOfLeadership) join an ally's KillShaper mission through condition_Bot_IsMissionAvailable(8, 60), the
+--      one link into EngageForKill that neither condition_Bot_EngageForKill nor fix-up 3b sees. The link sets no target
+--      (the mission's is not the bot's), and BailOnKill, at the bot's medium HP, ended the engage at its next think:
+--      Lane -> Lane_Cautious -> EngageForKill -> Lane every 0.7 s (a 15-minute practice match: 78 of 81 Creature entries into
+--      EngageForKill by this link, 46 of 61 of the HighHuntress's, 72 and 44 three-plan cycles in 15 minutes). Fix
+--      ([host] bot_join_fix): a join takes the mission's target, and passes only when BailOnKill, asked at once, would
+--      stay or the host would finish the fight (nBotHost.KillFinish); a refused join puts the bot's target back. A
+--      join can still fail at the next think (the plan's gambits aim at the nearest shaper, which BailOnKill judges;
+--      live: 8 of 13 joins in 15 min), so the host blocks a bot's engages (joins and 3b's EngageForKill) for a while
+--      after one it left at once, unless it would finish the fight (nBotHost.EngageBlocked, [host] bot_engage_block_ms).
+--      [assumed: the engine's stripped mission accept set the bot's target; the data's link asks for target info]
+local function missionTargetOf(team, id)
+  local f = hostfn('OpenMission')
+  if not f or type(id) ~= 'number' or id <= 0 then return nil end
+  for i = 1, 64 do
+    local mid, target = f(team, i)
+    if mid == nil then return nil end
+    if mid == id then return target end
+  end
+  return nil
+end
+
+local function joinCheck(original)
+  return function(bot, missionType, range, ...)
+    local ok, a, b, c, d, e = pcall(original, bot, missionType, range, ...)
+    if not ok then error(a, 0) end
+    if a ~= true or B.joinFixWanted == false then return a, b, c, d, e end
+    local cond = global('condition_Bot_IsMissionAvailable')
+    local mt = missionType or (type(cond) == 'table' and cond.defaultMission) or nil
+    local kill = (type(nMissionType) == 'table' and nMissionType.KillShaper) or 8
+    if mt ~= kill then return a, b, c, d, e end
+    -- the host blocks the engages of a bot that left its last one at once ([host] bot_engage_block_ms)
+    if B.EngageBlocked(bot) and not B.KillFinishHolds(bot) then
+      count('KillShaper join refused (blocked)')
+      return false, b, 0
+    end
+    local before = nAgent.GetBestTarget(bot)
+    local target = missionTargetOf(nGameObject.GetTeam(bot), c)
+    if exists(target) and target ~= before then nGameObject.SetTargetID(bot, target) end
+    local why = nil
+    local bail = global('condition_Bot_BailOnKill')
+    if type(bail) == 'table' and type(bail[1]) == 'function' then
+      local okb, leave = pcall(bail[1], bot)
+      if okb and leave == true then why = 'BailOnKill would leave at once' end
+    end
+    if why ~= nil and B.KillFinishHolds(bot) then
+      count('KillShaper join kept (the host would finish)')
+      why = nil
+    end
+    if why == nil then
+      count('KillShaper join')
+      return a, b, c, d, e
+    end
+    count('KillShaper join refused (' .. why .. ')')
+    if before ~= nil and nAgent.GetBestTarget(bot) ~= before then nGameObject.SetTargetID(bot, before) end
+    return false, b, 0
+  end
+end
+B.joinCheck = joinCheck
 
 B.fixups = B.fixups or { veryOutnumbered = false, groupInLane = false, bailOnKill = false }
 
@@ -926,6 +1124,17 @@ function B.ApplyFixups()
     k[1] = bailOnKillCheck(k[1])
     f.bailOnKill = true
   end
+  local g = global('condition_Bot_EngageForKill')  -- DESECBOT-3: fix-up 3b
+  if not f.engageFix and type(g) == 'table' and type(g[1]) == 'function' then
+    g[1] = engageCheck(g[1])
+    f.engageFix = true
+  end
+  local m = global('condition_Bot_IsMissionAvailable')  -- BOTCYCLE: fix-up 3c
+  local check = nConditionFns and nConditionFns.Check or 1
+  if not f.joinFix and type(m) == 'table' and type(m[check]) == 'function' then
+    m[check] = joinCheck(m[check])
+    f.joinFix = true
+  end
   if not f.parasite then
     if B.parasiteWanted == false then f.parasite = true else B.ApplyParasiteFixup() end
   end
@@ -947,11 +1156,145 @@ function B.ApplyFixups()
   if not f.lane then B.ApplyLaneFixup() end
   if f.lane and not f.team and type(B.ApplyTeamFixup) == 'function' then B.ApplyTeamFixup() end
   if f.team and f.composition and not f.jungle and type(B.ApplyJungleFixup) == 'function' then B.ApplyJungleFixup() end
-  return 'fix-ups: VeryOutnumbered ' .. tostring(f.veryOutnumbered) .. ', GroupInLane ' .. tostring(f.groupInLane) ..
+  if not f.kits and type(B.ApplyKitFixup) == 'function' then B.ApplyKitFixup() end
+  if not f.tacticianKits and type(B.ApplyTacticianKitFixup) == 'function' then B.ApplyTacticianKitFixup() end
+  if not f.nullPos then B.ApplyNullPosFixup() end
+  return 'fix-ups: NullPos ' .. tostring(f.nullPos == true) .. ', VeryOutnumbered ' .. tostring(f.veryOutnumbered) .. ', GroupInLane ' .. tostring(f.groupInLane) ..
          ', BailOnKill ' .. tostring(f.bailOnKill == true) .. ', Parasite ' .. tostring(f.parasite == true) ..
          ', CampRadius ' .. tostring(f.campRadius == true) .. ', Composition ' .. tostring(f.composition == true) ..
          ', Lane ' .. tostring(f.lane == true) .. ', Team ' .. tostring(f.team == true) ..
-         ', Jungle ' .. tostring(f.jungle == true)
+         ', Jungle ' .. tostring(f.jungle == true) .. ', Kits ' .. tostring(f.kits == true) ..
+         ', TacticianKits ' .. tostring(f.tacticianKits == true) .. ', EngageFix ' ..
+         (B.engageFixWanted == false and 'off' or tostring(f.engageFix == true)) .. ', JoinFix ' ..
+         (B.joinFixWanted == false and 'off' or tostring(f.joinFix == true))
+end
+
+-- ---- NULLPOS: (0, 0) is "no position" (gms/core/agents/nullpos.h) ----------------------------------------------------
+-- nBehavior_Follow (the Pursue leaf's behavior) re-reads the blackboard's target position (nAgent.GetTargetPosition)
+-- on every pass of its loop and, when its request block names no object (nBehaviorTree.GetTargetObjectID() is
+-- kObjIDNone), walks to it within 0.5. The zero vector there means "no point" to the engine's scorer, so a Follow that
+-- reads it walks to the map's centre for nothing (BACKTOACTION). Only Behavior_Follow.lua calls
+-- nAgent.GetTargetPosition (the abilities' GetTargetPosition is nAbility's). The guard: when the point is (0, 0) and
+-- the Follow has no object, the host gets a NULLPOS line (nBotHost.NullPos, kind 6) and the Follow gets the bot's own
+-- position, so its next test ("within 0.5") ends it and the tree redecides.
+B.NULLPOS_FOLLOW, B.NULLPOS_LANE_CENTRE = 6, 7  -- gms::agents::NullPosWhere::kFollow, kLaneCentre
+
+function B.IsNullPos(p)
+  return p ~= nil and p.x == 0 and p.y == 0
+end
+
+-- Reports a NULLPOS to the host (or counts it here without one).
+function B.ReportNullPos(obj, kind, lane)
+  count('NULLPOS')
+  local f = hostfn('NullPos')
+  if f then f(obj or kObjIDNone, kind, lane or 0) end
+end
+
+function B.NullPosFollowGuard(original)
+  return function(me, ...)
+    local p = original(me, ...)
+    if type(nBehaviorTree) == 'table' and type(nBehaviorTree.GetTargetObjectID) == 'function' and
+        nBehaviorTree.GetTargetObjectID() == kObjIDNone then
+      -- a Follow pass on a point (the guard's own evidence: dgsim_bots.Report's calls)
+      count('Follow point reads')
+      local readf = hostfn('NullPosRead')  -- the same count in the host's "stats nullpos:" line
+      if readf then readf() end
+      if B.IsNullPos(p) then
+        count('Follow point reads at (0, 0)')
+        B.ReportNullPos(me, B.NULLPOS_FOLLOW)
+        local own = nGameObject.GetPosition(me)
+        if own ~= nil then return own end
+      end
+    end
+    return p
+  end
+end
+
+function B.ApplyNullPosFixup()
+  local f = B.fixups
+  if f.nullPos then return end
+  if B.nullPosWanted == false then f.nullPos = true return end
+  if type(nAgent) ~= 'table' or type(nAgent.GetTargetPosition) ~= 'function' then return end
+  nAgent.GetTargetPosition = B.NullPosFollowGuard(nAgent.GetTargetPosition)
+  f.nullPos = true
+end
+
+-- ---- HUNTERBOT: the Hunter AI on other shapers' kits ([host] bot_kits) -------------------------------------------
+-- PC_Golem_Hunter (Faris) and PC_Survivor_Hunter (Freia) run Petrus's AI (BOT_Artificer_Hunter), whose gambits name
+-- slots, so they cast their own abilities. Its Farm plan holds the SpinToWin phase while condition_Bot_IsEActive is true
+-- (Petrus's E is a spin of some seconds; the phase's gambits are only the spell, the potion and the E), so for a shaper
+-- whose E is one cast (Faris's RecallDash, Freia's SlowStun; both have a second activation) "E active" answers false:
+-- SpinToWin comes only from its other link (CanUseE and 2 enemies within 8), casts the E (again: its second
+-- activation) and leaves when the E cools down. The host's kits.h has the rest (Faris's stance Q, the R finisher).
+B.hunterKits = B.hunterKits or { golem = { spin = false }, survivor = { spin = false } }
+
+function B.KitOf(bot)
+  if B.kitsWanted == false or not exists(bot) then return nil end
+  local name = string.lower(tostring(nGameObject.GetAssetName(bot) or ''))
+  return B.hunterKits[name:match('^([%a]+)') or name]
+end
+
+-- A live match showed the other link too: CanUseE and two creeps within 8 took Freia into
+-- SpinToWin, whose E gambit has no target of its own (her E needs one) and nothing else to do: she stood there 220 s.
+-- So for them condition_Bot_CanUseE answers false as well: no SpinToWin at all; the host casts their E at the target
+-- in ClearCamp and GankThings (agents.cpp HunterKitEStep).
+function B.ApplyKitFixup()
+  local f = B.fixups
+  if f.kits then return end
+  local c, u = global('condition_Bot_IsEActive'), global('condition_Bot_CanUseE')
+  if type(c) ~= 'table' or type(c[1]) ~= 'function' or type(u) ~= 'table' or type(u[1]) ~= 'function' then return end
+  local function noSpin(original, name)
+    return function(bot, ...)
+      local kit = B.KitOf(bot)
+      if kit ~= nil and kit.spin == false then
+        count(name .. ' (kit: no spin)')
+        return false
+      end
+      return original(bot, ...)
+    end
+  end
+  c[1] = noSpin(c[1], 'IsEActive')
+  u[1] = noSpin(u[1], 'CanUseE')
+  f.kits = true
+end
+
+-- ---- DESECBOT: the Tactician AI on Desecrator's kit ([host] bot_kits) ----------------------------------------------
+-- PC_Desecrator_Tactician runs the Guardian's AI (BOT_Guardian_Tactician), whose gambits name slots. Its one
+-- Guardian-only condition is condition_Guardian_ShieldActive (the Guardian's W is a shield, modifier
+-- _Guardian_W_ConeShield): 15 of its 16 W gambits want it false, so for a Desecrator, who never has that modifier, they
+-- would fire his W (FrozenAura, a burst slow of radius 13.24 around him) at enemies up to 40 away. For him "shield
+-- active" means "no enemy shaper he sees within wNear (12)", so the W gambits fire only with one in its reach. The one
+-- gambit that wants the shield on (CautiousLaning: W at the base with nobody within 20) the host leaves out for him
+-- (kits.h KitAllowsW).
+-- DESECBOT-3: earlyLevel, earlyChase, towerReach: B.EarlyDesecRefuses (fix-up 3b's block).
+B.tacticianKits = B.tacticianKits or { desecrator = { wNear = 12, earlyLevel = 3, earlyChase = 22, towerReach = 34 } }
+
+function B.TacticianKitOf(bot)
+  if B.kitsWanted == false or not exists(bot) then return nil end
+  local name = string.lower(tostring(nGameObject.GetAssetName(bot) or ''))
+  return B.tacticianKits[name:match('^([%a]+)') or name]
+end
+
+function B.ApplyTacticianKitFixup()
+  local f = B.fixups
+  if f.tacticianKits then return end
+  local c = global('condition_Guardian_ShieldActive')
+  if type(c) ~= 'table' or type(c[1]) ~= 'function' then return end
+  local original = c[1]
+  c[1] = function(bot, ...)
+    local kit = B.TacticianKitOf(bot)
+    if kit == nil or kit.wNear == nil then return original(bot, ...) end
+    local team = nGameObject.GetTeam(bot)
+    for _, e in ipairs(nBot.GetEnemyPlayersNearPosition(team, nGameObject.GetPosition(bot), kit.wNear, 0, true)) do
+      if nBot.ValidateHostileBotTarget(team, e, false, true, true) then
+        count('ShieldActive (kit: an enemy within the W)')
+        return false
+      end
+    end
+    count('ShieldActive (kit: no enemy within the W)')
+    return true
+  end
+  f.tacticianKits = true
 end
 
 
@@ -1069,7 +1412,8 @@ end
 local mainMissionTick = B.MissionTick
 function B.MissionTick(names)
   if not (B.fixups.veryOutnumbered and B.fixups.groupInLane and B.fixups.bailOnKill and B.fixups.parasite and
-          B.fixups.campRadius and B.fixups.composition and B.fixups.lane and B.fixups.team) then
+          B.fixups.campRadius and B.fixups.composition and B.fixups.lane and B.fixups.team and B.fixups.engageFix and
+          B.fixups.joinFix) then
     B.ApplyFixups()
   end
   local checks, ends, errors = mainMissionTick(names)
@@ -1349,6 +1693,11 @@ function B.ApplyCompositionFixup()
           p = B.HunterParasiteSpot(bot, p, B.campAskerKind)  -- PRETUSBOT: his side of it, not its centre
         end
         if p == nil and type(B.HunterTaskPos) == 'function' then p = B.HunterTaskPos(bot) end
+        -- CAMPFINISH: a nearly dead camp he is finishing: its last creature, wherever it stands (not the next camp by
+        -- the route cost, not the camp's marker 9 away from it)
+        if p == nil and type(B.HunterFinishPos) == 'function' then p = B.HunterFinishPos(bot) end
+        -- HUNTERROUTE: the opening route's camp (the host's choice), else the nearest camp by the route cost
+        if p == nil and type(B.HunterRoutePos) == 'function' then p = B.HunterRoutePos(bot) end
         if p ~= nil then
           -- condition_Bot_NextCreepCamp treats a zero coordinate as "no camp"
           return vec(p.x ~= 0 and p.x or 0.01, p.y ~= 0 and p.y or 0.01, p.z ~= 0 and p.z or 0.01)
@@ -1727,6 +2076,7 @@ function B.TeamSnapshot(team)
     end
   end
   s.levelDiff = 0
+  s.levelSum, s.levelCount = levelAllies, nAllies  -- HUNTERBOT: the Hunter's level against his team's
   if nAllies > 0 and nEnemies > 0 then s.levelDiff = levelAllies / nAllies - levelEnemies / nEnemies end
   -- lanes and structures
   local towersTop = nBattlegrounds.GetNumTowers(enemy, nLaneID.Top)
@@ -2413,7 +2763,22 @@ B.jungleConfig = B.jungleConfig or {
   stepLen = 40,            -- the walk to a task's point in steps of this (re-aimed at each step)
   pushStandOff = 25,       -- the Hunter's point before the push target (toward his base)
   orderLife = 3,
+  -- HUNTERBOT (B.hunterFixWanted, [host] bot_hunter_fix 1): the shared Hunter logic behind the user's "confused" Petrus
+  holdS = 10,              -- a team-call task (push, defend, well, gather, contest) is kept this long after it began,
+                           -- also when the call flickers off (it came back within seconds and he turned twice)
+  pushJoinRangeFix = 260,  -- a push's target this far at most (BOTJUNGLE's 170 kept him out of most pushes)
+  defendRange = 300,       -- the defend call only within this of the attacked structure (a walk across the map arrived
+  defendGuardianHp = 0.5,  -- after the fight), or for the Guardian at or below this HP fraction
+  waveCampFar = 110,       -- no living camp of his this near (route cost): he farms a lane wave within waveRange
+  waveRange = 90,
+  campSidePenalty = 90,    -- a camp on the enemy's half costs this many units more (gms/core/bots/jungle.h)
+  catchUpLevels = 2,       -- this many levels below his team's other shapers: he farms (no push, well, gank)
 }
+-- the keys added after a host's earlier chunk set the table (the chunk is loaded once; tests reload it)
+for k, v in pairs({ holdS = 10, pushJoinRangeFix = 260, defendRange = 300, defendGuardianHp = 0.5, waveCampFar = 110,
+                    waveRange = 90, campSidePenalty = 90, catchUpLevels = 2 }) do
+  if B.jungleConfig[k] == nil then B.jungleConfig[k] = v end
+end
 B.hunterTasks = B.hunterTasks or {}  -- Hunter creature -> its task { kind, pos, target, near, since, ... } (the conditions)
 
 local function jungleOn() return teamOn() and B.jungleWanted == true end
@@ -2525,20 +2890,42 @@ function B.HunterDecide(s, st, h, hs, cfg)
   local call, phase = st.call or 'farm', st.phase
   local cur = hs.task
   local function task(kind, pos, near, target, why) return { kind = kind, pos = pos, near = near, target = target, why = why } end
-  -- 1. the base
+  local fix = B.hunterFixWanted ~= false  -- HUNTERBOT
+  -- HUNTERBOT: catching up. A Hunter catchUpLevels or more below his team's other shapers (on average) farms: no push,
+  -- well, gather, contest or gank; the base, the parasite's kill, a human's ping and waves still take him. The live
+  -- matches: the Hunters who joined the fights while behind died there (2-7 times) and fell further behind.
+  local catchUp = false
+  if fix and (s.levelCount or 0) > 1 then
+    local mine = num(nGameObject.GetPlayerLevel(h.id), 1)
+    local others = ((s.levelSum or 0) - mine) / (s.levelCount - 1)
+    catchUp = others - mine >= (cfg.catchUpLevels or 2)
+  end
+  hs.catchUp = catchUp
+  -- CAMPFINISH: a nearly dead camp of his first (the host's nBotHost.CampFight, at most 12 s): no task but the base's
+  -- Guardian low on HP, the parasite's kill and a human's ping (the ping's order is kept for him: pingHold)
+  local finishing = B.HunterFinishPos(h.id) ~= nil
+  -- 1. the base (HUNTERBOT: from within defendRange, or for a Guardian low on HP; else the base's own defenders)
   if call == 'defend' then
-    local p = defendPoint(s.team)
-    if p then return task('defend', p, cfg.nearDefend, nil, 'the base is attacked') end
+    local p, id = defendPoint(s.team)
+    local guardianLow = id ~= nil and nGameObject.GetNPCType(id) == nNPCType.Guardian and hpFraction(id) <= cfg.defendGuardianHp
+    if p and (not finishing or guardianLow) and
+        (not fix or (cur ~= nil and cur.kind == 'defend') or dist2(p, h.pos) <= cfg.defendRange or guardianLow) then
+      return task('defend', p, cfg.nearDefend, nil, 'the base is attacked')
+    end
   end
   -- 2. the parasite: the gather, a contest's approach (the kill phase and a contest with allies at it: HunterParasitePos)
   local p = s.parasite or {}
   if p.stands and B.HunterParasitePos(h.id) ~= nil then
     return task('parasite', p.pos, cfg.nearTask, p.id, 'the team takes the parasite')
   end
-  if call == 'parasite' and phase == 'gather' and p.rally then
+  if finishing and (hs.order == nil or t > hs.order.untilT) then
+    B.JungleStat('finishing')
+    return nil, 'finishing a camp'
+  end
+  if call == 'parasite' and phase == 'gather' and p.rally and not catchUp then
     return task('gather', p.rally, cfg.nearTask, nil, 'the team gathers for the parasite')
   end
-  if call == 'contest' and p.stands and not B.TeamWantsHunterOnParasite(s.team, p.id) then
+  if call == 'contest' and p.stands and not catchUp and not B.TeamWantsHunterOnParasite(s.team, p.id) then
     return task('contest', contestPoint(s.team), cfg.nearTask, nil, 'the team contests the parasite')
   end
   -- 3. a human's ping for him
@@ -2566,13 +2953,24 @@ function B.HunterDecide(s, st, h, hs, cfg)
   elseif o ~= nil then
     hs.order = nil
   end
+  -- HUNTERBOT: catching up: no push, well or gank; a lane wave near him when his camps are far, else his camps
+  if catchUp then
+    local w = B.HunterWave(s, h, cfg)
+    if w ~= nil then return task('wave', nGameObject.GetPosition(w), cfg.nearTask, w, 'catching up: a lane wave') end
+    return nil, orderDone or 'catching up'
+  end
   -- 4. the team's push and a well call near him
   -- (joining needs joinHp, staying only leaveHp)
   local function hpFor(kind) if cur ~= nil and cur.kind == kind then return cfg.leaveHp end return cfg.joinHp end
+  local joinRange = fix and cfg.pushJoinRangeFix or cfg.pushJoinRange
   if call == 'push' and h.hp >= hpFor('push') and exists(st.target) and
       (st.fromOrder or nGameObject.GetNPCType(st.target) ~= nNPCType.Tower or
-       dist2(nGameObject.GetPosition(st.target), h.pos) <= cfg.pushJoinRange or (cur ~= nil and cur.kind == 'push')) then
+       dist2(nGameObject.GetPosition(st.target), h.pos) <= joinRange or (cur ~= nil and cur.kind == 'push')) then
     return task('push', standOff(s.team, st.target, cfg.pushStandOff), cfg.nearPush, st.target, 'the team pushes')
+  end
+  -- HUNTERBOT: between two targets of the same push (the first fell, the next not chosen yet) he keeps going
+  if fix and call == 'push' and cur ~= nil and cur.kind == 'push' and h.hp >= cfg.leaveHp and not exists(st.target) then
+    return cur
   end
   if call == 'well' and h.hp >= hpFor('well') then
     for _, w in ipairs(s.wells or {}) do
@@ -2580,6 +2978,12 @@ function B.HunterDecide(s, st, h, hs, cfg)
         return task('well', w.pos, cfg.nearTask, w.id, 'the team takes a well')
       end
     end
+  end
+  -- HUNTERBOT: a team-call task holds holdS after it began, though its call ended or flickered (he had turned back
+  -- and forth when the call came back seconds later); a down target or low HP (above) ends it
+  if fix and cur ~= nil and B.hunterHeldKinds[cur.kind] and t - (cur.since or t) < cfg.holdS and
+      (cur.target == nil or isNone(cur.target) or standing(cur.target)) then
+    return cur
   end
   -- 5. a gank: the one under way while it holds, else a new one
   if s.ftue then return nil, 'a first-time player' end
@@ -2596,15 +3000,77 @@ function B.HunterDecide(s, st, h, hs, cfg)
     keep.seen = cur.seen
     return keep
   end
-  if t < cfg.gankFrom or t < (hs.cool or 0) or h.hp < cfg.gankHp then return nil, orderDone end
-  local c = B.GankCandidates(s, h, cfg)[1]
-  if c ~= nil then
-    local g = task('gank', c.pos, cfg.nearGank, c.id, string.format('%s at %.0f %% HP, %d of ours and %d of theirs there, %.0f away',
-      tostring(nGameObject.GetAssetName(c.id)), c.hp * 100, c.allies, c.enemies, c.dist))
-    g.seen = t
-    return g
+  if t >= cfg.gankFrom and t >= (hs.cool or 0) and h.hp >= cfg.gankHp then
+    local c = B.GankCandidates(s, h, cfg)[1]
+    if c ~= nil then
+      local g = task('gank', c.pos, cfg.nearGank, c.id, string.format('%s at %.0f %% HP, %d of ours and %d of theirs there, %.0f away',
+        tostring(nGameObject.GetAssetName(c.id)), c.hp * 100, c.allies, c.enemies, c.dist))
+      g.seen = t
+      return g
+    end
+  end
+  -- 6. HUNTERBOT: no camp of his near (all cleared): a lane wave near him, for its XP and gold
+  if fix then
+    local w = B.HunterWave(s, h, cfg)
+    if w ~= nil then return task('wave', nGameObject.GetPosition(w), cfg.nearTask, w, 'no camp near: a lane wave') end
   end
   return nil, orderDone
+end
+
+-- CAMPFINISH: the last creature's position of the nearly dead camp Hunter `bot` is finishing (nil: none, or
+-- [host] bot_camp_finish 0)
+function B.HunterFinishPos(bot)
+  if B.campFinishWanted == false then return nil end
+  local f = hostfn('CampFight')
+  if not f or not exists(bot) then return nil end
+  local x, y, z, frac, finishing = f(bot)
+  if x == nil or finishing ~= true then return nil end
+  return vec(x, y, z)
+end
+
+-- HUNTERROUTE: the camp of the Hunter's opening route step (nBotHost.HunterRoute: the host's choice, gms/core/bots/
+-- route.h: green, the small fish and mushroom camps, blue, ..., orange and the pigs from level 3); nil: no step now,
+-- the route over or off ([host] bot_hunter_route=0), or not a Hunter
+function B.HunterRoutePos(bot)
+  local f = hostfn('HunterRoute')
+  if not f or not exists(bot) then return nil end
+  local x, y, z = f(bot)
+  if x == nil or (x == 0 and y == 0) then return nil end
+  return vec(x, y, z)
+end
+
+-- HUNTERBOT: the task kinds a team call gives (holdS keeps them a moment after the call ends) and the ones whose
+-- target may change without making it another task (a push's next structure, a wave's next minion)
+B.hunterHeldKinds = { push = true, defend = true, well = true, gather = true, contest = true }
+B.hunterReaimKinds = { push = true, defend = true, well = true, gather = true, contest = true, wave = true }
+
+-- HUNTERBOT: the camp of Hunter `h` by the route cost (gms/core/bots/jungle.h), nil when none lives; its point and cost.
+function B.HunterCamp(h, cfg)
+  local cc = hostfn('ClosestCamp')
+  if not cc then return nil end
+  local x, y, z = cc(h.pos.x, h.pos.y, h.pos.z, h.team or nGameObject.GetTeam(h.id), cfg.campSidePenalty or 0)
+  if x == nil or (x == 0 and y == 0) then return nil end
+  local p = vec(x, y, z)
+  return p, dist2(p, h.pos)
+end
+
+-- HUNTERBOT: an enemy lane minion within waveRange of Hunter `h`, off their towers, when no camp of his is within
+-- waveCampFar (all cleared or far); nil otherwise. The nearest first.
+function B.HunterWave(s, h, cfg)
+  if (s.t or 0) < (cfg.gankFrom or 0) then return nil end  -- the first camps spawn at 90 s; the lanes are the laners'
+  local _, d = B.HunterCamp(h, cfg)
+  if d ~= nil and d <= cfg.waveCampFar then return nil end
+  local team = h.team or nGameObject.GetTeam(h.id)
+  for _, o in ipairs(query(h.pos, cfg.waveRange, nGetObjectsSortType.Distance, nTargetType.EnemyNPCs, team, h.id, 0)) do
+    local npc = nGameObject.GetNPCType(o)
+    if (npc == nNPCType.MeleeMinion or npc == nNPCType.RangedMinion or npc == nNPCType.SuperMinion) and
+        nGameObject.GetTeam(o) == enemyOf(team) and nGameObject.IsAlive(o) == true and
+        nBot.ValidateHostileBotTarget(team, o, false, true) and
+        not underEnemyTower(team, nGameObject.GetPosition(o), cfg.towerSafe) then
+      return o
+    end
+  end
+  return nil
 end
 
 -- What the Hunter `bot` hits while on his task (ClearCamp's gambits through condition_nearest_creep), nil = the
@@ -2679,7 +3145,8 @@ function B.HunterTick(team, s, st)
       if hs.pendingOrder ~= nil then hs.order, hs.pendingOrder = hs.pendingOrder, nil end
       local prev = hs.task
       local tk, why = B.HunterDecide(s, st, h, hs, cfg)
-      local same = tk ~= nil and prev ~= nil and tk.kind == prev.kind and tk.target == prev.target
+      local same = tk ~= nil and prev ~= nil and tk.kind == prev.kind and
+                   (tk.target == prev.target or (B.hunterFixWanted ~= false and B.hunterReaimKinds[tk.kind] == true))
       if tk ~= nil then tk.since = same and prev.since or s.t end
       if not same and (tk ~= nil or prev ~= nil) then
         -- the end of a gank: its outcome, the cooldown
@@ -3001,6 +3468,9 @@ function B.Report()
   table.sort(host)
   p('dgsim_bots ' .. B.version .. ': nBotHost ' .. (#host > 0 and table.concat(host, ',') or 'none'))
   p(B.ApplyFixups())
+  local nc = B.stats.calls
+  p('NULLPOS guard: Follow point reads ' .. tostring(nc['Follow point reads'] or 0) .. ', at (0, 0) ' ..
+    tostring(nc['Follow point reads at (0, 0)'] or 0) .. ', reports ' .. tostring(nc['NULLPOS'] or 0))
   local s = B.Scan(true)
   local bindings = 0
   for _, st in ipairs(s.structures) do if st.tier ~= nil then bindings = bindings + 1 end end
@@ -3047,7 +3517,12 @@ do
   if closestCamp and nDirector then
     nDirector.GetClosestCampPosition = function(team, pos, ignoreFoW)
       count('GetClosestCampPosition')
-      local x, y, z = closestCamp(pos.x, pos.y, pos.z)
+      -- HUNTERBOT: his own half's camps first (the route cost, gms/core/bots/jungle.h)
+      local penalty = 0
+      if B.hunterFixWanted ~= false and B.jungleWanted == true and B.jungleConfig then
+        penalty = B.jungleConfig.campSidePenalty or 0
+      end
+      local x, y, z = closestCamp(pos.x, pos.y, pos.z, team or 0, penalty)
       if x == nil then return vec(0, 0, 0) end
       return vec(x, y, z)
     end

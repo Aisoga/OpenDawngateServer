@@ -23,7 +23,9 @@
 
 #include "core/common/log.h"
 #include "core/net/endpoint.h"
+#include "core/agents/nullpos.h"
 #include "core/bots/composition.h"
+#include "core/commands/testlua.h"
 #include "core/postgame/postgame.h"
 #include "core/protocol/messages.h"
 #include "core/protocol/wire.h"
@@ -880,9 +882,14 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     if (conn == gms::kNoConn && bots::IsBotIndex(gameplayIndex)) {
       // D6a: a bot's update also carries mRole (9), mbIsBot (11), mpBotData (15: the client's LabsPlayer_ReflectBotData
       // sets the noun, role and "<shaper> BOT" name) and mpNounDef (16, preloaded on pre-game 03)
+      // BOTDRAFT: while a custom game's bots wait for the humans in shaper select, only mbIsBot (the client names the
+      // bot "BOT n" and its slot stays empty, as a scripted ally without bot data); the reveal's update carries the rest
       std::vector<int> m = members;
+      const bool hidden = bots::DraftHidden();
       for (int extra : {static_cast<int>(gms::kPlayerRole), static_cast<int>(gms::kPlayerIsBot), 15, 16})
-        if (std::find(m.begin(), m.end(), extra) == m.end()) m.push_back(extra);
+        if ((!hidden || extra == static_cast<int>(gms::kPlayerIsBot)) && std::find(m.begin(), m.end(), extra) == m.end())
+          m.push_back(extra);
+      if (hidden) m.erase(std::remove(m.begin(), m.end(), static_cast<int>(gms::kPlayerRole)), m.end());
       std::sort(m.begin(), m.end());
       BoundTo b(sim_);
       if (!repl::Init()) return false;
@@ -907,7 +914,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   // BOTROLE: a bot's role again after the update that carried its bot data (the client's ReflectBotData sets mRole to the
   // BotClass's role: the Warden's Tactician, whatever the Predator or shaper select made of it)
   bool PlayerRoleFollowUp(uint8_t gameplayIndex, gms::Bytes* msg) override {
-    if (!bots::IsBotIndex(gameplayIndex)) return false;
+    if (!bots::IsBotIndex(gameplayIndex) || bots::DraftHidden()) return false;  // BOTDRAFT: no bot data went out
     BoundTo b(sim_);
     if (!repl::Init()) return false;
     return repl::PlayerUpdate(sim_, gameplayIndex, {static_cast<int>(gms::kPlayerRole)}, msg);
@@ -962,6 +969,37 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     if (!humans.empty())
       gms::Logf("%s match: shaper select content from createGame's roster:%s", gms::Clock().c_str(), humans.c_str());
     OtherPlayers();  // the bots are planned and created at the first accepted HelloReq (the session asks again later)
+    // BOTDRAFT: a custom game's bots pick after the humans: no pick of their own now, the draft gives them theirs
+    // ([host] bot_draft; bot_draft_grace_ms: how long the draft waits after the last human's lock-in for a role the
+    // human didn't tick or click)
+    const bool draft = bots::BeginDraft(sim_);
+    if (draft) {
+      config->draftGraceMs = HostOptionInt("bot_draft_grace_ms", 10000);
+      config->draft = [this](const std::vector<gms::ShaperDraftHuman>& humans,
+                             const std::vector<gms::ShaperDraftBot>& draftBots) {
+        (void)draftBots;  // the host's own list (bots::Players) is the same set
+        std::vector<bots::DraftHumanIn> in;
+        for (const gms::ShaperDraftHuman& h : humans) {
+          bots::DraftHumanIn d;
+          d.index = h.gameplayIndex;
+          d.team = h.team;
+          d.shaper = h.shaper;
+          d.preferred = h.preferredRoles;
+          d.roleCard = h.roleCard;
+          in.push_back(d);
+        }
+        std::vector<gms::ShaperDraftPick> picks;
+        for (const bots::DraftOut& o : bots::Draft(sim_, in)) {
+          gms::ShaperDraftPick k;
+          k.gameplayIndex = static_cast<uint8_t>(o.index);
+          k.noun = o.noun;
+          k.role = static_cast<uint8_t>(o.role >= 0 && o.role < gms::kNumRoles ? o.role : 0);
+          k.altRoles = static_cast<uint8_t>(o.altRoles);
+          picks.push_back(k);
+        }
+        return picks;
+      };
+    }
     int nth[3] = {};
     std::string desc;
     for (const bots::Bot& b : bots::Players()) {
@@ -969,16 +1007,21 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       p.gameplayIndex = static_cast<uint8_t>(b.index);
       p.team = static_cast<uint8_t>(b.team);
       p.scripted = true;
-      p.plan.noun = b.noun;
+      p.plan.noun = draft ? 0 : b.noun;
+      p.plan.draft = draft;
       const int k = b.team >= 0 && b.team <= 2 ? nth[b.team]++ : 0;
-      p.plan.pickMs = botPickMs_ + k * botStepMs_;
+      p.plan.pickMs = botPickMs_ + k * botStepMs_;  // BOTDRAFT: counted from the draft
       p.plan.lockMs = p.plan.pickMs + botLockMs_;
-      p.plan.role = static_cast<uint8_t>(b.role >= 0 && b.role < gms::kNumRoles ? b.role : 0);
-      p.plan.altRoles = static_cast<uint8_t>(gms::bots::AltRoles(b.botClass));
+      p.plan.role = static_cast<uint8_t>(!draft && b.role >= 0 && b.role < gms::kNumRoles ? b.role : 0);
+      p.plan.altRoles = static_cast<uint8_t>(draft ? 0 : gms::bots::AltRoles(b.botClass));
       config->players.push_back(p);
       char buf[96];
-      std::snprintf(buf, sizeof buf, " [%d: team %d, 0x%08x r%d, pick %d ms, lock %d ms]", b.index, b.team, b.noun,
-                    p.plan.role, p.plan.pickMs, p.plan.lockMs);
+      if (draft)
+        std::snprintf(buf, sizeof buf, " [%d: team %d, drafted after the humans, pick %d ms, lock %d ms after it]",
+                      b.index, b.team, p.plan.pickMs, p.plan.lockMs);
+      else
+        std::snprintf(buf, sizeof buf, " [%d: team %d, 0x%08x r%d, pick %d ms, lock %d ms]", b.index, b.team, b.noun,
+                      p.plan.role, p.plan.pickMs, p.plan.lockMs);
       desc += buf;
     }
     gms::Logf("%s match: shaper select (D3-live) set up: timers %u/%u/%u/%u ms (%s), %zu list entr%s for the humans, "
@@ -993,6 +1036,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   // from them, and before the 0x401 where the deploy reads mpNounDef). A bot keeps what LabsPlayer_ReflectBotData gave
   // it unless its pick differs (its shaper was taken by a teammate: the lock took another).
   void OnShaperPicks(const std::vector<gms::ShaperPick>& picks) override {
+    bots::RevealDrafted(sim_);  // BOTDRAFT: status 0x100, and the reveal's updates carry the drafted bot data
     for (const gms::ShaperPick& k : picks) {
       bool human = false;
       for (const auto& kv : players_) human = human || kv.second.index == k.gameplayIndex;
@@ -1238,6 +1282,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   // D1b-live test aid ([host] test_lua = "<seconds after EnterGame>:<file>[,<seconds>:<file>...]"): each Lua file (in
   // the game folder unless absolute; gms/engine/lua's dgsim_*.lua are installed there) runs once on the server
   // simulator's lua_State at its time, like the test wave's chunk; its string result is logged line by line.
+  // GUARDCORE: "<from>-<to>/<step>:<file>" runs it every <step> s from <from> to <to> (gms/core/commands/testlua.h).
   void SetTestLua(const char* spec) {
     std::string s(spec);
     size_t pos = 0;
@@ -1245,15 +1290,21 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       size_t comma = s.find(',', pos);
       if (comma == std::string::npos) comma = s.size();
       const std::string item = s.substr(pos, comma - pos);
-      const size_t colon = item.find(':');
-      if (colon != std::string::npos && colon > 0) {
-        TimedLua t;
-        t.at = std::atof(item.substr(0, colon).c_str());
-        t.file = item.substr(colon + 1);
-        testLua_.push_back(t);
-        Log("host: test_lua %.1f s after EnterGame: %s", t.at, t.file.c_str());
+      std::vector<gms::commands::TimedLuaItem> calls;
+      if (gms::commands::ParseTestLuaItem(item, &calls)) {
+        for (const gms::commands::TimedLuaItem& c : calls) {
+          TimedLua t;
+          t.at = c.at;
+          t.file = c.file;
+          testLua_.push_back(t);
+        }
+        if (calls.size() == 1)
+          Log("host: test_lua %.1f s after EnterGame: %s", calls[0].at, calls[0].file.c_str());
+        else
+          Log("host: test_lua %zu calls from %.1f to %.1f s after EnterGame: %s", calls.size(), calls.front().at,
+              calls.back().at, calls[0].file.c_str());
       } else if (!item.empty()) {
-        Log("host: test_lua item '%s' is not <seconds>:<file>; skipped", item.c_str());
+        Log("host: test_lua item '%s' is not <seconds>:<file> or <from>-<to>/<step>:<file>; skipped", item.c_str());
       }
       pos = comma + 1;
     }
@@ -1268,7 +1319,9 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   // creature (ResolveNearest; D12: "<prefix>@enemy|ally|npc[player]" filters by team); Q3c: "{casterpos}"/
   // "{creaturepos:<index>}" the position of its own/any player's creature (ResolvePositions; D12 had added the same
   // {casterpos}). D15: "gold <amount>" gives it gold, "report [<label>] [near <radius>]" logs its items, attributes and
-  // modifiers (and those of the objects within the radius): cmds::GrantGoldNow, cmds::ItemReportNow.
+  // modifiers (and those of the objects within the radius): cmds::GrantGoldNow, cmds::ItemReportNow. DESECBOT:
+  // "botxp <amount>" gives every bot XP then (their skill orders, level by level when below a level's XP);
+  // DESECBOT-2: "botgold <amount>" every bot gold (their builds; they spend it at their next visit to the shop).
   bool LoadCommandsFile(const char* path) {
     std::ifstream in(path);
     if (!in) {
@@ -1739,6 +1792,22 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
                   pl->index, hex.c_str());
         cmds::GrantXpNow(sim_, static_cast<unsigned>(pl->index), static_cast<float>(std::atof(hex.c_str() + 3)),
                          "injected");
+        continue;
+      }
+      if (hex.compare(0, 6, "botxp ") == 0) {  // DESECBOT test aid: "botxp <amount>", XP to every bot now (their ranks)
+        BoundTo b(sim_);
+        gms::Logf("%s match: injected (test side) %.1f s after EnterGame: %s", gms::Clock().c_str(), secs, hex.c_str());
+        for (unsigned i = 0; i < kMaxPlayers; ++i)
+          if (bots::IsBotIndex(static_cast<int>(i)))
+            cmds::GrantXpNow(sim_, i, static_cast<float>(std::atof(hex.c_str() + 6)), "injected bot");
+        continue;
+      }
+      if (hex.compare(0, 8, "botgold ") == 0) {  // DESECBOT-2 test aid: "botgold <amount>", gold to every bot now
+        BoundTo b(sim_);
+        gms::Logf("%s match: injected (test side) %.1f s after EnterGame: %s", gms::Clock().c_str(), secs, hex.c_str());
+        for (unsigned i = 0; i < kMaxPlayers; ++i)
+          if (bots::IsBotIndex(static_cast<int>(i)))
+            cmds::GrantGoldNow(sim_, i, static_cast<float>(std::atof(hex.c_str() + 8)), "injected bot");
         continue;
       }
       if (hex.compare(0, 5, "gold ") == 0) {  // D15: "gold <amount>", gold to the player now (nGoldSourceType.Cheat)
@@ -2530,11 +2599,42 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       fogLastSeenFresh_ += fresh;
     }
     PursuitWatch(objs);
+    OriginAudit(objs);
     fogRadiusWrites_ += rc.radiusWrites;
     fogGrassWrites_ += rc.grassWrites;
     fogLast_ = rc;
     if (rc.revealed) ++fogRevealTicks_;
     if (rc.failed && ++fogFailLogged_ <= 20) Log("fog: %d object(s) could not be read this tick", rc.failed);
+  }
+
+  // NULLPOS, the origin audit: (0, 0) is the bots' null position, so nothing in the world should stand exactly there
+  // (the parasite spawns at (0, -1), director.cpp). The first scan logs every object at exactly (0, 0) (or none);
+  // afterwards each object seen there for the first time gets a line, and each parasite stage its position when first
+  // seen. Lines "origin audit: ..." (lower case: they are evidence, not NULLPOS lines).
+  void OriginAudit(const std::vector<repl::NetObject>& objs) {
+    ++originTicks_;
+    std::string first;
+    int atOrigin = 0;
+    for (const repl::NetObject& o : objs) {
+      if (std::strstr(o.name, "Objective_SpiritMonster") && parasiteSeen_.insert(o.id).second)
+        Log("origin audit: the parasite %08X %s first seen at (%.2f, %.2f), hp %.0f (scan %u)", o.id, o.name, o.pos[0],
+            o.pos[1], o.hp, originTicks_);
+      if (!gms::agents::IsNullPos(o.pos[0], o.pos[1])) continue;
+      ++atOrigin;
+      if (!originFirst_) {
+        char b[96];
+        std::snprintf(b, sizeof b, "%s%08X %s (hp %.0f)", first.empty() ? "" : ", ", o.id, o.name, o.hp);
+        first += b;
+      } else if (originSeen_.insert(o.id).second) {
+        Log("origin audit: %08X %s at exactly (0, 0), hp %.0f (scan %u)", o.id, o.name, o.hp, originTicks_);
+      }
+      if (!originFirst_) originSeen_.insert(o.id);
+    }
+    if (!originFirst_) {
+      originFirst_ = true;
+      Log("origin audit: first scan, %zu objects: %d at exactly (0, 0)%s%s", objs.size(), atOrigin,
+          atOrigin ? ": " : "", first.c_str());
+    }
   }
 
   // D2g-pursuit, evidence: every follow of a scanned object (cLocomotionData +8 target, +0xC seen, +0xC8 goal). A line
@@ -2571,6 +2671,15 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
               f.id, f.name, p.team, f.pos[0], f.pos[1], p.target, p.goal[0], p.goal[1], p.goal[2], p.team,
               p.targetTracked ? "" : "(no record) ", p.lastSeen[0], p.lastSeen[1], p.targetPos[0], p.targetPos[1],
               origin ? "; AT THE MAP ORIGIN" : "");
+        // NULLPOS: exactly (0, 0) is no last-seen position at all (the follower's team never saw the target): a walk to
+        // the map's centre for nothing; reported once per goal, and the follow ends (agents.cpp ReportNullPosImpl)
+        if (moved && p.goal[0] == 0.f && p.goal[1] == 0.f) {
+          char who[96];
+          std::snprintf(who, sizeof who, "follows %08X hidden from team %u%s", p.target, p.team,
+                        p.targetTracked ? "" : ", no last-seen record");
+          agents::ReportNullPos(f.id, static_cast<int>(gms::agents::NullPosWhere::kHiddenPursuit), who,
+                                "engine object follow (fog)");
+        }
       } else if (had && !it->second.seen && ++pursuitLogged_ <= fogLogLimit_) {
         Log("pursuit: %08X %-28s at (%.1f, %.1f) sees its target %08X again: follows it, goal (%.1f, %.1f)", f.id, f.name,
             f.pos[0], f.pos[1], p.target, p.goal[0], p.goal[1]);
@@ -3441,6 +3550,10 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     char name[48] = {};
   };
   std::map<uint32_t, PursuitState> pursuits_;  // follower id -> its follow last tick
+  // NULLPOS: the origin audit (OriginAudit): objects seen at exactly (0, 0), the parasite's stages seen
+  bool originFirst_ = false;
+  std::set<uint32_t> originSeen_, parasiteSeen_;
+  unsigned originTicks_ = 0;
   int pursuitTicks_ = 0, pursuitHiddenTicks_ = 0, pursuitOriginTicks_ = 0, pursuitLogged_ = 0, pursuitOriginLogged_ = 0;
   // D2g-live step 3: what the players were sent of each object's animation overrides
   struct AnimShadow {

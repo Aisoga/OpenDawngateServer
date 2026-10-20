@@ -5,6 +5,7 @@
 - [The setup command](#the-setup-command)
 - [The same steps by hand](#the-same-steps-by-hand)
 - [Building the release](#building-the-release)
+- [The programs' icon](#the-programs-icon)
 - [Running the tests](#running-the-tests)
 - [Continuous integration](#continuous-integration)
 
@@ -108,6 +109,12 @@ After making new certificates, run `patch_client.py` again: the client must carr
 The script refuses to include any game file. It checks each file by name and by checksum against both archive builds.
 
 A release is a binary distribution under the AGPL: whoever hands it out also offers the source of the commit in its `BUILD.txt`.
+
+## The programs' icon
+
+`Start-Client.exe` and `Start-Server.exe` carry the project's icon, `server\cmd\assets\dawngate.ico` (16, 32 and 48 pixels, 32-bit). It gets into them without any outside tool: each of the two commands has a `rsrc_windows_amd64.syso` beside its code, a small COFF object holding the icon as Windows resources (`RT_ICON` and `RT_GROUP_ICON`). The Go linker links every `.syso` file of a package into the program, and the `_windows_amd64` in the name limits that to Windows x64 builds. So every build for Windows has the icon, whether it is a plain `go build`, `make_release.ps1` or CI, and the Linux builds don't see the files. `make_release.ps1` checks that both programs hold every image of the `.ico`.
+
+To change the icon, replace `server\cmd\assets\dawngate.ico` and run `go generate ./cmd/...` in `server\`. That runs `server\tools\icosyso` (it uses only Go's standard library), which rewrites both `.syso` files; commit them with the icon. `go test ./...` fails while the committed `.syso` files don't match the `.ico` (`server\internal\winres`). By hand: `go run ./tools/icosyso -ico <icon.ico> -o <command folder>\rsrc_windows [-arch amd64,386]` writes `rsrc_windows_<arch>.syso` per architecture. The release builds only Windows x64, so only that file is committed.
 
 ## Running the tests
 

@@ -1399,3 +1399,149 @@ GMS_TEST(ShaperSelectScriptedRoleIsAnnouncedAndAdjusts) {
   }
   CHECK(off && on);
 }
+
+// ---- BOTDRAFT: a custom game's bots pick after the humans --------------------------------------------------------------
+namespace {
+
+struct DraftRig {
+  std::vector<std::vector<gms::ShaperDraftHuman>> calls;
+  gms::ShaperSelectConfig cfg;
+  explicit DraftRig(int graceMs) {
+    cfg.timers = Timers(30000, 30000, 10000, 16);
+    cfg.humanDefault.list = {Entry(kAlpha, 1), Entry(kArtificer, 1), Entry(kGunman, 2)};
+    cfg.draftGraceMs = graceMs;
+    for (uint8_t i : {uint8_t{1}, uint8_t{2}}) {  // bot 1 on the human's team, bot 2 on the other
+      gms::ShaperSelectPlayer b = Scripted(i, i == 1 ? 1 : 2, 0, 1000, 2500, 0);
+      b.plan.draft = true;
+      cfg.players.push_back(b);
+    }
+    // the draft: the human's team's bot takes the Hunter unless the human said Hunter (then the Gladiator), and a
+    // shaper the human didn't pick
+    cfg.draft = [this](const std::vector<gms::ShaperDraftHuman>& humans, const std::vector<gms::ShaperDraftBot>& bots) {
+      calls.push_back(humans);
+      bool hunter = false;
+      uint32_t taken = 0;
+      for (const gms::ShaperDraftHuman& h : humans) {
+        hunter = hunter || (h.preferredRoles & 4) || h.roleCard == 2;
+        taken = h.shaper;
+      }
+      std::vector<gms::ShaperDraftPick> out;
+      for (const gms::ShaperDraftBot& b : bots) {
+        gms::ShaperDraftPick k;
+        k.gameplayIndex = b.gameplayIndex;
+        k.noun = taken == kArtificer ? kGunman : kArtificer;
+        k.role = static_cast<uint8_t>(b.team == 1 && hunter ? 0 : 2);
+        out.push_back(k);
+      }
+      return out;
+    };
+  }
+  DraftRig(const DraftRig&) = delete;
+  DraftRig& operator=(const DraftRig&) = delete;
+};
+
+bool SentRecordWithShaper(const RecordingSender& out, uint8_t index) {
+  char head[8];
+  std::snprintf(head, sizeof head, "c803%02x", index);
+  for (const Sent& x : out.sent)
+    if (x.hex.compare(0, 6, head) == 0 && x.hex.compare(6, 8, "00000000") != 0) return true;
+  return false;
+}
+
+}  // namespace
+
+// The bots show nothing until the human locked and said its role (a preferred-role box); then they draw at once, pick,
+// say their roles and lock; the human's Hunter keeps the bot teammate off the Hunter.
+GMS_TEST(ShaperSelectDraftWaitsForTheHumans) {
+  QuietLog log;
+  DraftRig rig(5000);
+  gms::ShaperSelect ss(rig.cfg);
+  const gms::ConnId human = 77;
+  ss.AddHuman(human, 0, 1);
+  RecordingSender out;
+  const int64_t s = 10000;
+  auto tickTo = [&](int64_t from, int64_t to) {
+    for (int64_t t = from; t <= to; t += 100) ss.Tick(t, out);
+  };
+  Msg(ss, human, Req(gms::kShaperHello), s, out);
+  ss.OnReady(human, s, out);
+  tickTo(s + 100, s + 8000);  // long past the bots' own pick and lock times
+  CHECK(!SentRecordWithShaper(out, 1));
+  CHECK(!SentRecordWithShaper(out, 2));
+  CHECK_EQ(ss.Record(1)->shaper, 0u);
+  CHECK_EQ(ss.Phase(), 1);
+  CHECK(rig.calls.empty());
+  Msg(ss, human, Req(gms::kShaperPreferredRole, 0, 2), s + 8000, out);  // the Hunter box
+  Msg(ss, human, Req(gms::kShaperRequest, kArtificer), s + 8100, out);
+  CHECK(rig.calls.empty());
+  Msg(ss, human, Req(gms::kShaperLockIn, kArtificer), s + 8200, out);
+  CHECK_EQ(rig.calls.size(), size_t{1});  // said its role: no grace
+  CHECK_EQ(rig.calls[0].size(), size_t{1});
+  CHECK_EQ(rig.calls[0][0].shaper, kArtificer);
+  CHECK_EQ(static_cast<int>(rig.calls[0][0].preferredRoles), 4);
+  tickTo(s + 8300, s + 12000);
+  CHECK_EQ(ss.Phase(), 2);
+  CHECK_EQ(ss.Record(1)->shaper, kGunman);
+  CHECK_EQ(static_cast<int>(ss.Record(1)->role), 0);  // the human is the Hunter
+  CHECK_EQ(static_cast<int>(ss.Record(2)->role), 2);
+  bool toggle = false;
+  for (const Sent& x : out.sent) toggle = toggle || (x.conn == human && x.hex == "c8060100");
+  CHECK(toggle);  // the bot teammate said its role to the human
+  CHECK(log.Has("BOTDRAFT: the bots draw now"));
+}
+
+// Without a role said, the draft waits the grace after the last lock; a role card chosen meanwhile counts (the
+// client's own first C8 07 does not).
+GMS_TEST(ShaperSelectDraftGraceAndRoleCard) {
+  QuietLog log;
+  DraftRig rig(4000);
+  gms::ShaperSelect ss(rig.cfg);
+  const gms::ConnId human = 77;
+  ss.AddHuman(human, 0, 1);
+  RecordingSender out;
+  const int64_t s = 10000;
+  Msg(ss, human, Req(gms::kShaperHello), s, out);
+  ss.OnReady(human, s, out);
+  Msg(ss, human, Req(gms::kShaperRequest, kAlpha), s + 1000, out);
+  Msg(ss, human, Req(gms::kShaperLockIn, kAlpha), s + 1100, out);
+  Msg(ss, human, Req(gms::kShaperSelectRole, 0, 0), s + 1150, out);  // the client's own, on entering its phase 2
+  for (int64_t t = s + 1200; t <= s + 4000; t += 100) ss.Tick(t, out);
+  CHECK(rig.calls.empty());
+  Msg(ss, human, Req(gms::kShaperSelectRole, 0, 2), s + 4100, out);  // the player clicks the Hunter card
+  CHECK_EQ(rig.calls.size(), size_t{1});
+  CHECK_EQ(rig.calls[0][0].roleCard, 2);
+  // and the grace alone: a second match where the human says nothing
+  DraftRig rig2(4000);
+  gms::ShaperSelect ss2(rig2.cfg);
+  ss2.AddHuman(human, 0, 1);
+  RecordingSender out2;
+  Msg(ss2, human, Req(gms::kShaperHello), s, out2);
+  ss2.OnReady(human, s, out2);
+  Msg(ss2, human, Req(gms::kShaperLockIn, kAlpha), s + 1000, out2);
+  for (int64_t t = s + 1100; t <= s + 4900; t += 100) ss2.Tick(t, out2);
+  CHECK(rig2.calls.empty());
+  ss2.Tick(s + 5000, out2);
+  CHECK_EQ(rig2.calls.size(), size_t{1});
+  CHECK_EQ(rig2.calls[0][0].roleCard, -1);
+}
+
+// The phase-1 timer: the human's record is locked first (the draft sees its shaper), then the bots draw and lock.
+GMS_TEST(ShaperSelectDraftAtTheTimer) {
+  QuietLog log;
+  DraftRig rig(5000);
+  gms::ShaperSelect ss(rig.cfg);
+  const gms::ConnId human = 77;
+  ss.AddHuman(human, 0, 1);
+  RecordingSender out;
+  const int64_t s = 10000;
+  Msg(ss, human, Req(gms::kShaperHello), s, out);
+  ss.OnReady(human, s, out);
+  Msg(ss, human, Req(gms::kShaperRequest, kArtificer), s + 1000, out);
+  for (int64_t t = s + 1100; t <= s + 30000; t += 100) ss.Tick(t, out);
+  CHECK_EQ(ss.Phase(), 2);
+  CHECK_EQ(rig.calls.size(), size_t{1});
+  CHECK_EQ(rig.calls[0][0].shaper, kArtificer);
+  CHECK_EQ(ss.Record(1)->shaper, kGunman);
+  CHECK((ss.Record(1)->flags & gms::kRecordShaperLocked) != 0);
+  CHECK((ss.Record(2)->flags & gms::kRecordShaperLocked) != 0);
+}

@@ -87,7 +87,8 @@ add_library(dgsim SHARED
   engine/components.cpp        # D1j: the ability data containers' release, the server pools' census
   engine/regen.cpp             # D1i: health and resource regeneration
   engine/agents.cpp
-  engine/match.cpp             # D1c-live: the match lifecycle (clock, Guardians, UI data, the end)
+  engine/hunterroute.cpp       # HUNTERROUTE: the Hunters' opening route, Vanquish, the first buff's pull (core/bots/route.h)
+  engine/match.cpp            # D1c-live: the match lifecycle (clock, Guardians, UI data, the end)
   engine/director.cpp          # D1c-live: waves, lanes, camps, the parasite
   engine/crowd.cpp             # D1k: the server space's NavPower constraint solver (the minions push each other)
   engine/wells.cpp             # D9: the spirit wells, workers and well gold (rules: core/wells)
@@ -185,6 +186,14 @@ if(RAKNET_FOUND)
     tests/test_surrender.cpp    # D8b-core: surrender's bytes and the vote; the karma tally is in test_postgame.cpp
     tests/test_shaper_select.cpp  # D3-core: script B's bytes, ShaperSelect's rules and timers (O1-O5)
     tests/test_bots.cpp         # D6b-shims: the bots' missions, lanes and fronts, team fill, shopping
+    tests/test_guidebuild.cpp   # DESECBOT-2: a profile's own build with its choices (core/bots/guidebuild.h)
+    tests/test_moyabot.cpp      # MOYABOT: Moya on the Hunter AI (profile, kit rules, guide build)
+    tests/test_campfinish.cpp   # CAMPFINISH: a Hunter finishes the camp he wins against (core/agents/campfinish.h)
+    tests/test_hunterroute.cpp  # HUNTERROUTE: the opening route, Vanquish's pick, the pull (core/bots/route.h)
+    tests/test_nullpos.cpp      # NULLPOS: (0, 0) as the bots' null position (core/agents/nullpos.h, lost.h's clear)
+    tests/test_killfinish.cpp   # KILLFINISH: stay to finish a won trade, the damage ring, BOTCYCLE's plan chain
+    tests/test_mikella.cpp      # MIKELLABOT: Mikella's profile, the Gladiator pin, her kit layer and guide build
+    tests/test_draft.cpp        # BOTDRAFT: a custom game's bots draw after the humans (core/bots/draft.h)
     tests/test_watchdog.cpp     # H5: the stall and step rules, a real watchdog thread against a test thread, the dump
     tests/test_d14.cpp          # D14: the map rules (reward buffs, aggro on sight, camp spots, the Guardian's shield)
     tests/test_timing.cpp       # Q3c: the tick, traffic and command-latency arithmetic, the CSV, the simulator's rule

@@ -365,7 +365,8 @@ test('lanes without the host', function()
   c, d = nBot.GetLaneCenterAndDirection(nLaneID.Bottom, nTeamID.Mortal)
   check(near(c.x, 66.5) and near(c.y, -68.7), 'Bottom')
   c, d = nBot.GetLaneCenterAndDirection(9, 1)
-  check(near(c.x, 0) and near(d.x, 0), 'an unknown lane: zero vectors')
+  -- NULLPOS: never the null position; the top lane's front (and a NULLPOS report)
+  check(near(c.x, -69.5) and near(c.y, 68.2) and near(d.x, 0.7333), 'an unknown lane: the top front, not (0, 0)')
   -- the results are nVectors (callers do vector arithmetic)
   c, d = nBot.GetLaneCenterAndDirection(nLaneID.Top, 1)
   local behind = c + d * -12
@@ -649,6 +650,194 @@ test('fixup bailOnKill', function()
   if not hadUtils then nBotUtils = nil end
   condition_Bot_EngageForKill = nil
   condition_Bot_BailOnKill = nil
+end)
+
+-- DESECBOT-3 (fix-up 3b): no EngageForKill that BailOnKill would leave at once; the early Desecrator neither engages
+-- nor stays on a target beyond his E or under its tower
+test('fixup engageFix: no bounce, the early Desecrator (DESECBOT-3)', function()
+  local B = dgsim_bots
+  B.fixupsWanted, B.engageFixWanted, B.desecKitWanted, B.kitsWanted = nil, nil, nil, nil
+  B.fixups = { veryOutnumbered = true, groupInLane = true, bailOnKill = false, parasite = true, campRadius = true,
+               engageFix = false }
+  local hadUtils = nBotUtils ~= nil
+  nBotUtils = nBotUtils or {}
+  local savedTower, savedSet, savedNear = nBotUtils.IsAllyTowerNear, nGameObject.SetTargetID, nBotUtils.IsEnemyPlayerNear
+  nBotUtils.IsEnemyPlayerNear = function() return false, kObjIDNone end
+  local towered = {}
+  nBotUtils.IsAllyTowerNear = function(o, r) return towered[o] == true and r >= 25 end
+  nGameObject.SetTargetID = function(o, t) W.get(o).best = t end
+  local guard = shaper('guardian', 1, 0, 0, { bot = true, level = 2 })
+  local des = shaper('desecrator', 1, 0, 0, { bot = true, level = 2 })
+  local low = shaper('warden', 2, 16, 0, { maxhp = 1000, hp = 300 })
+  local farOne = shaper('far', 2, 30, 0, { maxhp = 1000, hp = 300 })
+  local old = shaper('old', 2, -10, 0)
+  local bails = false
+  condition_Bot_EngageForKill = { [1] = function(bot)
+    local t = W.get(bot).aim
+    nGameObject.SetTargetID(bot, t)
+    return true, 0, 0, 0, t
+  end }
+  condition_Bot_BailOnKill = { [1] = function() return bails end }
+  local s = B.ApplyFixups()
+  check(s:find('EngageFix true') ~= nil and s:find('BailOnKill true') ~= nil, s)
+  local EFK, BAIL = condition_Bot_EngageForKill[1], condition_Bot_BailOnKill[1]
+  -- the Guardian: engages when BailOnKill would stay, not when it would leave (the target put back)
+  W.get(guard).aim, W.get(guard).best = low, old
+  local ok, _, _, _, t = EFK(guard)
+  check(ok == true and t == low and W.get(guard).best == low, 'engages: BailOnKill stays')
+  bails = true
+  W.get(guard).best = old
+  check(EFK(guard) == false and W.get(guard).best == old, 'refused: BailOnKill would leave at once; the old target back')
+  B.engageFixWanted = false
+  check(EFK(guard) == true, 'bot_engage_fix=0: the script alone')
+  check(B.ApplyFixups():find('EngageFix off') ~= nil, 'bot_engage_fix=0: the fix-ups line says off')
+  B.engageFixWanted = nil
+  bails = false
+  -- the Desecrator at level 2: not beyond his E (22), not under the target's tower
+  W.get(des).aim = farOne
+  check(EFK(des) == false, 'early Desecrator: a target 30 away is refused')
+  W.get(des).aim = low
+  check(EFK(des) == true, 'early Desecrator: 16 away, no tower: engages')
+  towered[low] = true
+  check(EFK(des) == false, 'early Desecrator: the target under its tower is refused')
+  W.get(des).best = low
+  check(BAIL(des) == true, 'early Desecrator: BailOnKill leaves a target under its tower')
+  towered[low] = nil
+  check(BAIL(des) == false, 'early Desecrator: and stays otherwise')
+  W.get(des).best = farOne
+  check(BAIL(des) == true, 'early Desecrator: BailOnKill leaves a target beyond his E')
+  -- from level 4 the AI's own rules; the Guardian never had them
+  W.get(des).level = 4
+  check(BAIL(des) == false, 'level 4: the script decides')
+  W.get(des).aim = farOne
+  check(EFK(des) == true, 'level 4: engages a target 30 away')
+  W.get(guard).aim = farOne
+  W.get(guard).best = farOne
+  check(EFK(guard) == true and BAIL(guard) == false, 'the Guardian: no early rule')
+  W.get(des).level = 2
+  B.desecKitWanted = false
+  check(EFK(des) == true, 'bot_desec_kit=0: no early rule')
+  B.desecKitWanted = nil
+  -- an error in the script passes
+  condition_Bot_EngageForKill[1] = function() error('boom') end
+  B.fixups.engageFix = false
+  B.ApplyFixups()
+  check(not pcall(condition_Bot_EngageForKill[1], guard), 'an error passes')
+  nBotUtils.IsAllyTowerNear, nGameObject.SetTargetID, nBotUtils.IsEnemyPlayerNear = savedTower, savedSet, savedNear
+  if not hadUtils then nBotUtils = nil end
+  condition_Bot_EngageForKill, condition_Bot_BailOnKill = nil, nil
+end)
+
+-- KILLFINISH: BailOnKill's reasons go to the host; the host's "would finish" keeps an engage fix-up 3b would refuse.
+-- BOTCYCLE (fix-up 3c): a KillShaper join takes the mission's target and passes only when BailOnKill would stay or the
+-- host would finish
+test('fixup joinFix and the BailOnKill reasons (KILLFINISH, BOTCYCLE)', function()
+  local B = dgsim_bots
+  B.fixupsWanted, B.engageFixWanted, B.joinFixWanted, B.desecKitWanted = nil, nil, nil, nil
+  B.fixups = { veryOutnumbered = true, groupInLane = true, bailOnKill = false, parasite = true, campRadius = true,
+               engageFix = false, joinFix = false }
+  local hadUtils = nBotUtils ~= nil
+  nBotUtils = nBotUtils or {}
+  local savedTower, savedSet, savedNear = nBotUtils.IsAllyTowerNear, nGameObject.SetTargetID, nBotUtils.IsEnemyPlayerNear
+  local savedPCO = nPlayer.IsPlayerControlledObject
+  nPlayer.IsPlayerControlledObject = function(o) return W.get(o) ~= nil and W.get(o).player == true end
+  nGameObject.SetTargetID = function(o, t) W.get(o).best = t end
+  local bot = shaper('creature', 1, 0, 0, { bot = true, level = 5, maxhp = 1000, hp = 200 })
+  local low = shaper('warden', 2, 10, 0, { maxhp = 1000, hp = 250, level = 5 })
+  local minion = W.add({ name = 'minion', team = 2, pos = P(5, 5) })
+  local nearest = low
+  nBotUtils.IsEnemyPlayerNear = function() return nearest ~= nil, nearest or kObjIDNone end
+  local towered = false
+  nBotUtils.IsAllyTowerNear = function() return towered end
+  local hostWhy, holds, asked, engageBlocked = {}, false, 0, false
+  local missions = { { 19, low } }
+  nBotHost = {
+    BailWhy = function(o, why) hostWhy[#hostWhy + 1] = why end,
+    KillFinish = function() asked = asked + 1; return holds end,
+    EngageBlocked = function() return engageBlocked end,
+    OpenMission = function(team, i) local m = missions[i]; if m then return m[1], m[2] end end,
+  }
+  condition_Bot_BailOnKill = { enemySearchRadius = 30, searchRadius = 50, towerSearchRadius = 25,
+    lowHealthThreshold = 0.3, enemyHealthThreshold = 0.49, increasedThresholdPerAlly = 0.12,
+    decreasedThresholdPerEnemy = 0.09, braveryFactor = 0.5, levelGapCutoff = 2, enemySearchHistory = 5 }
+  local bails = true
+  condition_Bot_BailOnKill[1] = function() return bails end
+  condition_Bot_EngageForKill = { enemySearchRadius = 55, [1] = function(b)
+    nGameObject.SetTargetID(b, low)
+    return true, 0, 0, 0, low
+  end }
+  condition_Bot_IsMissionAvailable = { defaultMission = 2, [nConditionFns.Check] = function(b, mt, range)
+    return true, kObjIDNone, 19
+  end }
+  local s = B.ApplyFixups()
+  check(s:find('JoinFix true') ~= nil and s:find('EngageFix true') ~= nil, s)
+  -- the reasons, in the script's order: the bot at 20 %, the enemy at 25 % (low enough, but above the bot's own)
+  W.get(bot).best = low
+  check(B.BailWhy(bot) == "its HP above the bot's", 'relative HP: ' .. tostring(B.BailWhy(bot)))
+  W.get(bot).hp = 300
+  check(B.BailWhy(bot) == 'another rule', 'the bot at 30 %: none of the tests')
+  towered = true
+  check(B.BailWhy(bot) == 'its tower near', 'its tower')
+  towered = false
+  W.get(low).level = 8
+  check(B.BailWhy(bot) == 'level gap', 'level gap')
+  W.get(low).level = 5
+  W.get(low).hp = 600
+  check(B.BailWhy(bot) == 'the enemy not low', 'the enemy at 60 %')
+  W.get(low).hp = 250
+  W.get(bot).best = kObjIDNone
+  check(B.BailWhy(bot) == 'no target', 'no target')
+  W.get(bot).best = low
+  nearest = nil
+  check(B.BailWhy(bot) == 'no enemy shaper near', 'nobody near')
+  nearest = low
+  W.get(bot).hp = 200
+  -- the wrapper hands the reason to the host when it bails
+  check(condition_Bot_BailOnKill[1](bot) == true and hostWhy[#hostWhy] == "its HP above the bot's", 'host got the reason')
+  -- fix-up 3b with the host: refused while it wouldn't finish, kept when it would
+  W.get(bot).best = minion
+  check(condition_Bot_EngageForKill[1](bot) == false and W.get(bot).best == minion, '3b refuses, target back')
+  holds = true
+  check(condition_Bot_EngageForKill[1](bot) == true and W.get(bot).best == low, '3b: the host would finish: engages')
+  holds = false
+  -- BOTCYCLE: an engage left at once blocks the next ones (unless the host would finish)
+  bails, engageBlocked = false, true
+  W.get(bot).best = minion
+  check(condition_Bot_EngageForKill[1](bot) == false and W.get(bot).best == minion, 'engage blocked, target back')
+  holds = true
+  check(condition_Bot_EngageForKill[1](bot) == true, 'blocked, but the host would finish: engages')
+  holds, bails, engageBlocked = false, true, false
+  -- fix-up 3c: a KillShaper join
+  local IMA = condition_Bot_IsMissionAvailable[nConditionFns.Check]
+  W.get(bot).best = minion
+  check(IMA(bot, 8, 60) == false and W.get(bot).best == minion, 'join refused: BailOnKill would leave; target back')
+  bails = false
+  local ok, _, id = IMA(bot, 8, 60)
+  check(ok == true and id == 19 and W.get(bot).best == low, 'join: the mission target is the bot\'s target')
+  engageBlocked = true
+  W.get(bot).best = minion
+  check(IMA(bot, 8, 60) == false and W.get(bot).best == minion, 'join refused while the host blocks it, target kept')
+  engageBlocked = false
+  bails = true
+  holds = true
+  W.get(bot).best = minion
+  check(IMA(bot, 8, 60) == true and W.get(bot).best == low, 'join kept: the host would finish')
+  holds = false
+  W.get(bot).best = minion
+  check(IMA(bot, 2) == true and W.get(bot).best == minion, 'another mission type: untouched')
+  B.joinFixWanted = false
+  check(IMA(bot, 8, 60) == true and W.get(bot).best == minion, 'bot_join_fix=0: the script alone')
+  check(B.ApplyFixups():find('JoinFix off') ~= nil, 'the fix-ups line says off')
+  B.joinFixWanted = nil
+  missions = {}
+  bails = false
+  check(IMA(bot, 8, 60) == true and W.get(bot).best == minion, 'mission gone: no target to take')
+  check(asked >= 3, 'the host was asked')
+  nBotUtils.IsAllyTowerNear, nGameObject.SetTargetID, nBotUtils.IsEnemyPlayerNear = savedTower, savedSet, savedNear
+  nPlayer.IsPlayerControlledObject = savedPCO
+  if not hadUtils then nBotUtils = nil end
+  nBotHost = nil
+  condition_Bot_EngageForKill, condition_Bot_BailOnKill, condition_Bot_IsMissionAvailable = nil, nil, nil
 end)
 
 -- BOTIDLE: the Hunter's IsNearNextCreepCamp radius widens from 5 to the host's value (once; 0 keeps the script's)
@@ -1675,6 +1864,177 @@ test('jungle: the Hunter answers the team calls', function()
   cleanJungle()
 end)
 
+test('jungle: the Hunter holds a call, keeps a push across targets, defends from near, farms waves (HUNTERBOT)', function()
+  local B = dgsim_bots
+  local roles, board, ids = jungleWorld()
+  local hu = shaper('hu', 1, -150, -40, { bot = true, maxhp = 700 })
+  roles[hu] = 2
+  for i = 1, 4 do shaper('e' .. i, 2, 200 + i, 200, { bot = true }) end
+  B.ApplyFixups()
+  local cfg = B.jungleConfig
+  local function decide(t, call, cur, pos, target)
+    W.matchTime = t
+    W.get(hu).pos = pos or W.get(hu).pos
+    local s = { t = t, team = 1, enemy = 2, parasite = {}, wells = {} }
+    local st = { call = call, target = target }
+    local h = { id = hu, alive = true, hp = 0.9, pos = W.get(hu).pos, team = 1 }
+    return B.HunterDecide(s, st, h, { task = cur }, cfg)
+  end
+  -- defend: from 145 away he goes; from 400 away not, unless the Guardian is low
+  local tk = decide(300, 'defend', nil, P(-150, -40))
+  check(tk ~= nil and tk.kind == 'defend', 'defend from near (' .. tostring(tk and tk.kind) .. ')')
+  tk = decide(300, 'defend', nil, P(150, 40))
+  check(tk == nil, 'no defend from across the map (' .. tostring(tk and tk.kind) .. ')')
+  W.get(W.guardians[1]).hp = W.get(W.guardians[1]).maxhp * 0.3
+  tk = decide(300, 'defend', nil, P(150, 40))
+  check(tk ~= nil and tk.kind == 'defend', 'the Guardian at 30 %: from anywhere')
+  W.get(W.guardians[1]).hp = W.get(W.guardians[1]).maxhp
+  -- the hold: the call ends 5 s after he took it: he keeps going; after holdS not
+  local cur = decide(300, 'defend', nil, P(-150, -40))
+  cur.since = 300
+  tk = decide(305, 'farm', cur)
+  check(tk == cur, 'held 5 s after the call ended')
+  tk = decide(311, 'farm', cur)
+  check(tk == nil, 'farm after holdS')
+  B.hunterFixWanted = false
+  tk = decide(305, 'farm', cur)
+  check(tk == nil, 'bot_hunter_fix=0: no hold')
+  tk = decide(300, 'defend', nil, P(150, 40))
+  check(tk ~= nil and tk.kind == 'defend', 'bot_hunter_fix=0: defend from anywhere')
+  B.hunterFixWanted = nil
+  -- the push: joins from 200 away (BOTJUNGLE: 170), keeps it while the push has no target for a moment
+  local tower = ids[10]
+  local tp = W.get(tower).pos
+  local from = P(tp.x - 200 * 0.6, tp.y - 200 * 0.8)
+  tk = decide(800, 'push', nil, from, tower)
+  check(tk ~= nil and tk.kind == 'push' and tk.target == tower, 'joins a push 200 away')
+  B.hunterFixWanted = false
+  check(decide(800, 'push', nil, from, tower) == nil, 'bot_hunter_fix=0: not from 200 away')
+  B.hunterFixWanted = nil
+  tk.since = 800
+  local gap = decide(820, 'push', tk, from, nil)
+  check(gap == tk, 'between two targets of the push: kept')
+  -- catching up: 2 levels below his team's others he keeps farming (no push), 1 below he joins
+  W.get(hu).level = 4
+  local function behind(sum)
+    local s2 = { t = 800, team = 1, enemy = 2, parasite = {}, wells = {}, levelSum = sum, levelCount = 5 }
+    return B.HunterDecide(s2, { call = 'push', target = tower }, { id = hu, alive = true, hp = 0.9, pos = from, team = 1 },
+                          {}, cfg)
+  end
+  local cu = behind(4 + 4 * 6)
+  check(cu == nil, 'catching up: no push (' .. tostring(cu and cu.kind) .. ')')
+  cu = behind(4 + 4 * 5)
+  check(cu ~= nil and cu.kind == 'push', 'one level behind: the push')
+  W.get(hu).level = nil
+  -- waves: after gankFrom, no camp of his near, an enemy minion near him
+  local m = W.add({ name = 'minion', team = 2, npc = nNPCType.MeleeMinion, pos = P(10, 10), maxhp = 400, hp = 400 })
+  local closestCamp = nBotHost.ClosestCamp
+  nBotHost.ClosestCamp = function() return nil end
+  tk = decide(400, 'farm', nil, P(0, 0))
+  check(tk ~= nil and tk.kind == 'wave' and tk.target == m, 'a wave without a camp (' .. tostring(tk and tk.kind) .. ')')
+  nBotHost.ClosestCamp = function(x, y, z, team, penalty) return x + 30, y, 0 end
+  tk = decide(400, 'farm', nil, P(0, 0))
+  check(tk == nil, 'a camp 30 away: the camp')
+  nBotHost.ClosestCamp = function() return nil end
+  check(decide(150, 'farm', nil, P(0, 0)) == nil, 'no waves before gankFrom')
+  nBotHost.ClosestCamp = closestCamp
+  W.kill(m)
+  -- CAMPFINISH: a nearly dead camp he finishes first: no push, the camp conditions answer its last creature
+  local campFight = nBotHost.CampFight
+  nBotHost.CampFight = function(bot) if bot == hu then return -60, -58, 1, 0.12, true end end
+  local fin, why = decide(800, 'push', nil, from, tower)
+  check(fin == nil and why == 'finishing a camp', 'finishing a camp: no push (' .. tostring(fin and fin.kind) .. ')')
+  check(decide(300, 'defend', nil, P(-150, -40)) == nil, 'finishing a camp: the base waits')
+  W.get(W.guardians[1]).hp = W.get(W.guardians[1]).maxhp * 0.3
+  local d2 = decide(300, 'defend', nil, P(-150, -40))
+  check(d2 ~= nil and d2.kind == 'defend', 'finishing a camp: the Guardian at 30 % does not wait')
+  W.get(W.guardians[1]).hp = W.get(W.guardians[1]).maxhp
+  B.campAsker = hu
+  local v = nDirector.GetClosestCampPosition(1, W.get(hu).pos, false)
+  B.campAsker = nil
+  check(v.x == -60 and v.y == -58, 'finishing a camp: the camp conditions answer its last creature')
+  nBotHost.CampFight = function(bot) if bot == hu then return -60, -58, 1, 0.8, false end end
+  tk = decide(800, 'push', nil, from, tower)
+  check(tk ~= nil and tk.kind == 'push', 'a camp not to finish: the push')
+  nBotHost.CampFight = function() return -60, -58, 1, 0.12, true end
+  B.campFinishWanted = false
+  tk = decide(800, 'push', nil, from, tower)
+  check(tk ~= nil and tk.kind == 'push', 'bot_camp_finish=0: the push')
+  B.campFinishWanted = nil
+  nBotHost.CampFight = campFight
+  -- HUNTERROUTE: the opening route's camp for a Hunter, after the finishing camp; nothing from the host: the default
+  local hunterRoute = nBotHost.HunterRoute
+  nBotHost.HunterRoute = function(bot) if bot == hu then return 68, -165.6, 1 end end
+  B.campAsker = hu
+  local rv = nDirector.GetClosestCampPosition(1, W.get(hu).pos, false)
+  check(rv.x == 68 and rv.y == -165.6, 'the opening route: green (' .. tostring(rv.x) .. ')')
+  nBotHost.CampFight = function(bot) if bot == hu then return -60, -58, 1, 0.12, true end end
+  rv = nDirector.GetClosestCampPosition(1, W.get(hu).pos, false)
+  check(rv.x == -60, 'finishing a camp comes before the route')
+  nBotHost.CampFight = campFight
+  nBotHost.HunterRoute = function() return nil end
+  rv = nDirector.GetClosestCampPosition(1, W.get(hu).pos, false)
+  check(rv.x ~= 68, 'no route step: the default camp')
+  B.campAsker = nil
+  check(B.HunterRoutePos(hu) == nil, 'HunterRoutePos: nil without a step')
+  nBotHost.HunterRoute = hunterRoute
+  cleanJungle()
+end)
+
+test('kits: Faris and Freia leave SpinToWin, Petrus keeps his spin (HUNTERBOT)', function()
+  local B = dgsim_bots
+  local faris = shaper('golem', 1, 0, 0, { bot = true })
+  local petrus = shaper('artificer', 1, 5, 0, { bot = true })
+  local spinning = true
+  condition_Bot_IsEActive = { [1] = function() return spinning end }
+  B.fixups.kits = nil
+  B.ApplyKitFixup()
+  check(B.fixups.kits ~= true, 'waits for condition_Bot_CanUseE')
+  condition_Bot_CanUseE = { [1] = function() return true end }
+  B.ApplyKitFixup()
+  check(B.fixups.kits == true, 'applied')
+  check(condition_Bot_IsEActive[1](faris) == false, 'Faris: E active answers false')
+  check(condition_Bot_CanUseE[1](faris) == false, 'Faris: no SpinToWin through CanUseE')
+  check(condition_Bot_IsEActive[1](petrus) == true and condition_Bot_CanUseE[1](petrus) == true,
+        'Petrus: the spin holds SpinToWin')
+  B.kitsWanted = false
+  check(condition_Bot_IsEActive[1](faris) == true and condition_Bot_CanUseE[1](faris) == true, 'bot_kits=0: the data')
+  B.kitsWanted = nil
+  condition_Bot_IsEActive, condition_Bot_CanUseE = nil, nil
+end)
+
+test('kits: the Desecrator\'s W only with an enemy shaper within 12, the Guardian keeps his shield (DESECBOT)', function()
+  local B = dgsim_bots
+  local des = shaper('desecrator', 1, 0, 0, { bot = true })
+  local guard = shaper('guardian', 1, 5, 0, { bot = true })
+  local shielded = false
+  B.fixups.tacticianKits = nil
+  B.ApplyTacticianKitFixup()
+  check(B.fixups.tacticianKits ~= true, 'waits for condition_Guardian_ShieldActive')
+  condition_Guardian_ShieldActive = { [1] = function() return shielded end }
+  B.ApplyTacticianKitFixup()
+  check(B.fixups.tacticianKits == true, 'applied')
+  local SA = condition_Guardian_ShieldActive[1]
+  check(SA(des) == true, 'nobody near: "shield active", no W')
+  local far = shaper('far', 2, 20, 0)
+  check(SA(des) == true, 'an enemy at 20: no W')
+  local hidden = shaper('hidden', 2, 8, 0, { visible = { [0] = true, [1] = false, [2] = true } })
+  check(SA(des) == true, 'an enemy at 8 he does not see: no W')
+  local ally = shaper('ally', 1, 3, 0)
+  check(SA(des) == true, 'an ally near: no W')
+  local near = shaper('near', 2, 10, 0)
+  check(SA(des) == false, 'an enemy at 10: the W gambits fire')
+  check(SA(guard) == false, 'the Guardian: his own modifier (off)')
+  shielded = true
+  check(SA(guard) == true, 'the Guardian: his own modifier (on)')
+  B.kitsWanted = false
+  check(SA(des) == true, 'bot_kits=0: the data (the modifier)')
+  B.kitsWanted = nil
+  check(not B.ApplyFixups():find('TacticianKits false'), 'the fix-ups line')
+  condition_Guardian_ShieldActive = nil
+  local _ = far and hidden and ally and near
+end)
+
 test('jungle: the bots follow the humans pings', function()
   local B = dgsim_bots
   local roles, board, ids, para, lanes = jungleWorld()
@@ -1762,6 +2122,71 @@ test('jungle: the bots follow the humans pings', function()
   B.TeamTick()
   check(st.call == 'parasite', 'bot_ping_follow=0: not read')
   cleanJungle()
+end)
+
+-- NULLPOS: a running Follow without an object that reads (0, 0) is reported and gets the bot's own position (it ends);
+-- a point or an object is left alone; an unknown lane's centre is reported and is the top front, never (0, 0)
+test('nullpos', function()
+  local B = dgsim_bots
+  local bot = shaper('PC_Warden', 2, 86, 72)
+  local reports = {}
+  nBotHost = { NullPos = function(obj, kind, lane) reports[#reports + 1] = { obj = obj, kind = kind, lane = lane } end }
+  local saved, savedTree = nAgent.GetTargetPosition, nBehaviorTree
+  local point, followTarget = nVector.create(0, 0, 0), kObjIDNone
+  nAgent.GetTargetPosition = function() return point end
+  nBehaviorTree = { GetTargetObjectID = function() return followTarget end }
+  B.fixups.nullPos = nil
+  B.ApplyNullPosFixup()
+  check(B.fixups.nullPos == true, 'applied')
+  local p = nAgent.GetTargetPosition(bot)
+  check(#reports == 1 and reports[1].obj == bot and reports[1].kind == B.NULLPOS_FOLLOW, 'Follow reported')
+  check(p ~= nil and p.x == 86 and p.y == 72, 'the bot gets its own position: ' .. tostring(p and p.x))
+  point = nVector.create(0, 0, 3.5)  -- a height doesn't make (0, 0) a place
+  nAgent.GetTargetPosition(bot)
+  check(#reports == 2, '(0, 0, z) too')
+  point = nVector.create(78, 20, 0)  -- a ward spot
+  p = nAgent.GetTargetPosition(bot)
+  check(#reports == 2 and p.x == 78 and p.y == 20, 'a point stays')
+  point, followTarget = nVector.create(0, 0, 0), bot  -- the Follow has an object: the point is not read
+  p = nAgent.GetTargetPosition(bot)
+  check(#reports == 2 and p.x == 0, 'with an object nothing happens')
+  point = nVector.create(-0.1, -0.1, 0)  -- an offset point is a place
+  followTarget = kObjIDNone
+  nAgent.GetTargetPosition(bot)
+  check(#reports == 2, 'the offset is not null')
+  B.ApplyNullPosFixup()  -- once
+  nAgent.GetTargetPosition(bot)
+  check(#reports == 2, 'applied once')
+  -- the evidence counts: every point-mode pass, and the ones at (0, 0)
+  check(B.stats.calls['Follow point reads'] == 5 and B.stats.calls['Follow point reads at (0, 0)'] == 2,
+        'counts ' .. tostring(B.stats.calls['Follow point reads']) .. ' ' .. tostring(B.stats.calls['Follow point reads at (0, 0)']))
+  -- BACKTOACTION's exact sequence, with the decompiled Follow loop's two reads per pass: the pursuit's point, then the
+  -- host writes the zero vector while the Follow runs; the next pass gets the bot's own position and ends
+  local reached, passes = false, 0
+  point = nVector.create(78, 20, 0)
+  local function followPass()
+    passes = passes + 1
+    local obj = nBehaviorTree.GetTargetObjectID()
+    local goal = nAgent.GetTargetPosition(bot)
+    if obj == kObjIDNone then
+      local at = nGameObject.GetPosition(bot)
+      if math.abs(at.x - goal.x) < 0.5 and math.abs(at.y - goal.y) < 0.5 then reached = true end
+      return goal
+    end
+  end
+  local g1 = followPass()
+  check(g1.x == 78 and not reached, 'pass 1 walks to the ward spot')
+  point = nVector.create(0, 0, 0)  -- the old EndPointPursuit: the zero vector under the running Follow
+  local g2 = followPass()
+  check(g2.x == 86 and g2.y == 72 and reached, 'pass 2: the own position, the Follow ends there')
+  check(#reports == 3 and reports[3].kind == B.NULLPOS_FOLLOW, 'pass 2 reported')
+  reports = { reports[1], reports[2] }
+  -- the lane centre of an unknown lane
+  local c = B.LaneCenter(0, 1)
+  check(#reports == 3 and reports[3].kind == B.NULLPOS_LANE_CENTRE and reports[3].lane == 0, 'lane centre reported')
+  check(not B.IsNullPos(c) and c.x == B.staticFronts[1].x, 'the top front instead')
+  nAgent.GetTargetPosition, nBehaviorTree = saved, savedTree
+  B.fixups.nullPos = nil
 end)
 
 print(checks .. ' checks, ' .. failed .. ' failed')

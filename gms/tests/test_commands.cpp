@@ -4,7 +4,9 @@
 // in d7_run1: its own check refuses an unranked ability).
 #include <cmath>
 #include <string>
+#include <vector>
 
+#include "core/commands/testlua.h"
 #include "core/common/bytes.h"
 #include "core/protocol/commands.h"
 #include "core/protocol/wire.h"
@@ -267,4 +269,40 @@ GMS_TEST(CommandsActionCommandResponse) {
   CHECK(!gms::SetResponseSequence(&notB4, 1));
   CHECK_EQ(gms::DescribeCommandAnswer(FromHex("9b00020000404100000cc200000000")),
            std::string("LocomotionCommand subtype 0, seq 2, pos (12.00, -35.00, 0.00)"));
+}
+
+// GUARDCORE: [host] test_lua's items, one call or a repeat ("<from>-<to>/<step>:<file>").
+GMS_TEST(TestLuaItems) {
+  using gms::commands::ParseTestLuaItem;
+  using gms::commands::TimedLuaItem;
+  std::vector<TimedLuaItem> v;
+  CHECK(ParseTestLuaItem("20:dgsim_probe.lua", &v));
+  CHECK_EQ(v.size(), static_cast<size_t>(1));
+  CHECK_EQ(v[0].at, 20.0);
+  CHECK(v[0].file == "dgsim_probe.lua");
+  v.clear();
+  CHECK(ParseTestLuaItem("20-30/2:dgsim_gcore.lua", &v));  // 20, 22, ..., 30: both ends included
+  CHECK_EQ(v.size(), static_cast<size_t>(6));
+  CHECK_EQ(v[5].at, 30.0);
+  CHECK(v[3].file == "dgsim_gcore.lua");
+  v.clear();
+  CHECK(ParseTestLuaItem("20-29/2:x.lua", &v));  // the last step that fits: 28
+  CHECK_EQ(v.size(), static_cast<size_t>(5));
+  CHECK_EQ(v.back().at, 28.0);
+  v.clear();
+  CHECK(ParseTestLuaItem("1.5-2.5/0.5:x.lua", &v));
+  CHECK_EQ(v.size(), static_cast<size_t>(3));
+  v.clear();
+  CHECK(!ParseTestLuaItem("C:/probes/p.lua", &v));  // no number before the colon
+  CHECK(ParseTestLuaItem("25:C:/probes/p.lua", &v));  // an absolute path after the time
+  CHECK(v.size() == 1 && v[0].file == "C:/probes/p.lua");
+  v.clear();
+  CHECK(!ParseTestLuaItem("20", &v));
+  CHECK(!ParseTestLuaItem(":x.lua", &v));
+  CHECK(!ParseTestLuaItem("20:", &v));
+  CHECK(!ParseTestLuaItem("30-20/2:x.lua", &v));
+  CHECK(!ParseTestLuaItem("20-30/0:x.lua", &v));
+  CHECK(!ParseTestLuaItem("20-30:x.lua", &v));
+  CHECK(!ParseTestLuaItem("0-100000/1:x.lua", &v));  // more than kMaxTestLuaRepeats
+  CHECK(v.empty());
 }

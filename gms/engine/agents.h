@@ -99,12 +99,40 @@ struct Options {
   bool botReflex = true;             // [host] bot_reflex
   bool botJungleFight = true;        // [host] bot_jungle_fight: a jungler's "weaker" compares HP points (PRETUSBOT)
   bool botWellDefense = true;        // [host] bot_well_defense: Tacticians, Hunters, Predators defend their wells (WELLDEF)
+  bool botKits = true;               // [host] bot_kits: the shapers' kit rules (HUNTERBOT: Faris never casts his stance Q)
+  bool botHunterUlt = true;          // [host] bot_hunter_ult: a Hunter casts his R at a low enemy shaper (HUNTERBOT)
+  bool botDesecKit = true;           // [host] bot_desec_kit: the Desecrator's kit layer (DESECBOT-3, core/agents/desecrator.h)
+  bool botMikellaKit = true;         // [host] bot_mikella_kit: Mikella's kit layer (MIKELLABOT, core/agents/mikella.h)
+  int botHunterIdleMs = 4000;        // [host] bot_hunter_idle_ms: a Hunter standing this long beside his target hits it (0 = off)
+  // CAMPFINISH (gms/core/agents/campfinish.h): a Hunter below the Flee threshold finishes the camp it wins against
+  bool botCampFinish = true;         // [host] bot_camp_finish: hold the Farm plan's Flee link while the Hunter wins the trade
+  int campFinishLogLimit = 600;      // [host] camp_finish_log_limit: the "camp finish:" lines (then every 10th)
   bool botBackStep = true;           // [host] bot_back_step: the lane phases' Back gambit is a short step, not a walk home
   bool botRecall = true;             // [host] bot_recall: a bot sent home casts Return to Base when it is quiet and far away
+  // KILLFINISH (gms/core/agents/killfinish.h): a bot in an EngageForKill plan stays to finish a won trade (its exit
+  // links, its FleeTowerTargeting phase, its Back gambit and BOTREFLEX's tower back-off held); needs bot_reflex. Off,
+  // the decision is still made and logged ("would hold")
+  bool botKillFinish = true;         // [host] bot_kill_finish
+  // BOTCYCLE: a plan entered in a think whose own link fires at once is passed through in that think (two plan
+  // changes per think at most, never back into a plan visited in it)
+  bool botPlanChain = true;          // [host] bot_plan_chain
+  // BOTCYCLE: a stance link back into the plan left less than this ago is held unless a fight or a flight is involved
+  // (gms/core/agents/killfinish.h PlanBounceHeld); 0 = off
+  int botPlanDwellMs = 1200;         // [host] bot_plan_dwell_ms
+  // BOTCYCLE: an engage the bot left again at once blocks its next engages this long (EngageBlocked); 0 = off
+  int botEngageBlockMs = 8000;       // [host] bot_engage_block_ms
   // BOTTEMPO (gms/core/agents/brain.h HoldStuck, TargetStale): no bot stands for minutes under its own walk to an
   // unreachable point or on the spot of a target that became untargetable
   int botHoldStuckMs = 15000;        // [host] bot_hold_stuck_ms: an instance holding a bot that hasn't moved 3 units this long ends (0 = off)
   bool botStaleTarget = true;        // [host] bot_stale_target: a bot's mTarget that is no longer a valid hostile target is dropped
+  // BACKTOACTION (gms/core/agents/lost.h): a Pursue leaf that outlived its point pursuit walked to the zero vector (the
+  // map's centre); the net for every bot: a Pursue leaf without anything to follow, a bot lost on the centre
+  bool botPointFollowFix = true;     // [host] bot_point_follow_fix: restart the Pursue leaf after a point pursuit ends
+  int botLostMs = 10000;             // [host] bot_lost_ms: on the centre without a target this long -> its lane front (0 = off)
+  // NULLPOS (gms/core/agents/nullpos.h): (0, 0) is "no position"; a goal there is logged ("NULLPOS: ..."), counted and
+  // refused or ended either way; strict (test sessions: run_session.ps1 sets it) logs every one without a budget
+  bool botNullPosStrict = false;     // [host] bot_nullpos_strict
+  int testNullPosFollowS = 0;        // [host] test_nullpos_follow: the forced Follow-on-(0, 0) case at this match second (0 = off)
   // RANGES: the parasite keeps an attacker on its list out to this distance ([host] parasite_reach, 0 = the data's
   // 27.05; it only lets the list keep an attacker, the on-sight range stays 27)
   float parasiteReach = 40.f;
@@ -131,10 +159,12 @@ struct Options {
   gms::agents::TowerTargetOptions towerTarget;
   int towerLogLimit = 300;
   // LEASH: how far jungle creatures and well workers follow a target from home (gms/core/agents/leash.h). Creeps:
-  // home = their spawn spot (object +0x5C), group = their camp (+0x50); [host] creep_leash (15; 0 = off, the tether
-  // only), creep_leash_reach (4), creep_leash_home (6). Workers: home = their well's centre, the own limit = the
-  // platform radius (the farthest worker spot) + worker_leash (2; 0 = off), worker_leash_reach (2), group = the well.
-  // Both: leash_chase_ms (3000; 0 = no chase time), leash_ignore_ms (2000), leash_log_limit (300, the "leash:" lines).
+  // home = their spawn spot (object +0x5C), group = their camp (+0x50); [host] creep_leash (18 since CAMPFINISH, 15
+  // before; 0 = off, the tether only), creep_leash_reach (4: the target leash 22, the engine's own tether for them),
+  // creep_leash_home (10; 6), creep_leash_chase_ms (5000; 3000). Workers: home = their well's centre, the own limit =
+  // the platform radius (the farthest worker spot) + worker_leash (2; 0 = off), worker_leash_reach (2), group = the
+  // well. Both: leash_chase_ms (given: both chase times; the workers' default 3000; 0 = no chase time),
+  // leash_ignore_ms (2000), leash_log_limit (300, the "leash:" lines).
   gms::agents::LeashOptions creepLeash;
   gms::agents::LeashOptions workerLeash;  // ownLimit = the margin beyond the platform; homeRadius unused (the platform)
   int leashLogLimit = 300;
@@ -158,7 +188,8 @@ void Tick(void* sim, float dt);
 
 // After a damaging hit (the damage core, server simulator bound): the attacker onto the victim's own aggro list (not
 // for a lethal hit) and Agent_CallForHelp for its helpers. AGENT_AI.md §6.3, step 4 of D1b-live.
-void OnDamaged(void* victim, void* attacker, unsigned descLo, unsigned descHi, bool lethal);
+// KILLFINISH: `dealt` (the HP the hit took) feeds the attacker's damage rate.
+void OnDamaged(void* victim, void* attacker, unsigned descLo, unsigned descHi, bool lethal, float dealt);
 
 // nBattlegrounds.AddBaseStructuresToAggroList's engine side (D5; match.cpp's Lua function, server simulator bound): the
 // structures `ids` that are alive, of another team, targetable and attackable go onto the agent's aggro list, nearest
@@ -174,6 +205,37 @@ std::string DescribeBot(std::uint32_t objectId);
 // NPCTARGET: the NPC brain's target, lazy-walk and fall-through counters and the parasite's and Guardians' starts per
 // ability, for a "stats npc:" line; false before the first brain step.
 bool FormatNpcStats(char* buf, std::size_t size);
+// HUNTERBOT: the kits' and the Hunters' counts (its own "stats hunters:" line; false before any bot thought)
+bool FormatHunterStats(char* buf, std::size_t size);
+// CAMPFINISH round 3: a Hunter's current camp fight (nBotHost.CampFight): its nearest living creature's position, the
+// camp's share of its full HP, whether he finishes it first; false without one
+bool HunterCampFight(std::uint32_t bot, float* pos, float* frac, bool* finishing);
+// CAMPFINISH: the Hunters' Flee links in a camp fight, the holds and how they ended ("stats campfinish:")
+bool FormatCampFinishStats(char* buf, std::size_t size);
+// DESECBOT-3: the Desecrator's kit layer's counts (its own "stats desecrator:" line; false while it never acted)
+bool FormatDesecStats(char* buf, std::size_t size);
+// MIKELLABOT: Mikella's kit layer's counts (its own "stats mikella:" line; false while it never acted)
+bool FormatMikellaStats(char* buf, std::size_t size);
+// BACKTOACTION: the Pursue restarts, the walks off the centre and the bots' stands there (its own "stats lost:" line;
+// false before the first bot thought)
+bool FormatLostStats(char* buf, std::size_t size);
+// NULLPOS: the "stats nullpos:" line (always, from the first bot think on: 0 is the pass)
+bool FormatNullPosStats(char* buf, std::size_t size);
+// NULLPOS from outside the brain: the Lua (nBotHost.NullPos: a running Follow read (0, 0), the shim's lane centre),
+// bots.cpp's lane fronts, director.cpp's camps. `object` 0 when no bot is at hand (`who` then names the place).
+// `kind` is a gms::agents::NullPosWhere.
+void ReportNullPos(std::uint32_t object, int kind, const char* who, const char* where);
+// NULLPOS: the Lua's Follow guard saw a running Follow's pass on a point (nBotHost.NullPosRead; counted in the stats)
+void NoteFollowPointRead();
+
+// KILLFINISH: whether the host would hold this bot in a fight with its target now (bot_kill_finish on; the Lua's
+// KillShaper join and EngageForKill checks ask it: nBotHost.KillFinish); the reason BailOnKill gave for leaving
+// (nBotHost.BailWhy, for the host's disengage lines); the "stats killfinish:" line (false before the first decision)
+bool KillFinishWouldHold(std::uint32_t bot);
+// BOTCYCLE: whether this bot's engages are blocked now (an engage it left at once; nBotHost.EngageBlocked)
+bool KillFinishEngageBlocked(std::uint32_t bot);
+void NoteBailWhy(std::uint32_t bot, const char* why);
+bool FormatKillFinishStats(char* buf, std::size_t size);
 
 // "agents N (trees ticked N this frame), ticks N, ..., leaves: PassiveIdle=3 Idle=30 ..." for the stats lines.
 void FormatStats(char* buf, std::size_t size);

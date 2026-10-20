@@ -1825,6 +1825,7 @@ constexpr std::uintptr_t kAgent = 0xD4;          // object id of the agent / car
 constexpr std::uintptr_t kTarget = 0xD8;         // target (ability) or caster (modifier) object id
 constexpr std::uintptr_t kThreadId = 0xE8;       // GearsLua thread id
 constexpr std::uintptr_t kHoldsAgent = 0xEC;     // cleared by nAbility.ReleaseAgent (0x00900280)
+constexpr std::uintptr_t kRank = 0xF0;           // int, the ability's rank (CreateAbilityInstance passes it to the cost getter)
 constexpr std::uintptr_t kStartMs = 0x208;
 constexpr std::uintptr_t kStackCount = 0x210;    // D15: int; the stacking path (0x009070D0) passes +0x210 + 1 as
                                                  // desiredStackCount, the unstacking one (0x00907570) ends it at 1
@@ -1836,6 +1837,16 @@ constexpr std::uintptr_t kEndPending = 0x234;    // byte, EndAbility deferred
 // cStaticAbility (instance +8): +0x428 deactivationType (dword; written by the constructor 0x00901219
 // and the copy 0x0090EA7C, read by no client instruction).
 constexpr std::uintptr_t kStaticDeactivationType = 0x428;
+// DISCIPLINE: cStaticAbility +0x300 resourcePointCost (float x 8; LabsAbilities_GetResourceCost 0x008FEDD0 reads
+// +0x2FC + rank x 4, rank clamped below 10), +0x320 reactivationResourcePointCost (x 8), +0x340
+// upkeepResourcePointCost (x 8) and +0x360 upkeepResourcePointTickRate (float, s). The upkeep pair is read by no client
+// instruction but the reflection and the copy (0x0090E90D): the stripped server update spent it; the host's end pass
+// does (abilities.cpp, gms/core/damage/upkeep.h). cStaticAbility +0x434 cooldownType (nCooldownType: Default 0,
+// Deactivate 1, Manual 2): Create- and ReactivateAbility (0x00909810, 0x00909E40) pay the cost only when it isn't
+// Manual; a Manual ability pays through nAbility.PayMana / PayCooldownAndMana in its script.
+constexpr std::uintptr_t kStaticUpkeepCost = 0x340;
+constexpr std::uintptr_t kStaticUpkeepTickRate = 0x360;
+constexpr std::uintptr_t kStaticCooldownType = 0x434;
 // D6c: cStaticAbility +0x494 castOnTopFlags (nCastOnTopFlags: CastOnTop 1, CastOnTopOnReactivation 2,
 // CastOnTopOfAbilitiesThatYield 4, YieldToOtherAbilities 8; read by LabsAbilities_CanCastOnTop 0x00904040, which
 // LabsAbilities_RequestAbility asks before it pushes a behavior-tree request that would abort the running ability) and

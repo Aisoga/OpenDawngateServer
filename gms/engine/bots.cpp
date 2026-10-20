@@ -8,12 +8,16 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <memory>
 #include <random>
 #include <set>
 #include <string>
 #include <vector>
 
+#include "core/agents/nullpos.h"
 #include "core/bots/bots.h"
+#include "core/bots/draft.h"
+#include "core/bots/guidebuild.h"
 #include "core/protocol/commands.h"
 #include "core/protocol/messages.h"
 #include "agents.h"
@@ -22,6 +26,7 @@
 #include "director.h"
 #include "game.h"
 #include "host/host.h"
+#include "hunterroute.h"
 #include "log.h"
 #include "match.h"
 #include "replicate.h"
@@ -59,6 +64,14 @@ constexpr std::uint32_t kStatusPicked = 0x100;       // shaper select done (Labs
 constexpr std::uint32_t kStatusLoaded = 0x400;       // level loaded (what the pre-game's gates wait for)
 constexpr std::uint32_t kDescriptorIsFtue = 0x100;   // nGameDescriptors.IsFTUE
 int g_fillTeams = 0;  // B10d: createGame's fillTeams (0 = not asked); gb::BotTeamSize has the rule
+
+// BOTDRAFT: a custom game's bots draw their classes in shaper select, after the humans (core/bots/draft.h)
+std::string g_gameMode;           // createGame's mode ("custom", "practice", ...; "" = no createGame)
+bool g_draft = false;             // decided at EnsurePlayers ([host] bot_draft)
+bool g_draftHidden = false;       // until the reveal: the bots' updates carry no bot data, noun or role
+bool g_drafted = false;           // the draft ran
+std::set<std::string> g_available;  // the classes the composition may use (EnsurePlayers)
+unsigned g_draftSeed = 1;
 
 struct Stats {
   unsigned created = 0, createFailed = 0, deployed = 0, deployFailed = 0;
@@ -494,15 +507,51 @@ int __cdecl LuaClosestLane(void* L) {
   return 1;
 }
 
-// nBotHost.ClosestCamp(x, y, z) -> x, y, z of the nearest creep camp with a living creature, or nothing (D6e: backs
-// nDirector.GetClosestCampPosition, whose client stub always answers a static vector)
+// nBotHost.ClosestCamp(x, y, z [, team, penalty]) -> x, y, z of the nearest creep camp with a living creature, or
+// nothing (D6e: backs nDirector.GetClosestCampPosition, whose client stub always answers a static vector); HUNTERBOT:
+// with a team and a penalty, camps on that team's enemy half cost the penalty more
 int __cdecl LuaClosestCamp(void* L) {
   if (!Ours()) {
     ++g_st.calls[5];
     return 0;
   }
   float p[3] = {};
-  if (!director::ClosestCampPosition(SehArgNumber(L, 1), SehArgNumber(L, 2), p)) return 0;
+  if (!director::ClosestCampPosition(SehArgNumber(L, 1), SehArgNumber(L, 2), p,
+                                     static_cast<int>(SehArgNumber(L, 4)), SehArgNumber(L, 5)))
+    return 0;
+  SehPushNumber(L, p[0]);
+  SehPushNumber(L, p[1]);
+  SehPushNumber(L, p[2]);
+  return 3;
+}
+
+// CAMPFINISH round 3: nBotHost.CampFight(bot) -> x, y, z of the nearest living creature of the Hunter's current camp
+// fight, the camp's share of its full HP and whether he finishes it first; nothing without a fight
+int __cdecl LuaCampFight(void* L) {
+  if (!Ours()) {
+    ++g_st.calls[5];
+    return 0;
+  }
+  float pos[3] = {}, frac = 1.f;
+  bool finishing = false;
+  if (!agents::HunterCampFight(SehArgId(L, 1), pos, &frac, &finishing) || gms::agents::IsNullPos(pos)) return 0;
+  SehPushNumber(L, pos[0]);
+  SehPushNumber(L, pos[1]);
+  SehPushNumber(L, pos[2]);
+  SehPushNumber(L, frac);
+  SehPushBoolean(L, finishing);
+  return 5;
+}
+
+// HUNTERROUTE: nBotHost.HunterRoute(bot) -> x, y, z of the camp of the Hunter's opening route step (its marker), or
+// nothing (no step now, the route over or off: the default camp)
+int __cdecl LuaHunterRoute(void* L) {
+  if (!Ours()) {
+    ++g_st.calls[5];
+    return 0;
+  }
+  float p[3] = {};
+  if (!hunterroute::RoutePoint(SehArgId(L, 1), p) || gms::agents::IsNullPos(p)) return 0;
   SehPushNumber(L, p[0]);
   SehPushNumber(L, p[1]);
   SehPushNumber(L, p[2]);
@@ -517,7 +566,14 @@ int __cdecl LuaLaneCenterAndDirection(void* L) {
   }
   ++g_st.calls[3];
   gb::Front f;
-  if (!g_state.fronts.Get(static_cast<int>(SehArgNumber(L, 1)), static_cast<int>(SehArgNumber(L, 2)), &f)) return 0;
+  const int lane = static_cast<int>(SehArgNumber(L, 1)), team = static_cast<int>(SehArgNumber(L, 2));
+  if (!g_state.fronts.Get(lane, team, &f)) return 0;
+  if (gms::agents::IsNullPos(f.center.x, f.center.y)) {  // NULLPOS: nothing (the shim's static front) instead
+    char who[64];
+    std::snprintf(who, sizeof who, "lane %d team %d", lane, team);
+    agents::ReportNullPos(0, static_cast<int>(gms::agents::NullPosWhere::kLaneFront), who, "LaneCenterAndDirection");
+    return 0;
+  }
   SehPushNumber(L, f.center.x);
   SehPushNumber(L, f.center.y);
   SehPushNumber(L, f.center.z);
@@ -564,6 +620,8 @@ struct ShopStats {
   unsigned calls[4] = {};  // CanAffordNextItem, PurchaseNextItem, CanBuyPotion, PurchasePotions
   unsigned bought = 0, potions = 0, refused = 0, noBuild = 0, awayFromShop = 0;
   float spent = 0;
+  unsigned guideBots = 0, guideBought = 0, guideChoices = 0, guideDeferred = 0;  // DESECBOT-2
+  unsigned guideLogged = 0;  // DESECBOT-2: the guide bots' purchase lines (their own budget)
 };
 ShopStats g_ss;
 
@@ -652,6 +710,32 @@ int __cdecl LuaBotRole(void* L) {
   }
   SehPushNumber(L, static_cast<float>(role));
   return 1;
+}
+
+// NULLPOS: nBotHost.NullPos(obj, kind [, lane]): the host's Lua found the null position as a goal (kind 6: a running
+// nBehavior_Follow without an object read (0, 0) from nAgent.GetTargetPosition; 7: GetLaneCenterAndDirection for an
+// unknown lane). Logs the "NULLPOS:" line and counts it (gms/core/agents/nullpos.h); the Lua recovers.
+int __cdecl LuaNullPos(void* L) {
+  if (!Ours()) {
+    ++g_st.calls[5];
+    return 0;
+  }
+  const std::uint32_t obj = SehArgId(L, 1);
+  const int kind = static_cast<int>(SehArgNumber(L, 2));
+  char who[64];
+  std::snprintf(who, sizeof who, "lane %d", static_cast<int>(SehArgNumber(L, 3)));
+  const char* where = kind == static_cast<int>(gms::agents::NullPosWhere::kFollow) ? "nBehavior_Follow (engine)"
+                      : kind == static_cast<int>(gms::agents::NullPosWhere::kLaneCentre)
+                          ? "nBot.GetLaneCenterAndDirection (Lua shim)"
+                          : "host Lua";
+  agents::ReportNullPos(obj, kind, obj ? nullptr : who, where);
+  return 0;
+}
+
+// NULLPOS: nBotHost.NullPosRead(): one pass of a running Follow on a point (the guard's evidence in "stats nullpos:").
+int __cdecl LuaNullPosRead(void* /*L*/) {
+  if (Ours()) agents::NoteFollowPointRead();
+  return 0;
 }
 
 std::string DescribeMission(const gb::Mission& m) {
@@ -813,6 +897,9 @@ struct BotShop {
   std::uint32_t potion = 0;          // the build's consumable (the Vitality Potion)
   int potionCost = 0;
   unsigned bought = 0, potions = 0;
+  // DESECBOT-2: a profile with its own build (gms/core/bots/guidebuild.h) shops by it instead of `build`
+  std::shared_ptr<gb::GuidePlanner> guide;
+  gb::BuildMemory memory;
 };
 std::map<int, BotShop> g_shops;  // by gameplay index
 
@@ -893,6 +980,120 @@ void* SehRecommendedBuild(void* noun) {
   }
 }
 
+// DESECBOT-2: the profile's own build, its names resolved like the ItemBuild's items (an item asset each, read into
+// the catalog with its components); false when none resolves (the bot shops by its ItemBuild then).
+bool ShopOfGuide(const Bot& b, const gb::GuideBuildDef& def, BotShop* s) {
+  std::string missing;
+  auto idOf = [&missing](const std::string& name) -> std::uint32_t {
+    const std::uint32_t id = AddItem(SehAsset(gms::AssetIdOf(name + ".Item")));
+    if (!id) missing += (missing.empty() ? "" : ", ") + name;
+    return id;
+  };
+  std::vector<gb::BuildEntry> entries = gb::GuidePlanner::Resolve(def, idOf);
+  std::string list;
+  std::size_t items = 0;
+  for (const gb::BuildEntry& e : entries) {
+    std::string opts;
+    for (const std::vector<std::uint32_t>& option : e.options) {
+      std::string names;
+      for (std::uint32_t id : option) {
+        const gb::ItemDef* d = g_catalog.Find(id);
+        if (d && d->consumable && !s->potion) {
+          s->potion = id;
+          s->potionCost = d->cost;
+        }
+        names += std::string(names.empty() ? "" : " + ") + SehAssetName(SehAsset(id));
+        ++items;
+      }
+      opts += std::string(opts.empty() ? "" : " | ") + (names.empty() ? "-" : names);
+    }
+    const char* rule = e.rule == gb::BuildRule::kWhenAhead     ? " [ahead]"
+                       : e.rule == gb::BuildRule::kMagicAllies ? " [magic allies]"
+                                                               : "";
+    list += std::string(list.empty() ? "" : "; ") + e.label + rule + (e.notBeforeS > 0 ? " [not before]" : "") + ": " +
+            opts;
+  }
+  if (!items) {
+    Log("bots: player %d (%s): guide build %s: no item resolves (missing %s); its ItemBuild instead", b.index,
+        b.botClass.c_str(), def.source, missing.c_str());
+    return false;
+  }
+  s->guide = std::make_shared<gb::GuidePlanner>(&g_catalog, std::move(entries));
+  s->buildName = std::string("guide: ") + def.source;
+  s->build = s->guide->Plan(gb::Inventory{}, gb::ShopContext{}, gb::BuildMemory{}).items;  // the default order
+  if (!s->potion) {
+    void* p = SehAsset(gms::AssetIdOf("Consumable_Potion_HealingPotion.Item"));
+    if (const std::uint32_t id = AddItem(p)) {
+      s->potion = id;
+      s->potionCost = g_catalog.Find(id) ? g_catalog.Find(id)->cost : 0;
+    }
+  }
+  ++g_ss.guideBots;
+  Log("bots: player %d (%s): guide build %s (%zu entries, %zu items: %s)%s%s, potion %08X at %d gold; catalog %zu items",
+      b.index, b.botClass.c_str(), def.source, s->guide->Entries().size(), items, list.c_str(),
+      missing.empty() ? "" : "; missing ", missing.c_str(), s->potion, s->potionCost, g_catalogRead.size());
+  return true;
+}
+
+// DESECBOT-2: what the guide build's rules look at, read at the shop: the bot's level, kills and deaths, the enemies'
+// average level, its allies' damage styles (PlayerClass ShaperStyle_DamageStyle through mpNounDef) and roles (mRole).
+struct PlayerFacts {
+  int team = 0, level = 0, kills = 0, deaths = 0, role = -1;
+  void* noun = nullptr;
+};
+
+bool SehPlayerFacts(void* sim, int index, PlayerFacts* f) {
+  __try {
+    void* p = GetPlayerByIndex(sim, static_cast<unsigned>(index));
+    if (!p) return false;
+    f->team = Field<unsigned char>(p, player::kTeam);
+    f->level = static_cast<int>(Field<unsigned>(p, player::kLevel));
+    f->kills = static_cast<int>(Field<unsigned>(p, player::kKills));
+    f->deaths = static_cast<int>(Field<unsigned>(p, player::kDeaths));
+    f->role = Field<unsigned char>(p, player::kRole);
+    f->noun = Field<void*>(p, player::kNounDef);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "player facts")) {
+    return false;
+  }
+}
+
+gb::ShopContext ShopContextOf(const Bot& b) {
+  gb::ShopContext c;
+  c.now = MissionNow();
+  PlayerFacts self;
+  if (!SehPlayerFacts(g_sim, b.index, &self)) return c;
+  c.level = self.level;
+  c.kills = self.kills;
+  c.deaths = self.deaths;
+  int enemies = 0, enemyLevels = 0;
+  for (int i = 0; i < 10; ++i) {
+    PlayerFacts f;
+    if (i == b.index || !SehPlayerFacts(g_sim, i, &f) || (f.team != 1 && f.team != 2)) continue;
+    if (f.team != self.team) {
+      ++enemies;
+      enemyLevels += f.level;
+      continue;
+    }
+    int v[3];
+    if (!f.noun || !SehShaperValues(f.noun, v)) continue;
+    if (v[2] == 1) ++c.magicAllies;                                // ShaperStyle_DamageStyle magical
+    if (f.role == 0 && v[2] == 0) c.physicalGladiatorAlly = true;  // a physical Gladiator
+  }
+  c.enemyLevel = enemies ? static_cast<double>(enemyLevels) / enemies : 0.0;
+  return c;
+}
+
+// The next step of the bot's build: its guide build's (with the entry it serves, the plan and the context) or its
+// ItemBuild's.
+bool NextStep(const Bot& b, const BotShop& s, const gb::Inventory& inv, gb::Purchase* p, int* entry,
+              gb::ResolvedBuild* plan, gb::ShopContext* ctx) {
+  if (entry) *entry = -1;
+  if (!s.guide) return gb::ShopPlanner(&g_catalog, s.build).Next(inv, p);
+  *ctx = ShopContextOf(b);
+  return s.guide->Next(inv, *ctx, s.memory, p, entry, plan);
+}
+
 BotShop& ShopOf(const Bot& b) {
   BotShop& s = g_shops[b.index];
   if (s.read) return s;
@@ -901,6 +1102,9 @@ BotShop& ShopOf(const Bot& b) {
   const std::size_t dot = base.find('.');
   if (dot != std::string::npos) base.resize(dot);
   base = gb::BaseClass(base);  // BOTPROFILE: a profile shops as the shaper it copies
+  if (const gb::GuideBuildDef* def = g_opt.guideBuilds ? gb::GuideBuildFor(b.botClass) : nullptr) {
+    if (ShopOfGuide(b, *def, &s)) return s;
+  }
   void* build = SehRecommendedBuild(SehAsset(gms::AssetIdOf(base + ".Noun")));
   if (!build && base.size() > 3 && base.compare(0, 3, "PC_") == 0)
     build = SehAsset(gms::AssetIdOf("RecommendedItemBuild_" + base.substr(3) + ".ItemBuild"));
@@ -982,7 +1186,7 @@ bool SehCanUseShop(void* sim, int index) {
 
 // A purchase through D7b's item transaction path, as if the bot's client had sent it: true if the gold went down.
 // Not tried away from the shop (counted).
-bool Buy(const Bot& b, std::uint32_t item, const char* why) {
+bool Buy(const Bot& b, std::uint32_t item, const char* why, bool guide = false) {
   Purse before, after;
   if (!SehPurse(g_sim, b.index, &before)) return false;
   if (!SehCanUseShop(g_sim, b.index)) {
@@ -1000,7 +1204,9 @@ bool Buy(const Bot& b, std::uint32_t item, const char* why) {
   const bool ok = SehPurse(g_sim, b.index, &after) && after.gold < before.gold;
   if (ok) g_ss.spent += before.gold - after.gold;
   else ++g_ss.refused;
-  if (LogBudget())
+  // DESECBOT-2: a guide build's purchases have their own budget (the first 400, then every 10th)
+  const bool logIt = guide ? (++g_ss.guideLogged <= 400 || g_ss.guideLogged % 10 == 0) : LogBudget();
+  if (logIt)
     Log("bots: player %d (%s) buys %08X (%s) for its %s: %s; gold %.0f -> %.0f at %.1f s", b.index, b.botClass.c_str(),
         item, SehAssetName(SehAsset(item)), why, ok ? "done" : "REFUSED", before.gold, after.gold, MissionNow());
   return ok;
@@ -1015,7 +1221,9 @@ int __cdecl LuaCanAffordNextItem(void* L) {
   float gold = 0;
   if (ShopView(L, &b, &s, &inv, &gold)) {
     ++g_ss.calls[0];
-    r = gb::ShopPlanner(&g_catalog, s->build).CanAffordNext(inv, gold);
+    gb::Purchase p;
+    gb::ShopContext ctx;
+    r = NextStep(*b, *s, inv, &p, nullptr, nullptr, &ctx) && static_cast<float>(p.price) <= gold;
   }
   SehPushBoolean(L, r);
   return 1;
@@ -1031,13 +1239,38 @@ int __cdecl LuaPurchaseNextItem(void* L) {
   if (ShopView(L, &b, &s, &inv, &gold)) {
     ++g_ss.calls[1];
     gb::Purchase p;
-    if (gb::ShopPlanner(&g_catalog, s->build).Next(inv, &p) && static_cast<float>(p.price) <= gold) {
-      char why[64];
-      std::snprintf(why, sizeof why, "build, price %d%s", p.price, p.replaces ? " (an upgrade)" : "");
-      r = Buy(*b, p.item, why);
+    int entry = -1;
+    gb::ResolvedBuild plan;
+    gb::ShopContext ctx;
+    if (NextStep(*b, *s, inv, &p, &entry, &plan, &ctx) && static_cast<float>(p.price) <= gold) {
+      char why[192];
+      const gb::BuildEntry* e = s->guide && entry >= 0 ? &s->guide->Entries()[static_cast<std::size_t>(entry)] : nullptr;
+      const std::size_t option = e ? static_cast<std::size_t>(plan.optionOf[static_cast<std::size_t>(entry)]) : 0;
+      if (e)
+        std::snprintf(why, sizeof why, "guide build, step %d %s: %s, price %d%s", entry, e->label.c_str(),
+                      e->optionLabels[option].c_str(), p.price, p.replaces ? " (an upgrade)" : "");
+      else
+        std::snprintf(why, sizeof why, "build, price %d%s", p.price, p.replaces ? " (an upgrade)" : "");
+      r = Buy(*b, p.item, why, e != nullptr);
       if (r) {
         ++s->bought;
         ++g_ss.bought;
+      }
+      if (r && e) {  // DESECBOT-2: the choice is kept from its first purchase on (and a deferral once its turn came)
+        ++g_ss.guideBought;
+        const std::set<int> deferredBefore = s->memory.deferred;
+        if (s->guide->Commit(plan, entry, &s->memory)) {
+          ++g_ss.guideChoices;
+          Log("bots: player %d (%s) guide choice %s: %s (%s) at %.1f s", b->index, b->botClass.c_str(), e->label.c_str(),
+              e->optionLabels[option].c_str(), plan.whyOf[static_cast<std::size_t>(entry)].c_str(), ctx.now);
+        }
+        for (int d : s->memory.deferred)
+          if (!deferredBefore.count(d)) {
+            ++g_ss.guideDeferred;
+            const gb::BuildEntry& de = s->guide->Entries()[static_cast<std::size_t>(d)];
+            Log("bots: player %d (%s) guide: %s deferred (its turn came before %.0f s), %s first, at %.1f s", b->index,
+                b->botClass.c_str(), de.label.c_str(), de.notBeforeS, e->label.c_str(), ctx.now);
+          }
       }
     }
   }
@@ -1210,6 +1443,36 @@ int __cdecl LuaLog(void* L) {
   return 0;
 }
 
+// ---- KILLFINISH ----
+// nBotHost.KillFinish(bot) -> bool: the host would keep this bot in a fight with its target now (agents.cpp's rule; the
+// Lua's KillShaper join and EngageForKill checks ask before refusing an engage that BailOnKill would end at once).
+int __cdecl LuaKillFinish(void* L) {
+  bool r = false;
+  if (Ours()) r = agents::KillFinishWouldHold(SehArgId(L, 1));
+  SehPushBoolean(L, r);
+  return 1;
+}
+
+// nBotHost.EngageBlocked(bot) -> bool: BOTCYCLE, the bot left its last engage at once; its next engages wait.
+int __cdecl LuaEngageBlocked(void* L) {
+  bool r = false;
+  if (Ours()) r = agents::KillFinishEngageBlocked(SehArgId(L, 1));
+  SehPushBoolean(L, r);
+  return 1;
+}
+
+// nBotHost.BailWhy(bot, why): the reason the Lua's BailOnKill gave for leaving (for the host's disengage lines).
+int __cdecl LuaBailWhy(void* L) {
+  if (!Ours()) return 0;
+  const char* why = nullptr;
+  __try {
+    why = LuaToString(L, 2, nullptr);
+  } __except (SehNote(GetExceptionInformation(), "lua_tolstring")) {
+  }
+  if (why) agents::NoteBailWhy(SehArgId(L, 1), why);
+  return 0;
+}
+
 // ---- BOTJUNGLE: the humans' pings ----
 // Every human minimap ping the command intake relays (commands.cpp, kCmdPing) is kept here, the last kHumanPings;
 // nBotHost.HumanPing(team, afterSeq) -> seq, pinger, target, x, y, z, type, match time of the team's first ping after
@@ -1253,8 +1516,12 @@ const LuaReg kBotHostRegs[] = {
     {"ClosestLane", &LuaClosestLane},
     {"LaneCenterAndDirection", &LuaLaneCenterAndDirection},
     {"ClosestCamp", &LuaClosestCamp},
+    {"CampFight", &LuaCampFight},  // CAMPFINISH
+    {"HunterRoute", &LuaHunterRoute},  // HUNTERROUTE
     {"IsFirstTimePlayer", &LuaIsFirstTimePlayer},
     {"BotRole", &LuaBotRole},  // BOTCOMP
+    {"NullPos", &LuaNullPos},  // NULLPOS
+    {"NullPosRead", &LuaNullPosRead},
     // D6b
     {"RequestMission", &LuaRequestMission},
     {"IsMissionAvailable", &LuaIsMissionAvailable},
@@ -1276,6 +1543,10 @@ const LuaReg kBotHostRegs[] = {
     {"Log", &LuaLog},
     // BOTJUNGLE
     {"HumanPing", &LuaHumanPing},
+    // KILLFINISH
+    {"KillFinish", &LuaKillFinish},
+    {"BailWhy", &LuaBailWhy},
+    {"EngageBlocked", &LuaEngageBlocked},
 };
 
 void* SehLuaState(void* sim) {
@@ -1344,6 +1615,12 @@ void LoadApi(void* sim) {
                           " dgsim_bots.jungleWanted = " + (g_opt.jungle ? "true" : "false") +
                           " dgsim_bots.pingWanted = " + (g_opt.pingFollow ? "true" : "false") +
                           " dgsim_bots.hunterParasiteStand = " + (g_opt.hunterParasiteStand ? "true" : "false") +
+                          " dgsim_bots.kitsWanted = " + (g_opt.kits ? "true" : "false") +
+                          " dgsim_bots.hunterFixWanted = " + (g_opt.hunterFix ? "true" : "false") +
+                          " dgsim_bots.campFinishWanted = " + (g_opt.campFinish ? "true" : "false") +
+                          " dgsim_bots.engageFixWanted = " + (g_opt.engageFix ? "true" : "false") +
+                          " dgsim_bots.joinFixWanted = " + (g_opt.joinFix ? "true" : "false") +
+                          " dgsim_bots.desecKitWanted = " + (g_opt.desecKit ? "true" : "false") +
                           " return 'ok'";
   SehRunLua(sim, pre.c_str(), static_cast<unsigned>(pre.size()), "dgsim_bots_pre", out, sizeof out);
   const bool ok = SehRunLua(sim, chunk.c_str(), static_cast<unsigned>(chunk.size()), "dgsim_bots_api.lua", out, sizeof out);
@@ -1425,6 +1702,28 @@ void Configure(const Options& o) {
   }
   // BOTPROFILE: 0 = never our profiles (the Predator on PC_Warden with the role set after it, as before)
   g_opt.profiles = HostOptionInt("bot_profiles", o.profiles ? 1 : 0) != 0;
+  {
+    // HUNTERBOT: the Hunter seat's classes ("all", a list such as "golem,survivor", "artificer" = Petrus alone)
+    char hunters[128];
+    HostOptionString("bot_hunters", o.hunters.c_str(), hunters, sizeof hunters);
+    g_opt.hunters = hunters;
+    // DESECBOT: each team's first Tactician seat pinned to a class ("desecrator", "guardian,desecrator"; "" = drawn)
+    char tacticians[128];
+    HostOptionString("bot_tacticians", o.tacticians.c_str(), tacticians, sizeof tacticians);
+    g_opt.tacticians = tacticians;
+    // MIKELLABOT: each team's first Gladiator seat pinned to a class ("mikella", "mikella,highhuntress"; "" = drawn)
+    char gladiators[128];
+    HostOptionString("bot_gladiators", o.gladiators.c_str(), gladiators, sizeof gladiators);
+    g_opt.gladiators = gladiators;
+  }
+  g_opt.guideBuilds = HostOptionInt("bot_guide_builds", o.guideBuilds ? 1 : 0) != 0;  // DESECBOT-2
+  g_opt.draft = HostOptionInt("bot_draft", o.draft);  // BOTDRAFT: -1 auto (custom games), 0 off, 1 always
+  g_opt.kits = HostOptionInt("bot_kits", o.kits ? 1 : 0) != 0;               // HUNTERBOT
+  g_opt.hunterFix = HostOptionInt("bot_hunter_fix", o.hunterFix ? 1 : 0) != 0;  // HUNTERBOT
+  g_opt.campFinish = HostOptionInt("bot_camp_finish", o.campFinish ? 1 : 0) != 0;  // CAMPFINISH
+  g_opt.engageFix = HostOptionInt("bot_engage_fix", o.engageFix ? 1 : 0) != 0;  // DESECBOT-3
+  g_opt.joinFix = HostOptionInt("bot_join_fix", o.joinFix ? 1 : 0) != 0;        // BOTCYCLE
+  g_opt.desecKit = HostOptionInt("bot_desec_kit", o.desecKit ? 1 : 0) != 0;     // DESECBOT-3
   g_opt.harassStartWorkers = HostOptionInt("bot_harass_start_workers", o.harassStartWorkers);
   g_opt.harassEndWorkers = HostOptionInt("bot_harass_end_workers", o.harassEndWorkers);
   g_opt.team = HostOptionInt("bot_team", o.team ? 1 : 0) != 0;                   // BOTTEAM
@@ -1440,7 +1739,8 @@ void Configure(const Options& o) {
   Log("bots (D6a, D6b): bots %d%s, allies %d, classes '%s', lua %d, lanes %d, ftue %d, log limit %d; missions %d (every "
       "%d ms), shopping %d (potions %d), fire tracker %d, script fix-ups %d; BOTCOMP composition %d (drop '%s'), harass "
       "workers %d..%d, Hunter gank %d; BOTTEAM team layer %d, pings %d; BOTTEMPO %d, team status every %d s; "
-      "BOTJUNGLE jungler %d, ping following %d; PRETUSBOT Hunter stand at the parasite %d; BOTPROFILE profiles %d",
+      "BOTJUNGLE jungler %d, ping following %d; PRETUSBOT Hunter stand at the parasite %d; BOTPROFILE profiles %d; "
+      "HUNTERBOT Hunters '%s', kits %d, Hunter fixes %d; DESECBOT Tacticians '%s', guide builds %d",
       g_opt.teamSize,
       g_opt.teamSize < 0
           ? " (auto: createGame's fillTeams a team, else 5 a team when the game's descriptors have BotsFillTeams 0x400)"
@@ -1449,7 +1749,8 @@ void Configure(const Options& o) {
       g_opt.missionMs, g_opt.shopping, g_opt.potions, g_opt.fireTracker, g_opt.fixups, g_opt.composition,
       g_opt.compositionDrop.c_str(), g_opt.harassStartWorkers, g_opt.harassEndWorkers, g_opt.hunterGank,
       g_opt.team && g_opt.laneFixes, g_opt.teamPings, g_opt.tempo, g_opt.teamStatusS, g_opt.jungle, g_opt.pingFollow,
-      g_opt.hunterParasiteStand, g_opt.profiles);
+      g_opt.hunterParasiteStand, g_opt.profiles, g_opt.hunters.c_str(), g_opt.kits, g_opt.hunterFix,
+      g_opt.tacticians.c_str(), g_opt.guideBuilds);
 }
 
 void OnHumanPing(int team, std::uint32_t pinger, std::uint32_t target, const float* pos, int type) {
@@ -1472,6 +1773,161 @@ void SetFillTeams(int seats) {
   g_fillTeams = seats > 0 ? seats : 0;
   Log("bots: createGame fillTeams %d (B10d: %s)", seats,
       g_fillTeams ? "bots in the open seats of a matchmade game" : "not asked; the descriptors decide");
+}
+
+void SetGameMode(const std::string& mode) { g_gameMode = mode; }
+
+// ---- BOTDRAFT -------------------------------------------------------------------------------------------------------
+
+namespace {
+
+bool SehClearStatus(void* sim, unsigned index, std::uint32_t bits, std::uint32_t* out) {
+  __try {
+    void* p = GetPlayerByIndex(sim, index);
+    if (!p) return false;
+    Field<std::uint32_t>(p, player::kStatus) &= ~bits;
+    *out = Field<std::uint32_t>(p, player::kStatus);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "clear bot status")) {
+    return false;
+  }
+}
+
+bool SehSetStatusBits(void* sim, unsigned index, std::uint32_t bits, std::uint32_t* out) {
+  __try {
+    void* p = GetPlayerByIndex(sim, index);
+    if (!p) return false;
+    Field<std::uint32_t>(p, player::kStatus) |= bits;
+    *out = Field<std::uint32_t>(p, player::kStatus);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "set bot status")) {
+    return false;
+  }
+}
+
+// The PlayerClass name (PC_<X>) of a shaper's default-skin Noun asset id; "" when unreadable.
+void* SehNounPlayerClass(void* noun) {
+  __try {
+    char* nd = noun ? Field<char*>(noun, noun::kData) : nullptr;
+    return nd ? Field<void*>(nd, kNounPlayerClass) : nullptr;
+  } __except (SehNote(GetExceptionInformation(), "noun PlayerClass")) {
+    return nullptr;
+  }
+}
+
+std::string SehPlayerClassOf(std::uint32_t nounId) {
+  void* pcAsset = SehNounPlayerClass(nounId ? SehAsset(nounId) : nullptr);
+  if (!pcAsset) return "";
+  std::string name = SehAssetName(pcAsset);
+  const size_t dot = name.find('.');
+  if (dot != std::string::npos) name.resize(dot);
+  return name;
+}
+
+}  // namespace
+
+bool BeginDraft(void* sim) {
+  if (!g_draft || g_drafted || g_bots.empty()) return false;
+  g_draftHidden = true;
+  BoundTo b(sim);
+  for (Bot& bot : g_bots) {
+    std::uint32_t st = bot.status;
+    if (SehClearStatus(sim, static_cast<unsigned>(bot.index), kStatusPicked, &st)) bot.status = st;
+  }
+  Log("bots: BOTDRAFT: %zu bot(s) wait in shaper select for the humans; until the reveal their updates carry no bot "
+      "data, noun or role, and no status 0x100 (the clients name them \"BOT n\")",
+      g_bots.size());
+  return true;
+}
+
+bool DraftHidden() { return g_draftHidden; }
+
+std::vector<DraftOut> Draft(void* sim, const std::vector<DraftHumanIn>& humans) {
+  std::vector<DraftOut> out;
+  if (g_drafted) return out;
+  g_drafted = true;
+  BoundTo b(sim);
+  std::vector<gb::DraftHuman> hs;
+  std::string hdesc;
+  for (const DraftHumanIn& h : humans) {
+    gb::DraftHuman d;
+    d.index = h.index;
+    d.team = h.team;
+    d.baseClass = SehPlayerClassOf(h.shaper);
+    int source = gb::kIntentNone;
+    d.role = gb::HumanIntent(h.preferred, h.roleCard, gb::TypicalRole(d.baseClass), &source);
+    hs.push_back(d);
+    char buf[200];
+    std::snprintf(buf, sizeof buf, " [%d: team %d, %s, wants %s (%s)]", h.index, h.team,
+                  d.baseClass.empty() ? "no shaper" : d.baseClass.c_str(), gb::RoleName(d.role),
+                  gb::IntentSourceName(source));
+    hdesc += buf;
+  }
+  std::vector<gb::DraftTeam> teams;
+  for (const Bot& bot : g_bots) {
+    auto it = std::find_if(teams.begin(), teams.end(), [&](const gb::DraftTeam& t) { return t.team == bot.team; });
+    if (it == teams.end()) teams.push_back(gb::DraftTeam{bot.team, 1});
+    else ++it->seats;
+  }
+  gb::DraftOptions o;
+  o.seed = g_draftSeed;
+  o.hunters = gb::ParseHunterList(g_opt.hunters);
+  o.huntersPinned = !(g_opt.hunters.empty() || g_opt.hunters == "default" || g_opt.hunters == "1");
+  o.tacticians = gb::ParseTacticianList(g_opt.tacticians);
+  o.gladiators = gb::ParseGladiatorList(g_opt.gladiators);
+  const std::map<int, std::vector<gb::ComposedSeat>> drawn = gb::DraftMatch(teams, hs, g_available, o);
+  Log("bots: BOTDRAFT: draw with seed %u: humans%s", g_draftSeed, hdesc.empty() ? " none" : hdesc.c_str());
+  std::map<int, size_t> nth;
+  for (Bot& bot : g_bots) {
+    auto t = drawn.find(bot.team);
+    const size_t k = nth[bot.team]++;
+    if (t == drawn.end() || k >= t->second.size()) {
+      Log("bots: BOTDRAFT: player %d (team %d) got no class from the draw; it keeps %s", bot.index, bot.team,
+          bot.botClass.c_str());
+      DraftOut d;
+      d.index = bot.index;
+      d.noun = bot.noun;
+      d.role = bot.role;
+      d.altRoles = gb::AltRoles(bot.botClass);
+      out.push_back(d);
+      continue;
+    }
+    const gb::ComposedSeat& s = t->second[k];
+    const std::uint32_t classId = g_classIds.count(s.botClass) ? g_classIds[s.botClass] : 0;
+    CreatedPlayer cp = {};
+    const bool ok = classId != 0 && SehCreateBot(sim, static_cast<unsigned>(bot.index), static_cast<unsigned char>(bot.team),
+                                                 bot.onlineId, classId, s.roleOverride ? s.role : -1, &cp);
+    if (ok) {
+      bot.botClass = s.botClass;
+      bot.lane = s.lane;
+      bot.noun = SehAssetId(cp.noun);
+      bot.role = cp.role;
+      std::uint32_t st = cp.status;
+      if (SehClearStatus(sim, static_cast<unsigned>(bot.index), kStatusPicked, &st)) bot.status = st;  // until the reveal
+    }
+    Log("bots: BOTDRAFT: player %d (team %d) draws %s (asset %08X) as %s, first lane %d%s%s -> %s: noun %s, role %d",
+        bot.index, bot.team, s.botClass.c_str(), classId, gb::RoleName(s.role), s.lane,
+        s.roleOverride ? ", the role set after its BotClass" : "", s.fallback ? ", a fallback (its pools were used up)" : "",
+        ok ? "LabsPlayer_ReflectBotData" : "FAILED (it keeps its first class)", SehAssetName(cp.noun), cp.role);
+    DraftOut d;
+    d.index = bot.index;
+    d.noun = bot.noun;
+    d.role = bot.role;
+    d.altRoles = gb::AltRoles(bot.botClass);
+    out.push_back(d);
+  }
+  return out;
+}
+
+void RevealDrafted(void* sim) {
+  if (!g_draftHidden) return;
+  g_draftHidden = false;
+  BoundTo b(sim);
+  for (Bot& bot : g_bots) {
+    std::uint32_t st = bot.status;
+    if (SehSetStatusBits(sim, static_cast<unsigned>(bot.index), kStatusPicked, &st)) bot.status = st;
+  }
+  Log("bots: BOTDRAFT: the reveal: the bots' updates carry their bot data, noun and role again (status 0x100 set)");
 }
 
 void OnSimulatorCreated(void* sim) {
@@ -1545,25 +2001,26 @@ const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& human
     // plan's own bots as the any-class fallback
     std::set<std::string> available;
     std::vector<std::string> anyClass;
-    std::vector<std::string> names;
-    for (int role = 0; role < 4; ++role)
-      for (const gb::ClassChoice& c : gb::ClassPreference(role)) names.push_back(c.botClass);
+    // the role lists, the Hunter and Gladiator classes and every profile (composition.h CatalogCandidates)
+    std::vector<std::string> names = gb::CatalogCandidates();
     for (const gb::BotCandidate& c : g_plan.bots) {
       names.push_back(c.botClass);
       anyClass.push_back(c.botClass);
     }
     for (const std::string& n : names) {
       if (available.count(n)) continue;
+      // a borrowed-AI profile's base has no AI of its own: without the profile its seat falls back to the AI's class
+      const bool borrowed = gb::AiClass(n) != gb::BaseClass(n);
+      const std::string fallback = borrowed ? gb::AiClass(n) + " instead" : gb::BaseClass(n) + " with the role set after it";
       if (gb::IsProfile(n) && !g_opt.profiles) {
-        Log("bots: BOTPROFILE: %s not used ([host] bot_profiles=0): %s with the role set after it", n.c_str(),
-            gb::BaseClass(n).c_str());
+        Log("bots: BOTPROFILE: %s not used ([host] bot_profiles=0): %s", n.c_str(), fallback.c_str());
         continue;
       }
       void* a = SehAsset(gms::AssetIdOf(n + ".BotClass"));
       if (!a) {
         if (gb::IsProfile(n))
-          Log("bots: BOTPROFILE: %s.BotClass not in this copy's catalog (no %s): %s with the role set after it", n.c_str(),
-              "game\\Data\\zz_BotProfiles.snap", gb::BaseClass(n).c_str());
+          Log("bots: BOTPROFILE: %s.BotClass not in this copy's catalog (no %s or an older one): %s", n.c_str(),
+              "game\\Data\\zz_BotProfiles.snap", fallback.c_str());
         else
           Log("bots: BOTCOMP: %s.BotClass not in the catalog", n.c_str());
         continue;
@@ -1577,8 +2034,33 @@ const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& human
     const int shuffleOpt = HostOptionInt("bot_shuffle", 1);
     const unsigned seed = shuffleOpt == 0 ? 0u : shuffleOpt > 1 ? static_cast<unsigned>(shuffleOpt) : (std::random_device{}() | 1u);
     Log("bots: BOTCOMP: class shuffle seed %u ([host] bot_shuffle %d)", seed, shuffleOpt);
+    const std::vector<std::string> hunters = gb::ParseHunterList(g_opt.hunters);
+    std::string hunterList;
+    for (const std::string& h : hunters) hunterList += (hunterList.empty() ? "" : ", ") + h + (available.count(h) ? "" : " (missing)");
+    Log("bots: HUNTERBOT: Hunter classes %s ([host] bot_hunters '%s')", hunterList.c_str(), g_opt.hunters.c_str());
+    const std::vector<std::string> tacticians = gb::ParseTacticianList(g_opt.tacticians);
+    std::string tacticianList;
+    for (const std::string& t : tacticians)
+      tacticianList += (tacticianList.empty() ? "" : ", ") + t + (available.count(t) ? "" : " (missing)");
+    Log("bots: DESECBOT: Tactician pin %s ([host] bot_tacticians '%s')",
+        tacticianList.empty() ? "none (drawn)" : tacticianList.c_str(), g_opt.tacticians.c_str());
+    const std::vector<std::string> gladiators = gb::ParseGladiatorList(g_opt.gladiators);
+    std::string gladiatorList;
+    for (const std::string& g : gladiators)
+      gladiatorList += (gladiatorList.empty() ? "" : ", ") + g + (available.count(g) ? "" : " (missing)");
+    Log("bots: MIKELLABOT: Gladiator pin %s ([host] bot_gladiators '%s')",
+        gladiatorList.empty() ? "none (drawn)" : gladiatorList.c_str(), g_opt.gladiators.c_str());
+    // BOTDRAFT: [host] bot_draft -1 (auto) = a custom game's bots draw in shaper select after the humans (the plan
+    // below only fixes how many bots each team has and their indexes; Draft gives them their classes)
+    g_available = available;
+    g_draftSeed = seed;
+    g_draft = g_opt.draft > 0 || (g_opt.draft < 0 && g_gameMode == "custom");
+    Log("bots: BOTDRAFT: %s ([host] bot_draft %d, createGame mode '%s')",
+        g_draft ? "the bots draw their shapers and roles in shaper select, after the humans (if it runs)"
+                : "off: the bots are composed now",
+        g_opt.draft, g_gameMode.c_str());
     plan = gb::PlanBotPlayersComposed(counted, g_teamSize, teams, available, anyClass, gb::ParseDropOrder(g_opt.compositionDrop),
-                                      0, seed);
+                                      0, seed, hunters, tacticians, gladiators);
     for (const gb::HumanPlayer& h : counted)
       Log("bots: BOTCOMP: human index %d team %d: role %s", h.index, h.team, gb::RoleName(h.role));
   } else {
@@ -1617,6 +2099,26 @@ const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& human
 }
 
 const std::vector<Bot>& Players() { return g_bots; }
+
+bool LaneFrontOf(std::uint32_t creature, int team, float* out, int* laneOut) {
+  int lane = g_state.lanes.LaneOf(creature);
+  if (lane <= 0)
+    for (const Bot& b : g_bots)
+      if (b.creature == creature) lane = b.lane;
+  gb::Front f;
+  if (lane <= 0 || !g_state.fronts.Get(lane, team, &f)) return false;
+  if (gms::agents::IsNullPos(f.center.x, f.center.y)) {  // NULLPOS: an empty lane path's front
+    char who[64];
+    std::snprintf(who, sizeof who, "lane %d team %d", lane, team);
+    agents::ReportNullPos(0, static_cast<int>(gms::agents::NullPosWhere::kLaneFront), who, "LaneFrontOf");
+    return false;
+  }
+  out[0] = f.center.x;
+  out[1] = f.center.y;
+  out[2] = f.center.z;
+  if (laneOut) *laneOut = lane;
+  return true;
+}
 
 void SetRole(int index, int role) {
   for (Bot& b : g_bots)
@@ -1669,7 +2171,7 @@ void Tick(void* sim) {
   static unsigned long long nextStatsMs = 0;
   if (now >= nextStatsMs) {
     nextStatsMs = now + 10000;
-    char ms[1800];
+    char ms[2048];
     FormatMissionStats(ms, sizeof ms);
     Log("stats bot missions: %s", ms);
   }
@@ -1816,7 +2318,7 @@ void FormatMissionStats(char* buf, std::size_t size) {
         "ticks %u (failed %u), checks %.0f, CheckEnds %.0f, Lua errors %.0f, open %zu:%s requested/"
         "taken by type:%s; ended: CheckEnd %u, expired %u, target gone %u; plan layer: accepted %u, refused %u, opened %u, "
         "again %u, kept %u, left %u; nBotHost mission calls %u/%u/%u/%u/%u/%u/%u/%u/%u; shopping: calls %u/%u/%u/%u, bought %u "
-        "items and %u potions for %.0f gold, refused %u, away from the shop %u, bots without a build %u; fire tracker "
+        "items and %u potions for %.0f gold, refused %u, away from the shop %u, bots without a build %u, guide builds %u (bought %u, choices %u, deferred %u); fire tracker "
         "%s (IsPositionSafe %u, unsafe %u, off the grid %u)",
         g_ms.ticks, g_ms.tickFailed, g_ms.checks, g_ms.checkEnds, g_ms.luaErrors, g_state.missions.Count(),
         open.empty() ? " none;" : open.c_str(), types.empty() ? " none" : types.c_str(), g_ms.endedByCheck, g_ms.expired,
@@ -1824,7 +2326,8 @@ void FormatMissionStats(char* buf, std::size_t size) {
         g_ms.calls[0],
         g_ms.calls[1], g_ms.calls[2], g_ms.calls[3], g_ms.calls[4], g_ms.calls[5], g_ms.calls[6], g_ms.calls[7],
         g_ms.calls[8], g_ss.calls[0], g_ss.calls[1], g_ss.calls[2], g_ss.calls[3], g_ss.bought, g_ss.potions,
-        static_cast<double>(g_ss.spent), g_ss.refused, g_ss.awayFromShop, g_ss.noBuild, g_fs.on ? "on" : "off",
+        static_cast<double>(g_ss.spent), g_ss.refused, g_ss.awayFromShop, g_ss.noBuild, g_ss.guideBots, g_ss.guideBought,
+        g_ss.guideChoices, g_ss.guideDeferred, g_fs.on ? "on" : "off",
         g_fs.calls, g_fs.unsafe,
         g_fs.offGrid);
     if (n < 0 || len + static_cast<std::size_t>(n) >= size) return;

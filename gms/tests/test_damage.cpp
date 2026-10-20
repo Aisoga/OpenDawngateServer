@@ -5,6 +5,7 @@
 
 #include "core/damage/regen.h"
 #include "core/damage/rules.h"
+#include "core/damage/upkeep.h"
 #include "tests/check.h"
 
 using namespace gms::damage;
@@ -371,4 +372,54 @@ GMS_TEST(DamageRegenHealthBars) {
   CHECK(Near(HealthBarTop(450.f, nullptr, 0, 0), 450.0, 1e-3));
   // a Guardian in its second bar regenerates to that bar's top, not into the lost one
   CHECK_EQ(RegenHealth(12990.f, 8000.f / 48.f, HealthBarTop(17250.f, bars, 3, 1), 5.f), 13000.f);
+}
+
+// DISCIPLINE: Raina's W (ability_Guardian_W_ConeShield) pays 1.25 Discipline every 0.1 s while it runs and ends when a
+// tick finds less than that; 100 Discipline last 8 s (regen is off under the shield's DisableResourcePointRegen).
+GMS_TEST(DamageUpkeep) {
+  const float w[8] = {1.25f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f};
+  CHECK_EQ(UpkeepCostForRank(w, 1), 1.25f);
+  CHECK_EQ(UpkeepCostForRank(w, 0), 1.25f);   // the rank clamped to 1..8
+  CHECK_EQ(UpkeepCostForRank(w, 3), 0.f);     // a one-entry array: the other ranks have none (the script's {1.25})
+  CHECK_EQ(UpkeepCostForRank(nullptr, 1), 0.f);
+  // nothing due before the first tick
+  UpkeepResult r = UpkeepStep(100.f, 1.25f, 0.1f, 1000, 1099);
+  CHECK_EQ(r.ticksPaid, 0);
+  CHECK_EQ(r.resource, 100.f);
+  CHECK(!r.end);
+  // one 500 ms step: five ticks, 6.25 paid, the clock on the last tick
+  r = UpkeepStep(100.f, 1.25f, 0.1f, 1000, 1530);
+  CHECK_EQ(r.ticksPaid, 5);
+  CHECK_EQ(r.resource, 93.75f);
+  CHECK_EQ(r.lastTickMs, 1500ull);
+  // run 100 Discipline down in 33 ms steps: it lasts 80 ticks (8 s) and ends at the 81st
+  float res = 100.f;
+  unsigned long long last = 0, now = 0;
+  int paid = 0;
+  bool ended = false;
+  while (!ended && now < 20000) {
+    now += 33;
+    r = UpkeepStep(res, 1.25f, 0.1f, last, now);
+    res = r.resource;
+    last = r.lastTickMs;
+    paid += r.ticksPaid;
+    ended = r.end;
+  }
+  CHECK(ended);
+  CHECK_EQ(paid, 80);
+  CHECK_EQ(res, 0.f);
+  CHECK(now >= 8100 && now < 8200);
+  // a tick that can't pay ends the ability without paying part of it
+  r = UpkeepStep(1.f, 1.25f, 0.1f, 0, 100);
+  CHECK(r.end);
+  CHECK_EQ(r.resource, 1.f);
+  CHECK_EQ(r.ticksPaid, 0);
+  // a stall pays at most kUpkeepMaxTicksPerStep ticks and the clock catches up
+  r = UpkeepStep(100.f, 1.25f, 0.1f, 0, 5050);
+  CHECK_EQ(r.ticksPaid, kUpkeepMaxTicksPerStep);
+  CHECK_EQ(r.lastTickMs, 5000ull);
+  // no cost or no tick rate: nothing
+  CHECK_EQ(UpkeepStep(50.f, 0.f, 0.1f, 0, 5000).ticksPaid, 0);
+  CHECK_EQ(UpkeepStep(50.f, 1.25f, 0.f, 0, 5000).ticksPaid, 0);
+  CHECK(!UpkeepStep(0.f, 0.f, 0.1f, 0, 5000).end);
 }

@@ -536,7 +536,7 @@ bool Core(void* target, void* snapshot, float damage, float coef, unsigned lo, u
   const bool attackerAlive = attacker && SehAlive(attacker);
   t.attackerDead = attacker && !attackerAlive;
   if (t.attackerDead && dealt > 0.f) ++g_st.deadAttackerHits;
-  if (dmg::DrawsAggro(dealt, attacker != nullptr, attackerAlive)) agents::OnDamaged(target, attacker, lo, hi, t.lethal);
+  if (dmg::DrawsAggro(dealt, attacker != nullptr, attackerAlive)) agents::OnDamaged(target, attacker, lo, hi, t.lethal, dealt);
   // D9: a capturer's damage pauses its capture; since D9c only an enemy player's hit (the attacker player-controlled or
   // a player's pet, the damage tracker's "player damage"), not a worker's, minion's, creep's or structure's
   if (dealt > 0.f) wells::OnDamaged(target, attacker, dealt);

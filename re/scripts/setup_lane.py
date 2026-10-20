@@ -207,7 +207,7 @@ def locale_step(data_dir, address, check_only, missing):
 
 def bot_profiles_step(data_dir, check_only, missing):
     """a copy's added bot profiles archive (bot_profiles.py: game/Data/zz_BotProfiles.snap, a Warden with the Predator
-    role), byte for byte what bot_profiles.py makes from the copy's own AssetData.snap; client and host copies."""
+    role, Faris and Freia as Hunters, Desecrator as a Tactician), byte for byte what bot_profiles.py makes from the copy's own AssetData.snap; client and host copies."""
     src, added = bot_profiles.paths(data_dir)
     want = bot_profiles.build(src)
     if os.path.isfile(added):

@@ -51,6 +51,7 @@ struct ReflexConfig {
   bool junglerHpPoints = true;      // PRETUSBOT: a jungler's "weaker" compares HP points (false: fractions, BOTREFLEX)
   float weakHpRatio = 0.75f;        // ... weaker with less than this share of the enemy's current HP points
   bool wellTacticians = false;      // WELLDEF: Tacticians take rule 3 too (the host sets it with bot_well_defense)
+  bool noShaperDive = false;        // DESECBOT-3: never under a tower for a shaper (a Desecrator at level 1-3)
 };
 
 // What the host measured for one bot at one think.
@@ -76,6 +77,8 @@ struct ReflexSensors {
   int alliesNear = 0;              // allied shapers within 35 (not itself)
   bool wellThreat = false;         // a well of its team on its side of the map is attacked or being captured (WELLDEF:
                                    // StepWellDefense says defend)
+  bool finishing = false;          // KILLFINISH: it finishes a won trade on its target (killfinish.h; that decision's
+                                   // own tower test passed): a dive
 };
 
 struct ReflexDecision {
@@ -104,7 +107,9 @@ inline bool ReflexOutnumbered(const ReflexSensors& s) { return s.enemiesNear > s
 // Diving under a tower for a kill: a weak enemy shaper under it, and the bot itself in shape.
 inline bool ReflexDiving(const ReflexSensors& s, const ReflexConfig& c) {
   if (s.targetIsTower && s.targetTowerHpFrac <= c.finishTowerHp && s.hpFrac >= c.finishSelfHp) return true;  // finishing a tower
-  if (!s.targetIsShaper || !s.targetInTowerZone || s.hpFrac < c.diveSelfHp) return false;
+  if (c.noShaperDive || !s.targetIsShaper) return false;
+  if (s.finishing) return true;  // KILLFINISH: a near-certain kill under the tower
+  if (!s.targetInTowerZone || s.hpFrac < c.diveSelfHp) return false;
   return s.targetHpFrac <= c.diveTargetHp || (s.engagePlan && s.targetHpFrac <= c.diveEngagedHp);
 }
 

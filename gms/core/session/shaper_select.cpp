@@ -85,13 +85,22 @@ ShaperSelect::ShaperSelect(const ShaperSelectConfig& config)
       guard_(config.clientPhaseGuard),
       skinsHoldMs_(config.lateSkinsHoldMs),
       humanDefault_(config.humanDefault),
-      rng_(config.seed) {
+      rng_(config.seed),
+      draftFn_(config.draft),
+      draftGraceMs_(config.draftGraceMs) {
   for (const ShaperSelectPlayer& sp : config.players) {
     Player& p = players_[sp.gameplayIndex];
     p.team = sp.team;
     p.scripted = sp.scripted;
     p.plan = sp.plan;
-    if (sp.scripted && sp.plan.role < kNumRoles) p.rec.role = sp.plan.role;  // its intention shows from the start
+    if (sp.scripted && sp.plan.draft) {
+      // BOTDRAFT: nothing of its own until the draft (no pick, role 0: phase 1 draws an unlocked slot without a role)
+      p.plan.noun = 0;
+      if (draftFn_) draftPending_ = true;
+      else p.plan.draft = false;
+    } else if (sp.scripted && sp.plan.role < kNumRoles) {
+      p.rec.role = sp.plan.role;  // its intention shows from the start
+    }
     p.content = sp.content;
     p.rec.index = sp.gameplayIndex;
   }
@@ -348,6 +357,7 @@ void ShaperSelect::Lock(uint8_t index, bool answer, ISender& out) {
   const uint32_t s = Resolve(index);
   p.rec.shaper = p.rec.skin = s;
   p.rec.flags |= kRecordShaperLocked;
+  if (!p.scripted) lastHumanLock_ = now_;  // BOTDRAFT: the grace counts from the last human's lock
   SendRecord(index, out);
   if (!p.Receives()) return;
   SendSkins(p, false, out);  // its own lock-in, or a phase-1 timer seconds after its C8 02
@@ -493,6 +503,77 @@ void ShaperSelect::LockFollowerRoles(ISender& out) {
   }
 }
 
+// BOTDRAFT: the bots draw once every connected human has locked its shaper and either said its role (preferred-role
+// toggles, a role card) or had draftGraceMs since the last of those locks to do so. A match without connected humans
+// draws at once.
+bool ShaperSelect::DraftReady(int64_t now) const {
+  bool told = true;
+  for (const auto& kv : players_) {
+    const Player& p = kv.second;
+    if (!p.Acting()) continue;
+    if (!(p.rec.flags & kRecordShaperLocked)) return false;
+    told = told && (p.preferredRoles != 0 || p.roleCard >= 0);
+  }
+  return told || now >= lastHumanLock_ + draftGraceMs_;
+}
+
+void ShaperSelect::RunDraft(int64_t now, ISender& out) {
+  (void)out;
+  draftPending_ = false;
+  draftAt_ = now;
+  std::vector<ShaperDraftHuman> humans;
+  std::vector<ShaperDraftBot> bots;
+  std::string hdesc;
+  for (const auto& kv : players_) {
+    const Player& p = kv.second;
+    if (p.scripted) {
+      if (p.plan.draft) bots.push_back(ShaperDraftBot{kv.first, p.team});
+      continue;
+    }
+    ShaperDraftHuman h;
+    h.gameplayIndex = kv.first;
+    h.team = p.team;
+    h.shaper = p.rec.shaper == kNounRandom ? 0 : p.rec.shaper;
+    h.preferredRoles = p.preferredRoles;
+    h.roleCard = p.roleCard;
+    humans.push_back(h);
+    char buf[96];
+    std::snprintf(buf, sizeof buf, " [%u: team %u, %s%s, preferred 0x%x, role card %d]", kv.first, p.team,
+                  NounText(h.shaper).c_str(), (p.rec.flags & kRecordShaperLocked) ? " locked" : "",
+                  p.preferredRoles, p.roleCard);
+    hdesc += buf;
+  }
+  Logf("%s    shaper select: BOTDRAFT: the bots draw now (%s): humans%s; %zu bot(s)", Clock().c_str(),
+       phase_ == 1 && static_cast<uint64_t>(now) >= phaseEnd_ ? "the phase-1 timer" : "the humans have chosen",
+       hdesc.empty() ? " none" : hdesc.c_str(), bots.size());
+  if (bots.empty()) return;
+  const std::vector<ShaperDraftPick> picks = draftFn_(humans, bots);
+  for (const ShaperDraftBot& b : bots) {
+    Player& p = players_.at(b.gameplayIndex);
+    const ShaperDraftPick* k = nullptr;
+    for (const ShaperDraftPick& x : picks)
+      if (x.gameplayIndex == b.gameplayIndex) k = &x;
+    if (!k || !k->noun || k->role >= kNumRoles) {
+      Logf("%s    shaper select: BOTDRAFT: bot %u got no draw; its lock takes the first free entry", Clock().c_str(),
+           b.gameplayIndex);
+      continue;
+    }
+    p.plan.noun = k->noun;
+    p.plan.role = k->role;
+    p.plan.altRoles = k->altRoles;
+    p.rec.role = k->role;
+  }
+}
+
+// BOTDRAFT: a drafted bot says its role at its pick (the toggle a human's preferred-role box sends), so its slot shows
+// it with the shaper; AnnounceFollowerRoles skips it at phase 2.
+void ShaperSelect::AnnounceDraftRole(uint8_t index, ISender& out) {
+  Player& p = players_.at(index);
+  if (p.plan.role >= kNumRoles || (p.preferredRoles & (1u << p.plan.role))) return;
+  p.preferredRoles |= static_cast<uint8_t>(1u << p.plan.role);
+  SendRoleToggle(index, p.plan.role, out);
+}
+
 void ShaperSelect::Advance(int64_t now, ISender& out) {
   now_ = now;
   if (phase_ == 0) return;
@@ -503,14 +584,18 @@ void ShaperSelect::Advance(int64_t now, ISender& out) {
   for (bool again = true; again;) {
     again = false;
     if (phase_ == 1) {
+      if (draftPending_ && DraftReady(now)) RunDraft(now, out);  // BOTDRAFT
       for (auto& kv : players_) {
         Player& p = kv.second;
         if (!p.scripted || (p.rec.flags & kRecordShaperLocked)) continue;
-        const uint64_t pickAt = phaseStart_ + static_cast<uint64_t>(std::max(0, p.plan.pickMs));
-        const uint64_t lockAt = phaseStart_ + static_cast<uint64_t>(std::max(0, std::max(p.plan.pickMs, p.plan.lockMs)));
+        if (p.plan.draft && draftPending_) continue;  // BOTDRAFT: waits for the humans
+        const uint64_t base = p.plan.draft ? static_cast<uint64_t>(draftAt_) : phaseStart_;
+        const uint64_t pickAt = base + static_cast<uint64_t>(std::max(0, p.plan.pickMs));
+        const uint64_t lockAt = base + static_cast<uint64_t>(std::max(0, std::max(p.plan.pickMs, p.plan.lockMs)));
         if (!p.planPicked && p.plan.noun && t >= pickAt) {
           p.planPicked = true;
           Pick(kv.first, p.plan.noun, out);
+          if (p.plan.draft) AnnounceDraftRole(kv.first, out);
         }
         if (t >= lockAt) Lock(kv.first, false, out);
       }
@@ -520,8 +605,21 @@ void ShaperSelect::Advance(int64_t now, ISender& out) {
         Enter(2, now, now, out);
         again = true;
       } else if (t >= phaseEnd_) {
+        // BOTDRAFT: the humans' records first, then the draft (it sees their shapers), then the drafted bots
         for (auto& kv : players_)
-          if (!(kv.second.rec.flags & kRecordShaperLocked)) Lock(kv.first, false, out);
+          if (!(kv.second.rec.flags & kRecordShaperLocked) && !(kv.second.scripted && kv.second.plan.draft))
+            Lock(kv.first, false, out);
+        if (draftPending_) RunDraft(now, out);
+        for (auto& kv : players_) {
+          Player& p = kv.second;
+          if (p.rec.flags & kRecordShaperLocked) continue;
+          if (p.plan.draft && !p.planPicked && p.plan.noun) {
+            p.planPicked = true;
+            Pick(kv.first, p.plan.noun, out);
+            AnnounceDraftRole(kv.first, out);
+          }
+          Lock(kv.first, false, out);
+        }
         Enter(2, static_cast<int64_t>(phaseEnd_), now, out);
         again = true;
       }
@@ -668,6 +766,10 @@ void ShaperSelect::OnMessage(ConnId conn, const uint8_t* body, size_t n, int64_t
         Refuse(index, "role", r.role >= kNumRoles ? "no such role" : "wrong phase or role locked");
         break;
       }
+      // BOTDRAFT: the client sends one by itself on entering its phase 2 (the record's role); a change, or any later
+      // one, is the player's own choice
+      ++p.roleCards;
+      if (p.rec.role != r.role || p.roleCards > 1) p.roleCard = r.role;
       if (p.rec.role != r.role) {
         p.rec.role = r.role;
         SendRecord(index, out);

@@ -10,6 +10,8 @@
 #include <string>
 
 #include "core/damage/pipeline.h"
+#include "core/damage/regen.h"
+#include "core/damage/upkeep.h"
 #include "game.h"
 #include "hook.h"
 #include "log.h"
@@ -33,6 +35,13 @@ struct Tracked {
   unsigned endCalls;
   bool dropped;
   bool seen;  // modifier lifetime logged once (D1e)
+  // DISCIPLINE: the upkeep of a running agent ability (kept across reactivations: the instance keeps running)
+  bool upkeepSeen;            // its static data looked at once
+  bool upkeepOn;              // it has an upkeep
+  unsigned long long upkeepLast;  // the last tick counted (ms, server clock)
+  unsigned long long upkeepLog;   // the last progress line
+  float upkeepPaid;
+  unsigned upkeepTicks;
 };
 constexpr int kMaxTracked = 8192;
 Tracked g_tracked[kMaxTracked];
@@ -48,6 +57,8 @@ struct Counters {
   unsigned endFinished, endFailed, endGone, endNoTick, endExpired, endCalls, removed, deferred, overflow;
   unsigned timedModifiers, untimedModifiers;
   unsigned held, heldEndPending, endPending;  // D10: resumes held in use, ends deferred during them, ended afterwards
+  unsigned upkeepInstances, upkeepTicks, endUpkeep, upkeepExceptions;  // DISCIPLINE
+  double upkeepPaid;
 } c;
 
 unsigned g_eventLogs;
@@ -463,6 +474,7 @@ const char* StatusName(int status) {
     case 1: return "no Tick";
     case 100: return "duration over (D1e)";
     case 101: return "end pending (D10)";
+    case 102: return "out of resource for its upkeep (DISCIPLINE)";
     default: return "?";
   }
 }
@@ -492,6 +504,74 @@ bool ModifierExpired(Tracked& t, void* in) {
   return gms::damage::ModifierExpired(deact, duration, start, now);
 }
 
+// DISCIPLINE: an agent ability's upkeep (cStaticAbility +0x340 upkeepResourcePointCost by rank, every +0x360
+// upkeepResourcePointTickRate seconds) comes out of its agent's resource while the instance runs; a tick that finds
+// less than the cost ends the ability (gms::damage::UpkeepStep). No client instruction but the reflection and the copy
+// reads the pair: the stripped server update spent it. The one ability with an upkeep is Raina's W
+// (ability_Guardian_W_ConeShield, 1.25 every 0.1 s). Written straight into the combatant data as regen.cpp does; the
+// replication's A0 delta carries mResourcePoints to the clients. Returns true when the ability must end.
+bool Upkeep(Tracked& t, void* in) {
+  char* st = Field<char*>(in, inst::kStatic);
+  if (!st) return false;
+  const float tick = Field<float>(st, kStaticUpkeepTickRate);
+  const int rank = Field<int>(in, inst::kRank);
+  const float cost = gms::damage::UpkeepCostForRank(reinterpret_cast<const float*>(st + kStaticUpkeepCost), rank);
+  const unsigned long long now = GetTimeMs(g_sim);
+  if (!t.upkeepSeen) {
+    t.upkeepSeen = true;
+    t.upkeepOn = cost > 0.f && tick > 0.f;
+    if (!t.upkeepOn) return false;
+    const unsigned long long start = Field<unsigned long long>(in, inst::kStartMs);
+    t.upkeepLast = start && start <= now ? start : now;
+    t.upkeepLog = now;
+    ++c.upkeepInstances;
+    void* o = GetObjectById(Field<unsigned>(in, inst::kAgent));
+    char* cd = o ? Field<char*>(o, gobj::kCombatant) : nullptr;
+    Log("upkeep: inst %08X %s agent %08X rank %d: %.2f every %.2f s (%.2f/s), resource %.2f (t %.2f s)", t.inst, InstName(in),
+        Field<unsigned>(in, inst::kAgent), rank, cost, tick, cost / tick,
+        cd ? Field<float>(cd, combatant::kResourcePoints) : -1.f, GameSeconds());
+  }
+  if (!t.upkeepOn) return false;
+  void* o = GetObjectById(Field<unsigned>(in, inst::kAgent));
+  char* cd = o ? Field<char*>(o, gobj::kCombatant) : nullptr;
+  if (!cd) return false;
+  if (GetResourceType(o) == gms::damage::kResourceTypeHealth) return false;  // [assumed] no upkeep out of health
+  float& res = Field<float>(cd, combatant::kResourcePoints);
+  const float before = res;
+  const gms::damage::UpkeepResult r = gms::damage::UpkeepStep(before, cost, tick, t.upkeepLast, now);
+  t.upkeepLast = r.lastTickMs;
+  if (r.ticksPaid > 0) {
+    res = r.resource;
+    t.upkeepPaid += before - r.resource;
+    t.upkeepTicks += static_cast<unsigned>(r.ticksPaid);
+    c.upkeepPaid += before - r.resource;
+    c.upkeepTicks += static_cast<unsigned>(r.ticksPaid);
+  }
+  if (r.end) {
+    ++c.endUpkeep;
+    Log("upkeep: inst %08X %s agent %08X: resource %.2f below the cost %.2f after %u ticks (%.2f paid): ending it (t %.2f s)",
+        t.inst, InstName(in), Field<unsigned>(in, inst::kAgent), r.resource, cost, t.upkeepTicks, t.upkeepPaid, GameSeconds());
+    return true;
+  }
+  if (now - t.upkeepLog >= 1000 && LogThis()) {
+    t.upkeepLog = now;
+    Log("upkeep: inst %08X %s agent %08X: resource %.2f (%u ticks, %.2f paid so far; t %.2f s)", t.inst, InstName(in),
+        Field<unsigned>(in, inst::kAgent), r.resource, t.upkeepTicks, t.upkeepPaid, GameSeconds());
+  }
+  return false;
+}
+
+bool SehUpkeep(Tracked& t, void* in) {
+  __try {
+    return Upkeep(t, in);
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    if (++c.upkeepExceptions <= 5) Log("EXCEPTION in the upkeep of inst %08X; its upkeep off", t.inst);
+    t.upkeepSeen = true;
+    t.upkeepOn = false;
+    return false;
+  }
+}
+
 void EndPass() {
   // New instances may be created while we end others (Deactivate runs Lua); they are appended and
   // looked at on the next pass, so iterate over the entries that exist now.
@@ -518,17 +598,25 @@ void EndPass() {
       end = true;
       status = 100;
     }
+    // DISCIPLINE: a running agent ability pays its upkeep; one that can't is ended
+    if (!end && type == 0 && g_opt.upkeep && !Field<unsigned char>(in, inst::kEndPending) && SehUpkeep(t, in)) {
+      end = true;
+      status = 102;
+    }
     // D10: an EndAbility that came while something held the instance (its own running Tick) is still pending
     if (!end && Field<unsigned char>(in, inst::kEndPending) && Field<int>(in, inst::kInUse) == 0) {
       end = true;
       status = 101;
     }
     if (!end) continue;
-    g_hostCause = status == 101 ? "the end pass (an end deferred while it ran)" : "the end pass";
+    g_hostCause = status == 101   ? "the end pass (an end deferred while it ran)"
+                  : status == 102 ? "the end pass (out of resource for its upkeep)"
+                                  : "the end pass";
     if (t.endCalls == 0) {
       switch (status) {
         case 100: ++c.endExpired; break;
         case 101: ++c.endPending; break;
+        case 102: break;  // counted by Upkeep
         case -1: ++c.endFinished; break;
         case -2: ++c.endFailed; break;
         case 99: ++c.endGone; break;
@@ -573,10 +661,10 @@ bool AbilityTickInstall(const AbilityTickOptions& options) {
     g_origCall = reinterpret_cast<CallFunctionFn>(HookDetour(kCallFunction, kCallFunctionBytes, sizeof kCallFunctionBytes,
                                                              reinterpret_cast<void*>(&CallFunctionHook)));
   Log("ability tick hooks: CreateTickThread %s, RecreateTickThread %s, ResumeThread %s; end_no_tick %d, modifier_expiry %d, "
-      "hold_running %d; Lua context (D12) %s",
+      "hold_running %d, upkeep %d; Lua context (D12) %s",
       g_origCreate ? "installed" : "FAILED", g_origRecreate ? "installed" : "FAILED",
       !(g_opt.holdRunning || g_opt.luaContext) ? "off" : g_origResume ? "installed" : "FAILED", g_opt.endNoTick,
-      g_opt.modifierExpiry, g_opt.holdRunning,
+      g_opt.modifierExpiry, g_opt.holdRunning, g_opt.upkeep,
       !g_opt.luaContext ? "off" : g_origCall && g_origResume ? "installed (CallFunction, ResumeThread)" : "FAILED");
   if (!g_origResume) g_opt.holdRunning = 0;
   if (!g_origResume || !g_origCall) g_opt.luaContext = 0;
@@ -658,8 +746,13 @@ void AbilityTickFormatStats(char* buf, std::size_t size) {
                 c.endFinished + c.endFailed + c.endGone + c.endNoTick + c.endExpired + c.endPending, c.endFinished, c.endFailed,
                 c.endGone, c.endNoTick, c.endExpired, c.endPending, c.removed, c.deferred, g_nTracked, c.timedModifiers,
                 c.untimedModifiers, c.held, c.heldEndPending, c.overflow ? " OVERFLOW" : "");
-  // D6c: agent abilities ended before their Tick finished, by cause
   int len = static_cast<int>(std::strlen(buf));
+  // DISCIPLINE: upkeep costs paid by running abilities
+  if (g_opt.upkeep && len > 0 && static_cast<std::size_t>(len) < size)
+    len += std::snprintf(buf + len, size - len, "; upkeep: %u instances, %u ticks, %.1f paid, %u ended out of resource%s",
+                         c.upkeepInstances, c.upkeepTicks, c.upkeepPaid, c.endUpkeep,
+                         c.upkeepExceptions ? " (EXCEPTIONS)" : "");
+  // D6c: agent abilities ended before their Tick finished, by cause
   if (g_opt.endTrace && len > 0 && static_cast<std::size_t>(len) < size) {
     len += std::snprintf(buf + len, size - len, "; early ends (D6c) %u (%u holding the agent):", g_early, g_earlyHolding);
     for (int i = 0; i < g_nCauses && len > 0 && static_cast<std::size_t>(len) < size; ++i)

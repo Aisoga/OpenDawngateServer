@@ -338,6 +338,12 @@ if ($Seconds -lt 0 -or ($Seconds -eq 0 -and -not $Play)) { Write-Host '-Seconds 
 # (5 minutes in a game, so -Seconds > 300), off otherwise and in play mode, where the player gives input.
 if ($KeepAlive -lt 0) { $KeepAlive = if (-not $Play -and $Seconds -gt 300) { 60 } else { 0 } }
 if ($KeepAlive % 2) { Write-Host "-KeepAlive $KeepAlive must be even (the monitor's loop steps by 2 s)" -ForegroundColor Red; exit 2 }
+# NULLPOS: a test session's host treats (0, 0) as a null pointer strictly (every "NULLPOS:" line logged, the summary's
+# nullpos line says FAIL); play mode (play.ps1, the user's game) keeps the host's default (logged with a budget).
+# An explicit bot_nullpos_strict in -HostOptions wins.
+if (-not $Play -and ($GmsHost -or $HostDir) -and "$HostOptions" -notmatch '(^|;)\s*bot_nullpos_strict\s*=') {
+    $HostOptions = if ($HostOptions) { "$HostOptions;bot_nullpos_strict=1" } else { 'bot_nullpos_strict=1' }
+}
 
 # one session at a time (P1): a test session must never stop a running play session's processes as leftovers, nor the
 # other way round. The lock names this process and its start time, so a stale lock (a killed session) is ignored.
@@ -1546,6 +1552,18 @@ if (Test-Path $simLogFile) {
     $sas = @($d | Where-Object { $_ -match 'ASSERT \[server\]' }).Count
     $st = "$($d | Where-Object { $_ -match '\] stats t\+' } | Select-Object -Last 1)" -replace '^.*\] stats ', ''
     $sum += "dgsim    : last $(if ($phase) { $phase } else { 'phase: none' }); $exc exception(s); $sas server assert line(s)$(if ($st) { "; last stats $st" })"
+    # (0, 0) handed to a bot as a goal is a null position; any such line fails a test session
+    $npLines = @($d | Where-Object { $_ -cmatch 'NULLPOS: ' })  # case-sensitive: not the 'stats nullpos:' line
+    $npStats = "$($d | Where-Object { $_ -match '\] stats nullpos: ' } | Select-Object -Last 1)" -replace '^.*\] stats nullpos: ', ''
+    if ($npLines.Count -or $npStats) {
+        $npFirst = if ($npLines.Count) { "; first: $("$($npLines[0])" -replace '^.*NULLPOS: ', '')" } else { '' }
+        $sum += "nullpos  : $(if ($npLines.Count) { "FAIL: $($npLines.Count) NULLPOS line(s)$npFirst" } else { 'pass: 0 NULLPOS lines' })$(if ($npStats) { "; last stats $npStats" })"
+    }
+    # DEADTARGET: a bot request at a dead, deleted or gone object; any line fails a test session as well
+    $dtLines = @($d | Where-Object { $_ -cmatch 'DEADTARGET: ' })
+    if ($dtLines.Count -or $npStats) {
+        $sum += "deadtarg : $(if ($dtLines.Count) { "FAIL: $($dtLines.Count) DEADTARGET line(s); first: $("$($dtLines[0])" -replace '^.*DEADTARGET: ', '')" } else { 'pass: 0 DEADTARGET lines' })"
+    }
     $sa = "$($d | Where-Object { $_ -match '\] stats abilities: ' } | Select-Object -Last 1)" -replace '^.*\] stats abilities: ', ''
     $sd = "$($d | Where-Object { $_ -match '\] stats damage: ' } | Select-Object -Last 1)" -replace '^.*\] stats damage: ', ''
     if ($sa -or $sd) { $sum += "dgsim ab : $sa$(if ($sd) { "; damage: $sd" })" }

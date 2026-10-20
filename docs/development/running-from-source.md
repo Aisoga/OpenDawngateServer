@@ -20,7 +20,7 @@ powershell -ExecutionPolicy Bypass -File re\scripts\play.ps1 [-ShaperSelect]
 
 One command does everything:
 
-1. It checks the setup. It rebuilds the match host and installs the new `dgsim.dll` when the sources changed. For anything else missing, it prints the command to run.
+1. It checks the setup. It rebuilds the match host and installs the new `dgsim.dll` when the sources changed, and it rewrites the CREATE GAME dialog's bot check box (`game\Data\zz_MatchOptions.snap`) and the bot profiles (`game\Data\zz_BotProfiles.snap`, in both the client and the host copy) when they are missing or older than the scripts that make them. For anything else missing, it prints the command to run.
 2. It builds and starts the server, then starts the game in a normal window.
 3. When you close the game or press **Ctrl+C**, it cleans up: the game, the match hosts, the server and the packet capture. In a match, Ctrl+C closes the game after 10 seconds; a second Ctrl+C stops at once.
 
@@ -81,6 +81,8 @@ There's no packet capture or egress check here. Logs go to `re\logs\manual_<date
 | `prepare_flags=1` | Show the "Match Found" accept/decline prompt before a queue match |
 | `move_takeover=0` | Bring back the original's rule that a move waits for an attack-move's first hit |
 | `role_passives=0` | Switch the roles' passives and their minion gold bonuses off |
+| `bot_draft=0`, `bot_draft=1` | A custom game's bots pick their shapers and roles at once instead of after the players (`0`), or wait for the players in every game with shaper select, practice included (`1`) |
+| `bot_draft_grace_ms=N` | How long the bots wait after the last lock-in for a player who said no role (default 10000) |
 | `banter=0`, `banter_window=0` | No banter lines, or banter at any time of the match |
 | `test_wave=20` | Spawn test minions after 20 seconds |
 | `grant_xp=2200` | Give each player enough experience to rank all four abilities |

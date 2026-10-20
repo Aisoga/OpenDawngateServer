@@ -202,6 +202,10 @@ func TestUpdateFails(t *testing.T) {
 func TestRunClientUpdates(t *testing.T) {
 	fx := newUpdateFixture(t, "v0.5")
 	os.WriteFile(filepath.Join(fx.dir, "Start-Client.old.exe"), []byte("left by an earlier update"), 0o644)
+	// a game running on this PC (a test lane's, the user's) holds the client mutex; this folder's client never runs
+	orig := clientRunning
+	clientRunning = func() bool { return false }
+	t.Cleanup(func() { clientRunning = orig })
 	var out bytes.Buffer
 	code := RunClient([]string{"--check"}, IO{In: strings.NewReader("y\n"), Out: &out, ExeDir: fx.dir, Interactive: true})
 	if fx.fake.Count() != 0 || fx.file("Start-Client.exe") != "client v0.5" {

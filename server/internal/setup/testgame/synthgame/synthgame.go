@@ -112,24 +112,91 @@ func Files(ts *assetdata.Types) ([]testgame.SnapFile, error) {
 		return nil, err
 	}
 	files = append(files, testgame.SnapFile{Name: "AssetData/Binary/PC_Warden.BotClass.bin", Data: bc})
+	// the Hunter AI's BotClass and the shapers without an AI (botprofiles' borrowed-AI profiles): the donor gets a
+	// skill order and one spell (fixed words +0x0C/+0x10 and +0x14/+0x18, their data after the two names)
+	donor, err := Bin(ts, "BotClass", map[string]any{"nounDef": "spark.Noun", "aiDefinition": "BOT_spark_Hunter.AIDefinition",
+		"role": uint32(2)})
+	if err != nil {
+		return nil, err
+	}
+	le := binary.LittleEndian
+	le.PutUint32(donor[0x0C:], 0x02000100)
+	le.PutUint32(donor[0x10:], 18)
+	le.PutUint32(donor[0x14:], 0x02000200)
+	le.PutUint32(donor[0x18:], 1)
+	for _, s := range []uint32{3, 4, 5, 3, 3, 6, 3, 4, 3, 6, 4, 4, 4, 5, 6, 5, 5, 5} {
+		donor = le.AppendUint32(donor, s)
+	}
+	donor = append(le.AppendUint32(donor, 0x02000210), "Spell_Spark.Item\x00"...)
+	files = append(files, testgame.SnapFile{Name: "AssetData/Binary/PC_Artificer.BotClass.bin", Data: donor})
+	// the Tactician AI's BotClass (PC_Guardian) with a skill order and three spells, for a profile that names its own
+	guardian, err := Bin(ts, "BotClass", map[string]any{"nounDef": "rock.Noun", "aiDefinition": "BOT_rock_Tactician.AIDefinition",
+		"role": uint32(1)})
+	if err != nil {
+		return nil, err
+	}
+	le.PutUint32(guardian[0x0C:], 0x02000300)
+	le.PutUint32(guardian[0x10:], 18)
+	le.PutUint32(guardian[0x14:], 0x02000400)
+	le.PutUint32(guardian[0x18:], 3)
+	for _, s := range []uint32{5, 3, 4, 5, 5, 6, 5, 3, 5, 6, 3, 3, 3, 4, 6, 4, 4, 4} {
+		guardian = le.AppendUint32(guardian, s)
+	}
+	for _, w := range []uint32{0x02000410, 0x02000420, 0x02000430} {
+		guardian = le.AppendUint32(guardian, w)
+	}
+	guardian = append(guardian, "Spell_A.Item\x00Spell_B.Item\x00Spell_C.Item\x00"...)
+	files = append(files, testgame.SnapFile{Name: "AssetData/Binary/PC_Guardian.BotClass.bin", Data: guardian})
+	// the Gladiator AI's BotClass (PC_HighHuntress) with a skill order and three spells (MIKELLABOT)
+	huntress, err := Bin(ts, "BotClass", map[string]any{"nounDef": "blade.Noun",
+		"aiDefinition": "BOT_blade_Gladiator.AIDefinition", "role": uint32(0)})
+	if err != nil {
+		return nil, err
+	}
+	le.PutUint32(huntress[0x0C:], 0x02000500)
+	le.PutUint32(huntress[0x10:], 18)
+	le.PutUint32(huntress[0x14:], 0x02000600)
+	le.PutUint32(huntress[0x18:], 3)
+	for _, s := range []uint32{3, 5, 4, 3, 3, 6, 3, 5, 3, 6, 5, 5, 5, 4, 6, 4, 4, 4} {
+		huntress = le.AppendUint32(huntress, s)
+	}
+	for _, w := range []uint32{0x02000610, 0x02000620, 0x02000630} {
+		huntress = le.AppendUint32(huntress, w)
+	}
+	huntress = append(huntress, "Spell_A.Item\x00Spell_D.Item\x00Spell_E.Item\x00"...)
+	files = append(files, testgame.SnapFile{Name: "AssetData/Binary/PC_HighHuntress.BotClass.bin", Data: huntress})
+	for _, n := range []string{"Golem", "Survivor", "Desecrator", "MerchantPrincess", "Otter"} {
+		b, err := Bin(ts, "BotClass", map[string]any{"nounDef": strings.ToLower(n) + ".Noun", "role": uint32(1)})
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, testgame.SnapFile{Name: "AssetData/Binary/PC_" + n + ".BotClass.bin", Data: b})
+	}
 	// a file that doesn't parse (left out, as assetdata.py dump leaves it out) and the catalog
 	files = append(files, testgame.SnapFile{Name: "AssetData/Binary/broken.CollectionItem.bin", Data: []byte{1, 2, 3}},
 		testgame.SnapFile{Name: "AssetData/Binary/catalog_153.bin", Data: catalog()})
 	return files, nil
 }
 
-// catalog is a Catalog listing PC_Warden.BotClass alone (a CatalogEntry of 0x30 bytes: name, compile time, typeCrc
-// 0xDF9D7C39 = the BotClass table's, source file, location and status 4; then its two strings).
+// catalog is a Catalog listing the nine BotClasses (CatalogEntries of 0x30 bytes: name, compile time, typeCrc
+// 0xDF9D7C39 = the BotClass table's, source file, location and status 4; then each one's two strings).
 func catalog() []byte {
 	le := binary.LittleEndian
-	e := make([]byte, 0x30)
-	le.PutUint32(e[0x00:], 0x02000010)
-	le.PutUint64(e[0x08:], 1415127097)
-	le.PutUint32(e[0x14:], 0xDF9D7C39)
-	le.PutUint32(e[0x1C:], 0x02000020)
-	e[0x20], e[0x21] = 4, 4
-	d := le.AppendUint32(le.AppendUint32(nil, 0x02000000), 1)
-	return append(append(d, e...), "PC_Warden.BotClass\x00Heroes/ember/PC_Warden.Noun\x00"...)
+	names := []string{"PC_Warden", "PC_Artificer", "PC_Golem", "PC_Survivor", "PC_Guardian", "PC_Desecrator",
+		"PC_HighHuntress", "PC_MerchantPrincess", "PC_Otter"}
+	d := le.AppendUint32(le.AppendUint32(nil, 0x02000000), uint32(len(names)))
+	var strs []byte
+	for i, n := range names {
+		e := make([]byte, 0x30)
+		le.PutUint32(e[0x00:], 0x02000010+uint32(0x20*i))
+		le.PutUint64(e[0x08:], 1415127097)
+		le.PutUint32(e[0x14:], 0xDF9D7C39)
+		le.PutUint32(e[0x1C:], 0x02000020+uint32(0x20*i))
+		e[0x20], e[0x21] = 4, 4
+		d = append(d, e...)
+		strs = append(strs, n+".BotClass\x00Heroes/ember/"+n+".Noun\x00"...)
+	}
+	return append(d, strs...)
 }
 
 // Locale is the synthetic English Locale.package.

@@ -211,12 +211,26 @@ inline std::vector<BotPlayer> PlanBotPlayersComposed(const std::vector<HumanPlay
                                                      const std::vector<int>& teams, const std::set<std::string>& available,
                                                      const std::vector<std::string>& anyClass,
                                                      const std::vector<int>& dropOrder, unsigned reserved = 0,
-                                                     unsigned seed = 0) {
+                                                     unsigned seed = 0,
+                                                     const std::vector<std::string>& hunters = {"PC_Artificer"},
+                                                     const std::vector<std::string>& tacticians = {},
+                                                     const std::vector<std::string>& gladiators = {}) {
   unsigned taken = reserved;
   for (const HumanPlayer& h : humans)
     if (h.index >= 0 && h.index < kMaxPlayerIndexes) taken |= 1u << h.index;
   std::vector<BotPlayer> out;
-  for (int team : teams) {
+  // HUNTERBOT: each team's Hunter class, drawn once per match (distinct when two are available)
+  const std::vector<std::string> hunterOf = DrawHunters(hunters, available, seed, static_cast<int>(teams.size()));
+  // DESECBOT: each team's pinned Tactician ([host] bot_tacticians; "" = the draw as it is)
+  const std::vector<std::string> tacticianOf =
+      DrawPerTeam(tacticians, available, seed, static_cast<int>(teams.size()), 0x54414354u);  // "TACT"
+  // MIKELLABOT: each team's pinned Gladiator ([host] bot_gladiators; "" = the draw as it is)
+  const std::vector<std::string> gladiatorOf =
+      DrawPerTeam(gladiators, available, seed, static_cast<int>(teams.size()), 0x474C4144u);  // "GLAD"
+  for (size_t ti = 0; ti < teams.size(); ++ti) {
+    const int team = teams[ti];
+    const std::string& hunterClass = hunterOf[ti];
+    const std::string& tacticianClass = tacticianOf[ti];
     std::vector<int> roles;
     int mineCount = 0;
     for (const HumanPlayer& h : humans)
@@ -225,9 +239,12 @@ inline std::vector<BotPlayer> PlanBotPlayersComposed(const std::vector<HumanPlay
         ++mineCount;
       }
     // seed != 0: the free draw (any class in any seat, ComposeTeamFree); 0: the fixed setup
-    const std::vector<ComposedSeat> seats =
-        seed ? ComposeTeamFree(teamSize - mineCount, available, seed + static_cast<unsigned>(team) * 7919u, roles)
-             : ComposeTeam(WantedSeats(teamSize - mineCount, roles, dropOrder), available, anyClass, 0u);
+    std::vector<ComposedSeat> seats =
+        seed ? ComposeTeamFree(teamSize - mineCount, available, seed + static_cast<unsigned>(team) * 7919u, roles,
+                               hunterClass, tacticianClass)
+             : ComposeTeam(WantedSeats(teamSize - mineCount, roles, dropOrder), available, anyClass, 0u, hunterClass,
+                           tacticianClass);
+    PinGladiator(seats, gladiatorOf[ti], available);  // MIKELLABOT
     int slot = 0;
     for (const ComposedSeat& s : seats) {
       const int seatSlot = slot++;

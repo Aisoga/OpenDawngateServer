@@ -1,9 +1,10 @@
-// gms/core/bots (BOTDRAFT): the bots of a custom game draw their shapers and roles after the humans have chosen.
+// gms/core/bots (BOTDRAFT): the bots of a game draw their shapers and roles after the humans have chosen.
 // Header-only, engine-free.
 //
 // The user's rule (2026-10-20): in a custom game with bots, the bots announce their shapers and roles only after every
 // human has made a selection, so a human who wants to play the Hunter doesn't get a bot Hunter (Petrus) beside him, and
-// the shapers get shuffled more. Practice games keep the old way (the bots are composed at the first HelloReq).
+// the shapers get shuffled more. Since 2026-10-21 the same in practice games and in the PvP queue's games with bots
+// (DraftOn).
 //
 // What a human "wants" (HumanIntent) is, in this order: its Preferred Roles check boxes in phase 1 (C8 06, the
 // original UI's way to say it), a role card it chose on its own role page after its lock-in (C8 07 that changed its
@@ -20,9 +21,9 @@
 //   * shuffled per team with the match's seed; the pins come first: each team's Hunter (DrawHunters over bot_hunters),
 //     Tactician (bot_tacticians, the first flex seat) and Gladiator (bot_gladiators, the first Gladiator seat); a pin
 //     a human of the team holds gives way to the pool;
-//   * unlike the practice game's draw, Mikella (PC_MerchantPrincess_Gladiator) is in the Gladiator pool without a pin;
-//     Faris (PC_Golem_Hunter) stays out of the default Hunter list (he can't clear his first camp), as in practice
-//     games: bot_hunters=all brings him in;
+//   * unlike the composed bots (bot_draft 0), Mikella (PC_MerchantPrincess_Gladiator) is in the Gladiator pool
+//     without a pin; Faris (PC_Golem_Hunter) stays out of the default Hunter list (he can't clear his first camp), as
+//     with the composed bots: bot_hunters=all brings him in;
 //   * hard rule: no shaper twice on a team, and none a human of the team picked (a profile counts as its base class);
 //   * soft rule: a shaper a human of the other team picked, or one the other team's bots drew, only when the pool has
 //     nothing else (the original game allowed the same shaper on both teams, blind pick: a shaper is unique within a
@@ -41,6 +42,16 @@
 #include "core/bots/profiles.h"
 
 namespace gms::bots {
+
+// Whether a game's bots draw after the humans: [host] bot_draft (`option`: -1 auto, 0 off, 1 always) and createGame's
+// mode. Auto takes every game dgserver makes: "custom", "practice" (PRACTICE DAWNGATE) and "pvp" (the matchmaker's,
+// with bots in its open seats); a host without createGame (mode "") or with a mode it doesn't know keeps the composed
+// bots. The draft itself only runs where shaper select does (the host's BeginDraft).
+inline bool DraftOn(int option, const std::string& mode) {
+  if (option > 0) return true;
+  if (option == 0) return false;
+  return mode == "custom" || mode == "practice" || mode == "pvp";
+}
 
 // The role a shaper is usually played in, by its PlayerClass name (PC_<X>): the top guide's role of the 420 archived
 // moba-champion.com guides [guide]. kRoleUnknown for any other name.

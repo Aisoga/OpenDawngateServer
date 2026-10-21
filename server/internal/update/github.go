@@ -42,7 +42,7 @@ func GitHub(userAgent string) Source {
 }
 
 // Loopback is a fake of GitHub's API and downloads at base (http://127.x.y.z:port; tests only): the API under
-// base/repos/<Repo>/releases/latest, the assets anywhere under base. Any other address is refused, so the test
+// base/repos/<Repo>/releases/latest (and .../releases/tags/<tag>), the assets anywhere under base. Any other address is refused, so the test
 // hook can never send Start-Client somewhere else on the network.
 func Loopback(base, userAgent string) (Source, error) {
 	u, err := url.Parse(strings.TrimRight(base, "/"))
@@ -110,9 +110,29 @@ func (s Source) get(ctx context.Context, cl *http.Client, u, accept string) (*ht
 	return resp, nil
 }
 
+// TagURL is the API request for the release of one tag.
+func (s Source) TagURL(tag string) string {
+	return strings.TrimRight(s.API, "/") + "/repos/" + Repo + "/releases/tags/" + url.PathEscape(tag)
+}
+
 // Latest asks for the latest release: its tag, which must be a numbered release's name, and its asset <tag>.zip.
 func (s Source) Latest(ctx context.Context) (Release, error) {
-	resp, err := s.get(ctx, s.client(s.AskTime), s.LatestURL(), "application/vnd.github+json")
+	return s.release(ctx, s.client(s.AskTime), s.LatestURL(), "the latest release", "")
+}
+
+// ByTag asks for the release of tag (a numbered release's name, v0.7): its asset <tag>.zip, the Windows release
+// (the server's client package takes the Windows zip of the server's own version, whichever system the server
+// runs on). The answer must name that tag; a draft or a pre-release is refused as by Latest.
+func (s Source) ByTag(ctx context.Context, tag string) (Release, error) {
+	if !IsRelease(tag) {
+		return Release{}, fmt.Errorf("%q is not a numbered release (v<major>.<minor>[.<patch>])", tag)
+	}
+	return s.release(ctx, s.client(30*time.Second), s.TagURL(tag), "the release "+tag, tag)
+}
+
+// release reads a release's answer at u (what names it in errors); want, when set, is the tag it must name.
+func (s Source) release(ctx context.Context, cl *http.Client, u, what, want string) (Release, error) {
+	resp, err := s.get(ctx, cl, u, "application/vnd.github+json")
 	if err != nil {
 		return Release{}, err
 	}
@@ -129,13 +149,16 @@ func (s Source) Latest(ctx context.Context) (Release, error) {
 		} `json:"assets"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&r); err != nil {
-		return Release{}, fmt.Errorf("the latest release's answer: %v", err)
+		return Release{}, fmt.Errorf("%s's answer: %v", what, err)
+	}
+	if want != "" && r.Tag != want {
+		return Release{}, fmt.Errorf("%s: the answer names the release %q", what, r.Tag)
 	}
 	if r.Draft || r.Prerelease {
-		return Release{}, fmt.Errorf("the latest release %q is a draft or a pre-release", r.Tag)
+		return Release{}, fmt.Errorf("%s %q is a draft or a pre-release", what, r.Tag)
 	}
 	if !IsRelease(r.Tag) {
-		return Release{}, fmt.Errorf("the latest release %q is not named v<major>.<minor>[.<patch>]", r.Tag)
+		return Release{}, fmt.Errorf("%s %q is not named v<major>.<minor>[.<patch>]", what, r.Tag)
 	}
 	rel := Release{Tag: r.Tag}
 	for _, a := range r.Assets {

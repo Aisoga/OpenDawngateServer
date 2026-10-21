@@ -250,3 +250,94 @@ func TestSeveralMatchesPerTick(t *testing.T) {
 		t.Fatalf("matches %d left %d", len(ms), m.Len())
 	}
 }
+
+// MMWAIT: a smaller match waits FillAfter after its anchor, FillExtend more for each session that joins;
+// a full match starts at once. Nine solo players joining just in time keep a 5v5 waiting 90 + 8 × 30 s.
+func TestFillExtend(t *testing.T) {
+	c := newClock()
+	start := c.t
+	m := New(Config{TeamSize: 5, MinPlayers: 1, FillAfter: 90 * time.Second, FillExtend: 30 * time.Second, Now: c.now})
+	nextID = 0
+	mustAdd(t, m, ticket("pvp", "", 1))
+	if d := m.NextDeadline(); !d.Equal(start.Add(90 * time.Second)) {
+		t.Fatalf("next deadline %v", d.Sub(start))
+	}
+	for i := 0; i < 8; i++ { // each joins 1 s before the deadline so far
+		c.t = m.NextDeadline().Add(-time.Second)
+		if ms, _ := m.Tick(); len(ms) != 0 {
+			t.Fatalf("join %d: started early", i)
+		}
+		mustAdd(t, m, ticket("pvp", "", 1))
+	}
+	if d := m.NextDeadline().Sub(start); d != 330*time.Second {
+		t.Fatalf("deadline after 8 joins %v", d)
+	}
+	c.t = start.Add(330*time.Second - time.Millisecond)
+	if ms, _ := m.Tick(); len(ms) != 0 {
+		t.Fatal("started before 330 s")
+	}
+	c.t = start.Add(330 * time.Second)
+	if ms, _ := m.Tick(); len(ms) != 1 || ms[0].Full || teams(ms[0]) != "[1 3 5 7 9|2 4 6 8]" {
+		t.Fatalf("matches %v", ms)
+	}
+
+	// the tenth player fills the match: at once
+	c.t = start
+	nextID = 0
+	for i := 0; i < 10; i++ {
+		mustAdd(t, m, ticket("pvp", "", 1))
+		c.advance(time.Second)
+	}
+	if ms, _ := m.Tick(); len(ms) != 1 || !ms[0].Full {
+		t.Fatalf("full match %v", ms)
+	}
+
+	// a party is one join: +30 s once
+	c.t = start
+	mustAdd(t, m, ticket("pvp", "", 1))
+	c.advance(10 * time.Second)
+	mustAdd(t, m, ticket("pvp", "", 3))
+	if d := m.NextDeadline().Sub(start); d != 120*time.Second {
+		t.Fatalf("deadline with a party %v", d)
+	}
+	// a cancel takes its extension back
+	m.Remove(nextID)
+	if d := m.NextDeadline().Sub(start); d != 90*time.Second {
+		t.Fatalf("deadline after the cancel %v", d)
+	}
+}
+
+// DISCORD2b: Snapshot gives one mode's tickets, its player count and the earliest match start (MMWAIT's rule).
+func TestSnapshot(t *testing.T) {
+	c := newClock()
+	start := c.t
+	m := New(Config{TeamSize: 5, MinPlayers: 1, FillAfter: 90 * time.Second, FillExtend: 30 * time.Second, Now: c.now})
+	nextID = 0
+	if st := m.Snapshot("pvp"); len(st.Tickets) != 0 || st.Players != 0 || !st.StartsAt.IsZero() || st.Capacity != 10 {
+		t.Fatalf("empty queue %+v", st)
+	}
+	mustAdd(t, m, ticket("pvp", "", 1))
+	c.advance(10 * time.Second)
+	mustAdd(t, m, ticket("pvp", "", 3), ticket("custom", "", 1))
+	st := m.Snapshot("pvp")
+	if len(st.Tickets) != 2 || st.Players != 4 || st.Tickets[1].Players[0].Name != "p2_0" || !st.Tickets[0].Queued.Equal(start) {
+		t.Fatalf("snapshot %+v", st)
+	}
+	if d := st.StartsAt.Sub(start); d != 120*time.Second { // 90 s after the first, +30 s for the party
+		t.Fatalf("starts after %v", d)
+	}
+	if st := m.Snapshot("custom"); st.Players != 1 || st.StartsAt.Sub(start) != 100*time.Second {
+		t.Fatalf("custom %+v", st)
+	}
+	// a full match starts now
+	mustAdd(t, m, ticket("pvp", "", 5), ticket("pvp", "", 1))
+	if st := m.Snapshot("pvp"); st.Players != 10 || !st.StartsAt.Equal(c.t) {
+		t.Fatalf("full: %+v", st)
+	}
+	// fewer than MinPlayers: no start time
+	m2 := New(Config{TeamSize: 5, MinPlayers: 2, FillAfter: time.Minute, Now: c.now})
+	mustAdd(t, m2, ticket("pvp", "", 1))
+	if st := m2.Snapshot("pvp"); st.Players != 1 || !st.StartsAt.IsZero() {
+		t.Fatalf("below MinPlayers %+v", st)
+	}
+}

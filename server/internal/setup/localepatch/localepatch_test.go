@@ -35,13 +35,13 @@ func MadeUp() []byte {
 // The SHA-256s re/scripts/patch_locale.py gives for the same inputs (test_ph2b.py pins the same values).
 const (
 	madeUpSHA        = "97766712cea3cf54c20204922cc472d86ac9d592c40e955f7c1a635e0567f25e"
-	madeUpLaneB      = "a0a8be4d2bdff1c15d64dcded59fb4c71beab8c35e5904041f0810bea5204730" // --host 127.0.0.2
-	madeUpWebDomain  = "2c3e021aea10d8a154a4c10e11864938003a110d7736735ed537ea2d717ba81a" // 192.168.1.20, Play.Example.org:8443
+	madeUpLaneB      = "ab925a706ce8c2087adac0938925ee539c8751d69cc29ea81ffb0afa9e9a5213" // --host 127.0.0.2
+	madeUpWebDomain  = "22c506d29b524dae62fd6081d32364c8ea7043895744d4f6242ffd7372426e8e" // 192.168.1.20, Play.Example.org:8443
 	synthLocaleSHA   = "528ce9623b3b1542fa600b1036136a3c39e8e68bb586019fb3a6d3c2f6374832" // synthgame.Locale()
-	synthLocal       = "c8f7d64be868d1c88ae93f0efef6ab02590cc65fe01a4351a10991ce1378b4fd" // the synthetic game, 127.0.0.1
-	game854Local     = "5eca730a2db2572c817c1b61085a4094884c4366b05f97fda430e424035fac2b" // build 854, --host 127.0.0.1
-	game854LaneB     = "cd8a64f93a65856c6fcbe9d6d627e3166b08354c2b66e5bb4537c74d8ad7a48e" // --host 127.0.0.2
-	game854WebDomain = "98041c169bf54c0203cfac31a3c4f006fe448677f8766a1bdb15c5df283b0ee9" // 203.0.113.7, dawngate.example.org
+	synthLocal       = "9ce4f9d12c272865e5eed08d6621052b58dbccb57757fc6e92d204f695fc4132" // the synthetic game, 127.0.0.1
+	game854Local     = "032b20b329a328328c58c6767c0c38ae4f417e1930224d46af4d77ebead7066c" // build 854, --host 127.0.0.1
+	game854LaneB     = "75673a3e080ed7d8a28d1eb24f33636a85131548297ee99689efaa137e68d4f3" // --host 127.0.0.2
+	game854WebDomain = "3a6daee84c5729605d5005142b073bed81bc95c30ee116f1b7ee1b7b606553a9" // 203.0.113.7, dawngate.example.org
 )
 
 func TestBuildMatchesPython(t *testing.T) {

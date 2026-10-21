@@ -21,11 +21,13 @@ const (
 // leaderboardMax is the most rows a reply carries (the client asks for COUN 200).
 const leaderboardMax = 200
 
-// LeaderboardMinGames is the fewest games a ranked account has by default: the screen's own text reads "Solo Top 200.
-// Rank is based upon results of solo games only. Must have at least 50 games played." (dgserver
-// --leaderboard-min-games changes it; every game of the profile's PLAYED counts, not only solo queue games
-// [assumed]).
-const LeaderboardMinGames = 50
+// LeaderboardMinGames is the fewest games a ranked account has by default (dgserver --leaderboard-min-games changes
+// it). Only PvP and custom games count, practice games don't (store.History.Ranked, hostedGame.ranked). The client's
+// own text said "Solo Top 200. Rank is based upon results of solo games only. Must have at least 50 games played.";
+// the player copy's setup replaces it with "Top 200" and "Rank is based upon PvP and custom games. Must have at least
+// 10 games played." (localepatch.LeaderboardLines, whose number is this one: a server that changes the flag makes the
+// screen's number wrong).
+const LeaderboardMinGames = 10
 
 // leaderboard answers getLeaderboard (LeaderboardStatsRequest, member table 0x012F0518: NAME, STRT the first rank
 // wanted, COUN how many, POFF the period offset; the client sends NAME 'Skill' with POFF 0, then 'SkillDaily' with

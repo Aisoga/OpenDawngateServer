@@ -79,7 +79,8 @@ type Server struct {
 	// up to the team size (createGame's fillTeams). Off = the open seats stay empty (B10b's 1 v 0).
 	MMBots bool
 	// LeaderboardMinGames is the fewest games an account needs for the main menu's Leaderboard (LBFIX, dgserver
-	// --leaderboard-min-games; leaderboard.go). NewServer sets the client's own text's 50.
+	// --leaderboard-min-games; leaderboard.go). NewServer sets LeaderboardMinGames (10, the number the setup puts into the
+	// screen's text).
 	LeaderboardMinGames int
 	// Rand is the random source of the post-game rewards (B7c, progression.go); nil = math/rand/v2's.
 	Rand progress.Rand
@@ -104,7 +105,9 @@ type Server struct {
 	hosted  hostedGames  // games with a match host (C1)
 	groups  playgroups   // playgroups, e.g. a game's chat (B11)
 	mm      mmState      // matchmaking sessions and their timer (B10a)
-	msgs    messaging    // Messaging relay: online users, inboxes, rate limits (B10c)
+	// DISCORD2b: the live PvP queue message (SetDiscordQueue; nil = off)
+	discordQueue atomic.Pointer[DiscordQueue]
+	msgs         messaging // Messaging relay: online users, inboxes, rate limits (B10c)
 	// G3: each persona's saved reconnect game id (BGOps::setGameID; reconnect.go)
 	reconnect reconnectIDs
 	// B13b: each online persona's presence (associationlists.go)
@@ -117,6 +120,8 @@ type Server struct {
 	live liveSessions
 	// the launcher's join codes and the invites sent in a leader's name (joincodes.go)
 	joins joinCodes
+	// where finished matches are posted on Discord (SetResultPosts; results.go); nil = nowhere
+	results atomic.Pointer[ResultPosts]
 
 	handlers map[key]Handler
 }

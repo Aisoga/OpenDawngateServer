@@ -362,12 +362,16 @@ func TestHostedGameProgression(t *testing.T) {
 	if acct.FirstWinDay != time.Unix(testTime, 0).UTC().Format("2006-01-02") || acct.Flags&store.FlagFTUEDone == 0 {
 		t.Errorf("account: first win %q, flags %#x", acct.FirstWinDay, acct.Flags)
 	}
+	if acct.History.Ranked != (store.GamesWon{}) { // a practice game isn't counted for the Leaderboard
+		t.Errorf("Leaderboard counts %+v after a practice game", acct.History.Ranked)
+	}
 	hs.close()
 	log := hs.log.String()
 	for _, want := range []string{
 		"[blaze]    game 1: player 2000000001 result map[assists:2 bestStreak:3 deaths:1 doubleKills:1 kills:3] (stored at finishGame)\n",
 		"[blaze]    account 1000000001: game 1 won, +124 XP (level 2), 1 wins; bag \"Silverish\", 12 Destiny, items [0x10000006(duplicate, 50 CC) 0x10000007(duplicate, 15 CC)], 65 CC, FTUE true\n",
 		"[blaze]    account 1000000001: FTUE done (practice game 1 finished)\n",
+		"[blaze]    account 1000000001: game 1 leaderboard: not counted (a practice game); 0 games, 0 wins\n",
 		"[host] match 1 -> {\"t\":\"playerRewards\",\"user\":2000000001,",
 	} {
 		if !strings.Contains(log, want) {
@@ -457,6 +461,14 @@ func TestHostedPvPProgression(t *testing.T) {
 		if ps["WINS"] != c.wins || ps["PLAYED"] != c.played || ps["KILLS"] != c.kills || acct.XP != c.xp ||
 			acct.Flags&store.FlagFTUEDone != 0 {
 			t.Errorf("account %d: stats %v, XP %d, flags %#x", c.uid, ps, acct.XP, acct.Flags)
+		}
+		// a PvP game counts for the Leaderboard, all time and today
+		want := store.GamesWon{Games: 1}
+		if c.wins == "1" {
+			want.Wins = 1
+		}
+		if r := acct.History.Ranked; r != want || len(acct.History.Days) != 1 || acct.History.Days[0].Ranked != want {
+			t.Errorf("account %d: Leaderboard counts %+v, history days %+v", c.uid, r, acct.History.Days)
 		}
 	}
 }

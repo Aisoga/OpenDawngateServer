@@ -164,7 +164,8 @@ func TestThisPCFlags(t *testing.T) {
 	if strings.Contains(f, "--local-trust") || pc.signupMode() != signupOpen {
 		t.Errorf("without local trust: %s, mode %q", f, pc.signupMode())
 	}
-	ini := Config{"address": "192.168.1.20", "shaper_select": "off", "signup": "invite", "server_flags": "--owned starter --web-port 443"}
+	ini := Config{"address": "192.168.1.20", "shaper_select": "off", "signup": "invite", "discord_webhook_server": "https://discord.com/api/webhooks/1/t",
+		"server_flags": "--owned starter --web-port 443 --discord-webhook=https://discord.com/api/webhooks/2/t"}
 	pc = newThisPC(IO{}, l, "127.0.0.1", "host", ini, bm, true, false)
 	if pc.signupMode() != signupInvite {
 		t.Errorf("the folder's Start-Server.ini's mode: %q", pc.signupMode())
@@ -177,8 +178,12 @@ func TestThisPCFlags(t *testing.T) {
 	pc = newThisPC(IO{}, l, "127.0.0.1", "host", ini, bm, true, false)
 	f = strings.Join(pc.flags(), " ")
 	if strings.Contains(f, "--shaper-select") || !strings.Contains(f, "--certs "+l.Certs("192.168.1.20")) || !strings.Contains(f, "--signup invite") ||
-		!strings.Contains(f, "--owned starter --web-port 443 --bind 127.0.1.11") || !strings.HasSuffix(f, "--gms-bind 127.0.1.11") {
+		!strings.Contains(f, "--owned starter --web-port 443 --discord-webhook=https://discord.com/api/webhooks/2/t --bind 127.0.1.11") || !strings.Contains(f, "--gms-bind 127.0.1.11") {
 		t.Errorf("with the folder's Start-Server.ini: %s", f)
+	}
+	// never a Discord post from This PC: the ini's keys aren't passed, and server_flags' webhook is turned off after it
+	if strings.Contains(f, "webhooks/1/") || !strings.HasSuffix(f, "--discord-webhook= --discord-webhook-queue= --discord-webhook-result= --discord-webhook-server=") {
+		t.Errorf("This PC's Discord flags: %s", f)
 	}
 }
 

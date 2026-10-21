@@ -3,7 +3,7 @@ OpenDawngateServer: Start-Server and Start-Client          (release @VERSION@)
 
 An unofficial fan project to play the 2014 MOBA Dawngate again. It is not affiliated with or endorsed by
 Electronic Arts or Waystone Games; Dawngate is a trademark of its owners. This release contains no game file:
-every player needs their own Dawngate.zip from archive.org.
+every player needs their own Dawngate.zip from archive.org, which Start-Client.exe downloads for them.
 
 A WORD ON SAFETY. The game is 2014 code. At home the game and the server send nothing to the internet (see
 "Privacy" for what Start-Client.exe itself sends); a public server (see "Hosting on the internet") gets
@@ -14,7 +14,8 @@ own risk. Players: play only on servers you trust, with a password you use nowhe
 What you need
 -------------
 - Windows 10 or 11, 64-bit, with a graphics card that runs DirectX 9 games.
-- Dawngate.zip (1.3 GB) from https://archive.org/details/Dawngate
+- An internet connection at the first start: Start-Client.exe downloads Dawngate.zip (1.3 GB) from
+  https://archive.org/details/Dawngate (or uses your copy of it, put next to Start-Client.exe).
 - About 5 GB of free disk space on this drive: the zip, a copy of the game for playing and one for the
   server's match host (1.5 GB each; the second only once you play on This PC).
 Nothing else: no Python, Go or Visual Studio.
@@ -23,18 +24,21 @@ Nothing else: no Python, Go or Visual Studio.
 Playing on this PC (a practice match against bots)
 --------------------------------------------------
 1. Unpack this release into a folder of its own, e.g. C:\Games\Dawngate.
-2. Put Dawngate.zip into the same folder, next to Start-Client.exe.
-3. Double-click Start-Client.exe. Its first start makes the game copy in the folder Dawngate-Data (about half
-   a minute), then the game starts. The login screen opens with "This PC" selected (SERVER, above the login):
-   the server on this PC, which Start-Client runs by itself. You need no Start-Server.exe for this.
+2. If you have Dawngate.zip, put it into the same folder, next to Start-Client.exe.
+3. Double-click Start-Client.exe. Without Dawngate.zip its first start asks "Download Dawngate.zip (1.3 GB)
+   from archive.org? [Y/n]": press Enter (an interrupted download continues at the next start; mirrors:
+   game_sources = <url> in Start-Client.ini). It checks the zip against the original build, makes the game
+   copy in the folder Dawngate-Data (about half a minute), then the game starts. The login screen opens with
+   "This PC" selected (SERVER, above the login): the server on this PC, which Start-Client runs by itself.
+   You need no Start-Server.exe for this.
 4. Log in with a login name (3-32 letters, digits and . _ - @, e.g. an e-mail address) and a password of
    8 or more characters: the first login with a new name creates the account with that password. The first
    login to This PC also sets up the server's match host (about half a minute; the Start-Client window shows
    the steps); later logins start it in a second or two. Then PLAY and PRACTICE DAWNGATE. Pick your shaper
    (click a card, then Choose), a role (then Finalize) and a skin; then a match with bots begins.
 To stop: close the game. Start-Client ends with it, and the server on this PC with it.
-If Dawngate.zip is somewhere else, Start-Client.exe asks for it at its first start (drag it onto the window,
-or press Enter to choose it); it also looks in your Downloads folder.
+If Dawngate.zip is somewhere else, answer n to the download: Start-Client.exe then asks for it (drag it onto
+the window, or press Enter to choose it); it also looks in your Downloads folder.
 If a Start-Server.exe of the same folder runs (see the next sections), This PC is that server instead. A
 folder has one server at a time: Start-Server.exe doesn't start while Start-Client runs the folder's server.
 
@@ -50,7 +54,7 @@ On the PC that runs the server:
 3. If Windows asks whether Start-Server.exe may use the network, allow it for private networks only.
    (A public address: README section "Hosting on the internet" below; the risk applies.)
 On every other player's PC:
-1. Unpack this release and put that player's own Dawngate.zip next to it.
+1. Unpack this release (Start-Client.exe downloads that player's own Dawngate.zip, or uses theirs next to it).
 2. Start it once as   Start-Client.exe 192.168.1.20   (or add the server on the login screen: see the next
    section).
 3. Log in. The first login to a new server stops with "New server key" while the server list shows the key's

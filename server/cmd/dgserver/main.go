@@ -53,8 +53,8 @@
 //	    [--gms-options "key=value;..."] [--gms-warm N] [--gms-runner auto|none|CMD]]
 //	    [--agent-key FILE] [--gms-control-bind 127.0.0.1] [--gms-control-port 10040]
 //	    [--gms-hello-timeout 30s] [--gms-ready-timeout 2m] [--gms-heartbeat-timeout 30s]
-//	    [--mm-team-size 5] [--mm-min-players 1] [--mm-fill-after 15s] [--mm-max-wait 0] [--mm-bots=false] [--mm-refuse]
-//	    [--custom-bots] [--leaderboard-min-games 50]
+//	    [--mm-team-size 5] [--mm-min-players 1] [--mm-fill-after 90s] [--mm-fill-extend 30s] [--mm-max-wait 0] [--mm-bots=false] [--mm-refuse]
+//	    [--custom-bots] [--leaderboard-min-games 10]
 //	    [--kill-switches WalletTopUp] [--broadcast TEXT] [--broadcast-file FILE] [--broadcast-flags 4]
 //	bin\dgserver.exe --agent <server IP>:10040 --agent-key FILE --gms-dir DIR --host <this machine's IP>
 //	    [--public-host ADDR] [--gms-args ...] [--gms-ports 10042-10051] [--agent-name NAME] [--log DIR] [--seconds N]
@@ -64,8 +64,8 @@
 //
 // PvP matchmaking (roadmap B10a, internal/matchmaker, docs/BLAZE.md *PvP matchmaking (B10a)*):
 // GameManager::startMatchmaking queues the player (or the PvP party it leads) per region; a game forms
-// when both teams of --mm-team-size are full, or once the oldest session has waited --mm-fill-after with
-// at least --mm-min-players. The game is announced like a practice game: the --gms-port address, or a
+// when both teams of --mm-team-size are full, or once the oldest session has waited --mm-fill-after, plus
+// --mm-fill-extend for each session that joined it, with at least --mm-min-players. The game is announced like a practice game: the --gms-port address, or a
 // match host per game with --gms-dir, which since B10d fills the empty slots with bots up to
 // --mm-team-size a team (--mm-bots=false leaves them empty). --mm-max-wait caps a session's wait (the
 // client asks for 3 h; B10b); --mm-refuse (a test aid) refuses every request.

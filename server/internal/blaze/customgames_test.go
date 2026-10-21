@@ -627,6 +627,13 @@ func TestCustomGameSpectatorNotStored(t *testing.T) {
 	if played := pb.Stats[progress.PlayerStats]["PLAYED"]; played != "" {
 		t.Errorf("the spectator's account has PLAYED %q", played)
 	}
+	// a custom game counts for the Leaderboard, not for its spectator
+	if pa.History.Ranked != (store.GamesWon{Games: 1, Wins: 1}) || pb.History.Ranked != (store.GamesWon{}) {
+		t.Errorf("Leaderboard counts: the player's %+v, the spectator's %+v", pa.History.Ranked, pb.History.Ranked)
+	}
+	if log := ts.log.String(); !strings.Contains(log, "account 1000000001: game 1 leaderboard: counted (custom game); 1 games, 1 wins") {
+		t.Errorf("log lacks the player's leaderboard line")
+	}
 	if log := ts.log.String(); !strings.Contains(log, "account 1000000002: game 1 not stored (a spectator)") {
 		t.Errorf("log lacks the spectator's line")
 	}

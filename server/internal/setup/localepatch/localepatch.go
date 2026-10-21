@@ -1,5 +1,6 @@
 // Package localepatch makes a player copy's added locale package game\Data\Locale\en-us\AA_Server.package:
-// changed copies of three of the copy's own string tables with the server's login texts and links, byte for byte
+// changed copies of five of the copy's own string tables with the server's login texts and links and the
+// Leaderboard's rule, byte for byte
 // what re/scripts/patch_locale.py makes (that script's docstring has the rule). The client mounts every *.package of Locale\en-us and the one whose name
 // sorts first wins, so AA_Server.package overrides the shipped Locale.package, which stays untouched. The game's
 // text can't ship, so the package is made at setup time from the copy's own Locale.package.
@@ -10,6 +11,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	"dawngate/server/internal/setup/dbpf"
 	"dawngate/server/internal/sitelinks"
@@ -25,14 +27,38 @@ const (
 	Comment = "# PH2b: lines the build lacks, added by the server's setup" // before appended lines
 )
 
-// The string tables' key parts and the three tables (FNV-1 of BlazeErrors, the URL table's id, LoginScreen).
+// The string tables' key parts and the five tables (FNV-1 of BlazeErrors, the URL table's id, LoginScreen,
+// FNV-1 of fe_leaderboard and fe_matchtype).
 const (
-	StringType  = 0x02FAC0B6
-	StringGroup = 0x02FABF01
-	BlazeErrors = 0x1E5BC096
-	URLs        = 0x30B0670B
-	LoginScreen = 0x69E51800
+	StringType    = 0x02FAC0B6
+	StringGroup   = 0x02FABF01
+	BlazeErrors   = 0x1E5BC096
+	URLs          = 0x30B0670B
+	LoginScreen   = 0x69E51800
+	FELeaderboard = 0xE3B520DE
+	FEMatchType   = 0xFF007FE0
 )
+
+// LeaderboardMinGames is the number the Leaderboard screen's rule names: dgserver's default
+// --leaderboard-min-games (blaze.LeaderboardMinGames). A server that changes the flag makes the screen's number wrong.
+const LeaderboardMinGames = 10
+
+// LeaderboardLines are FE_Leaderboard's: the screen's title (was "Solo Top 200") and the rule under it, as dgserver
+// ranks (only PvP and custom games count, practice games don't).
+var LeaderboardLines = map[uint32]string{
+	0x00000100: "Top 200",
+	0x00000101: "Rank is based upon PvP and custom games. Must have at least " + strconv.Itoa(LeaderboardMinGames) +
+		" games played.",
+}
+
+// MatchTypeLines are FE_MatchType's lines that said a group's games don't count for the Leaderboard; group PvP queue
+// games do. 0x0FD84A0A keeps its 80 blanks, which break the line in the tile.
+var MatchTypeLines = map[uint32]string{
+	0x0FD838A1: "Queue for a game with friends. Impacts Leaderboard ranking.",
+	0x0FD84A0A: "Match with other players of similar skill." + strings.Repeat(" ", 80) +
+		"Solo and group games impact Leaderboard ranking.",
+	0x0EC1B32D: "Games queued as a group impact Leaderboard ranking too.",
+}
 
 // ErrorLines are BlazeErrors' new lines (full error codes); 0x00CA0001 and 0x40720000 have no line in build 854.
 var ErrorLines = map[uint32]string{
@@ -185,7 +211,8 @@ func Tables(o Options) (map[uint32]map[uint32]string, error) {
 		urls[SlotSignup+uint32(slot)] = fmt.Sprintf("http://%s:%d/%s", o.Host, port, SlotPath(slot, sitelinks.Signup))
 		urls[SlotPassword+uint32(slot)] = fmt.Sprintf("http://%s:%d/%s", o.Host, port, SlotPath(slot, sitelinks.Password))
 	}
-	return map[uint32]map[uint32]string{BlazeErrors: ErrorLines, URLs: urls, LoginScreen: LoginLines}, nil
+	return map[uint32]map[uint32]string{BlazeErrors: ErrorLines, URLs: urls, LoginScreen: LoginLines,
+		FELeaderboard: LeaderboardLines, FEMatchType: MatchTypeLines}, nil
 }
 
 var bom = []byte{0xEF, 0xBB, 0xBF}
@@ -265,7 +292,7 @@ func table(p *dbpf.Package, inst uint32) ([]byte, error) {
 	return nil, nil
 }
 
-// Build makes AA_Server.package from the copy's Locale.package (its bytes): the three tables changed, in instance
+// Build makes AA_Server.package from the copy's Locale.package (its bytes): the five tables changed, in instance
 // order, stored uncompressed (dbpf.WritePackage). A table missing from it (a synthetic test build) is made of the
 // appended lines alone.
 func Build(locale []byte, o Options) ([]byte, error) {

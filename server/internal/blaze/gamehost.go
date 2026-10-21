@@ -151,6 +151,9 @@ type hostedGame struct {
 	// B15: a custom game's lobby (customgames.go); nil for practice and matchmade games. hg.game.Attrs is then the
 	// game's attribute map as it is now (setGameAttributes changes it), sorted the way the client looks keys up.
 	custom *customLobby
+
+	// fillTeams is createGame's fillTeams (B10d; 0 = the host's auto rule): the Discord result counts the bots by it
+	fillTeams int
 }
 
 // heldRewards is one player's finished game whose rewards wait for the host's playerKarma (D8c).
@@ -201,7 +204,7 @@ func (s *Server) startHostedGame(r *Request, g Game, p Player) []byte {
 func (s *Server) launchHostedGame(g Game, mode string, fillTeams int, players []*hostedPlayer, replied chan struct{},
 	setup func(Game, *hostedPlayer) []byte, custom *customLobby) (*hostedGame, error) {
 	g.PersistedID = PersistedGameID(g.ID) // G3: the client saves it for a reconnect (reconnect.go)
-	hg := &hostedGame{s: s, game: g, mode: mode, started: s.Now(), replied: replied, setup: setup,
+	hg := &hostedGame{s: s, game: g, mode: mode, fillTeams: fillTeams, started: s.Now(), replied: replied, setup: setup,
 		state: GameStatePreGame, players: players, custom: custom}
 	if custom != nil {
 		hg.setup = hg.lobbySetup
@@ -444,6 +447,7 @@ func (hg *hostedGame) events() gmshost.Events {
 			s.Log.Logf("blaze", "   game %d finished: winner team %d, %.1f s, %s", gid, f.WinnerTeam,
 				float64(f.DurationMs)/1000, f.Reason)
 			hg.persist(mt, f)
+			hg.postResult(f) // DISCORD2c: the result on Discord (results.go), store or not
 			hg.setState(GameStatePostGame)
 		},
 		PlayerKarma: func(mt *gmshost.Match, k gmshost.PlayerKarma) {
@@ -538,6 +542,7 @@ func (hg *hostedGame) persist(mt *gmshost.Match, f gmshost.FinishGame) {
 	}
 	practice := hg.mode == gmshost.ModePractice
 	hg.mu.Lock()
+	ranked := hg.ranked()
 	var joined []*hostedPlayer
 	for _, hp := range hg.players {
 		// B15b: a custom game's spectator joins the GMS (the host's addPlayer) but plays nothing: no result, no
@@ -559,7 +564,7 @@ func (hg *hostedGame) persist(mt *gmshost.Match, f gmshost.FinishGame) {
 		}
 		g := progress.Game{Descriptors: game.descriptors(), Won: won, Seconds: float64(f.DurationMs) / 1000}
 		hold := g.KarmaVote()
-		acct, res, err := s.applyGame(hp.userID, g, pf.Stats, pf.Rewards, practice, hold)
+		acct, res, err := s.applyGame(hp.userID, g, pf.Stats, pf.Rewards, practice, ranked, hold)
 		if err != nil {
 			s.Log.Logf("blaze", "   (account %d: game %d not stored: %v)", hp.userID, game.ID, err)
 			if err == store.ErrNoAccount {
@@ -569,6 +574,7 @@ func (hg *hostedGame) persist(mt *gmshost.Match, f gmshost.FinishGame) {
 		s.Log.Logf("blaze", "   account %d: game %d %s", hp.userID, game.ID, res.describe())
 		if err == nil {
 			s.Log.Logf("blaze", "   account %d: game %d history: %s", hp.userID, game.ID, res.describeHistory(s.Content))
+			s.Log.Logf("blaze", "   account %d: game %d leaderboard: %s", hp.userID, game.ID, res.describeRanked(hg.mode))
 		}
 		if practice {
 			s.Log.Logf("blaze", "   account %d: FTUE done (practice game %d finished)", hp.userID, game.ID)
@@ -593,6 +599,20 @@ func (hg *hostedGame) persist(mt *gmshost.Match, f gmshost.FinishGame) {
 			s.refreshKnownUser(hp.p.ID) // B14: the clients that know the player (its party, its game's chat) see the new wins
 		}
 	}
+}
+
+// ranked reports whether the game counts for the main menu's Leaderboard (its games and wins, store.History.Ranked;
+// the operator's rule): a PvP game (matchmade, queued solo or as a group) and a custom game do; a practice game
+// doesn't, nor does a practice group's, which the server makes as a custom game with the bots-fill bit in its
+// GameFlags (0x412; customgames.go). The profile's PlayerStats and history count every game. Called with hg.mu held.
+func (hg *hostedGame) ranked() bool {
+	switch hg.mode {
+	case gmshost.ModePvP:
+		return true
+	case gmshost.ModeCustom:
+		return hg.game.descriptors()&GameFlagBotsFillTeams == 0
+	}
+	return false
 }
 
 // grantHeld decides and stores a held player's rewards (D8c), with the karma votes in h.game if the host reported

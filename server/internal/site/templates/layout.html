@@ -19,7 +19,8 @@
 <a href="/admin/audit">Audit log</a>
 <form method="post" action="/admin/logout" class="inline"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit" class="link">Log out {{.Admin.Name}}</button></form>
 </nav>{{end}}{{else}}<nav>
-<a href="/signup">Make an account</a>
+{{if .Download}}<a href="/download">Download</a>
+{{end}}<a href="/signup">Make an account</a>
 <a href="/account/password">Change password</a>
 <a href="/password">Forgot password?</a>
 <a href="/account/data">Your data</a>

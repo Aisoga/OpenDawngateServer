@@ -91,7 +91,21 @@ type Config struct {
 	EndSessions func(userID int64, why string) int
 	Log         func(format string, a ...any) // one line per request (nil = none)
 	Now         func() time.Time
+	// Download is the server's client package (dgserver --client-package; nil: none): the page /download and the
+	// file at Download.Path.
+	Download *Download
 }
+
+// Download is the client package on the website.
+type Download struct {
+	Path, File string       // the file's URL path (/dawngate/download/<File>) and name
+	Handler    http.Handler // serves the file
+	// State is the tunnel key's fingerprint and why the server has no package ("" when it has one), for the page
+	State func() (fingerprint, unavailable string)
+}
+
+// PageDownload is the client package's page.
+const PageDownload = "download"
 
 // Rate is a token bucket: PerMinute tokens a minute, at most Burst saved up.
 type Rate struct {
@@ -188,6 +202,10 @@ func New(cfg Config) (*Site, error) {
 	m.HandleFunc("GET /status.json", s.statusJSON)
 	m.HandleFunc("GET /"+PagePrivacy, s.operatorPage(PagePrivacy, "Privacy"))
 	m.HandleFunc("GET /"+PageTerms, s.operatorPage(PageTerms, "Terms of use"))
+	if d := cfg.Download; d != nil {
+		m.HandleFunc("GET /"+PageDownload, s.downloadPage)
+		m.Handle("GET "+d.Path, d.Handler)
+	}
 	if cfg.Admin != nil {
 		s.admin = newAdminState(*cfg.Admin, cfg.Now)
 		s.adminRoutes(m)
@@ -227,6 +245,9 @@ func (r *recorder) Write(b []byte) (int, error) {
 	}
 	return r.ResponseWriter.Write(b)
 }
+
+// Unwrap lets http.ResponseController reach the connection (the download's own write deadline).
+func (r *recorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 // ServeHTTP answers one request: the security headers, the body limit, the page and the log line.
 func (s *Site) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -326,6 +347,12 @@ type view struct {
 	Version string
 	Pages   string     // where the operator's texts go
 	Admin   *adminView // the admin pages' data (nil on the player's pages)
+	// Download is the client package's link and state (nil: the server hands out none)
+	Download *downloadView
+}
+
+type downloadView struct {
+	Path, File, Fingerprint, Unavailable string
 }
 
 type rules struct{ MinName, MaxName, MinDisplay, MaxDisplay, MinPassword, MaxPassword int }
@@ -340,6 +367,9 @@ func (s *Site) render(w http.ResponseWriter, r *http.Request, status int, page s
 		return
 	}
 	v.Version, v.Mode, v.Rules = s.cfg.Version, s.cfg.Policy.CurrentMode().String(), theRules
+	if d := s.cfg.Download; d != nil && v.Download == nil {
+		v.Download = &downloadView{Path: d.Path, File: d.File}
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	if err := t.ExecuteTemplate(w, "layout.html", v); err != nil && s.cfg.Log != nil {
@@ -353,6 +383,16 @@ func (s *Site) index(w http.ResponseWriter, r *http.Request) {
 		v.Status = st
 	}
 	s.render(w, r, http.StatusOK, "index", v)
+}
+
+// downloadPage is the client package's page: the file, the key's fingerprint and the three steps.
+func (s *Site) downloadPage(w http.ResponseWriter, r *http.Request) {
+	d := s.cfg.Download
+	v := &downloadView{Path: d.Path, File: d.File}
+	if d.State != nil {
+		v.Fingerprint, v.Unavailable = d.State()
+	}
+	s.render(w, r, http.StatusOK, PageDownload, &view{Title: "Download the game client", Download: v})
 }
 
 func (s *Site) passwordHelp(w http.ResponseWriter, r *http.Request) {

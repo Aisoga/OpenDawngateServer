@@ -48,7 +48,7 @@ python -m venv .venv
 |---|---|
 | archive | `client\ia_Dawngate`: the game extracted from `Dawngate.zip`, every file checked against [`file_manifest.csv`](../file_manifest.csv). It is never modified afterwards. |
 | certificates | `server\certs`: a certificate authority and server certificate for `127.0.0.1` |
-| client copy | `client\run_854\Dawngate`, patched to use only `127.0.0.1` and to trust your certificate authority, with the login texts (`game\Data\Locale\en-us\AA_Server.package`), the bot profiles (`game\Data\zz_BotProfiles.snap`) and the CREATE GAME dialog with its "Fill open seats with bots" check box (`game\Data\zz_MatchOptions.snap`) |
+| client copy | `client\run_854\Dawngate`, patched to use only `127.0.0.1` and to trust your certificate authority, with the login texts and the Leaderboard's rule (`game\Data\Locale\en-us\AA_Server.package`), the bot profiles (`game\Data\zz_BotProfiles.snap`) and the CREATE GAME dialog with its "Fill open seats with bots" check box (`game\Data\zz_MatchOptions.snap`) |
 | RakNet | `tools\raknet\RakNet` |
 | builds | `gms\build` (the match host) and `server\bin\dgserver.exe` |
 | host copy | `client\run_854_server\Dawngate` with `dgsim.dll` installed as `PhysXLoader.dll`, its settings file `game\dgsim.ini` and the bot profiles |

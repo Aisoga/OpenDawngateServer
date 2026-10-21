@@ -182,6 +182,15 @@ CREATE TABLE server_settings (
 	changed TEXT NOT NULL
 ) WITHOUT ROWID;
 `},
+	// the Leaderboard's own counts (History.Ranked): the PvP and custom games and their wins, all time on the account
+	// and per day of the history (the daily ranking). The profile's PlayerStats count every game, practice included,
+	// and the history can't tell a practice game from another, so an older account starts at 0 here.
+	{5, "the Leaderboard's games and wins (LBMIN)", `
+ALTER TABLE accounts ADD COLUMN ranked_games INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE accounts ADD COLUMN ranked_wins INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE history_days ADD COLUMN ranked_games INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE history_days ADD COLUMN ranked_wins INTEGER NOT NULL DEFAULT 0;
+`},
 }
 
 // SchemaVersion is the schema version this build writes (the last migration's).

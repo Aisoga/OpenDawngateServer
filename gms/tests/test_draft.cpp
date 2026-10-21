@@ -203,3 +203,18 @@ GMS_TEST(DraftWithoutProfiles) {
   }
   CHECK(predator);
 }
+
+// BOTDRAFT-PRACTICE: [host] bot_draft -1 (auto) takes every game dgserver makes (custom, practice, the PvP queue's);
+// 0 never, 1 always; a host without createGame (mode "") or an unknown mode keeps the composed bots.
+GMS_TEST(DraftOnByModeAndOption) {
+  CHECK(DraftOn(-1, "custom"));
+  CHECK(DraftOn(-1, "practice"));
+  CHECK(DraftOn(-1, "pvp"));
+  CHECK(!DraftOn(-1, ""));
+  CHECK(!DraftOn(-1, "tutorial"));
+  CHECK(!DraftOn(0, "custom"));
+  CHECK(!DraftOn(0, "practice"));
+  CHECK(!DraftOn(0, "pvp"));
+  CHECK(DraftOn(1, ""));
+  CHECK(DraftOn(1, "practice"));
+}

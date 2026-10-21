@@ -248,6 +248,27 @@ try {
     }
     # PLAYPROF: the client shows the bots' shaper, role and name from these profiles
     if ((Test-Path $Python) -and (Test-Path (Join-Path $ClientDir 'game\Dawngate.exe'))) { Update-BotProfiles $ClientDir 'client copy' }
+    # LBMIN: the client texts (game\Data\Locale\en-us\AA_Server.package: the login texts and links, the Leaderboard's
+    # rule), byte for byte what patch_locale.py makes now for 127.0.0.1 (setup_all.py's step too); a copy whose links
+    # go to a website (setup_all.py --web-domain) is left to setup_all.py, which knows the domain
+    $locData = Join-Path $ClientDir 'game\Data'
+    if ((Test-Path $Python) -and (Test-Path (Join-Path $locData 'Locale\en-us\Locale.package'))) {
+        $locLabel = 'client texts (game\Data\Locale\en-us\AA_Server.package)'
+        $locScript = Join-Path $PSScriptRoot 'patch_locale.py'
+        $locAdded = Join-Path $locData 'Locale\en-us\AA_Server.package'
+        $null = & $Python -I $locScript $locData --host 127.0.0.1 --check
+        if ($LASTEXITCODE -eq 0) { Ok $locLabel }
+        elseif ((Test-Path $locAdded) -and -not [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($locAdded)).Contains('http://127.0.0.1:18080/dawngate/terms')) {
+            Missing "$locLabel are older (their links go to a website)" @('.venv\Scripts\python -I re\scripts\setup_all.py --web-domain <the domain>')
+        } else {
+            Write-Host "  install  $locLabel (older texts)" -ForegroundColor Yellow
+            & $Python -I $locScript $locData --host 127.0.0.1 | ForEach-Object { Write-Host "           $_" -ForegroundColor Gray }
+            $null = & $Python -I $locScript $locData --host 127.0.0.1 --check
+            if ($LASTEXITCODE -eq 0) { Ok $locLabel }
+            else { Missing "installing the $locLabel failed (is the game running from client\run_854?)" @(
+                '.venv\Scripts\python -I re\scripts\patch_locale.py client\run_854\Dawngate\game\Data --host 127.0.0.1') }
+        }
+    }
 
     # ---- the host copy and the match-host build
     $hostSetup = '.venv\Scripts\python -I re\scripts\setup_server_copy.py client\run_854\Dawngate client\run_854_server\Dawngate gms\build\Release\dgsim.dll'

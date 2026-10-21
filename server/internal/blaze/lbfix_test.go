@@ -2,12 +2,15 @@ package blaze
 
 import (
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"dawngate/server/internal/fire"
+	"dawngate/server/internal/gmshost"
 	"dawngate/server/internal/golden"
+	"dawngate/server/internal/setup/localepatch"
 	"dawngate/server/internal/store"
 	"dawngate/server/internal/tdf"
 )
@@ -33,19 +36,21 @@ func TestLBFIXRepliesMatchGolden(t *testing.T) {
 	}
 }
 
-// seedGames gives a pipe session's account its profile totals, its shapers and today's games.
-func seedGames(t *testing.T, s *Server, email string, played, wins string, shapers map[uint32]store.GamesWon,
-	today map[uint32]store.ShaperDay) {
+// seedGames gives a pipe session's account its Leaderboard games and wins, its shapers and today's Leaderboard games.
+// Its profile's PlayerStats (every game, practice included) say 60 games and 60 wins, which the ranking doesn't read.
+func seedGames(t *testing.T, s *Server, email string, ranked store.GamesWon, shapers map[uint32]store.GamesWon,
+	today *store.GamesWon) {
 	t.Helper()
 	a, _, err := s.Store.Login(email, time.Unix(testTime, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Store.Update(a.UserID, func(a *store.Account) {
-		a.Stats["PlayerStats"] = map[string]string{"PLAYED": played, "WINS": wins}
+		a.Stats["PlayerStats"] = map[string]string{"PLAYED": "60", "WINS": "60"}
+		a.History.Ranked = ranked
 		a.History.Shapers = shapers
 		if today != nil {
-			a.History.Days = []store.HistoryDay{{Day: time.Unix(testTime, 0).UTC().Format("2006-01-02"), Shapers: today}}
+			a.History.Days = []store.HistoryDay{{Day: time.Unix(testTime, 0).UTC().Format("2006-01-02"), Ranked: *today}}
 		}
 	}); err != nil {
 		t.Fatal(err)
@@ -60,10 +65,10 @@ func seedGames(t *testing.T, s *Server, email string, played, wins string, shape
 func TestLeaderboardSession(t *testing.T) {
 	ps := newPipeSessionWith(t, func(s *Server) {
 		s.LeaderboardMinGames = 1
-		seedGames(t, s, "player@example.com", "5", "3", map[uint32]store.GamesWon{1002: {Games: 1}}, nil)
-		seedGames(t, s, "second@example.com", "4", "3", map[uint32]store.GamesWon{1001: {Games: 4, Wins: 3}},
-			map[uint32]store.ShaperDay{1001: {Games: 3, Wins: 3}})
-		seedGames(t, s, "third@example.com", "0", "0", nil, nil) // no games: not ranked
+		seedGames(t, s, "player@example.com", store.GamesWon{Games: 5, Wins: 3}, map[uint32]store.GamesWon{1002: {Games: 1}}, nil)
+		seedGames(t, s, "second@example.com", store.GamesWon{Games: 4, Wins: 3}, map[uint32]store.GamesWon{1001: {Games: 4, Wins: 3}},
+			&store.GamesWon{Games: 3, Wins: 3})
+		seedGames(t, s, "third@example.com", store.GamesWon{}, nil, nil) // no Leaderboard games: not ranked
 	})
 	ps.loginAs("player@example.com", 1)
 	// 'Skill': the golden reply but for player's shaper (1002 here)
@@ -114,15 +119,45 @@ func TestLeaderboardSession(t *testing.T) {
 	}
 }
 
-// By default an account needs the 50 games the screen's text names: 49 games aren't ranked, 50 are.
+// By default an account needs the 10 Leaderboard games the screen's text names (the setup's FE_Leaderboard line): 9
+// games aren't ranked, 10 are.
 func TestLeaderboardMinGames(t *testing.T) {
 	ps := newPipeSessionWith(t, func(s *Server) {
-		seedGames(t, s, "player@example.com", "49", "30", nil, nil)
-		seedGames(t, s, "second@example.com", "50", "3", nil, nil)
+		seedGames(t, s, "player@example.com", store.GamesWon{Games: 9, Wins: 8}, nil, nil)
+		seedGames(t, s, "second@example.com", store.GamesWon{Games: 10, Wins: 3}, nil, nil)
 	})
 	ps.loginAs("player@example.com", 1)
 	ps.send(ComponentStats, CmdStatsGetLeaderboard, 10, ps.request("getleaderboard_request"))
 	ps.expectPayload(ComponentStats, CmdStatsGetLeaderboard, fire.Reply, 10, LeaderboardReply([]store.LeaderRow{
-		{PersonaID: store.FirstPersonaID + 1, Name: "second", Games: 50, Wins: 3}}, 1))
+		{PersonaID: store.FirstPersonaID + 1, Name: "second", Games: 10, Wins: 3}}, 1))
 	ps.close()
+}
+
+// The number in the Leaderboard screen's text, which the player copy's setup writes (localepatch), is the default's.
+func TestLeaderboardTextNumber(t *testing.T) {
+	if localepatch.LeaderboardMinGames != LeaderboardMinGames ||
+		!strings.Contains(localepatch.LeaderboardLines[0x101], fmt.Sprintf(" at least %d games played.", LeaderboardMinGames)) {
+		t.Errorf("the screen says %q, the default is %d", localepatch.LeaderboardLines[0x101], LeaderboardMinGames)
+	}
+}
+
+// Which hosted games count for the Leaderboard: PvP (matchmade, also a group's: GameFlags 1) and custom games (2, also
+// with the create dialog's bots); not a practice game (0x50C) nor a practice group's (0x412, made as a custom game).
+func TestRankedGames(t *testing.T) {
+	for _, c := range []struct {
+		mode  string
+		flags string
+		want  bool
+	}{
+		{gmshost.ModePvP, "1", true}, {gmshost.ModePvP, "", true}, {gmshost.ModeCustom, "2", true},
+		{gmshost.ModeCustom, "1042", false}, {gmshost.ModePractice, "1292", false}, {gmshost.ModePractice, "1036", false},
+	} {
+		hg := &hostedGame{mode: c.mode}
+		if c.flags != "" {
+			hg.game.Attrs = []tdf.Pair{tdf.KV("GameFlags", c.flags)}
+		}
+		if got := hg.ranked(); got != c.want {
+			t.Errorf("%s game, GameFlags %s: ranked %v", c.mode, c.flags, got)
+		}
+	}
 }

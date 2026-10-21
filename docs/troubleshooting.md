@@ -12,8 +12,14 @@
 **"is not the Dawngate.zip of archive.org"**
 The setup checks every file against build 1.0.903.854. Download the zip again from <https://archive.org/details/Dawngate>; the download may be incomplete.
 
+**The download of Dawngate.zip fails, or archive.org is down**
+The window names each source and why it failed. Start the program again later: an interrupted download continues where it stopped (from `Dawngate.zip.part` next to the program). To use another source, list a mirror of the same zip in `game_sources = <url>` in `Start-Client.ini` or `Start-Server.ini` (tried after archive.org), or download the zip yourself from anywhere and put it next to the program: it is used without asking. Every download is checked against the original build, so a mirror with another file is skipped (*... gave a file that isn't build 854's Dawngate.zip*) and never used.
+
+**"not enough disk space" before the download**
+The download wants room for the zip and the game copies made from it (about 5 GB in all). Free some space, or put the release on another drive.
+
 **Start-Server or Start-Client can't find Dawngate.zip**
-Put the zip next to the program, or in your Downloads folder. You can also drag it onto the program's window when it asks, or set `zip = <path>` in `Start-Server.ini` or `Start-Client.ini`. The server on This PC sets itself up while the game runs and asks nothing then: if its `Dawngate.zip` isn't found, its login is refused (*The server on this PC didn't start*) and `Start-Client`'s window names the places it looked. Put the zip there and log in again.
+Started in a console window, the program offers to download it. Otherwise put the zip next to the program, or in your Downloads folder. You can also drag it onto the program's window when it asks, or set `zip = <path>` in `Start-Server.ini` or `Start-Client.ini`. The server on This PC sets itself up while the game runs and asks nothing then: if its `Dawngate.zip` isn't found, its login is refused (*The server on this PC didn't start*) and `Start-Client`'s window names the places it looked. Put the zip there and log in again.
 
 **The setup stopped halfway**
 Start the program again: it continues where it stopped. If the same step fails again, delete the folder the message names inside `Dawngate-Data`, and it will be made anew.

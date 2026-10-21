@@ -7,37 +7,39 @@ import (
 	"time"
 )
 
-// The ranking: active accounts with enough games, by wins, then fewer games, then persona id; the favourite shaper by games;
-// a day's games taken out for the ranking before that day; disabled, banned and deleted accounts and accounts without
-// games left out; the limit.
+// The ranking: active accounts with enough Leaderboard games (History.Ranked; the profile's PlayerStats, practice games
+// included, aren't read), by wins, then fewer games, then persona id; the favourite shaper by games of any kind; a day's
+// Leaderboard games taken out for the ranking before that day; disabled, banned and deleted accounts and accounts
+// without Leaderboard games left out; the limit.
 func TestLeaderboard(t *testing.T) {
 	s := New()
 	const today = "2026-10-17"
 	type acct struct {
-		played, wins string
-		shapers      map[uint32]GamesWon
-		day          map[uint32]ShaperDay // today's games
-		status       Status
+		ranked  GamesWon
+		shapers map[uint32]GamesWon
+		day     *GamesWon // today's Leaderboard games (and one lost game the day before)
+		status  Status
 	}
 	accts := []acct{
-		{played: "10", wins: "4", shapers: map[uint32]GamesWon{7: {Games: 6, Wins: 3}, 9: {Games: 4, Wins: 1}}}, // 1
-		{played: "8", wins: "4", shapers: map[uint32]GamesWon{9: {Games: 8, Wins: 4}},
-			day: map[uint32]ShaperDay{9: {Games: 3, Wins: 3}}}, // 2: ahead of 1 (fewer games); before today 5 games, 1 win
-		{played: "3", wins: "6"},                                                    // 3: wins above games (a stat out of step): counted as 3
-		{played: "0", wins: "0"},                                                    // 4: no games
-		{played: "20", wins: "20", status: StatusBanned},                            // 5
-		{played: "2", wins: "2", day: map[uint32]ShaperDay{5: {Games: 2, Wins: 2}}}, // 6: all games today
+		{ranked: GamesWon{10, 4}, shapers: map[uint32]GamesWon{7: {Games: 6, Wins: 3}, 9: {Games: 4, Wins: 1}}}, // 1
+		{ranked: GamesWon{8, 4}, shapers: map[uint32]GamesWon{9: {Games: 8, Wins: 4}},
+			day: &GamesWon{3, 3}}, // 2: ahead of 1 (fewer games); before today 5 games, 1 win
+		{ranked: GamesWon{3, 6}}, // 3: wins above games (a count out of step): counted as 3
+		{},                       // 4: no Leaderboard games (its PlayerStats say 50)
+		{ranked: GamesWon{20, 20}, status: StatusBanned}, // 5
+		{ranked: GamesWon{2, 2}, day: &GamesWon{2, 2}},   // 6: all games today
 	}
 	ids := make([]int64, len(accts))
 	for i, c := range accts {
 		a, _ := login(t, s, fmt.Sprintf("p%d@example.com", i+1), time.Unix(0, 0))
 		ids[i] = a.Personas[0].ID
 		if _, err := s.Update(a.UserID, func(a *Account) {
-			a.Stats["PlayerStats"] = map[string]string{"PLAYED": c.played, "WINS": c.wins}
+			a.Stats["PlayerStats"] = map[string]string{"PLAYED": "50", "WINS": "50"} // every game, practice included
+			a.History.Ranked = c.ranked
 			a.History.Shapers = c.shapers
 			if c.day != nil {
-				a.History.Days = []HistoryDay{{Day: "2026-10-16", Shapers: map[uint32]ShaperDay{1: {Games: 1}}},
-					{Day: today, Shapers: c.day}}
+				a.History.Days = []HistoryDay{{Day: "2026-10-16", Shapers: map[uint32]ShaperDay{1: {Games: 4}},
+					Ranked: GamesWon{Games: 1}}, {Day: today, Ranked: *c.day}}
 			}
 		}); err != nil {
 			t.Fatal(err)

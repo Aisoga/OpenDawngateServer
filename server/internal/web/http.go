@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"mime"
 	"net"
 	"os"
@@ -82,7 +83,22 @@ type HTTP struct {
 	// client's login-screen links /dawngate/<page> go to the website's pages when dgserver runs one). They come
 	// before Extra.
 	Redirects map[string]string
+	// Download is the server's client package (dgserver --client-package; nil: none): its file streamed at
+	// Download.Path, its page at DownloadPagePath.
+	Download *Download
 }
+
+// Download is the client package on the HTTP port.
+type Download struct {
+	Path, File  string                 // the file's URL path (/dawngate/download/<File>) and name
+	Disposition string                 // its Content-Disposition
+	Open        func() (string, error) // the package file, built first if need be (an fs.ErrNotExist error: none, 404)
+	// State is the tunnel key's fingerprint and why the server has no package ("" when it has one), for the page
+	State func() (fingerprint, unavailable string)
+}
+
+// DownloadPagePath is the client package's page on the HTTP port (beside the login screen's pages).
+const DownloadPagePath = "dawngate/download"
 
 // CAModulusPath is where dgserver --serve-ca serves the redirector CA's public modulus (128 bytes, ca_modulus.bin):
 // Start-Client.exe fetches it from a server on another machine and has the player compare its Fingerprint with the
@@ -184,10 +200,18 @@ func (h *HTTP) ServeConn(c net.Conn) {
 		h.Log.Log(who, "-> 302 Found, to "+to)
 		return
 	}
+	if d := h.Download; d != nil && urlPath(target) == d.Path {
+		h.serveDownload(c, peer, len(parts) > 0 && parts[0] == "HEAD")
+		return
+	}
 	var data []byte
 	ctype, status, source := "text/plain", "404 Not Found", ""
+	if d := h.Download; d != nil && urlPath(target) == "/"+DownloadPagePath {
+		fp, why := d.State()
+		data, ctype, status, source = DownloadPage(d.Path, d.File, fp, why), "text/html; charset=utf-8", "200 OK", "(served)"
+	}
 	for _, b := range h.Extra {
-		if urlPath(target) == "/"+b.Path {
+		if urlPath(target) == "/"+b.Path && source == "" {
 			data, ctype, status, source = b.Body, b.ContentType, "200 OK", "(served)"
 			break
 		}
@@ -223,6 +247,56 @@ func (h *HTTP) ServeConn(c net.Conn) {
 		note = fmt.Sprintf(", %d bytes %s", len(data), source)
 	}
 	h.Log.Log(who, "-> "+status+note)
+}
+
+// serveDownload streams the client package (built first if need be: the request waits), with its
+// Content-Disposition; 404 when the server has none, 503 while it can't be made (the reason is in the log).
+func (h *HTTP) serveDownload(c net.Conn, peer string, head bool) {
+	const who = "http"
+	d := h.Download
+	reply := func(status, text string) {
+		body := []byte(text + "\n")
+		out := fmt.Sprintf("HTTP/1.1 %s\r\nContent-Type: text/plain\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", status, len(body))
+		if !head {
+			out += string(body)
+		}
+		c.Write([]byte(out))
+		h.Log.Log(who, "-> "+status)
+	}
+	file, err := d.Open()
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			reply("404 Not Found", "No client package: "+err.Error()+".")
+		} else {
+			reply("503 Service Unavailable", "The client package can't be made right now; please try again later.")
+		}
+		return
+	}
+	f, err := os.Open(file)
+	if err != nil {
+		reply("503 Service Unavailable", "The client package can't be read right now; please try again later.")
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		reply("503 Service Unavailable", "The client package can't be read right now; please try again later.")
+		return
+	}
+	c.SetWriteDeadline(time.Now().Add(30 * time.Minute))
+	hdr := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\nContent-Length: %d\r\nContent-Disposition: %s\r\n"+
+		"Connection: close\r\n\r\n", st.Size(), d.Disposition)
+	if _, err := io.WriteString(c, hdr); err != nil {
+		h.Log.Logf(who, "%s %s: %v", peer, logging.ErrName(err), err)
+		return
+	}
+	if !head {
+		if n, err := io.Copy(c, f); err != nil {
+			h.Log.Logf(who, "%s the client package cut short after %d of %d bytes: %s: %v", peer, n, st.Size(), logging.ErrName(err), err)
+			return
+		}
+	}
+	h.Log.Logf(who, "-> 200 OK, the client package %s (%d bytes)", d.File, st.Size())
 }
 
 // lookup maps a request target to a file under the web root, or "".

@@ -11,7 +11,10 @@
 //   - Teams are filled oldest ticket first, each ticket onto the team with fewer players that still
 //     has room for the whole group (TeamSize per team); a ticket that fits nowhere waits.
 //   - A match starts at once when both teams are full. With fewer players it starts once there are at
-//     least MinPlayers and the anchor has waited FillAfter (the empty slots are for bots: M8).
+//     least MinPlayers and its fill deadline has passed (the empty slots are for bots: M8): FillAfter
+//     after the anchor queued, and FillExtend later for each ticket of the match that queued after the
+//     anchor (MMWAIT: 90 s, then 30 s more per joining ticket, so a 5v5 of solo players waits at most
+//     90 + 8 × 30 = 330 s; the tenth player fills the match).
 //   - A ticket whose own Timeout has passed expires (Blaze: SESSION_TIMED_OUT).
 //
 // This is our own design: the original matchmaker ran on EA's Blaze server and isn't in the client. The
@@ -56,7 +59,7 @@ type Match struct {
 	Mode   string
 	Region string // the match's region ("" if every ticket said any)
 	Teams  [2][]*Ticket
-	Full   bool // both teams full; otherwise it started on FillAfter with open slots
+	Full   bool // both teams full; otherwise it started on its fill deadline with open slots
 }
 
 // Size returns the number of players on team i.
@@ -76,8 +79,9 @@ func (m Match) Tickets() []*Ticket {
 // Config sets the matchmaker's rules.
 type Config struct {
 	TeamSize   int           // players per team, 1 (1v1) to MaxTeamSize (5v5)
-	MinPlayers int           // fewest humans a match starts with after FillAfter (1 = a lone player gets a game)
+	MinPlayers int           // fewest humans a match starts with after its fill deadline (1 = a lone player gets a game)
 	FillAfter  time.Duration // how long the oldest ticket waits for full teams before a smaller match starts
+	FillExtend time.Duration // MMWAIT: how much later a smaller match starts for each ticket that joined it
 	// MaxWait caps every ticket's Timeout (0 = the ticket's own: the client asks for 3 h, DUR). B10b: the
 	// client has no queue timer of its own, so this is the server's only limit on a wait.
 	MaxWait time.Duration
@@ -115,6 +119,9 @@ func (m *Matchmaker) Config() Config { return m.cfg }
 
 func (c Config) String() string {
 	s := fmt.Sprintf("%dv%d, start with %d+ players after %s", c.TeamSize, c.TeamSize, c.MinPlayers, c.FillAfter)
+	if c.FillExtend > 0 {
+		s += fmt.Sprintf(" (+%s per joining session)", c.FillExtend)
+	}
 	if c.MaxWait > 0 {
 		s += fmt.Sprintf(", wait at most %s", c.MaxWait)
 	}
@@ -228,6 +235,38 @@ func (m *Matchmaker) Tick() (matches []Match, expired []*Ticket) {
 // form builds the match anchored at a, if one may start now. The anchor goes to team 0; the other
 // candidates follow in queue order.
 func (m *Matchmaker) form(a *Ticket, now time.Time) (Match, bool) {
+	mt := m.assemble(a)
+	if !mt.Full && (mt.Size(0)+mt.Size(1) < m.cfg.MinPlayers || now.Before(m.fillDeadline(mt))) {
+		return Match{}, false
+	}
+	for i := range mt.Teams { // each team in queue order (an older ticket may follow the anchor)
+		sort.SliceStable(mt.Teams[i], func(x, y int) bool { return mt.Teams[i][x].queued.Before(mt.Teams[i][y].queued) })
+	}
+	return mt, true
+}
+
+// fillDeadline is when mt, if not full, may start with open slots: FillAfter after its oldest ticket
+// queued, then FillExtend more for each later ticket, counted from its join if it came after the
+// deadline so far (MinPlayers held the match back). The oldest ticket, not the anchor: a younger anchor
+// must not start the match before the older ticket's extended deadline.
+func (m *Matchmaker) fillDeadline(mt Match) time.Time {
+	joined := mt.Tickets()
+	sort.SliceStable(joined, func(x, y int) bool { return joined[x].queued.Before(joined[y].queued) })
+	at := joined[0].queued.Add(m.cfg.FillAfter)
+	if m.cfg.FillExtend <= 0 {
+		return at
+	}
+	for _, t := range joined[1:] {
+		if t.queued.After(at) {
+			at = t.queued
+		}
+		at = at.Add(m.cfg.FillExtend)
+	}
+	return at
+}
+
+// assemble puts the candidates for the match anchored at a onto the two teams.
+func (m *Matchmaker) assemble(a *Ticket) Match {
 	size := m.cfg.TeamSize
 	mt := Match{Mode: a.Mode, Region: a.Region}
 	mt.Teams[0] = []*Ticket{a}
@@ -256,22 +295,63 @@ func (m *Matchmaker) form(a *Ticket, now time.Time) (Match, bool) {
 		mt.Teams[team] = append(mt.Teams[team], t)
 		count[team] += n
 	}
-	total := count[0] + count[1]
-	mt.Full = total == 2*size
-	if !mt.Full && (total < m.cfg.MinPlayers || now.Sub(a.queued) < m.cfg.FillAfter) {
-		return Match{}, false
-	}
-	for i := range mt.Teams { // each team in queue order (an older ticket may follow the anchor)
-		sort.SliceStable(mt.Teams[i], func(x, y int) bool { return mt.Teams[i][x].queued.Before(mt.Teams[i][y].queued) })
-	}
-	return mt, true
+	mt.Full = count[0]+count[1] == 2*size
+	return mt
 }
 
 // compatible reports whether a ticket of region r can join a match of region want ("" = any).
 func compatible(want, r string) bool { return want == "" || r == "" || want == r }
 
-// NextDeadline returns when Tick next has something to do without a new ticket: the earliest end of a
-// FillAfter wait or of a timeout among the queued tickets (zero if the queue is empty).
+// QueueState is what one mode's queue looks like now (Snapshot): for the Discord queue message (DISCORD2b).
+type QueueState struct {
+	Mode     string
+	Tickets  []TicketState // in queue order (oldest first)
+	Players  int           // humans in Tickets (a party counts each member)
+	Capacity int           // seats of one match (2 × TeamSize)
+	// StartsAt is the earliest time a match of this mode starts by the rules above: now when one is full already
+	// (Tick forms it at once), else the earliest fill deadline (FillAfter after its oldest ticket, FillExtend more
+	// per later one) among the matches the queued tickets would anchor that have MinPlayers. Zero: none has
+	// MinPlayers yet (or the queue is empty), so no start time is known.
+	StartsAt time.Time
+}
+
+// TicketState is one queued ticket in a QueueState.
+type TicketState struct {
+	ID      int64
+	Players []Player // the session's owner (a party's leader) first
+	Queued  time.Time
+}
+
+// Snapshot returns mode's queue as it is now.
+func (m *Matchmaker) Snapshot(mode string) QueueState {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.cfg.Now()
+	st := QueueState{Mode: mode, Capacity: 2 * m.cfg.TeamSize}
+	for _, t := range m.queue {
+		if t.Mode != mode {
+			continue
+		}
+		st.Tickets = append(st.Tickets, TicketState{ID: t.ID, Players: append([]Player(nil), t.Players...), Queued: t.queued})
+		st.Players += len(t.Players)
+		mt := m.assemble(t)
+		at := now
+		switch {
+		case mt.Full:
+		case mt.Size(0)+mt.Size(1) < m.cfg.MinPlayers:
+			continue
+		default:
+			at = m.fillDeadline(mt)
+		}
+		if st.StartsAt.IsZero() || at.Before(st.StartsAt) {
+			st.StartsAt = at
+		}
+	}
+	return st
+}
+
+// NextDeadline returns when Tick next has something to do without a new ticket: the earliest fill
+// deadline of a match a queued ticket would anchor, or end of a timeout (zero if the queue is empty).
 func (m *Matchmaker) NextDeadline() time.Time {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -282,7 +362,7 @@ func (m *Matchmaker) NextDeadline() time.Time {
 		}
 	}
 	for _, t := range m.queue {
-		earlier(t.queued.Add(m.cfg.FillAfter))
+		earlier(m.fillDeadline(m.assemble(t)))
 		if t.Timeout > 0 {
 			earlier(t.queued.Add(t.Timeout))
 		}

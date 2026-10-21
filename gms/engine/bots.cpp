@@ -65,7 +65,7 @@ constexpr std::uint32_t kStatusLoaded = 0x400;       // level loaded (what the p
 constexpr std::uint32_t kDescriptorIsFtue = 0x100;   // nGameDescriptors.IsFTUE
 int g_fillTeams = 0;  // B10d: createGame's fillTeams (0 = not asked); gb::BotTeamSize has the rule
 
-// BOTDRAFT: a custom game's bots draw their classes in shaper select, after the humans (core/bots/draft.h)
+// BOTDRAFT: the bots draw their classes in shaper select, after the humans (core/bots/draft.h)
 std::string g_gameMode;           // createGame's mode ("custom", "practice", ...; "" = no createGame)
 bool g_draft = false;             // decided at EnsurePlayers ([host] bot_draft)
 bool g_draftHidden = false;       // until the reveal: the bots' updates carry no bot data, noun or role
@@ -1717,7 +1717,7 @@ void Configure(const Options& o) {
     g_opt.gladiators = gladiators;
   }
   g_opt.guideBuilds = HostOptionInt("bot_guide_builds", o.guideBuilds ? 1 : 0) != 0;  // DESECBOT-2
-  g_opt.draft = HostOptionInt("bot_draft", o.draft);  // BOTDRAFT: -1 auto (custom games), 0 off, 1 always
+  g_opt.draft = HostOptionInt("bot_draft", o.draft);  // BOTDRAFT: -1 auto (custom, practice, pvp), 0 off, 1 always
   g_opt.kits = HostOptionInt("bot_kits", o.kits ? 1 : 0) != 0;               // HUNTERBOT
   g_opt.hunterFix = HostOptionInt("bot_hunter_fix", o.hunterFix ? 1 : 0) != 0;  // HUNTERBOT
   g_opt.campFinish = HostOptionInt("bot_camp_finish", o.campFinish ? 1 : 0) != 0;  // CAMPFINISH
@@ -2050,11 +2050,12 @@ const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& human
       gladiatorList += (gladiatorList.empty() ? "" : ", ") + g + (available.count(g) ? "" : " (missing)");
     Log("bots: MIKELLABOT: Gladiator pin %s ([host] bot_gladiators '%s')",
         gladiatorList.empty() ? "none (drawn)" : gladiatorList.c_str(), g_opt.gladiators.c_str());
-    // BOTDRAFT: [host] bot_draft -1 (auto) = a custom game's bots draw in shaper select after the humans (the plan
-    // below only fixes how many bots each team has and their indexes; Draft gives them their classes)
+    // BOTDRAFT: [host] bot_draft -1 (auto) = the bots of a custom, practice or PvP game draw in shaper select after
+    // the humans (gb::DraftOn; the plan below only fixes how many bots each team has and their indexes; Draft gives
+    // them their classes)
     g_available = available;
     g_draftSeed = seed;
-    g_draft = g_opt.draft > 0 || (g_opt.draft < 0 && g_gameMode == "custom");
+    g_draft = gb::DraftOn(g_opt.draft, g_gameMode);
     Log("bots: BOTDRAFT: %s ([host] bot_draft %d, createGame mode '%s')",
         g_draft ? "the bots draw their shapers and roles in shaper select, after the humans (if it runs)"
                 : "off: the bots are composed now",

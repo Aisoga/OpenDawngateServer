@@ -882,7 +882,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     if (conn == gms::kNoConn && bots::IsBotIndex(gameplayIndex)) {
       // D6a: a bot's update also carries mRole (9), mbIsBot (11), mpBotData (15: the client's LabsPlayer_ReflectBotData
       // sets the noun, role and "<shaper> BOT" name) and mpNounDef (16, preloaded on pre-game 03)
-      // BOTDRAFT: while a custom game's bots wait for the humans in shaper select, only mbIsBot (the client names the
+      // BOTDRAFT: while the bots wait for the humans in shaper select, only mbIsBot (the client names the
       // bot "BOT n" and its slot stays empty, as a scripted ally without bot data); the reveal's update carries the rest
       std::vector<int> m = members;
       const bool hidden = bots::DraftHidden();
@@ -969,7 +969,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     if (!humans.empty())
       gms::Logf("%s match: shaper select content from createGame's roster:%s", gms::Clock().c_str(), humans.c_str());
     OtherPlayers();  // the bots are planned and created at the first accepted HelloReq (the session asks again later)
-    // BOTDRAFT: a custom game's bots pick after the humans: no pick of their own now, the draft gives them theirs
+    // BOTDRAFT: the bots pick after the humans: no pick of their own now, the draft gives them theirs
     // ([host] bot_draft; bot_draft_grace_ms: how long the draft waits after the last human's lock-in for a role the
     // human didn't tick or click)
     const bool draft = bots::BeginDraft(sim_);

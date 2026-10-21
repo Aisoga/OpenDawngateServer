@@ -77,6 +77,22 @@ type GameResult struct {
 	// none, not counted by shaper), Role the role key (outside 1-4: not counted by role).
 	Noun, Shaper uint32
 	Role         int64
+	// Ranked: the game counts for the Leaderboard (hostedGame.ranked); RankedTotal the account's Leaderboard games
+	// and wins after it.
+	Ranked      bool
+	RankedTotal store.GamesWon
+}
+
+// describeRanked is the log text of what a game of this mode added to the Leaderboard's counts.
+func (r GameResult) describeRanked(mode string) string {
+	if !r.Ranked {
+		kind := "a practice game"
+		if mode != gmshost.ModePractice {
+			kind = "a practice group's game"
+		}
+		return fmt.Sprintf("not counted (%s); %d games, %d wins", kind, r.RankedTotal.Games, r.RankedTotal.Wins)
+	}
+	return fmt.Sprintf("counted (%s game); %d games, %d wins", mode, r.RankedTotal.Games, r.RankedTotal.Wins)
 }
 
 // describeHistory is the log text of what a game added to the shaper and role history.
@@ -103,9 +119,9 @@ func (r GameResult) describeHistory(c *content.Content) string {
 
 // applyGame stores one player's finished game in the account and returns what changed. The rewards
 // (grantRewards) are part of it unless holdRewards (D8c: a game with a karma vote, whose rewards wait for the
-// host's playerKarma and applyRewards).
+// host's playerKarma and applyRewards). A ranked game (hostedGame.ranked) also adds to the Leaderboard's counts.
 func (s *Server) applyGame(userID int64, g progress.Game, stats map[string]int64, hostRewards *gmshost.Rewards,
-	practice, holdRewards bool) (store.Account, GameResult, error) {
+	practice, ranked, holdRewards bool) (store.Account, GameResult, error) {
 	today := s.Now().UTC().Format("2006-01-02")
 	var res GameResult
 	acct, err := s.Store.Update(userID, func(a *store.Account) {
@@ -121,6 +137,10 @@ func (s *Server) applyGame(userID int64, g progress.Game, stats map[string]int64
 		res.Noun, res.Role = uint32(stats[progress.StatNoun]), stats[progress.StatRole]
 		res.Shaper, _ = s.Content.ShaperOf(res.Noun)
 		a.History = progress.ApplyHistory(a.History, s.Now(), res.Shaper, res.Role, g.Won, stats, g.Seconds)
+		if ranked {
+			a.History = progress.ApplyRanked(a.History, s.Now(), g.Won)
+		}
+		res.Ranked, res.RankedTotal = ranked, a.History.Ranked
 		res.XP = progress.GameXP(g.Won, g.Seconds)
 		a.XP += res.XP
 		a.Level = max(a.Level, progress.LevelFor(a.XP))

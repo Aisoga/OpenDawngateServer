@@ -50,6 +50,7 @@ type serverChoice struct {
 	server string
 	bm     *Bookmarks
 	add    []listAdd
+	ini    Config // Start-Client.ini when its server is in add (onlyFirst): its gateway_pin
 }
 
 // listAdd is a server Start-Client puts into the picker's list when it isn't there yet.
@@ -155,6 +156,7 @@ func chooseServer(o IO, in *bufio.Reader, clientIni string, l setup.Layout, ccfg
 	if c.picker {
 		if iniServer := ccfg["server"]; iniServer != "" && ValidServerAddress(iniServer) == nil {
 			c.add = append([]listAdd{{b: ownBookmark(iniServer, gwPort, scfg), why: "Start-Client.ini's server", onlyFirst: true}}, c.add...)
+			c.ini = ccfg
 		}
 		return c, nil
 	}
@@ -190,8 +192,11 @@ func ownBookmark(address string, gwPort int, scfg Config) Bookmark {
 
 // pickerBookmarks puts the choice's servers into the list when they are missing: Start-Client.ini's server (the
 // first server of a new list), this PC's Start-Server or the player's answer, and the address given to Start-Client
-// (preselected: a login without a pick goes there). --gateway-pin with that address stores the operator's key as
-// its trusted one. It returns the tag to preselect; check changes nothing.
+// (preselected: a login without a pick goes there; without one, the ini's server while no server of the list has
+// been used yet).
+// --gateway-pin with that address stores the operator's key as its trusted one; Start-Client.ini's gateway_pin does
+// so for the ini's server when no other key is trusted for it (trustIniGatewayPin). It returns the tag to preselect;
+// check changes nothing.
 func pickerBookmarks(o IO, l setup.Layout, c serverChoice, pinFlag string, check bool, pc *thisPC) (string, error) {
 	bm := c.bm
 	if pinFlag != "" && c.server == "" {
@@ -215,8 +220,16 @@ func pickerBookmarks(o IO, l setup.Layout, c serverChoice, pinFlag string, check
 	for _, b := range bm.List() {
 		empty = empty && b.Tag == ThisPCTag
 	}
-	preselect := ""
+	preselect, iniAddr := "", ""
 	for _, a := range c.add {
+		if a.onlyFirst {
+			iniAddr = a.b.Address
+		}
+		if a.onlyFirst && c.ini[GatewayPinKey] != "" { // the operator's key for the ini's server (a handed-out package)
+			if err := trustIniGatewayPin(o, l, c.ini, a.b.Address, check); err != nil {
+				return "", err
+			}
+		}
 		if a.onlyFirst && !empty {
 			continue
 		}
@@ -241,6 +254,13 @@ func pickerBookmarks(o IO, l setup.Layout, c serverChoice, pinFlag string, check
 				return "", err
 			}
 			fmt.Fprintf(o.Out, "  picker   %s's tunnel key %s trusted (--gateway-pin)\n", b.Address, p.Fingerprint())
+		}
+	}
+	if last, ok := bm.Last(); preselect == "" && iniAddr != "" && (!ok || last.LastUsed == "") {
+		// the ini's server until the first login used a server of the list (a handed-out package: its server, also
+		// when the first start ended before a login), then the list's last one as for every list
+		if b, ok := bm.Find(iniAddr); ok && strings.EqualFold(b.Address, iniAddr) {
+			preselect = b.Tag
 		}
 	}
 	list := bm.List()

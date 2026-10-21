@@ -24,7 +24,9 @@ import (
 
 	"dawngate/server/internal/accounts"
 	"dawngate/server/internal/blaze"
+	"dawngate/server/internal/clientpkg"
 	"dawngate/server/internal/content"
+	"dawngate/server/internal/discordhook"
 	"dawngate/server/internal/gms"
 	"dawngate/server/internal/gmshost"
 	"dawngate/server/internal/limits"
@@ -110,8 +112,12 @@ type config struct {
 	// the website (website.go): --web-port, --web-domain, --web-email, --web-dir, --web-acme-url, --web-proxy,
 	// --web-bind
 	web websiteConfig
+	// the client package (clientpkg.go): --client-package, --client-package-name, --client-package-source
+	clientPackage clientPackageConfig
 	// quiet writes the log to its file only, not to the console (Hooks.Quiet: Start-Client's server for This PC)
 	quiet bool
+	// the Discord webhooks (secrets: never logged) and the posts' options (--discord-...)
+	discord discordhook.Settings
 }
 
 // broadcastEvery is how often the operator's broadcast file is read (B14).
@@ -423,8 +429,14 @@ type instance struct {
 	stopLimits func()
 	// stops the status check of the logged-in accounts (--status-check; nil without)
 	stopStatus func()
+	// the Discord webhooks (--discord-webhook...; no hook and no goroutine without a URL)
+	discord *discordhook.Hooks
+	// matches counts the running games with a match host (the "going down" post)
+	matches func() int
 	// the website (--web-port; nil without)
 	website *website
+	// the client package (--client-package; nil without)
+	clientPackage *clientpkg.Package
 	// the services' own listeners are bound (--plain on); false: their ports are only the gateway's (--plain off)
 	plain bool
 }
@@ -488,8 +500,13 @@ func start(cfg config) (*instance, error) {
 		extra = append(extra, web.Builtin{Path: web.CAModulusPath, ContentType: "application/octet-stream", Body: modulus})
 		caNote = web.Fingerprint(modulus)
 	}
-	extra = append(extra, web.SitePages(cfg.accounts.Mode)...) // the login screen's links (sitelinks)
-	extra = append(extra, web.VersionPage(version.String()))   // Start-Client's check of a server without the tunnel
+	var pkgLog *logging.Log // the package's lines, once the log is open
+	pkg, err := newClientPackage(cfg, tunnelOn, &pkgLog)
+	if err != nil {
+		return nil, err
+	}
+	extra = append(extra, web.SitePagesFor(cfg.accounts.Mode, pkg != nil)...) // the login screen's links (sitelinks)
+	extra = append(extra, web.VersionPage(version.String()))                  // Start-Client's check of a server without the tunnel
 	st, cont, contentInfo, err := openData(cfg)
 	if err != nil {
 		return nil, err
@@ -511,7 +528,8 @@ func start(cfg config) (*instance, error) {
 	if cfg.quiet {
 		log.SetConsole(nil)
 	}
-	in := &instance{log: log, caFingerprint: caNote, store: st, plain: cfg.plainOn()}
+	pkgLog = log
+	in := &instance{log: log, caFingerprint: caNote, store: st, plain: cfg.plainOn(), clientPackage: pkg}
 	limitsNote := startLimits(&cfg, in, public)
 	for i, p := range cfg.ports() {
 		if !in.plain { // only the gateway's listener (startGateway): nothing to bind, the port is a number
@@ -567,6 +585,7 @@ func start(cfg config) (*instance, error) {
 	bz.Store, bz.Content, bz.Policy = st, cont, cfg.policy
 	bz.Hosts = in.hosts // nil without --gms-dir: B8's announced GMS port
 	bz.MM = matchmaker.New(cfg.mm)
+	in.matches = func() int { return len(bz.HostedMatches()) }
 	bz.MMRefuse = cfg.mmRefuse
 	bz.TestLoginErrors = cfg.testLoginErrors
 	bz.Accounts = cfg.accounts
@@ -590,6 +609,9 @@ func start(cfg config) (*instance, error) {
 		go qos.ServeUDP()
 	}
 	httpSrv, tel := &web.HTTP{Log: log, WWW: www, Extra: extra}, &telemetry.Sink{Log: log}
+	if pkg != nil {
+		httpSrv.Download, cfg.web.download = webDownload(pkg), siteDownload(pkg)
+	}
 	if cfg.web.port > 0 { // the website, before the HTTP port serves (its redirects)
 		if in.website, err = startWebsite(cfg, log, st, in.limits, websiteStatus(bz, in.hosts), websiteAdmin(bz),
 			bz.EndAccountSessions, public,
@@ -599,6 +621,9 @@ func start(cfg config) (*instance, error) {
 			return nil, err
 		}
 		httpSrv.Redirects = in.website.redirects()
+		if pkg != nil { // the HTTP port's Download page goes to the website's (the file itself is served on both)
+			httpSrv.Redirects["/"+web.DownloadPagePath] = in.website.url + site.PageDownload
+		}
 	}
 	if in.plain {
 		go httpSrv.Serve(in.listeners[3])
@@ -643,6 +668,9 @@ func start(cfg config) (*instance, error) {
 	if in.website != nil {
 		log.Log("stub", in.website.note)
 	}
+	if pkg != nil && in.gateway != nil {
+		log.Log("stub", startClientPackage(pkg, cfg, in.gateway))
+	}
 	accounts := "accounts in memory only"
 	if st.Path() != "" {
 		accounts = fmt.Sprintf("accounts in %s (%s)", st.Path(), st.Info())
@@ -677,6 +705,15 @@ func start(cfg config) (*instance, error) {
 	log.Logf("stub", "logins (PH2): %s%s; %s; %s", describeSignup(cfg.accounts), modeNote, startPruning(cfg, in),
 		describeSessionEnd(cfg, in.stopStatus != nil))
 	log.Logf("stub", "limits (PH6): %s", limitsNote)
+	if in.discord, err = discordhook.Open(cfg.discord, discordhook.Options{Logf: func(f string, a ...any) { log.Logf("stub", f, a...) },
+		UserAgent: "OpenDawngate-Server/" + version.String()}); err != nil {
+		in.close()
+		log.Close()
+		return nil, err
+	}
+	log.Log("stub", in.discord.Describe())
+	bz.SetResultPosts(blaze.ResultPosts{Hook: in.discord.Hook(discordhook.Result), Settings: cfg.discord})
+	bz.SetDiscordQueue(blaze.NewDiscordQueue(in.discord.Hook(discordhook.Queue), cfg.discord)) // DISCORD2b
 	return in, nil
 }
 
@@ -910,6 +947,7 @@ func (in *instance) close() {
 	if in.stopStatus != nil {
 		in.stopStatus()
 	}
+	in.discord.Close(0) // the "going down" post had its flush before (Run)
 	if in.hosts != nil {
 		in.hosts.Close() // kills running hosts
 	}
@@ -994,11 +1032,13 @@ func Run(args []string, h Hooks) int {
 	fs.IntVar(&cfg.mm.TeamSize, "mm-team-size", cfg.mm.TeamSize, "PvP matchmaking: players per team (1 = 1v1 ... 5 = 5v5)")
 	fs.IntVar(&cfg.mm.MinPlayers, "mm-min-players", cfg.mm.MinPlayers, "PvP matchmaking: fewest players a match starts with once --mm-fill-after has passed (the empty slots get bots, --mm-bots)")
 	fs.DurationVar(&cfg.mm.FillAfter, "mm-fill-after", cfg.mm.FillAfter, "PvP matchmaking: how long the oldest player waits for full teams before a smaller match starts")
+	fs.DurationVar(&cfg.mm.FillExtend, "mm-fill-extend", cfg.mm.FillExtend, "PvP matchmaking: how much longer a smaller match waits for each player (session) who joins it (0 = no extension)")
 	fs.DurationVar(&cfg.mm.MaxWait, "mm-max-wait", 0, "PvP matchmaking: the longest a player waits in the queue before it gives up (SESSION_TIMED_OUT; 0 = the client's 3 h)")
 	testLoginErrors := fs.String("test-login-errors", "", "test aid: comma-separated 16-bit error codes (hex 0x.. or decimal); the n-th login gets the n-th as its error reply (0 = answered as usual), later logins are answered as usual; e.g. 0x0C,0x4072,0")
 	fs.BoolVar(&cfg.mmRefuse, "mm-refuse", false, "PvP matchmaking test aid: refuse every startMatchmaking (GAMEMANAGER_ERR_INVALID_MATCHMAKING_CRITERIA)")
 	fs.BoolVar(&cfg.mmBots, "mm-bots", true, "PvP matchmaking with match hosts: a game that starts with open seats (after --mm-fill-after) gets bots in them, up to --mm-team-size a team (B10d); --mm-bots=false leaves them empty")
-	fs.IntVar(&cfg.leaderboardMinGames, "leaderboard-min-games", blaze.LeaderboardMinGames, "the main menu's Leaderboard lists the accounts with at least this many games (the screen says 50)")
+	discordOpts := addDiscordFlags(fs)
+	fs.IntVar(&cfg.leaderboardMinGames, "leaderboard-min-games", blaze.LeaderboardMinGames, "the main menu's Leaderboard lists the accounts with at least this many PvP and custom games (the screen says 10)")
 	fs.BoolVar(&cfg.customBots, "custom-bots", false, "custom games with match hosts: bots fill the open seats when the game starts (B15; off: only the lobby's players)")
 	fs.BoolVar(&cfg.shaperSelect.On, "shaper-select", false, "match hosts run shaper select with each player's shapers, skins, wards and announcers from its account (D3-live)")
 	freeRotation := fs.String("free-rotation", "", `shaper select: shapers in the free rotation, comma-separated ("gunman,PC_Otter,Fenmore")`)
@@ -1048,6 +1088,13 @@ func Run(args []string, h Hooks) int {
 	fs.StringVar(&cfg.web.acmeURL, "web-acme-url", "", "--web-domain: the ACME directory (default Let's Encrypt; "+site.LetsEncryptStagingURL+" for a first try)")
 	fs.BoolVar(&cfg.web.proxy, "web-proxy", false, "serve the website behind a reverse proxy (nginx, for example) that holds --web-domain's HTTPS certificate: plain HTTP on --web-bind:--web-port only, no certificate of its own; the links and redirects point at https://<web-domain>/, and the players' addresses come from the proxy's X-Forwarded-For or X-Real-IP (trusted from a loopback peer only)")
 	fs.StringVar(&cfg.web.bind, "web-bind", "", "--web-proxy: the loopback address the website listens on (default "+DefaultWebProxyBind+"; never a network address)")
+	fs.BoolVar(&cfg.clientPackage.on, "client-package", false, "hand out the game client for this server at /dawngate/download/OpenDawngate-<name>.zip "+
+		"(the HTTP port and the website, with a Download page): the Windows release of this server's version, fetched from "+
+		"GitHub once into <data>\\client-package, with a Start-Client.ini that preselects this server (--public-host) and "+
+		"trusts its tunnel key; needs --tunnel on and --data; a developer build has none")
+	fs.StringVar(&cfg.clientPackage.name, "client-package-name", "", "--client-package: the <name> in the file's name (default --web-domain, else --public-host)")
+	fs.StringVar(&cfg.clientPackage.source, "client-package-source", "", "--client-package: test aid: a fake of GitHub's API and downloads at "+
+		"http://<loopback address>:<port> instead of GitHub")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Dawngate restoration server: redirector (TLS :%d), Blaze, QoS, HTTP and telemetry.\n"+
 			"Usage: dgserver [flags]\n", redirector.Port)
@@ -1132,6 +1179,12 @@ func Run(args []string, h Hooks) int {
 		fmt.Fprintln(os.Stderr, "dgserver:", err)
 		return 2
 	}
+	if d, err := discordOpts.settings(); err != nil {
+		fmt.Fprintln(os.Stderr, "dgserver:", err)
+		return 2
+	} else {
+		cfg.discord = d
+	}
 	if codes, err := parseLoginErrors(*testLoginErrors); err != nil {
 		fmt.Fprintln(os.Stderr, "dgserver: --test-login-errors:", err)
 		return 2
@@ -1199,10 +1252,13 @@ func Run(args []string, h Hooks) int {
 		}
 		return 1
 	}
+	status := startStatus(cfg.dataDir, in.discord.Hook(discordhook.Server), in.log, version.String(), time.Now)
 	if h.Started != nil {
 		h.Started(in.info(cfg))
 	}
+	status.online()
 	waitForStop(*seconds, h.Stop)
+	status.down(in.discord, in.matches(), discordFlush)
 	in.stop()
 	return 0
 }
@@ -1234,6 +1290,9 @@ type Info struct {
 	WebProxy string
 	// Version is the build's version (version.String): a player's Start-Client needs the same one
 	Version string
+	// ClientPackage is the client package's URL path (--client-package; "" without) and why there is none ("" when
+	// there is one: a developer build has none)
+	ClientPackage, ClientPackageMissing string
 }
 
 func (in *instance) info(cfg config) Info {
@@ -1254,6 +1313,9 @@ func (in *instance) info(cfg config) Info {
 		info.GatewayPort, info.GatewayFingerprint = in.gateway.Port(), in.gateway.Identity.Pin.Fingerprint()
 		info.GatewayPin = in.gateway.Identity.Pin.String()
 		info.TCPPorts = append(info.TCPPorts, info.GatewayPort)
+	}
+	if in.clientPackage != nil {
+		info.ClientPackage, info.ClientPackageMissing = in.clientPackage.Path(), in.clientPackage.Unavailable()
 	}
 	if in.website != nil {
 		info.WebURL, info.WebFingerprint, info.WebProxy = in.website.url, in.website.fingerprint, in.website.proxyAddr

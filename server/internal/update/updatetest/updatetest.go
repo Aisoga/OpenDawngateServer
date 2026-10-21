@@ -65,7 +65,8 @@ func (r FakeRelease) Zip(extra map[string]string) []byte {
 	return buf.Bytes()
 }
 
-// FakeGitHub serves GitHub's latest-release answer and a release's zip (through a redirect, as GitHub's downloads
+// FakeGitHub serves GitHub's latest-release answer (also as the answer for its tag, releases/tags/<Tag>; any other
+// tag is 404) and a release's zip (through a redirect, as GitHub's downloads
 // are) on a loopback address, and counts the requests. Tests only.
 type FakeGitHub struct {
 	*httptest.Server
@@ -106,7 +107,7 @@ func (f *FakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	dl := "/" + update.Repo + "/releases/download/" + tag + "/" + name
 	switch r.URL.Path {
-	case "/repos/" + update.Repo + "/releases/latest":
+	case "/repos/" + update.Repo + "/releases/latest", "/repos/" + update.Repo + "/releases/tags/" + tag:
 		if r.Header.Get("User-Agent") == "" {
 			http.Error(w, "no User-Agent", http.StatusForbidden)
 			return

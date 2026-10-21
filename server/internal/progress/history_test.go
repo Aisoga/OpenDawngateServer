@@ -57,6 +57,35 @@ func TestApplyHistory(t *testing.T) {
 	}
 }
 
+// The Leaderboard's counts add up all time and per day, beside the day's shaper and role games; the input isn't
+// changed; a game on a day without other games adds the day; old days are dropped as ApplyHistory drops them.
+func TestApplyRanked(t *testing.T) {
+	const x = 0x10000001
+	h := ApplyHistory(store.History{}, at(0), x, RoleGladiator, true, nil, 60)
+	before := h.Clone()
+	h2 := ApplyRanked(h, at(0), true)
+	if !reflect.DeepEqual(h, before) {
+		t.Fatal("ApplyRanked changed its input")
+	}
+	h2 = ApplyRanked(ApplyRanked(h2, at(2), false), at(2), true)
+	want := store.History{
+		Shapers: map[uint32]store.GamesWon{x: {Games: 1, Wins: 1}},
+		Days: []store.HistoryDay{
+			{Day: "2026-10-01", Shapers: map[uint32]store.ShaperDay{x: {Games: 1, Wins: 1, Seconds: 60}},
+				Roles: map[uint8]store.GamesWon{RoleGladiator: {Games: 1, Wins: 1}}, Ranked: store.GamesWon{Games: 1, Wins: 1}},
+			{Day: "2026-10-03", Ranked: store.GamesWon{Games: 2, Wins: 1}},
+		},
+		Ranked: store.GamesWon{Games: 3, Wins: 2},
+	}
+	if !reflect.DeepEqual(h2, want) {
+		t.Fatalf("history\n got %+v\nwant %+v", h2, want)
+	}
+	if got := ApplyRanked(h2, at(7), false); len(got.Days) != 2 || got.Days[0].Day != "2026-10-03" ||
+		got.Ranked != (store.GamesWon{Games: 4, Wins: 2}) {
+		t.Errorf("day 7: %+v", got)
+	}
+}
+
 // The groups' keys and rows: ShaperStats all time by catalogID; the history groups per day within the
 // requested periods (offset, count), each key's rows by offset; days after today, keys without games and
 // roles outside 1-4 are left out.

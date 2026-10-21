@@ -43,6 +43,11 @@ tunnel = auto
 ; The server's tunnel port (TCP and UDP), when its operator changed it. Empty: 42128.
 gateway_port =
 
+; The tunnel key of the server above (64 hex digits), when its operator handed it out: the first login to that server
+; then trusts it without stopping at the key's fingerprint. A key that differs from one you trusted before is not taken
+; (the login screen shows KEY CHANGED). Empty: compare the fingerprint at the first login.
+gateway_pin =
+
 ; The server picker on the game's login screen: SERVER above the login lists your servers (the list is
 ; Dawngate-Data\servers\bookmarks.json), and you add or remove servers there. auto (the default) and on use it
 ; whenever the tunnel is used; off never: the game then plays on one server.
@@ -89,7 +94,8 @@ var oldClientComments = map[string][][]string{
 }
 
 var clientKeys = []string{"server", "folder", "zip", "tunnel", "gateway_port", "picker", "local_trust", "update_check",
-	DiscordKey, DiscordAppIDKey, DiscordJoinKey}
+	DiscordKey, DiscordAppIDKey, DiscordJoinKey,
+	GatewayPinKey}
 
 // TestParkEnv set to 1 is Start-Client's --test-park (the release's test hook; never needed by a player).
 const TestParkEnv = "DAWNGATE_TEST_PARK"
@@ -110,6 +116,8 @@ func RunClient(args []string, o IO) int {
 	nonInteractive := fs.Bool("non-interactive", false, "never ask anything (also no update question); for scripts and tests")
 	park := fs.Bool("test-park", os.Getenv(TestParkEnv) == "1", "test hook: keep the game window off the desktop and never activate it, as run_session.ps1 -Background does; also "+TestParkEnv+"=1")
 	zipFlag := fs.String("zip", "", "Dawngate.zip, when the player copy must be made or repaired")
+	gameSourceFlag := fs.String(GameSourceFlag, "", "where to download Dawngate.zip from when it isn't found (addresses separated by commas; "+
+		"only these, without asking)")
 	tunnelFlag := fs.String("tunnel", "", "the encrypted tunnel: auto or on (every server; the default), off (a server whose Start-Server.ini has tunnel = off)")
 	gwPortFlag := fs.String("gateway-port", "", "the server's tunnel port (default 42128)")
 	gwPinFlag := fs.String("gateway-pin", "", "the server's tunnel key (64 hex digits), when its operator handed it out (no question)")
@@ -212,6 +220,9 @@ func RunClient(args []string, o IO) int {
 	if err != nil {
 		return o.fail("%v", err)
 	}
+	if err := checkIniGatewayPin(ccfg); err != nil {
+		return o.fail("%v", err)
+	}
 	named := *serverFlag
 	if named == "" && len(positional) > 0 {
 		named = positional[0]
@@ -268,12 +279,15 @@ func RunClient(args []string, o IO) int {
 		} else {
 			gw = gatewayAddress(server, gwPort, scfg)
 			fmt.Fprintf(o.Out, "  tunnel   %s (the game connects to %s on this PC)\n", gw, patchFor)
-			pinFlag := *gwPinFlag
+			pinFlag, pinFrom := *gwPinFlag, "--gateway-pin"
 			if ownKey && pinFlag == "" && len(ownAddrs) > 0 && ownAddrs[0] == server {
 				pinFlag = ownPin.String() // this PC's own server: its key is in the folder
 			}
+			if pinFlag == "" && strings.EqualFold(server, ccfg["server"]) { // the operator's key in Start-Client.ini
+				pinFlag, pinFrom = iniGatewayPin(o, l, ccfg, server), iniPinSource
+			}
 			if !*check {
-				if pin, err = trustedGatewayPin(o, in, l, server, gw, pinFlag, *trust); err != nil {
+				if pin, err = trustedGatewayPin(o, in, l, server, gw, pinFlag, pinFrom, *trust); err != nil {
 					return o.fail("%v", err)
 				}
 			}
@@ -324,11 +338,16 @@ func RunClient(args []string, o IO) int {
 	fmt.Fprintln(o.Out, "\nChecking the game copy (the first start makes it: about half a minute and 1.5 GB):")
 	zipConf := firstNonEmpty(*zipFlag, ccfg["zip"], scfg["zip"])
 	zipUsed := "" // the archive this start found (This PC's setup takes it again)
-	findZip := zipFinder(o, in, zipConf)
+	sources, err := newGameSources(*gameSourceFlag, firstNonEmpty(ccfg[GameSourcesKey], scfg[GameSourcesKey]), gameCopiesSpace)
+	if err != nil {
+		return o.fail("%v", err)
+	}
+	sources.noDownloadsDir = *lane != ""
+	findZip := zipFinder(o, in, zipConf, sources)
 	if pc != nil {
 		quiet := o
-		quiet.Interactive = false // This PC is set up while the game runs: nothing is asked then
-		later := zipFinder(quiet, nil, zipConf)
+		quiet.Interactive = false // This PC is set up while the game runs: nothing is asked or downloaded then
+		later := zipFinder(quiet, nil, zipConf, gameSources{noDownloadsDir: sources.noDownloadsDir})
 		pc.findZip = func() (string, error) {
 			if zipUsed != "" {
 				return zipUsed, nil

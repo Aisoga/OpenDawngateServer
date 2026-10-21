@@ -1,0 +1,20 @@
+{{define "content"}}
+{{with .Download}}
+{{if .Unavailable}}
+<p>This server has no game client to download: {{.Unavailable}}.</p>
+{{else}}
+<p>The game client, ready for this server: <a href="{{.Path}}" download>{{.File}}</a>. Its Start-Client.exe has this
+server preselected and trusts its key, so there is nothing to type and no fingerprint to compare.</p>
+<ol>
+<li><b>Unzip</b> it into a folder of its own.</li>
+<li><b>Start</b> Start-Client.exe there. Its first start sets the game up from Dawngate.zip (the project never ships
+the game; the player's guide says where to get it).</li>
+<li><b>Log in</b> on the game's login screen: this server is preselected.{{if eq $.Mode "open"}} A new login name and
+a password make your account at the first login, or <a href="/signup">make it here</a> first.{{else if eq $.Mode "invite"}}
+<a href="/signup">Make your account here</a> first, with your invite code.{{end}}</li>
+</ol>
+{{if .Fingerprint}}<p>The server's key fingerprint is <code>{{.Fingerprint}}</code>. The Start-Client.ini in the zip
+trusts this key; if you got the zip from somewhere else, compare it with the one shown here.</p>{{end}}
+{{end}}
+{{end}}
+{{end}}

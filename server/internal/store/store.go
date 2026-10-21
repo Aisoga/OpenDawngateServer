@@ -125,6 +125,9 @@ type History struct {
 	// Days holds the last days' games, one entry per UTC day with games, oldest first (ShaperHistoryStats
 	// and RoleHistoryStats, which the client asks for by day: STAT_PERIOD_DAILY, 7 periods).
 	Days []HistoryDay `json:"days,omitempty"`
+	// Ranked counts the games the main menu's Leaderboard ranks by (LBMIN): PvP (matchmade) and custom games, never
+	// practice games (solo or a practice group). Counted from the build that added it; earlier games aren't in it.
+	Ranked GamesWon `json:"ranked,omitzero"`
 }
 
 // GamesWon is a count of games and of the wins among them.
@@ -138,6 +141,7 @@ type HistoryDay struct {
 	Day     string               `json:"day"`               // "2006-01-02"
 	Shapers map[uint32]ShaperDay `json:"shapers,omitempty"` // by the shaper's catalogID
 	Roles   map[uint8]GamesWon   `json:"roles,omitempty"`   // by role: 1 gladiator, 2 tactician, 3 hunter, 4 predator
+	Ranked  GamesWon             `json:"ranked,omitzero"`   // the day's part of History.Ranked (the daily ranking)
 }
 
 // ShaperDay is one shaper's games of one day: the eight values of a ShaperHistoryStats row, as totals (the
@@ -155,11 +159,11 @@ type ShaperDay struct {
 
 // Clone returns a deep copy of h.
 func (h History) Clone() History {
-	c := History{Shapers: maps.Clone(h.Shapers)}
+	c := History{Shapers: maps.Clone(h.Shapers), Ranked: h.Ranked}
 	if h.Days != nil {
 		c.Days = make([]HistoryDay, len(h.Days))
 		for i, d := range h.Days {
-			c.Days[i] = HistoryDay{Day: d.Day, Shapers: maps.Clone(d.Shapers), Roles: maps.Clone(d.Roles)}
+			c.Days[i] = HistoryDay{Day: d.Day, Shapers: maps.Clone(d.Shapers), Roles: maps.Clone(d.Roles), Ranked: d.Ranked}
 		}
 	}
 	return c

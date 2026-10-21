@@ -32,10 +32,22 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 | `web_domain` | empty | Your domain name for the website, for a free Let's Encrypt certificate. Needs TCP 443 forwarded. |
 | `web_email` | empty | An e-mail address for Let's Encrypt (optional). |
 | `web_proxy` | `off` | `on` puts the website behind a reverse proxy such as nginx that already serves HTTPS on port 443: the website then listens on `127.0.0.1:<web_port>` over plain HTTP, for the proxy only, and has no certificate of its own. Needs `web_domain` and a `web_port` above 1023 (for example `8095`); `web_email` isn't used. See [The website behind nginx](hosting.md#the-website-behind-nginx). |
+| `client_package` | `off` | `on` hands out the game client for your server: the Windows release of the server's own version, with a `Start-Client.ini` that preselects your server and trusts its key, at `/dawngate/download/OpenDawngate-<name>.zip` and on the website's **Download** page. The server downloads that release from github.com once and keeps it in `Dawngate-Data\data\client-package`. Needs the tunnel. See [Hand out a ready package](hosting.md#hand-out-a-ready-package). |
 | `folder` | `Dawngate-Data` | Where the game copies, certificates, accounts and logs go: relative to the program's folder, or a full path. |
-| `zip` | empty | Where `Dawngate.zip` is, if it's not next to the program or in your Downloads folder. Only needed for setup and repairs. |
+| `zip` | empty | Where `Dawngate.zip` is, if it's not next to the program or in your Downloads folder. Only needed for setup and repairs. Set, it turns the download off. |
+| `game_sources` | empty | Mirrors of `Dawngate.zip`, separated by commas: tried in turn after archive.org when the zip is downloaded ([Downloading the game](hosting.md#downloading-the-game)). Every download is checked against build 1.0.903.854; a source with another file is skipped. |
 | `server_flags` | empty | More server options, separated by spaces. See [below](#extra-server-options-server_flags). |
 | `wine` | empty | Linux only: the Wine program that runs the match hosts, for example `/opt/wine-stable/bin/wine`. Empty: `wine` from the `PATH`. |
+| `discord_webhook` | empty | A Discord webhook address (`https://discord.com/api/webhooks/…`) for the queue message and the match results, unless they have their own. Keep it secret: whoever has it can post to the channel. Empty: no posts. See [Discord channel posts](hosting.md#discord-channel-posts). |
+| `discord_webhook_queue` | empty | The queue message's own webhook (empty: `discord_webhook`). |
+| `discord_webhook_result` | empty | The match results' own webhook (empty: `discord_webhook`). |
+| `discord_webhook_server` | empty | The webhook for the server's status: online, going down, back after a crash. Only this one; never `discord_webhook`. |
+| `discord_queue_ping` | empty | The id of a Discord role the queue message pings. Empty: no ping. |
+| `discord_ping_cooldown` | `15m` | The queue message pings the role at most this often. |
+| `discord_ping_min_wait` | `30s` | No ping when the match starts sooner than this anyway. |
+| `discord_queue_edit` | `on` | `on` edits one queue message live; `off` posts a new message for each change. |
+| `discord_names` | `on` | `off` writes "a player" instead of player names in the posts. |
+| `discord_result_modes` | `pvp,custom` | The modes whose match results are posted, comma-separated: `pvp`, `custom`, `practice`, or `none`. A practice group's game against bots counts as `practice`. |
 
 ## Start-Server.exe options
 
@@ -46,6 +58,7 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 | `--setup-only` | Set up or repair everything, then exit without starting the server. |
 | `--dedicated` | The same as `dedicated = yes`: only the match hosts' copy. |
 | `--zip <file>` | Use this `Dawngate.zip`. |
+| `--game-source <url>[,<url>...]` | When `Dawngate.zip` isn't found, download it from these addresses only (not archive.org, not `game_sources`), without asking, also with `--non-interactive`. |
 | `--config <file>` | Use another config file instead of `Start-Server.ini`. |
 | `--i-accept-the-risk` | Accept the risk notice for a public address. |
 | `--non-interactive` | Never ask anything (for scripts). |
@@ -79,6 +92,7 @@ Start-Client.exe [<server address or tag>] [options]
 | `--ca <file>` | With `--tunnel off`: the `ca_modulus.bin` the operator handed out, instead of asking about the fingerprint. |
 | `--trust` | Trust a new key or certificate authority without asking (scripts; with `--picker off` or `--tunnel off`). |
 | `--zip <file>` | Use this `Dawngate.zip` to set up or repair the game copy. |
+| `--game-source <url>[,<url>...]` | When `Dawngate.zip` isn't found, download it from these addresses only, without asking (also with `--non-interactive`). Without it, the first start asks before it downloads from archive.org and then the mirrors of `game_sources` in `Start-Client.ini` (or `Start-Server.ini`) ([Downloading the game](hosting.md#downloading-the-game)). |
 | `--check` | Only report what is missing. |
 | `--setup-only` | Prepare the game copy for the server without starting the game. |
 | `--version` | Print the release's version and exit. It plays only on servers of the same version. |
@@ -87,6 +101,8 @@ Start-Client.exe [<server address or tag>] [options]
 | `--discord-join on\|off` | Join from Discord: `on` (the default) or `off`. Needs the Discord status. |
 
 `Start-Client.ini` has the keys `server` (empty: the server list), `folder`, `tunnel`, `gateway_port`, `picker` (`auto`, `on`, `off`), `local_trust` (`on`, `off`), `update_check` (`on`, `off`), `discord` (`on`, `off`), `discord_join` (`on`, `off`) and `discord_app_id`. An older `Start-Client.ini` keeps working: its `server` becomes the first server of a new list, and its comments are updated. The option on the command line wins over the key.
+
+`gateway_pin = <64 hex digits>` in `Start-Client.ini` is the key of the ini's `server`, as its operator handed it out: it works as `--gateway-pin` does for that server (trusted without the confirmation), and the ini's server is preselected until a login has used a server of the list. A key that differs from one already trusted for that server is not taken: `Start-Client.exe` says so, and the server's key is checked against the trusted one (*KEY CHANGED* when it differs). A `gateway_pin` without `server`, or one that isn't 64 hex digits, stops `Start-Client.exe` with a message.
 
 **Discord status.** While the game runs, `Start-Client.exe` shows your friends on Discord what you do in Dawngate, through the Discord app on the same PC (its local connection; the app passes the status on to Discord, and nothing happens without the app; [privacy.md](privacy.md)). Your profile shows *Playing OpenDawngate* with the project's logo and the status below it, which shows only the state, the mode, a timer and your party's size, never a name or a server:
 
@@ -132,7 +148,7 @@ It doesn't ask with `update_check = off`, `--check`, `--setup-only` or `--non-in
 - Its log goes to `Dawngate-Data\logs`, as `Start-Server.exe`'s; the console shows its setup and one line when it runs.
 - A folder has one server at a time: `Start-Server.exe` refuses to start (or set up) while `Start-Client.exe` runs the folder's server.
 
-**The server's key.** Each server's key is pinned in `Dawngate-Data\servers\<address>\gateway.pin`. A new key is confirmed once: the first login to that server is refused with `00E70001` while the list shows the key's fingerprint, and the next login to the same server, showing the same key, trusts it. No confirmation is needed for a key given with `--gateway-pin`, nor for This PC (its key is in the folder: `Dawngate-Data\certs`, or the running `Start-Server.exe`'s from `server.lock`). A key that differs from the pinned one is refused (`00E20001`).
+**The server's key.** Each server's key is pinned in `Dawngate-Data\servers\<address>\gateway.pin`. A new key is confirmed once: the first login to that server is refused with `00E70001` while the list shows the key's fingerprint, and the next login to the same server, showing the same key, trusts it. No confirmation is needed for a key given with `--gateway-pin` or `Start-Client.ini`'s `gateway_pin`, nor for This PC (its key is in the folder: `Dawngate-Data\certs`, or the running `Start-Server.exe`'s from `server.lock`). A key that differs from the pinned one is refused (`00E20001`).
 
 ### The server list
 
@@ -207,11 +223,12 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 | `--shaper-timers <ms>,<ms>,<ms>,<ms>` | the game's | The lengths of shaper select's four phases. |
 | `--mm-team-size N` | `5` | Players per team in the queue (1 = 1v1 … 5 = 5v5). |
 | `--mm-min-players N` | `1` | The fewest players a queue match starts with. |
-| `--mm-fill-after <time>` | `15s` | How long the queue waits for full teams before starting a smaller match. |
+| `--mm-fill-after <time>` | `90s` | How long the queue waits for full teams before starting a smaller match. |
+| `--mm-fill-extend <time>` | `30s` | How much longer the queue waits each time another player (or group) joins the match. With the defaults a 5v5 waits at most 330 seconds; the tenth player starts it at once. `0s` turns the extension off. |
 | `--mm-max-wait <time>` | `0` (no limit) | The longest a player waits in the queue before being told it timed out. |
 | `--mm-bots=false` | on | Leave the empty seats of a queue match empty instead of filling them with bots. |
-| `--custom-bots` | off | Fill a custom game's empty seats with bots. In shaper select a custom game's bots pick their shapers and roles after the players have chosen. |
-| `--leaderboard-min-games N` | `50` | The fewest games a player needs to appear on the Leaderboard (the screen says 50). Every game counts, practice and custom games included. |
+| `--custom-bots` | off | Fill a custom game's empty seats with bots. In shaper select the bots pick their shapers and roles after the players have chosen, as in every game with bots. |
+| `--leaderboard-min-games N` | `10` | The fewest games a player needs to appear on the Leaderboard. Only PvP and custom games count, practice games don't. The Leaderboard screen's text says 10 whatever this flag is (the number is written into the players' game copies by their setup), so a server that changes it makes the screen's number wrong. |
 | `--kill-switches <names>` | `WalletTopUp` | Client features to switch off, comma-separated: `Matchmaking`, `WalletTopUp` (the add-funds button), `EUGameServers`, `PracticeSoloGames`, `FTUESoloGames`, `PurchaseWithWaypoints`, `PracticeGroupGames`, `CustomGames`, `ForwardRenderer`. `none` switches nothing off. |
 | `--broadcast <text>` | none | One announcement, in addition to `broadcast.txt`. |
 | `--broadcast-flags N` | `4` | Where announcements show by default (see [Announcements](hosting.md#announcements)). |
@@ -220,13 +237,15 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 | `--gms-runner auto\|none\|<command>` | `auto` | What starts the match hosts' `Dawngate.exe`: `auto` starts it directly on Windows and through `wine` on other systems, `none` always directly, or a command such as `/opt/wine-stable/bin/wine`. |
 | `--limits auto\|on\|off` | `auto` | The limits: `auto` turns them on for a public address. |
 | `--status-check <time>` | `5s` | How often the server rechecks logged-in accounts, so that a disabled account is taken out quickly. |
+| `--discord-webhook <address>` and the other `--discord-…` options | off | The `discord_…` keys above, as options: `--discord-webhook-server`, `--discord-queue-ping`, `--discord-names off` and so on (a key's `_` becomes `-`). An address that isn't a Discord webhook stops the server at its start, and the logs name a webhook only by the last digits of its id. |
 | `--allow-any-client` | off | Let in a `Start-Client.exe` of any release, also one from before the release check (for tests with mixed builds). Without it only the server's own release logs in. |
+| `--client-package-name <name>` | `web_domain`, else `address` | With `client_package = on`: the `<name>` in the package's file name `OpenDawngate-<name>.zip` (letters, digits, `.`, `_` and `-`; anything else becomes `-`). |
 
 ## The Dawngate-Data folder
 
 | Folder | Contents |
 |---|---|
-| `data\` | `accounts.db` (with `-wal` and `-shm`), `content.json` (what accounts can own, built from your game files), `broadcast.txt`, and `site\` (the website's certificates and your own pages). **Back this up.** |
+| `data\` | `accounts.db` (with `-wal` and `-shm`), `content.json` (what accounts can own, built from your game files), `broadcast.txt`, and `site\` (the website's certificates and your own pages). **Back this up.** While the server runs, `running.json` (its process id, start, version, and a time refreshed every minute): a clean stop deletes it, so finding it at the next start means the server stopped unexpectedly. |
 | `certs\<address>\` | The server's certificates and the tunnel key. Keep private. Hand out only the key's 64 hex digits the server's window shows (and, with `tunnel = off`, `ca_modulus.bin`). |
 | `certs\tunnel-127.0.0.1\` | `Start-Client.exe`'s own certificates for the tunnel on this PC. |
 | `logs\` | The server's logs, and `hosts\<match>\` for each match. They contain login names and addresses. |

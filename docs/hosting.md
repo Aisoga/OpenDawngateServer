@@ -10,6 +10,7 @@ This guide is for whoever runs the server that other people play on. It uses the
 - [Accounts](#accounts)
 - [The website and the admin page](#the-website-and-the-admin-page)
 - [Announcements](#announcements)
+- [Discord channel posts](#discord-channel-posts)
 - [Backups](#backups)
 - [Logs](#logs)
 - [Security: what is protected and what isn't](#security-what-is-protected-and-what-isnt)
@@ -29,17 +30,17 @@ A match host has no window, graphics or sound. It needs about 100 MB of memory a
 ## What you need
 
 - A Windows 10 or 11 PC, 64-bit, that stays on while people play. A Linux machine works too: see [Linux server](#linux-server).
-- `Dawngate.zip` from <https://archive.org/details/Dawngate> and the release zip.
+- The release zip, and an internet connection for the first setup: `Start-Server.exe` downloads `Dawngate.zip` (1.3 GB) from <https://archive.org/details/Dawngate> itself. If you already have the zip, put it next to `Start-Server.exe` first.
 - About 5 GB of free disk space (about 3 GB on a PC that only hosts, see [A server that only hosts](#a-server-that-only-hosts)).
 
 ## Setting it up
 
-1. Unpack the release into a folder of its own and put `Dawngate.zip` next to `Start-Server.exe`.
+1. Unpack the release into a folder of its own. If you have `Dawngate.zip`, put it next to `Start-Server.exe` (or leave it in your Downloads folder).
 2. Start `Start-Server.exe`. It asks who will play on the server:
    - **1, only this PC:** the server listens on `127.0.0.1` and nothing outside your PC can reach it.
    - **2, your home network:** it lists this PC's addresses in your network; pick the one your router connects to.
    - **3, the internet:** it asks the questions in [Hosting on the internet](#hosting-on-the-internet).
-3. It writes your answers to `Start-Server.ini`, sets everything up in `Dawngate-Data` and starts the server. Leave the window open. Press Ctrl+C or close the window to stop the server and its running matches.
+3. It writes your answers to `Start-Server.ini`, sets everything up in `Dawngate-Data` and starts the server. If it doesn't find `Dawngate.zip`, it first asks once whether to download it (see [Downloading the game](#downloading-the-game)). Leave the window open. Press Ctrl+C or close the window to stop the server and its running matches.
 
 To change your answers later, run `Start-Server.exe --configure`, or edit `Start-Server.ini` and start the program again. The file explains each setting, and [reference.md](reference.md#start-serverini) lists them all.
 
@@ -48,6 +49,17 @@ Every start checks the setup and repairs anything missing, which usually takes a
 You can play on the same PC that runs the server: just start `Start-Client.exe` there too. **This PC**, the first row of the login screen's server list, is this server while it runs in the same folder, and `Start-Client.exe` knows its key. When `Start-Server.exe` isn't running, This PC is a server that `Start-Client.exe` runs itself on the same folder, with the same accounts and `Start-Server.ini`'s game options (`shaper_select`, `signup`, `server_flags`; never the website or the public settings), only for the player on this PC. A folder has one server at a time: `Start-Server.exe` refuses to start while `Start-Client.exe` runs the folder's server ("This folder's server already runs inside Start-Client.exe"); close the game first.
 
 **Every server uses the encrypted tunnel.** Players reach it on one port, **42128, TCP and UDP**; everything else the server runs answers inside the tunnel. Its match hosts listen on a loopback address of their own, so a server and a player's game run side by side on one PC. (`tunnel = off` in `Start-Server.ini` turns the tunnel off; that's an option for developers, and players then need `Start-Client.exe --tunnel off`.)
+
+### Downloading the game
+
+The project ships no game files. When neither `Start-Server.exe` nor `Start-Client.exe` finds `Dawngate.zip` (next to the program, in the folder above it or in your Downloads folder), it asks *Dawngate isn't set up yet. Download Dawngate.zip (1.3 GB) from archive.org? [Y/n]* and downloads it next to the program:
+
+- It checks the free disk space first (the zip plus the game copies), shows the progress, speed and time left, and checks every file of the download against the original build 1.0.903.854 before using it.
+- An interrupted download continues at the next start (from `Dawngate.zip.part`).
+- **Mirrors:** `game_sources = <url>, <url>` in `Start-Server.ini` or `Start-Client.ini` lists other places to download the same zip from, tried in turn after archive.org. A source that gives another file is skipped (*... gave a file that isn't build 854's Dawngate.zip*) and never used, so any mirror is safe to list.
+- **Scripts and services:** without a console window (or with `--non-interactive`) nothing is downloaded unless the command line names the sources: `Start-Server.exe --non-interactive --game-source <url>` downloads from those only, without asking.
+- A `zip =` path in the `.ini` turns the download off: the program uses that file or asks for it.
+- If archive.org is down, see [troubleshooting.md](troubleshooting.md).
 
 ### A server that only hosts
 
@@ -68,9 +80,16 @@ If someone also plays on a dedicated server's PC with `Start-Client.exe` from th
 1. Choose **2** at the first question, or set `address = <this PC's LAN address>` in `Start-Server.ini`, for example `address = 192.168.1.20`.
 2. The server window shows the server's **key fingerprint**, for example `3ff46759dcb1ea30`, and the whole key (64 hex digits). Give your players the address, and tell them the fingerprint or show them your window.
 3. If Windows asks whether `Start-Server.exe` may use the network, allow **private networks** only.
-4. Each player unpacks the release with their own `Dawngate.zip` and starts `Start-Client.exe <address>` once (or adds the address on the login screen). Their first login stops with *New server key*, and their server list shows the key's fingerprint: they compare it with yours and log in again, which trusts it.
+4. Each player unpacks the release (its first start downloads their own `Dawngate.zip`) and starts `Start-Client.exe <address>` once (or adds the address on the login screen). Their first login stops with *New server key*, and their server list shows the key's fingerprint: they compare it with yours and log in again, which trusts it.
 
-**Instead of comparing fingerprints**, you can hand out the whole key from your window. Players then start `Start-Client.exe <address> --gateway-pin <key>` once, and their first login goes straight through. The key is public; never hand out any file from `Dawngate-Data\certs`.
+**Instead of comparing fingerprints**, you can hand out the whole key from your window. Players then start `Start-Client.exe <address> --gateway-pin <key>` once, and their first login goes straight through. Or put both into the `Start-Client.ini` you hand out next to `Start-Client.exe`:
+
+```ini
+server = 192.168.1.20
+gateway_pin = <the whole key>
+```
+
+Its first start puts your server into the player's server list, preselects it and trusts the key. A player who already trusted another key for your server keeps that one: the key in the file is not taken over it. The key is public; never hand out any file from `Dawngate-Data\certs`.
 
 If you change the server's address later, the server makes new certificates and a new key for it (in `Dawngate-Data\certs\<new address>`), so players add the new address and confirm its key once.
 
@@ -120,6 +139,16 @@ Players pick a server on the game's login screen, from a list that each player k
 The server window shows the **key's fingerprint**, 16 hex digits, and the whole key, 64 hex digits. Publish the fingerprint where your players can check it, for example in your community's channel. A player's first login to a new server stops with *New server key* while their server list shows its fingerprint; once they have compared it, their next login trusts it. Every later login checks it. If you publish the whole key, players can start `Start-Client.exe <your address> --gateway-pin <key>` once instead, and nobody needs to compare.
 
 The key is in `Dawngate-Data\certs\<address>\`. Keep it private, and keep it. If the key changes, for example because `Dawngate-Data\certs` was lost or made anew, every player's list shows **KEY CHANGED** with the old and the new fingerprint, and their logins are refused. Each player then has to confirm the new fingerprint with you and delete their old copy of the key ([troubleshooting.md](troubleshooting.md#logging-in)). That is what protects them from a stranger at your address, so tell them in advance if you ever change it.
+
+### Hand out a ready package
+
+With `client_package = on` in `Start-Server.ini`, your server hands out the game client ready for your server: the Windows release of the server's own version, with a `Start-Client.ini` next to `Start-Client.exe` that names your address (and your tunnel port, if it isn't 42128) and trusts your server's key. A player downloads it from your website's **Download** page (`https://<your website>/download`), unzips it into a folder of its own, starts `Start-Client.exe` and logs in: your server is preselected, and there is no key to compare. The page also shows your key's fingerprint and the three steps. The package never contains the game: `Start-Client.exe` sets the game up from `Dawngate.zip` as usual.
+
+- The file is `OpenDawngate-<name>.zip`, where `<name>` is your `web_domain`, else your address. It is always the release of the version your server runs, so it fits your server; `Start-Server.exe` names the page when it starts.
+- The server downloads that release from github.com once (from the project's releases page; the size and checksum GitHub gives and every file's checksum in the release's `BUILD.txt` are checked) and keeps the package in `Dawngate-Data\data\client-package\<version>\`. After an update of the server, the first start makes the package of the new version and deletes the old one. This download is the server's only outgoing connection besides the website's certificate, which is why the option is off by default.
+- The programs in the package are the release's files byte for byte, so their signatures stay valid.
+- A server you built yourself (not a numbered release) has no package; its Download page says so.
+- The website must be on (`web_port`): with the tunnel, the website is the only place outside the tunnel that serves the package.
 
 ## Versions and updates
 
@@ -209,6 +238,39 @@ Welcome to our Dawngate server
 @6 Server restart at 20:00 UTC
 ```
 
+## Discord channel posts
+
+The server can post to channels of your Discord server through webhooks. Nothing is posted until you set a webhook address in `Start-Server.ini`.
+
+**To make a webhook** (you need the *Manage Webhooks* permission on the Discord server): in Discord open *Server Settings*, *Integrations*, *Webhooks*, click *New Webhook*, give it a name (for example *Dawngate*) and choose the channel, then *Copy Webhook URL*. Paste the address into `Start-Server.ini` and start `Start-Server.exe` again:
+
+```ini
+discord_webhook_server = https://discord.com/api/webhooks/1234567890/AbCdEf...
+```
+
+- **Keep the address secret.** Whoever has it can post to the channel. The server never writes it into its logs; it names a webhook only by the last digits of its id (`webhook id …7890`). If it leaks, delete the webhook in Discord and make a new one.
+**The server's status** goes to `discord_webhook_server` only:
+
+- *Server online (version …)* when it has started;
+- *Server going down (2 matches cut short)* when you stop it (Ctrl+C, closing its window, an update); the server waits up to 3 seconds for the post to go out;
+- *Server back online (version …): it stopped unexpectedly around …* when the last run ended otherwise (a crash, a killed process, a power cut). The time is shown in each reader's own time zone and is accurate to about a minute.
+
+**The queue message** goes to `discord_webhook_queue` (else `discord_webhook`):
+
+- The first player into an empty PvP queue posts *Name is queuing for PvP — 1/10 · starts in 1:30, bots fill the open seats*. The countdown runs in each reader's Discord by itself.
+- Joins and leaves edit that message (at most every 2 seconds); it ends as *PvP match started: 2 players + 8 bots* or *PvP queue closed*. The next player starts a new message. With `discord_queue_edit = off` every change is a new post instead.
+- **The role ping:** set `discord_queue_ping` to a role's id (in Discord: *User Settings*, *Advanced*, *Developer Mode* on; then *Server Settings*, *Roles*, right-click the role, *Copy Role ID*). The role is mentioned on a queue's first post only, at most once per `discord_ping_cooldown` (15m), and only when at least `discord_ping_min_wait` (30s) is left before the match starts. Players who want the pings take the role.
+- Custom and practice games never post here.
+
+**The match results** go to `discord_webhook_result` (else `discord_webhook`): one post per finished match of the modes in `discord_result_modes` (`pvp,custom`; add `practice` for practice games): the winner, how and when it ended, and per team each player's shaper and kills/deaths/assists, plus how many bots played. With `discord_names = off` players show as *a player*. A match that was cut short without a winner posts nothing.
+
+- **One webhook for everything, or one per kind:** `discord_webhook` serves the queue message and the match results; `discord_webhook_queue` and `discord_webhook_result` give either its own channel. The server's status posts only to `discord_webhook_server`. A public server might use two channels: `#queue`, and `#matches` for the results and the server's status.
+- **No surprise pings:** no post pings `@everyone`, `@here` or a member, and a player name such as `@everyone` shows as plain text.
+- Only addresses at `discord.com` (or the older `discordapp.com`) are accepted; anything else stops the server at its start with a message that names the key.
+- The server on a player's own PC (**This PC** in `Start-Client.exe`) never posts, whatever its folder's `Start-Server.ini` says.
+
+All keys are in [reference.md](reference.md#start-serverini).
+
 ## Backups
 
 Accounts live in one database, `Dawngate-Data\data\accounts.db`, with `accounts.db-wal` and `accounts.db-shm` beside it.
@@ -252,7 +314,7 @@ The Linux release runs the same server on a 64-bit Linux machine, for example a 
 ### What you need on Linux
 
 - A 64-bit Linux machine with Wine and its 32-bit part. Debian 12 and Ubuntu 24.04 work with their own Wine packages.
-- The release's Linux archive (`OpenDawngateServer-<version>-linux.tar.gz`) and `Dawngate.zip`.
+- The release's Linux archive (`OpenDawngateServer-<version>-linux.tar.gz`). Its first start in a terminal downloads `Dawngate.zip` ([Downloading the game](#downloading-the-game)); if you have the zip already, copy it next to `start-server`.
 - About 3 GB of free disk space, plus 1.3 GB while `Dawngate.zip` is there. Each running match needs about 120 MB of memory and a tenth of one CPU core.
 
 Install Wine (Debian or Ubuntu):
@@ -273,11 +335,11 @@ On other distributions, install Wine with its 32-bit (WoW64) support. The server
    sudo useradd --system --create-home --home-dir /srv/dawngate --shell /usr/sbin/nologin dawngate
    ```
 
-2. Unpack the archive into that folder, put `Dawngate.zip` next to `start-server`, and give the folder to the user:
+2. Unpack the archive into that folder, and give the folder to the user (copy `Dawngate.zip` next to `start-server` if you have it; otherwise the next step downloads it):
 
    ```sh
    sudo tar xzf OpenDawngateServer-<version>-linux.tar.gz -C /srv/dawngate --strip-components=1
-   sudo cp Dawngate.zip /srv/dawngate/
+   sudo cp Dawngate.zip /srv/dawngate/    # only if you have it
    sudo chown -R dawngate:dawngate /srv/dawngate
    ```
 

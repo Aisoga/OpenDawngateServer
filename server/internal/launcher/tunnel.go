@@ -124,10 +124,73 @@ func gatewayAddress(server string, port int, scfg Config) string {
 	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
+// GatewayPinKey is Start-Client.ini's gateway_pin: the tunnel key of the ini's server, as its operator handed it out.
+const GatewayPinKey = "gateway_pin"
+
+// iniPinSource names Start-Client.ini's gateway_pin in messages.
+const iniPinSource = ClientConfigName + "'s " + GatewayPinKey
+
+// checkIniGatewayPin refuses a gateway_pin that isn't a key, or one without the server it belongs to.
+func checkIniGatewayPin(ccfg Config) error {
+	v := ccfg[GatewayPinKey]
+	if v == "" {
+		return nil
+	}
+	if _, err := tunnel.ParsePin(v); err != nil {
+		return fmt.Errorf("%s: %s = %s: %v", ClientConfigName, GatewayPinKey, v, err)
+	}
+	if ccfg["server"] == "" {
+		return fmt.Errorf("%s: %s is the tunnel key of the server set there: set server = to that server's address, or empty %s",
+			ClientConfigName, GatewayPinKey, GatewayPinKey)
+	}
+	return nil
+}
+
+// iniGatewayPin is Start-Client.ini's gateway_pin (checked by checkIniGatewayPin) for the ini's server, whose list
+// entry or trust store is address: used as --gateway-pin is when no key or the same one is trusted for that server.
+// A key that differs from the one trusted before is not taken (""): the server's key then meets the trusted one as
+// without the ini's key (the KEY CHANGED path).
+func iniGatewayPin(o IO, l setup.Layout, ccfg Config, address string) string {
+	p, err := tunnel.ParsePin(ccfg[GatewayPinKey])
+	if ccfg[GatewayPinKey] == "" || err != nil {
+		return ""
+	}
+	if raw, err := os.ReadFile(TrustedGateway(l, address)); err == nil {
+		if known, err := tunnel.ParsePin(strings.TrimSpace(string(raw))); err == nil && !tunnel.SamePin(known, p) {
+			fmt.Fprintf(o.Out, "  note: %s (%s) isn't the key trusted for %s before (%s): not taken; the server's key is "+
+				"checked against the trusted one\n", iniPinSource, p.Fingerprint(), address, known.Fingerprint())
+			return ""
+		}
+	}
+	return p.String()
+}
+
+// trustIniGatewayPin stores Start-Client.ini's gateway_pin as the trusted key of the ini's server in the picker's list
+// (address: its entry's address) when none is stored yet (iniGatewayPin); check changes nothing.
+func trustIniGatewayPin(o IO, l setup.Layout, ccfg Config, address string, check bool) error {
+	pin := iniGatewayPin(o, l, ccfg, address)
+	store := TrustedGateway(l, address)
+	if pin == "" || check {
+		return nil
+	}
+	if _, err := os.Stat(store); err == nil {
+		return nil // the same key is trusted already
+	}
+	if err := os.MkdirAll(filepath.Dir(store), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(store, []byte(pin+"\n"), 0o644); err != nil {
+		return err
+	}
+	p, _ := tunnel.ParsePin(pin)
+	fmt.Fprintf(o.Out, "  picker   %s's tunnel key %s trusted (%s)\n", address, p.Fingerprint(), iniPinSource)
+	return nil
+}
+
 // trustedGatewayPin probes the gateway and returns its key once trusted: the one stored before, a pin given with
-// --gateway-pin (no question), or one the player confirms. A server of another version, or of none it can tell, is
-// refused first (versionMismatch).
-func trustedGatewayPin(o IO, in *bufio.Reader, l setup.Layout, server, gw, pinFlag string, trust bool) (tunnel.Pin, error) {
+// --gateway-pin or Start-Client.ini's gateway_pin (pinFrom names it; no question), or one the player confirms. A
+// server of another version, or of none it can tell, is refused first (versionMismatch).
+func trustedGatewayPin(o IO, in *bufio.Reader, l setup.Layout, server, gw, pinFlag, pinFrom string, trust bool) (tunnel.Pin, error) {
 	info, err := tunnel.ProbeInfo(gw, 5*time.Second, nil)
 	served := info.Pin
 	if err != nil {
@@ -143,8 +206,8 @@ func trustedGatewayPin(o IO, in *bufio.Reader, l setup.Layout, server, gw, pinFl
 			return served, err
 		}
 		if !tunnel.SamePin(want, served) {
-			return served, fmt.Errorf("the server at %s presents the tunnel key %s, not the one given with --gateway-pin (%s)",
-				gw, served.Fingerprint(), want.Fingerprint())
+			return served, fmt.Errorf("the server at %s presents the tunnel key %s, not the one given with %s (%s)",
+				gw, served.Fingerprint(), pinFrom, want.Fingerprint())
 		}
 		trust = true
 	}

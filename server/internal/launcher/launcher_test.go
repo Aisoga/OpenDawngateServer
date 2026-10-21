@@ -31,8 +31,11 @@ func TestConfigFiles(t *testing.T) {
 	}
 	want := Config{"address": "127.0.0.1", "bind": "", "i_accept_the_risk": "no", "profile": "auto", "tunnel": "auto", "gateway_port": "42128",
 		"shaper_select": "on", "dedicated": "no", "signup": "open", "signups_per_address": "3", "log_days": "30", "web_port": "443", "web_domain": "",
-		"web_email": "", "web_proxy": "off", "folder": "Dawngate-Data",
-		"zip": "", "server_flags": ""}
+		"web_email": "", "web_proxy": "off", "client_package": "off", "folder": "Dawngate-Data",
+		"zip": "", GameSourcesKey: "", "server_flags": "",
+		"discord_webhook": "", "discord_webhook_queue": "", "discord_webhook_result": "", "discord_webhook_server": "", "discord_queue_ping": "",
+		"discord_ping_cooldown": "15m", "discord_ping_min_wait": "30s", "discord_queue_edit": "on", "discord_names": "on",
+		"discord_result_modes": "pvp,custom"}
 	if !reflect.DeepEqual(c, want) {
 		t.Errorf("defaults %v", c)
 	}

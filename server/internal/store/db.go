@@ -462,9 +462,10 @@ func load(q querier, userID int64) (*Account, error) {
 	var level, xp, avatar, ec, pc, cc, spentEC, spentPC, countEC, countPC uint32
 	var flags, userInfo int64
 	err := q.QueryRow(`SELECT email, created, last_login, granted, level, xp, flags, avatar, ec, pc, cc, user_info,
-		first_win_day, spent_ec, spent_pc, count_ec, count_pc FROM accounts WHERE user_id = ?`, userID).Scan(
+		first_win_day, spent_ec, spent_pc, count_ec, count_pc, ranked_games, ranked_wins FROM accounts WHERE user_id = ?`,
+		userID).Scan(
 		&a.Email, &created, &lastLogin, &granted, &level, &xp, &flags, &avatar, &ec, &pc, &cc, &userInfo,
-		&a.FirstWinDay, &spentEC, &spentPC, &countEC, &countPC)
+		&a.FirstWinDay, &spentEC, &spentPC, &countEC, &countPC, &a.History.Ranked.Games, &a.History.Ranked.Wins)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoAccount
 	}
@@ -584,11 +585,11 @@ func loadHistory(q querier, a *Account) error {
 	err = each(q, func(r *sql.Rows) error {
 		var pos int
 		var d HistoryDay
-		err := r.Scan(&pos, &d.Day)
+		err := r.Scan(&pos, &d.Day, &d.Ranked.Games, &d.Ranked.Wins)
 		byPos[pos] = len(a.History.Days)
 		a.History.Days = append(a.History.Days, d)
 		return err
-	}, `SELECT pos, day FROM history_days WHERE user_id = ? ORDER BY pos`, a.UserID)
+	}, `SELECT pos, day, ranked_games, ranked_wins FROM history_days WHERE user_id = ? ORDER BY pos`, a.UserID)
 	if err != nil || len(a.History.Days) == 0 {
 		return err
 	}
@@ -668,10 +669,11 @@ func insertAccount(q querier, a *Account) error {
 func save(q querier, before, a *Account) error {
 	if _, err := q.Exec(`UPDATE accounts SET email = ?, email_key = ?, created = ?, last_login = ?, granted = ?, level = ?,
 		xp = ?, flags = ?, avatar = ?, ec = ?, pc = ?, cc = ?, user_info = ?, first_win_day = ?, spent_ec = ?, spent_pc = ?,
-		count_ec = ?, count_pc = ? WHERE user_id = ?`,
+		count_ec = ?, count_pc = ?, ranked_games = ?, ranked_wins = ? WHERE user_id = ?`,
 		a.Email, emailKey(a.Email), a.Created.Format(timeFormat), a.LastLogin.Format(timeFormat), a.Granted, a.Level,
 		a.XP, int64(a.Flags), a.Avatar, a.EC, a.PC, a.CC, int64(a.UserInfo), a.FirstWinDay, a.Commerce.SpentEC,
-		a.Commerce.SpentPC, a.Commerce.CountEC, a.Commerce.CountPC, a.UserID); err != nil {
+		a.Commerce.SpentPC, a.Commerce.CountEC, a.Commerce.CountPC, a.History.Ranked.Games, a.History.Ranked.Wins,
+		a.UserID); err != nil {
 		return err
 	}
 	if before == nil {
@@ -727,8 +729,9 @@ func save(q querier, before, a *Account) error {
 		ids := slices.Sorted(maps.Keys(h.Shapers))
 		w.replace("history_shapers", `INSERT INTO history_shapers (user_id, catalog_id, games, wins) VALUES (?, ?, ?, ?)`,
 			len(ids), func(i int) []any { g := h.Shapers[ids[i]]; return []any{a.UserID, ids[i], g.Games, g.Wins} })
-		w.replace("history_days", `INSERT INTO history_days (user_id, pos, day) VALUES (?, ?, ?)`, len(h.Days),
-			func(i int) []any { return []any{a.UserID, i, h.Days[i].Day} })
+		w.replace("history_days", `INSERT INTO history_days (user_id, pos, day, ranked_games, ranked_wins) VALUES (?, ?, ?, ?, ?)`,
+			len(h.Days),
+			func(i int) []any { d := h.Days[i]; return []any{a.UserID, i, d.Day, d.Ranked.Games, d.Ranked.Wins} })
 		var shapers, roles [][]any
 		for pos, d := range h.Days {
 			for _, id := range slices.Sorted(maps.Keys(d.Shapers)) {

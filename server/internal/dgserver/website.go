@@ -39,6 +39,8 @@ type websiteConfig struct {
 	dir, acmeURL  string
 	proxy         bool   // --web-proxy
 	bind          string // --web-bind: the proxy mode's loopback address ("" = DefaultWebProxyBind)
+	// download is the client package's page and file (--client-package; nil: none)
+	download *site.Download
 }
 
 // DefaultWebProxyBind is where the website listens behind a reverse proxy unless --web-bind names another loopback
@@ -172,7 +174,7 @@ func startWebsite(cfg config, lg *logging.Log, st *store.Store, lim *limits.Limi
 			strings.Join(cert.Leaf.DNSNames, ", ")+ipList(cert.Leaf.IPAddresses), made, where, fp)
 	}
 	sc := site.Config{Store: st, Policy: cfg.accounts, Status: status, Pages: dir, HSTS: wc.domain != "", Admin: admin,
-		EndSessions: endSessions, Log: func(format string, a ...any) { lg.Logf("web", format, a...) }}
+		EndSessions: endSessions, Download: wc.download, Log: func(format string, a ...any) { lg.Logf("web", format, a...) }}
 	if lim != nil { // not a nil *Limiter in the interface: the site skips the calls without limits
 		sc.Limits = lim
 	}
@@ -217,7 +219,7 @@ func startProxiedWebsite(cfg config, lg *logging.Log, st *store.Store, lim *limi
 	}
 	ws := &website{url: webURL(wc.domain, 443)}
 	sc := site.Config{Store: st, Policy: cfg.accounts, Status: status, Pages: dir, HSTS: true, Admin: admin,
-		EndSessions: endSessions, Proxy: true, PublicURL: ws.url,
+		EndSessions: endSessions, Proxy: true, PublicURL: ws.url, Download: wc.download,
 		Log: func(format string, a ...any) { lg.Logf("web", format, a...) }}
 	if lim != nil { // not a nil *Limiter in the interfaces: the site skips the calls without limits
 		sc.Limits, sc.Conns = lim, lim

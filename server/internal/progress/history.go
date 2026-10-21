@@ -102,14 +102,7 @@ func ApplyHistory(h store.History, now time.Time, shaper uint32, role int64, won
 	if ms := game[StatDurationMs]; ms > 0 {
 		secs = u32(ms / 1000)
 	}
-	today := day(now).Format(dayLayout)
-	i := sort.Search(len(out.Days), func(i int) bool { return out.Days[i].Day >= today })
-	if i == len(out.Days) || out.Days[i].Day != today {
-		out.Days = append(out.Days, store.HistoryDay{})
-		copy(out.Days[i+1:], out.Days[i:])
-		out.Days[i] = store.HistoryDay{Day: today}
-	}
-	d := &out.Days[i]
+	d := &out.Days[dayIndex(&out, now)]
 	if shaper != 0 {
 		if out.Shapers == nil {
 			out.Shapers = map[uint32]store.GamesWon{}
@@ -137,14 +130,48 @@ func ApplyHistory(h store.History, now time.Time, shaper uint32, role int64, won
 		r := d.Roles[uint8(role)]
 		d.Roles[uint8(role)] = store.GamesWon{Games: r.Games + 1, Wins: r.Wins + win}
 	}
-	kept := out.Days[:0]
-	for _, dd := range out.Days {
+	pruneDays(&out, now)
+	return out
+}
+
+// ApplyRanked adds one finished game to an account's Leaderboard counts (store.History.Ranked, all time, and the day
+// of now's part of them, for the ranking a day ago) and returns the new history (h is not changed). Only a game that
+// counts for the Leaderboard comes here (a PvP or custom game: blaze's hostedGame.ranked). Days more than
+// HistoryDays - 1 days before now are dropped, as ApplyHistory drops them.
+func ApplyRanked(h store.History, now time.Time, won bool) store.History {
+	out := h.Clone()
+	win := uint32(0)
+	if won {
+		win = 1
+	}
+	out.Ranked = store.GamesWon{Games: out.Ranked.Games + 1, Wins: out.Ranked.Wins + win}
+	d := &out.Days[dayIndex(&out, now)]
+	d.Ranked = store.GamesWon{Games: d.Ranked.Games + 1, Wins: d.Ranked.Wins + win}
+	pruneDays(&out, now)
+	return out
+}
+
+// dayIndex returns the index of now's UTC day in h.Days, adding the day in order if it has none.
+func dayIndex(h *store.History, now time.Time) int {
+	today := day(now).Format(dayLayout)
+	i := sort.Search(len(h.Days), func(i int) bool { return h.Days[i].Day >= today })
+	if i == len(h.Days) || h.Days[i].Day != today {
+		h.Days = append(h.Days, store.HistoryDay{})
+		copy(h.Days[i+1:], h.Days[i:])
+		h.Days[i] = store.HistoryDay{Day: today}
+	}
+	return i
+}
+
+// pruneDays drops the days more than HistoryDays - 1 days before now (a day that doesn't parse stays).
+func pruneDays(h *store.History, now time.Time) {
+	kept := h.Days[:0]
+	for _, dd := range h.Days {
 		if off, ok := dayOffset(now, dd.Day); !ok || off < HistoryDays {
 			kept = append(kept, dd)
 		}
 	}
-	out.Days = kept
-	return out
+	h.Days = kept
 }
 
 // Row is one EntityStats of a keyed stat group: its period offset (POFF: days before today for the daily

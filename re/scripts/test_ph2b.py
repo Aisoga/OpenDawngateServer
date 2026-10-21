@@ -24,14 +24,14 @@ import dbpf  # noqa: E402
 import patch_locale as pl  # noqa: E402
 
 MADE_UP_SHA = "97766712cea3cf54c20204922cc472d86ac9d592c40e955f7c1a635e0567f25e"
-MADE_UP_LANE_B = "a0a8be4d2bdff1c15d64dcded59fb4c71beab8c35e5904041f0810bea5204730"  # --host 127.0.0.2
-MADE_UP_WEB = "2c3e021aea10d8a154a4c10e11864938003a110d7736735ed537ea2d717ba81a"  # 192.168.1.20, Play.Example.org:8443
+MADE_UP_LANE_B = "ab925a706ce8c2087adac0938925ee539c8751d69cc29ea81ffb0afa9e9a5213"  # --host 127.0.0.2
+MADE_UP_WEB = "22c506d29b524dae62fd6081d32364c8ea7043895744d4f6242ffd7372426e8e"  # 192.168.1.20, Play.Example.org:8443
 SYNTH_LOCALE_SHA = "528ce9623b3b1542fa600b1036136a3c39e8e68bb586019fb3a6d3c2f6374832"
-SYNTH_LOCAL = "c8f7d64be868d1c88ae93f0efef6ab02590cc65fe01a4351a10991ce1378b4fd"  # the synthetic game, 127.0.0.1
+SYNTH_LOCAL = "9ce4f9d12c272865e5eed08d6621052b58dbccb57757fc6e92d204f695fc4132"  # the synthetic game, 127.0.0.1
 GAME_854 = {  # build 854's Locale.package
-    ("127.0.0.1", None): "5eca730a2db2572c817c1b61085a4094884c4366b05f97fda430e424035fac2b",
-    ("127.0.0.2", None): "cd8a64f93a65856c6fcbe9d6d627e3166b08354c2b66e5bb4537c74d8ad7a48e",
-    ("203.0.113.7", "dawngate.example.org"): "98041c169bf54c0203cfac31a3c4f006fe448677f8766a1bdb15c5df283b0ee9",
+    ("127.0.0.1", None): "032b20b329a328328c58c6767c0c38ae4f417e1930224d46af4d77ebead7066c",
+    ("127.0.0.2", None): "75673a3e080ed7d8a28d1eb24f33636a85131548297ee99689efaa137e68d4f3",
+    ("203.0.113.7", "dawngate.example.org"): "3a6daee84c5729605d5005142b073bed81bc95c30ee116f1b7ee1b7b606553a9",
 }
 # synthgame.Locale() (server/internal/setup/testgame/synthgame): one RefPack-compressed table, no login table
 SYNTH_LOCALE = bytes.fromhex(
@@ -109,6 +109,11 @@ class SameAsGo(Temp):
                 text = pkg.read(e)
                 for lid, line in tabs[e.instance].items():
                     self.assertEqual(text.count(f"0x{lid:08x} {line}\r\n".encode()), 1, (hex(e.instance), lid))
+                if e.instance in (pl.FE_LEADERBOARD, pl.FE_MATCH_TYPE):  # LBMIN: every line replaced in place
+                    self.assertNotIn(pl.ADDED_COMMENT.encode(), text)
+            lb = [pkg.read(e) for e in pkg.entries if e.instance == pl.FE_LEADERBOARD]
+            self.assertIn(b"0x00000101 Rank is based upon PvP and custom games. Must have at least 10 games played.\r\n",
+                          lb[0])
 
 
 class Rule(unittest.TestCase):

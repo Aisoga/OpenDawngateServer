@@ -81,7 +81,7 @@ There's no packet capture or egress check here. Logs go to `re\logs\manual_<date
 | `prepare_flags=1` | Show the "Match Found" accept/decline prompt before a queue match |
 | `move_takeover=0` | Bring back the original's rule that a move waits for an attack-move's first hit |
 | `role_passives=0` | Switch the roles' passives and their minion gold bonuses off |
-| `bot_draft=0`, `bot_draft=1` | A custom game's bots pick their shapers and roles at once instead of after the players (`0`), or wait for the players in every game with shaper select, practice included (`1`) |
+| `bot_draft=0`, `bot_draft=1` | The bots pick their shapers and roles at once instead of after the players (`0`), or wait for the players even in a match host the server didn't start (`1`; by default they wait in custom, practice and queue games) |
 | `bot_draft_grace_ms=N` | How long the bots wait after the last lock-in for a player who said no role (default 10000) |
 | `banter=0`, `banter_window=0` | No banter lines, or banter at any time of the match |
 | `test_wave=20` | Spawn test minions after 20 seconds |

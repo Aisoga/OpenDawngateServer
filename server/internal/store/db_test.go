@@ -288,9 +288,15 @@ func TestSchema(t *testing.T) {
 	r.Update(a.UserID, func(a *Account) {
 		a.Items[1], a.Settings["k"], a.Stats["g"] = 1, "v", map[string]string{"n": "1"}
 		a.AddPage()
-		a.History = History{Shapers: map[uint32]GamesWon{1: {1, 1}}, Days: []HistoryDay{{Day: "d", Roles: map[uint8]GamesWon{1: {1, 0}}}}}
+		a.History = History{Shapers: map[uint32]GamesWon{1: {1, 1}}, Days: []HistoryDay{{Day: "d", Roles: map[uint8]GamesWon{1: {1, 0}},
+			Ranked: GamesWon{2, 1}}}, Ranked: GamesWon{5, 3}}
 		a.Lists.Friends = []ListMember{{ID: 5}}
 	})
+	// the Leaderboard's counts read back (the account's and the day's)
+	if got, _ := r.Account(a.UserID); got.History.Ranked != (GamesWon{5, 3}) || len(got.History.Days) != 1 ||
+		got.History.Days[0].Ranked != (GamesWon{2, 1}) {
+		t.Errorf("history read back %+v", got.History)
+	}
 	if _, err := r.db.Exec(`DELETE FROM accounts WHERE user_id = ?`, a.UserID); err != nil {
 		t.Fatal(err)
 	}

@@ -461,8 +461,9 @@ func (p *thisPC) flags() []string {
 	if p.localTrust { // no passwords: the server binds only ThisPCAddress, a loopback address (dgserver checks it)
 		f = append(f, "--local-trust")
 	}
-	return append(f, "--bind", p.address, "--public-host", p.address, "--gms-control-bind", p.address, "--web-port", "0",
+	f = append(f, "--bind", p.address, "--public-host", p.address, "--gms-control-bind", p.address, "--web-port", "0",
 		"--tunnel", "on", "--gateway-port", strconv.Itoa(p.gwPort), "--plain", "off", "--gms-bind", HostsAddress(p.address))
+	return append(f, noDiscordFlags()...) // This PC never posts to Discord, whatever server_flags say
 }
 
 // Close stops Start-Client's own server (and its match hosts) and frees the folder's run lock.

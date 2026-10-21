@@ -15,8 +15,8 @@ This guide covers installing the game, playing your first match, and playing wit
 ## What you need
 
 - Windows 10 or 11, 64-bit, with a graphics card that runs DirectX 9 games.
-- `Dawngate.zip` from <https://archive.org/details/Dawngate> (1.3 GB, build 1.0.903.854). Every player needs their own copy.
 - The release zip from this project's *Releases* page.
+- An internet connection for the first start, which downloads the game: `Dawngate.zip` (1.3 GB, build 1.0.903.854) from <https://archive.org/details/Dawngate>. The project ships no game files; every player gets their own copy from that archive. If you already have the zip, the program uses it.
 - About 5 GB of free disk space: the zip, plus two copies of the game. One copy is for playing, the other is used by the server on your PC to run matches. If you only ever play on other people's servers, the second copy is never made.
 
 Nothing else needs to be installed.
@@ -24,9 +24,12 @@ Nothing else needs to be installed.
 ## Installing
 
 1. Unpack the release zip into a folder of its own, for example `C:\Games\Dawngate`.
-2. Put `Dawngate.zip` into that folder, next to `Start-Client.exe`. If you leave it in your Downloads folder, the program finds it there too.
-3. Start **`Start-Client.exe`**. Its first start checks `Dawngate.zip` against the original archive and makes your copy of the game in a folder called `Dawngate-Data` (about half a minute); then the game opens. Later starts take a few seconds.
-4. The login screen opens with **This PC** selected above the login panel: the server on your own PC. Log in (see [Your first match](#your-first-match)). Your first login to it sets up the server's copy of the game (about half a minute) and starts the server; the login waits for it, and the server list shows the progress. From then on the server starts within a second or two of your login.
+2. Start **`Start-Client.exe`**. Its first start asks once: *Dawngate isn't set up yet. Download Dawngate.zip (1.3 GB) from archive.org? [Y/n]*. Press Enter. It downloads the zip into the folder (the window shows how much is done, the speed and the time left), checks every file against the original build, and makes your copy of the game in a folder called `Dawngate-Data` (about half a minute after the download); then the game opens. Later starts take a few seconds.
+   - If you already have `Dawngate.zip`, put it next to `Start-Client.exe` before the first start, or leave it in your Downloads folder: it is used without asking.
+   - If the download stops (you close the window, the connection drops), start `Start-Client.exe` again: it continues where it stopped.
+   - If you answer No, it asks where your `Dawngate.zip` is instead.
+   - If archive.org is down, see [troubleshooting.md](troubleshooting.md).
+3. The login screen opens with **This PC** selected above the login panel: the server on your own PC. Log in (see [Your first match](#your-first-match)). Your first login to it sets up the server's copy of the game (about half a minute) and starts the server; the login waits for it, and the server list shows the progress. From then on the server starts within a second or two of your login.
 
 That's all you need to play alone or against bots. The server on your PC runs inside `Start-Client.exe` and stops when you close the game. Your accounts stay in `Dawngate-Data`.
 
@@ -40,7 +43,7 @@ You don't need `Start-Server.exe` to play. It is for running a server that other
 2. **The news overlay.** The first time you log in, a news overlay with three pages appears. Click its right arrow twice, then OK. Escape doesn't close it. It doesn't come back for that account.
 3. **PLAY, then PRACTICE, then PRACTICE DAWNGATE.** The server starts a match for you ("Creating game, please wait.").
 4. **Shaper select:**
-   - **Select your Shaper:** click a shaper card, then **Choose <name>** at the bottom right. The **?** card at the end of the list picks a random shaper. Your bot teammates pick theirs within a few seconds. The enemy team's picks stay hidden until the reveal.
+   - **Select your Shaper:** click a shaper card, then **Choose <name>** at the bottom right. The **?** card at the end of the list picks a random shaper. To say which role you want, tick it under **Preferred Roles** before you choose, or click its role card on the next page. The bots wait for you (their rows show *BOT 1*, *BOT 2* and so on, still selecting), then pick shapers and roles around yours: no bot teammate takes your shaper or your role. The enemy team's picks stay hidden until the reveal.
    - **Loadout and role:** pick a perk page under *Choose your Loadout* and a role card (Gladiator, Tactician, Hunter or Predator), then click **Finalize your selections!**
    - **Skin:** click one of your shaper's skins, and a ward or announcer pack if you like. This phase ends by itself after 15 seconds.
 
@@ -147,7 +150,7 @@ The match runs as in the original game. The server uses the game's own data and 
   - A page only counts in a match when every socket of its Spiritstone holds a matching Spark.
   - Your first page, **Starter**, comes filled: the Blue Spiritstone of Vigor on the left half of the grid, the Green Spiritstone of Bravery at the top right and two Red Spiritstones of Fervor sharing the bottom-right square, with a Spark in every socket (Health +108, Power +9, Haste +4, Armor +4). Every account owns these Spiritstones and Sparks, also on a server where new accounts start with only the basics. Change or clear the page as you like; once you have saved a page, the server leaves your pages alone. An account from before this page existed gets it at its next login, but only if it has never saved a page.
   - The **+** beside the page tabs buys another page, up to 10.
-- **Leaderboard:** the server's top 200 players with at least 50 games (the server's operator can change the number), ranked by wins, then by fewer games. Every match counts, practice and custom games too. The arrows show how a rank changed since the start of the day (UTC).
+- **Leaderboard:** the server's top 200 players with at least 10 games (the server's operator can change the number), ranked by wins, then by fewer games. Only PvP games (queued alone or as a group) and custom games count, for both the games and the wins; practice games (alone or with a group, against bots) don't. Your profile still counts every game. The arrows show how a rank changed since the start of the day (UTC).
 - **Profile:** your career, recent history and all-time statistics.
 - **Wins** show on the trophy at the top right.
 
@@ -155,7 +158,7 @@ The match runs as in the original game. The server uses the game's own data and 
 
 Everyone on a server needs their own account. The ways to play together:
 
-- **The solo queue:** on the **VERSUS** tab, click **QUEUE SOLO**. The server waits about 15 seconds for other players, then starts a match. Bots fill any empty seats, and they don't go easier on you here. **CANCEL MATCHMAKING** takes you out of the queue.
+- **The solo queue:** on the **VERSUS** tab, click **QUEUE SOLO**. The server waits 90 seconds for other players, and 30 seconds more each time someone joins, then starts a match (at once when all ten seats are taken; at most about five and a half minutes). Bots fill any empty seats, and they don't go easier on you here. **CANCEL MATCHMAKING** takes you out of the queue.
 - **A party:**
   1. The leader clicks **CREATE A GROUP**, then the add-players icon below the team list.
   2. The leader types the other player's name (shown at the top right of their main menu) and clicks the small person-plus icon.
@@ -175,7 +178,7 @@ Everyone on a server needs their own account. The ways to play together:
   - If the creator leaves the lobby, the game closes for everyone.
   - **Fill open seats with bots**, a check box in the CREATE GAME dialog (under the password field), has bots take every seat no player holds when the game starts. The browser and the lobby then show the game as **[Bots] <name>**. The box starts unticked each time the dialog opens. A name too long for the marker the box adds is shortened to 25 characters.
   - Without the check box, empty seats stay empty unless the server's operator has bots fill them in every custom game.
-  - **In shaper select the bots of a custom game wait for the players.** Their rows show *BOT 1*, *BOT 2* and so on, still selecting, so every shaper is free for you. Pick and lock in your shaper and say which role you want: tick it under **Preferred Roles** before you lock in, or click its role card on the next page. Once every player has locked in and said a role (or 10 seconds after the last lock-in), the bots draw their shapers and roles around you: none takes a shaper a player of its team picked, and none takes your role. For example, if you play Petrus as the Hunter, your team gets no bot Hunter. If you don't say a role, the bots guess it from your shaper's usual role. The bots then pick one after another and show their roles, and the enemy team's picks stay hidden until the match starts. Practice games keep the quick way: there the bots pick at once.
+  - **In shaper select the bots wait for the players**, in custom games as in practice games and in queue matches with bots. Their rows show *BOT 1*, *BOT 2* and so on, still selecting, so every shaper is free for you. Pick and lock in your shaper and say which role you want: tick it under **Preferred Roles** before you lock in, or click its role card on the next page. Once every player has locked in and said a role (or 10 seconds after the last lock-in), the bots draw their shapers and roles around you: none takes a shaper a player of its team picked, and none takes your role. For example, if you play Petrus as the Hunter, your team gets no bot Hunter. If you don't say a role, the bots guess it from your shaper's usual role. The bots then pick one after another and show their roles, and the enemy team's picks stay hidden until the match starts.
 - **Spectating:** a spectator sees both teams and the whole map, and can also join a game that is already running. If a spectator's game closes, **Rejoin** in the main menu brings them back.
 
 ### Playing on someone else's server

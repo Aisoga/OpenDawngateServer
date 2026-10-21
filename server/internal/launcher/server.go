@@ -15,6 +15,7 @@ import (
 
 	"dawngate/server/internal/accounts"
 	"dawngate/server/internal/dgserver"
+	"dawngate/server/internal/gamedl"
 	"dawngate/server/internal/setup"
 	"dawngate/server/internal/setup/archive"
 	"dawngate/server/internal/setup/hostcopy"
@@ -118,13 +119,26 @@ web_email =
 ;        isn't used.
 web_proxy = off
 
+; A ready game client for your players (needs the tunnel):
+;   off  none (the default)
+;   on   the server hands out the release of its own version for Windows with a Start-Client.ini that preselects this
+;        server and trusts its key, at /dawngate/download/OpenDawngate-<name>.zip on the website (its Download page).
+;        The server downloads that release from github.com once (its only outgoing connection besides the website's
+;        certificate) and keeps it in Dawngate-Data\data\client-package.
+client_package = off
+
 ; The folder for the game copies (about 3 GB), the certificates, the accounts and the logs: relative to this
 ; program's folder, or a full path such as D:\Games\Dawngate-Data.
 folder = Dawngate-Data
 
 ; Dawngate.zip from archive.org, only needed for the first setup and for repairs. Empty: next to this program,
-; then in your Downloads folder; if it isn't found there, Start-Server.exe asks for it.
+; then in your Downloads folder; if it isn't found there, Start-Server.exe offers to download it (in a console) or
+; asks for it.
 zip =
+
+; Mirrors of Dawngate.zip, tried in turn after archive.org when the zip is downloaded, separated by commas, e.g.
+; https://mirror.example.org/Dawngate.zip. Every download is checked against the original build before it is used.
+game_sources =
 
 ; A dedicated server, one that only hosts other players:
 ;   no   the default. Start-Server.exe makes no player copy anyway while the tunnel is on (Start-Client.exe makes
@@ -133,6 +147,30 @@ zip =
 ;        about 1.5 GB less, and a complete folder (host, certs, data) starts without Dawngate.zip. A player copy
 ;        already in the folder is left alone. Or the flag  Start-Server.exe --dedicated
 dedicated = no
+
+; Discord channel posts by webhook (the hosting guide, "Discord channel posts"). Whoever has a webhook address
+; (https://discord.com/api/webhooks/...) can post to its channel: keep this file private. In Discord: Server
+; Settings, Integrations, Webhooks, New Webhook, choose the channel, Copy Webhook URL. Empty: no posts.
+;   discord_webhook         the queue message and the match results, unless they have their own below
+;   discord_webhook_queue   the queue message's own channel
+;   discord_webhook_result  the match results' own channel
+;   discord_webhook_server  the server's status (online, going down, back after a crash): only this one, never
+;                           discord_webhook
+discord_webhook =
+discord_webhook_queue =
+discord_webhook_result =
+discord_webhook_server =
+
+; The queue message: the id of a role it pings (empty: none), at most every discord_ping_cooldown and not when the
+; match starts within discord_ping_min_wait anyway; discord_queue_edit on: one message edited live, off: a new post
+; per change. Player names in the posts: on, or off ("a player"). The modes whose results are posted: pvp, custom,
+; practice (comma-separated), or none.
+discord_queue_ping =
+discord_ping_cooldown = 15m
+discord_ping_min_wait = 30s
+discord_queue_edit = on
+discord_names = on
+discord_result_modes = pvp,custom
 
 ; More server options, separated by blanks, e.g.  --owned starter  or  --mm-team-size 1 --mm-fill-after 5s
 ; (README.txt lists a few; "dgserver.exe -h" in the developers' build lists all). Empty: the defaults.
@@ -160,7 +198,8 @@ var manifest *archive.Manifest
 
 var serverKeys = []string{"address", "bind", RiskAckKey, "profile", "tunnel", "gateway_port", "shaper_select", "dedicated", "signup",
 	"signups_per_address", "log_days", "web_port", "web_domain", "web_email", "web_proxy", "folder", "zip", "server_flags",
-	"wine"}
+	"wine", ClientPackageKey, "discord_webhook", "discord_webhook_queue", "discord_webhook_result", "discord_webhook_server", "discord_queue_ping",
+	"discord_ping_cooldown", "discord_ping_min_wait", "discord_names", "discord_queue_edit", "discord_result_modes"}
 
 // IO is where a launcher talks: the console normally, buffers in tests.
 type IO struct {
@@ -191,16 +230,33 @@ func (o IO) pause() {
 	}
 }
 
-// zipFinder is the setup's FindZip: the configured or usual places, then (interactively) the question.
-func zipFinder(o IO, in *bufio.Reader, configured string) func() (string, error) {
+// zipFinder is the setup's FindZip: the configured or usual places, then the download (gamezip.go: in a console after
+// a question, without one only from sources named on the command line; never when zip = names a file), then
+// (interactively) the question for the file.
+func zipFinder(o IO, in *bufio.Reader, configured string, gs gameSources) func() (string, error) {
 	return func() (string, error) {
-		cands := ZipCandidates(o.ExeDir, configured)
+		cands := zipPlaces(o.ExeDir, configured, gs)
 		if p := FirstFile(cands); p != "" {
 			return p, nil
 		}
+		if configured == "" {
+			p, err := offerGameDownload(o, in, gs)
+			switch {
+			case p != "":
+				return p, nil
+			case errors.Is(err, gamedl.ErrNoSpace):
+				return "", err
+			case err != nil && !errors.Is(err, errDeclined):
+				if !o.Interactive {
+					return "", fmt.Errorf("%w: %v; put it next to the program, or name another source (--%s)", setup.ErrNoZip,
+						err, GameSourceFlag)
+				}
+				fmt.Fprintf(o.Out, "  %v\n", err)
+			}
+		}
 		if !o.Interactive {
-			return "", fmt.Errorf("%w (looked in %s); put it next to Start-Server.exe or name it in the config file (zip =)",
-				setup.ErrNoZip, strings.Join(cands, ", "))
+			return "", fmt.Errorf("%w (looked in %s); put it next to the program or name it in the config file (zip =), "+
+				"or start the program in a console to download it", setup.ErrNoZip, strings.Join(cands, ", "))
 		}
 		var pick func() (string, error) // Windows' file dialog; elsewhere only a typed path
 		if runtime.GOOS == "windows" {
@@ -228,6 +284,8 @@ func RunServer(args []string, o IO) int {
 	seconds := fs.Int("seconds", 0, "stop the server after N seconds (tests)")
 	hostDir := fs.String("host-files", "", `the folder with dgsim.dll and lua\ (default: host\ next to this program)`)
 	zipFlag := fs.String("zip", "", "Dawngate.zip (instead of the config file's zip)")
+	gameSourceFlag := fs.String(GameSourceFlag, "", "where to download Dawngate.zip from when it isn't found (addresses separated by commas; "+
+		"only these, without asking)")
 	riskFlag := fs.Bool(RiskAckFlag, false, "accept the risk of a server on a public address (needed to start one)")
 	dedicatedFlag := fs.Bool("dedicated", false, "a dedicated server: set up and run only the match-host copy, never a player copy (the config file's dedicated = yes)")
 	configure := fs.Bool("configure", false, "ask the first start's questions again (who plays: this PC, a home network, the internet)")
@@ -327,6 +385,10 @@ func RunServer(args []string, o IO) int {
 		return o.fail("%s: %v", path, err)
 	}
 	dedicated = dedicated || *dedicatedFlag || hostsUnderWine // Linux: no Start-Client, so never a player copy
+	clientPackage, err := cfg.Bool(ClientPackageKey, false)
+	if err != nil {
+		return o.fail("%s: %v", path, err)
+	}
 	folder := cfg["folder"]
 	if folder == "" {
 		folder = DefaultFolder
@@ -335,6 +397,14 @@ func RunServer(args []string, o IO) int {
 	zipConf := cfg["zip"]
 	if *zipFlag != "" {
 		zipConf = *zipFlag
+	}
+	need := int64(gameCopiesSpace)
+	if dedicated {
+		need = gameHostCopySpace
+	}
+	sources, err := newGameSources(*gameSourceFlag, cfg[GameSourcesKey], need)
+	if err != nil {
+		return o.fail("%s: %v", path, err)
 	}
 	if _, err := setup.ClientOptions(address); err != nil {
 		return o.fail("%s: address = %s: %v", path, address, err)
@@ -357,6 +427,9 @@ func RunServer(args []string, o IO) int {
 	}
 	publicP := publicProfile(profile, address) // the tunnel required, the limits on
 	tunnelOn := tunnelFor(mode, address) || publicP
+	if clientPackage && !tunnelOn {
+		return o.fail("%s: %s = on needs the tunnel (tunnel = auto or on): the package's Start-Client.ini trusts its key", path, ClientPackageKey)
+	}
 	if public {
 		logDays, _ := strconv.Atoi(firstNonEmpty(cfg["log_days"], "30"))
 		ServerRiskNotice(o.Out, RiskInfo{Address: address, Bind: cfg["bind"], GatewayPort: gwPort, Signup: loginFlags[1],
@@ -490,7 +563,7 @@ func RunServer(args []string, o IO) int {
 	}
 	l := setup.Layout{Root: root}
 	// with a web domain the client copy's login links go to https://<domain>/<page> (sitelinks.Base)
-	s := &setup.Setup{Layout: l, Out: o.Out, Live: o.Live, Check: *check, FindZip: zipFinder(o, in, zipConf), HostFiles: files,
+	s := &setup.Setup{Layout: l, Out: o.Out, Live: o.Live, Check: *check, FindZip: zipFinder(o, in, zipConf, sources), HostFiles: files,
 		Manifest: manifest, WebDomain: web.Domain}
 	var release func()
 	if !*check {
@@ -543,7 +616,10 @@ func RunServer(args []string, o IO) int {
 		return 0
 	}
 
-	own := append(loginFlags, web.Flags()...)
+	own := append(append(loginFlags, web.Flags()...), DiscordFlags(cfg)...)
+	if clientPackage {
+		own = append(own, "--client-package")
+	}
 	if publicP { // the limits on also for a public profile on a LAN address (dgserver's auto covers a public one)
 		own = append(own, "--limits", "on")
 	}
@@ -618,6 +694,7 @@ func RunServer(args []string, o IO) int {
 		}
 		fmt.Fprintf(o.Out, "  %s\n", loginHint(cfg["signup"]))
 		websiteBanner(o.Out, info, public)
+		packageBanner(o.Out, info)
 		if hostsUnderWine {
 			fmt.Fprintf(o.Out, "  The match hosts run under %s (%s) on 127.0.0.1, in the Wine prefix %s.\n", wine.Version, wine.Wine, wine.Prefix)
 		}
@@ -841,8 +918,8 @@ func lines(ls []setup.Line) string {
 func setupAdvice(bad []setup.Line, root string) string {
 	for _, l := range bad {
 		if strings.Contains(l.Detail, "Dawngate.zip not found") || strings.Contains(l.Detail, "no Dawngate.zip") {
-			return "Download Dawngate.zip from https://archive.org/details/Dawngate, put it next to Start-Server.exe " +
-				"and start Start-Server.exe again."
+			return "Start the program again in a console window: it offers to download Dawngate.zip (an interrupted " +
+				"download continues), or put Dawngate.zip from https://archive.org/details/Dawngate next to it first."
 		}
 		if strings.Contains(l.Detail, "disk space") || l.Step == "disk space" {
 			return "Free some disk space (or set folder = to another drive in " + ServerConfigName + "), then start again."

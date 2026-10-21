@@ -9,6 +9,20 @@ import (
 	"time"
 )
 
+// insertOldAccount writes the account Old@Example.com (persona Old) as every schema version has it, without the columns
+// later versions added (insertAccount writes the current schema's).
+func insertOldAccount(t *testing.T, tx *sql.Tx) {
+	t.Helper()
+	if _, err := tx.Exec(`INSERT INTO accounts (user_id, email, email_key, created, last_login) VALUES (?, ?, ?, ?, ?)`,
+		FirstUserID, "Old@Example.com", emailKey("Old@Example.com"), time.Time{}.Format(timeFormat), time.Time{}.Format(timeFormat)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`INSERT INTO personas (persona_id, user_id, pos, name, name_key) VALUES (?, ?, 0, ?, ?)`,
+		FirstPersonaID, FirstUserID, "Old", nameKey("Old")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // a database of version 1 (with accounts) migrates to the current version; its accounts have no password
 // yet and are active.
 func TestMigrateFromVersion1(t *testing.T) {
@@ -25,10 +39,7 @@ func TestMigrateFromVersion1(t *testing.T) {
 		t.Fatal(err)
 	}
 	tx, _ := db.Begin()
-	a := &Account{UserID: FirstUserID, Email: "Old@Example.com", Level: 1, Personas: []Persona{{ID: FirstPersonaID, Name: "Old"}}}
-	if err := insertAccount(tx, a); err != nil {
-		t.Fatal(err)
-	}
+	insertOldAccount(t, tx)
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}

@@ -89,7 +89,7 @@ struct Options {
   bool jungle = true;         // BOTJUNGLE: the Hunter takes part (ganks, defends, pushes, wells, the parasite gather)
   bool pingFollow = true;     // BOTJUNGLE: the bots follow their human teammates' minimap pings
   bool hunterParasiteStand = true;  // PRETUSBOT: the Hunter fights the parasite from its edge, not from its centre
-  int draft = -1;  // BOTDRAFT: [host] bot_draft, -1 auto (a custom game's bots draw after the humans), 0 off, 1 always
+  int draft = -1;  // BOTDRAFT: [host] bot_draft, -1 auto (custom, practice, PvP: gms::bots::DraftOn), 0 off, 1 always
 };
 
 // BOTJUNGLE: a human's minimap ping (the command intake's ping relay, commands.cpp): kept (the last 32) for
@@ -101,7 +101,8 @@ void Configure(const Options& o);
 // B10d: createGame's fillTeams (the seats a team dgserver asks the host to fill with bots; 0 = not asked), for the
 // `bots` auto rule. Called at createGame, before the first HelloReq plans the bots.
 void SetFillTeams(int seats);
-// BOTDRAFT: createGame's mode ("custom" turns the draft on with [host] bot_draft -1). Called at createGame.
+// BOTDRAFT: createGame's mode ("custom", "practice", "pvp" turn the draft on with [host] bot_draft -1). Called at
+// createGame.
 void SetGameMode(const std::string& mode);
 
 // After GameSimulator_Init, before the level (server simulator bound): nBotHost on the shared lua_State.
@@ -144,7 +145,7 @@ bool LaneFrontOf(std::uint32_t creature, int team, float* out, int* laneOut = nu
 // the Lua shims' BotRole answers from, in step).
 void SetRole(int index, int role);
 
-// BOTDRAFT (gms/core/bots/draft.h): in a custom game the bots get their classes in
+// BOTDRAFT (gms/core/bots/draft.h): in a custom, practice or PvP game the bots get their classes in
 // shaper select, after the humans have chosen. BeginDraft (shaper select set up, the bots created) says whether the
 // draft runs; from then until RevealDrafted the bots' player updates carry no bot data, noun or role (DraftHidden) and
 // their status lacks 0x100, so the clients show "BOT n" with an empty slot. Draft draws every bot's class from the

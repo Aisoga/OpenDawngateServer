@@ -80,10 +80,11 @@ var matchmakingResultNames = map[int64]string{MatchmakingCreatedGame: "SUCCESS_C
 	MatchmakingTerminated: "SESSION_TERMINATED", MatchmakingGameSetupFailed: "SESSION_ERROR_GAME_SETUP_FAILED"}
 
 // DefaultMatchmaking is the matchmaker's default rules: 5v5 (the client asks for TEAM.PCAP 5 of an
-// ExpectedPlayerCount of 10), and a lone player gets a game after 15 s (the empty slots get bots with
+// ExpectedPlayerCount of 10), and a lone player gets a game after 90 s, 30 s later for each player who
+// joined meanwhile (MMWAIT, the user's rule of 2026-10-21: at most 330 s; the empty slots get bots with
 // Server.MMBots, B10d).
 func DefaultMatchmaking() matchmaker.Config {
-	return matchmaker.Config{TeamSize: 5, MinPlayers: 1, FillAfter: 15 * time.Second}
+	return matchmaker.Config{TeamSize: 5, MinPlayers: 1, FillAfter: 90 * time.Second, FillExtend: 30 * time.Second}
 }
 
 // MatchmakingContext is the setup context of one player of a matchmade game: MatchmakingSetupContext
@@ -175,6 +176,10 @@ type mmState struct {
 	mu    sync.Mutex
 	ids   int64 // matchmaking session ids (MSID), from 1
 	timer *time.Timer
+	// DISCORD2b: discordMu orders the queue message's updates (discordqueue.go); forming counts the ticks that
+	// formed matches and haven't shown them yet
+	discordMu sync.Mutex
+	forming   int
 }
 
 func (m *mmState) next() int64 {
@@ -247,7 +252,10 @@ func registerMatchmaking(s *Server) {
 			r.Server.Log.Logf("blaze", "   matchmaking session %d: cancel, but it isn't queued (any more)", id)
 			return nil
 		}
-		r.After(func() { r.Server.matchmakingFailed(t, MatchmakingCanceled, "canceled") })
+		r.After(func() {
+			r.Server.matchmakingFailed(t, MatchmakingCanceled, "canceled")
+			r.Server.discordQueueSync(nil, false)
+		})
 		return nil
 	})
 }
@@ -343,6 +351,7 @@ func unionAddress(req *tdf.Struct, label string) (ext, in Addr) {
 func (s *Server) endMatchmaking(id, result int64, why string) {
 	if t, ok := s.MM.Remove(id); ok {
 		s.matchmakingFailed(t, result, why)
+		s.discordQueueSync(nil, false)
 	}
 }
 
@@ -356,15 +365,26 @@ func (s *Server) matchmakingFailed(t *matchmaker.Ticket, result int64, why strin
 }
 
 // mmTick forms what the queue allows now, ends timed-out sessions and arms the timer for the next
-// deadline (no timer while the queue is empty).
+// deadline (no timer while the queue is empty). Then the Discord queue message shows the queue (DISCORD2b: every
+// join comes through here, and every deadline).
 func (s *Server) mmTick() {
+	s.mm.discordMu.Lock()
 	matches, expired := s.MM.Tick()
+	formed := len(matches) > 0
+	if formed {
+		s.mm.forming++
+	}
+	s.mm.discordMu.Unlock()
 	for _, t := range expired {
 		s.matchmakingFailed(t, MatchmakingTimedOut, "timed out")
 	}
+	var started []MatchStarted
 	for _, m := range matches {
-		s.startMatch(m)
+		if ms, ok := s.startMatch(m); ok {
+			started = append(started, ms)
+		}
 	}
+	s.discordQueueSync(started, formed)
 	next := s.MM.NextDeadline()
 	s.mm.mu.Lock()
 	defer s.mm.mu.Unlock()
@@ -379,8 +399,9 @@ func (s *Server) mmTick() {
 
 // startMatch makes the game of a formed match and announces it to its players: PROS in team order (team
 // index = TIDX), the anchor session's owner SUCCESS_CREATED_GAME, the other owners
-// SUCCESS_JOINED_NEW_GAME, party members the indirect context with their leader's session and result.
-func (s *Server) startMatch(m matchmaker.Match) {
+// SUCCESS_JOINED_NEW_GAME, party members the indirect context with their leader's session and result. It returns
+// the match's humans, bots and empty seats for the Discord queue message, ok false when no host could take it.
+func (s *Server) startMatch(m matchmaker.Match) (MatchStarted, bool) {
 	tickets := m.Tickets()
 	g := tickets[0].Data.(*mmSession).game
 	g.ID = s.gameIDs.Add(1)
@@ -434,6 +455,12 @@ func (s *Server) startMatch(m matchmaker.Match) {
 	s.Log.Logf("blaze", "   matchmaking: game %d %q, %d v %d (full %v, region %q): sessions %v v %v%s",
 		g.ID, g.Name, m.Size(0), m.Size(1), m.Full, m.Region, ticketIDs(m.Teams[0]), ticketIDs(m.Teams[1]), seats)
 	setup := func(g Game, hp *hostedPlayer) []byte { return MatchedGameSetupNotification(g, players, ctx[hp.p.ID]) }
+	started := MatchStarted{Players: len(players)}
+	if fill > 0 {
+		started.Bots = 2*fill - len(players)
+	} else {
+		started.Open = int(2*size) - len(players)
+	}
 	if s.Hosts != nil {
 		replied := make(chan struct{})
 		close(replied) // the sessions' replies went out before the match formed
@@ -441,13 +468,15 @@ func (s *Server) startMatch(m matchmaker.Match) {
 			for _, t := range tickets {
 				s.matchmakingFailed(t, MatchmakingGameSetupFailed, err.Error())
 			}
+			return MatchStarted{}, false
 		}
-		return
+		return started, true
 	}
 	s.Log.Logf("blaze", "   game %d %q: GMS %s (HNET), players %v", g.ID, g.Name, g.GMS, playerIDs(players))
 	for _, hp := range hps {
 		hp.conn.Push(s, ComponentGameManager, NotifyGameSetupID, "NotifyGameSetup", setup(hp.conn.ForClient(g), hp))
 	}
+	return started, true
 }
 
 func ticketIDs(ts []*matchmaker.Ticket) []int64 {

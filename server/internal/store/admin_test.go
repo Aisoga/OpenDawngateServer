@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// a database of version 3 (with a password and a status) migrates to version 4: every account is a player,
+// a database of version 3 (with a password and a status) migrates to the current version: every account is a player,
 // the audit log and the settings are empty, and what version 3 stored is unchanged.
 func TestMigrateFromVersion3(t *testing.T) {
 	path := filepath.Join(t.TempDir(), FileName)
@@ -29,10 +29,7 @@ func TestMigrateFromVersion3(t *testing.T) {
 		}
 	}
 	tx, _ := db.Begin()
-	a := &Account{UserID: FirstUserID, Email: "Old@Example.com", Level: 1, Personas: []Persona{{ID: FirstPersonaID, Name: "Old"}}}
-	if err := insertAccount(tx, a); err != nil {
-		t.Fatal(err)
-	}
+	insertOldAccount(t, tx)
 	if _, err := tx.Exec(`UPDATE accounts SET password = '$argon2id$old', status = 1`); err != nil {
 		t.Fatal(err)
 	}
@@ -42,12 +39,16 @@ func TestMigrateFromVersion3(t *testing.T) {
 	db.Close()
 
 	s := openT(t, path)
-	if want := "1 accounts, schema 3 -> 4"; s.Info() != want {
+	if want := fmt.Sprintf("1 accounts, schema 3 -> %d", SchemaVersion()); s.Info() != want {
 		t.Errorf("info %q, want %q", s.Info(), want)
 	}
 	c, found, err := s.CredentialsByID(FirstUserID)
 	if err != nil || !found || c.Hash != "$argon2id$old" || c.Status != StatusDisabled || c.Role != RolePlayer {
 		t.Errorf("credentials %+v %v %v", c, found, err)
+	}
+	// version 5: the Leaderboard's counts start at 0 (the older games can't be told apart from practice games)
+	if a, ok := s.Account(FirstUserID); !ok || a.History.Ranked != (GamesWon{}) {
+		t.Errorf("account %v, Leaderboard counts %+v", ok, a.History.Ranked)
 	}
 	if log, err := s.AuditLog(10, 0); err != nil || len(log) != 0 {
 		t.Errorf("audit log %v %v", log, err)

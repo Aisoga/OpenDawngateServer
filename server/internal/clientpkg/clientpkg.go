@@ -86,6 +86,9 @@ type Package struct {
 	failed  time.Time
 	// the fingerprint of the tunnel key the ini trusts
 	fingerprint string
+
+	bg       sync.WaitGroup     // Start's background build
+	bgCancel context.CancelFunc // ends it at Close (nil before Start)
 }
 
 // New makes the package; Start gives it its ini and starts the first build.
@@ -158,11 +161,27 @@ func (p *Package) Start(ini []byte, fingerprint string) {
 	if !update.IsRelease(p.cfg.Version) {
 		return
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), buildTime)
+	p.mu.Lock()
+	p.bgCancel = cancel
+	p.mu.Unlock()
+	p.bg.Add(1)
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), buildTime)
+		defer p.bg.Done()
 		defer cancel()
 		p.Get(ctx)
 	}()
+}
+
+// Close ends Start's background build: one not begun yet doesn't begin, one running is waited for.
+func (p *Package) Close() {
+	p.mu.Lock()
+	cancel := p.bgCancel
+	p.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	p.bg.Wait()
 }
 
 // Get returns the package file, built first if need be: concurrent callers wait for one build. A failed build is
@@ -174,6 +193,9 @@ func (p *Package) Get(ctx context.Context) (string, error) {
 		return "", ctx.Err()
 	}
 	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		p.mu.Lock()
 		if p.built != "" {
 			if _, err := os.Stat(p.built); err == nil {

@@ -57,7 +57,9 @@ func newPkg(t *testing.T, f *updatetest.FakeGitHub, version, dir string) *Packag
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(Config{Version: version, Source: src, Dir: dir, Name: "play.example.org", Log: t.Logf})
+	p := New(Config{Version: version, Source: src, Dir: dir, Name: "play.example.org", Log: t.Logf})
+	t.Cleanup(p.Close) // Start's background build must not outlive the test (it logs through t)
+	return p
 }
 
 func names(t *testing.T, zipFile string) []string {

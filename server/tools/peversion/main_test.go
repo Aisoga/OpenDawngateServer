@@ -52,7 +52,7 @@ func TestSetAndCheck(t *testing.T) {
 		t.Fatalf("before set: %v", bad)
 	}
 	for _, v := range []string{"v1.2", "nightly-1"} { // twice: set replaces the first resource
-		if err := set(exe, v, "Dawngate Restoration: a test"); err != nil {
+		if err := set(exe, v, "OpenDawngateServer: a test"); err != nil {
 			t.Fatal(err)
 		}
 		if bad := Check(exe, v); len(bad) != 0 {

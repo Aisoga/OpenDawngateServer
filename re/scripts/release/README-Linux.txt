@@ -1,4 +1,4 @@
-Dawngate Restoration: the Linux server (start-server)          (release @VERSION@)
+OpenDawngateServer: the Linux server (start-server)          (release @VERSION@)
 ==============================================================================
 
 An unofficial fan project to play the 2014 MOBA Dawngate again. It is not affiliated with or endorsed by

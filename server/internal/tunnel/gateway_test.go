@@ -354,8 +354,8 @@ func TestProbeInfo(t *testing.T) {
 	if g.Sessions() != 0 || !strings.Contains(buf.String(), "version asked ("+g.Version) {
 		t.Errorf("%d sessions after the info hello; log:\n%s", g.Sessions(), buf.String())
 	}
-	if v, facts, err := readInfoReply(bytes.NewReader(infoReply("Dawngate-Restoration-test\t2", map[string]string{"signup": "in vite"}))); err != nil ||
-		v != "Dawngate-Restoration-test-2" || len(facts) != 1 || facts[FactSignup] != "in-vite" {
+	if v, facts, err := readInfoReply(bytes.NewReader(infoReply("OpenDawngateServer-test\t2", map[string]string{"signup": "in vite"}))); err != nil ||
+		v != "OpenDawngateServer-test-2" || len(facts) != 1 || facts[FactSignup] != "in-vite" {
 		t.Errorf("an info reply read back: %q, %v, %v (cleaned)", v, facts, err)
 	}
 	if info.Facts == nil || len(info.Facts) != 0 {

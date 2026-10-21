@@ -143,7 +143,7 @@ func RunClient(args []string, o IO) int {
 		return o.fail("--test-lane %s: one letter", *lane)
 	}
 	in := bufio.NewReader(o.In)
-	fmt.Fprintf(o.Out, "Dawngate Restoration: Start-Client, version %s\n", version.String())
+	fmt.Fprintf(o.Out, "OpenDawngateServer: Start-Client, version %s\n", version.String())
 	if *lane == "" && !*check && clientRunning() {
 		// a second Start-Client (e.g. Discord starting it for a Join while the game runs) changes nothing: the running
 		// one keeps the server list in memory and would write over what this one wrote

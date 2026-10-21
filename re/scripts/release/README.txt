@@ -1,4 +1,4 @@
-Dawngate Restoration: Start-Server and Start-Client          (release @VERSION@)
+OpenDawngateServer: Start-Server and Start-Client          (release @VERSION@)
 ==============================================================================
 
 An unofficial fan project to play the 2014 MOBA Dawngate again. It is not affiliated with or endorsed by
@@ -251,6 +251,6 @@ them too. With Discord's Join used:  reg delete HKCU\Software\Classes\discord-15
 Firewall answers Windows kept: Windows Security, Firewall & network protection, Allow an app through firewall.
 
 
-Copyright (C) 2026 the Dawngate Restoration contributors. This project's code is licensed under the GNU AGPL v3
+Copyright (C) 2026 the OpenDawngateServer contributors. This project's code is licensed under the GNU AGPL v3
 (LICENSE.txt); the source of this release is the project's repository at the commit in BUILD.txt. The game, its
 files and its content belong to their owners and are not part of this release.

@@ -32,10 +32,10 @@ import (
 )
 
 // Product is the project's name: every signed file's product name.
-const Product = "Dawngate Restoration"
+const Product = "OpenDawngateServer"
 
 // Copyright is the files' copyright line (the README's).
-const Copyright = "Copyright (C) 2026 the Dawngate Restoration contributors. AGPL-3.0-only."
+const Copyright = "Copyright (C) 2026 the OpenDawngateServer contributors. AGPL-3.0-only."
 
 func main() {
 	if len(os.Args) < 2 {

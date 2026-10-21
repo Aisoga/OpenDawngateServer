@@ -472,7 +472,7 @@ func writePage(c net.Conn, status int, title, body string) {
 		"</title>\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<style>body{font-family:sans-serif;" +
 		"max-width:44em;margin:2em auto;padding:0 1em;line-height:1.5}td,th{padding:.2em .6em;text-align:left}" +
 		"code{font-size:1.1em}</style></head>\n<body><h1>" + html.EscapeString(title) + "</h1>\n" + body +
-		"\n<p><small>Dawngate Restoration: Start-Client on this PC.</small></p></body></html>\n"
+		"\n<p><small>OpenDawngateServer: Start-Client on this PC.</small></p></body></html>\n"
 	fmt.Fprintf(c, "HTTP/1.1 %d %s\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: %d\r\nCache-Control: no-store\r\n"+
 		"Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'\r\n"+
 		"X-Frame-Options: DENY\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: same-origin\r\nConnection: close\r\n\r\n%s",

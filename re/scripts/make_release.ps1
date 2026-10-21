@@ -17,7 +17,7 @@
      every image of that .ico. The Linux server start-server is the same
      build of server\cmd\start-server for linux/amd64 with the same version (not <Name>-linux: Start-Client.exe
      refuses a server of any other version). Both programs and host\dgsim.dll get a version resource (server\tools\
-     peversion: product name "Dawngate Restoration", product and file version <Name>), which code signing requires
+     peversion: product name "OpenDawngateServer", product and file version <Name>), which code signing requires
      (SignPath: the project's name and one product version per build); it is checked on all three. With
      -SignedFiles <folder> (the CI's second run, with the files the signing service returned) those three are
      replaced by their signed copies after checking that each is this build's file plus a valid signature.
@@ -68,7 +68,7 @@ $Out = (Resolve-Path $Out).Path
 $commit = "$(& git -C $Repo rev-parse --short=10 HEAD)".Trim()
 $commitTime = [long]"$(& git -C $Repo log -1 --format=%ct HEAD)".Trim()
 $dirty = "$(& git -C $Repo status --porcelain --untracked-files=no -- server re/scripts/release)".Trim()
-if (-not $Name) { $Name = "Dawngate-Restoration-$(Get-Date -Format 'yyyyMMdd')-$commit" }
+if (-not $Name) { $Name = "OpenDawngateServer-$(Get-Date -Format 'yyyyMMdd')-$commit" }
 function Fail([string]$m) { Write-Host $m -ForegroundColor Red; exit 1 }
 # the name is the build's version (server\internal\version): Start-Client plays only on servers of the same one
 if ($Name -notmatch '^[A-Za-z0-9._+-]{1,64}$') { Fail "-Name $Name`: 1-64 of letters, digits and . _ + - (it is the release's version)" }
@@ -116,8 +116,8 @@ try {
     $peversion = Join-Path $Out "peversion-$PID.exe"
     & $go build -C (Join-Path $Repo 'server') -o $peversion ./tools/peversion
     if ($LASTEXITCODE -ne 0) { Fail 'go build ./tools/peversion failed' }
-    foreach ($p in @(@('Start-Server.exe', './cmd/start-server', 'Dawngate Restoration: the server'),
-            @('Start-Client.exe', './cmd/start-client', "Dawngate Restoration: the game's launcher"))) {
+    foreach ($p in @(@('Start-Server.exe', './cmd/start-server', 'OpenDawngateServer: the server'),
+            @('Start-Client.exe', './cmd/start-client', "OpenDawngateServer: the game's launcher"))) {
         Write-Host "building $($p[0]) ..." -ForegroundColor Cyan
         & $go build -C (Join-Path $Repo 'server') -trimpath -ldflags "-s -w -X dawngate/server/internal/version.release=$Name" -o (Join-Path $dir $p[0]) $p[1]
         if ($LASTEXITCODE -ne 0) { Fail "go build $($p[1]) failed" }
@@ -188,7 +188,7 @@ $utf8 = New-Object Text.UTF8Encoding($false)
 function Write-Text([string]$path, [string[]]$lines, [string]$eol) { [IO.File]::WriteAllText($path, (($lines -join $eol) + $eol), $utf8) }
 # the DLL with its version resource (as the programs'); the Linux folder gets the same file
 Copy-Item $dll (Join-Path $dir 'host\dgsim.dll')
-Set-PeVersion (Join-Path $dir 'host\dgsim.dll') 'Dawngate Restoration: the match host'
+Set-PeVersion (Join-Path $dir 'host\dgsim.dll') 'OpenDawngateServer: the match host'
 & $peversion check -version $Name (Join-Path $dir 'Start-Server.exe') (Join-Path $dir 'Start-Client.exe') (Join-Path $dir 'host\dgsim.dll')
 if ($LASTEXITCODE -ne 0) { Fail 'a signed file lacks its version resource (product name, product version)' }
 # -SignedFiles: the three files as the code signing service returned them (CI: SignPath). Each must be this build's
@@ -240,7 +240,7 @@ if (-not $patches.Count) { Fail "no RakNet patches in $GmsRoot\gms\cmake\raknet_
 # $contain its verb, $mods their outside modules, $pickerFirst the picker paragraph's first line ($null: none)
 function New-Notices([string]$sep, [string]$programs, [string]$contain, [string[]]$mods, [string]$pickerFirst) {
     $n = @(
-        'Third-party notices for the Dawngate Restoration release',
+        'Third-party notices for the OpenDawngateServer release',
         '=========================================================',
         '',
         "host${sep}dgsim.dll links RakNet 4.081 (https://github.com/facebookarchive/RakNet, commit 1a169895) statically.",

@@ -98,7 +98,7 @@ func TestFrontVersion(t *testing.T) {
 		state   string // the server s's state in the list
 		code    uint16 // the login to s (0: through)
 	}{
-		{"Dawngate-Restoration-20261016-another", versionOther, FrontErrVersion},
+		{"OpenDawngateServer-20261016-another", versionOther, FrontErrVersion},
 		{"", versionSame, 0}, // this build's own version: the server's
 	} {
 		logDir := t.TempDir()

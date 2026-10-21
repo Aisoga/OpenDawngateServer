@@ -123,7 +123,7 @@ The key is in `Dawngate-Data\certs\<address>\`. Keep it private, and keep it. If
 
 ## Versions and updates
 
-Every release has a version, its name, such as `Dawngate-Restoration-20261016-905ef17f5f`. The server window shows it at the start and when the server runs (`Version …: players need Start-Client.exe of the same release`), and `Start-Server.exe --version` prints it. A player's `Start-Client.exe` logs in only on a server of exactly the same version: any difference refuses the login, and their server list shows your server as **other version**. A server of a release from before this check doesn't tell its version, and every current `Start-Client.exe` refuses it (**version unknown**).
+Every release has a version, its name, such as `OpenDawngateServer-20261016-905ef17f5f`. The server window shows it at the start and when the server runs (`Version …: players need Start-Client.exe of the same release`), and `Start-Server.exe --version` prints it. A player's `Start-Client.exe` logs in only on a server of exactly the same version: any difference refuses the login, and their server list shows your server as **other version**. A server of a release from before this check doesn't tell its version, and every current `Start-Client.exe` refuses it (**version unknown**).
 
 Your server checks it too: each player's `Start-Client.exe` names its release when it connects, and the server lets in only its own release. A `Start-Client.exe` from before that check (or one changed to skip its own) can't name one and is refused; that player sees *The server you picked doesn't answer*, and your server's log says why (`session refused: its Start-Client names no release …` or `… is release X, this server is release Y …`). For tests with mixed builds, `server_flags = --allow-any-client` in `Start-Server.ini` lets every release in.
 
@@ -252,7 +252,7 @@ The Linux release runs the same server on a 64-bit Linux machine, for example a 
 ### What you need on Linux
 
 - A 64-bit Linux machine with Wine and its 32-bit part. Debian 12 and Ubuntu 24.04 work with their own Wine packages.
-- The release's Linux archive (`Dawngate-Restoration-<version>-linux.tar.gz`) and `Dawngate.zip`.
+- The release's Linux archive (`OpenDawngateServer-<version>-linux.tar.gz`) and `Dawngate.zip`.
 - About 3 GB of free disk space, plus 1.3 GB while `Dawngate.zip` is there. Each running match needs about 120 MB of memory and a tenth of one CPU core.
 
 Install Wine (Debian or Ubuntu):
@@ -276,7 +276,7 @@ On other distributions, install Wine with its 32-bit (WoW64) support. The server
 2. Unpack the archive into that folder, put `Dawngate.zip` next to `start-server`, and give the folder to the user:
 
    ```sh
-   sudo tar xzf Dawngate-Restoration-<version>-linux.tar.gz -C /srv/dawngate --strip-components=1
+   sudo tar xzf OpenDawngateServer-<version>-linux.tar.gz -C /srv/dawngate --strip-components=1
    sudo cp Dawngate.zip /srv/dawngate/
    sudo chown -R dawngate:dawngate /srv/dawngate
    ```
@@ -438,7 +438,7 @@ If nginx answers `502 Bad Gateway`, the server isn't running, or `proxy_pass` na
 2. Unpack the new archive over the folder and give it to the user again:
 
    ```sh
-   sudo tar xzf Dawngate-Restoration-<new version>-linux.tar.gz -C /srv/dawngate --strip-components=1
+   sudo tar xzf OpenDawngateServer-<new version>-linux.tar.gz -C /srv/dawngate --strip-components=1
    sudo chown -R dawngate:dawngate /srv/dawngate
    ```
 

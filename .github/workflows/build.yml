@@ -127,7 +127,7 @@ jobs:
       - name: Release zip and Linux archive
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          # a tag's build is named after the tag; any other build Dawngate-Restoration-<date>-<commit>
+          # a tag's build is named after the tag; any other build OpenDawngateServer-<date>-<commit>
           $nameArgs = @()
           if ($env:RELEASE_NAME) { $nameArgs = @('-Name', $env:RELEASE_NAME) }
           powershell -NoProfile -ExecutionPolicy Bypass -File re/scripts/make_release.ps1 @nameArgs
@@ -366,7 +366,7 @@ jobs:
             echo "::error::tag $TAG ($SHA) is not on main (compare: $status); push main first, then the tag"; exit 1
           fi
           cat > notes.md <<NOTES
-          Dawngate Restoration ${TAG}, built by this repository's build workflow from commit ${SHA}.
+          OpenDawngateServer ${TAG}, built by this repository's build workflow from commit ${SHA}.
 
           - \`${TAG}.zip\`: Windows 10/11 64-bit. \`Start-Server.exe\` runs a server, \`Start-Client.exe\` plays. Put your own \`Dawngate.zip\` (archive.org) next to \`Start-Server.exe\`; the release contains no game file. See \`README.txt\` in the zip.
           - \`${TAG}-linux.tar.gz\`: the same server for a 64-bit Linux machine (\`start-server\`, its match hosts under Wine).
@@ -375,4 +375,4 @@ jobs:
           - \`BUILD.txt\` in each archive names the commit it was built from (the source, AGPL-3.0).
           NOTES
           gh release create "$TAG" "$zip" "$tgz" --repo "$REPO" --verify-tag \
-            --title "Dawngate Restoration $TAG" --notes-file notes.md
+            --title "OpenDawngateServer $TAG" --notes-file notes.md

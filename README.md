@@ -1,4 +1,4 @@
-# Dawngate Restoration
+# OpenDawngateServer
 
 [![build](https://github.com/Aisoga/OpenDawngateServer/actions/workflows/build.yml/badge.svg)](https://github.com/Aisoga/OpenDawngateServer/actions/workflows/build.yml)
 
@@ -65,7 +65,7 @@ The Windows programs of the numbered releases (`Start-Client.exe`, `Start-Server
 
 ## License
 
-This repository's own code and documentation are licensed under the **GNU Affero General Public License, version 3 only** (AGPL-3.0-only); see [`LICENSE`](LICENSE). Copyright (C) 2026 the Dawngate Restoration contributors.
+This repository's own code and documentation are licensed under the **GNU Affero General Public License, version 3 only** (AGPL-3.0-only); see [`LICENSE`](LICENSE). Copyright (C) 2026 the OpenDawngateServer contributors.
 
 The license covers only this project's code and docs, not the game, its files or its content, which belong to their owners. Third-party components keep their own licenses:
 

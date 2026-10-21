@@ -243,7 +243,7 @@ func RunServer(args []string, o IO) int {
 		return 0
 	}
 	in := bufio.NewReader(o.In)
-	fmt.Fprintf(o.Out, "Dawngate Restoration: Start-Server, version %s\n", version.String())
+	fmt.Fprintf(o.Out, "OpenDawngateServer: Start-Server, version %s\n", version.String())
 	path := *configPath
 	if path == "" {
 		path = filepath.Join(o.ExeDir, ServerConfigName)

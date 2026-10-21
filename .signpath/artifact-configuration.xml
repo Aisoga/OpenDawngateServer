@@ -9,7 +9,7 @@
     <parameter name="version" required="true" />
   </parameters>
   <zip-file>
-    <pe-file-set product-name="Dawngate Restoration" product-version="${version}">
+    <pe-file-set product-name="OpenDawngateServer" product-version="${version}">
       <include path="Start-Server.exe" />
       <include path="Start-Client.exe" />
       <include path="dgsim.dll" />

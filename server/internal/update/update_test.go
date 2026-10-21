@@ -32,7 +32,7 @@ func TestVersionOrder(t *testing.T) {
 		{"dev-0123456789+dirty", "v9.9", false},
 		{"dev", "v0.6", false},
 		{"nightly", "v0.6", false},
-		{"Dawngate-Restoration-20261018-0123456789", "v0.6", false},
+		{"OpenDawngateServer-20261018-0123456789", "v0.6", false},
 		{"v0.5", "nightly", false},
 		{"v0.5", "v0.6-rc1", false},
 		{"V0.5", "v0.6", false},
@@ -124,7 +124,7 @@ func TestLatestAndDownload(t *testing.T) {
 	}
 
 	// no <tag>.zip (the hand-made releases), a draft, a tag that isn't a numbered release
-	f.ZipName = "Dawngate-Restoration-v0.5.zip"
+	f.ZipName = "OpenDawngateServer-v0.5.zip"
 	if _, err := src.Latest(context.Background()); !errors.Is(err, update.ErrNoZip) {
 		t.Errorf("no <tag>.zip: %v", err)
 	}

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Copyright (C) 2026 the Dawngate Restoration contributors.
+// Copyright (C) 2026 the OpenDawngateServer contributors.
 //
 // The "Fill open seats with bots" check box in the game's CREATE GAME dialog (Custom Game Setup).
 //

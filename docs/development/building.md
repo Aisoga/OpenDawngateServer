@@ -89,7 +89,7 @@ After making new certificates, run `patch_client.py` again: the client must carr
    powershell -ExecutionPolicy Bypass -File re\scripts\make_release.ps1
    ```
 
-   This writes `re\out\release\<name>\` and `<name>.zip`, named `Dawngate-Restoration-<date>-<commit>`, or the name given with `-Name` (a numbered release uses its tag, for example `-Name v0.6`). The name is also the programs' version: `Start-Client.exe` plays only on servers built with the same name. The release contains:
+   This writes `re\out\release\<name>\` and `<name>.zip`, named `OpenDawngateServer-<date>-<commit>`, or the name given with `-Name` (a numbered release uses its tag, for example `-Name v0.6`). The name is also the programs' version: `Start-Client.exe` plays only on servers built with the same name. The release contains:
 
    - `Start-Server.exe` and `Start-Client.exe`;
    - `host\dgsim.dll` with its Lua scripts;

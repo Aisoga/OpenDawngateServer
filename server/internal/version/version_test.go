@@ -22,7 +22,7 @@ func TestCompute(t *testing.T) {
 		info      func() (*debug.BuildInfo, bool)
 		want      string
 	}{
-		{"release", "Dawngate-Restoration-20261016-905ef17f5f", info("vcs.revision", "905ef17f5f0e07a9f573a87029426e7f5f8a2ccc"), "Dawngate-Restoration-20261016-905ef17f5f"},
+		{"release", "OpenDawngateServer-20261016-905ef17f5f", info("vcs.revision", "905ef17f5f0e07a9f573a87029426e7f5f8a2ccc"), "OpenDawngateServer-20261016-905ef17f5f"},
 		{"release with odd characters", " Test Build #2 ", none, "Test-Build--2"},
 		{"clean checkout", "", info("vcs.revision", "905ef17f5f0e07a9f573a87029426e7f5f8a2ccc", "vcs.modified", "false"), "dev-905ef17f5f"},
 		{"modified checkout", "", info("vcs.revision", "905ef17f5f0e07a9f573a87029426e7f5f8a2ccc", "vcs.modified", "true"), "dev-905ef17f5f+dirty"},

@@ -7,14 +7,14 @@ import (
 
 func TestNumbersOf(t *testing.T) {
 	for name, want := range map[string][4]uint16{
-		"v0.6":     {0, 6, 0, 0},
-		"v1.0.1":   {1, 0, 1, 0},
-		"2.3.4":    {2, 3, 4, 0},
-		"v1":       {},
-		"v1.2.3.4": {},
-		"v70000.1": {},
-		"Dawngate-Restoration-20261017-1412db3630": {},
-		"SRVVER-test-1": {},
+		"v0.6":                                   {0, 6, 0, 0},
+		"v1.0.1":                                 {1, 0, 1, 0},
+		"2.3.4":                                  {2, 3, 4, 0},
+		"v1":                                     {},
+		"v1.2.3.4":                               {},
+		"v70000.1":                               {},
+		"OpenDawngateServer-20261017-1412db3630": {},
+		"SRVVER-test-1":                          {},
 	} {
 		if got := NumbersOf(name); got != want {
 			t.Errorf("%s: %v, want %v", name, got, want)
@@ -23,8 +23,8 @@ func TestNumbersOf(t *testing.T) {
 }
 
 func TestVersionRoundTrip(t *testing.T) {
-	v := Version{ProductName: "Dawngate Restoration", ProductVersion: "v1.2.3", FileVersion: "v1.2.3",
-		FileDescription: "Dawngate Restoration: the match host (ü)", InternalName: "dgsim",
+	v := Version{ProductName: "OpenDawngateServer", ProductVersion: "v1.2.3", FileVersion: "v1.2.3",
+		FileDescription: "OpenDawngateServer: the match host (ü)", InternalName: "dgsim",
 		OriginalFilename: "dgsim.dll", LegalCopyright: "Copyright (C) 2026", Numbers: NumbersOf("v1.2.3"), DLL: true}
 	b := v.Resource()
 	le := binary.LittleEndian

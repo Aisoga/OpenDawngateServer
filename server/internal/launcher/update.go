@@ -76,7 +76,7 @@ func offerUpdate(o IO, in *bufio.Reader, u updateOptions) (code int, ran bool, e
 	if u.check || u.setupOnly || u.nonInteractive || !on {
 		return 0, false, nil
 	}
-	ua := "Dawngate-Restoration-Start-Client/" + updateOwnVersion()
+	ua := "OpenDawngateServer-Start-Client/" + updateOwnVersion()
 	src := updateSource(ua)
 	if base := os.Getenv(UpdateTestEnv); base != "" {
 		if src, err = update.Loopback(base, ua); err != nil {

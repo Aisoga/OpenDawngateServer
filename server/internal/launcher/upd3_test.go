@@ -127,7 +127,7 @@ func TestUpdateNotAsked(t *testing.T) {
 	}{
 		{name: "developer build", own: "dev-0123456789", interactive: true},
 		{name: "developer build dirty", own: "dev-0123456789+dirty", interactive: true},
-		{name: "nightly-style name", own: "Dawngate-Restoration-20261018-0123456789", interactive: true},
+		{name: "nightly-style name", own: "OpenDawngateServer-20261018-0123456789", interactive: true},
 		{name: "update_check off", own: "v0.5", interactive: true, u: updateOptions{setting: "off"}},
 		{name: "--check", own: "v0.5", interactive: true, u: updateOptions{check: true}},
 		{name: "--setup-only", own: "v0.5", interactive: true, u: updateOptions{setupOnly: true}},
@@ -177,7 +177,7 @@ func TestUpdateNothingNewer(t *testing.T) {
 		t.Fatal("an older release offered")
 	}
 	fx = newUpdateFixture(t, "v0.5")
-	fx.fake.ZipName = "Dawngate-Restoration-v0.6.zip" // a hand-made release: no <tag>.zip
+	fx.fake.ZipName = "OpenDawngateServer-v0.6.zip" // a hand-made release: no <tag>.zip
 	if _, ran, out := fx.offer(t, "y\n", true, updateOptions{}); ran || out != "" {
 		t.Fatalf("no <tag>.zip: ran %v\n%s", ran, out)
 	}

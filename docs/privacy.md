@@ -1,6 +1,6 @@
 # Privacy
 
-Dawngate Restoration collects nothing for its developers: no analytics, no account with the project, no reports sent to us. The programs transfer information only to the systems listed here: the servers you choose to play on, GitHub for the update check, and Discord through the Discord app on your PC. Each one that isn't the point of playing can be switched off.
+OpenDawngateServer collects nothing for its developers: no analytics, no account with the project, no reports sent to us. The programs transfer information only to the systems listed here: the servers you choose to play on, GitHub for the update check, and Discord through the Discord app on your PC. Each one that isn't the point of playing can be switched off.
 
 ## Start-Client.exe
 

@@ -151,6 +151,25 @@ func ApplyRanked(h store.History, now time.Time, won bool) store.History {
 	return out
 }
 
+// ImportRanked adds one game played at the time at, before the Leaderboard had its own counts, to them (the operator's
+// import from the server's old logs): to the all-time count always, and to at's UTC day (the day ApplyRanked would have
+// chosen then) only while that day is still one of the HistoryDays days before now that an account keeps; days older
+// than that are dropped, as ApplyRanked drops them. It returns the new history (h is not changed).
+func ImportRanked(h store.History, now, at time.Time, won bool) store.History {
+	out := h.Clone()
+	win := uint32(0)
+	if won {
+		win = 1
+	}
+	out.Ranked = store.GamesWon{Games: out.Ranked.Games + 1, Wins: out.Ranked.Wins + win}
+	if off, _ := dayOffset(now, day(at).Format(dayLayout)); off >= 0 && off < HistoryDays {
+		d := &out.Days[dayIndex(&out, at)]
+		d.Ranked = store.GamesWon{Games: d.Ranked.Games + 1, Wins: d.Ranked.Wins + win}
+	}
+	pruneDays(&out, now)
+	return out
+}
+
 // dayIndex returns the index of now's UTC day in h.Days, adding the day in order if it has none.
 func dayIndex(h *store.History, now time.Time) int {
 	today := day(now).Format(dayLayout)

@@ -606,11 +606,17 @@ func (hg *hostedGame) persist(mt *gmshost.Match, f gmshost.FinishGame) {
 // doesn't, nor does a practice group's, which the server makes as a custom game with the bots-fill bit in its
 // GameFlags (0x412; customgames.go). The profile's PlayerStats and history count every game. Called with hg.mu held.
 func (hg *hostedGame) ranked() bool {
-	switch hg.mode {
+	return Ranked(hg.mode, hg.game.descriptors())
+}
+
+// Ranked is hostedGame.ranked's rule by the game's mode (createGame's mode) and GameFlags (createGame's descriptors):
+// the import of the Leaderboard's games from older servers' logs decides by it too, so both count alike.
+func Ranked(mode string, gameFlags uint32) bool {
+	switch mode {
 	case gmshost.ModePvP:
 		return true
 	case gmshost.ModeCustom:
-		return hg.game.descriptors()&GameFlagBotsFillTeams == 0
+		return gameFlags&GameFlagBotsFillTeams == 0
 	}
 	return false
 }

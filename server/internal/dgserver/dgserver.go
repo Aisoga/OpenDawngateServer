@@ -1065,6 +1065,11 @@ func Run(args []string, h Hooks) int {
 	fs.StringVar(&ac.accountStatus, "account-status", "", "set an account's status, then exit: <login name>=active|disabled|banned|deleted")
 	fs.StringVar(&ac.makeAdmin, "make-admin", "", "give the account with this login name the admin role (the website's /admin page), then exit")
 	fs.StringVar(&ac.removeAdmin, "remove-admin", "", "take the admin role from the account with this login name, then exit")
+	fs.Var(&ac.importLogs, "import-ranked-logs", "after updating from v0.8 or older, with the server stopped: count the "+
+		"Leaderboard's PvP and custom games of the older versions from their log files (a logs folder, or a log file named "+
+		"itself; may be given more than once), then exit; prints what it finds (a dry run) unless --apply")
+	fs.BoolVar(&ac.apply, "apply", false, "--import-ranked-logs: write the games into the database (once; again only with --force)")
+	fs.BoolVar(&ac.force, "force", false, "--import-ranked-logs --apply: import again although an import ran before (the same games count twice)")
 	seconds := fs.Int("seconds", 0, "stop after N seconds (default: run until Ctrl+C)")
 	printPorts := fs.Bool("print-ports", false, "print the TCP ports this configuration listens on, then exit")
 	limitsFlag := fs.String("limits", "auto", "rate and count limits on every listener, the logins, Blaze requests, games and queues, and the match hosts' packets (net_limits): auto = on for a public --bind or --public-host address, off on loopback and LAN; on forces them (the lanes' tests); off")

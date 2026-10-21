@@ -317,6 +317,40 @@ func (s *Store) Update(userID int64, fn func(a *Account)) (Account, error) {
 	return copyAccount(a), tx.Commit()
 }
 
+// UpdateMany changes every account in userIDs through fn and sets the server setting key to value (key "" = none), all
+// in one transaction: either every change is stored or none is (the operator's one-shot imports, such as the
+// Leaderboard's games read from old logs). fn gets each stored account (maps allocated, as Update's) and must not keep
+// it. An unknown user id stores nothing and returns ErrNoAccount.
+func (s *Store) UpdateMany(userIDs []int64, fn func(a *Account), key, value string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, id := range userIDs {
+		a, err := load(tx, id)
+		if err != nil {
+			return err
+		}
+		before := copyAccount(a)
+		fn(a)
+		a.UserID = id
+		if err := save(tx, &before, a); err != nil {
+			return err
+		}
+	}
+	if key != "" {
+		if _, err := tx.Exec(`INSERT INTO server_settings (key, value, changed) VALUES (?, ?, ?)
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value, changed = excluded.changed`, key, value,
+			now.UTC().Format(timeFormat)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // UpdatePair changes two accounts through fn in one transaction (B13b: a friendship is added to or
 // removed from both accounts at once). fn gets the stored accounts (maps allocated, as Update's; the same pointer
 // twice if the ids are equal) and must not keep them. It returns copies of both; ErrNoAccount if either is unknown.

@@ -86,6 +86,33 @@ func TestApplyRanked(t *testing.T) {
 	}
 }
 
+// ImportRanked adds an old game to the all-time count, and to its own day only while that day is still kept (the
+// HistoryDays days up to now); a live day's count is added to, never replaced.
+func TestImportRanked(t *testing.T) {
+	const x = 0x10000001
+	now := at(8) // 2026-10-09: the days kept are 2026-10-03 .. 2026-10-09
+	h := ApplyRanked(ApplyHistory(store.History{}, now, x, RoleGladiator, true, nil, 60), now, true)
+	before := h.Clone()
+	got := ImportRanked(h, now, at(0), true) // 2026-10-01: too old for a day
+	if !reflect.DeepEqual(h, before) {
+		t.Fatal("ImportRanked changed its input")
+	}
+	got = ImportRanked(ImportRanked(got, now, at(3), false), now, at(3), true) // 2026-10-04
+	got = ImportRanked(got, now, at(8), false)                                 // today, beside the live game
+	want := store.History{
+		Shapers: map[uint32]store.GamesWon{x: {Games: 1, Wins: 1}},
+		Days: []store.HistoryDay{
+			{Day: "2026-10-04", Ranked: store.GamesWon{Games: 2, Wins: 1}},
+			{Day: "2026-10-09", Shapers: map[uint32]store.ShaperDay{x: {Games: 1, Wins: 1, Seconds: 60}},
+				Roles: map[uint8]store.GamesWon{RoleGladiator: {Games: 1, Wins: 1}}, Ranked: store.GamesWon{Games: 2, Wins: 1}},
+		},
+		Ranked: store.GamesWon{Games: 5, Wins: 3},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("history\n got %+v\nwant %+v", got, want)
+	}
+}
+
 // The groups' keys and rows: ShaperStats all time by catalogID; the history groups per day within the
 // requested periods (offset, count), each key's rows by offset; days after today, keys without games and
 // roles outside 1-4 are left out.

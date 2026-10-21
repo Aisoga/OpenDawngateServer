@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"dawngate/server/internal/accounts"
+	"dawngate/server/internal/rankedlogs"
 	"dawngate/server/internal/store"
 )
 
@@ -30,17 +31,21 @@ type accountCommands struct {
 	accountStatus string // <name>=<status>
 	makeAdmin     string // the admin role
 	removeAdmin   string
+	importLogs    stringList     // --import-ranked-logs: log folders and files
+	apply, force  bool           // --import-ranked-logs: write (else a dry run); again after an earlier import
+	importLoc     *time.Location // tests: the log times' zone (default the local one)
 }
 
 // any reports whether a command was given.
 func (c accountCommands) any() bool {
 	return c.makeInvite || c.listInvites || c.revokeInvite != 0 || c.createAccount != "" || c.resetPassword != "" ||
-		c.accountStatus != "" || c.makeAdmin != "" || c.removeAdmin != ""
+		c.accountStatus != "" || c.makeAdmin != "" || c.removeAdmin != "" || len(c.importLogs) > 0 || c.apply || c.force
 }
 
 // AccountCommandFlags are the flags of the one-shot account commands, for Start-Server.exe to recognize and pass on.
 var AccountCommandFlags = []string{"make-invite", "invite-uses", "invite-days", "invite-note", "list-invites",
-	"revoke-invite", "create-account", "reset-password", "account-status", "make-admin", "remove-admin"}
+	"revoke-invite", "create-account", "reset-password", "account-status", "make-admin", "remove-admin",
+	"import-ranked-logs", "apply", "force"}
 
 // run carries out the account commands on the database in dataDir, writing what it did (and the new passwords and
 // codes, which are shown only here) to out. It returns the exit code. Every command that changes something writes an
@@ -143,6 +148,20 @@ func (c accountCommands) run(dataDir string, out, errOut io.Writer, now time.Tim
 		}
 		audit("account role", accounts.AccountTarget(cr.UserID, cr.Name), fmt.Sprintf("%s -> %s", cr.Role, role))
 	}
+	if (c.apply || c.force) && len(c.importLogs) == 0 {
+		return fail(errors.New("--apply and --force go with --import-ranked-logs <logs folder>"))
+	}
+	if len(c.importLogs) > 0 {
+		sum, err := rankedlogs.Run(st, rankedlogs.Options{Paths: c.importLogs, Loc: c.loc(), Apply: c.apply, Force: c.force,
+			Now: now}, out)
+		if err != nil {
+			return fail(err)
+		}
+		if sum.Applied {
+			audit("import ranked games", "", fmt.Sprintf("%d PvP or custom games (%d wins) of %d accounts from %d log files",
+				sum.Games, sum.Wins, sum.Accounts, sum.Imported))
+		}
+	}
 	if c.listInvites {
 		all, err := st.Invites()
 		if err != nil {
@@ -165,6 +184,28 @@ func (c accountCommands) run(dataDir string, out, errOut io.Writer, now time.Tim
 		}
 	}
 	return 0
+}
+
+// loc is the zone the import reads the log times in: this machine's (the server that wrote them ran here), or the
+// tests' fixed one.
+func (c accountCommands) loc() *time.Location {
+	if c.importLoc != nil {
+		return c.importLoc
+	}
+	return time.Local
+}
+
+// stringList is a flag that may be given more than once.
+type stringList []string
+
+func (l *stringList) String() string { return strings.Join(*l, ", ") }
+
+func (l *stringList) Set(v string) error {
+	if v == "" {
+		return errors.New("an empty path")
+	}
+	*l = append(*l, v)
+	return nil
 }
 
 func expiry(i store.Invite) string {

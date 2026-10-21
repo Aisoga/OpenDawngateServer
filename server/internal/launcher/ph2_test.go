@@ -49,6 +49,10 @@ func TestSplitAccountArgs(t *testing.T) {
 		// the admin role
 		{[]string{"--make-admin", "boss", "--check"}, []string{"--check"}, []string{"--make-admin", "boss"}},
 		{[]string{"--remove-admin=boss"}, nil, []string{"--remove-admin=boss"}},
+		// the Leaderboard's games from old logs: --apply and --force take no value and are no command alone
+		{[]string{"--import-ranked-logs", "/srv/logs", "--apply", "--non-interactive", "--force"}, []string{"--non-interactive"},
+			[]string{"--import-ranked-logs", "/srv/logs", "--apply", "--force"}},
+		{[]string{"--apply"}, []string{"--apply"}, nil},
 	} {
 		own, acct := SplitAccountArgs(c.in)
 		if !reflect.DeepEqual(own, c.own) || !reflect.DeepEqual(acct, c.acct) {
@@ -72,6 +76,11 @@ func TestStartServerAccountCommands(t *testing.T) {
 	}
 	if code := RunServer([]string{"--reset-password", "nobody"}, o); code != 1 {
 		t.Errorf("reset of an unknown account: exit %d", code)
+	}
+	// the Leaderboard's games from old logs (an empty logs folder: nothing to import, but the command runs)
+	logs := t.TempDir()
+	if code := RunServer([]string{"--import-ranked-logs", logs, "--apply", "--non-interactive"}, o); code != 0 {
+		t.Errorf("--import-ranked-logs: exit %d", code)
 	}
 	st, err := store.Open(filepath.Join(data, store.FileName)) // dgserver printed to the console; the database says it
 	if err != nil {

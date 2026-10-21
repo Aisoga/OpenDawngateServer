@@ -76,6 +76,16 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 | `--revoke-invite <id>` | Cancel an invite code. |
 | `--make-admin <name>`, `--remove-admin <name>` | Give or take the admin role (for the website's admin page). |
 
+**Counting the Leaderboard's games from old logs** (once, after updating from v0.8 or older; stop the server first; [hosting.md](hosting.md#after-updating-from-v08-or-older)):
+
+| Command | Effect |
+|---|---|
+| `--import-ranked-logs <logs folder or log file>` | Print what the log files of v0.8 and older say: per account the PvP and custom games and wins, per UTC day, and the profile's totals for comparison. Changes nothing. May be given more than once. A folder's files of v0.9 or newer and of developer builds are skipped; a developer build's file is read when it is named itself. The log times are read in the computer's time zone (the server wrote them in it). |
+| `--import-ranked-logs <…> --apply` | Add those games to the Leaderboard's counts, in one step, and note in the database that it ran. Refused when it ran before. |
+| `--import-ranked-logs <…> --apply --force` | Add them again (the same games count twice). |
+
+The same import as a program of its own, for a server of a version without the option: `go build ./cmd/import-ranked` in the source's `server` folder (for Linux from any system: `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o import-ranked ./cmd/import-ranked`), then `import-ranked --data <Dawngate-Data>/data [--apply [--force]] <logs folder>`. It changes no table layout, so the version that made the database opens it as before.
+
 ## Start-Client.exe and Start-Client.ini
 
 ```

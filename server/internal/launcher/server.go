@@ -840,14 +840,16 @@ func loginHint(mode string) string {
 }
 
 // SplitAccountArgs takes dgserver's one-shot account commands (--make-invite, --create-account, --reset-password,
-// --account-status, --list-invites, --revoke-invite and --make-invite's options) out of Start-Server's arguments, with
+// --account-status, --list-invites, --revoke-invite and --make-invite's options; --import-ranked-logs with --apply and
+// --force) out of Start-Server's arguments, with
 // their values. A non-empty acct means: run them on the setup folder's database (dgserver --data) and exit.
 func SplitAccountArgs(args []string) (own, acct []string) {
 	isAccount := map[string]bool{}
 	for _, f := range dgserver.AccountCommandFlags {
 		isAccount[f] = true
 	}
-	boolFlags := map[string]bool{"make-invite": true, "list-invites": true}
+	boolFlags := map[string]bool{"make-invite": true, "list-invites": true, "apply": true, "force": true}
+	options := map[string]bool{"apply": true, "force": true} // --import-ranked-logs' options, not commands of their own
 	command := false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -861,11 +863,11 @@ func SplitAccountArgs(args []string) (own, acct []string) {
 			i++
 			acct = append(acct, args[i])
 		}
-		if !strings.HasPrefix(name, "invite-") {
+		if !strings.HasPrefix(name, "invite-") && !options[name] {
 			command = true
 		}
 	}
-	if !command { // --invite-uses alone isn't a command: let the flag parser complain
+	if !command { // --invite-uses or --apply alone isn't a command: let the flag parser complain
 		return args, nil
 	}
 	return own, acct

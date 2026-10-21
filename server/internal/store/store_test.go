@@ -187,6 +187,37 @@ func TestUpdatePair(t *testing.T) {
 	}
 }
 
+// UpdateMany changes several accounts and a server setting in one transaction: an unknown id stores none of them.
+func TestUpdateMany(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	s := openT(t, path)
+	t0 := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	a, _ := login(t, s, "a@example.com", t0)
+	b, _ := login(t, s, "b@example.com", t0)
+	add := func(x *Account) { x.History.Ranked.Games += 2; x.History.Ranked.Wins++ }
+	if err := s.UpdateMany([]int64{a.UserID, 42}, add, "k", "v", t0); err != ErrNoAccount {
+		t.Fatalf("an unknown id: %v", err)
+	}
+	if x, _ := s.Account(a.UserID); x.History.Ranked != (GamesWon{}) {
+		t.Errorf("a failed UpdateMany changed account a: %+v", x.History.Ranked)
+	}
+	if _, _, found, _ := s.Setting("k"); found {
+		t.Error("a failed UpdateMany set the setting")
+	}
+	if err := s.UpdateMany([]int64{a.UserID, b.UserID}, add, "k", "v", t0); err != nil {
+		t.Fatal(err)
+	}
+	r := openT(t, path)
+	for _, id := range []int64{a.UserID, b.UserID} {
+		if x, _ := r.Account(id); x.History.Ranked != (GamesWon{Games: 2, Wins: 1}) {
+			t.Errorf("account %d after reopening: %+v", id, x.History.Ranked)
+		}
+	}
+	if v, changed, found, err := r.Setting("k"); err != nil || !found || v != "v" || !changed.Equal(t0) {
+		t.Errorf("setting: %q %v %v %v", v, changed, found, err)
+	}
+}
+
 // Everything survives a restart: accounts, personas, id counters and player content.
 func TestPersistenceRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "data", FileName)

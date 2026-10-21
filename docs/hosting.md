@@ -164,6 +164,22 @@ So when you update the server, tell your players which release it runs now, and 
 
 Players unpack the same release's `Start-Client.exe` into their folder the same way. Until they do, their logins to your server are refused, with a message that names both versions in their server list. **This PC**, the server in a player's own folder, is never refused.
 
+### After updating from v0.8 or older
+
+From v0.9 on, the Leaderboard counts only PvP and custom games, in counts of its own that start at 0 for every account: the older versions never stored a game's mode. Your server's log files did record it, so the server can count the older versions' PvP and custom games from them, once:
+
+1. Stop the server.
+2. Run the dry run. It changes nothing and prints, per log file, its version and whether it is read, and per account the games and wins it finds, per UTC day, next to the profile's totals (every game, practice included). An account marked `!` played more games than the logs show: games from before the oldest log (logs older than `log_days` are deleted) can't be told apart from practice games and aren't counted.
+
+   ```
+   Start-Server.exe --import-ranked-logs Dawngate-Data\logs
+   ```
+
+3. If the numbers look right, run it again with `--apply`. It writes everything at once, adds to the games played since the update, and notes in the database that it ran: a second `--apply` is refused (`--force` would count the same games twice).
+4. Start the server.
+
+Only log files written by v0.8 or older are read; a log of v0.9 or newer, whose games the server counted itself, is skipped. A developer build's log is read only when you name the file itself. On Linux, run it as the server's user: `sudo -u dawngate /srv/dawngate/start-server --import-ranked-logs /srv/dawngate/Dawngate-Data/logs` (and the same with `--apply`).
+
 ## Accounts
 
 Players log in with a **login name** (3–32 of `A–Z a–z 0–9 . _ - @`, not case-sensitive) and a **password** (8–63 characters). The server stores only a hash of each password.

@@ -88,7 +88,7 @@ Start-Client.exe [<server address or tag>] [options]
 
 `Start-Client.ini` has the keys `server` (empty: the server list), `folder`, `tunnel`, `gateway_port`, `picker` (`auto`, `on`, `off`), `local_trust` (`on`, `off`), `update_check` (`on`, `off`), `discord` (`on`, `off`), `discord_join` (`on`, `off`) and `discord_app_id`. An older `Start-Client.ini` keeps working: its `server` becomes the first server of a new list, and its comments are updated. The option on the command line wins over the key.
 
-**Discord status.** While the game runs, `Start-Client.exe` shows your friends on Discord what you do in Dawngate, through the Discord app on the same PC (its local connection; nothing goes over the network, and nothing happens without the app). Your profile shows *Playing OpenDawngate* with the project's logo and the status below it, which shows only the state, the mode, a timer and your party's size, never a name or a server:
+**Discord status.** While the game runs, `Start-Client.exe` shows your friends on Discord what you do in Dawngate, through the Discord app on the same PC (its local connection; the app passes the status on to Discord, and nothing happens without the app; [privacy.md](privacy.md)). Your profile shows *Playing OpenDawngate* with the project's logo and the status below it, which shows only the state, the mode, a timer and your party's size, never a name or a server:
 
 | You are | The status |
 |---|---|

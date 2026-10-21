@@ -446,6 +446,17 @@ If nginx answers `502 Bad Gateway`, the server isn't running, or `proxy_pass` na
 
 `Start-Server.ini` and `Dawngate-Data` stay. Tell your players the new version, as on Windows ([Versions and updates](#versions-and-updates)).
 
+### Removing a Linux server
+
+```sh
+sudo systemctl disable --now dawngate
+sudo rm /etc/systemd/system/dawngate.service
+sudo systemctl daemon-reload
+sudo userdel --remove dawngate
+```
+
+`userdel --remove` deletes the user's home `/srv/dawngate` with everything in it (the programs, `Dawngate-Data` with the accounts and logs, the Wine prefix). Remove the firewall rules you added for ports 42128 and 443 (`sudo ufw delete allow 42128`, and so on), and the nginx site if you set one up. On Windows, see [Uninstalling](playing.md#uninstalling).
+
 ### Wine on Linux
 
 - `start-server` uses `wine` from the `PATH`. For another Wine, for example WineHQ's packages in `/opt/wine-stable`, set `wine = /opt/wine-stable/bin/wine` in `Start-Server.ini`.

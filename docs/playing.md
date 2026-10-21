@@ -274,7 +274,7 @@ Your `Start-Client.exe` and the server must be the same release: **any differenc
 
 ## Discord status
 
-If the Discord app runs on the same PC, your friends on Discord see *Playing OpenDawngate* on your profile while the game runs, with what you do: *In the menu*, *In the lobby · PvP*, *In queue · PvP* with the time in the queue, *Shaper select · Practice vs bots*, *In match · PvP* with the match's time, *Post-game*, and *In a party (3 of 5)* when you are in a party. It never shows your name, your shaper or the server. It clears when the game ends, and it follows Discord if you start or restart Discord while you play.
+If the Discord app runs on the same PC, your friends on Discord see *Playing OpenDawngate* on your profile while the game runs, with what you do: *In the menu*, *In the lobby · PvP*, *In queue · PvP* with the time in the queue, *Shaper select · Practice vs bots*, *In match · PvP* with the match's time, *Post-game*, and *In a party (3 of 5)* when you are in a party. It never shows your name, your shaper or the server (with Join on, the button carries the server's address and key to the friend who clicks it, see below). It clears when the game ends, and it follows Discord if you start or restart Discord while you play.
 
 - To switch it off, put `discord = off` into `Start-Client.ini` (or start `Start-Client.exe --discord off`).
 - Discord shows it only while *Display current activity as a status message* is on in Discord's *Activity Privacy* settings.
@@ -293,9 +293,7 @@ While you are in a party, a practice group or a custom game's lobby with a free 
 
 ## Known limitations
 
-- The loot bag click after a win hasn't been confirmed in a real game yet. If you don't click the bag, the game returns to the main menu about 105 seconds after the end anyway.
 - Pause isn't available. Surrender isn't available in practice matches.
-- The minimap has no respawn timers for the jungle camps; a cleared camp's icon just comes back at the respawn.
 - The bots follow rules partly reconstructed from the game's data, so their exact behaviour may differ from the original.
 - Some details of the original server had to be guessed. If something works differently from how you remember it, a report helps, especially with a video of the original.
 
@@ -306,3 +304,18 @@ While you are in a party, a practice group or a custom game's lobby with a free 
 - **The server's logs** are in `Dawngate-Data\logs`, with one folder per match under `hosts`. `Start-Client.exe`'s own log is `front-<time>.log` there.
 
 If something goes wrong, see [troubleshooting.md](troubleshooting.md).
+
+## Uninstalling
+
+The programs install nothing into Windows. To remove everything:
+
+1. Close the game and `Start-Server.exe`.
+2. Delete the folder you unpacked the release into. That removes the programs, your settings (`Start-Client.ini`, `Start-Server.ini`) and `Dawngate-Data`: both game copies, the server's accounts, certificates and logs, and your server list. Keep `Dawngate.zip` if you want to play again later; it is never changed. If `folder` in an `.ini` pointed elsewhere, delete that folder too.
+3. Delete what the game itself writes:
+   - `%APPDATA%\DawngateData` (the game's settings and log),
+   - `Documents\Dawngate` (the game's cache of shaper portraits),
+   - `%LOCALAPPDATA%\CrashRpt\UnsentCrashReports\Dawngate_1.0.903.854`, if the game ever crashed.
+4. If you used the Discord status with Join, delete the registry key Discord uses to start `Start-Client.exe` (your own user's, no administrator needed): `reg delete HKCU\Software\Classes\discord-1561733580789514310 /f` in a command prompt.
+5. If Windows asked whether `Start-Server.exe` or the game may use the network, it kept your answer as a firewall rule. *Windows Security* → *Firewall & network protection* → *Allow an app through firewall* lists them; remove the entries for `Start-Server.exe` and `Dawngate.exe` there (this needs an administrator).
+
+A Linux server: [hosting.md](hosting.md#removing-a-linux-server).

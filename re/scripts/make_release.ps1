@@ -16,7 +16,11 @@
      rsrc_windows_amd64.syso (made from server\cmd\assets\dawngate.ico); the script checks that both programs hold
      every image of that .ico. The Linux server start-server is the same
      build of server\cmd\start-server for linux/amd64 with the same version (not <Name>-linux: Start-Client.exe
-     refuses a server of any other version).
+     refuses a server of any other version). Both programs and host\dgsim.dll get a version resource (server\tools\
+     peversion: product name "Dawngate Restoration", product and file version <Name>), which code signing requires
+     (SignPath: the project's name and one product version per build); it is checked on all three. With
+     -SignedFiles <folder> (the CI's second run, with the files the signing service returned) those three are
+     replaced by their signed copies after checking that each is this build's file plus a valid signature.
   3. The folder <Out>\<Name>\: the two programs, host\dgsim.dll, host\lua\*.lua, README.txt (re\scripts\release),
      LICENSE.txt (the AGPL text: the checkout's LICENSE, else branch public's), THIRD-PARTY-NOTICES.txt (RakNet 4.081's LICENSE and PATENTS
      from tools\raknet\RakNet and a note on this project's RakNet patches (gms\cmake\raknet_patches),
@@ -45,7 +49,8 @@ param(
     [string]$Name,
     [string]$GmsRoot,
     [switch]$NoZip,
-    [switch]$NoLinux
+    [switch]$NoLinux,
+    [string]$SignedFiles
 )
 $ErrorActionPreference = 'Stop'
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -89,6 +94,10 @@ foreach ($d in @($dir, $ldir)) { if (Test-Path $d) { Remove-Item -Recurse -Force
 New-Item -ItemType Directory -Force (Join-Path $dir 'host\lua') | Out-Null
 if ($Linux) { New-Item -ItemType Directory -Force (Join-Path $ldir 'host\lua') | Out-Null }
 $latin1 = [Text.Encoding]::GetEncoding(28591)
+function Set-PeVersion([string]$path, [string]$desc) {
+    & $peversion set -version $Name -description $desc $path | Out-Null
+    if ($LASTEXITCODE -ne 0) { Fail "peversion set $path failed" }
+}
 $saved = @{}
 foreach ($k in 'GOOS', 'GOARCH', 'CGO_ENABLED', 'GOTOOLCHAIN') { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
 $listModules = {
@@ -102,10 +111,17 @@ $listModules = {
 try {
     $env:GOOS = 'windows'; $env:GOARCH = 'amd64'; $env:CGO_ENABLED = '0'; $env:GOTOOLCHAIN = 'local'
     $ico = [IO.File]::ReadAllBytes((Join-Path $Repo 'server\cmd\assets\dawngate.ico'))
-    foreach ($p in @(@('Start-Server.exe', './cmd/start-server'), @('Start-Client.exe', './cmd/start-client'))) {
+    # the version resource of the signed files (SignPath: product name and one product version per build), written
+    # by server\tools\peversion after each build; the tool itself is built into <Out> and removed at the end
+    $peversion = Join-Path $Out "peversion-$PID.exe"
+    & $go build -C (Join-Path $Repo 'server') -o $peversion ./tools/peversion
+    if ($LASTEXITCODE -ne 0) { Fail 'go build ./tools/peversion failed' }
+    foreach ($p in @(@('Start-Server.exe', './cmd/start-server', 'Dawngate Restoration: the server'),
+            @('Start-Client.exe', './cmd/start-client', "Dawngate Restoration: the game's launcher"))) {
         Write-Host "building $($p[0]) ..." -ForegroundColor Cyan
         & $go build -C (Join-Path $Repo 'server') -trimpath -ldflags "-s -w -X dawngate/server/internal/version.release=$Name" -o (Join-Path $dir $p[0]) $p[1]
         if ($LASTEXITCODE -ne 0) { Fail "go build $($p[1]) failed" }
+        Set-PeVersion (Join-Path $dir $p[0]) $p[2]
         $said = "$(& (Join-Path $dir $p[0]) --version)".Trim()
         if ($said -ne $Name) { Fail "$($p[0]) --version says '$said', not its version $Name (the linker's -X)" }
         # the program's icon: the linker links the command's rsrc_windows_amd64.syso (made from this .ico by
@@ -170,8 +186,34 @@ $linuxPicker = $Linux -and ([IO.File]::ReadAllText((Join-Path $ldir 'start-serve
 # 3. the files
 $utf8 = New-Object Text.UTF8Encoding($false)
 function Write-Text([string]$path, [string[]]$lines, [string]$eol) { [IO.File]::WriteAllText($path, (($lines -join $eol) + $eol), $utf8) }
+# the DLL with its version resource (as the programs'); the Linux folder gets the same file
+Copy-Item $dll (Join-Path $dir 'host\dgsim.dll')
+Set-PeVersion (Join-Path $dir 'host\dgsim.dll') 'Dawngate Restoration: the match host'
+& $peversion check -version $Name (Join-Path $dir 'Start-Server.exe') (Join-Path $dir 'Start-Client.exe') (Join-Path $dir 'host\dgsim.dll')
+if ($LASTEXITCODE -ne 0) { Fail 'a signed file lacks its version resource (product name, product version)' }
+# -SignedFiles: the three files as the code signing service returned them (CI: SignPath). Each must be this build's
+# file with an Authenticode signature added and nothing else changed (peversion signed) and Windows must find the
+# signature valid; they replace the built ones before BUILD.txt and the archives, so BUILD.txt's SHA-256 (which
+# Start-Client's update checks) are the signed files'
+$signer = ''
+if ($SignedFiles) {
+    if (-not (Test-Path $SignedFiles)) { Fail "-SignedFiles $SignedFiles`: no such folder" }
+    foreach ($f in @('Start-Server.exe', 'Start-Client.exe', 'host\dgsim.dll')) {
+        $leaf = Split-Path $f -Leaf
+        $found = @(Get-ChildItem $SignedFiles -Recurse -File -Filter $leaf)
+        if ($found.Count -ne 1) { Fail "-SignedFiles: $($found.Count) files named $leaf in $SignedFiles, not one" }
+        & $peversion signed -version $Name (Join-Path $dir $f) $found[0].FullName
+        if ($LASTEXITCODE -ne 0) { Fail "-SignedFiles: $leaf is not this build's file with a signature added" }
+        $sig = Get-AuthenticodeSignature $found[0].FullName
+        if ($sig.Status -ne 'Valid') { Fail "-SignedFiles: the signature of $leaf is $($sig.Status) ($($sig.StatusMessage))" }
+        Copy-Item $found[0].FullName (Join-Path $dir $f) -Force
+        $signer = $sig.SignerCertificate.Subject
+        Write-Host "signed: $f ($signer)" -ForegroundColor Green
+    }
+}
+Remove-Item $peversion
 foreach ($d in @($dir) + @(if ($Linux) { $ldir })) {
-    Copy-Item $dll (Join-Path $d 'host\dgsim.dll')
+    if ($d -ne $dir) { Copy-Item (Join-Path $dir 'host\dgsim.dll') (Join-Path $d 'host\dgsim.dll') }
     foreach ($f in $lua) { Copy-Item $f.FullName (Join-Path $d "host\lua\$($f.Name)") }
 }
 $readme = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'release\README.txt')).Replace('@VERSION@', $Name)
@@ -292,7 +334,8 @@ $dirtyNote = if ($dirty) { ' (with uncommitted changes in server\ or re\scripts\
 $build = Get-BuildLines $dir '^(Start-Server\.exe|Start-Client\.exe|README\.txt|LICENSE\.txt|THIRD-PARTY-NOTICES\.txt|BUILD\.txt|host\\dgsim\.dll|host\\lua\\[A-Za-z0-9_]+\.lua)$' '\' @(
     "release  $Name", "version  $Name (Start-Server.exe and Start-Client.exe; a player's Start-Client and the server must have the same)",
     "commit   $commit$dirtyNote",
-    "built    $built", "go       $goVersion", "dgsim    $dll (current: newer than its sources, its build stamp's bytes)")
+    "built    $built", "go       $goVersion", "dgsim    $dll (current: newer than its sources, its build stamp's bytes)",
+    "signed   $(if ($signer) { "Start-Server.exe, Start-Client.exe, host\dgsim.dll: $signer" } else { 'no (unsigned)' })")
 [IO.File]::WriteAllText((Join-Path $dir 'BUILD.txt'), (($build -join "`r`n") + "`r`n"))
 if ($Linux) {
     $build = Get-BuildLines $ldir '^(start-server|dawngate\.service|README\.txt|LICENSE\.txt|THIRD-PARTY-NOTICES\.txt|BUILD\.txt|host\\dgsim\.dll|host\\lua\\[A-Za-z0-9_]+\.lua)$' '/' @(

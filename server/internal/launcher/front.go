@@ -506,8 +506,20 @@ func (f *Front) serveHTTP(c net.Conn) {
 		f.servePage(c, bufio.NewReader(rest))
 		return
 	}
+	// the game's crash and error reports (CrashRpt: a memory dump, the game's log and preferences, pictures of every
+	// screen) stay on this PC: the front answers them itself and never passes them to the server
+	if isCrashReportPath(first) {
+		f.httpLocal.ServeConn(&replayConn{Conn: c, r: rest})
+		return
+	}
 	c.SetReadDeadline(time.Time{})
 	f.servePiped(f.Ports.HTTP, &replayConn{Conn: c, r: rest}, f.httpLocal.ServeConn)
+}
+
+// isCrashReportPath: the request line's target is under the config packages' crash-report URL (/crash/).
+func isCrashReportPath(line []byte) bool {
+	f := strings.Fields(string(line))
+	return len(f) >= 2 && strings.HasPrefix(pathOf(f[1]), "/crash/")
 }
 
 // serveTelemetry carries the game's telemetry connection (it stays open across logins) packet by packet to the

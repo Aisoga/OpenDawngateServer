@@ -842,7 +842,8 @@ end
 --      defaultSearchRadius (30), what the local holds for every use in the data (no link passes a parameter).
 --   2. ability_Bot_GroupInLane compares nBotUtils.GetEnemiesInLane's table with GetAlliesInLane's number (Lua 5.1
 --      raises on every Tick, no metamethod applies between a table and a number) and passes (lane, team) to helpers that
---      take (team, lane). Fix: its Tick is replaced by a copy that passes (team, lane) and counts the table (#). Only the
+--      take (team, lane). Fix: its Tick is replaced by the project's own
+--      (groupInLaneTick below), which passes (team, lane) and counts the table (#). Only the
 --      Creature_Gladiator and Sculptor phases use it (not Tuning.BotPlan's five bots); ability_Bot_SpreadOutLanes has
 --      the same bug but no phase uses it, so it stays.
 local function countOf(x)
@@ -850,34 +851,46 @@ local function countOf(x)
   return tonumber(x) or 0
 end
 
-local function groupInLaneTick(p3)
-  local v4 = ability_Bot_GroupInLane
-  p3.nearTower = false
-  p3.myPosition = nGameObject.GetPosition(p3.myObjectID)
-  p3.nearbyTowers = nObjectManager.GetObjectsInRadius(p3.myPosition, v4.searchRadius, nGetObjectsSortType.Distance,
-                                                      nTargetType.EnemyStructures, 0, kObjIDNone, kObjIDNone,
-                                                      v4.descriptors, 0) or {}
-  for _, tower in ipairs(p3.nearbyTowers) do
-    if nBot.ValidateHostileBotTarget(p3.myTeam, tower, false, true) then
-      p3.nearTower = true
-      break
+-- The project's own Tick for ability_Bot_GroupInLane (written for the host from the behaviour above, not taken from
+-- the game): a bot that isn't near an enemy structure goes to a lane where its team is outnumbered (top first), else to
+-- the lane with more allies. It keeps the ability's state fields (nearTower, myPosition, nearbyTowers, alliesTop,
+-- enemiesTop, alliesBot, enemiesBot) for the game's other functions of the ability.
+local function laneCounts(team, lane)
+  return countOf(nBotUtils.GetAlliesInLane(team, lane)), countOf(nBotUtils.GetEnemiesInLane(team, lane))
+end
+
+local function nearEnemyStructure(state, radius, descriptors)
+  state.nearbyTowers = nObjectManager.GetObjectsInRadius(state.myPosition, radius, nGetObjectsSortType.Distance,
+                                                         nTargetType.EnemyStructures, 0, kObjIDNone, kObjIDNone,
+                                                         descriptors, 0) or {}
+  for _, structure in ipairs(state.nearbyTowers) do
+    if nBot.ValidateHostileBotTarget(state.myTeam, structure, false, true) then
+      return true
     end
   end
-  p3.alliesTop = countOf(nBotUtils.GetAlliesInLane(p3.myTeam, nLaneID.Top))
-  p3.enemiesTop = countOf(nBotUtils.GetEnemiesInLane(p3.myTeam, nLaneID.Top))
-  p3.alliesBot = countOf(nBotUtils.GetAlliesInLane(p3.myTeam, nLaneID.Bottom))
-  p3.enemiesBot = countOf(nBotUtils.GetEnemiesInLane(p3.myTeam, nLaneID.Bottom))
+  return false
+end
+
+local function groupInLaneTick(state)
+  local ability = ability_Bot_GroupInLane
+  state.myPosition = nGameObject.GetPosition(state.myObjectID)
+  state.nearTower = nearEnemyStructure(state, ability.searchRadius, ability.descriptors)
+  state.alliesTop, state.enemiesTop = laneCounts(state.myTeam, nLaneID.Top)
+  state.alliesBot, state.enemiesBot = laneCounts(state.myTeam, nLaneID.Bottom)
   -- BOTCOMP: with the composed setup (one Gladiator per lane, a support each) the lanes are the setup's: no balancing
-  if not p3.nearTower and B.compositionWanted ~= true then
-    if p3.enemiesTop > p3.alliesTop then
-      nBot.AssignLane(p3.myObjectID, nLaneID.Top)
-    elseif p3.enemiesBot > p3.alliesBot then
-      nBot.AssignLane(p3.myObjectID, nLaneID.Bottom)
-    elseif p3.alliesTop > p3.alliesBot then
-      nBot.AssignLane(p3.myObjectID, nLaneID.Top)
-    elseif p3.alliesBot > p3.alliesTop then
-      nBot.AssignLane(p3.myObjectID, nLaneID.Bottom)
-    end
+  if state.nearTower or B.compositionWanted == true then
+    return
+  end
+  local lane
+  if state.enemiesTop > state.alliesTop then
+    lane = nLaneID.Top
+  elseif state.enemiesBot > state.alliesBot then
+    lane = nLaneID.Bottom
+  elseif state.alliesTop ~= state.alliesBot then
+    lane = state.alliesTop > state.alliesBot and nLaneID.Top or nLaneID.Bottom
+  end
+  if lane then
+    nBot.AssignLane(state.myObjectID, lane)
   end
 end
 B.groupInLaneTick = groupInLaneTick

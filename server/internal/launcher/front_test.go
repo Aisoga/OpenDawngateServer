@@ -586,6 +586,18 @@ func TestFrontServerSwitch(t *testing.T) {
 	}
 	get("/dawngate/terms")
 	waitLog(t, logB, "GET /dawngate/terms", 1)
+	// a crash or error report stays here: the front answers it, the server never sees it
+	if resp, err := http.Post("http://"+net.JoinHostPort(frontLocal, strconv.Itoa(DefaultFrontPorts.HTTP))+
+		"/crash/reportCrash/", "multipart/form-data; boundary=x", strings.NewReader("--x--\r\n")); err != nil {
+		t.Fatal(err)
+	} else {
+		resp.Body.Close()
+	}
+	get("/dawngate/terms")
+	waitLog(t, logB, "GET /dawngate/terms", 2)
+	if strings.Contains(readLogs(t, logB), "/crash/") {
+		t.Error("the crash report reached B")
+	}
 
 	// the file as written
 	raw, _ := os.ReadFile(BookmarksPath(l))

@@ -5,9 +5,10 @@ An unofficial fan project to play the 2014 MOBA Dawngate again. It is not affili
 Electronic Arts or Waystone Games; Dawngate is a trademark of its owners. This release contains no game file:
 every player needs their own Dawngate.zip from archive.org.
 
-A WORD ON SAFETY. The game is 2014 code. At home nothing leaves your network; a public server (see "Hosting on
-the internet") gets checked passwords, an encrypted tunnel, limits and a website for accounts, and is still
-run at the operator's own risk. Players: play only on servers you trust, with a password you use nowhere else.
+A WORD ON SAFETY. The game is 2014 code. At home the game and the server send nothing to the internet (see
+"Privacy" for what Start-Client.exe itself sends); a public server (see "Hosting on the internet") gets
+checked passwords, an encrypted tunnel, limits and a website for accounts, and is still run at the operator's
+own risk. Players: play only on servers you trust, with a password you use nowhere else.
 
 
 What you need
@@ -149,7 +150,8 @@ instead, and players need Start-Client.exe --tunnel off.
 
 Windows warnings
 ----------------
-- SmartScreen may say the programs are unrecognized (they aren't signed): "More info", then "Run anyway".
+- SmartScreen may say the programs are unrecognized while a release isn't signed yet: "More info", then
+  "Run anyway". Code signing policy: the project's README (https://github.com/Aisoga/OpenDawngateServer).
 - On a LAN address the Windows firewall asks once whether Start-Server.exe may use the network: allow private
   networks only. On this PC alone (address 127.0.0.1) the question can be cancelled.
 - Your antivirus may look at the programs the first time; the setup patches a few bytes of the game's copy
@@ -229,6 +231,25 @@ Dawngate-Data\            made by the first start: the game copies, certificates
                           Dawngate-Data\data to keep the accounts (with the server stopped). Never share the
                           game copies (they are the game's files), the certificates' *_key.pem files or the
                           logs (they hold login names and addresses).
+
+Privacy
+-------
+Nothing goes to this project's developers. Start-Client.exe sends your login and your game to the server you
+pick; at each start a numbered release asks api.github.com for a newer release (update_check = off in
+Start-Client.ini stops it); with the Discord app running, your status goes to Discord, and with Join the
+address and key of the server you play on (discord = off, discord_join = off). The game's crash reports stay
+on this PC. A server keeps accounts, match histories and logs with login names and addresses in
+Dawngate-Data. The full list: docs/privacy.md in the project's repository.
+
+
+Removing it
+-----------
+The programs install nothing into Windows. Close the game and Start-Server.exe, then delete this folder (with
+Dawngate-Data; keep Dawngate.zip to play again later). The game also writes %APPDATA%\DawngateData,
+Documents\Dawngate and, after a crash, %LOCALAPPDATA%\CrashRpt\UnsentCrashReports\Dawngate_1.0.903.854: delete
+them too. With Discord's Join used:  reg delete HKCU\Software\Classes\discord-1561733580789514310 /f
+Firewall answers Windows kept: Windows Security, Firewall & network protection, Allow an app through firewall.
+
 
 Copyright (C) 2026 the Dawngate Restoration contributors. This project's code is licensed under the GNU AGPL v3
 (LICENSE.txt); the source of this release is the project's repository at the commit in BUILD.txt. The game, its

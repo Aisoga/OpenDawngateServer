@@ -4,6 +4,9 @@
 # A successful build of main (every job green) replaces the rolling "nightly" pre-release (never marked Latest).
 # A pushed tag v<major>.<minor>[.<patch>] on a commit of main builds the same way, with the tag as the
 # release's name and version, and publishes the numbered release <tag> with <tag>.zip and <tag>-linux.tar.gz.
+# A numbered release's Windows programs are signed through SignPath once the repository has its settings
+# (README.md *Code signing policy*; the steps after "Release zip and Linux archive"); until then, and for every
+# other build, they stay unsigned.
 # Nothing here needs the game's files: tests that read them skip themselves.
 name: build
 
@@ -33,7 +36,10 @@ jobs:
     # only in the public repository (a private copy of this file runs nothing)
     if: github.repository == 'Aisoga/OpenDawngateServer'
     runs-on: windows-2022 # Visual Studio 2022 with its x86 compiler and CMake
-    timeout-minutes: 60
+    # a numbered release waits for the signing request's manual approval (up to 3 hours, below)
+    timeout-minutes: ${{ startsWith(github.ref, 'refs/tags/v') && 240 || 60 }}
+    outputs:
+      signed: ${{ steps.signed.outputs.signed }}
     defaults:
       run:
         shell: pwsh
@@ -132,6 +138,64 @@ jobs:
           if ($env:RELEASE_NAME -and $zip[0].Name -cne "$env:RELEASE_NAME.zip") { throw "the zip is $($zip[0].Name), not $env:RELEASE_NAME.zip" }
           "RELEASE_ZIP=$($zip[0].FullName)" >> $env:GITHUB_ENV
           "RELEASE_TGZ=$($tgz[0].FullName)" >> $env:GITHUB_ENV
+
+      # Code signing (README.md *Code signing policy*): a numbered release's Start-Server.exe, Start-Client.exe and
+      # host\dgsim.dll go to SignPath as a workflow artifact of this run (its origin check: built here, on GitHub's
+      # runners), which signs them once an approver approves the request (by hand, within 3 hours). The release is
+      # then built again with the signed files: make_release.ps1 -SignedFiles checks that each is this build's file
+      # plus a valid signature, and BUILD.txt lists the signed files (Start-Client's update checks them). Runs only
+      # with the repository variable SIGNPATH_ORGANIZATION_ID and the secret SIGNPATH_API_TOKEN set
+      # (SIGNPATH_PROJECT_SLUG and SIGNPATH_SIGNING_POLICY_SLUG when they differ from the defaults below).
+      - name: Files to sign
+        id: to-sign
+        if: env.RELEASE_NAME != '' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        run: |
+          $d = "re/out/release/$env:RELEASE_NAME"
+          New-Item -ItemType Directory -Force re/out/to-sign | Out-Null
+          Copy-Item "$d/Start-Server.exe", "$d/Start-Client.exe", "$d/host/dgsim.dll" re/out/to-sign
+          Get-ChildItem re/out/to-sign
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload-unsigned
+        if: steps.to-sign.outcome == 'success'
+        with:
+          name: to-sign
+          path: re/out/to-sign/
+          if-no-files-found: error
+          retention-days: 1
+
+      - uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        if: steps.to-sign.outcome == 'success'
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'OpenDawngateServer' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          parameters: |
+            version: "${{ env.RELEASE_NAME }}"
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 10800
+          output-artifact-directory: re/out/signed
+
+      - name: Release with the signed files
+        id: signed
+        if: steps.to-sign.outcome == 'success'
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          # the signed artifact as files (unpacked here if it came as a zip)
+          if (-not (Get-ChildItem re/out/signed -Recurse -Filter 'Start-Client.exe')) {
+            Get-ChildItem re/out/signed -Filter '*.zip' | ForEach-Object { Expand-Archive $_.FullName -DestinationPath re/out/signed/unzipped }
+          }
+          Remove-Item -Recurse -Force re/out/release
+          powershell -NoProfile -ExecutionPolicy Bypass -File re/scripts/make_release.ps1 -Name $env:RELEASE_NAME -SignedFiles re/out/signed
+          $zip = @(Get-ChildItem re/out/release -Filter '*.zip')
+          $tgz = @(Get-ChildItem re/out/release -Filter '*-linux.tar.gz')
+          if ($zip.Count -ne 1 -or $tgz.Count -ne 1) { throw "expected one release zip and one Linux archive" }
+          if ($zip[0].Name -cne "$env:RELEASE_NAME.zip") { throw "the zip is $($zip[0].Name), not $env:RELEASE_NAME.zip" }
+          "RELEASE_ZIP=$($zip[0].FullName)" >> $env:GITHUB_ENV
+          "RELEASE_TGZ=$($tgz[0].FullName)" >> $env:GITHUB_ENV
+          "signed=true" >> $env:GITHUB_OUTPUT
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -253,7 +317,7 @@ jobs:
           cat > notes.md <<EOF
           An automatic build of commit ${SHA}, made by this repository's build workflow.
 
-          - Unsigned and not tested in the game: the stable versions are the numbered releases.
+          - Unsigned and not tested in the game: the stable versions are the numbered releases ([Code signing policy](https://github.com/${REPO}#code-signing-policy)).
           - Like every release it contains no game file: put your own \`Dawngate.zip\` (archive.org) next to \`Start-Server.exe\`.
           - The \`-linux.tar.gz\` archive is the same server for a 64-bit Linux machine (\`start-server\`, its match hosts under Wine); players use the zip's \`Start-Client.exe\`.
           - \`BUILD.txt\` in each archive names the commit it was built from (the source, AGPL-3.0).
@@ -284,8 +348,15 @@ jobs:
           REPO: ${{ github.repository }}
           SHA: ${{ github.sha }}
           TAG: ${{ github.ref_name }}
+          SIGNED: ${{ needs.build.outputs.signed }}
         run: |
           set -euo pipefail
+          policy="[Code signing policy](https://github.com/${REPO}#code-signing-policy)"
+          if [ "$SIGNED" = true ]; then
+            signing="- The Windows programs are signed: free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org) (${policy})."
+          else
+            signing="- The programs are unsigned (SmartScreen: *More info*, *Run anyway*; ${policy})."
+          fi
           zip="release/$TAG.zip"
           tgz="release/$TAG-linux.tar.gz"
           ls -l "$zip" "$tgz"
@@ -300,7 +371,7 @@ jobs:
           - \`${TAG}.zip\`: Windows 10/11 64-bit. \`Start-Server.exe\` runs a server, \`Start-Client.exe\` plays. Put your own \`Dawngate.zip\` (archive.org) next to \`Start-Server.exe\`; the release contains no game file. See \`README.txt\` in the zip.
           - \`${TAG}-linux.tar.gz\`: the same server for a 64-bit Linux machine (\`start-server\`, its match hosts under Wine).
           - Players and servers play together only on the same release: update both to this one.
-          - The programs are unsigned (SmartScreen: *More info*, *Run anyway*).
+          ${signing}
           - \`BUILD.txt\` in each archive names the commit it was built from (the source, AGPL-3.0).
           NOTES
           gh release create "$TAG" "$zip" "$tgz" --repo "$REPO" --verify-tag \

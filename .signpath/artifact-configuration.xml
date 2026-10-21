@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The SignPath artifact configuration of the release signing (docs/development/signing.md). It lives in SignPath's
+     project settings; this copy is the reference and must be kept equal to it. The artifact is the workflow artifact
+     "to-sign" of .github/workflows/build.yml: a zip with the three files at its root. Every file must carry the
+     project's name as its product name and the release's name as its product version (make_release.ps1 writes both
+     with server/tools/peversion); the workflow passes the version as the parameter. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file-set product-name="Dawngate Restoration" product-version="${version}">
+      <include path="Start-Server.exe" />
+      <include path="Start-Client.exe" />
+      <include path="dgsim.dll" />
+      <for-each>
+        <authenticode-sign />
+      </for-each>
+    </pe-file-set>
+  </zip-file>
+</artifact-configuration>

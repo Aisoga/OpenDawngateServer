@@ -29,7 +29,9 @@ You need Windows 10 or 11 (64-bit), a graphics card that runs DirectX 9 games an
 
 `Start-Server.exe` is only needed to run a server that other people play on ([docs/hosting.md](docs/hosting.md)).
 
-Windows may warn that the programs are unrecognized, because they aren't signed. Click *More info*, then *Run anyway*.
+Windows may warn that the programs are unrecognized while a release isn't signed yet ([Code signing policy](#code-signing-policy)). Click *More info*, then *Run anyway*.
+
+To remove everything again, see [Uninstalling](docs/playing.md#uninstalling).
 
 ## Documentation
 
@@ -39,6 +41,7 @@ Windows may warn that the programs are unrecognized, because they aren't signed.
 | host a server for friends or for the internet | [docs/hosting.md](docs/hosting.md) |
 | look up a setting, a command or a port | [docs/reference.md](docs/reference.md) |
 | fix a problem | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| know what the programs send where | [docs/privacy.md](docs/privacy.md) |
 | understand how the restoration works | [docs/how-it-works.md](docs/how-it-works.md) |
 | build it from source, or work on it | [docs/development/](docs/development/README.md) |
 
@@ -49,7 +52,16 @@ The game client is code from 2014 and trusts the server it connects to.
 - Play only on servers whose operator you trust.
 - Use a password you don't use anywhere else.
 
-On your own PC and home network nothing leaves your network. A server on the internet runs at its operator's own risk. Its protections, and what they leave open, are in [Hosting on the internet](docs/hosting.md#hosting-on-the-internet).
+On your own PC and home network the game and the server send nothing to the internet; `Start-Client.exe` itself asks GitHub for updates and, with the Discord app running, shows your status on Discord ([Privacy](docs/privacy.md), both can be switched off). A server on the internet runs at its operator's own risk. Its protections, and what they leave open, are in [Hosting on the internet](docs/hosting.md#hosting-on-the-internet).
+
+## Code signing policy
+
+The Windows programs of the numbered releases (`Start-Client.exe`, `Start-Server.exe` and `host\dgsim.dll`) get signed by the release build: free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org). The project is applying for it; until it is granted, the releases are unsigned.
+
+- Only files built by this repository's own build (`.github/workflows/build.yml`, from a tagged commit, on GitHub's runners) are signed, never a file built elsewhere or another project's.
+- Every signing request is approved by hand.
+- Committers and reviewers: [Aisoga](https://github.com/Aisoga). Approvers: [Aisoga](https://github.com/Aisoga).
+- Privacy policy: [docs/privacy.md](docs/privacy.md) lists everything the programs send and where (the servers you play on, the update check on GitHub, the Discord status) and how to switch each off. Nothing goes to this project's developers.
 
 ## License
 

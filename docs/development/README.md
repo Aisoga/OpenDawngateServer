@@ -6,6 +6,7 @@ These pages are for people who want to build the project from source, run it fro
 |---|---|
 | [building.md](building.md) | Tools, the one-command setup, building the release, running the tests |
 | [running-from-source.md](running-from-source.md) | Playing and serving from a checkout, test options for the match host, logs, LAN play, extra host machines |
+| [signing.md](signing.md) | Code signing of the releases (SignPath): the version resource, the build's signing steps, the one-time setup |
 | [decisions/](decisions/) | Design decisions: languages, the setup in Go, third-party Go modules |
 | [../how-it-works.md](../how-it-works.md) | An overview of the pieces |
 

@@ -1696,8 +1696,9 @@ constexpr int kAbsorbDamage = 14, kAbsorbMagical = 15, kAbsorbPhysical = 16, kAb
 constexpr std::uintptr_t kHasHandler = 0x14;
 }  // namespace fns
 // The attribute snapshot (pool 0x0993DBD5; AttributeSnapshot_Create 0x008D8A80): +0 its id, +4 caster, +0xC team,
-// +0xD player index, +0xE kill-credit player index, +0x10 the credited ability GUID, +0x14 the instance, +0x18 the
-// original ability GUID.
+// +0xD player index, +0xE kill-credit player index, +0x10/+0x14 the credited (root) ability GUID and instance, +0x18/+0x24
+// the snapshot's own ability GUID and instance (DRAINHEAL: AttributeSnapshot_CreateFromSnapshot 0x008D8C70 keeps the
+// source's credit pair and writes its own pair; core/damage/snapshot_ids.h).
 namespace snap {
 constexpr std::uintptr_t kId = 0x00;
 constexpr std::uintptr_t kCaster = 0x04;
@@ -1705,8 +1706,9 @@ constexpr std::uintptr_t kTeam = 0x0C;
 constexpr std::uintptr_t kPlayerIndex = 0x0D;
 constexpr std::uintptr_t kCreditPlayerIndex = 0x0E;
 constexpr std::uintptr_t kAbilityGuid = 0x10;
-constexpr std::uintptr_t kInstance = 0x14;
-constexpr std::uintptr_t kOriginalGuid = 0x18;
+constexpr std::uintptr_t kInstance = 0x14;      // the credited instance
+constexpr std::uintptr_t kOriginalGuid = 0x18;  // the own GUID
+constexpr std::uintptr_t kOwnInstance = 0x24;
 }  // namespace snap
 
 // --- player death and respawn (D1g; docs/DAMAGE.md *D1g: player death and respawn on the host*) ---------------------

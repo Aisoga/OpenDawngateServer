@@ -18,6 +18,7 @@
 #include "core/bots/bots.h"
 #include "core/bots/draft.h"
 #include "core/bots/guidebuild.h"
+#include "core/bots/lanesplit.h"
 #include "core/protocol/commands.h"
 #include "core/protocol/messages.h"
 #include "agents.h"
@@ -72,6 +73,11 @@ bool g_draftHidden = false;       // until the reveal: the bots' updates carry n
 bool g_drafted = false;           // the draft ran
 std::set<std::string> g_available;  // the classes the composition may use (EnsurePlayers)
 unsigned g_draftSeed = 1;
+
+// BOTLANESPLIT (core/bots/lanesplit.h): the humans' roles by team the last split counted (the composition's, the
+// draft's intents, the reveal's picks), and the match's single lane changes the rule refused or took
+std::map<int, std::vector<int>> g_humanRoles;
+unsigned g_splitKept = 0, g_splitTaken = 0;
 
 struct Stats {
   unsigned created = 0, createFailed = 0, deployed = 0, deployFailed = 0;
@@ -729,6 +735,52 @@ const Bot* BotByCreature(std::uint32_t creature) {
   return nullptr;
 }
 
+// BOTLANESPLIT: one line per team: its bots by lane (class and role), the humans counted, split or not.
+void LogLaneSplit(const char* when) {
+  for (int team = 1; team <= 2; ++team) {
+    std::string top, bottom;
+    std::vector<gb::LaneMember> members;
+    for (const Bot& b : g_bots) {
+      if (b.team != team) continue;
+      members.push_back(gb::LaneMember{b.role, b.lane});
+      std::string& side = b.lane == gb::kLaneTop ? top : bottom;
+      side += (side.empty() ? "" : ", ") + b.botClass + " " + gb::RoleName(b.role);
+    }
+    if (members.empty()) continue;
+    std::string humans;
+    for (int r : g_humanRoles[team]) humans += (humans.empty() ? "" : ", ") + std::string(gb::RoleName(r));
+    Log("bots: BOTLANESPLIT (%s): team %d top [%s], bottom [%s]; humans [%s]; the bots' roles %s", when, team,
+        top.c_str(), bottom.c_str(), humans.c_str(),
+        gb::LanesSplit(members) ? "split" : "NOT split (the lane counts allow no better)");
+  }
+}
+
+// BOTLANESPLIT: the bots of every team divide their roles over the lanes again (their current lanes give the counts);
+// a deployed bot's lane is reassigned too.
+void ResplitLanes(const char* when) {
+  if (!g_opt.laneSplit) return;
+  for (int team = 1; team <= 2; ++team) {
+    std::vector<gb::LaneMember> members;
+    std::vector<Bot*> at;
+    for (Bot& b : g_bots)
+      if (b.team == team) {
+        members.push_back(gb::LaneMember{b.role, b.lane});
+        at.push_back(&b);
+      }
+    if (members.empty()) continue;
+    const std::vector<int> lanes =
+        gb::SplitLanes(members, g_humanRoles[team], g_plan.topLaners > 0 ? g_plan.topLaners : 2);
+    for (size_t k = 0; k < at.size(); ++k) {
+      Bot& b = *at[k];
+      if (lanes[k] == b.lane) continue;
+      Log("bots: BOTLANESPLIT (%s): player %d (%s, %s, team %d) lane %d -> %d", when, b.index, b.botClass.c_str(),
+          gb::RoleName(b.role), team, b.lane, lanes[k]);
+      b.lane = lanes[k];
+      if (b.creature) g_state.lanes.Assign(b.creature, b.lane);
+    }
+  }
+}
+
 // BOTCOMP: nBotHost.BotRole(obj) -> the bot's mRole (RolesTuning.role index: 0 Gladiator, 1 Tactician, 2 Hunter, 3 Predator),
 // -1 for an object that is no bot of ours.
 int __cdecl LuaBotRole(void* L) {
@@ -740,6 +792,39 @@ int __cdecl LuaBotRole(void* L) {
     ++g_st.calls[5];
   }
   SehPushNumber(L, static_cast<float>(role));
+  return 1;
+}
+
+// BOTLANESPLIT: nBotHost.LaneSplit(bot, lane) -> the lane the bot takes for a single lane change in the match
+// (dgsim_bots_api.lua's ability_Bot_AssignToThreatenedLane): `lane` when its role's groups stay split over its team's
+// other bots (core/bots/lanesplit.h MoveKeepsSplit) or [host] bot_lane_split is 0, else its current lane. It assigns
+// nothing; the caller does.
+int __cdecl LuaLaneSplit(void* L) {
+  const std::uint32_t bot = SehArgId(L, 1);
+  const int lane = static_cast<int>(SehArgNumber(L, 2));
+  int out = lane;
+  if (Ours()) {
+    const Bot* me = BotByCreature(bot);
+    const int from = g_state.lanes.LaneOf(bot);
+    if (g_opt.laneSplit && me) {
+      std::vector<gb::LaneMember> others;
+      for (const Bot& b : g_bots)
+        if (&b != me && b.team == me->team && b.creature)
+          others.push_back(gb::LaneMember{b.role, g_state.lanes.LaneOf(b.creature)});
+      if (!gb::MoveKeepsSplit(me->role, from, lane, others)) out = from;
+    }
+    if (from != lane && (lane == gb::kLaneTop || lane == gb::kLaneBottom)) {
+      if (out == lane) ++g_splitTaken;
+      else ++g_splitKept;
+      if (LogBudget())
+        Log("bots: BOTLANESPLIT: player %d (%s, %s) asked to change lane %d -> %d: %s (kept %u, taken %u)",
+            me ? me->index : -1, me ? me->botClass.c_str() : "?", me ? gb::RoleName(me->role) : "?", from, lane,
+            out == lane ? "taken" : "kept (its role's split)", g_splitKept, g_splitTaken);
+    }
+  } else {
+    ++g_st.calls[5];
+  }
+  SehPushNumber(L, static_cast<float>(out));
   return 1;
 }
 
@@ -1543,6 +1628,7 @@ int __cdecl LuaHumanPing(void* L) {
 
 const LuaReg kBotHostRegs[] = {
     {"AssignLane", &LuaAssignLane},
+    {"LaneSplit", &LuaLaneSplit},  // BOTLANESPLIT
     {"GetLane", &LuaGetLane},
     {"ClosestLane", &LuaClosestLane},
     {"SharedLanes", &LuaSharedLanes},  // MAPHOST
@@ -1637,6 +1723,7 @@ void LoadApi(void* sim) {
                           " dgsim_bots.parasiteWanted = " + (g_opt.parasiteGuard ? "true" : "false") +
                           " dgsim_bots.campRadius = " + std::to_string(g_opt.campRadius) +
                           " dgsim_bots.laneWanted = " + (g_opt.laneFixes ? "true" : "false") +
+                          " dgsim_bots.laneSplitWanted = " + (g_opt.laneSplit ? "true" : "false") +
                           " dgsim_bots.compositionWanted = " + (g_opt.composition && g_opt.classes.empty() ? "true" : "false") +
                           " dgsim_bots.harassStartWorkers = " + std::to_string(g_opt.harassStartWorkers) +
                           " dgsim_bots.harassEndWorkers = " + std::to_string(g_opt.harassEndWorkers) +
@@ -1751,6 +1838,7 @@ void Configure(const Options& o) {
   g_opt.guideBuilds = HostOptionInt("bot_guide_builds", o.guideBuilds ? 1 : 0) != 0;  // DESECBOT-2
   g_opt.draft = HostOptionInt("bot_draft", o.draft);  // BOTDRAFT: -1 auto (custom, practice, pvp), 0 off, 1 always
   g_opt.hunterSeat = HostOptionInt("bot_hunter_seat", o.hunterSeat);  // MAPHOST: -1 auto (camps), 0 never, 1 always
+  g_opt.laneSplit = HostOptionInt("bot_lane_split", o.laneSplit ? 1 : 0) != 0;  // BOTLANESPLIT
   g_opt.kits = HostOptionInt("bot_kits", o.kits ? 1 : 0) != 0;               // HUNTERBOT
   g_opt.hunterFix = HostOptionInt("bot_hunter_fix", o.hunterFix ? 1 : 0) != 0;  // HUNTERBOT
   g_opt.campFinish = HostOptionInt("bot_camp_finish", o.campFinish ? 1 : 0) != 0;  // CAMPFINISH
@@ -1909,8 +1997,11 @@ std::vector<DraftOut> Draft(void* sim, const std::vector<DraftHumanIn>& humans) 
   o.tacticians = gb::ParseTacticianList(g_opt.tacticians);
   o.gladiators = gb::ParseGladiatorList(g_opt.gladiators);
   o.jungle = HunterSeat();  // MAPHOST
+  o.laneSplit = g_opt.laneSplit;  // BOTLANESPLIT
   const std::map<int, std::vector<gb::ComposedSeat>> drawn = gb::DraftMatch(teams, hs, g_available, o);
   Log("bots: BOTDRAFT: draw with seed %u: humans%s", g_draftSeed, hdesc.empty() ? " none" : hdesc.c_str());
+  g_humanRoles.clear();  // BOTLANESPLIT: the draw counted the humans' intents
+  for (const gb::DraftHuman& h : hs) g_humanRoles[h.team].push_back(h.role);
   std::map<int, size_t> nth;
   for (Bot& bot : g_bots) {
     auto t = drawn.find(bot.team);
@@ -1950,6 +2041,7 @@ std::vector<DraftOut> Draft(void* sim, const std::vector<DraftHumanIn>& humans) 
     d.altRoles = gb::AltRoles(bot.botClass);
     out.push_back(d);
   }
+  if (g_opt.laneSplit) LogLaneSplit("the draft");
   return out;
 }
 
@@ -2027,6 +2119,8 @@ const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& human
   }
   // G3b: a roster human that hasn't connected yet counts for its team (CountedHumans) and keeps its index
   const std::vector<gb::HumanPlayer> counted = gb::CountedHumans(hs, ws);
+  g_humanRoles.clear();  // BOTLANESPLIT
+  for (const gb::HumanPlayer& h : counted) g_humanRoles[h.team].push_back(h.role);
   const std::vector<int> teams = gb::BotTeams(counted, g_opt.allies);
   std::vector<gb::BotPlayer> plan;
   g_composed = g_opt.composition && g_opt.classes.empty();  // [host] bot_classes overrides the setup
@@ -2095,11 +2189,12 @@ const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& human
                 : "off: the bots are composed now",
         g_opt.draft, g_gameMode.c_str());
     plan = gb::PlanBotPlayersComposed(counted, g_teamSize, teams, available, anyClass, gb::ParseDropOrder(g_opt.compositionDrop),
-                                      0, seed, hunters, tacticians, gladiators, HunterSeat());
+                                      0, seed, hunters, tacticians, gladiators, HunterSeat(), g_opt.laneSplit);
     for (const gb::HumanPlayer& h : counted)
       Log("bots: BOTCOMP: human index %d team %d: role %s", h.index, h.team, gb::RoleName(h.role));
   } else {
-    plan = gb::PlanBotPlayers(g_plan.slots, g_plan.bots, counted, g_teamSize, teams, g_plan.topLaners, g_plan.botLaners);
+    plan = gb::PlanBotPlayers(g_plan.slots, g_plan.bots, counted, g_teamSize, teams, g_plan.topLaners, g_plan.botLaners, 0,
+                              g_opt.laneSplit);
   }
   Log("bots: team fill (team size %d from %s, descriptors 0x%X): humans%s; waiting roster humans (G3b: counted for "
       "their teams)%s; %zu bot(s)",
@@ -2130,6 +2225,7 @@ const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& human
         cp.status);
     if (bot.created) g_bots.push_back(bot);
   }
+  if (g_opt.laneSplit) LogLaneSplit(g_draft ? "planned; the draft decides" : "the composition");
   return g_bots;
 }
 
@@ -2158,6 +2254,14 @@ bool LaneFrontOf(std::uint32_t creature, int team, float* out, int* laneOut) {
 void SetRole(int index, int role) {
   for (Bot& b : g_bots)
     if (b.index == index) b.role = role;
+}
+
+void SplitLanesAtReveal(const std::vector<std::pair<int, int>>& humanTeamRoles) {
+  if (!g_opt.laneSplit) return;
+  g_humanRoles.clear();
+  for (const auto& tr : humanTeamRoles) g_humanRoles[tr.first].push_back(tr.second);
+  ResplitLanes("the reveal");
+  LogLaneSplit("the reveal");
 }
 
 bool IsBotIndex(int index) {
@@ -2299,10 +2403,10 @@ void FormatStats(char* buf, std::size_t size) {
   std::snprintf(buf, size,
                 "bots %zu (team 1 %d, team 2 %d; created %u, failed %u), deployed %d (failed %u); lane fronts: updates %u, "
                 "minions %u,%s nBotHost calls: AssignLane %u, GetLane %u, ClosestLane %u, LaneCenterAndDirection %u, "
-                "IsFirstTimePlayer %u, other simulator %u; exceptions %u",
+                "IsFirstTimePlayer %u, other simulator %u; exceptions %u; BOTLANESPLIT lane changes kept %u, taken %u",
                 g_bots.size(), team[1], team[2], g_st.created, g_st.createFailed, deployed, g_st.deployFailed,
                 g_st.frontUpdates, g_st.minions, fronts.empty() ? " none;" : fronts.c_str(), g_st.calls[0], g_st.calls[1],
-                g_st.calls[2], g_st.calls[3], g_st.calls[4], g_st.calls[5], g_st.exceptions);
+                g_st.calls[2], g_st.calls[3], g_st.calls[4], g_st.calls[5], g_st.exceptions, g_splitKept, g_splitTaken);
   std::size_t len = std::strlen(buf);
   // every bot: lane, position, HP, level, the brain step's plan / phase / leaf; D6b: mission, gold, items
   if (!g_sim || len + 1 >= size) return;

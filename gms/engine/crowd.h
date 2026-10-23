@@ -20,6 +20,7 @@ namespace crowd {
 
 struct Options {
   bool constraintSolver = true;
+  bool campReach = true;  // CAMPREACH: [host] camp_reach (1): a camp's bigger creatures pass its smaller ones
 };
 
 void Configure(const Options& options);
@@ -31,7 +32,13 @@ void OnLevelStarted(void* sim);
 // The mover of object `id` (object +0x8DC): its repulsor (+0x1B8) and whether it is on (+0x1C0), for the log.
 bool MoverRepulsor(std::uint32_t id, void** mover, void** repulsor, unsigned* on);
 
-// "constraint solver N, navigators N, repulsors N" (the server space's flag and the navigator module's counts).
+// CAMPREACH (gms/core/agents/camp_crowd.h): a new camp creature of `tier` (0 minor .. 3 uber) gets its repulsor flags
+// (locomotion +0x94/+0x98): not blocked by its camp's lower tiers. Nothing with [host] camp_reach=0 or for the parasite.
+// Logs the first few. False if the locomotion couldn't be read.
+bool CampCreature(std::uint32_t id, int tier, const char* noun);
+
+// "constraint solver N, navigators N, repulsors N, camp creatures N" (the server space's flag, the navigator module's
+// counts, CAMPREACH's creatures).
 void FormatStats(char* buf, std::size_t size);
 
 }  // namespace crowd

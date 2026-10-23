@@ -12,6 +12,7 @@
 #include "agents.h"
 #include "core/damage/pipeline.h"
 #include "core/damage/rules.h"
+#include "core/damage/snapshot_ids.h"
 #include "death.h"
 #include "game.h"
 #include "hook.h"
@@ -336,6 +337,7 @@ struct Trace {
   bool crit, lethal, attackerDead;
   int intChange, queued, absorbHandlers;
   unsigned ability;
+  unsigned instance;  // DRAINHEAL: the instance the damage events get
   char hex[96];
 };
 
@@ -399,11 +401,11 @@ bool CoreGuarded(void* target, void* snapshot, float damage, float coef, unsigne
 
 void LogHit(void* target, void* attacker, unsigned lo, const Trace& t, int depth) {
   if (!LogBudget()) return;
-  Log("damage: %08X %s <- %08X %s ability %08X desc 0x%X%s: base %.2f + coef %.2f -> initial %.2f%s, outgoing %.2f, incoming %.2f, "
+  Log("damage: %08X %s <- %08X %s ability %08X inst %08X desc 0x%X%s: base %.2f + coef %.2f -> initial %.2f%s, outgoing %.2f, incoming %.2f, "
       "x %.4f -> %.2f, final %.2f, absorbed %.2f (%d handlers) -> dealt %.2f; hp %.2f -> %.2f (int %d)%s; event queued %d "
       "[%s]%s",
       Field<unsigned>(target, gobj::kId), NounName(target), attacker ? Field<unsigned>(attacker, gobj::kId) : 0u,
-      attacker ? NounName(attacker) : "-", t.ability, lo, depth ? " (overload)" : "", t.base, t.coef, t.initial,
+      attacker ? NounName(attacker) : "-", t.ability, t.instance, lo, depth ? " (overload)" : "", t.base, t.coef, t.initial,
       t.crit ? " CRIT" : "", t.outgoing, t.incoming, t.mult, t.incoming * t.mult, t.final, t.absorbed, t.absorbHandlers,
       t.dealt, t.hpBefore, t.hpAfter, t.intChange, t.lethal ? " LETHAL" : "", t.queued, t.hex,
       t.healed > 0.f ? " lifedrain" : t.attackerDead ? " (attacker dead: no lifedrain, no aggro)" : "");
@@ -433,6 +435,16 @@ bool Core(void* target, void* snapshot, float damage, float coef, unsigned lo, u
   const unsigned creditGuid = snapshot ? Field<unsigned>(snapshot, snap::kAbilityGuid) : 0u;
   t.ability = creditGuid;
   const unsigned instance = snapshot ? Field<unsigned>(snapshot, snap::kInstance) : 0u;
+  // DRAINHEAL: the damage events report the snapshot's own instance (+0x24), not the credited one (+0x14):
+  // modifier_Item_Drain.OnTookDamage heals only when tookDamageAbilityInstance is its own instance
+  // (core/damage/snapshot_ids.h; [host] damage_event_instance=0 passes the credited one as before)
+  dmg::SnapshotAbility ids;
+  ids.creditGuid = creditGuid;
+  ids.creditInstance = instance;
+  ids.ownGuid = guid;
+  ids.ownInstance = snapshot ? Field<unsigned>(snapshot, snap::kOwnInstance) : 0u;
+  const unsigned eventInstance = g_opt.eventOwnInstance ? dmg::DamageEventInstance(ids) : instance;
+  t.instance = eventInstance;
   const unsigned team = snapshot ? Field<unsigned char>(snapshot, snap::kTeam) : 0u;
   unsigned playerIdx = 0xFF;
   if (snapshot) {
@@ -541,7 +553,7 @@ bool Core(void* target, void* snapshot, float damage, float coef, unsigned lo, u
   // a player's pet, the damage tracker's "player damage"), not a worker's, minion's, creep's or structure's
   if (dealt > 0.f) wells::OnDamaged(target, attacker, dealt);
   if (dmg::FiresDamageEvents(lo)) {
-    SehFireEvents(targetId, attackerId, team, playerIdx, dealt, lo, hi, creditGuid, instance, damage, coef,
+    SehFireEvents(targetId, attackerId, team, playerIdx, dealt, lo, hi, creditGuid, eventInstance, damage, coef,
                   snapshot != nullptr, snapshot ? Field<unsigned>(snapshot, snap::kId) : 0u, t.crit);
     ++g_st.events;
   }
@@ -650,9 +662,9 @@ bool DamageInstall(const DamageOptions& options) {
       HookDetour(kTakeDamage, kTakeDamageBytes, sizeof kTakeDamageBytes, reinterpret_cast<void*>(&TakeDamageHook)));
   g_installed = g_orig != nullptr;
   Log("damage (D1f-live): TakeDamage core %s; absorb %d, extra reductions %d, lifedrain %d, overload %d, shield totals %d, "
-      "log limit %d, report zero hits %d",
+      "log limit %d, report zero hits %d, event instance %s",
       g_installed ? "installed" : "FAILED", g_opt.absorb, g_opt.reductions, g_opt.lifedrain, g_opt.overload, g_opt.shields,
-      g_opt.logLimit, g_opt.reportZero);
+      g_opt.logLimit, g_opt.reportZero, g_opt.eventOwnInstance ? "own" : "credited");
   return g_installed;
 }
 

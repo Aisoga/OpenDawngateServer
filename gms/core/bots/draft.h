@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "core/bots/composition.h"
+#include "core/bots/lanesplit.h"
 #include "core/bots/profiles.h"
 
 namespace gms::bots {
@@ -109,18 +110,6 @@ inline int HumanIntent(unsigned preferredBits, int roleCard, int typicalRole, in
   return kRoleUnknown;
 }
 
-// The role a BotClass plays by itself: a profile's own, else the composition's role lists (PC_Warden: Tactician).
-inline int ClassRole(const std::string& botClass) {
-  for (const Profile& p : Profiles())
-    if (botClass == p.name) return p.role;
-  for (int role : {kRoleGladiator, kRoleHunter, kRoleTactician})
-    for (const ClassChoice& c : ClassPreference(role))
-      if (c.botClass == botClass && !c.roleOverride) return role;
-  for (const std::string& h : HunterClasses())
-    if (h == botClass) return kRoleHunter;
-  return kRoleUnknown;
-}
-
 // Every available class of `role`, in a fixed order (the composition's list, the Hunter list for the Hunter, then the
 // profiles of profiles.h with that role), each once; the Predator's PC_Warden entry (roleOverride) is left out here.
 inline std::vector<std::string> DraftPool(int role, const std::set<std::string>& available,
@@ -161,6 +150,8 @@ struct DraftOptions {
   // MAPHOST: false on a level without jungle camps (MM_Map_v3): no Hunter seat, its seat becomes a flex seat at the
   // bottom (composition.h NoJungleSeat), and the fallback takes no Hunter class
   bool jungle = true;
+  // BOTLANESPLIT: each team's drawn bots divide their roles over the lanes, the humans' intents counted (lanesplit.h)
+  bool laneSplit = true;
 };
 
 // Picks the first entry of `order` whose base class is neither in `hard` nor (first pass) in `soft`; "" = none. A
@@ -356,6 +347,7 @@ inline std::map<int, std::vector<ComposedSeat>> DraftMatch(const std::vector<Dra
                                                        hunterOf[static_cast<size_t>(ti)],
                                                        tacticianOf[static_cast<size_t>(ti)],
                                                        gladiatorOf[static_cast<size_t>(ti)], rng);
+    if (o.laneSplit) SplitSeatLanes(seats, roles);  // BOTLANESPLIT
     for (const ComposedSeat& s : seats) drawn.insert(BaseClass(s.botClass));
     out[t.team] = seats;
   }

@@ -1179,6 +1179,68 @@ test('lane fix-up: Gladiators stay, the siege lane is the opened lane, the base 
   ability_Bot_AssignToSiegeLane, condition_Bot_InEnemyBase = nil, nil
 end)
 
+-- ---- BOTLANESPLIT: the threatened lane keeps each role split over the lanes ---------------------------------------------
+test('lane split fix-up: the threatened lane keeps each role split (BOTLANESPLIT)', function()
+  local B = dgsim_bots
+  local bot = shaper('ts', 1, -240, -240, { bot = true })
+  local lanes, asked, allow = { [bot] = nLaneID.Top }, {}, false
+  nBotHost = {
+    AssignLane = function(b, lane) lanes[b] = lane end,
+    GetLane = function(b) return lanes[b] or 0 end,
+    LaneSplit = function(b, lane)
+      asked[#asked + 1] = lane
+      if allow then return lane end
+      return lanes[b] or lane
+    end,
+  }
+  -- the script's shape: the lane nearest the Guardian (here always Bottom), assigned for good
+  ability_Bot_AssignToThreatenedLane = {}
+  ability_Bot_AssignToThreatenedLane[nAbilityFns.Tick] = function(p)
+    p.laneToDefend = nLaneID.Bottom
+    nBot.AssignLane(p.myObjectID, p.laneToDefend)
+  end
+  condition_Bot_AssignedToThreatenedLane = { [1] = function(b) return nBot.GetLaneID(b) == nLaneID.Bottom end }
+  B.fixups.laneSplit = false
+  B.laneSplitWanted = true
+  B.ApplyLaneSplitFixup()
+  check(B.fixups.laneSplit == true, 'applied')
+  check(condition_Bot_AssignedToThreatenedLane[1](bot) == true, 'kept: the condition says assigned, so the gambit rests')
+  check(lanes[bot] == nLaneID.Top and asked[#asked] == nLaneID.Bottom, 'the condition asked the host and assigned nothing')
+  ability_Bot_AssignToThreatenedLane[nAbilityFns.Tick]({ myObjectID = bot })
+  check(lanes[bot] == nLaneID.Top, 'the ability keeps the lane')
+  check((B.stats.laneSplitKept or 0) >= 1, 'counted')
+  allow = true
+  check(condition_Bot_AssignedToThreatenedLane[1](bot) == false, 'taken: the original condition')
+  local p = { myObjectID = bot }
+  ability_Bot_AssignToThreatenedLane[nAbilityFns.Tick](p)
+  check(lanes[bot] == nLaneID.Bottom and p.laneToDefend == nLaneID.Bottom, 'the ability assigns the lane')
+  check(B.laneHook == nil, 'no hook left')
+  -- every other caller (the push call, the siege rally) assigns directly
+  allow = false
+  local n = #asked
+  nBot.AssignLane(bot, nLaneID.Top)
+  check(lanes[bot] == nLaneID.Top and #asked == n, 'a direct AssignLane is not asked')
+  -- a host without LaneSplit: the script as it was
+  nBotHost.LaneSplit = nil
+  check(condition_Bot_AssignedToThreatenedLane[1](bot) == false, 'no host rule: the original condition')
+  ability_Bot_AssignToThreatenedLane[nAbilityFns.Tick]({ myObjectID = bot })
+  check(lanes[bot] == nLaneID.Bottom, 'no host rule: the original ability')
+  ability_Bot_AssignToThreatenedLane, condition_Bot_AssignedToThreatenedLane = nil, nil
+end)
+
+test('lane split fix-up: off with [host] bot_lane_split 0', function()
+  local B = dgsim_bots
+  local tick = function(p) nBot.AssignLane(p.myObjectID, nLaneID.Bottom) end
+  ability_Bot_AssignToThreatenedLane = {}
+  ability_Bot_AssignToThreatenedLane[nAbilityFns.Tick] = tick
+  condition_Bot_AssignedToThreatenedLane = { [1] = function() return false end }
+  B.fixups.laneSplit = false
+  B.laneSplitWanted = false
+  B.ApplyLaneSplitFixup()
+  check(B.fixups.laneSplit == true and ability_Bot_AssignToThreatenedLane[nAbilityFns.Tick] == tick, 'nothing wrapped')
+  ability_Bot_AssignToThreatenedLane, condition_Bot_AssignedToThreatenedLane = nil, nil
+end)
+
 -- ---- BOTPARA: the rally points are moved out of the parasite's reach ---------------------------------------------------
 test('parasite fix-up: the rally points leave the parasite reach', function()
   local B = dgsim_bots

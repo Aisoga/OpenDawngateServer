@@ -818,7 +818,7 @@ void SpawnMember(WaveGroup& g, double t) {
     void *bfxMover = nullptr, *repulsor = nullptr;
     unsigned on = 0;
     crowd::MoverRepulsor(cr.id, &bfxMover, &repulsor, &on);
-    char cs[96];
+    char cs[160];
     crowd::FormatStats(cs, sizeof cs);
     if (SehRepulsion(cr.id, &dis, &blk, &idn, &obs, &ao, &mover))
       Log("director: repulsion of the first wave minion %08X (%s): mDisableRepulsion %u, repulsor blockage flags %08X, "
@@ -988,6 +988,8 @@ void SpawnCamp(Camp& c, double t) {
         continue;
       }
       ++g_st.creatures;
+      // CAMPREACH: the bigger creatures aren't blocked by the camp's smaller ones (gms/core/agents/camp_crowd.h)
+      if (!c.parasite) crowd::CampCreature(cr.id, k, SehAssetName(c.def.creeps[k]));
       c.members.push_back(cr.id);
       const bool joined = c.record && SehJoinCamp(cr.id, c.record, c.marker);
       if (joined) ++g_st.members;

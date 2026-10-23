@@ -1029,6 +1029,9 @@ void ReadConfig() {
     ao.workerLeash.chaseMs = chaseMs >= 0 ? chaseMs : 3000;
     ao.creepLeash.chaseMs = HostOptionInt("creep_leash_chase_ms", chaseMs >= 0 ? chaseMs : 5000);
     ao.creepLeash.ignoreMs = ao.workerLeash.ignoreMs = HostOptionInt("leash_ignore_ms", 2000);
+    // CAMPLEASH: a target inside the NPC's home radius stops neither by the chase time nor by its group's drop, and a
+    // member that hit the target within its chase time keeps it when the group lets go (leash_area=0: CAMPFINISH's rule)
+    ao.creepLeash.areaHolds = ao.workerLeash.areaHolds = HostOptionInt("leash_area", 1) != 0;
     ao.leashLogLimit = HostOptionInt("leash_log_limit", ao.leashLogLimit);
     {  // HUNTERROUTE: the Hunters' opening route, Vanquish rule and the first buff's pull (bot_hunter_route=0: all off)
       hunterroute::Options ho;
@@ -1101,6 +1104,7 @@ void ReadConfig() {
     mo.director.campIcons = HostOptionInt("camp_icons", 3);  // CAMPICONS: each team's knowledge (director::Configure reads it too)
     crowd::Options co;  // D1k: NavPower's constraint solver for the server space
     co.constraintSolver = HostOptionInt("navpower_constraint_solver", 1) != 0;
+    co.campReach = HostOptionInt("camp_reach", 1) != 0;  // CAMPREACH: a camp's bigger creatures pass its smaller ones
     crowd::Configure(co);
     match::Configure(mo);
     // D6a: the bot players (bots.h)
@@ -1406,6 +1410,7 @@ void ExperimentInstall(const char* gameDir, unsigned long mainThreadId) {
     d.overload = opt("damage_overload", 1) != 0;
     d.shields = opt("damage_shields", 1) != 0;
     d.reportZero = opt("damage_report_zero", 0) != 0;
+    d.eventOwnInstance = opt("damage_event_instance", 1) != 0;
     g_damage = DamageInstall(d);
   } else {
     Log("damage hook off (damage = 0)");

@@ -328,7 +328,7 @@ struct Stats {
   double chaseSecondsSum = 0, chaseSecondsMax = 0, chaseLaneSum = 0, chaseLaneMax = 0;
   // LEASH, per class (0 creeps, 1 workers): fights (a target as the best target), their length and the farthest the
   // NPC got from home, the rule's drops by kind (own, chase, target, group), hits not taken onto the list, early updates
-  unsigned fights[2] = {}, fightLogged = 0, classLogged = 0, workerClassLogged = 0, leashDrops[2][5] = {}, leashHitsSkipped[2] = {}, leashForced = 0, leashResets = 0;
+  unsigned fights[2] = {}, fightLogged = 0, classLogged = 0, workerClassLogged = 0, leashDrops[2][5] = {}, leashHitsSkipped[2] = {}, leashForced = 0, leashResets = 0, leashGroupHeld = 0;
   double fightSecondsSum[2] = {}, fightSecondsMax[2] = {}, fightOwnSum[2] = {}, fightOwnMax[2] = {};
   // MINPURSUE: the lane minions' follows (Pursue leaves): how many, how long, how far walked and from the lane, how
   // many over 40 units, the restarts by kind (not the best target, list empty, lane leash)
@@ -1000,14 +1000,20 @@ void LeashPrune(AgentState& st, const AgentInfo& a, std::vector<gms::agents::Agg
   for (const auto& c : *cands) {
     if (c.taunting) continue;
     int why = self;
+    float edge = -1.f;  // the target's edge distance from home
     if (!why) {
       void* t = SehFind(c.id);
       ObjInfo ti;
-      if (t && SehObjInfo(t, &ti) &&
-          gms::agents::LeashTargetBeyond(st.leashOpt, LeashDist(ti.pos, st.leashHome) - ti.radius))
-        why = gms::agents::kLeashTarget;
+      if (t && SehObjInfo(t, &ti)) {
+        edge = std::max(LeashDist(ti.pos, st.leashHome) - ti.radius, 0.f);
+        if (gms::agents::LeashTargetBeyond(st.leashOpt, edge)) why = gms::agents::kLeashTarget;
+      }
     }
-    if (!why && g_leashDrops.Ignored(st.leashGroup, c.id, now)) why = gms::agents::kLeashGroup;
+    // CAMPLEASH: a target in the NPC's area, or one it is hitting, outlasts the group's drop
+    if (!why && g_leashDrops.Ignored(st.leashGroup, c.id, now)) {
+      if (gms::agents::LeashGroupHolds(st.leashOpt, st.leash, c.id, edge, now)) ++g_st.leashGroupHeld;
+      else why = gms::agents::kLeashGroup;
+    }
     if (!why) continue;
     dropped->push_back(c.id);
     ++g_st.leashDrops[cls][why];
@@ -1029,13 +1035,18 @@ void LeashPrune(AgentState& st, const AgentInfo& a, std::vector<gms::agents::Agg
 void LeashAfterUpdate(void* o, AgentState& st, const AgentInfo& a, std::uint32_t best, unsigned long long nowMs) {
   const int cls = st.leashClass - 1;
   const float own = LeashDist(a.self.pos, st.leashHome);
-  gms::agents::UpdateLeash(&st.leash, st.leashOpt, best, own, static_cast<std::int64_t>(nowMs));
   float targetDist = 0.f;
+  bool targetKnown = false;
   if (best) {
     void* t = SehFind(best);
     ObjInfo ti;
-    if (t && SehObjInfo(t, &ti)) targetDist = LeashDist(ti.pos, st.leashHome) - ti.radius;
+    if (t && SehObjInfo(t, &ti)) {
+      targetDist = LeashDist(ti.pos, st.leashHome) - ti.radius;
+      targetKnown = true;
+    }
   }
+  gms::agents::UpdateLeash(&st.leash, st.leashOpt, best, own, static_cast<std::int64_t>(nowMs),
+                           targetKnown ? std::max(targetDist, 0.f) : -1.f);
   if (st.fightTarget && best != st.fightTarget) {  // a fight ended
     if (own > st.fightMaxOwn) st.fightMaxOwn = own;
     const double secs = static_cast<double>(nowMs - st.fightSinceMs) / 1000.0;
@@ -6113,8 +6124,11 @@ void OnDamaged(void* victim, void* attacker, unsigned descLo, unsigned descHi, b
       AgentState& s = itv->second;
       const float own = LeashDist(v.pos, s.leashHome);
       const bool beyondSelf = own > s.leashOpt.ownLimit;
-      const bool beyondTarget = gms::agents::LeashTargetBeyond(s.leashOpt, LeashDist(at.pos, s.leashHome) - at.radius);
-      const bool ignored = g_leashDrops.Ignored(s.leashGroup, at.id, now);
+      const float edge = std::max(LeashDist(at.pos, s.leashHome) - at.radius, 0.f);
+      const bool beyondTarget = gms::agents::LeashTargetBeyond(s.leashOpt, edge);
+      // CAMPLEASH: a hit from the NPC's area, or by what it is hitting, is taken despite the group's drop
+      const bool ignored = g_leashDrops.Ignored(s.leashGroup, at.id, now) &&
+                           !gms::agents::LeashGroupHolds(s.leashOpt, s.leash, at.id, edge, now);
       if (beyondSelf || beyondTarget || ignored) {
         ++g_st.leashHitsSkipped[s.leashClass - 1];
         if (g_st.fightLogged < static_cast<unsigned>(g_opt.leashLogLimit) && LogBudget())
@@ -6537,7 +6551,8 @@ bool FormatLeashStats(char* buf, std::size_t size) {
                          g_st.fightOwnMax[c], d[1], d[2], d[3], d[4], g_st.leashHitsSkipped[c]);
   }
   if (len >= 0 && static_cast<std::size_t>(len) < size)
-    std::snprintf(buf + len, size - len, "; early updates %u, pursuits ended %u", g_st.leashForced, g_st.leashResets);
+    std::snprintf(buf + len, size - len, "; early updates %u, pursuits ended %u, group drops held %u (CAMPLEASH)",
+                  g_st.leashForced, g_st.leashResets, g_st.leashGroupHeld);
   return true;
 }
 

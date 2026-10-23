@@ -190,12 +190,14 @@ if(RAKNET_FOUND)
     tests/test_guidebuild.cpp   # DESECBOT-2: a profile's own build with its choices (core/bots/guidebuild.h)
     tests/test_moyabot.cpp      # MOYABOT: Moya on the Hunter AI (profile, kit rules, guide build)
     tests/test_campfinish.cpp   # CAMPFINISH: a Hunter finishes the camp he wins against (core/agents/campfinish.h)
+    tests/test_campreach.cpp    # CAMPREACH, CAMPLEASH: big creeps pass small ones, a fight in the camp holds
     tests/test_hunterroute.cpp  # HUNTERROUTE: the opening route, Vanquish's pick, the pull (core/bots/route.h)
     tests/test_nullpos.cpp      # NULLPOS: (0, 0) as the bots' null position (core/agents/nullpos.h, lost.h's clear)
     tests/test_killfinish.cpp   # KILLFINISH: stay to finish a won trade, the damage ring, BOTCYCLE's plan chain
     tests/test_bottower.cpp     # BOTTOWER: tower dangers, the keep-out, REFLEXWALK, the time under tower fire
     tests/test_mikella.cpp      # MIKELLABOT: Mikella's profile, the Gladiator pin, her kit layer and guide build
     tests/test_draft.cpp        # BOTDRAFT: a custom game's bots draw after the humans (core/bots/draft.h)
+    tests/test_lanesplit.cpp    # BOTLANESPLIT: the bots divide each role over the lanes (core/bots/lanesplit.h)
     tests/test_maphost.cpp      # MAPHOST: no Hunter seat without camps, the lanes of a one-lane level
     tests/test_mapbase.cpp      # MAPBASE: two Binding tiers, three Cores, the Locus (MM_Map_v3's base)
     tests/test_mapmines.cpp     # MAPMINES: the gold mines no player reaches (island markers), MM_Map_v3's full mines

@@ -26,7 +26,7 @@
 
 dgsim_bots = dgsim_bots or {}
 local B = dgsim_bots
-B.version = '18'  -- 18: MAPHOST's shared lanes (nBotHost.SharedLanes: a Binding stands in every lane of a one-lane level); 17: HUNTERROUTE's opening route (nBotHost.HunterRoute); 16: KILLFINISH's BailOnKill reasons, BOTCYCLE's KillShaper join (fix-up 3c) and engage block; 15: CAMPFINISH's camp finishing (nBotHost.CampFight); 14: NULLPOS's Follow guard and lane-centre check; 13: DESECBOT-3's EngageForKill fix-up 3b and the early Desecrator; 12: DESECBOT's Tactician kit (Desecrator's W); 11: HUNTERBOT's kits (Faris, Freia) and the shared Hunter fixes; 10: PRETUSBOT's stand at the parasite; 9: BOTJUNGLE's Hunter tasks and ping following; 8: BOTTEAM's team calls; 7: BOTCOMP's composition rules (Predator harass, Hunter parasite, lane lock); 2: D6b's script fix-ups; 3: D6c's BailOnKill fix-up; 4: D6e's GetClosestCampPosition; 5: BOTPARA's parasite fix-up; 6: BOTIDLE's camp radius
+B.version = '19'  -- 19: BOTLANESPLIT's threatened-lane fix-up (nBotHost.LaneSplit); 18: MAPHOST's shared lanes (nBotHost.SharedLanes: a Binding stands in every lane of a one-lane level); 17: HUNTERROUTE's opening route (nBotHost.HunterRoute); 16: KILLFINISH's BailOnKill reasons, BOTCYCLE's KillShaper join (fix-up 3c) and engage block; 15: CAMPFINISH's camp finishing (nBotHost.CampFight); 14: NULLPOS's Follow guard and lane-centre check; 13: DESECBOT-3's EngageForKill fix-up 3b and the early Desecrator; 12: DESECBOT's Tactician kit (Desecrator's W); 11: HUNTERBOT's kits (Faris, Freia) and the shared Hunter fixes; 10: PRETUSBOT's stand at the parasite; 9: BOTJUNGLE's Hunter tasks and ping following; 8: BOTTEAM's team calls; 7: BOTCOMP's composition rules (Predator harass, Hunter parasite, lane lock); 2: D6b's script fix-ups; 3: D6c's BailOnKill fix-up; 4: D6e's GetClosestCampPosition; 5: BOTPARA's parasite fix-up; 6: BOTIDLE's camp radius
 B.config = B.config or {
   scanSeconds = 5,            -- game seconds between walks of the object pool (structures, wells)
   scanLimit = 4096,           -- pool slots walked at most
@@ -547,9 +547,14 @@ end
 
 -- ---- nBot: lanes -------------------------------------------------------------------------------------------------
 
--- AssignLane(bot, lane): the bot's lane (host: BotLanes; else kept here).
+-- AssignLane(bot, lane): the bot's lane (host: BotLanes; else kept here). BOTLANESPLIT: while B.laneHook is set (the
+-- threatened-lane fix-up) it decides: it answers the lane to assign, or nil for none.
 function nBot.AssignLane(bot, lane)
   count('AssignLane')
+  if B.laneHook then
+    lane = B.laneHook(bot, lane)
+    if lane == nil then return end
+  end
   local f = hostfn('AssignLane')
   if f then
     f(bot, num(lane, 0))
@@ -1182,6 +1187,7 @@ function B.ApplyFixups()
   end
   if not f.composition then B.ApplyCompositionFixup() end
   if not f.lane then B.ApplyLaneFixup() end
+  if not f.laneSplit and type(B.ApplyLaneSplitFixup) == 'function' then B.ApplyLaneSplitFixup() end
   if f.lane and not f.team and type(B.ApplyTeamFixup) == 'function' then B.ApplyTeamFixup() end
   if f.team and f.composition and not f.jungle and type(B.ApplyJungleFixup) == 'function' then B.ApplyJungleFixup() end
   if not f.kits and type(B.ApplyKitFixup) == 'function' then B.ApplyKitFixup() end
@@ -1190,7 +1196,8 @@ function B.ApplyFixups()
   return 'fix-ups: NullPos ' .. tostring(f.nullPos == true) .. ', VeryOutnumbered ' .. tostring(f.veryOutnumbered) .. ', GroupInLane ' .. tostring(f.groupInLane) ..
          ', BailOnKill ' .. tostring(f.bailOnKill == true) .. ', Parasite ' .. tostring(f.parasite == true) ..
          ', CampRadius ' .. tostring(f.campRadius == true) .. ', Composition ' .. tostring(f.composition == true) ..
-         ', Lane ' .. tostring(f.lane == true) .. ', Team ' .. tostring(f.team == true) ..
+         ', Lane ' .. tostring(f.lane == true) .. ', LaneSplit ' ..
+         (B.laneSplitWanted == false and 'off' or tostring(f.laneSplit == true)) .. ', Team ' .. tostring(f.team == true) ..
          ', Jungle ' .. tostring(f.jungle == true) .. ', Kits ' .. tostring(f.kits == true) ..
          ', TacticianKits ' .. tostring(f.tacticianKits == true) .. ', EngageFix ' ..
          (B.engageFixWanted == false and 'off' or tostring(f.engageFix == true)) .. ', JoinFix ' ..
@@ -1869,6 +1876,73 @@ function B.ApplyLaneFixup()
     end
   end
   f.lane = true
+end
+
+-- ---- BOTLANESPLIT: a single bot's lane change keeps each role split over the lanes ([host] bot_lane_split) ---------
+-- ability_Bot_AssignToThreatenedLane (a gambit of the BackToAction phases of the HighHuntress, Guardian, Artist,
+-- TidalQueen and Warden AIs, so also the Desecrator's and Mikella's) assigns a bot standing in its own base to the lane
+-- whose front is nearest its Guardian, for good, whenever condition_Bot_EnemiesThreateningBase sees a front within 170
+-- of it. Our fronts stand at the team's own fresh wave right after it spawns, so the first wave already moved a laner
+-- beside its role's other bot (the user's report of 2026-10-23: two Tacticians, or two Gladiators, on one lane). The
+-- host's nBotHost.LaneSplit(bot, lane) answers the lane the bot takes (gms/core/bots/lanesplit.h MoveKeepsSplit): the
+-- asked one, or the bot's own when the move would put two of its role, or both supports, on one lane. The ability then
+-- assigns that, and condition_Bot_AssignedToThreatenedLane answers true for a bot the rule keeps, so the gambit doesn't
+-- fire again at every think. Without the host function nothing changes. The team's push call and the siege rally move
+-- the whole team on purpose and don't ask.
+local function threatenedLane(tick, bot)
+  local lane
+  local prev = B.laneHook
+  B.laneHook = function(_, l)
+    lane = l
+    return nil
+  end
+  local ok = pcall(tick, { myObjectID = bot })
+  B.laneHook = prev
+  if not ok then return nil end
+  return lane
+end
+
+local function splitLane(bot, lane)
+  local f = hostfn('LaneSplit')
+  if not f or lane == nil then return lane end
+  return num(f(bot, num(lane, 0)), lane)
+end
+B.splitLane = splitLane
+
+function B.ApplyLaneSplitFixup()
+  local f = B.fixups
+  if f.laneSplit then return end
+  if B.laneSplitWanted == false then f.laneSplit = true return end
+  local a = global('ability_Bot_AssignToThreatenedLane')
+  local c = global('condition_Bot_AssignedToThreatenedLane')
+  local ci = nConditionFns and nConditionFns.Check or 1
+  if type(nAbilityFns) ~= 'table' or type(a) ~= 'table' or type(c) ~= 'table' then return end
+  local tick = a[nAbilityFns.Tick]
+  local check = c[ci]
+  if type(tick) ~= 'function' or type(check) ~= 'function' then return end
+  a[nAbilityFns.Tick] = function(p, ...)
+    local prev = B.laneHook
+    B.laneHook = function(bot, lane)
+      local l = splitLane(bot, lane)
+      if l ~= lane then
+        B.stats.laneSplitKept = (B.stats.laneSplitKept or 0) + 1
+        return nil
+      end
+      return l
+    end
+    local r = { pcall(tick, p, ...) }
+    B.laneHook = prev
+    if not r[1] then error(r[2], 0) end
+    return unpack(r, 2)
+  end
+  c[ci] = function(bot, ...)
+    local r = check(bot, ...)
+    if r or isNone(bot) then return r end
+    local want = threatenedLane(tick, bot)
+    if want ~= nil and splitLane(bot, want) ~= want then return true end
+    return r
+  end
+  f.laneSplit = true
 end
 
 -- ---- BOTTEAM: the team's call (fix-up 8, [host] bot_team) ----------------------------------------------------------

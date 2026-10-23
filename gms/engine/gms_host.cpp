@@ -1072,6 +1072,15 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
         perks::WritePlayerLoadout(sim_, k.gameplayIndex, k.loadout);
       }
     }
+    // BOTLANESPLIT: the roles are final now (the bots' after any change above, the humans' picks): the bots divide
+    // each role over the lanes once more before the deploy
+    std::vector<std::pair<int, int>> humanRoles;
+    for (const gms::ShaperPick& k : picks) {
+      bool human = false;
+      for (const auto& kv : players_) human = human || kv.second.index == k.gameplayIndex;
+      if (human) humanRoles.emplace_back(static_cast<int>(k.team), static_cast<int>(k.role));
+    }
+    if (!bots::Players().empty()) bots::SplitLanesAtReveal(humanRoles);
   }
 
   // WARDSKIN: a human's ward skin and announcer pack from shaper select (C8 0E, echoed to its client, which shows and

@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "core/agents/camp_crowd.h"
 #include "game.h"
 #include "log.h"
 
@@ -126,6 +127,43 @@ void OnLevelStarted(void* sim) {
       : "FAILED", before, SehSolverFlag(navSpace));
 }
 
+namespace {
+
+// CAMPREACH: reads a creature's repulsor flags from its locomotion and writes the camp's (both words at once).
+bool SehCampFlags(std::uint32_t id, int tier, gms::agents::RepulsorFlags* before, gms::agents::RepulsorFlags* after) {
+  __try {
+    void* o = GetObjectById(id);
+    char* l = o ? Field<char*>(o, loco::kOfObject) : nullptr;
+    if (!l) return false;
+    before->blockage = Field<std::uint32_t>(l, loco::kRepulsorBlockage);
+    before->identity = Field<std::uint32_t>(l, loco::kRepulsorIdentity);
+    *after = gms::agents::CampCreepRepulsor(tier, *before);
+    Field<std::uint32_t>(l, loco::kRepulsorBlockage) = after->blockage;
+    Field<std::uint32_t>(l, loco::kRepulsorIdentity) = after->identity;
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "camp repulsor flags")) {
+    return false;
+  }
+}
+
+unsigned g_campCreatures, g_campLogged;
+
+}  // namespace
+
+bool CampCreature(std::uint32_t id, int tier, const char* noun) {
+  if (!g_opt.campReach) return true;
+  gms::agents::RepulsorFlags before, after;
+  if (!SehCampFlags(id, tier, &before, &after)) return false;
+  ++g_campCreatures;
+  if (g_campLogged < 12) {
+    ++g_campLogged;
+    Log("crowd: camp creature %08X %s tier %d: repulsor blockage %08X -> %08X, identity %08X -> %08X (CAMPREACH: not "
+        "blocked by its camp's lower tiers)",
+        id, noun ? noun : "?", tier, before.blockage, after.blockage, before.identity, after.identity);
+  }
+  return true;
+}
+
 bool MoverRepulsor(std::uint32_t id, void** mover, void** repulsor, unsigned* on) {
   return SehMover(id, mover, repulsor, on);
 }
@@ -139,7 +177,8 @@ void FormatStats(char* buf, std::size_t size) {
     void* sim = GetCurrentSim();
     if (sim && SehSpace(sim, &h, &s, &n) && h == g_handle) flag = SehSolverFlag(n);
   }
-  std::snprintf(buf, size, "constraint solver %d, navigators %d, repulsors %d", flag, navigators, repulsors);
+  std::snprintf(buf, size, "constraint solver %d, navigators %d, repulsors %d, camp creatures %u (camp_reach %d)", flag,
+                navigators, repulsors, g_campCreatures, g_opt.campReach ? 1 : 0);
 }
 
 }  // namespace crowd

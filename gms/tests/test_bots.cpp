@@ -506,7 +506,8 @@ GMS_TEST(BotsPlanBotPlayers) {
   h.index = 0;
   h.team = 1;
   h.shaper = T("mage", "ranged", "magical");
-  std::vector<BotPlayer> bots = PlanBotPlayers(PlanSlots(), PlanBots(), {h}, 5, {1, 2}, 2, 3);
+  // the slots' own lanes (BOTLANESPLIT off; with it the bots divide their roles over the lanes: test_lanesplit.cpp)
+  std::vector<BotPlayer> bots = PlanBotPlayers(PlanSlots(), PlanBots(), {h}, 5, {1, 2}, 2, 3, 0, false);
   CHECK_EQ(static_cast<int>(bots.size()), 9);
   for (std::size_t i = 0; i < bots.size(); ++i) {
     CHECK_EQ(bots[i].index, static_cast<int>(i) + 1);  // 1-9, team 1's four first

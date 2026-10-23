@@ -27,6 +27,7 @@
 
 #include "core/bots/composition.h"
 #include "core/bots/lanes.h"  // LaneId
+#include "core/bots/lanesplit.h"
 
 namespace gms::bots {
 
@@ -171,20 +172,37 @@ constexpr int kMaxPlayerIndexes = 10;  // gameplay indexes 0-9 (10-14 are specta
 // humans (in `humans` order) and `teamSize` seats; the bots take the lowest gameplay indexes that no human holds and
 // `reserved` (bit i = index i: e.g. a roster index whose player hasn't connected yet) doesn't name, in team order (the
 // first team's bots first, each in slot order); online id = index + 1, so 1-10, the range LabsPlayer_HandlePlayerOnlineId
-// (0x00915DC0) treats as a bot (0 asserts). Bots stop when the indexes run out.
+// (0x00915DC0) treats as a bot (0 asserts). Bots stop when the indexes run out. BOTLANESPLIT (`laneSplit`): each team's
+// bots divide their roles (their classes' own, ClassRole) over the lanes (lanesplit.h SplitLanes).
 inline std::vector<BotPlayer> PlanBotPlayers(const std::vector<Slot>& slots, const std::vector<BotCandidate>& plan,
                                              const std::vector<HumanPlayer>& humans, int teamSize,
                                              const std::vector<int>& teams, int topLaners, int botLaners,
-                                             unsigned reserved = 0) {
+                                             unsigned reserved = 0, bool laneSplit = true) {
   unsigned taken = reserved;
   for (const HumanPlayer& h : humans)
     if (h.index >= 0 && h.index < kMaxPlayerIndexes) taken |= 1u << h.index;
   std::vector<BotPlayer> out;
   for (int team : teams) {
     std::vector<ShaperType> mine;
+    std::vector<int> roles;
     for (const HumanPlayer& h : humans)
-      if (h.team == team) mine.push_back(h.shaper);
-    for (const Seat& s : FillTeam(slots, plan, mine, teamSize, topLaners, botLaners)) {
+      if (h.team == team) {
+        mine.push_back(h.shaper);
+        roles.push_back(h.role);
+      }
+    std::vector<Seat> seats = FillTeam(slots, plan, mine, teamSize, topLaners, botLaners);
+    if (laneSplit) {  // BOTLANESPLIT
+      std::vector<LaneMember> members;
+      std::vector<size_t> at;
+      for (size_t i = 0; i < seats.size(); ++i)
+        if (!seats[i].human) {
+          members.push_back(LaneMember{ClassRole(seats[i].botClass), seats[i].lane});
+          at.push_back(i);
+        }
+      const std::vector<int> lanes = SplitLanes(members, roles, topLaners);
+      for (size_t k = 0; k < at.size(); ++k) seats[at[k]].lane = lanes[k];
+    }
+    for (const Seat& s : seats) {
       if (s.human) continue;
       int index = -1;
       for (int i = 0; i < kMaxPlayerIndexes && index < 0; ++i)
@@ -207,6 +225,8 @@ inline std::vector<BotPlayer> PlanBotPlayers(const std::vector<Slot>& slots, con
 // BOTCOMP: the same with composition.h's setup per team: each team's bot seats are teamSize minus its humans; a human
 // of known role takes that role off the list (`WantedSeats`), the class per seat comes from `ComposeTeam`. A seat that
 // finds no class (none available) is left out. `slot` is the seat's position in the team's wanted list.
+// BOTLANESPLIT (`laneSplit`): then each team's bots divide their roles over the lanes, the team's humans of known role
+// counted (lanesplit.h SplitSeatLanes).
 inline std::vector<BotPlayer> PlanBotPlayersComposed(const std::vector<HumanPlayer>& humans, int teamSize,
                                                      const std::vector<int>& teams, const std::set<std::string>& available,
                                                      const std::vector<std::string>& anyClass,
@@ -215,7 +235,8 @@ inline std::vector<BotPlayer> PlanBotPlayersComposed(const std::vector<HumanPlay
                                                      const std::vector<std::string>& hunters = {"PC_Artificer"},
                                                      const std::vector<std::string>& tacticians = {},
                                                      const std::vector<std::string>& gladiators = {},
-                                                     bool jungle = true) {  // MAPHOST: false = no Hunter seat
+                                                     bool jungle = true,  // MAPHOST: false = no Hunter seat
+                                                     bool laneSplit = true) {
   unsigned taken = reserved;
   for (const HumanPlayer& h : humans)
     if (h.index >= 0 && h.index < kMaxPlayerIndexes) taken |= 1u << h.index;
@@ -246,6 +267,7 @@ inline std::vector<BotPlayer> PlanBotPlayersComposed(const std::vector<HumanPlay
              : ComposeTeam(WantedSeats(teamSize - mineCount, roles, dropOrder, jungle), available, anyClass, 0u,
                            hunterClass, tacticianClass);
     PinGladiator(seats, gladiatorOf[ti], available);  // MIKELLABOT
+    if (laneSplit) SplitSeatLanes(seats, roles);       // BOTLANESPLIT
     int slot = 0;
     for (const ComposedSeat& s : seats) {
       const int seatSlot = slot++;

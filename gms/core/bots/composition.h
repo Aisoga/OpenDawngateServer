@@ -109,6 +109,19 @@ inline const std::vector<std::string>& DefaultHunters() {
   return k;
 }
 
+// The role a BotClass plays by itself: a profile's own, else the composition's role lists (PC_Warden: Tactician).
+// BOTDRAFT's fallback seats take it; BOTLANESPLIT counts a fallback seat's role with it.
+inline int ClassRole(const std::string& botClass) {
+  for (const Profile& p : Profiles())
+    if (botClass == p.name) return p.role;
+  for (int role : {kRoleGladiator, kRoleHunter, kRoleTactician})
+    for (const ClassChoice& c : ClassPreference(role))
+      if (c.botClass == botClass && !c.roleOverride) return role;
+  for (const std::string& h : HunterClasses())
+    if (h == botClass) return kRoleHunter;
+  return kRoleUnknown;
+}
+
 // [host] bot_hunters: "" or "default" = DefaultHunters(); "all" = every Hunter class (HunterClasses' order); else a
 // comma list in the listed order, each a class or profile name, a shaper's name or its noun's (artificer/petrus,
 // golem/faris, survivor/freia, otter/moya; any case); "0", "off" and "none" = PC_Artificer alone (the old single Hunter). Unknown

@@ -10,6 +10,7 @@
 #include "core/damage/instance_ids.h"
 #include "core/damage/pipeline.h"
 #include "core/damage/rules.h"
+#include "core/damage/snapshot_ids.h"
 #include "tests/check.h"
 
 using namespace gms::damage;
@@ -814,4 +815,65 @@ GMS_TEST(ModCapThrottle) {
   CHECK(!CapAssertReported(1001));
   CHECK(CapAssertReported(10000));
   CHECK(!CapAssertReported(12000));
+}
+
+// ---- The ability and instance the damage events report (core/damage/snapshot_ids.h) -------------------------------
+
+// The battle spell Drain with the instance ids a host session logged: the cast ability_Item_Drain (instance 844B003B) spawns
+// ability_track_homing_projectile (IsUtility), whose hit requests modifier_Item_Drain (instance 84520040, descriptors
+// IsDoT | IsDebuff | IsMagicalDamage | IsItem) on the target; its five ticks deal the damage with the modifier's own
+// snapshot, and its OnTookDamage heals the caster only when tookDamageAbilityInstance is its own instance.
+GMS_TEST(DrainhealTheEventsReportTheModifiersOwnInstance) {
+  const unsigned drainAbility = 0x1D74DD52, homing = 0x5A1E0001, drainMod = 0x37FFA3B7;
+  constexpr unsigned kIsDebuff = 0x20, kIsSpell = 0x2000;
+  const SnapshotAbility cast = RootSnapshotAbility(drainAbility, 0x844B003B);
+  const SnapshotAbility projectile = ChildSnapshotAbility(cast, homing, 0x844E0037, kIsUtility);
+  CHECK_EQ(projectile.ownGuid, drainAbility);  // the helper is transparent: it keeps the cast's own pair
+  CHECK_EQ(projectile.ownInstance, 0x844B003Bu);
+  const SnapshotAbility mod =
+      ChildSnapshotAbility(projectile, drainMod, 0x84520040, kIsDoT | kIsDebuff | kIsMagical | kIsItem);
+  CHECK_EQ(mod.creditGuid, drainAbility);  // the host's damage lines said "ability 1D74DD52" for every tick
+  CHECK_EQ(mod.creditInstance, 0x844B003Bu);
+  CHECK_EQ(mod.ownGuid, drainMod);
+  CHECK_EQ(mod.ownInstance, 0x84520040u);
+  // modifier_Item_Drain.OnTookDamage: tookDamageAbilityInstance == nAbility.GetAbilityInstanceID() and the caster alive
+  auto heals = [](unsigned eventInstance, unsigned thisInstance, bool casterAlive) {
+    return eventInstance == thisInstance && casterAlive;
+  };
+  CHECK(heals(DamageEventInstance(mod), 0x84520040, true));
+  CHECK(!heals(mod.creditInstance, 0x84520040, true));  // the credited instance (the host before): never
+  CHECK(!heals(DamageEventInstance(mod), 0x84520040, false));
+  CHECK_EQ(DamageEventGuid(mod), drainAbility);
+  // the return trip: modifier_Item_Drain_ProjectileHandler, requested with the Drain modifier's snapshot, credits the
+  // cast too and has its own instance
+  const SnapshotAbility handler = ChildSnapshotAbility(mod, 0xCB2FA309, 0x84600050, kIsSpell | kIsItem);
+  CHECK_EQ(DamageEventGuid(handler), drainAbility);
+  CHECK_EQ(DamageEventInstance(handler), 0x84600050u);
+}
+
+// The GUID stays the credit one: modifier_LoreMaster_Q_DamageLink shares damage with its own snapshot and skips hits
+// whose tookDamageAbility is ability_LoreMaster_Q_Chains, so its own shared hits must report the Chains' GUID (else it
+// would share them again, without end). A cast's own hit reports its own GUID and instance either way.
+GMS_TEST(DrainhealTheEventGuidIsTheCreditOne) {
+  const unsigned chains = 0x1111AAAA, link = 0x2222BBBB;
+  const SnapshotAbility cast = RootSnapshotAbility(chains, 0x80010001);
+  const SnapshotAbility linkMod = ChildSnapshotAbility(cast, link, 0x80020002, 0x20);
+  CHECK_EQ(DamageEventGuid(linkMod), chains);  // == ignoredAbility: not shared again
+  CHECK_EQ(DamageEventInstance(linkMod), 0x80020002u);
+  CHECK_EQ(DamageEventGuid(cast), chains);
+  CHECK_EQ(DamageEventInstance(cast), 0x80010001u);
+  // a snapshot without an own instance (none seen; Create always writes one) falls back to the credit instance
+  SnapshotAbility bare;
+  bare.creditInstance = 7;
+  CHECK_EQ(DamageEventInstance(bare), 7u);
+  // a source without a credit pair: the child credits the source's own pair, and without that itself
+  SnapshotAbility ownOnly;
+  ownOnly.ownGuid = 5;
+  ownOnly.ownInstance = 6;
+  const SnapshotAbility c1 = ChildSnapshotAbility(ownOnly, 9, 10, 0);
+  CHECK_EQ(c1.creditGuid, 5u);
+  CHECK_EQ(c1.creditInstance, 6u);
+  const SnapshotAbility c2 = ChildSnapshotAbility(SnapshotAbility{}, 9, 10, 0);
+  CHECK_EQ(c2.creditGuid, 9u);
+  CHECK_EQ(c2.creditInstance, 10u);
 }

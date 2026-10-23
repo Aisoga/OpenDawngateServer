@@ -43,6 +43,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace bots {
@@ -93,6 +94,10 @@ struct Options {
   // MAPHOST: [host] bot_hunter_seat, -1 auto (a bot Hunter only on a level with jungle camps: director::JungleCamps),
   // 0 never (the seat is a laner: composition.h NoJungleSeat), 1 always (as before MAPHOST)
   int hunterSeat = -1;
+  // BOTLANESPLIT: [host] bot_lane_split, the bots divide each role evenly over the lanes (gms/core/bots/lanesplit.h): at
+  // the composition and the draw, after a role change in shaper select, and for a single bot's lane change in the match
+  // (ability_Bot_AssignToThreatenedLane through nBotHost.LaneSplit); 0 = the lanes as composed and every change taken
+  bool laneSplit = true;
 };
 
 // BOTJUNGLE: a human's minimap ping (the command intake's ping relay, commands.cpp): kept (the last 32) for
@@ -147,6 +152,10 @@ bool LaneFrontOf(std::uint32_t creature, int team, float* out, int* laneOut = nu
 // Shaper select moved a bot to another role (its mRole is written by the host's pick write; this keeps our list, which
 // the Lua shims' BotRole answers from, in step).
 void SetRole(int index, int role);
+// BOTLANESPLIT: the reveal's picks are in (the bots' roles after SetRole, the humans' picked roles as (team, role)):
+// every team's bots divide their roles over the lanes again, the humans counted (gms/core/bots/lanesplit.h), before the
+// deploy hands the lanes to nBot.AssignLane. Logs one "BOTLANESPLIT (the reveal)" line per team.
+void SplitLanesAtReveal(const std::vector<std::pair<int, int>>& humanTeamRoles);
 
 // BOTDRAFT (gms/core/bots/draft.h): in a custom, practice or PvP game the bots get their classes in
 // shaper select, after the humans have chosen. BeginDraft (shaper select set up, the bots created) says whether the

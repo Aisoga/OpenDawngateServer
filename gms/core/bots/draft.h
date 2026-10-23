@@ -158,6 +158,9 @@ struct DraftOptions {
   bool huntersPinned = false;  // bot_hunters names classes (not "" or "default"): each team's Hunter is a pin
   std::vector<std::string> tacticians;                  // ParseTacticianList([host] bot_tacticians); empty = no pin
   std::vector<std::string> gladiators;                  // ParseGladiatorList([host] bot_gladiators); empty = no pin
+  // MAPHOST: false on a level without jungle camps (MM_Map_v3): no Hunter seat, its seat becomes a flex seat at the
+  // bottom (composition.h NoJungleSeat), and the fallback takes no Hunter class
+  bool jungle = true;
 };
 
 // Picks the first entry of `order` whose base class is neither in `hard` nor (first pass) in `soft`; "" = none. A
@@ -186,7 +189,7 @@ inline std::vector<ComposedSeat> ComposeDraftTeam(int seats, const std::vector<i
   if (seats <= 0) return {};
   // the seats by role (positions: g top/bottom, f top/bottom, h)
   std::vector<int> g = {kLaneTop, kLaneBottom}, f = {kLaneTop, kLaneBottom};
-  int h = 1;
+  int h = o.jungle ? 1 : 0;  // MAPHOST: no Hunter seat without camps (the extra flex seat below takes it)
   bool predatorTaken = false;
   for (int role : humanRoles) {
     if (role == kRoleHunter && h > 0) --h;
@@ -220,7 +223,9 @@ inline std::vector<ComposedSeat> ComposeDraftTeam(int seats, const std::vector<i
     return s;
   };
   // any available class as the last resort (its own role)
-  std::vector<std::string> anyClass(available.begin(), available.end());
+  std::vector<std::string> anyClass;
+  for (const std::string& c : available)
+    if (o.jungle || ClassRole(c) != kRoleHunter) anyClass.push_back(c);
   auto fallback = [&](int lane) {
     ComposedSeat s;
     s.lane = lane;

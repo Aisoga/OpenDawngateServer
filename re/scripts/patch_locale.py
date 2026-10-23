@@ -2,7 +2,7 @@
 
 The client looks every string table up by {instance = FNV-1 of the table's name, type 0x02FAC0B6, group 0x02FABF01} in
 every *.package of game/Data/Locale/en-us/, and the package whose name sorts first wins (an added
-AA_*.package was seen winning over Locale.package live). So this script writes changed copies of five of the copy's own tables into an added package
+AA_*.package was seen winning over Locale.package live). So this script writes changed copies of six of the copy's own tables into an added package
 beside the shipped Locale.package, which stays untouched (the game's text can't ship: the package is made from the
 copy's own file at setup time):
 
@@ -29,6 +29,11 @@ copy's own file at setup time):
                             default --leaderboard-min-games; a server that changes it makes this number wrong)
   FE_MatchType 0xFF007FE0   the PLAY screen's lines that said a group's games don't count (0x0fd838a1, 0x0fd84a0a,
                             0x0ec1b32d): group PvP queue games count
+  FE_CustomGameLobby 0x7BE32E1A the custom lobby's map line for a level the client's map table can't name: the
+                            client falls back to ^FE_CustomGameLobby!0x0f2b57c5, which the build lacks (it showed
+                            that key), so the line 0x0f2b57c5 "MM (one lane)", the create dialog's label (MM_Map_v3
+                            is the only such map a server hosts; test_ph2b.py checks the label against
+                            patch_login_movie.EXTRA_MAPS)
 
 The links (SITE_PAGES): without a website, http://<host>:<http port>/dawngate/<page>, which dgserver's HTTP port
 answers with a short page of its own (server/internal/web/sitepages.go: how sign-up works in its mode, ask the operator
@@ -40,7 +45,7 @@ package's tests pin the same SHA-256s): a table is cut at "\\n"; a line whose te
 line, before a final "\\r") starts with "0x", 8 hex digits and a blank gets the new text after that prefix, the line's
 ends kept; ids the table lacks are appended after the comment line ADDED_COMMENT, each as "0x<id, 8 lower-case hex
 digits> <text>\\r\\n" in id order (a table not ending in "\\n" gets "\\r\\n" first); a table missing from Locale.package
-(only in a synthetic test build) is made of those appended lines alone. The package holds the five tables in instance
+(only in a synthetic test build) is made of those appended lines alone. The package holds the six tables in instance
 order, stored uncompressed (dbpf.py write_package).
 
 Usage:
@@ -67,6 +72,7 @@ SOURCE = "game/Data/Locale/en-us/" + SHIPPED  # the copy's own tables it is made
 STRING_TYPE, STRING_GROUP = 0x02FAC0B6, 0x02FABF01
 BLAZE_ERRORS, URLS, LOGIN_SCREEN = 0x1E5BC096, 0x30B0670B, 0x69E51800
 FE_LEADERBOARD, FE_MATCH_TYPE = 0xE3B520DE, 0xFF007FE0  # FNV-1 of fe_leaderboard, fe_matchtype
+FE_CUSTOM_GAME_LOBBY = 0x7BE32E1A  # FNV-1 of fe_customgamelobby
 LEADERBOARD_MIN_GAMES = 10  # dgserver's --leaderboard-min-games default (blaze.LeaderboardMinGames)
 HTTP_PORT = 18080
 FALLBACK_PREFIX = "dawngate/"  # dgserver's own pages on its HTTP port (web.SitePrefix)
@@ -181,6 +187,11 @@ MATCH_TYPE_LINES = {
     0x0FD84A0A: "Match with other players of similar skill." + " " * 80 + "Solo and group games impact Leaderboard ranking.",
     0x0EC1B32D: "Games queued as a group impact Leaderboard ranking too.",
 }
+# the custom lobby's map line for a LevelId the client's one-entry map table (0x013F3A78) can't name: CustomMatchLobbyUI
+# asserts resultName and shows ^FE_CustomGameLobby!0x0f2b57c5, a line build 854 lacks. Of the maps a server hosts
+# (blaze.PlayableLevels) only MM_Map_v3 gets there, so the create dialog's label for it (EXTRA_MAPS).
+LOBBY_MAP_LINE = 0x0F2B57C5
+LOBBY_LINES = {LOBBY_MAP_LINE: "MM (one lane)"}
 URL_PAGES = {  # line id -> page
     0x00000001: "terms", 0x00000002: "privacy", 0x00000003: "password", 0x00000004: "signup",
     0x00000005: "signup", 0x00000006: "signup", 0x00000007: "terms", 0x00000100: "", 0x00000101: "",
@@ -237,7 +248,8 @@ def tables(host, http_port=HTTP_PORT, web_domain=None):
         for first, page in ((SLOT_SIGNUP, "signup"), (SLOT_PASSWORD, "password")):
             urls[first + slot] = f"http://{host}:{http_port}/{FALLBACK_PREFIX}pick/{slot}/{page}"
     return {BLAZE_ERRORS: dict(ERROR_LINES), URLS: urls, LOGIN_SCREEN: dict(LOGIN_LINES),
-            FE_LEADERBOARD: dict(LEADERBOARD_LINES), FE_MATCH_TYPE: dict(MATCH_TYPE_LINES)}
+            FE_LEADERBOARD: dict(LEADERBOARD_LINES), FE_MATCH_TYPE: dict(MATCH_TYPE_LINES),
+            FE_CUSTOM_GAME_LOBBY: dict(LOBBY_LINES)}
 
 
 def patch_table(text, lines):

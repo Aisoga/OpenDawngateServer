@@ -435,7 +435,7 @@ func (g *Gateway) serveSession(c *tls.Conn, peer string, ver byte) {
 	g.mu.Unlock()
 	keys, err := DeriveKeys(c.ConnectionState(), s.id)
 	if err == nil {
-		err = s.attach(c, keys, ip)
+		err = s.attach(c, keys, ip, h.release, ver == sessionVersion && build.Same(g.Version, h.release))
 	}
 	if err != nil {
 		g.logf("%s: session %d: %v", peer, s.id, err)
@@ -657,14 +657,18 @@ type session struct {
 
 	mu       sync.Mutex
 	tunnelIP net.IP
-	up       *Opener
-	down     *Sealer
-	endpoint *net.UDPAddr
-	control  net.Conn
-	lost     time.Time
-	flows    map[flowKey]*flow
-	routes   map[int]*net.UDPAddr
-	ended    bool
+	// release is the release the session hello named ("" for a version 1 hello), sameRelease whether it is the
+	// gateway's Version (false for any session let in only by AllowAnyClient)
+	release     string
+	sameRelease bool
+	up          *Opener
+	down        *Sealer
+	endpoint    *net.UDPAddr
+	control     net.Conn
+	lost        time.Time
+	flows       map[flowKey]*flow
+	routes      map[int]*net.UDPAddr
+	ended       bool
 
 	upN, upBytes, downN, downBytes, streams       atomic.Uint64
 	dropAuth, dropReplay, dropBig, dropRoute, eps atomic.Uint64
@@ -684,7 +688,9 @@ type flow struct {
 	last   atomic.Int64 // unix nanoseconds of the last datagram either way
 }
 
-func (s *session) attach(c net.Conn, k Keys, ip net.IP) error {
+// The release named in the hello and whether it is the gateway's own (a resumed session takes the new hello's: the
+// same Start-Client normally, checked again by checkRelease) are what SameRelease tells the services.
+func (s *session) attach(c net.Conn, k Keys, ip net.IP, release string, same bool) error {
 	up, err := NewOpener(k.Up, s.id)
 	if err != nil {
 		return err
@@ -696,6 +702,7 @@ func (s *session) attach(c net.Conn, k Keys, ip net.IP) error {
 	s.mu.Lock()
 	old := s.control
 	s.control, s.lost, s.up, s.down, s.tunnelIP = c, time.Time{}, up, down, ip
+	s.release, s.sameRelease = release, same
 	s.mu.Unlock()
 	if old != nil && old != c {
 		old.Close()

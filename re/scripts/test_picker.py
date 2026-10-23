@@ -1,11 +1,14 @@
-"""Tests of the movie patcher of the server picker and the bot check box (re/scripts/patch_login_movie.py) and their
+"""Tests of the movie patcher of the server picker, the bot check box and the chat rooms class
+(re/scripts/patch_login_movie.py) and their
 committed bytes.
 
 The made-up movie and its patched form have the SHA-256s that server/internal/setup/moviepatch's Go tests pin (the
 Go port writes the same bytes); the encoder and archive writer the ones server/internal/setup/snap's tests pin. With
 the game's files (client/ia_Dawngate/Dawngate, or DAWNGATE_GAME) the player's own LoginScreen.snap is patched too and
 read back, and its Battlegrounds.snap with the bot check box (with DAWNGATE_MATCHOPTIONS_GO naming the file that Go's
-TestBuildMatchOptions854 wrote with DAWNGATE_MATCHOPTIONS_OUT, compared byte for byte). --compile also checks that the committed ABC and tags are what the source compiles to (build_picker.py
+TestBuildMatchOptions854 wrote with DAWNGATE_MATCHOPTIONS_OUT, compared byte for byte), and its Global.snap with the
+class that opens the chat rooms the server marks as open by default (DAWNGATE_CHATROOMS_GO naming the file that
+TestBuildChatRooms854 wrote with DAWNGATE_CHATROOMS_OUT). --compile also checks that the committed ABC and tags are what the source compiles to (build_picker.py
 check; needs the Flex SDK and Java).
 
 Usage:
@@ -131,9 +134,103 @@ def main(argv):
     except plm.MovieError as e:
         check("the bot check box already" in str(e), f"refused: the bot check box twice ({e})")
     with open(os.path.join(REPO, "client_ui", "matchoptions", "BotCheckbox.as"), encoding="utf-8") as f:
-        check('MARKER:String = "~#bots"' in f.read(), "the class's marker is the server's ~#bots")
+        mo_as = f.read()
+    check('MARKER:String = "~#bots"' in mo_as, "the class's marker is the server's ~#bots")
+    # the map dropdown: the class reads the map list the archive holds, and sends ~#<tag> (the server's cutNameTags)
+    check(f'MAPS_URL:String = "{plm.MAP_LIST_PATH[len("UI/Scaleform/"):]}"' in mo_as and
+          f'MAPS_MAGIC:String = "{plm.MAP_LIST_MAGIC.split(chr(9))[0]}"' in mo_as and
+          'FIRST_TAG:String = "sm"' in mo_as and 'tag = "~#" +' in mo_as,
+          "the class reads the archive's map list and sends ~#sm or the listed map's tag")
+    def pad(text):
+        return text + b"\n" * (plm.MAP_LIST_SIZE - len(text))
+    check(plm.map_list([]) == pad(b"dawngate-maps\t1\nend\n") and
+          plm.map_list(plm.EXTRA_MAPS) == pad(b"dawngate-maps\t1\nmap\tmm\tMM (one lane)\nend\n") and
+          len(plm.map_list([("t", "", "a label of some twenty chars")] * 100)) == plm.MAP_LIST_SIZE,
+          "the map list's bytes, padded to 1 KB, as moviepatch's MapList")
+    check(plm.snappy_literals(b"") == b"\0" and plm.snappy_literals(b"ab") == b"\x02\x04ab" and
+          plm.snappy_literals(bytes(300))[:5] == bytes([0xAC, 0x02, 61 << 2, 0x2B, 0x01]) and
+          len(plm.snappy_literals(bytes(plm.MAP_LIST_SIZE))) == 1029 and
+          snap.snappy_decompress(plm.snappy_literals(bytes(range(256)) * 300), 76800) == bytes(range(256)) * 300,
+          "Snappy literals only, as snap.EncodeLiterals")
+    check(plm.server_maps(plm.EXTRA_MAPS, ["mm"]) == list(plm.EXTRA_MAPS) and plm.server_maps(plm.EXTRA_MAPS, []) == []
+          and plm.server_maps([], ["mm"]) == [], "server_maps: the copy's maps that the server offers")
+    with tempfile.TemporaryDirectory() as d:
+        bsnap = os.path.join(d, "Battlegrounds.snap")
+        with open(bsnap, "wb") as f:
+            f.write(plm.pack_bytes([(mo.movie_path, m)]))
+        none = plm.build(bsnap, b"OURTAGS", mo)  # no map archive beside it
+        check(sha(none) == "e4994e8df80b86886df2a24a92f90ab698bd91a572be6e0a66cff9ab3a881471" and len(none) == 1326,
+              "a made-up dialog archive without maps as moviepatch_test.go pins it")
+        with open(os.path.join(d, "zz_MM_Map_v3.snap"), "wb") as f:
+            f.write(b"x")
+        mm = plm.build(bsnap, b"OURTAGS", mo)  # the map's archive beside it
+        check(sha(mm) == "ea32a187414f66c510cea4473c00b166be6db1188d0710b61e6622c43b3e5e9b" and len(mm) == 1326,
+              "with MM's archive in the copy: the list names MM, as moviepatch_test.go pins it")
+        check(plm.build(bsnap, b"OURTAGS", mo, maps=[]) == none, "maps=[] lists none")
+        # the front's in-place write (moviepatch.WriteMapList; TestWriteMapList pins the same)
+        copy = os.path.join(d, "copy")
+        os.makedirs(os.path.join(copy, "game", "Data"))
+        arch = plm.map_list_archive(copy)
+        with open(arch, "wb") as f:
+            f.write(mm)
+        changed = plm.write_map_list(copy, [])
+        with open(arch, "rb") as f:
+            after = f.read()
+        check(changed and after == none and not plm.write_map_list(copy, []),
+              "write_map_list: a server without MM, in place (the setup's archive without maps)")
+        check(plm.map_list_only(after, mm) and not plm.map_list_only(mm, mm) and
+              not plm.map_list_only(after[:40] + bytes([after[40] ^ 1]) + after[41:], mm),
+              "map_list_only: the front's list, not a changed movie")
+        check(plm.write_map_list(copy, plm.EXTRA_MAPS) and open(arch, "rb").read() == mm, "write_map_list: MM again")
+        old = plm.pack_bytes([(mo.movie_path, m), (plm.MAP_LIST_PATH, b"dawngate-maps\t1\nend\n")])
+        with open(arch, "wb") as f:
+            f.write(old)
+        try:
+            plm.write_map_list(copy, [])
+            check(False, "write_map_list refuses an older layout")
+        except plm.MapListLayoutError:
+            check(open(arch, "rb").read() == old and not plm.map_list_only(old, mm),
+                  "write_map_list refuses an older layout, the file unchanged")
+
+    # the chat rooms opened by default: the same patcher with its spec
+    cr = plm.SPECS["chatrooms"]
+    ctags = plm.read_tags(cr.tags)
+    ct = plm.tags_of(ctags, 0, len(ctags))
+    check([c for c, *_ in ct] == [39, 82, 76, 70] and ct[-1][3] == len(ctags),
+          "chatrooms_tags.hex: DefineSprite, DoABC, SymbolClass, PlaceObject3")
+    check(plm._pairs(ctags, ct[2][2], ct[2][3]) == [(2000, "AutoRooms")], "its SymbolClass: 2000 -> AutoRooms")
+    check(ctags[ct[3][2]:ct[3][3]] == bytes([0x06, 0]) + struct.pack("<HH", 2000, 2000) + b"\0",
+          "its PlaceObject3: character 2000 at depth 2000, no name")
+    check(plm.patch_movie(m, b"OURTAGS", cr) == out, "the chat rooms spec patches as the picker's (the same bytes)")
+    try:
+        plm.patch_movie(plm.patch_movie(m, ctags, cr), ctags, cr)
+        check(False, "refused: the chat rooms class twice")
+    except plm.MovieError as e:
+        check("the chat rooms opened by default already" in str(e), f"refused: the chat rooms class twice ({e})")
+    with open(os.path.join(REPO, "client_ui", "chatrooms", "AutoRooms.as"), encoding="utf-8") as f:
+        src_as = f.read()
+    check("AUTO_CATEGORY_MIN:Number = 1000;" in src_as, "the class's marked categories start at the server's 1000")
+    # a new line's sound: the game's interact event 74 (CHAT_NOTIFY_SYS_MESSAGE), its table entry Play_UI_notification
+    check("SOUND_EVENT:uint = 74;" in src_as and 'ExternalInterface.call("Global.OnInteractEvent", SOUND_EVENT)' in src_as,
+          "the class rings with the game's interact event 74 (Play_UI_notification)")
 
     game = game_dir()
+    if game:
+        gsrc = os.path.join(game, "game", "Data", "Global.snap")
+        gbuilt = plm.build(gsrc, spec=cr)
+        tmp = tempfile.NamedTemporaryFile(suffix=".snap", delete=False)
+        tmp.write(gbuilt)
+        tmp.close()
+        back = snap.Snap(tmp.name)
+        graw = back.read(back.entries[0])
+        os.remove(tmp.name)
+        ids, names, depths, _ = plm.scan(zlib.decompress(graw[8:]))
+        check(back.entries[0].name == cr.movie_path and "AutoRooms" in names and "maxis.chat.Chat" in names and
+              2000 in ids and 2000 in depths,
+              f"the player's own chat movie patched ({len(gbuilt)} bytes, SHA-256 {sha(gbuilt)[:16]})")
+        if os.environ.get("DAWNGATE_CHATROOMS_GO"):  # moviepatch's TestBuildChatRooms854 output
+            with open(os.environ["DAWNGATE_CHATROOMS_GO"], "rb") as f:
+                check(f.read() == gbuilt, "the Go setup's zz_Chat.snap is the same")
     if game:
         bsrc = os.path.join(game, "game", "Data", "Battlegrounds.snap")
         bbuilt = plm.build(bsrc, spec=mo)

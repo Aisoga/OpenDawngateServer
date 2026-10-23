@@ -111,6 +111,9 @@ EXTRA_COPIES = ("e", "f", "h", "lan")
 GB = 1 << 30
 COPY_BYTES = int(1.6 * GB)  # one copy of the build (1.53 GB)
 MARGIN = 1 * GB
+# the archive zz_MM_Map_v3.snap the setup makes from build 854's files (server/internal/setup/mapmm's pin)
+MM_ARCHIVE = "zz_MM_Map_v3.snap"
+MM_ARCHIVE_SHA256 = "3e0496a84d6320b1c16017301a578278c8f794cb409e64614b8e13845bbdb9bc"
 
 OK, DONE, NOTE, SKIP = "ok", "done", "note", "skipped"
 MISSING, STALE, FAILED = "MISSING", "STALE", "FAILED"
@@ -790,13 +793,82 @@ class Setup:
                                              "(is the game running from this copy?)")
         return self.report(DONE, step, f"{line} (was: {why})")
 
+    def step_halloween(self, step, copy):
+        """a client copy's added archive game/Data/zz_Halloween.snap (halloween.py: the map's Halloween decoration
+        under level flag 1, shown only in a match whose server sends that flag, dgserver --halloween), made from the
+        copy's own AssetData.snap; current means byte for byte what halloween.py makes (the Go setup's halloween, the
+        same bytes). Every client copy; the host copy doesn't need it."""
+        import halloween as hw
+        src = os.path.join(copy, "game", "Data", "AssetData.snap")
+        added = os.path.join(copy, "game", "Data", hw.ARCHIVE)
+        if not os.path.isfile(src):
+            return self.report(MISSING, step, f"{self.show(src)} (the copy is incomplete)")
+        if sha256(src) != self.orig_sha("game/Data/AssetData.snap"):
+            return self.report(FAILED, step, f"{self.show(src)} is not the untouched build-854 file "
+                                             "(docs/file_manifest.csv); delete the copy and run this again")
+        try:
+            want = hw.build(src)
+        except ValueError as e:
+            return self.report(FAILED, step, str(e))
+        line = f"{self.show(added)}: the Halloween decoration under level flag {hw.LEVEL_FLAG} " \
+               f"({hashlib.sha256(want).hexdigest()[:16]})"
+        have = read(added) if os.path.isfile(added) else None
+        if have == want:
+            return self.report(OK, step, line)
+        why = "not there" if have is None else "an older one"
+        if self.check:
+            return self.report(MISSING if have is None else STALE, step, f"{self.show(added)}: {why}")
+        self.never_pristine(added)
+        if self.script("halloween.py", os.path.join(copy, "game", "Data")) or not os.path.isfile(added) or \
+                read(added) != want:
+            return self.report(FAILED, step, f"halloween.py didn't write the expected {self.show(added)} "
+                                             "(is the game running from this copy?)")
+        return self.report(DONE, step, f"{line} (was: {why})")
+
+    def step_mapship(self, step, copy):
+        """a copy's added archive game/Data/zz_MM_Map_v3.snap (the second map MM_Map_v3's level files: the navigation
+        graphs, the PhysX mesh (shipped cooked in the setup's code), the fog outlines, the minimap and the ground),
+        made from the copy's own game files by the release setup's own code (`go run ./tools/mapmm`); current means build 854's archive (MM_ARCHIVE_SHA256, the Go setup's pin). Every
+        client copy and the host copy: a server may host either map."""
+        added = os.path.join(copy, "game", "Data", MM_ARCHIVE)
+        line = f"{self.show(added)}: the second map MM_Map_v3's level files ({MM_ARCHIVE_SHA256[:16]})"
+        if os.path.isfile(added) and sha256(added) == MM_ARCHIVE_SHA256:
+            return self.report(OK, step, line)
+        why = "an older one" if os.path.isfile(added) else "not there"
+        if self.check:
+            return self.report(STALE if os.path.isfile(added) else MISSING, step, f"{self.show(added)}: {why}")
+        if not self.needs(step, Go=self.tools.get("go")):
+            return False
+        self.never_pristine(added)
+        env = dict(os.environ, GOTOOLCHAIN="local")
+        if self.run([self.tools["go_exe"], "run", "./tools/mapmm", copy], env=env,
+                    cwd=os.path.join(self.code, "server")) or \
+                not (os.path.isfile(added) and sha256(added) == MM_ARCHIVE_SHA256):
+            return self.report(FAILED, step, f"server/tools/mapmm didn't write build 854's {self.show(added)} "
+                                             "(is the game running from this copy?)")
+        return self.report(DONE, step, f"{line} (was: {why})")
+
     def step_match_options(self, step, copy):
         """a client copy's added archive game/Data/zz_MatchOptions.snap (patch_login_movie.py --spec matchoptions: the
-        CREATE GAME dialog's movie with our "Fill open seats with bots" check box), made from the copy's own
-        Battlegrounds.snap; current means byte for byte what patch_login_movie.py makes (the Go setup's
-        moviepatch.MatchOptions, the same bytes). Every client copy."""
+        CREATE GAME dialog's movie with our "Fill open seats with bots" check box and map dropdown, and the map list
+        of the maps besides The Dawngate whose archives the copy has), made from the copy's own Battlegrounds.snap;
+        current means byte for byte what patch_login_movie.py makes (the Go setup's moviepatch.MatchOptions, the same
+        bytes). Every client copy; a step that adds a map's archive runs before this one."""
+        return self.step_movie(step, copy, "matchoptions", "the create dialog's bot check box",
+                               "an older check box or map list")
+
+    def step_chat_rooms(self, step, copy):
+        """a client copy's added archive game/Data/zz_Chat.snap (patch_login_movie.py --spec chatrooms: the chat movie
+        with our class that opens the rooms the server marks as open by default, once per login, minimised and without
+        the focus), made from the copy's own Global.snap; current means byte for byte what patch_login_movie.py makes
+        (the Go setup's moviepatch.ChatRooms, the same bytes). Every client copy."""
+        return self.step_movie(step, copy, "chatrooms", "the chat rooms opened by default", "an older chat rooms class")
+
+    def step_movie(self, step, copy, name, what, older):
+        """one of patch_login_movie.py's added archives (spec `name`) in a client copy, made from the copy's own
+        source archive."""
         import patch_login_movie as plm
-        spec = plm.SPECS["matchoptions"]
+        spec = plm.SPECS[name]
         src = os.path.join(copy, *spec.source.split("/"))
         added = os.path.join(copy, *spec.rel.split("/"))
         if not os.path.isfile(src):
@@ -808,15 +880,21 @@ class Setup:
             want = plm.build(src, spec=spec)
         except (plm.MovieError, ValueError) as e:
             return self.report(FAILED, step, str(e))
-        line = f"{self.show(added)}: the create dialog's bot check box ({hashlib.sha256(want).hexdigest()[:16]})"
+        line = f"{self.show(added)}: {what} ({hashlib.sha256(want).hexdigest()[:16]})"
         have = read(added) if os.path.isfile(added) else None
         if have == want:
             return self.report(OK, step, line)
-        why = "not there" if have is None else "an older check box"
+        why = "not there" if have is None else older
+        if have is not None and spec.map_list and plm.map_list_only(have, want):
+            # Start-Client's front wrote the maps of the server a login went to (moviepatch.WriteMapList): current
+            # for a check; the setup puts the copy's own list back
+            if self.check:
+                return self.report(OK, step, f"{line} (with the map list of the server logged in to last)")
+            why = "the map list of the server logged in to last"
         if self.check:
             return self.report(MISSING if have is None else STALE, step, f"{self.show(added)}: {why}")
         self.never_pristine(added)
-        if self.script("patch_login_movie.py", "--spec", "matchoptions", src, added) or not os.path.isfile(added) or \
+        if self.script("patch_login_movie.py", "--spec", name, src, added) or not os.path.isfile(added) or \
                 read(added) != want:
             return self.report(FAILED, step, f"patch_login_movie.py didn't write the expected {self.show(added)} "
                                              "(is the game running from this copy?)")
@@ -1094,22 +1172,30 @@ class Setup:
         certs = self.step_certs("certificates", self.certs, LOCAL)
         if self.a.lan_certs:
             self.step_certs("lan certs", self.lan_certs, self.a.lan_certs)
-        client = False
+        client = client_copy = False
         if self.copy_there("client copy", self.client, archive, PATCHED):
             exe = self.needs("client exe", certificates=certs) and \
                 self.step_exe("client exe", self.client, os.path.join(self.certs, "ca_modulus.bin"), "local", LOCAL)
             config = self.step_config("client config", self.client, LOCAL)
             self.step_locale("client texts", self.client, LOCAL)
             self.step_bot_profiles("client bots", self.client)
-            self.step_match_options("bot check box", self.client)
+            self.step_halloween("halloween", self.client)
             client = bool(exe and config)
+            client_copy = True
         raknet = self.step_raknet()
         gms = self.step_gms(raknet)
+        if client or (self.check and os.path.isdir(self.client)):
+            self.step_mapship("client MM_Map_v3", self.client)
+        if client_copy:
+            # after the map's archive: the create dialog's map dropdown lists the maps the copy has (MAPDROP)
+            self.step_match_options("bot check box", self.client)
+            self.step_chat_rooms("chat rooms", self.client)
         self.step_server()
         host_copy = self.copy_there("host copy", self.host, archive, PATCHED + (LOADER,))
         host = False
         if host_copy:
             self.step_bot_profiles("host bots", self.host)
+            self.step_mapship("host MM_Map_v3", self.host)
             exe = self.needs("host exe", certificates=certs) and \
                 self.step_exe("host exe", self.host, os.path.join(self.certs, "ca_modulus.bin"), "local", LOCAL,
                               exact=False)
@@ -1147,7 +1233,10 @@ class Setup:
             self.step_config("client config", self.client, host)
             self.step_locale("client texts", self.client, host)
             self.step_bot_profiles("client bots", self.client)
+            self.step_halloween("halloween", self.client)
+            self.step_mapship("client MM_Map_v3", self.client)
             self.step_match_options("bot check box", self.client)
+            self.step_chat_rooms("chat rooms", self.client)
 
     def finish(self):
         bad = [r for r in self.results if r[0] in BAD]

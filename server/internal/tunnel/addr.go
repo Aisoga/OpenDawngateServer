@@ -29,6 +29,27 @@ func (a *Addr) String() string { return net.JoinHostPort(a.IP.String(), strconv.
 // TunnelSession returns the tunnel session id (an interface other packages test for without importing this one).
 func (a *Addr) TunnelSession() uint64 { return a.Session }
 
+// Release is the release name the session's Start-Client gave in its hello ("" when it named none or the address
+// has no session), and same whether that is the gateway's own release. Without the gateway's AllowAnyClient every
+// session is of the same release; with it, an older or another Start-Client is let in and same is false. The services
+// take same as the capability of a Start-Client of this release: its setup makes the files every map the release
+// offers needs (the Blaze map check, blaze.Server.MapTrust).
+func (a *Addr) Release() (name string, same bool) {
+	if a == nil || a.sess == nil {
+		return "", false
+	}
+	a.sess.mu.Lock()
+	defer a.sess.mu.Unlock()
+	return a.sess.release, a.sess.sameRelease
+}
+
+// FakeSessionAddr is an address of a session that exists only for a service's tests: its Start-Client named release,
+// same as the gateway's own or not (Release); it routes nothing.
+func FakeSessionAddr(ip net.IP, port int, release string, same bool) *Addr {
+	return &Addr{IP: ip, Port: port, Session: 1, sess: &session{release: release, sameRelease: same,
+		routes: map[int]*net.UDPAddr{}}}
+}
+
 // IPPort returns the address and port.
 func (a *Addr) IPPort() (net.IP, int) { return a.IP, a.Port }
 

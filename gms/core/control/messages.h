@@ -83,6 +83,10 @@ struct CreateGame {
   // dgserver sends the matchmaker's team size unless --mm-bots=false); written only when not 0, and 0 = not asked
   // (the host's [host] bots auto rule goes by the descriptors' BotsFillTeams).
   int64_t fillTeams = 0;
+  // HOLIDAY1: the level flags the host loads the level with and sends in GamePrepareForStart (the client's level loader
+  // loads a markerset whose condition names value c only when bit c is set; bit 0 = the Halloween decoration, dgserver
+  // --halloween); written only when not 0, and 0 = not given (the host keeps dgsim.ini's [dgsim] flags).
+  int64_t levelFlags = 0;
 };
 
 // host -> server: level loaded, GMS port bound.

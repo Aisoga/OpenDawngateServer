@@ -17,12 +17,24 @@ picker already, is refused.
 
 The same is done for the CREATE GAME dialog's bot check box (--spec matchoptions): client_ui/matchoptions/BotCheckbox.as,
 its tags server/internal/setup/moviepatch/matchoptions_tags.hex, the movie UI/Scaleform/Battlegrounds/MatchOptionsUI.gfx
-from game/Data/Battlegrounds.snap, the added archive game/Data/zz_MatchOptions.snap (the same id and depth, 2000).
+from game/Data/Battlegrounds.snap, the added archive game/Data/zz_MatchOptions.snap (the same id and depth, 2000). The
+same class shows the dialog's map dropdown when the copy has a map besides The Dawngate: the archive also holds the
+dialog's map list, UI/Scaleform/Battlegrounds/dgmaps.json (map_list: one line per map of EXTRA_MAPS whose archive is in
+the copy's game/Data, found beside the source archive; --maps names them instead), which the class reads. The list
+is padded to MAP_LIST_SIZE and stored as Snappy literals only, so Start-Client's front can write the maps of the server
+a login goes to into it in place (write_map_list, server_maps; Go's moviepatch.WriteMapList); a check counts such a
+list as current (map_list_only).
+And for the chat rooms the server marks as open by default (--spec chatrooms): client_ui/chatrooms/AutoRooms.as, its tags
+server/internal/setup/moviepatch/chatrooms_tags.hex, the chat movie UI/Scaleform/Global/Chat.gfx from
+game/Data/Global.snap, the added archive game/Data/zz_Chat.snap (the same id and depth, 2000).
 
 Usage (python -I: the game's files are untrusted input):
     python -I re/scripts/patch_login_movie.py <game/Data/LoginScreen.snap> <out zz_ServerPicker.snap> [--tags <file>]
     python -I re/scripts/patch_login_movie.py --spec matchoptions <game/Data/Battlegrounds.snap> <out zz_MatchOptions.snap>
-    python -I re/scripts/patch_login_movie.py [--spec matchoptions] --movie <in .gfx> <out .gfx> [--tags <file>]
+                                              [--maps mm|none]   # the map list's maps (default: the copy's own)
+    python -I re/scripts/patch_login_movie.py --read-map-list <copy holding game/Data>   # print the copy's map list
+    python -I re/scripts/patch_login_movie.py --spec chatrooms <game/Data/Global.snap> <out zz_Chat.snap>
+    python -I re/scripts/patch_login_movie.py [--spec matchoptions|chatrooms] --movie <in .gfx> <out .gfx> [--tags <file>]
 """
 import os
 import struct
@@ -40,9 +52,10 @@ MOVIEPATCH = os.path.join(REPO, "server", "internal", "setup", "moviepatch")
 class Spec:
     """One added class: the archive its movie comes from, the added archive, the movie's path, the committed tags."""
 
-    def __init__(self, what, source, rel, movie_path, tags, class_name, char_id=2000, depth=2000):
+    def __init__(self, what, source, rel, movie_path, tags, class_name, char_id=2000, depth=2000, map_list=False):
         self.what, self.source, self.rel, self.movie_path = what, source, rel, movie_path
         self.tags, self.class_name, self.char_id, self.depth = tags, class_name, char_id, depth
+        self.map_list = map_list  # the archive also holds the create dialog's map list (MAP_LIST_PATH)
 
 
 SPECS = {
@@ -51,9 +64,24 @@ SPECS = {
                    "ServerPicker"),
     "matchoptions": Spec("the bot check box", "game/Data/Battlegrounds.snap", "game/Data/zz_MatchOptions.snap",
                          "UI/Scaleform/Battlegrounds/MatchOptionsUI.gfx",
-                         os.path.join(MOVIEPATCH, "matchoptions_tags.hex"), "BotCheckbox"),
+                         os.path.join(MOVIEPATCH, "matchoptions_tags.hex"), "BotCheckbox", map_list=True),
+    "chatrooms": Spec("the chat rooms opened by default", "game/Data/Global.snap", "game/Data/zz_Chat.snap",
+                      "UI/Scaleform/Global/Chat.gfx", os.path.join(MOVIEPATCH, "chatrooms_tags.hex"), "AutoRooms"),
 }
 PICKER = SPECS["picker"]
+
+# The create dialog's map list (client_ui/matchoptions/BotCheckbox.as reads it as Battlegrounds/dgmaps.json; the game's
+# file opener keeps only .json): "dawngate-maps<TAB>1", a line "map<TAB><tag><TAB><label>" per map besides The Dawngate
+# that the copy has, "end"; LF, UTF-8. No map line: the dialog stays as the game made it (The Dawngate only).
+MAP_LIST_PATH = "UI/Scaleform/Battlegrounds/dgmaps.json"
+MAP_LIST_MAGIC = "dawngate-maps\t1"
+# The list's fixed size: the text padded with line ends, stored as Snappy literals only, so every list has the same
+# layout and Start-Client's front can write the list of the server a login goes to in place while the game has the
+# archive mounted (write_map_list; moviepatch.MapListSize, WriteMapList).
+MAP_LIST_SIZE = 1 << 10
+# The maps besides The Dawngate a copy can have: its name tag (the server's ~#<tag>), its archive in game/Data, the
+# dropdown's text (the lobby and the browser show the server's label, "[MM] ").
+EXTRA_MAPS = (("mm", "zz_MM_Map_v3.snap", "MM (one lane)"),)
 # The picker's names, as before the specs.
 TAGS = PICKER.tags
 MOVIE_PATH = PICKER.movie_path
@@ -195,30 +223,179 @@ def read_tags(path=TAGS):
         return bytes.fromhex(f.read().decode("ascii"))
 
 
-def build(snap_path, tags=None, spec=PICKER):
+def copy_maps(data_dir):
+    """EXTRA_MAPS's entries whose archive is in the copy's game/Data folder `data_dir`."""
+    return [m for m in EXTRA_MAPS if os.path.isfile(os.path.join(data_dir, m[1]))]
+
+
+def map_list(maps):
+    """The map list's bytes for `maps` (EXTRA_MAPS's entries): the text padded with line ends to MAP_LIST_SIZE (maps
+    that don't fit are left out)."""
+    text = (MAP_LIST_MAGIC + "\n").encode("utf-8")
+    for tag, _, label in maps:
+        line = f"map\t{tag}\t{label}\n".encode("utf-8")
+        if len(text) + len(line) + len(b"end\n") > MAP_LIST_SIZE:
+            break
+        text += line
+    text += b"end\n"
+    return text + b"\n" * (MAP_LIST_SIZE - len(text))
+
+
+def snappy_literals(src):
+    """A Snappy block of literals only (snap.EncodeLiterals): its size depends on len(src) alone."""
+    n, out = len(src), bytearray()
+    while True:  # the uncompressed length, a varint
+        b = n & 0x7F
+        n >>= 7
+        out.append(b | (0x80 if n else 0))
+        if not n:
+            break
+    a = 0
+    while a < len(src):
+        ln = min(len(src) - a, 1 << 16)
+        k = ln - 1
+        if k < 60:
+            out.append(k << 2)
+        elif k < 256:
+            out += bytes([60 << 2, k])
+        else:
+            out += bytes([61 << 2, k & 0xFF, k >> 8])
+        out += src[a:a + ln]
+        a += ln
+    return bytes(out)
+
+
+def server_maps(have, offered):
+    """The maps of `have` (the copy's, copy_maps) that a server offers: `offered` holds its tags (the tunnel's maps
+    fact). A map the copy lacks is never listed."""
+    return [m for m in have if m[0] in offered]
+
+
+def map_list_archive(copy):
+    """The copy's archive that holds the map list (the copy holds game/Data)."""
+    return os.path.join(copy, *SPECS["matchoptions"].rel.split("/"))
+
+
+class MapListLayoutError(ValueError):
+    """The archive has no map list of the fixed layout (a setup before it)."""
+
+
+def _index(d):
+    """An archive's entries from its bytes: [(name, size, stored_size, offset, flags)] (snap.Snap's reading)."""
+    if len(d) < snap.HEADER_SIZE or d[:4] != snap.MAGIC:
+        raise MapListLayoutError("not a .snap archive")
+    count, names_size = struct.unpack_from("<II", d, 8)
+    names_off = len(d) - names_size
+    index_off = names_off - count * snap.ENTRY_SIZE
+    if index_off < snap.HEADER_SIZE:
+        raise MapListLayoutError("the index exceeds the file")
+    out = []
+    for i in range(count):
+        v = struct.unpack_from("<8I", d, index_off + i * snap.ENTRY_SIZE)
+        end = d.find(b"\0", names_off + v[0])
+        if end < 0 or v[6] + v[2] > index_off:
+            raise MapListLayoutError(f"entry {i} is outside the archive")
+        out.append((d[names_off + v[0]:end].decode("utf-8", "replace"), v[1], v[2], v[6], v[7]))
+    return out
+
+
+def _map_list_entry(d):
+    """The map list's (offset, stored size) in archive bytes `d`, checked: a literals-only block of MAP_LIST_SIZE."""
+    want = len(snappy_literals(bytes(MAP_LIST_SIZE)))
+    for name, size, stored_size, offset, flags in _index(d):
+        if name == MAP_LIST_PATH:
+            if flags & snap.FLAG_STORED or size != MAP_LIST_SIZE or stored_size != want:
+                break
+            return offset, stored_size
+    raise MapListLayoutError("no map list of the fixed layout (an older setup; the next setup writes it)")
+
+
+def write_map_list(copy, maps):
+    """Write the list of `maps` into the copy's zz_MatchOptions.snap in place (only the entry's bytes; the game may
+    have the archive mounted). True when the bytes changed; MapListLayoutError leaves the file as it was."""
+    path = map_list_archive(copy)
+    with open(path, "rb") as f:
+        d = f.read()
+    offset, size = _map_list_entry(d)
+    payload = snappy_literals(map_list(maps))
+    if d[offset:offset + size] == payload:
+        return False
+    with open(path, "r+b") as f:
+        f.seek(offset)
+        f.write(payload)
+    return True
+
+
+def map_list_only(have, want):
+    """Whether archive bytes `have` differ from `want` only in the map list's text (both of the fixed layout, have's
+    list whole): a list Start-Client's front wrote for the server a login went to, which the setup counts as current."""
+    if len(have) != len(want) or have == want:
+        return False
+    try:
+        offset, size = _map_list_entry(want)
+        if _map_list_entry(have) != (offset, size):
+            return False
+        text = snap.snappy_decompress(have[offset:offset + size], MAP_LIST_SIZE)
+    except (MapListLayoutError, snap.SnapError):
+        return False
+    return (have[:offset] == want[:offset] and have[offset + size:] == want[offset + size:] and
+            text.startswith((MAP_LIST_MAGIC + "\n").encode("utf-8")) and b"\nend\n" in text)
+
+
+def build(snap_path, tags=None, spec=PICKER, maps=None):
     """The added archive's bytes (zz_ServerPicker.snap from the player's LoginScreen.snap; with the matchoptions spec
-    zz_MatchOptions.snap from Battlegrounds.snap)."""
+    zz_MatchOptions.snap from Battlegrounds.snap, with the chatrooms spec zz_Chat.snap from Global.snap). The
+    matchoptions archive also holds the map list of `maps` (None: the maps whose archives are beside snap_path)."""
     tags = read_tags(spec.tags) if tags is None else tags
     s = snap.Snap(snap_path)
     entry = next((e for e in s.entries if e.name == spec.movie_path), None)
     if entry is None:
         raise MovieError(f"{snap_path}: no {spec.movie_path}")
     movie = patch_movie(s.read(entry), tags, spec)
-    return pack_bytes([(spec.movie_path, movie)])
+    files = [(spec.movie_path, movie)]
+    if spec.map_list:
+        if maps is None:
+            maps = copy_maps(os.path.dirname(os.path.abspath(snap_path)))
+        files.append((MAP_LIST_PATH, map_list(maps), True))
+    return pack_bytes(files)
 
 
 def pack_bytes(files):
-    """snap.pack's archive as bytes (Snappy entries)."""
+    """snap.pack's archive as bytes: files [(name, bytes)] Snappy-compressed, [(name, bytes, True)] as literals only
+    (snappy_literals; Go's snap.File.Literals)."""
     data = bytearray()
     index = bytearray()
     names = bytearray()
-    for name, blob in files:
-        payload = snap.snappy_compress(blob)
+    for name, blob, *literals in files:
+        payload = snappy_literals(blob) if literals and literals[0] else snap.snappy_compress(blob)
         index += struct.pack("<8I", len(names), len(blob), len(payload), 0, 0, 0, snap.HEADER_SIZE + len(data), 0)
         names += name.encode("utf-8") + b"\0"
         data += payload
     head = snap.MAGIC + struct.pack("<HHII", 0x200, 1, len(files), len(names)) + b"\0" * 16
     return bytes(head + data + index + names)
+
+
+def print_map_list(copy):
+    """Print the map list in a copy's zz_MatchOptions.snap (its maps and whether it has the fixed layout); 1 without
+    one."""
+    path = map_list_archive(copy)
+    with open(path, "rb") as f:
+        d = f.read()
+    try:
+        offset, size = _map_list_entry(d)
+        text, layout = snap.snappy_decompress(d[offset:offset + size], MAP_LIST_SIZE), "the fixed layout"
+    except MapListLayoutError:
+        entry = next((e for e in _index(d) if e[0] == MAP_LIST_PATH), None)
+        if entry is None:
+            print(f"{path}: no map list")
+            return 1
+        _, size, stored_size, offset, _ = entry
+        text, layout = snap.snappy_decompress(d[offset:offset + stored_size], size), "an older layout"
+    maps = [line.split("\t")[1] for line in text.decode("utf-8").split("\nend\n")[0].splitlines()
+            if line.startswith("map\t")]
+    print(f"{path}: the map list ({layout}): The Dawngate{''.join(', ' + t for t in maps)}"
+          f"{'' if maps else ' only (no dropdown)'}")
+    return 0
 
 
 def main(argv):
@@ -230,6 +407,15 @@ def main(argv):
             sys.exit(f"--spec takes one of {', '.join(SPECS)}")
         spec = SPECS[args[i + 1]]
         del args[i:i + 2]
+    maps = None
+    if "--maps" in args:
+        i = args.index("--maps")
+        names = args[i + 1].split(",") if i + 1 < len(args) else []
+        known = {m[0]: m for m in EXTRA_MAPS}
+        if not names or any(n not in known and n != "none" for n in names):
+            sys.exit(f"--maps takes none or a comma-separated list of {', '.join(known)}")
+        maps = [known[n] for n in names if n != "none"]
+        del args[i:i + 2]
     tags_path = spec.tags
     if "--tags" in args:
         i = args.index("--tags")
@@ -237,6 +423,8 @@ def main(argv):
         del args[i:i + 2]
     if not sys.flags.isolated:
         sys.exit("run this with python -I: it reads the game's files")
+    if len(args) == 2 and args[0] == "--read-map-list":
+        return print_map_list(args[1])
     tags = read_tags(tags_path)
     if len(args) == 3 and args[0] == "--movie":
         with open(args[1], "rb") as f:
@@ -248,12 +436,17 @@ def main(argv):
     if len(args) != 2:
         print(__doc__)
         return 2
-    out = build(args[0], tags, spec)
+    out = build(args[0], tags, spec, maps)
     with open(args[1], "wb") as f:
         f.write(out)
     back = snap.Snap(args[1])
     movie = back.read(back.entries[0])
     print(f"{args[1]}: {len(out)} bytes, the movie {len(movie)} bytes with {len(tags)} bytes of {spec.what}'s tags")
+    if spec.map_list:
+        listed = [line.split("\t")[1] for line in back.read(back.entries[1]).decode("utf-8").splitlines()
+                  if line.startswith("map\t")]
+        print(f"  the map list ({MAP_LIST_PATH}): The Dawngate{''.join(', ' + t for t in listed)}"
+              f"{'' if listed else ' only (no dropdown)'}")
     return 0
 
 

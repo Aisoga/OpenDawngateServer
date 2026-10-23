@@ -35,13 +35,13 @@ func MadeUp() []byte {
 // The SHA-256s re/scripts/patch_locale.py gives for the same inputs (test_ph2b.py pins the same values).
 const (
 	madeUpSHA        = "97766712cea3cf54c20204922cc472d86ac9d592c40e955f7c1a635e0567f25e"
-	madeUpLaneB      = "ab925a706ce8c2087adac0938925ee539c8751d69cc29ea81ffb0afa9e9a5213" // --host 127.0.0.2
-	madeUpWebDomain  = "22c506d29b524dae62fd6081d32364c8ea7043895744d4f6242ffd7372426e8e" // 192.168.1.20, Play.Example.org:8443
+	madeUpLaneB      = "ee5628e48171b9180ad8594353b7f9c6080c11f0b201cee6e5ec6a85c173d77d" // --host 127.0.0.2
+	madeUpWebDomain  = "ff457ba688e065e38e55fd0ff725d49daf06840ffb079d62238398e94b0dbc53" // 192.168.1.20, Play.Example.org:8443
 	synthLocaleSHA   = "528ce9623b3b1542fa600b1036136a3c39e8e68bb586019fb3a6d3c2f6374832" // synthgame.Locale()
-	synthLocal       = "9ce4f9d12c272865e5eed08d6621052b58dbccb57757fc6e92d204f695fc4132" // the synthetic game, 127.0.0.1
-	game854Local     = "032b20b329a328328c58c6767c0c38ae4f417e1930224d46af4d77ebead7066c" // build 854, --host 127.0.0.1
-	game854LaneB     = "75673a3e080ed7d8a28d1eb24f33636a85131548297ee99689efaa137e68d4f3" // --host 127.0.0.2
-	game854WebDomain = "3a6daee84c5729605d5005142b073bed81bc95c30ee116f1b7ee1b7b606553a9" // 203.0.113.7, dawngate.example.org
+	synthLocal       = "c9fc88d87bc633d3f6a6f5ae1b335268b8847bb62050df7d206dac8c6fbf6088" // the synthetic game, 127.0.0.1
+	game854Local     = "45bc4fa5c35f647c88eafa213a82ca289e42273d727b3a4ec29e80d187f242b8" // build 854, --host 127.0.0.1
+	game854LaneB     = "c6aa134d04e2c1cf7762903cc491fbc83a8163cf6b77f2afe5f1bf3683c0f120" // --host 127.0.0.2
+	game854WebDomain = "e9392a09c68e3f167917683dc19897db9075274d63efcaffd9a3cb031426eca4" // 203.0.113.7, dawngate.example.org
 )
 
 func TestBuildMatchesPython(t *testing.T) {
@@ -113,6 +113,21 @@ func TestBuildGame(t *testing.T) {
 					t.Errorf("entry %d: line %08x %q found %d times", i, id, line, n)
 				}
 			}
+			// the custom lobby's table: the shipped one (no final line end) and the appended map line
+			if e.Instance == FECustomGameLobby {
+				sp, err := dbpf.Parse(in)
+				if err != nil {
+					t.Fatal(err)
+				}
+				shipped, err := table(sp, FECustomGameLobby)
+				if want := string(shipped) + "\r\n" + Comment + "\r\n0x0f2b57c5 MM (one lane)\r\n"; err != nil ||
+					!strings.HasSuffix(string(shipped), "0x0f2b5801 Please Wait") || string(text) != want {
+					t.Errorf("FE_CustomGameLobby: %q (%v), want the shipped table and the map line", text, err)
+				}
+			}
+		}
+		if len(p.Entries) != 6 {
+			t.Errorf("%d tables, want 6", len(p.Entries))
 		}
 	}
 }

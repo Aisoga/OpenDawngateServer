@@ -284,6 +284,29 @@ test('towers per lane', function()
   check((W.calls.GetObjectIdByIndex or 0) == before, 'cached walk')
 end)
 
+test('towers on a one-lane level (MAPHOST)', function()
+  -- MM_Map_v3's four Bindings: both teams' lie on the one diagonal lane, team 1's below it (y - x < 0)
+  local b = {}
+  for i, x in ipairs({ { 'Binding_Mortal_Inner', -86.5, -108.8 }, { 'Binding_Mortal_Middle', -40.1, -46.2 },
+                       { 'Binding_Spirit_Middle', 40.1, 46.2 }, { 'Binding_Spirit_Inner', 86.5, 108.8 } }) do
+    b[i] = W.add({ name = x[1], team = string.find(x[1], 'Mortal') and 1 or 2, pos = P(x[2], x[3]),
+                   npc = nNPCType.Tower, structure = true })
+  end
+  check(nBattlegrounds.GetNumTowers(1, nLaneID.Top) == 0 and nBattlegrounds.GetNumTowers(1, nLaneID.Bottom) == 2,
+        'separate lanes: the Mortal Bindings all in one lane')
+  nBotHost = { SharedLanes = function() return true end }
+  W.time = W.time + 10
+  check(nBattlegrounds.GetNumTowers(1, nLaneID.Top) == 2 and nBattlegrounds.GetNumTowers(1, nLaneID.Bottom) == 2,
+        'shared: Mortal 2 in each lane')
+  check(nBattlegrounds.GetNumTowers(2, nLaneID.Top) == 2 and nBattlegrounds.GetNumTowers(2, nLaneID.Bottom) == 2,
+        'shared: Spirit 2 in each lane')
+  check(nBattlegrounds.GetOuterTower(1, nLaneID.Top) == b[2] and nBattlegrounds.GetOuterTower(2, nLaneID.Bottom) == b[3],
+        'shared: the Middle Bindings are the outer ones in both lanes')
+  check(nBattlegrounds.GetNumTowers(1, nLaneID.None) == 0, 'shared: lane None still 0')
+  check(dgsim_bots.inLane(nLaneID.Top, nLaneID.Bottom) and not dgsim_bots.inLane(nLaneID.None, nLaneID.Top),
+        'inLane')
+end)
+
 test('vulnerable and base structures', function()
   local b, nubs = v5Structures()
   W.get(b[8]).untargetable = true  -- a protected Spirit Middle

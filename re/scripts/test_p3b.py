@@ -23,6 +23,13 @@ references are computed with the Go setup's own ca_modulus.bin):
                  list's archive zz_ServerList.snap (written by Start-Client before each game start) isn't compared
   bot check box  the client copy's game\\Data\\zz_MatchOptions.snap = patch_login_movie.build(its own
                  Battlegrounds.snap, spec matchoptions); the host copy has none
+  chat rooms     the client copy's game\\Data\\zz_Chat.snap = patch_login_movie.build(its own Global.snap, spec
+                 chatrooms); the host copy has none
+  halloween      the client copy's game\\Data\\zz_Halloween.snap = halloween.build(its own AssetData.snap); the host
+                 copy has none
+  MM_Map_v3      both copies' game\\Data\\zz_MM_Map_v3.snap = build 854's archive (MM_ARCHIVE_SHA256: the Go
+                 setup's pin, which its Python twin makes too; the PhysX mesh is the cooked one the setup ships
+                 as data), and the release has no host\\physcook.exe (no cooking at setup any more)
 
 A Start-Server with the tunnel makes no client copy (Start-Client does), and a player's folder has no host copy and
 no server certificates: the checks of a copy that isn't there are left out (one of the two must be there).
@@ -42,6 +49,11 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)  # -I drops the script folder
 import bot_profiles  # noqa: E402
+import halloween  # noqa: E402
+
+# the archive the setup makes from build 854's files (server/internal/setup/mapmm's pin)
+MM_ARCHIVE = "zz_MM_Map_v3.snap"
+MM_ARCHIVE_SHA256 = "3e0496a84d6320b1c16017301a578278c8f794cb409e64614b8e13845bbdb9bc"
 import patch_client  # noqa: E402
 import patch_config  # noqa: E402
 import patch_locale  # noqa: E402
@@ -205,18 +217,49 @@ def main(argv):
     else:
         r.line("client: no server picker (not set up in picker mode)")
 
-    print("bot check box")
-    mo = patch_login_movie.SPECS["matchoptions"]
-    if not have_client:
-        r.line("no client copy")
-    else:
+    for title, name, what in (("bot check box", "matchoptions", "bot check box"),
+                              ("chat rooms", "chatrooms", "chat rooms class")):
+        print(title)
+        mo = patch_login_movie.SPECS[name]
+        base = mo.rel.split("/")[-1]
+        if not have_client:
+            r.line("no client copy")
+            continue
         want = patch_login_movie.build(j(client, *mo.source.split("/")), spec=mo)
         p = j(client, *mo.rel.split("/"))
         got = read(p) if os.path.isfile(p) else b""
-        r.check(got == want, "client zz_MatchOptions.snap = patch_login_movie.py --spec matchoptions",
+        # the front writes the maps of the server a login went to into the map list (MAPDROP-server): the rest equal
+        front = mo.map_list and patch_login_movie.map_list_only(got, want)
+        r.check(got == want or front, f"client {base} = patch_login_movie.py --spec {name}"
+                f"{' (but the map list, which the front wrote for the last login)' if front else ''}",
                 f"{sha(got)[:16]} vs {sha(want)[:16]}")
-        r.check(not os.path.isfile(j(host, *mo.rel.split("/"))), "the host copy has no bot check box")
-        print(f"client zz_MatchOptions.snap: {sha(got)}  ({'equal' if got == want else 'DIFFERENT'})")
+        r.check(not os.path.isfile(j(host, *mo.rel.split("/"))), f"the host copy has no {what}")
+        print(f"client {base}: {sha(got)}  ({'equal' if got == want else 'equal but the map list' if front else 'DIFFERENT'})")
+
+    print("halloween")
+    hw_rel = "game/Data/" + halloween.ARCHIVE
+    if not have_client:
+        r.line("no client copy")
+    else:
+        want = halloween.build(j(client, "game", "Data", "AssetData.snap"))
+        p = j(client, *hw_rel.split("/"))
+        got = read(p) if os.path.isfile(p) else b""
+        r.check(got == want, f"client {halloween.ARCHIVE} = halloween.py", f"{sha(got)[:16]} vs {sha(want)[:16]}")
+        r.check(not os.path.isfile(j(host, *hw_rel.split("/"))), "the host copy has no Halloween archive")
+        print(f"client {halloween.ARCHIVE}: {sha(got)}  ({'equal' if got == want else 'DIFFERENT'})")
+
+    print("MM_Map_v3")
+    mm_rel = "game/Data/" + MM_ARCHIVE
+    r.check(not os.path.exists(j(a.release, "host", "physcook.exe")), "the release has no host\\physcook.exe")
+    for name, have, copy in (("client", have_client, client), ("host", have_host, host)):
+        if not have:
+            r.line(f"no {name} copy")
+            continue
+        p = j(copy, *mm_rel.split("/"))
+        got = sha(read(p)) if os.path.isfile(p) else "(missing)"
+        r.check(got == MM_ARCHIVE_SHA256, f"{name} {MM_ARCHIVE} = build 854's",
+                f"{got[:16]} vs {MM_ARCHIVE_SHA256[:16]}")
+        print(f"{name} {MM_ARCHIVE}: {got}  ({'equal' if got == MM_ARCHIVE_SHA256 else 'DIFFERENT'})")
 
     if have_host:
         print("host DLL")
@@ -255,7 +298,8 @@ def main(argv):
                 if rel not in untouched and not rel.endswith(".orig") and rel != bot_profiles.REL and not (
                         label == "host" and (rel.startswith("game/dgsim") or rel == "game/PhysXLoader_orig.dll")) and not (
                         label == "client" and rel in (patch_locale.REL, patch_login_movie.REL, LIST_ARCHIVE,
-                                                      patch_login_movie.SPECS["matchoptions"].rel)):
+                                                      patch_login_movie.SPECS["matchoptions"].rel,
+                                                      patch_login_movie.SPECS["chatrooms"].rel, hw_rel)):
                     extra.append(rel)
         r.line(f"{label}: extra files {extra[:5] if extra else 'none'}")
 

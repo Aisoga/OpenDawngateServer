@@ -176,7 +176,16 @@ type CreateGame struct {
 	// goes by the descriptors' BotsFillTeams (0x400) as before. The descriptors stay the game's GameFlags: they
 	// reach the client (C1 01, the simulator's +0x19E58), and the bit can't carry a team size.
 	FillTeams int `json:"fillTeams,omitempty"`
+	// LevelFlags are the level flags the host loads the level with and sends in GamePrepareForStart, so every client
+	// loads it with them too: the client's level loader loads a markerset whose condition names value c only when bit
+	// c is set. LevelFlagHalloween shows the map's Halloween decoration (a client with zz_Halloween.snap; dgserver
+	// --halloween). 0 = none (omitted): the host keeps its dgsim.ini [dgsim] flags.
+	LevelFlags int64 `json:"levelFlags,omitempty"`
 }
+
+// LevelFlagHalloween is CreateGame.LevelFlags' bit for the Halloween decoration (setup/halloween.LevelFlag: the
+// holiday markerset's condition hordeLevelsOnly, 0).
+const LevelFlagHalloween = 1
 
 // Modes of CreateGame: ModePractice is a game made by resetDedicatedServer (PRACTICE DAWNGATE, B8),
 // ModePvP one made by the matchmaker (GameManager::startMatchmaking, B10a), ModeCustom a custom game (B15:

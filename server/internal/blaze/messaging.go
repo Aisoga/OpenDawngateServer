@@ -373,8 +373,8 @@ type relayResult struct {
 	why       string
 }
 
-// membersOf returns the members of playgroup id, or of the playgroup with key when id is 0.
-func (p *playgroups) membersOf(id int64, key string) ([]pgMember, bool) {
+// memberIDs returns the members' BlazeIds of playgroup id, or of the playgroup with key when id is 0.
+func (p *playgroups) memberIDs(id int64, key string) ([]int64, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	pg := p.byID[id]
@@ -384,7 +384,11 @@ func (p *playgroups) membersOf(id int64, key string) ([]pgMember, bool) {
 	if pg == nil {
 		return nil, false
 	}
-	return append([]pgMember{}, pg.members...), true
+	ids := make([]int64, len(pg.members))
+	for i, m := range pg.members {
+		ids[i] = m.BlazeID
+	}
+	return ids, true
 }
 
 // relay checks msg from sender and works out who gets it. Our rules (BlazeSDK's server isn't in the
@@ -392,7 +396,9 @@ func (p *playgroups) membersOf(id int64, key string) ([]pgMember, bool) {
 // inbox, online or not (the client purges what it handled: whispers at login, the others by MGID); an
 // unknown user is skipped (none known: MESSAGING_ERR_TARGET_NOT_FOUND); a playgroup or game reaches its
 // members, and only a member may send to it; the sender gets its own copy only with MessageFlagEcho (or as
-// a target). Rooms and other target types: MESSAGING_ERR_TARGET_TYPE_INVALID.
+// a target). A chat room (ROOMS2, target (0x15, 1)) is like a playgroup: its members get the line, only a member may
+// send, and the client's FLAG 6 echoes it to the sender (whose own line the room window shows only as that copy).
+// Other target types: MESSAGING_ERR_TARGET_TYPE_INVALID.
 func (s *Server) relay(sender store.Persona, msg ClientMessage) relayResult {
 	m := &s.msgs
 	now := s.Now()
@@ -404,7 +410,8 @@ func (s *Server) relay(sender store.Persona, msg ClientMessage) relayResult {
 	switch {
 	case !allowed:
 		return relayResult{err: ErrMessagingUnknown, why: "rate limit"}
-	case msg.TargetType != ObjTypeUser && msg.TargetType != ObjTypePlaygroup && msg.TargetType != ObjTypeGame:
+	case msg.TargetType != ObjTypeUser && msg.TargetType != ObjTypePlaygroup && msg.TargetType != ObjTypeGame &&
+		msg.TargetType != ObjTypeRoom:
 		return relayResult{err: ErrMessagingTargetTypeInvalid, why: fmt.Sprintf("target type %v", msg.TargetType)}
 	case len(msg.Targets) == 0 || len(msg.Targets) > lim.MaxTargets:
 		return relayResult{err: ErrMessagingInvalidParam, why: fmt.Sprintf("%d targets", len(msg.Targets))}
@@ -430,16 +437,22 @@ func (s *Server) relay(sender store.Persona, msg ClientMessage) relayResult {
 		}
 	default:
 		for _, id := range msg.Targets {
-			members, ok := s.groups.membersOf(id, "")
-			if msg.TargetType == ObjTypeGame { // the game's chat playgroup (B11) stands for its players
-				members, ok = s.groups.membersOf(0, fmt.Sprintf("GG-%d", id))
+			var members []int64
+			var ok bool
+			switch msg.TargetType {
+			case ObjTypeRoom: // ROOMS2: a chat room's members (rooms.go)
+				members, ok = s.rooms.memberIDs(id)
+			case ObjTypeGame: // the game's chat playgroup (B11) stands for its players
+				members, ok = s.groups.memberIDs(0, fmt.Sprintf("GG-%d", id))
+			default:
+				members, ok = s.groups.memberIDs(id, "")
 			}
-			if !ok || !slices.ContainsFunc(members, func(pm pgMember) bool { return pm.BlazeID == sender.ID }) {
-				return relayResult{err: ErrMessagingTargetNotFound, why: fmt.Sprintf("%v %d: not a member", msg.TargetType, id)}
+			if !ok || !slices.Contains(members, sender.ID) {
+				return relayResult{err: ErrMessagingTargetNotFound, why: fmt.Sprintf("%s %d: not a member", targetTypeName(msg.TargetType), id)}
 			}
-			for _, pm := range members {
-				if (pm.BlazeID != sender.ID || msg.Flags&MessageFlagEcho != 0) && !slices.Contains(users, pm.BlazeID) {
-					users = append(users, pm.BlazeID)
+			for _, m := range members {
+				if (m != sender.ID || msg.Flags&MessageFlagEcho != 0) && !slices.Contains(users, m) {
+					users = append(users, m)
 				}
 			}
 		}
@@ -577,6 +590,8 @@ func targetTypeName(t tdf.ObjType) string {
 		return "playgroup"
 	case ObjTypeGame:
 		return "game"
+	case ObjTypeRoom:
+		return "room"
 	}
 	return fmt.Sprintf("(%d, %d)", t.Component, t.Type)
 }

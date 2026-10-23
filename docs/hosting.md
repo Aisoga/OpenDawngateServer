@@ -10,6 +10,7 @@ This guide is for whoever runs the server that other people play on. It uses the
 - [Accounts](#accounts)
 - [The website and the admin page](#the-website-and-the-admin-page)
 - [Announcements](#announcements)
+- [Chat rooms](#chat-rooms)
 - [Discord channel posts](#discord-channel-posts)
 - [Backups](#backups)
 - [Logs](#logs)
@@ -46,7 +47,7 @@ To change your answers later, run `Start-Server.exe --configure`, or edit `Start
 
 Every start checks the setup and repairs anything missing, which usually takes a second. `Start-Server.exe --check` only reports what's missing.
 
-You can play on the same PC that runs the server: just start `Start-Client.exe` there too. **This PC**, the first row of the login screen's server list, is this server while it runs in the same folder, and `Start-Client.exe` knows its key. When `Start-Server.exe` isn't running, This PC is a server that `Start-Client.exe` runs itself on the same folder, with the same accounts and `Start-Server.ini`'s game options (`shaper_select`, `signup`, `server_flags`; never the website or the public settings), only for the player on this PC. A folder has one server at a time: `Start-Server.exe` refuses to start while `Start-Client.exe` runs the folder's server ("This folder's server already runs inside Start-Client.exe"); close the game first.
+You can play on the same PC that runs the server: just start `Start-Client.exe` there too. **This PC**, the first row of the login screen's server list, is this server while it runs in the same folder, and `Start-Client.exe` knows its key. When `Start-Server.exe` isn't running, This PC is a server that `Start-Client.exe` runs itself on the same folder, with the same accounts and `Start-Server.ini`'s game options (`shaper_select`, `halloween`, `map`, `custom_maps`, `signup`, `server_flags`; never the website or the public settings), only for the player on this PC. A folder has one server at a time: `Start-Server.exe` refuses to start while `Start-Client.exe` runs the folder's server ("This folder's server already runs inside Start-Client.exe"); close the game first.
 
 **Every server uses the encrypted tunnel.** Players reach it on one port, **42128, TCP and UDP**; everything else the server runs answers inside the tunnel. Its match hosts listen on a loopback address of their own, so a server and a player's game run side by side on one PC. (`tunnel = off` in `Start-Server.ini` turns the tunnel off; that's an option for developers, and players then need `Start-Client.exe --tunnel off`.)
 
@@ -253,6 +254,92 @@ Lines starting with `#` are comments. Delete the file, or empty it, to take the 
 Welcome to our Dawngate server
 @6 Server restart at 20:00 UTC
 ```
+
+After your messages the status line also shows how many players are online, for example "14 players online, 3 in a match" (only in the status line and in shaper select, never in the chat). A player counts from the login on; "in a match" counts the players of the running matches, from the loading screen to the end, and a custom game once it has started. When players log in or out, the number updates at most every 30 seconds, so a burst of logins makes one update. To turn it off, set `online_count = off` in `Start-Server.ini`; `online_count_every` sets how often it may update (for example `1m`).
+
+## Chat rooms
+
+Players find public chat rooms in the chat panel: the speech-bubble icon at the bottom right of the main menu opens the
+room list. A double-click on a room (or right-click, *Join Chatroom*) joins it; its chat window then waits as a tab in
+the bottom bar, where a click opens it and the X leaves the room. The window lists who is in the room, and every line
+reaches everyone in it.
+
+The server's rooms are set in `Start-Server.ini`:
+
+```ini
+chat_rooms = General, Looking for group, Matchmaking:queue:open
+```
+
+The rooms are separated by commas and listed in this order. A name may be followed by `:<capacity>` (2 to 1000
+players, 50 if not given), `:queue` and `:open`, in any order. Into the `:queue` room (at most one) the server posts
+the PvP queue's news, who is queuing, how many, when the match starts, and when it started or the queue closed, as
+lines from *PvP queue*. Only players in the room see them. Every player joins an `:open` room by itself at each login:
+its tab appears in the bottom bar, minimised, and the keyboard stays where it was. A player who closes it stays out
+until the next login. So by default every player is in *Matchmaking* and sees the queue's news there; *General* and
+*Looking for group* are joined by hand. This needs the game copies that Start-Client sets up (they carry the
+`zz_Chat.snap` that does the joining); another copy lists an open room like any other. `chat_rooms = none` turns the
+rooms off. Rooms have no passwords, nobody can create rooms in the game, and the rooms start empty with every server
+start. A `Start-Server.ini` from before this setting keeps its own line (`…Matchmaking:queue`, no room opens); add
+`:open` to the rooms you want opened.
+
+## The Halloween decoration
+
+The game ships a Halloween decoration for its map that it never showed: candles, pumpkins, jack-o'-lanterns and a tomb
+around the map. To show it in every match on your server, set this in `Start-Server.ini` and start `Start-Server.exe`
+again:
+
+```
+halloween = on
+```
+
+`off` (the default) shows the map as it shipped. The server tells each match whether to show it, so a player who
+plays on several servers sees it only on the ones that have it on. It needs the game copies that Start-Client sets up
+(they carry `zz_Halloween.snap`, the decoration's list); another copy shows the plain map. The decoration is scenery
+only: it doesn't block movement or sight.
+
+## The map
+
+Every match on your server is played on The Dawngate (`SM_Map_v5`), the game's map. The game also holds a cut
+one-lane map, `MM_Map_v3`, which can be played for testing, unfinished: its navigation, physics, ground and fog are
+rebuilt, but its matches still follow The Dawngate's rules where the map has no rules of its own: each base has The
+Dawngate's shop zone, shop keepers and healing, a match ends with The Dawngate's end screen (the victory view and the
+loot bag), the bots have no jungler (the map has no camps) and all lane, and the map's super
+minions don't spawn yet. Instead of spirit wells each team has one gold mine, on an island behind its base that no
+shaper can reach: it starts with all 36 workers and pays every player of its team 36 gold a minute from the start,
+and it can't be captured or raided. Every player's game and the match
+hosts' copy need its files (`game\Data\zz_MM_Map_v3.snap`): `Start-Server.exe` and `Start-Client.exe` make them from
+the game's own files at their first start (a few seconds). A match on a map the host copy lacks doesn't start
+(the server's log warns about it at the start). Players need a release that makes these files, the one your server
+runs: an older game without them would crash when it loads the map.
+
+So your server lets only players it knows have the files into a match on `MM_Map_v3`: those whose `Start-Client.exe`
+is your server's own release (it tells the server through the tunnel). Anyone else (an older `Start-Client.exe` let
+in by `--allow-any-client`, or a game connected without the tunnel) can't join such a game from the browser, an
+invite or a join code, and can't queue when `map = MM_Map_v3`: their game shows *Dawngate is unable to continue.
+Please close the client and re-run the launcher. Error Code: 01310004* (as a notification, or a pop-up for the queue),
+and the chat gets a *System* line with the reason. A practice or custom game such a player creates is played on
+`SM_Map_v5` instead, with a *System* line saying so. The server's log names each refused player and why (`map
+check`). Players connecting without the tunnel (`tunnel = off`, or on a LAN without `Start-Client.exe`) can't be
+checked; if you know their games have the files, name them in `server_flags`: `--trust-maps all`, or their addresses
+and networks (`--trust-maps 192.168.1.20,10.0.0.0/8`).
+
+Two settings in `Start-Server.ini` choose the map:
+
+```
+map = SM_Map_v5
+custom_maps = MM_Map_v3
+```
+
+- `map` is the map of every match: practice, the queue and custom games. Only `SM_Map_v5` and `MM_Map_v3` are
+  accepted; another name stops the server at its start.
+- `custom_maps` lists the maps a custom game's creator may pick, comma-separated. Players pick in the CREATE GAME
+  dialog's map list (The Dawngate or MM), which adds the map's tag to the game's name: `~#mm` for `MM_Map_v3`, `~#sm`
+  for `SM_Map_v5` (always allowed, as is `map`); typing the tag at the end of the name does the same. The game browser
+  shows such a game as `[MM] <name>`: the game itself can only name The Dawngate in its Map column. The dialog lists
+  the maps your server offers (`map` and `custom_maps`) to players whose game has their files: `Start-Client.exe`
+  learns them from the server when the player logs in. Without `MM_Map_v3` in either setting players see
+  *Map: The Dawngate* only. A pick of a map that isn't offered (a typed tag) is dropped, and that game is played
+  on `map`.
 
 ## Discord channel posts
 

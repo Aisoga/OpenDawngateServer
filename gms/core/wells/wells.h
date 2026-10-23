@@ -186,6 +186,9 @@ struct WellDef {
   Vec3 pos;                  // mWorldPos, the capture sphere's centre
   int displayIndex = -1;     // mHUDMineStatusDisplayIndex 0-3; -1 = the well's index [assumed: marker order]
   std::vector<Vec3> spots;   // the 18 worker-spot child markers ("Follower Spawn Point"), slot order; empty = the well
+  // MAPMINES: false for a well on an island only NPCs may use (islands.h OutOfPlayersReach: MM_Map_v3's two team gold
+  // mines). The rules don't change (nobody reaches its ring); MinesForTeam can leave it out for the bots.
+  bool playersReach = true;
 };
 
 // Per tick, every player's creature (shapers and bot shapers; nothing else captures: "an opposing Shaper").
@@ -426,14 +429,18 @@ class Wells {
     const Well& w = wells_[static_cast<size_t>(i)];
     return slot >= 0 && slot < static_cast<int>(w.worker.size()) ? w.worker[static_cast<size_t>(slot)] : 0;
   }
-  // nBattlegrounds.GetMinesForTeam(team [, onlyUnlocked]): the wells `team` owns, as object ids, in well order.
-  std::vector<std::uint32_t> MinesForTeam(int team, bool onlyUnlocked = false) const {
+  // nBattlegrounds.GetMinesForTeam(team [, onlyUnlocked]): the wells `team` owns, as object ids, in well order;
+  // MAPMINES: with `reachableOnly` not the wells out of the players' reach (WellDef::playersReach false).
+  std::vector<std::uint32_t> MinesForTeam(int team, bool onlyUnlocked = false, bool reachableOnly = false) const {
     std::vector<std::uint32_t> out;
     for (int i = 0; i < Count(); ++i)
-      if (wells_[static_cast<size_t>(i)].owner == team && !(onlyUnlocked && IsLocked(i)))
+      if (wells_[static_cast<size_t>(i)].owner == team && !(onlyUnlocked && IsLocked(i)) &&
+          !(reachableOnly && !PlayersReach(i)))
         out.push_back(wells_[static_cast<size_t>(i)].def.object);
     return out;
   }
+  // MAPMINES: whether a player can reach the well (false for an unknown index).
+  bool PlayersReach(int i) const { return Valid(i) && wells_[static_cast<size_t>(i)].def.playersReach; }
   // nBattlegrounds.GetFollowersForTitan(well): the workers at the well (0 for an unknown id).
   int FollowersForTitan(std::uint32_t object) const { return Workers(IndexOf(object)); }
   // nBattlegrounds.IsTitanNodeLocked(well): false for an unknown id (the client stub's answer).

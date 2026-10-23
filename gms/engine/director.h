@@ -18,7 +18,11 @@
 //     [assumed]), each creature at its child marker, in the camp (object +0x50 and AIDirectorImpl_AddCampMember
 //     0x008AF780) so a hit creep pulls its camp (Agent_CallForHelp);
 //   - the parasite at match start (its camp, director +0x18 for nDirector.GetParasiteID, followed through its stages);
-//   - nDirector.OverrideMinionSpawnerAsset / ResetMinionSpawnerAsset over the client's no-op stubs.
+//   - nDirector.OverrideMinionSpawnerAsset / ResetMinionSpawnerAsset over the client's no-op stubs;
+//   - MAPSTRIDER: the lane agents where the level's striderSpawnEnabled is set (MM_Map_v3): one creature per super-
+//     minion spawner (type 4) with the waves a per-team countdown picks, the tuning's strider list entry in turn
+//     (gms/core/matchflow/laneagents.h [assumed rule]); [host] lane_agents, lane_agent_order, lane_agent_waves_before,
+//     lane_agent_waves_between (Configure reads them).
 // Every engine call runs under SEH. Settings ([host] keys, match.cpp reads them): director (1), director_waves (1),
 // director_camps (1), director_parasite (1), lane_table (1), wave_delay / wave_interval (the tuning's), wave_limit (0),
 // wave_spawners ("" = all; e.g. "Mortal_Top"),
@@ -156,6 +160,10 @@ int NearestLane(float x, float y, float* distance);
 // The bots' lane fronts use team 1's splines (gms/core/bots/lanes.h LanePath).
 bool LaneKnots(int laneId, int team, std::vector<float>* xyz);
 
+// MAPHOST: the level's creep camps without the parasite's (SM_Map_v5 22, MM_Map_v3 0); -1 before the level was read.
+// The bots' setup seats no Hunter on a level without camps (gms/core/bots/composition.h NoJungleSeat).
+int JungleCamps();
+
 // D6e: the nearest creep camp (not the parasite's) with a living creature, by its marker position; false when
 // every camp is empty (cleared, waiting for the respawn, or not spawned yet). Backs nDirector.GetClosestCampPosition.
 // HUNTERBOT: with `team` (1, 2) and a penalty, a camp on that team's enemy half costs the penalty more
@@ -169,6 +177,17 @@ struct Tuning {
   float waveInterval = 30.f;    // minionSpawnInterval1 (+0x14)
   float nubRespawn = 480.f;     // nubRespawnTime (+0xDC)
   float wellLockFirst = 900.f;  // goldMineLockedDurationFirstInSeconds (+0x7C)
+  // MAPHOST: the lane agents (read and logged); MAPSTRIDER: spawned (gms/core/matchflow/laneagents.h)
+  int wavesBeforeLaneAgents = 0;   // numMinionWavesBeforeLaneAgentSpawns (+0x2C)
+  int wavesBetweenLaneAgents = 0;  // numMinionWavesBetweenLaneAgentSpawns (+0x30)
+  bool striderSpawnEnabled = false;  // +0xF0
+  int striderMortal = 0, striderSpirit = 0;  // the lists' lengths (+0xE0, +0xE8)
+  // MAPSTRIDER: the lists' noun assets (team 1 striderMortal, team 2 striderSpirit; the first kMaxStriders) and each
+  // tower tier's laneAgentRespawnCounterAdjustment (tower[] +0xCC, 0x10 bytes each, +0x0C; read and logged only)
+  static constexpr int kMaxStriders = 8;
+  void* striderNouns[2][kMaxStriders] = {};
+  int towerTiers = 0;
+  int towerAdjust[4] = {};
 };
 const Tuning& LevelTuning();
 

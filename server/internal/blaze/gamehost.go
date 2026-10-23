@@ -64,8 +64,8 @@ const (
 	ErrNoHostCapacity = 0x0132
 )
 
-// HostedLevel is the level every hosted game loads (SM_Map_v5, the only map of build 854's practice
-// game; D2b's GamePrepareForStart level 0x946D41FE).
+// HostedLevel is the level hosted games load by default (SM_Map_v5, the only map of build 854's practice
+// game; D2b's GamePrepareForStart level 0x946D41FE); Server.Level (dgserver --level) replaces it (level.go).
 const HostedLevel = "SM_Map_v5"
 
 // PlayerRemovedReason names (name table 0x012E7668), as removePlayer passes them to the host.
@@ -211,9 +211,12 @@ func (s *Server) launchHostedGame(g Game, mode string, fillTeams int, players []
 	}
 	each := hg.setup // every player's NotifyGameSetup with the GMS address its client reaches (tunnel.go)
 	hg.setup = func(g Game, hp *hostedPlayer) []byte { return each(hp.conn.ForClient(g), hp) }
-	spec := gmshost.CreateGame{GameID: g.ID, Level: HostedLevel, Mode: mode, Seed: g.Seed,
+	spec := gmshost.CreateGame{GameID: g.ID, Level: s.gameLevel(g), Mode: mode, Seed: g.Seed,
 		Descriptors: int64(g.descriptors()), // D8-live: the game's GameFlags
 		FillTeams:   fillTeams}              // B10d: a matchmade game's open seats
+	if s.Halloween {
+		spec.LevelFlags = gmshost.LevelFlagHalloween // the Halloween decoration (zz_Halloween.snap)
+	}
 	ids := make([]int64, len(players))
 	for i, hp := range players {
 		spec.Roster = append(spec.Roster, gmshost.RosterEntry{User: hp.p.ID, Name: hp.p.Name, Index: i, Team: int(hp.p.Team) + 1,

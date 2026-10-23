@@ -602,9 +602,24 @@
    "pretty": "    DATA: \n      BPS: 'local'\n      CMAP: \n        21840: 0\n      CTY: ''\n      DMAP: \n        458804: 3\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    SUBS: 1\n    USID: 2000000001"
   },
   {
+   "name": "notifymessage_onlinecount_notification",
+   "hex": "9ac8670000b67a640004ba1b65010100c39b2403874d3205000104808058043130300081805802340082805807363034383030008380581f3220706c6179657273206f6e6c696e652c203120696e2061206d61746368009ac8670000cf48740000d219c00002d29933040000d34e70080000d39c2500ac0400cf28e509000000d29b650083b0b5ac0d",
+   "pretty": "    FLAG: 0\n    MGID: 4\n    NAME: ''\n    PYLD: \n      ATTR: \n        720896: '100'\n        720897: '4'\n        720898: '604800'\n        720899: '2 players online, 1 in a match'\n      FLAG: 0\n      STAT: 0\n      TAG: 2\n      TIDS: []\n      TTYP: \n        (0, 0)\n      TYPE: 300\n    SRCE: \n      (0, 0, 0)\n    TIME: 1791405059"
+  },
+  {
+   "name": "notifymessage_mapcheck_notification",
+   "hex": "9ac8670000b67a640001ba1b65010100c39b2403874d320500010480805804313031008180580233008280580436303000838058af04596f752063616e2774206a6f696e20225b4d4d5d20437573746f6d2031223a20697420706c617973206f6e20746865206d6170204d4d5f4d61705f76332c20616e6420796f757220636f7079206f66204461776e67617465206d6179206e6f7420686176652074686174206d617027732066696c65732028796f752061726520636f6e6e656374656420776974686f7574207468652074756e6e656c2c20736f20746865207365727665722063616e277420636865636b20796f757220636f7079292e20436c6f7365207468652067616d6520616e6420737461727420697420616761696e20776974682053746172742d436c69656e742e657865206f6620746869732073657276657227732072656c65617365202872656c2d41292c2077686963682061646473207468656d2e009ac8670000cf48740000d219c00002d29933040000d34e70080000d39c2500ac0400cf28e509000000d29b650083b0b5ac0d",
+   "pretty": "    FLAG: 0\n    MGID: 1\n    NAME: ''\n    PYLD: \n      ATTR: \n        720896: '101'\n        720897: '3'\n        720898: '600'\n        720899: 'You can\\'t join \"[MM] Custom 1\": it plays on the map MM_Map_v3, and your copy of Dawngate may not have that map\\'s files (you are connected without the tunnel, so the server can\\'t check your copy). Close the game and start it again with Start-Client.exe of this server\\'s release (rel-A), which adds them.'\n      FLAG: 0\n      STAT: 0\n      TAG: 2\n      TIDS: []\n      TTYP: \n        (0, 0)\n      TYPE: 300\n    SRCE: \n      (0, 0, 0)\n    TIME: 1791405059"
+  },
+  {
    "name": "notifygamesetup_custom_notification",
    "hex": "9e1b6503864b6e04000181d0acf30e874d3205010107144578706563746564506c61796572436f756e7400033130000a47616d65466c616773000232000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c4964000b3234393031383832383600135365727665724275696c6456657273696f6e001c312e302e3930332e3835342d524c2d50726f642d52656c65617365008e1c000400020f009e990000019ee86d0109437573746f6d2031009f39740085149f3d21008202a2e97404030102978a7003a7000000818080f00fc2fcb400ba9c0100a6ea7003a7000000818080f00fc2fcb400ba9c010000b63870000fbb4bf00001c27a6401106461776e676174652d67616d652d3100c28cf403a30a640081f882ad16a33b34000000c329730001c3387301066c6f63616c00ce596400af7bd238700005d28cf403a30a640081f882ad16a33b34000000d29933040003010203d75a64012530303030303030302d303030302d303030302d303030302d30303030303030303030303100db3d32011c312e302e3930332e3835342d524c2d50726f642d52656c656173650000c32bf30403019e99000001b2f8c00093d5f2d60cba1b650107706c6179657200c299000081d0acf30ec2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000818080f00fc2fcb4008b390000ce99000000cecbf40000cf48740002d299380000d29b6500809b86e3bfd1ae06d699000081d0acf30e00ca58730600da1b3503923d38000000",
    "pretty": "    GAME: \n      ADMN: \n        - 2000000001\n      ATTR: \n        ExpectedPlayerCount: '10'\n        GameFlags: '2'\n        GameOwnerId: '77359401'\n        GameOwnerName: 'player'\n        GameType: '1'\n        LevelId: '2490188286'\n        ServerBuildVersion: '1.0.903.854-RL-Prod-Release'\n      CAP: \n        - 15\n        - 0\n      GID: 1\n      GNAM: 'Custom 1'\n      GSET: 1285\n      GSTA: 130\n      HNET: \n        - ('union', 2, {'EXIP': {'IP': 2130706433, 'PORT': 10042}, 'INIP': {'IP': 2130706433, 'PORT': 10042}})\n      MCAP: 15\n      NTOP: 1\n      PGID: 'dawngate-game-1'\n      PHST: \n        HPID: 3000000001\n        HSLT: 0\n      PRES: 1\n      PSAS: 'local'\n      SEED: 7919\n      TCAP: 5\n      THST: \n        HPID: 3000000001\n        HSLT: 0\n      TIDS: \n        - 1\n        - 2\n        - 3\n      UUID: '00000000-0000-0000-0000-000000000001'\n      VSTR: '1.0.903.854-RL-Prod-Release'\n    PROS: \n      - \n        GID: 1\n        LOC: 1701729619\n        NAME: 'player'\n        PID: 2000000001\n        PNET: \n          <union member 2>\n            VALU: \n              EXIP: \n                IP: 2130706433\n                PORT: 3659\n              INIP: \n                IP: 2130706433\n                PORT: 3659\n        SID: 0\n        SLOT: 0\n        STAT: 2\n        TIDX: 0\n        TIME: 1791405059000000\n        UID: 2000000001\n    REAS: \n      <union member 0>\n        VALU: \n          DCTX: 0"
+  },
+  {
+   "name": "notifygamesetup_custom_mm_notification",
+   "hex": "9e1b6503864b6e04000181d0acf30e874d3205010107144578706563746564506c61796572436f756e7400033130000a47616d65466c616773000232000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c4964000b3131303832303638393400135365727665724275696c6456657273696f6e001c312e302e3930332e3835342d524c2d50726f642d52656c65617365008e1c000400020f009e990000019ee86d0109437573746f6d2031009f39740085149f3d21008202a2e97404030102978a7003a7000000818080f00fc2fcb400ba9c0100a6ea7003a7000000818080f00fc2fcb400ba9c010000b63870000fbb4bf00001c27a6401106461776e676174652d67616d652d3100c28cf403a30a640081f882ad16a33b34000000c329730001c3387301066c6f63616c00ce596400af7bd238700005d28cf403a30a640081f882ad16a33b34000000d29933040003010203d75a64012530303030303030302d303030302d303030302d303030302d30303030303030303030303100db3d32011c312e302e3930332e3835342d524c2d50726f642d52656c656173650000c32bf30403019e99000001b2f8c00093d5f2d60cba1b650107706c6179657200c299000081d0acf30ec2e9740602da1b3503978a7003a7000000818080f00fc2fcb4008b3900a6ea7003a7000000818080f00fc2fcb4008b390000ce99000000cecbf40000cf48740002d299380000d29b6500809b86e3bfd1ae06d699000081d0acf30e00ca58730600da1b3503923d38000000",
+   "pretty": "    GAME: \n      ADMN: \n        - 2000000001\n      ATTR: \n        ExpectedPlayerCount: '10'\n        GameFlags: '2'\n        GameOwnerId: '77359401'\n        GameOwnerName: 'player'\n        GameType: '1'\n        LevelId: '1108206894'\n        ServerBuildVersion: '1.0.903.854-RL-Prod-Release'\n      CAP: \n        - 15\n        - 0\n      GID: 1\n      GNAM: 'Custom 1'\n      GSET: 1285\n      GSTA: 130\n      HNET: \n        - ('union', 2, {'EXIP': {'IP': 2130706433, 'PORT': 10042}, 'INIP': {'IP': 2130706433, 'PORT': 10042}})\n      MCAP: 15\n      NTOP: 1\n      PGID: 'dawngate-game-1'\n      PHST: \n        HPID: 3000000001\n        HSLT: 0\n      PRES: 1\n      PSAS: 'local'\n      SEED: 7919\n      TCAP: 5\n      THST: \n        HPID: 3000000001\n        HSLT: 0\n      TIDS: \n        - 1\n        - 2\n        - 3\n      UUID: '00000000-0000-0000-0000-000000000001'\n      VSTR: '1.0.903.854-RL-Prod-Release'\n    PROS: \n      - \n        GID: 1\n        LOC: 1701729619\n        NAME: 'player'\n        PID: 2000000001\n        PNET: \n          <union member 2>\n            VALU: \n              EXIP: \n                IP: 2130706433\n                PORT: 3659\n              INIP: \n                IP: 2130706433\n                PORT: 3659\n        SID: 0\n        SLOT: 0\n        STAT: 2\n        TIDX: 0\n        TIME: 1791405059000000\n        UID: 2000000001\n    REAS: \n      <union member 0>\n        VALU: \n          DCTX: 0"
   },
   {
    "name": "notifygamesetup_customjoin_notification",
@@ -650,6 +665,11 @@
    "name": "notifygamelistupdate_removed_notification",
    "hex": "92fba500019eca640001ca5b7604000101",
    "pretty": "    DONE: 1\n    GLID: 1\n    REMV: \n      - 1"
+  },
+  {
+   "name": "notifygamelistupdate_mm_notification",
+   "hex": "92fba500019eca640001d709340403019a9d0000a4019e1b4003864b6e04000181d0acf30e874d3205010107144578706563746564506c61796572436f756e7400033130000a47616d65466c616773000232000c47616d654f776e6572496400093737333539343031000e47616d654f776e65724e616d650007706c61796572000947616d655479706500023100084c6576656c4964000b3131303832303638393400135365727665724275696c6456657273696f6e001c312e302e3930332e3835342d524c2d50726f642d52656c65617365008e1c000400020f009e990000019ee86d010e5b4d4d5d20437573746f6d2031009f39740085149f3d21008202a2e97404030102978a7003a7000000818080f00fc2fcb400ba9c0100a6ea7003a7000000818080f00fc2fcb400ba9c010000a2fcf40081f882ad16bb4bf00001c23bb40400020200c329730001c3387301036e6100cafcf4040302978a640000b2f8c00093d5f2d60cba1b650107706c6179657200c299000081d0acf30ecf48740004d29938000000978a640000b2f8c00093d5f2d60cba1b6501077365636f6e6400c299000082d0acf30ecf48740002d29938000100d238700005d29ba6040303d299000001d33ea5000100d299000002d33ea5000100d299000003d33ea5000000db3d32011c312e302e3930332e3835342d524c2d50726f642d52656c65617365000000",
+   "pretty": "    DONE: 1\n    GLID: 1\n    UPDT: \n      - \n        FIT: 100\n        GAM: \n          ADMN: \n            - 2000000001\n          ATTR: \n            ExpectedPlayerCount: '10'\n            GameFlags: '2'\n            GameOwnerId: '77359401'\n            GameOwnerName: 'player'\n            GameType: '1'\n            LevelId: '1108206894'\n            ServerBuildVersion: '1.0.903.854-RL-Prod-Release'\n          CAP: \n            - 15\n            - 0\n          GID: 1\n          GNAM: '[MM] Custom 1'\n          GSET: 1285\n          GSTA: 130\n          HNET: \n            - ('union', 2, {'EXIP': {'IP': 2130706433, 'PORT': 10042}, 'INIP': {'IP': 2130706433, 'PORT': 10042}})\n          HOST: 3000000001\n          NTOP: 1\n          PCNT: \n            - 2\n            - 0\n          PRES: 1\n          PSAS: 'na'\n          ROST: \n            - \n              EXID: 0\n              LOC: 1701729619\n              NAME: 'player'\n              PID: 2000000001\n              STAT: 4\n              TIDX: 0\n            - \n              EXID: 0\n              LOC: 1701729619\n              NAME: 'second'\n              PID: 2000000002\n              STAT: 2\n              TIDX: 1\n          TCAP: 5\n          TINF: \n            - \n              TID: 1\n              TSZE: 1\n            - \n              TID: 2\n              TSZE: 1\n            - \n              TID: 3\n              TSZE: 0\n          VSTR: '1.0.903.854-RL-Prod-Release'"
   },
   {
    "name": "usersessiondisconnected_notification",
@@ -715,6 +735,101 @@
    "name": "notifymessage_joincode_custom_notification",
    "hex": "9ac8670000b67a640007ba1b650107706c6179657200c39b2403874d320500010480805807706c61796572008480580237008580580b31303030303030303030008680580230009ac8670000cf48740000d219c00000d2993304000182d0acf30ed34e700882e00301d39c2500bc8dfdfb1100cf28e50982e0030181d0acf30ed29b650083b0b5ac0d",
    "pretty": "    FLAG: 0\n    MGID: 7\n    NAME: 'player'\n    PYLD: \n      ATTR: \n        720896: 'player'\n        720900: '7'\n        720901: '1000000000'\n        720902: '0'\n      FLAG: 0\n      STAT: 0\n      TAG: 0\n      TIDS: \n        - 2000000002\n      TTYP: \n        (30722, 1)\n      TYPE: 2411701116\n    SRCE: \n      (30722, 1, 2000000001)\n    TIME: 1791405059"
+  },
+  {
+   "name": "roomviewadded_notification",
+   "hex": "929cf0010b4368617420726f6f6d7300ba1b650109616c6c526f6f6d7300db7a640001",
+   "pretty": "    DISP: 'Chat rooms'\n    NAME: 'allRooms'\n    VWID: 1"
+  },
+  {
+   "name": "roomcategoryadded_notification",
+   "hex": "8e1c2100328f4a640001925ce301125075626c6963206368617420726f6f6d7300929cf001075075626c6963009ac8670000ba1b6501077075626c696300db7a640001",
+   "pretty": "    CAPA: 50\n    CTID: 1\n    DESC: 'Public chat rooms'\n    DISP: 'Public'\n    FLAG: 0\n    NAME: 'public'\n    VWID: 1"
+  },
+  {
+   "name": "roomadded_notification",
+   "hex": "8e1c0000328f4a640001ba1b65010847656e6572616c00c2fc350000c33de4010100cada640001",
+   "pretty": "    CAP: 50\n    CTID: 1\n    NAME: 'General'\n    POPU: 0\n    PSWD: ''\n    RMID: 1"
+  },
+  {
+   "name": "roomadded_second_notification",
+   "hex": "8e1c0000328f4a640001ba1b6501124c6f6f6b696e6720666f722067726f757000c2fc350000c33de4010100cada640002",
+   "pretty": "    CAP: 50\n    CTID: 1\n    NAME: 'Looking for group'\n    POPU: 0\n    PSWD: ''\n    RMID: 2"
+  },
+  {
+   "name": "roomupdated_notification",
+   "hex": "8e1c0000328f4a640001ba1b65010847656e6572616c00c2fc350002c33de4010100cada640001",
+   "pretty": "    CAP: 50\n    CTID: 1\n    NAME: 'General'\n    POPU: 2\n    PSWD: ''\n    RMID: 1"
+  },
+  {
+   "name": "selectcategoryupdates_view_reply",
+   "hex": "db7a640001",
+   "pretty": "    VWID: 1"
+  },
+  {
+   "name": "joinroom_reply",
+   "hex": "8e4874038e1c2100328f4a640001925ce301125075626c6963206368617420726f6f6d7300929cf001075075626c6963009ac8670000ba1b6501077075626c696300db7a64000100b64874038baa640081d0acf30ecada64000100ca4874038e1c0000328f4a640001ba1b65010847656e6572616c00c2fc350001c33de4010100cada64000100da487403929cf0010b4368617420726f6f6d7300ba1b650109616c6c526f6f6d7300db7a64000100da5cb30000",
+   "pretty": "    CDAT: \n      CAPA: 50\n      CTID: 1\n      DESC: 'Public chat rooms'\n      DISP: 'Public'\n      FLAG: 0\n      NAME: 'public'\n      VWID: 1\n    MDAT: \n      BZID: 2000000001\n      RMID: 1\n    RDAT: \n      CAP: 50\n      CTID: 1\n      NAME: 'General'\n      POPU: 1\n      PSWD: ''\n      RMID: 1\n    VDAT: \n      DISP: 'Chat rooms'\n      NAME: 'allRooms'\n      VWID: 1\n    VERS: 0"
+  },
+  {
+   "name": "joinroom_second_reply",
+   "hex": "8e4874038e1c2100328f4a640001925ce301125075626c6963206368617420726f6f6d7300929cf001075075626c6963009ac8670000ba1b6501077075626c696300db7a64000100b64874038baa640082d0acf30ecada64000100ca4874038e1c0000328f4a640001ba1b65010847656e6572616c00c2fc350002c33de4010100cada64000100da487403929cf0010b4368617420726f6f6d7300ba1b650109616c6c526f6f6d7300db7a64000100da5cb30000",
+   "pretty": "    CDAT: \n      CAPA: 50\n      CTID: 1\n      DESC: 'Public chat rooms'\n      DISP: 'Public'\n      FLAG: 0\n      NAME: 'public'\n      VWID: 1\n    MDAT: \n      BZID: 2000000002\n      RMID: 1\n    RDAT: \n      CAP: 50\n      CTID: 1\n      NAME: 'General'\n      POPU: 2\n      PSWD: ''\n      RMID: 1\n    VDAT: \n      DISP: 'Chat rooms'\n      NAME: 'allRooms'\n      VWID: 1\n    VERS: 0"
+  },
+  {
+   "name": "roommemberjoined_notification",
+   "hex": "8baa640081d0acf30ecada640001",
+   "pretty": "    BZID: 2000000001\n    RMID: 1"
+  },
+  {
+   "name": "roommemberjoined_second_notification",
+   "hex": "8baa640082d0acf30ecada640001",
+   "pretty": "    BZID: 2000000002\n    RMID: 1"
+  },
+  {
+   "name": "roommemberleft_notification",
+   "hex": "b62a640082d0acf30ecada640001",
+   "pretty": "    MBID: 2000000002\n    RMID: 1"
+  },
+  {
+   "name": "leaveroom_reply",
+   "hex": "8f4a640001cada640001",
+   "pretty": "    CTID: 1\n    RMID: 1"
+  },
+  {
+   "name": "roompopulationupdated_notification",
+   "hex": "c2fc2d050000010102",
+   "pretty": "    POPM: \n      1: 2"
+  },
+  {
+   "name": "roomremoved_notification",
+   "hex": "cada640002",
+   "pretty": "    RMID: 2"
+  },
+  {
+   "name": "notifymessage_room_notification",
+   "hex": "9ac8670000b67a640009ba1b650107706c6179657200c39b2403874d320500010382fc070b68656c6c6f20726f6f6d008380580230008980580b68656c6c6f20726f6f6d009ac8670006cf48740000d219c00000d2993304000101d34e70081501d39c25000200cf28e50982e0030181d0acf30ed29b650083b0b5ac0d",
+   "pretty": "    FLAG: 0\n    MGID: 9\n    NAME: 'player'\n    PYLD: \n      ATTR: \n        65282: 'hello room'\n        720899: '0'\n        720905: 'hello room'\n      FLAG: 6\n      STAT: 0\n      TAG: 0\n      TIDS: \n        - 1\n      TTYP: \n        (21, 1)\n      TYPE: 2\n    SRCE: \n      (30722, 1, 2000000001)\n    TIME: 1791405059"
+  },
+  {
+   "name": "roomcategoryadded_open_notification",
+   "hex": "8e1c2100328f4a6400a80f925ce301265075626c6963206368617420726f6f6d73206f70656e656420617420746865206c6f67696e00929cf001054f70656e009ac8670000ba1b6501056f70656e00db7a640001",
+   "pretty": "    CAPA: 50\n    CTID: 1000\n    DESC: 'Public chat rooms opened at the login'\n    DISP: 'Open'\n    FLAG: 0\n    NAME: 'open'\n    VWID: 1"
+  },
+  {
+   "name": "roomadded_open_notification",
+   "hex": "8e1c0000328f4a6400a80fba1b65010c4d617463686d616b696e6700c2fc350000c33de4010100cada640003",
+   "pretty": "    CAP: 50\n    CTID: 1000\n    NAME: 'Matchmaking'\n    POPU: 0\n    PSWD: ''\n    RMID: 3"
+  },
+  {
+   "name": "joinroom_open_reply",
+   "hex": "8e4874038e1c2100328f4a6400a80f925ce301265075626c6963206368617420726f6f6d73206f70656e656420617420746865206c6f67696e00929cf001054f70656e009ac8670000ba1b6501056f70656e00db7a64000100b64874038baa640081d0acf30ecada64000300ca4874038e1c0000328f4a6400a80fba1b65010c4d617463686d616b696e6700c2fc350001c33de4010100cada64000300da487403929cf0010b4368617420726f6f6d7300ba1b650109616c6c526f6f6d7300db7a64000100da5cb30000",
+   "pretty": "    CDAT: \n      CAPA: 50\n      CTID: 1000\n      DESC: 'Public chat rooms opened at the login'\n      DISP: 'Open'\n      FLAG: 0\n      NAME: 'open'\n      VWID: 1\n    MDAT: \n      BZID: 2000000001\n      RMID: 3\n    RDAT: \n      CAP: 50\n      CTID: 1000\n      NAME: 'Matchmaking'\n      POPU: 1\n      PSWD: ''\n      RMID: 3\n    VDAT: \n      DISP: 'Chat rooms'\n      NAME: 'allRooms'\n      VWID: 1\n    VERS: 0"
+  },
+  {
+   "name": "leaveroom_open_reply",
+   "hex": "8f4a6400a80fcada640003",
+   "pretty": "    CTID: 1000\n    RMID: 3"
   }
  ],
  "decode": [
@@ -1072,6 +1187,41 @@
    "name": "selectcategoryupdates_request",
    "hex": "db7a640000",
    "pretty": "    VWID: 0"
+  },
+  {
+   "name": "selectviewupdates_request",
+   "hex": "d709340001",
+   "pretty": "    UPDT: 1"
+  },
+  {
+   "name": "selectcategoryupdates_view_request",
+   "hex": "db7a640001",
+   "pretty": "    VWID: 1"
+  },
+  {
+   "name": "joinroom_request",
+   "hex": "8f4a640001a6ea640000a6edb40000c21cf3010100c3686c010100cada640001",
+   "pretty": "    CTID: 1\n    INID: 0\n    INVT: 0\n    PASS: ''\n    PVAL: ''\n    RMID: 1"
+  },
+  {
+   "name": "leaveroom_request",
+   "hex": "cada640001",
+   "pretty": "    RMID: 1"
+  },
+  {
+   "name": "togglejoinedroomnotifications_request",
+   "hex": "96e8ac0001",
+   "pretty": "    ENBL: 1"
+  },
+  {
+   "name": "sendmessage_room_request",
+   "hex": "874d320500010382fc070b68656c6c6f20726f6f6d008380580230008980580b68656c6c6f20726f6f6d009ac8670006cf48740000d219c00000d2993304000101d34e70081501d39c250002",
+   "pretty": "    ATTR: \n      65282: 'hello room'\n      720899: '0'\n      720905: 'hello room'\n    FLAG: 6\n    STAT: 0\n    TAG: 0\n    TIDS: \n      - 1\n    TTYP: \n      (21, 1)\n    TYPE: 2"
+  },
+  {
+   "name": "joinroom_open_request",
+   "hex": "8f4a6400a80fa6ea640000a6edb40000c21cf3010100c3686c010100cada640003",
+   "pretty": "    CTID: 1000\n    INID: 0\n    INVT: 0\n    PASS: ''\n    PVAL: ''\n    RMID: 3"
   }
  ],
  "errors": [
@@ -1231,6 +1381,17 @@
    "payload": "",
    "pretty": "",
    "hex": "000078020023400330000005"
+  },
+  {
+   "name": "joingame_mapcheck_reply",
+   "component": 4,
+   "command": 9,
+   "type": 3,
+   "id": 12,
+   "error": 305,
+   "payload": "",
+   "pretty": "",
+   "hex": "00000004000901313000000c"
   }
  ]
 }

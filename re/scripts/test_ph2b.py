@@ -7,6 +7,8 @@ two setups make the same package byte for byte:
     setup_test.go's end-to-end run of the Go setup installs;
   - build 854's Locale.package for 127.0.0.1, 127.0.0.2 and a web domain (skipped without client/ia_Dawngate);
   - the text rule's cases and the option checks; setup_all.py's locale step on a scratch copy (made, current, stale).
+  - MAPPICK-label: the custom lobby's map line (FE_CustomGameLobby 0x0f2b57c5) appended to the shipped table, and
+    its text the create dialog's label for MM (patch_login_movie.EXTRA_MAPS).
 
 Usage:
     .venv/Scripts/python -I re/scripts/test_ph2b.py [-v]
@@ -24,14 +26,14 @@ import dbpf  # noqa: E402
 import patch_locale as pl  # noqa: E402
 
 MADE_UP_SHA = "97766712cea3cf54c20204922cc472d86ac9d592c40e955f7c1a635e0567f25e"
-MADE_UP_LANE_B = "ab925a706ce8c2087adac0938925ee539c8751d69cc29ea81ffb0afa9e9a5213"  # --host 127.0.0.2
-MADE_UP_WEB = "22c506d29b524dae62fd6081d32364c8ea7043895744d4f6242ffd7372426e8e"  # 192.168.1.20, Play.Example.org:8443
+MADE_UP_LANE_B = "ee5628e48171b9180ad8594353b7f9c6080c11f0b201cee6e5ec6a85c173d77d"  # --host 127.0.0.2
+MADE_UP_WEB = "ff457ba688e065e38e55fd0ff725d49daf06840ffb079d62238398e94b0dbc53"  # 192.168.1.20, Play.Example.org:8443
 SYNTH_LOCALE_SHA = "528ce9623b3b1542fa600b1036136a3c39e8e68bb586019fb3a6d3c2f6374832"
-SYNTH_LOCAL = "9ce4f9d12c272865e5eed08d6621052b58dbccb57757fc6e92d204f695fc4132"  # the synthetic game, 127.0.0.1
+SYNTH_LOCAL = "c9fc88d87bc633d3f6a6f5ae1b335268b8847bb62050df7d206dac8c6fbf6088"  # the synthetic game, 127.0.0.1
 GAME_854 = {  # build 854's Locale.package
-    ("127.0.0.1", None): "032b20b329a328328c58c6767c0c38ae4f417e1930224d46af4d77ebead7066c",
-    ("127.0.0.2", None): "75673a3e080ed7d8a28d1eb24f33636a85131548297ee99689efaa137e68d4f3",
-    ("203.0.113.7", "dawngate.example.org"): "3a6daee84c5729605d5005142b073bed81bc95c30ee116f1b7ee1b7b606553a9",
+    ("127.0.0.1", None): "45bc4fa5c35f647c88eafa213a82ca289e42273d727b3a4ec29e80d187f242b8",
+    ("127.0.0.2", None): "c6aa134d04e2c1cf7762903cc491fbc83a8163cf6b77f2afe5f1bf3683c0f120",
+    ("203.0.113.7", "dawngate.example.org"): "e9392a09c68e3f167917683dc19897db9075274d63efcaffd9a3cb031426eca4",
 }
 # synthgame.Locale() (server/internal/setup/testgame/synthgame): one RefPack-compressed table, no login table
 SYNTH_LOCALE = bytes.fromhex(
@@ -114,6 +116,13 @@ class SameAsGo(Temp):
             lb = [pkg.read(e) for e in pkg.entries if e.instance == pl.FE_LEADERBOARD]
             self.assertIn(b"0x00000101 Rank is based upon PvP and custom games. Must have at least 10 games played.\r\n",
                           lb[0])
+            # MAPPICK-label: the lobby's table is the shipped one (no final line end) plus the appended map line
+            shipped = pl.find_table(dbpf.Package(path), pl.FE_CUSTOM_GAME_LOBBY)
+            lobby = [pkg.read(e) for e in pkg.entries if e.instance == pl.FE_CUSTOM_GAME_LOBBY]
+            self.assertTrue(shipped.endswith(b"0x0f2b5801 Please Wait"), shipped[-40:])
+            self.assertNotIn(b"0x0f2b57c5", shipped)
+            self.assertEqual(lobby, [shipped + b"\r\n" + pl.ADDED_COMMENT.encode() + b"\r\n0x0f2b57c5 MM (one lane)\r\n"])
+            self.assertEqual(len(pkg.entries), 6)
 
 
 class Rule(unittest.TestCase):
@@ -139,6 +148,12 @@ class Rule(unittest.TestCase):
                                 ("127.0.0.1", 18080, "dä.de")):
             with self.assertRaises(pl.LocaleError, msg=(host, port, dom)):
                 pl.site_base(host, port, dom)
+
+    def test_lobby_map_label(self):
+        # the lobby's line for the map the client can't name is the create dialog's label for it: one such map
+        import patch_login_movie as plm
+        self.assertEqual(pl.tables("127.0.0.1")[0x7BE32E1A], {0x0F2B57C5: "MM (one lane)"})  # fe_customgamelobby
+        self.assertEqual([m[2] for m in plm.EXTRA_MAPS], [pl.LOBBY_LINES[pl.LOBBY_MAP_LINE]])
 
     def test_pages(self):
         # the links name only pages dgserver serves (server/internal/sitelinks.Pages)

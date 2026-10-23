@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -80,6 +81,11 @@ type config struct {
 	mmBots               bool               // B10d: bots in a matchmade game's open seats (--mm-bots, on by default)
 	leaderboardMinGames  int                // LBFIX: the fewest games for the Leaderboard (--leaderboard-min-games)
 	customBots           bool               // B15: bots in a custom game's open seats (--custom-bots)
+	level                string             // MAPLEVEL1: the level hosted games load (--map, --level; "" = blaze.HostedLevel)
+	customLevels         []string           // MAPPICK: the levels a custom game's name tag may pick (--custom-maps)
+	mapTrust             blaze.MapTrust     // MAPGUARD: the clients without the tunnel that may play MM_Map_v3 (--trust-maps)
+	tunnelRelease        string             // MAPGUARD: --tunnel-client's release name in its session hello (--tunnel-release, a test aid)
+	halloween            bool               // HOLIDAY1: the map's Halloween decoration in every hosted match (--halloween)
 	shaperSelect         blaze.ShaperSelect // D3-live step 4: --shaper-select, --free-rotation, --shaper-timers
 	// B14: the kill switches every login gets (--kill-switches), a broadcast message from the command line
 	// (--broadcast), the operator's broadcast file ("" = none; main makes <data>\broadcast.txt the default) and the
@@ -87,6 +93,13 @@ type config struct {
 	killSwitches             []int64
 	broadcast, broadcastFile string
 	broadcastFlags           int64
+	// ONLINECOUNT: the players-online count in the main menu's marquee (--online-count, on by default) and the least
+	// time between two pushes of a changed count (--online-count-every)
+	onlineCount      bool
+	onlineCountEvery time.Duration
+	// ROOMS2: the public chat rooms of the Social panel's Rooms tab (--chat-rooms; set: the flags were read)
+	chatRooms    []blaze.ChatRoom
+	chatRoomsSet bool
 	// serve <certs>\ca_modulus.bin on the HTTP port (--serve-ca) for Start-Client.exe on other machines
 	serveCA bool
 	// the sign-up policy (--signup, --signups-per-address) and the log retention in days (--log-days; 0 = keep)
@@ -414,6 +427,8 @@ type instance struct {
 	ports     []int            // actual ports, in config order
 	// B14: stops the broadcast file's watcher (nil without --broadcast-file)
 	stopWatch func()
+	// ONLINECOUNT: stops the players-online count (nil with --online-count off)
+	stopCount func()
 	// the served CA modulus's fingerprint (--serve-ca; "" without)
 	caFingerprint string
 	// the account store, closed after the listeners
@@ -592,6 +607,10 @@ func start(cfg config) (*instance, error) {
 	bz.MMBots = cfg.mmBots
 	bz.LeaderboardMinGames = cfg.leaderboardMinGames
 	bz.CustomBots = cfg.customBots
+	bz.Level = cfg.level
+	bz.CustomLevels = cfg.customLevels
+	bz.MapTrust, bz.Release = cfg.mapTrust, version.String()
+	bz.Halloween = cfg.halloween
 	bz.ShaperSelect = cfg.shaperSelect
 	bz.KillSwitches = cfg.killSwitches
 	bz.Limits = in.limits
@@ -599,7 +618,21 @@ func start(cfg config) (*instance, error) {
 	if cfg.statusCheck > 0 && st.Path() != "" { // another process can change the database only on disk
 		in.stopStatus = bz.WatchAccountStatus(cfg.statusCheck)
 	}
+	if cfg.chatRoomsSet {
+		bz.SetChatRooms(cfg.chatRooms)
+	}
+	log.Logf("stub", "chat rooms (ROOMS2): %s", blaze.DescribeChatRooms(bz.ChatRooms()))
 	broadcastNote := startBroadcasts(cfg, bz, in)
+	if cfg.onlineCount {
+		every := cfg.onlineCountEvery
+		if every <= 0 {
+			every = blaze.DefaultOnlineCountEvery
+		}
+		in.stopCount = bz.StartOnlineCount(every)
+		broadcastNote += fmt.Sprintf("; the players-online count in the marquee (a change pushed at most every %s)", every)
+	} else {
+		broadcastNote += "; no players-online count"
+	}
 	qos := web.NewQoS(log, public, in.qosUDP)
 	qos.Port = qp // the qosport the replies name without a probe socket (--plain off)
 	qos.Limits = in.limits
@@ -698,8 +731,24 @@ func start(cfg config) (*instance, error) {
 			len(cfg.testLoginErrors), describeLoginErrors(cfg.testLoginErrors))
 	}
 	log.Logf("stub", "PvP matchmaking: %s%s", bz.MM.Config(), mmNotes)
+	if cfg.level != "" {
+		log.Logf("stub", "hosted level: %s (LevelId %d = %#08x; --map)", cfg.level, blaze.LevelAssetID(cfg.level),
+			blaze.LevelAssetID(cfg.level))
+	}
+	if len(cfg.customLevels) > 0 {
+		log.Logf("stub", "custom games may pick the maps %s by a name tag (--custom-maps)", describeCustomLevels(cfg.customLevels))
+	}
+	for _, note := range levelArchiveNotes(cfg) {
+		log.Logf("stub", "%s", note)
+	}
+	if note := mapCheckNote(cfg); note != "" {
+		log.Logf("stub", "%s", note)
+	}
 	if cfg.hostsOn() || cfg.shaperSelect.On {
 		log.Logf("stub", "shaper select (D3-live): %s", cfg.shaperSelect.Describe())
+	}
+	if cfg.hostsOn() || cfg.halloween {
+		log.Logf("stub", "Halloween decoration (HOLIDAY1): %s", describeHalloween(cfg.halloween))
 	}
 	log.Logf("stub", "system messages (B14): kill switches %s; %s", blaze.DescribeKillSwitches(cfg.killSwitches), broadcastNote)
 	log.Logf("stub", "logins (PH2): %s%s; %s; %s", describeSignup(cfg.accounts), modeNote, startPruning(cfg, in),
@@ -932,6 +981,9 @@ func (in *instance) close() {
 	if in.stopWatch != nil {
 		in.stopWatch()
 	}
+	if in.stopCount != nil {
+		in.stopCount()
+	}
 	if in.gateway != nil {
 		in.gateway.Close()
 	}
@@ -1039,6 +1091,11 @@ func Run(args []string, h Hooks) int {
 	fs.BoolVar(&cfg.mmBots, "mm-bots", true, "PvP matchmaking with match hosts: a game that starts with open seats (after --mm-fill-after) gets bots in them, up to --mm-team-size a team (B10d); --mm-bots=false leaves them empty")
 	discordOpts := addDiscordFlags(fs)
 	fs.IntVar(&cfg.leaderboardMinGames, "leaderboard-min-games", blaze.LeaderboardMinGames, "the main menu's Leaderboard lists the accounts with at least this many PvP and custom games (the screen says 10)")
+	level := fs.String("map", blaze.HostedLevel, "the map every hosted game loads: SM_Map_v5 (the game's map) or MM_Map_v3 (the cut one-lane map; every player's copy and the host copy need its zz_MM_Map_v3.snap); a custom game's name tag may pick another (--custom-maps)")
+	fs.StringVar(level, "level", blaze.HostedLevel, "the same as --map")
+	trustMaps := fs.String("trust-maps", "none", "the players without the tunnel who may play a map beside SM_Map_v5 (MM_Map_v3): none (the server can't check their copies; they can't join or queue for its games, and their own games play on SM_Map_v5), all, or comma-separated addresses and networks (192.168.1.7,10.0.0.0/8); through the tunnel a player may when its Start-Client is this server's release")
+	fs.StringVar(&cfg.tunnelRelease, "tunnel-release", "", "--tunnel-client test aid: the release name its session hello gives instead of this build's (a server with --allow-any-client lets it in as another release)")
+	customMaps := fs.String("custom-maps", "", `the maps a custom game's creator may pick with a tag at the end of the game's name ("~#mm" MM_Map_v3, "~#sm" SM_Map_v5), comma-separated, besides SM_Map_v5 and --map; "" or "none" = only those`)
 	fs.BoolVar(&cfg.customBots, "custom-bots", false, "custom games with match hosts: bots fill the open seats when the game starts (B15; off: only the lobby's players)")
 	fs.BoolVar(&cfg.shaperSelect.On, "shaper-select", false, "match hosts run shaper select with each player's shapers, skins, wards and announcers from its account (D3-live)")
 	freeRotation := fs.String("free-rotation", "", `shaper select: shapers in the free rotation, comma-separated ("gunman,PC_Otter,Fenmore")`)
@@ -1047,6 +1104,10 @@ func Run(args []string, h Hooks) int {
 	fs.StringVar(&cfg.broadcast, "broadcast", "", `a broadcast message every login gets (B14; "@<flags> " in front sets its display flags)`)
 	fs.StringVar(&cfg.broadcastFile, "broadcast-file", "", `the operator's broadcast messages, one per line, read every 2 s and sent to everyone logged in when they change (B14; default <data>\broadcast.txt, "" = none)`)
 	fs.Int64Var(&cfg.broadcastFlags, "broadcast-flags", blaze.DefaultBroadcastFlags, "display flags of the broadcast messages: 4 the main menu's marquee and shaper select, 2 a System chat line (also in a match), 1 the main menu chat's notifications; added up")
+	chatRooms := fs.String("chat-rooms", blaze.DefaultChatRooms, `the Social panel's public chat rooms, comma-separated in the Rooms tab's order: a name, optionally :<capacity> (2-1000, default 50), :queue (the room where the server posts the PvP queue's news) and :open (the client joins it by itself at every login, as a minimised tab; ROOMS3); "none" = no rooms`)
+	halloween := fs.String("halloween", "off", `the map's Halloween decoration (candles, pumpkins, jack-o'-lanterns) in every match with a match host: on or off; players see it with a player copy set up by this release (its zz_Halloween.snap)`)
+	onlineCount := fs.String("online-count", "on", `the main menu's marquee and shaper select show how many players are online ("2 players online, 1 in a match"): on or off`)
+	fs.DurationVar(&cfg.onlineCountEvery, "online-count-every", blaze.DefaultOnlineCountEvery, "the players-online count: the least time between two updates sent to the players (logins and logouts in a burst send one update)")
 	signup := fs.String("signup", "open", "sign-up mode: open (a new login name makes an account at its first login, with the password typed), invite (new accounts only with an invite code: --make-invite; the website), closed (only the operator: --create-account)")
 	fs.IntVar(&cfg.accounts.SignupsPerAddress, "signups-per-address", accounts.DefaultSignupsPerAddress, "the most accounts one public source address may make per UTC day (loopback and LAN addresses are never counted); 0 = no cap")
 	fs.BoolVar(&cfg.accounts.LocalTrust, "local-trust", false, "no passwords, for a server only this PC reaches (Start-Client's own server for This PC): any login name logs in with any password, and none is checked or stored; needs a loopback --bind")
@@ -1124,6 +1185,24 @@ func Run(args []string, h Hooks) int {
 		return 2
 	}
 	cfg.policy.PerkPages = uint32(*perkPages)
+	if lv, err := blaze.ParseLevel(*level); err != nil {
+		fmt.Fprintln(os.Stderr, "dgserver:", err)
+		return 2
+	} else if !strings.EqualFold(lv, blaze.HostedLevel) {
+		cfg.level = lv
+	}
+	if cl, err := blaze.ParseLevels(*customMaps); err != nil {
+		fmt.Fprintln(os.Stderr, "dgserver:", strings.Replace(err.Error(), "--map", "--custom-maps", 1))
+		return 2
+	} else {
+		cfg.customLevels = cl
+	}
+	if mt, err := blaze.ParseMapTrust(*trustMaps); err != nil {
+		fmt.Fprintln(os.Stderr, "dgserver:", err)
+		return 2
+	} else {
+		cfg.mapTrust = mt
+	}
 	if *ftueRequired {
 		cfg.policy.FTUEDone = false
 	}
@@ -1144,6 +1223,22 @@ func Run(args []string, h Hooks) int {
 		fmt.Fprintln(os.Stderr, "dgserver:", err)
 		return 2
 	}
+	if err := applyOnlineCount(&cfg, *onlineCount); err != nil {
+		fmt.Fprintln(os.Stderr, "dgserver:", err)
+		return 2
+	}
+	halloweenOn, halloweenErr := discordhook.ParseOnOff(*halloween)
+	if halloweenErr != nil {
+		fmt.Fprintln(os.Stderr, "dgserver: --halloween:", halloweenErr)
+		return 2
+	}
+	cfg.halloween = halloweenOn
+	rooms, roomsErr := blaze.ParseChatRooms(*chatRooms)
+	if roomsErr != nil {
+		fmt.Fprintln(os.Stderr, "dgserver: --chat-rooms:", roomsErr)
+		return 2
+	}
+	cfg.chatRooms, cfg.chatRoomsSet = rooms, true
 	if m, err := accounts.ParseMode(*signup); err != nil {
 		fmt.Fprintln(os.Stderr, "dgserver: --signup:", err)
 		return 2
@@ -1342,6 +1437,94 @@ func applySystemFlags(cfg *config, killSwitches string, set map[string]bool) err
 	}
 	if !set["broadcast-file"] && cfg.dataDir != "" {
 		cfg.broadcastFile = filepath.Join(cfg.dataDir, "broadcast.txt")
+	}
+	return nil
+}
+
+// describeCustomLevels is the log's list of --custom-maps: "MM_Map_v3 (~#mm)".
+func describeCustomLevels(levels []string) string {
+	var b []string
+	for _, name := range levels {
+		l, _ := blaze.FindLevel(name)
+		b = append(b, name+" ("+blaze.MapTagPrefix+l.Tag+")")
+	}
+	return strings.Join(b, ", ")
+}
+
+// mapCheckNote is the start-up line of the map check (MAPGUARD, blaze/mapguard.go) when the server may host a map
+// beside SM_Map_v5 (--map, --custom-maps): who may play it. "" otherwise.
+func mapCheckNote(cfg config) string {
+	var maps []string
+	for _, name := range append([]string{cfg.level}, cfg.customLevels...) {
+		if l, ok := blaze.FindLevel(name); ok && l.Archive != "" && !slices.Contains(maps, l.Name) {
+			maps = append(maps, l.Name)
+		}
+	}
+	if len(maps) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("map check: %s only for Start-Client of this server's release %s through the tunnel, and without "+
+		"the tunnel for %s (--trust-maps); any other player can't join a game on it or queue for it, and a game it "+
+		"creates plays on %s", strings.Join(maps, ", "), version.String(), describeMapTrust(cfg.mapTrust), blaze.HostedLevel)
+}
+
+func describeMapTrust(m blaze.MapTrust) string {
+	switch s := m.String(); s {
+	case "none":
+		return "nobody"
+	case "all":
+		return "every client"
+	default:
+		return s
+	}
+}
+
+// levelArchiveNotes warn about each map the server may host (--map, --custom-maps) whose archive the local host copy
+// (--gms-dir) lacks: its matches would not start ("level FAILED" in the host's log). A remote host agent's copy isn't
+// checked, nor the players' copies.
+func levelArchiveNotes(cfg config) []string {
+	if cfg.gmsDir == "" {
+		return nil
+	}
+	exe, err := gmshost.ResolveExe(cfg.gmsDir)
+	if err != nil {
+		return nil
+	}
+	var notes []string
+	seen := map[string]bool{}
+	for _, name := range append([]string{cfg.level}, cfg.customLevels...) {
+		l, ok := blaze.FindLevel(name)
+		if !ok || l.Archive == "" || seen[l.Name] {
+			continue
+		}
+		seen[l.Name] = true
+		p := filepath.Join(filepath.Dir(exe), "Data", l.Archive)
+		if _, err := os.Stat(p); err != nil {
+			notes = append(notes, fmt.Sprintf("WARNING: map %s: the host copy has no %s (%s), so its matches won't start",
+				l.Name, l.Archive, p))
+		}
+	}
+	return notes
+}
+
+// describeHalloween is the log's note for --halloween.
+func describeHalloween(on bool) string {
+	if on {
+		return fmt.Sprintf("on (every createGame has levelFlags %d: the hosts load the holiday markerset's condition and "+
+			"send it in GamePrepareForStart; clients with zz_Halloween.snap show it)", gmshost.LevelFlagHalloween)
+	}
+	return "off (level flags 0: the map as shipped)"
+}
+
+// applyOnlineCount reads --online-count (on or off) into cfg and checks --online-count-every (at least 1 s).
+func applyOnlineCount(cfg *config, on string) error {
+	v, err := discordhook.ParseOnOff(on)
+	if err != nil {
+		return fmt.Errorf("--online-count: %v", err)
+	}
+	cfg.onlineCount = v
+	if cfg.onlineCountEvery < time.Second {
+		return fmt.Errorf("--online-count-every must be at least 1s (e.g. 30s, 2m)")
 	}
 	return nil
 }

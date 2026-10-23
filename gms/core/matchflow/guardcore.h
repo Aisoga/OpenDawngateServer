@@ -84,5 +84,33 @@ inline std::string SpecialsOf(unsigned livingMask) {
   return s.empty() ? "none (basic attacks only)" : s;
 }
 
+// MAPBASE: a level with fewer than five Cores a team (MM_Map_v3: nub_<team>_v5_A, B, C only). `presentMask` = the
+// Cores that stand on the level (bit i = Core A+i of the Guardian's team exists, alive or not). A Core that isn't on
+// the level can't die, so ability_BaseNub_Death never puts its modifier_Guardian_Nub<X>_Destroyed on the Guardian:
+// that special's condition passes for the whole match and the cooldown counts only destroyed Cores that exist
+// [script: condition_Guardian_UseKnockUpOrbs/_UseLaserBlast test only their modifier]. With every Core present these
+// are the one-argument functions above.
+inline unsigned AllowedSpecialsMask(unsigned livingMask, unsigned presentMask) {
+  return (livingMask | ~presentMask) & kAllCores;
+}
+inline int DestroyedCoreCount(unsigned livingMask, unsigned presentMask) {
+  return LivingCoreCount(presentMask & ~livingMask & kAllCores);
+}
+inline double SpecialCooldownSeconds(unsigned livingMask, unsigned presentMask) {
+  return 6.0 + 2.0 * DestroyedCoreCount(livingMask, presentMask);
+}
+// "ABC.." with '-' for a destroyed Core and '.' for one the level doesn't have ("A-C..").
+inline std::string CoreMaskString(unsigned livingMask, unsigned presentMask) {
+  std::string s;
+  for (int i = 0; i < kGuardianCores; ++i) {
+    const bool present = (presentMask >> i) & 1u, alive = (livingMask >> i) & 1u;
+    s += !present ? '.' : alive ? static_cast<char>('A' + i) : '-';
+  }
+  return s;
+}
+inline std::string SpecialsOf(unsigned livingMask, unsigned presentMask) {
+  return SpecialsOf(AllowedSpecialsMask(livingMask, presentMask));
+}
+
 }  // namespace flow
 }  // namespace gms

@@ -1171,6 +1171,8 @@ constexpr std::uintptr_t kScale = 0x2C;             // f32 (D14: 2.0 on each buf
 constexpr std::uintptr_t kTarget = 0x54;
 constexpr std::uintptr_t kChildren = 0x58;          // u32[] {pointer, count}
 constexpr std::uintptr_t kSplinePathNode = 0xA4;    // cSplinePathNodeData* {char name[32], knot, lane, team, delete}
+constexpr std::uintptr_t kNavmeshMarkerData = 0xA8;  // cNavmeshMarkerData* {bool allowPlayersHere, allowNPCsHere}, nullable
+                                                    // (the island markers; MAPMINES)
 constexpr std::uintptr_t kSpawnPointDef = 0xBC;     // componentData (+0xAC) .spawnPointDef (+0x10), nullable
 }  // namespace marker
 namespace nounData {
@@ -1191,6 +1193,23 @@ namespace gameplayTuning {  // LevelGameplayTuning
 constexpr std::uintptr_t kMinionSpawnDelay1 = 0x0C;
 constexpr std::uintptr_t kMinionSpawnInterval1 = 0x14;
 constexpr std::uintptr_t kNubRespawnTime = 0xDC;
+// MAPHOST: the lane agents (striders, the super-minion spawners' creatures; docs/data/assetdata_types.txt). SM_Map_v5:
+// 0, 0, false; MM_Map_v3's Tuning_MM_V3: 6, 4, true (striderMortal/Spirit Minion_MM_v3_Boar_Major, _Flocklord,
+// _Deer_Major)
+constexpr std::uintptr_t kWavesBeforeLaneAgents = 0x2C;   // i32 numMinionWavesBeforeLaneAgentSpawns
+constexpr std::uintptr_t kWavesBetweenLaneAgents = 0x30;  // i32 numMinionWavesBetweenLaneAgentSpawns
+// MAPBASE: the Bindings' respawn part of tower[] (kTowers below): +0 f32 respawnTime (SM_Map_v5 three entries 1e8 s;
+// MM_Map_v3 two, 900 s and 600 s), used only with towerRespawnEnabled, false on both.
+constexpr std::uintptr_t kTowerEntryRespawnTime = 0x0;
+constexpr std::uintptr_t kTowerRespawnEnabled = 0xD8;     // bool
+constexpr std::uintptr_t kStriderMortal = 0xE0;           // asset[] {pointer, u32 count}
+constexpr std::uintptr_t kStriderSpirit = 0xE8;           // asset[]
+constexpr std::uintptr_t kStriderSpawnEnabled = 0xF0;     // bool
+// MAPSTRIDER: tower[] {pointer, u32 count} of 0x10-byte entries (+0 respawnTime, +4 augmentation[],
+// +0xC laneAgentRespawnCounterAdjustment i32); SM_Map_v5 three tiers -1, -1, -1; MM_Map_v3 two, 0 and -1
+constexpr std::uintptr_t kTowers = 0xCC;
+constexpr std::uintptr_t kTowerSize = 0x10;
+constexpr std::uintptr_t kTowerLaneAgentAdjust = 0x0C;
 }  // namespace gameplayTuning
 // GearsLua_RegisterNamespace (0x00873170, cdecl (lua_State*, const char* ns, const luaL_Reg* fns, int count)): fetches
 // (or creates) the global table and sets each field, so it replaces the client's stubs (SERVER_LUA_API.md).

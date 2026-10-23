@@ -77,5 +77,5 @@ The detailed decision records are in [development/decisions/](development/decisi
 
 ## What's not in this repository
 
-- No game files. Every player downloads the client from archive.org, and the setup checks it against a list of the original files' checksums ([`file_manifest.csv`](file_manifest.csv)).
+- No game files. Every player downloads the client from archive.org, and the setup checks it against a list of the original files' checksums ([`file_manifest.csv`](file_manifest.csv)). The files the setup adds to the game are made on the player's machine from the player's own copy. One file ships ready-made: the cut map `MM_Map_v3`'s physics mesh in PhysX's cooked form (`server/internal/setup/mapmm/physmesh`). Its triangles are our own, a floor and walls traced from the map's line-of-sight image, plus the search tree NVIDIA's cooker builds over them. Only that cooker can make the file, and running it on every player's machine would mean shipping an extra program.
 - The reverse-engineering notes and research tools that led here aren't published. The code's comments still name the parts of the client each piece relies on.

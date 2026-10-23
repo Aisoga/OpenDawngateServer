@@ -82,6 +82,7 @@ add_library(dgsim SHARED
   engine/damage.cpp            # D1f-live: the TakeDamage core (docs/DAMAGE.md)
   engine/death.cpp             # D1f-live: death processing, rewards, gold
   engine/passives.cpp          # D6c: the shapers' passives at the deploy and each respawn
+  engine/mapfix.cpp            # MAPLUA: MM_Map_v3's script fix-ups (dgsim_mapfix.lua), MM's own base regen (opt-in)
   engine/shop.cpp              # D15c: the shop's purchase effect (onItemPurchased, GetItemFx*)
   engine/volumes.cpp           # D12c: attached trigger volumes follow their objects
   engine/components.cpp        # D1j: the ability data containers' release, the server pools' census
@@ -192,8 +193,14 @@ if(RAKNET_FOUND)
     tests/test_hunterroute.cpp  # HUNTERROUTE: the opening route, Vanquish's pick, the pull (core/bots/route.h)
     tests/test_nullpos.cpp      # NULLPOS: (0, 0) as the bots' null position (core/agents/nullpos.h, lost.h's clear)
     tests/test_killfinish.cpp   # KILLFINISH: stay to finish a won trade, the damage ring, BOTCYCLE's plan chain
+    tests/test_bottower.cpp     # BOTTOWER: tower dangers, the keep-out, REFLEXWALK, the time under tower fire
     tests/test_mikella.cpp      # MIKELLABOT: Mikella's profile, the Gladiator pin, her kit layer and guide build
     tests/test_draft.cpp        # BOTDRAFT: a custom game's bots draw after the humans (core/bots/draft.h)
+    tests/test_maphost.cpp      # MAPHOST: no Hunter seat without camps, the lanes of a one-lane level
+    tests/test_mapbase.cpp      # MAPBASE: two Binding tiers, three Cores, the Locus (MM_Map_v3's base)
+    tests/test_mapmines.cpp     # MAPMINES: the gold mines no player reaches (island markers), MM_Map_v3's full mines
+    tests/test_mapstrider.cpp   # MAPSTRIDER: the lane agents' waves and nouns (core/matchflow/laneagents.h)
+    tests/test_maplua.cpp       # MAPLUA: MM_Map_v3's script fix-ups, the base regen choice (core/matchflow/mapfix.h)
     tests/test_watchdog.cpp     # H5: the stall and step rules, a real watchdog thread against a test thread, the dump
     tests/test_d14.cpp          # D14: the map rules (reward buffs, aggro on sight, camp spots, the Guardian's shield)
     tests/test_timing.cpp       # Q3c: the tick, traffic and command-latency arithmetic, the CSV, the simulator's rule
@@ -236,6 +243,18 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/core/control/CMakeLists.txt")
   if(TARGET gms_tests)
     target_link_libraries(gms_tests PRIVATE dg_control)
   endif()
+endif()
+
+# ---- physcook (MAPPHYS): a level's PhysX triangle mesh, cooked with the game's own PhysXCooking.dll ---------------
+# physcook.exe <PhysXCooking.dll> <in.dgmi> <out.bin>: a developers' tool (the mesh builder runs it; the setup ships the
+# cooked MM_Map_v3 mesh as data, server/internal/setup/mapmm/physmesh); its engine-free part is the
+# header core/physx/cook.h, tested in gms_tests (tests/test_physcook.cpp). Needs no RakNet; no part of dgsim.
+add_executable(physcook physcook/main.cpp)
+target_compile_options(physcook PRIVATE /W4)
+target_compile_definitions(physcook PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX _CRT_SECURE_NO_WARNINGS)
+target_include_directories(physcook PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
+if(TARGET gms_tests)
+  target_sources(gms_tests PRIVATE tests/test_physcook.cpp)
 endif()
 
 # ---- build stamps (G5): <binary>.stamp after every successful build, also when MSBuild doesn't relink ---------------

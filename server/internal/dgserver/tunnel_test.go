@@ -316,6 +316,37 @@ func TestSignupFact(t *testing.T) {
 	}
 }
 
+// TestMapsFact: the gateway's info hello names the maps a custom game may pick besides The Dawngate (--map and
+// --custom-maps, as tags), from which Start-Client lists the CREATE GAME dialog's maps; none is an empty fact.
+func TestMapsFact(t *testing.T) {
+	certs := testCerts(t)
+	for _, c := range []struct {
+		level  string
+		custom []string
+		want   string
+	}{
+		{"", nil, ""},
+		{"", []string{"MM_Map_v3"}, "mm"},
+		{"MM_Map_v3", nil, "mm"},
+		{"SM_Map_v5", []string{"SM_Map_v5"}, ""},
+	} {
+		cfg := config{bind: "127.0.9.35", certs: certs, logDir: t.TempDir(), plain: PlainOff, tunnel: TunnelOn,
+			redirectorPort: redirector.Port, level: c.level, customLevels: c.custom}
+		in, err := start(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := tunnel.ProbeInfo(in.gateway.Addr(), 3*time.Second, nil)
+		in.stop()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := info.Facts[tunnel.FactMaps]; !ok || got != c.want {
+			t.Errorf("--map %q --custom-maps %v: the gateway's maps %q (named: %v), want %q", c.level, c.custom, got, ok, c.want)
+		}
+	}
+}
+
 func between(s, a, b string) string {
 	i := strings.Index(s, a)
 	if i < 0 {

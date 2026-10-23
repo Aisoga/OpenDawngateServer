@@ -11,7 +11,8 @@ Checks gms/engine/lua/dgsim_bots_api.lua (and its probe and tests) without the g
      real GlobalDefinitions/Global/Table/BotUtils and called against the shims in a stub world. Its per-script lines are
      printed; script bugs the docs list are expected there. With --callers also tests/test_guardcore_scripts.lua
      (GUARDCORE): the Guardian's special conditions and special cooldown against the Cores' Destroyed modifiers, for
-     all 32 sets of living Cores; it must pass ("N checks, 0 failed").
+     all 32 sets of living Cores; it must pass ("N checks, 0 failed"). And tests/test_dgsim_mapfix.lua (MAPLUA):
+     dgsim_mapfix.lua over MM_Map_v3's Flocklord buffs and modifier_MM_regenSpeed; it must pass too.
 
 Usage (from the repo root; tools/ is gitignored, so in a worktree pass the main checkout's jars or let the script find
 them through the git common dir):
@@ -44,6 +45,11 @@ FILES = [
     os.path.join(TESTS, "callers_smoke.lua"),
     os.path.join(LUA_DIR, "dgsim_gcore.lua"),  # GUARDCORE's probe and its scripts test
     os.path.join(TESTS, "test_guardcore_scripts.lua"),
+    os.path.join(LUA_DIR, "dgsim_mapbase.lua"),  # MAPBASE's probes (compiled only)
+    os.path.join(LUA_DIR, "dgsim_mapbase_open.lua"),
+    os.path.join(LUA_DIR, "dgsim_maptags.lua"),  # MAPTAGS' probe (compiled only)
+    os.path.join(LUA_DIR, "dgsim_mapfix.lua"),  # MAPLUA's fix-ups of MM_Map_v3's scripts and their test
+    os.path.join(TESTS, "test_dgsim_mapfix.lua"),
 ]
 # the tier-3 functions whose callers the smoke test runs (docs/data/server_lua_missing_api.csv)
 TIER3_GETTERS = {"GetNumTowers", "GetOuterTower", "GetVulnerableStructures", "GetClosestBaseStructure",
@@ -176,6 +182,15 @@ def main():
         m = re.search(r"(\d+) checks, (\d+) failed", out)
         passed = bool(m) and m.group(2) == "0"
         print(f"guardcore: {m.group(0) if m else 'no result'}")
+        if not passed:
+            print(out.strip())
+        ok &= passed
+        # MAPLUA: dgsim_mapfix.lua over MM_Map_v3's own scripts (the Flocklord buffs, modifier_MM_regenSpeed)
+        out = run_lua(args.java, args.luaj, [os.path.join(TESTS, "test_dgsim_mapfix.lua"),
+                                             os.path.abspath(args.callers), os.path.join(LUA_DIR, "dgsim_mapfix.lua")])
+        m = re.search(r"(\d+) checks, (\d+) failed", out)
+        passed = bool(m) and m.group(2) == "0"
+        print(f"mapfix: {m.group(0) if m else 'no result'}")
         if not passed:
             print(out.strip())
         ok &= passed

@@ -16,6 +16,7 @@
 #include "core/bots/jungle.h"
 #include "core/matchflow/camps.h"
 #include "core/matchflow/flow.h"
+#include "core/matchflow/laneagents.h"
 #include "agents.h"
 #include "crowd.h"
 #include "game.h"
@@ -48,7 +49,8 @@ DWORD SehNote(EXCEPTION_POINTERS* ep, const char* what) {
 
 // ---- raw level data (read under SEH into PODs) -----------------------------------------------------------------------
 
-constexpr int kMaxChildren = 32;
+// MAPMINES: 64, not 32: each of MM_Map_v3's gold mines has 36 worker spots (32 left 4 workers on the mine's centre)
+constexpr int kMaxChildren = 64;
 
 struct MarkerPos {
   std::uint32_t id;
@@ -206,6 +208,24 @@ bool SehReadTuning(void* level, Tuning* t) {
     t->waveInterval = Field<float>(d, gameplayTuning::kMinionSpawnInterval1);
     t->nubRespawn = Field<float>(d, gameplayTuning::kNubRespawnTime);
     t->wellLockFirst = Field<float>(d, 0x7C);
+    t->wavesBeforeLaneAgents = Field<int>(d, gameplayTuning::kWavesBeforeLaneAgents);
+    t->wavesBetweenLaneAgents = Field<int>(d, gameplayTuning::kWavesBetweenLaneAgents);
+    t->striderSpawnEnabled = Field<unsigned char>(d, gameplayTuning::kStriderSpawnEnabled) != 0;
+    t->striderMortal = Field<int>(d, gameplayTuning::kStriderMortal + 4);
+    t->striderSpirit = Field<int>(d, gameplayTuning::kStriderSpirit + 4);
+    // MAPSTRIDER: the lists' nouns (asset pointers, 4 bytes each) and the towers' lane-agent adjustments
+    const std::uintptr_t lists[2] = {gameplayTuning::kStriderMortal, gameplayTuning::kStriderSpirit};
+    for (int team = 0; team < 2; ++team) {
+      void** arr = Field<void**>(d, lists[team]);
+      const int n = Field<int>(d, lists[team] + 4);
+      for (int k = 0; arr && k < n && k < Tuning::kMaxStriders; ++k) t->striderNouns[team][k] = arr[k];
+    }
+    char* towers = Field<char*>(d, gameplayTuning::kTowers);
+    const int nt = Field<int>(d, gameplayTuning::kTowers + 4);
+    t->towerTiers = 0;
+    for (int k = 0; towers && k < nt && k < 4; ++k)
+      t->towerAdjust[t->towerTiers++] =
+          Field<int>(towers + k * gameplayTuning::kTowerSize, gameplayTuning::kTowerLaneAgentAdjust);
     t->read = true;
     return true;
   } __except (SehNote(GetExceptionInformation(), "ReadTuning")) {
@@ -274,6 +294,7 @@ struct Spawner {
   std::uint32_t target = 0;
   int lane = -1;   // index into g_lanes
   int waves = 0, spawned = 0;
+  bool laneAgent = false;  // MAPSTRIDER: a super-minion spawner (type 4): only lane-agent waves start it
 };
 
 struct Camp {
@@ -322,7 +343,27 @@ struct Stats {
   unsigned waves = 0, minions = 0, failed = 0, campSpawns = 0, creatures = 0, campClears = 0, members = 0;
   unsigned overrides = 0, resets = 0, parasiteStages = 0, exceptions = 0, laneEntries = 0, laneAssigned = 0;
   unsigned membersPruned = 0;
+  unsigned laneAgents = 0, laneAgentDeaths = 0;  // MAPSTRIDER
 } g_st;
+
+// MAPSTRIDER: the lane agents (gms/core/matchflow/laneagents.h): [host] lane_agents (-1 the level's
+// striderSpawnEnabled, 0 never, 1 always), lane_agent_order (0 the list's entries in turn and then its last, 1 round),
+// lane_agent_waves_before / _between (-1 the tuning's; test aids); one countdown per team (1, 2).
+int g_laneAgentsOption = -1;
+bool g_laneAgentCycle = false;
+int g_laneAgentBefore = -1, g_laneAgentBetween = -1;
+bool g_laneAgentsOn = false;
+flow::LaneAgentCountdown g_agentCountdown[2];
+struct LaneAgent {
+  std::uint32_t id = 0;
+  std::string noun;
+  int team = 0;
+  int number = 0;  // the team's lane agent number (1, 2, ...)
+  double spawnedAt = 0.0;
+  bool dead = false;
+};
+std::vector<LaneAgent> g_laneAgents;
+double g_lastAgentTrace = -1.0;
 
 void* g_director;  // sim +0x560
 void* g_impl;      // director +0x1C
@@ -632,6 +673,9 @@ struct WaveGroup {
   int level = -1;
   double firstAt = -1.0, lastAt = -1.0;
   std::vector<std::uint32_t> ids;
+  int laneAgent = 0;   // MAPSTRIDER: the team's lane agent number (1, 2, ...); 0 = a minion wave
+  int listIndex = -1;  // ... its entry in the tuning's strider list (-1: the spawner's own composition)
+  int listSize = 0;
 };
 std::vector<WaveGroup> g_groups;
 
@@ -675,7 +719,9 @@ bool SehCushions(float* out5) {
 }
 
 // Starts one spawner's wave (its override's composition if one is set); the members follow in TickGroups.
-void StartWave(int spawnerIndex, int wave, double t) {
+// MAPSTRIDER: `laneAgent` > 0 is the team's lane agent number: one creature, the tuning's strider list entry for it
+// (gms::flow::LaneAgentListIndex), or the spawner's own composition when the team's list is empty.
+void StartWave(int spawnerIndex, int wave, double t, int laneAgent = 0) {
   Spawner& sp = g_spawners[spawnerIndex];
   WaveGroup g;
   g.spawner = spawnerIndex;
@@ -683,7 +729,23 @@ void StartWave(int spawnerIndex, int wave, double t) {
   g.start = t;
   g.interval = g_opt.spawnIntervalS > 0.0 ? g_opt.spawnIntervalS : 0.0;
   g.def = sp.def;
-  auto ov = g_overrides.find(sp.noun);
+  g.laneAgent = laneAgent;
+  if (laneAgent > 0) {
+    const int ti = g.def.team == 2 ? 1 : 0;
+    const int size = std::min(ti ? g_tuning.striderSpirit : g_tuning.striderMortal, Tuning::kMaxStriders);
+    g.listSize = size > 0 ? size : 0;
+    g.listIndex = flow::LaneAgentListIndex(laneAgent - 1, g.listSize, g_laneAgentCycle);
+    void* noun = g.listIndex >= 0 ? g_tuning.striderNouns[ti][g.listIndex] : nullptr;
+    if (noun) {
+      for (int k = 0; k < 4; ++k) {
+        g.def.creeps[k] = k == 0 ? noun : nullptr;
+        g.def.counts[k] = k == 0 ? 1.f : 0.f;
+      }
+    } else {
+      g.listIndex = -1;
+    }
+  }
+  auto ov = laneAgent > 0 ? g_overrides.end() : g_overrides.find(sp.noun);
   if (ov != g_overrides.end()) {
     SpawnDef od;
     if (SehNounSpawnDef(ov->second, &od) && od.ok) {
@@ -727,7 +789,27 @@ void SpawnMember(WaveGroup& g, double t) {
   if (g.firstAt < 0.0) g.firstAt = t;
   g.lastAt = t;
   g.ids.push_back(cr.id);
-  if (g.wave == 0 && i == 0) g_traced.push_back(cr.id);
+  if (g.laneAgent > 0) {  // MAPSTRIDER
+    ++g_st.laneAgents;
+    LaneAgent a;
+    a.id = cr.id;
+    a.noun = SehAssetName(g.def.creeps[k]);
+    a.team = g.def.team;
+    a.number = g.laneAgent;
+    a.spawnedAt = t;
+    g_laneAgents.push_back(a);
+    const Lane* lane = sp.lane >= 0 ? &g_lanes[sp.lane] : nullptr;
+    Log("director: lane agent %d of team %d: %08X %s (%s) from %s at (%.1f, %.1f), match %.2f s, with wave %d -> lane "
+        "%s (spline id %08X), NPC level %d, HP %.0f",
+        a.number, a.team, cr.id, a.noun.c_str(),
+        g.listIndex >= 0 ? ("strider list entry " + std::to_string(g.listIndex + 1) + " of " +
+                            std::to_string(g.listSize))
+                               .c_str()
+                         : "the spawner's own composition",
+        sp.name.c_str(), pos[0], pos[1], t, g.wave + 1, lane ? lane->name.c_str() : "none", g.splineId, cr.level,
+        cr.hp);
+  }
+  if (g.wave == 0 && i == 0 && g.laneAgent == 0) g_traced.push_back(cr.id);
   if (!g_repulsionLogged) {
     g_repulsionLogged = true;
     unsigned dis = 0;
@@ -764,7 +846,12 @@ void TickGroups(double t) {
       std::snprintf(b, sizeof b, "%s%08X", ids.empty() ? "" : " ", id);
       ids += b;
     }
-    if (LogBudget())
+    if (g.laneAgent > 0) {
+      // MAPSTRIDER: its own line ("lane-agent wave", so the reports' "director: wave N" count stays the minion waves)
+      Log("director: lane-agent wave %d at match %.2f s: %s (team %d) %s -> lane %s: lane agent %d, %s",
+          g.wave + 1, g.start, sp.name.c_str(), g.def.team, CompositionText(g.def).c_str(),
+          lane ? lane->name.c_str() : "none", g.laneAgent, ids.empty() ? "NOT SPAWNED" : ids.c_str());
+    } else if (LogBudget())
       Log("director: wave %d at match %.2f s: %s (team %d) %s%s%s -> lane %s (spline id %08X), NPC level %d, spawned "
           "%.2f-%.2f s (%s): %s",
           g.wave + 1, g.start, sp.name.c_str(), g.def.team, CompositionText(g.def).c_str(),
@@ -1076,6 +1163,30 @@ void UpdateCampIcons(double t) {
   }
 }
 
+// MAPSTRIDER: the living lane agents (position, spline knot, HP), every director_trace_s s.
+void TraceLaneAgents(double t) {
+  if (g_opt.traceSeconds <= 0) return;
+  if (g_lastAgentTrace >= 0 && t - g_lastAgentTrace < g_opt.traceSeconds) return;
+  g_lastAgentTrace = t;
+  std::string line;
+  for (LaneAgent& a : g_laneAgents) {
+    if (a.dead) continue;
+    float hp = 0.f, pos[3] = {};
+    std::uint32_t idx = 0, spline = 0;
+    const int st = SehMemberState(a.id, &hp, pos, &idx, &spline);
+    char b[160];
+    if (st < 0) {
+      a.dead = true;  // gone without a death we saw
+      std::snprintf(b, sizeof b, " %08X %s gone;", a.id, a.noun.c_str());
+    } else {
+      std::snprintf(b, sizeof b, " %08X %s team %d (%.1f, %.1f) knot %d%s hp %.0f%s;", a.id, a.noun.c_str(), a.team,
+                    pos[0], pos[1], static_cast<int>(idx), spline ? "" : " (lane done)", hp, st == 0 ? " dead" : "");
+    }
+    line += b;
+  }
+  if (!line.empty()) Log("director: lane agents at match %.1f s:%s", t, line.c_str());
+}
+
 void Trace(double t) {
   if (g_opt.traceSeconds <= 0 || g_traced.empty()) return;
   if (g_lastTrace >= 0 && t - g_lastTrace < g_opt.traceSeconds) return;
@@ -1155,6 +1266,11 @@ void Configure(const Options& o) {
   g_opt.campIcons = HostOptionInt("camp_icons", 3);
   g_revealBuffS = HostOptionInt("camp_reveal_buff_s", static_cast<int>(flow::kCampRevealBuffS));
   g_revealSmallS = HostOptionInt("camp_reveal_small_s", static_cast<int>(flow::kCampRevealSmallS));
+  // MAPSTRIDER: the lane agents' host options
+  g_laneAgentsOption = HostOptionInt("lane_agents", -1);
+  g_laneAgentCycle = HostOptionInt("lane_agent_order", 0) == 1;
+  g_laneAgentBefore = HostOptionInt("lane_agent_waves_before", -1);
+  g_laneAgentBetween = HostOptionInt("lane_agent_waves_between", -1);
 }
 
 void RegisterLua(void* L, void* sim) {
@@ -1205,7 +1321,29 @@ bool OnLevelStarted(void* sim) {
     Log("director: LevelGameplayTuning: minionSpawnDelay1 %.1f, minionSpawnInterval1 %.1f, nubRespawnTime %.1f, "
         "goldMineLockedDurationFirstInSeconds %.1f",
         g_tuning.waveDelay, g_tuning.waveInterval, g_tuning.nubRespawn, g_tuning.wellLockFirst);
-  else
+  if (g_tuning.read)  // MAPHOST
+    Log("director: LevelGameplayTuning lane agents: striderSpawnEnabled %d, numMinionWavesBeforeLaneAgentSpawns %d, "
+        "numMinionWavesBetweenLaneAgentSpawns %d, striderMortal %d and striderSpirit %d noun(s)",
+        g_tuning.striderSpawnEnabled ? 1 : 0, g_tuning.wavesBeforeLaneAgents, g_tuning.wavesBetweenLaneAgents,
+        g_tuning.striderMortal, g_tuning.striderSpirit);
+  // MAPSTRIDER: on or off, the countdowns (gms/core/matchflow/laneagents.h)
+  g_laneAgentsOn = flow::LaneAgentsOn(g_laneAgentsOption, g_tuning.striderSpawnEnabled);
+  {
+    const int before = g_laneAgentBefore >= 0 ? g_laneAgentBefore : g_tuning.wavesBeforeLaneAgents;
+    const int between = g_laneAgentBetween >= 0 ? g_laneAgentBetween : g_tuning.wavesBetweenLaneAgents;
+    for (flow::LaneAgentCountdown& c : g_agentCountdown) c.Init(before, between);
+    std::string adj;
+    for (int k = 0; k < g_tuning.towerTiers; ++k) adj += (k ? " " : "") + std::to_string(g_tuning.towerAdjust[k]);
+    if (g_laneAgentsOn)
+      Log("director: lane agents on ([host] lane_agents %d, the level's striderSpawnEnabled %d): with waves %d, %d, %d, "
+          "... (%d before, %d between%s), the strider list's entries %s; the towers' laneAgentRespawnCounterAdjustment "
+          "[%s] not applied",
+          g_laneAgentsOption, g_tuning.striderSpawnEnabled ? 1 : 0, flow::LaneAgentWaveIndex(before, between, 0) + 1,
+          flow::LaneAgentWaveIndex(before, between, 1) + 1, flow::LaneAgentWaveIndex(before, between, 2) + 1, before,
+          between, (g_laneAgentBefore >= 0 || g_laneAgentBetween >= 0) ? ", [host] lane_agent_waves_*" : "",
+          g_laneAgentCycle ? "in a round" : "in turn, then the last", adj.c_str());
+  }
+  if (!g_tuning.read)
     Log("director: LevelGameplayTuning not readable; SM_Map_v5's values assumed");
   {
     float c[5] = {};
@@ -1342,16 +1480,47 @@ bool OnLevelStarted(void* sim) {
             markerTiming ? " (marker)" : " (noun)", c.record);
       g_camps.push_back(c);
     } else if (def.type == 4) {
-      Log("director: super-minion spawner %s (marker %u) not used (LevelGameplayTuning.striderSpawnEnabled is false on "
-          "SM_Map_v5)",
-          r.nounName, r.id);
+      // MAPSTRIDER: a lane-agent spawner, used when the level's striderSpawnEnabled (or [host] lane_agents=1) says so
+      if (!g_laneAgentsOn) {
+        Log("director: super-minion spawner %s (marker %u) not used (the level's striderSpawnEnabled %d, [host] "
+            "lane_agents %d)",
+            r.nounName, r.id, g_tuning.striderSpawnEnabled ? 1 : 0, g_laneAgentsOption);
+        continue;
+      }
+      Spawner sp;
+      sp.marker = r.id;
+      sp.name = r.nounName;
+      sp.noun = r.noun;
+      sp.def = def;
+      sp.markerTiming = markerTiming;
+      sp.laneAgent = true;
+      std::memcpy(sp.pos, r.pos, sizeof sp.pos);
+      std::memcpy(sp.rot, r.rot, sizeof sp.rot);
+      sp.target = r.target;
+      for (int i = 0; i < static_cast<int>(g_lanes.size()); ++i)
+        if (g_lanes[i].headMarker == r.target) sp.lane = i;
+      const int ti = def.team == 2 ? 1 : 0;
+      const int listSize = std::min(ti ? g_tuning.striderSpirit : g_tuning.striderMortal, Tuning::kMaxStriders);
+      std::string list;
+      for (int k = 0; k < listSize; ++k)
+        list += (k ? ", " : "") + std::string(SehAssetName(g_tuning.striderNouns[ti][k]));
+      Log("director: lane-agent spawner %s (marker %u) team %d at (%.1f, %.1f) -> lane %s: one of %s per lane-agent "
+          "wave (its own composition: %s)",
+          sp.name.c_str(), sp.marker, def.team, sp.pos[0], sp.pos[1],
+          sp.lane >= 0 ? g_lanes[sp.lane].name.c_str() : "NONE",
+          list.empty() ? "its own composition" : ("the level's strider list [" + list + "]").c_str(),
+          CompositionText(def).c_str());
+      g_spawners.push_back(sp);
     }
   }
   if (g_opt.laneTable) FillLaneTable(sim);
   g_levelOk = true;
-  Log("director: level read: %zu lanes, %zu minion spawners, %zu camps (parasite %s), %zu Guardians, %zu wells",
-      g_lanes.size(), g_spawners.size(), g_camps.size(), g_camp_parasite >= 0 ? "yes" : "no", g_guardians.size(),
-      g_wells.size());
+  std::size_t agentSpawners = 0;  // MAPSTRIDER: counted apart, so "minion spawners" stays the lane spawners
+  for (const Spawner& sp : g_spawners) agentSpawners += sp.laneAgent ? 1 : 0;
+  Log("director: level read: %zu lanes, %zu minion spawners, %zu camps (parasite %s), %zu Guardians, %zu wells, %zu "
+      "lane-agent spawners",
+      g_lanes.size(), g_spawners.size() - agentSpawners, g_camps.size(), g_camp_parasite >= 0 ? "yes" : "no",
+      g_guardians.size(), g_wells.size(), agentSpawners);
   return true;
 }
 
@@ -1375,8 +1544,21 @@ void Tick(void* sim, double t) {
       const int k = g_waves.next;
       g_waves.Fired();
       ++g_st.waves;
-      for (int i = 0; i < static_cast<int>(g_spawners.size()); ++i)
-        if (Selected(g_spawners[i].name)) StartWave(i, k, t);
+      // MAPSTRIDER: does this wave carry each team's lane agent (one countdown per team)?
+      int agent[2] = {0, 0};
+      if (g_laneAgentsOn)
+        for (int ti = 0; ti < 2; ++ti)
+          if (g_agentCountdown[ti].OnWave()) agent[ti] = g_agentCountdown[ti].Spawned();
+      for (int i = 0; i < static_cast<int>(g_spawners.size()); ++i) {
+        const Spawner& sp = g_spawners[i];
+        if (!Selected(sp.name)) continue;
+        if (!sp.laneAgent) {
+          StartWave(i, k, t);
+          continue;
+        }
+        const int ti = sp.def.team == 1 ? 0 : sp.def.team == 2 ? 1 : -1;
+        if (ti >= 0 && agent[ti] > 0) StartWave(i, k, t, agent[ti]);
+      }
     }
   TickGroups(t);
   TraceShapes(t);
@@ -1391,6 +1573,7 @@ void Tick(void* sim, double t) {
     UpdateCampIcons(t);
   }
   Trace(t);
+  TraceLaneAgents(t);
 }
 
 void Stop() {
@@ -1405,6 +1588,18 @@ void Stop() {
 
 void OnObjectDied(std::uint32_t id, int killerTeam) {
   if (!g_levelOk || !g_started || g_stopped || !id) return;
+  for (LaneAgent& a : g_laneAgents) {  // MAPSTRIDER
+    if (a.id != id || a.dead) continue;
+    a.dead = true;
+    ++g_st.laneAgentDeaths;
+    float hp = 0.f, pos[3] = {};
+    std::uint32_t idx = 0;
+    SehMemberState(id, &hp, pos, &idx);
+    Log("director: lane agent %d of team %d (%08X %s) died at match %.2f s, %.1f s after its spawn, at (%.1f, %.1f) "
+        "knot %u, killer's team %d",
+        a.number, a.team, a.id, a.noun.c_str(), g_now, g_now - a.spawnedAt, pos[0], pos[1], idx, killerTeam);
+    return;
+  }
   for (Camp& c : g_camps) {
     if (c.parasite || !c.timer.Alive()) continue;
     if (std::find(c.members.begin(), c.members.end(), id) == c.members.end()) continue;
@@ -1514,6 +1709,13 @@ bool LaneKnots(int laneId, int team, std::vector<float>* xyz) {
   return false;
 }
 
+int JungleCamps() {
+  if (!g_levelOk) return -1;
+  int n = 0;
+  for (const Camp& c : g_camps) n += c.parasite ? 0 : 1;
+  return n;
+}
+
 bool ClosestCampPosition(float x, float y, float* out, int team, float enemySidePenalty) {
   int best = -1;
   float bd = 3.0e38f;
@@ -1616,10 +1818,10 @@ void FormatStats(char* buf, std::size_t size) {
   std::snprintf(buf, size,
                 "waves %u (next at %.0f s), minions %u (lane assigned %u, spawning %zu waves), creatures %u in %u camp "
                 "spawns (cleared %u, members %u, pruned %u), parasite %08X (stages %u), overrides %u/%u, failed %u, lane "
-                "table %u",
+                "table %u, lane agents %u (died %u)",
                 g_st.waves, g_waves.TimeOf(g_waves.next), g_st.minions, g_st.laneAssigned, g_groups.size(), g_st.creatures,
                 g_st.campSpawns, g_st.campClears, g_st.members, g_st.membersPruned, g_parasite, g_st.parasiteStages,
-                g_st.overrides, g_st.resets, g_st.failed, g_st.laneEntries);
+                g_st.overrides, g_st.resets, g_st.failed, g_st.laneEntries, g_st.laneAgents, g_st.laneAgentDeaths);
 }
 
 }  // namespace director

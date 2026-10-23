@@ -44,9 +44,17 @@ Since D8-live `--postgame [catalogID ...]` prints instead what the post-game lef
 account data's FLAG (bit 0, set by C1 04's FTUE byte), the inventory counts of the given catalogIDs (C1 04's items), and
 the stats snapshot the client took at C1 01 (the records the game-end screen and the After Action Review show).
 
+Since MAPFILES-fog `--fog [LEVEL.out]` prints instead the fog renderer's level data, in any state: the renderer
+[[0x0159A038] + 0x4C] (the level load 0x0056CA6D-0x0056CAC5 calls 0x0055BEB0 on it with the level's levelSize, which
+sets +0x10/+0x14, and FogOfWarRenderer_LoadOutlines 0x0055E1A0), its size, and the outline vector (+0x1C..+0x20,
+0x30 bytes an entry: +0 the file's 32-byte header (centre, radius +0xC, half-extents, r2 +0x1C), +0x20 the grass id,
++0x24 the sphere-tree node); with a .out file it says whether the renderer holds that file's outlines (centre, radius
+and grass id of every one). Before a level it holds none at size 599.215.
+
 Usage (64-bit Python from .venv; the game runs as the same user, no admin needed):
     .venv/Scripts/python -I re/scripts/game_peek.py <pid> [--all] [--vision] [--mods [--names CSV]] [--out FILE]
     .venv/Scripts/python -I re/scripts/game_peek.py <pid> --postgame [0x10A4638F 0x10A46383] [--out FILE]
+    .venv/Scripts/python -I re/scripts/game_peek.py <pid> --fog [re/out/mapfiles/MM_Map_v3/levels/MM_Map_v3/MM_Map_v3.out]
   --all also lists the objects without a network component (the client's own level objects; ~7,000 lines).
   --vision (D2g-rest) adds the vision fields: vis = mVisibleToTeam, vr = mVisionRadius, grass s<server id>/c<the
   client's own id>@<server cell>, STEALTHED (mStealthed), IN-GRASS (mbInGrass).
@@ -69,10 +77,14 @@ import argparse
 import csv
 import ctypes
 import ctypes.wintypes as wt
+import os
 import struct
 import sys
 
 GAME_CLIENT = 0x019768C0
+# MAPFILES-fog: the fog renderer is [[0x0159A038] + 0x4C] (the level load 0x0056CA6D-0x0056CAC5 sets its size from the
+# level, 0x0055BEB0, and calls FogOfWarRenderer_LoadOutlines 0x0055E1A0 on it)
+FOG_GFX_GLOBAL = 0x0159A038
 ID_MAP_BUCKETS, ID_MAP_COUNT = 0x013F5DD4, 0x013F5DD8
 # D7b: the voice lines' ClientFeedbackDefs (GMS_PROTOCOL.md *Item transactions, voice lines and emotes (D7b)*)
 FEEDBACK_NAMES = ['PlayerCommCharge', 'PlayerCommCare', 'PlayerCommNo', 'PlayerCommSorry', 'PlayerCommThankYou',
@@ -312,6 +324,62 @@ def postgame(p, say, items):
                 f'creeps {cs}, gold {gold}, role {role}, items [{inv}]')
 
 
+def fog_renderer(p, say, out_path=None):
+    """MAPFILES-fog: the fog renderer's level data. Returns the number of outlines it holds (-1: no renderer)."""
+    gfx = p.u32(FOG_GFX_GLOBAL)
+    r = p.u32(gfx + 0x4C) if gfx else 0
+    if not r:
+        say(f'fog renderer: none (graphics global [0x{FOG_GFX_GLOBAL:08x}] = 0x{gfx:08x})')
+        return -1
+    sx, sy = p.f32(r + 0x10), p.f32(r + 0x14)
+    begin, end = p.u32(r + 0x1C), p.u32(r + 0x20)
+    n = (end - begin) // 0x30 if end >= begin else -1
+    ents = []
+    raw = p.read(begin, 0x30 * n) if n > 0 else b''
+    for i in range(len(raw) // 0x30):
+        f = struct.unpack_from('<8f', raw, 0x30 * i)
+        gid, node = struct.unpack_from('<II', raw, 0x30 * i + 0x20)
+        ents.append({'c': (f[0], f[1], f[2]), 'r': f[3], 'e': (f[4], f[5]), 'r2': f[7], 'grass': gid, 'node': node})
+    grass = sum(1 for e in ents if e['grass'])
+    nodes = sum(1 for e in ents if e['node'])
+    say(f'fog renderer 0x{r:08x} ([0x{FOG_GFX_GLOBAL:08x}] 0x{gfx:08x} +0x4C): size ({sx:.3f}, {sy:.3f}), '
+        f'outlines {n} ({n - grass} terrain, {grass} grass; {nodes} in the sphere tree), vector 0x{begin:08x}..0x{end:08x}')
+    for i, e in enumerate(ents[:3] + ents[-1:] if len(ents) > 4 else ents):
+        say(f'  outline: centre ({e["c"][0]:.3f}, {e["c"][1]:.3f}, {e["c"][2]:.3f}) r {e["r"]:.3f} '
+            f'half-extents ({e["e"][0]:.3f}, {e["e"][1]:.3f}) r2 {e["r2"]:.3f} grass 0x{e["grass"]:08x}')
+    if out_path:
+        nterr, ngrass, outs = read_out_headers(out_path)
+        fil = sorted((round(o['cx'], 3), round(o['cy'], 3), round(o['r'], 3), o['grass']) for o in outs)
+        mem = sorted((round(e['c'][0], 3), round(e['c'][1], 3), round(e['r'], 3), e['grass']) for e in ents)
+        same = sum(1 for a, b in zip(fil, mem) if a == b)
+        say(f'against {out_path}: file {nterr} terrain + {ngrass} grass outlines, renderer {n}; '
+            f'centre, radius and grass id equal for {same} of {len(fil)} (sorted)'
+            + (' -> the renderer holds this file' if same == len(fil) == n else ' -> DIFFERENT'))
+    return n
+
+
+def read_out_headers(path):
+    """A level's fog outline file (.out, 'ltuo' version 0x0300): the terrain and grass counts and every outline's
+    centre, radius and grass id (the 32-byte header the renderer copies); its vertices are skipped."""
+    data = open(path, 'rb').read()
+    magic, nterr, ver, ngrass, _ = struct.unpack_from('<4sIHHI', data, 0)
+    if magic != b'ltuo' or ver != 0x0300:
+        raise ValueError(f'{path}: not an outline file ({magic!r}, version {ver:#x})')
+    off, outs = 16, []
+    for i in range(nterr + ngrass):
+        gid = 0
+        if i >= nterr:
+            (gid,) = struct.unpack_from('<I', data, off)
+            off += 4
+        hdr = struct.unpack_from('<8f', data, off)
+        (nv,) = struct.unpack_from('<I', data, off + 32)
+        off += 36 + 12 * nv
+        outs.append({'grass': gid, 'cx': hdr[0], 'cy': hdr[1], 'r': hdr[3]})
+    if off != len(data):
+        raise ValueError(f'{path}: {len(data) - off} bytes left over')
+    return nterr, ngrass, outs
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('pid', type=int)
@@ -324,6 +392,9 @@ def main():
     ap.add_argument('--postgame', nargs='*', metavar='CATALOGID',
                     help='D8-live: the account FLAG, the inventory counts of these catalogIDs and the post-game '
                          'snapshot instead of the objects (works in every game state)')
+    ap.add_argument('--fog', nargs='?', const='', metavar='LEVEL.out',
+                    help="MAPFILES-fog: the fog renderer's size and outlines instead of the objects (any state after "
+                         "the level load); with a .out file also whether the renderer holds that file's outlines")
     a = ap.parse_args()
     lines = []
     say = lines.append
@@ -332,6 +403,14 @@ def main():
     except OSError as e:
         print(e)
         return 2
+    if a.fog is not None:
+        n = fog_renderer(p, say, a.fog or None)
+        text = '\n'.join(lines)
+        print(text)
+        if a.out:
+            with open(a.out, 'w', encoding='utf-8') as f:
+                f.write(text + '\n')
+        return 0 if n >= 0 else 2
     if a.postgame is not None:
         postgame(p, say, [int(x, 0) for x in a.postgame])
         text = '\n'.join(lines)
@@ -403,6 +482,15 @@ def main():
         van = [p.u32(pl + 0x314), p.u32(pl + 0x318)]
         say('  vanity (+0x314): ward ' + (p.cstr(p.u32(van[0])) if van[0] else 'default') + ', announcer ' +
             (p.cstr(p.u32(van[1])) if van[1] else 'default'))
+
+    # MAPHOST: the base objects the shop's reach is measured from (mBaseObjects, sim +0x19E30 + team * 4, registered by
+    # GameWorld_CreateMarkerObject 0x008FAE90 for a marker whose noun has the catalog tag "baseMarker"; the position at
+    # object +0x10). None on a team: LabsPlayer_InProximityToItemShop is false everywhere, the shop UI refuses
+    bases = []
+    for team in range(3):
+        b = p.u32(sim + 0x19E30 + team * 4)
+        bases.append(f'team {team} ' + (f'0x{b:08x} at ({p.f32(b + 0x10):.1f}, {p.f32(b + 0x14):.1f})' if b else 'none'))
+    say('base objects (the shop): ' + '; '.join(bases))
 
     # X2a: the tower graphics' slot stride (TowerGraphics_Init 0x00539310 copies mNumTowersPerLane, cBattlegroundsUIData
     # at sim +0xC930 + 0xD0, at EnterGame; 0 makes all four lane groups share slots) and the per-slot states that

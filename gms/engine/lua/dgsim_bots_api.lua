@@ -26,7 +26,7 @@
 
 dgsim_bots = dgsim_bots or {}
 local B = dgsim_bots
-B.version = '17'  -- 17: HUNTERROUTE's opening route (nBotHost.HunterRoute); 16: KILLFINISH's BailOnKill reasons, BOTCYCLE's KillShaper join (fix-up 3c) and engage block; 15: CAMPFINISH's camp finishing (nBotHost.CampFight); 14: NULLPOS's Follow guard and lane-centre check; 13: DESECBOT-3's EngageForKill fix-up 3b and the early Desecrator; 12: DESECBOT's Tactician kit (Desecrator's W); 11: HUNTERBOT's kits (Faris, Freia) and the shared Hunter fixes; 10: PRETUSBOT's stand at the parasite; 9: BOTJUNGLE's Hunter tasks and ping following; 8: BOTTEAM's team calls; 7: BOTCOMP's composition rules (Predator harass, Hunter parasite, lane lock); 2: D6b's script fix-ups; 3: D6c's BailOnKill fix-up; 4: D6e's GetClosestCampPosition; 5: BOTPARA's parasite fix-up; 6: BOTIDLE's camp radius
+B.version = '18'  -- 18: MAPHOST's shared lanes (nBotHost.SharedLanes: a Binding stands in every lane of a one-lane level); 17: HUNTERROUTE's opening route (nBotHost.HunterRoute); 16: KILLFINISH's BailOnKill reasons, BOTCYCLE's KillShaper join (fix-up 3c) and engage block; 15: CAMPFINISH's camp finishing (nBotHost.CampFight); 14: NULLPOS's Follow guard and lane-centre check; 13: DESECBOT-3's EngageForKill fix-up 3b and the early Desecrator; 12: DESECBOT's Tactician kit (Desecrator's W); 11: HUNTERBOT's kits (Faris, Freia) and the shared Hunter fixes; 10: PRETUSBOT's stand at the parasite; 9: BOTJUNGLE's Hunter tasks and ping following; 8: BOTTEAM's team calls; 7: BOTCOMP's composition rules (Predator harass, Hunter parasite, lane lock); 2: D6b's script fix-ups; 3: D6c's BailOnKill fix-up; 4: D6e's GetClosestCampPosition; 5: BOTPARA's parasite fix-up; 6: BOTIDLE's camp radius
 B.config = B.config or {
   scanSeconds = 5,            -- game seconds between walks of the object pool (structures, wells)
   scanLimit = 4096,           -- pool slots walked at most
@@ -130,6 +130,21 @@ local function laneOfPoint(p)
 end
 B.laneOfPoint = laneOfPoint
 
+-- MAPHOST: the level's lanes are one path (MM_Map_v3: its Top and Bottom splines run along the one lane;
+-- nBotHost.SharedLanes, false without the host): a Binding then stands in every lane, and a bot on the path is in
+-- every lane. inLane(a, b): lane a counts as lane b.
+local function lanesShared()
+  local f = hostfn('SharedLanes')
+  return f ~= nil and f() == true
+end
+B.lanesShared = lanesShared
+local function inLane(a, b)
+  if a == b then return true end
+  local real = function(l) return l == nLaneID.Top or l == nLaneID.Bottom end
+  return real(a) and real(b) and lanesShared()
+end
+B.inLane = inLane
+
 -- The lane by the level's tag map (SM_Map_v5_Tags.tga has Top and Bottom regions along the lanes, none in the
 -- jungle or the bases): nLaneID.None off the lanes.
 local function laneByTags(obj)
@@ -229,7 +244,7 @@ function nBattlegrounds.GetNumTowers(team, lane)
   count('GetNumTowers')
   local n = 0
   for _, s in ipairs(B.Scan().structures) do
-    if s.tier ~= nil and s.lane == lane and standing(s.id) and nGameObject.GetTeam(s.id) == team then n = n + 1 end
+    if s.tier ~= nil and inLane(s.lane, lane) and standing(s.id) and nGameObject.GetTeam(s.id) == team then n = n + 1 end
   end
   return n
 end
@@ -240,7 +255,7 @@ function nBattlegrounds.GetOuterTower(team, lane)
   count('GetOuterTower')
   local best, bestTier = kObjIDNone, nil
   for _, s in ipairs(B.Scan().structures) do
-    if s.tier ~= nil and s.lane == lane and standing(s.id) and nGameObject.GetTeam(s.id) == team then
+    if s.tier ~= nil and inLane(s.lane, lane) and standing(s.id) and nGameObject.GetTeam(s.id) == team then
       if bestTier == nil or s.tier < bestTier then
         best, bestTier = s.id, s.tier
       end
@@ -2660,7 +2675,7 @@ function B.TeamStatus(team)
         n = n + 1
         if nGameObject.IsAlive(c) == true then
           alive = alive + 1
-          if st.call == 'push' and st.lane ~= nil and laneOfPoint(nGameObject.GetPosition(c)) == st.lane then
+          if st.call == 'push' and st.lane ~= nil and inLane(laneOfPoint(nGameObject.GetPosition(c)), st.lane) then
             inPushLane = inPushLane + 1
           end
         end

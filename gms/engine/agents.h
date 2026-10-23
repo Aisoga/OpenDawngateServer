@@ -113,6 +113,13 @@ struct Options {
   // links, its FleeTowerTargeting phase, its Back gambit and BOTREFLEX's tower back-off held); needs bot_reflex. Off,
   // the decision is still made and logged ("would hold")
   bool botKillFinish = true;         // [host] bot_kill_finish
+  // BOTTOWER (gms/core/agents/towersafety.h): a tower that targets the bot, or has none of its minions in range, is a
+  // danger as a recent hit is (BOTREFLEX's rule 1); targets under an unsafe enemy tower are left alone; a retreat step
+  // held off by another walk of the same ability ends it (REFLEXWALK). All need bot_reflex; the measurement runs anyway
+  bool botTowerAware = true;         // [host] bot_tower_aware
+  bool botTowerKeepOut = true;       // [host] bot_tower_keepout
+  bool botReflexWalk = true;         // [host] bot_reflex_walk
+  int botTowerLogLimit = 300;        // [host] bot_tower_log_limit: the "bottower:" episode lines (then every 20th)
   // BOTCYCLE: a plan entered in a think whose own link fires at once is passed through in that think (two plan
   // changes per think at most, never back into a plan visited in it)
   bool botPlanChain = true;          // [host] bot_plan_chain
@@ -155,7 +162,8 @@ struct Options {
   // TOWERAGGRO (gms/core/agents/tower_target.h): towers (aggro type tower, not the Guardian) take a taunt, then a
   // shaper that hit a shaper of their team within their range until it leaves that range, then every non-player before
   // every shaper (stickiness and reports only within a class): [host] tower_target (1; 0 = the old order),
-  // tower_log_limit (300, the "towers:" lines)
+  // tower_log_limit (300, the "towers:" lines); TOWERSTICK: among the non-players the tower's current target (what it
+  // shoots, while on the list) before the reports and the nearer: [host] tower_stick (1; 0 = TOWERAGGRO's order)
   gms::agents::TowerTargetOptions towerTarget;
   int towerLogLimit = 300;
   // LEASH: how far jungle creatures and well workers follow a target from home (gms/core/agents/leash.h). Creeps:
@@ -236,6 +244,9 @@ bool KillFinishWouldHold(std::uint32_t bot);
 bool KillFinishEngageBlocked(std::uint32_t bot);
 void NoteBailWhy(std::uint32_t bot, const char* why);
 bool FormatKillFinishStats(char* buf, std::size_t size);
+// BOTTOWER: "stats bottower:" (the counts, the exposure totals) and "stats bottower bots:" (per bot)
+bool FormatBotTowerStats(char* buf, std::size_t size);
+bool FormatBotTowerBots(char* buf, std::size_t size);
 
 // "agents N (trees ticked N this frame), ticks N, ..., leaves: PassiveIdle=3 Idle=30 ..." for the stats lines.
 void FormatStats(char* buf, std::size_t size);

@@ -56,6 +56,7 @@
 //	    [--mm-team-size 5] [--mm-min-players 1] [--mm-fill-after 90s] [--mm-fill-extend 30s] [--mm-max-wait 0] [--mm-bots=false] [--mm-refuse]
 //	    [--custom-bots] [--leaderboard-min-games 10]
 //	    [--kill-switches WalletTopUp] [--broadcast TEXT] [--broadcast-file FILE] [--broadcast-flags 4]
+//	    [--chat-rooms "General, Looking for group, Matchmaking:queue:open"]
 //	bin\dgserver.exe --agent <server IP>:10040 --agent-key FILE --gms-dir DIR --host <this machine's IP>
 //	    [--public-host ADDR] [--gms-args ...] [--gms-ports 10042-10051] [--agent-name NAME] [--log DIR] [--seconds N]
 //	bin\dgserver.exe --make-agent-key FILE

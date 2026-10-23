@@ -359,6 +359,24 @@ func (c *Content) ShaperOf(id uint32) (uint32, bool) {
 	return 0, false
 }
 
+// Listed returns the client's rule for the items it can show: an item whose title (its CollectionItem.longName
+// string, English) the game has. Build 854's client lists an item only when the string table of its longName
+// exists (Collection_GetAllAssetsOfType 0x0087B730), and shaper select shows no card for a shaper without its art;
+// the shapers without a title are exactly the ones without art: the five testing-only ones and the unreleased
+// Weaver ("Rezen") and WeaponMaster, which aren't testing-only. In content without any title (a hand-made file, or a dump made without the Locale) every item counts as listed.
+func (c *Content) Listed() func(Item) bool {
+	titled := false
+	if c != nil {
+		for _, it := range c.Items {
+			if it.Title != "" {
+				titled = true
+				break
+			}
+		}
+	}
+	return func(it Item) bool { return !titled || it.Title != "" }
+}
+
 // Old reports a content file of the B7a format: no sockets, drop tables or loot tuning.
 func (c *Content) Old() bool { return c != nil && c.Format == FormatB7a }
 

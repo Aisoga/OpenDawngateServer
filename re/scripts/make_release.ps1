@@ -26,8 +26,9 @@
      from tools\raknet\RakNet and a note on this project's RakNet patches (gms\cmake\raknet_patches),
      Go's LICENSE and (ADR-4) the licence files of every outside Go module the two programs link, from the
      module cache: modernc.org/sqlite and its dependencies, golang.org/x/crypto, golang.org/x/sys),
-     BUILD.txt (commit, Go version, every file's SHA-256). The compiled classes of the server picker and the bot check box
-     are checked to be in the SWF tags Start-Client.exe embeds (picker_tags.hex, matchoptions_tags.hex), and those in
+     BUILD.txt (commit, Go version, every file's SHA-256). The compiled classes of the server picker, the bot check box and
+     the chat rooms opened by default are checked to be in the SWF tags Start-Client.exe embeds (picker_tags.hex,
+     matchoptions_tags.hex, chatrooms_tags.hex), and those in
      the built Start-Client.exe; the notices name their AGPL sources and the development-only tools (the Flex SDK compiler, FFDec), which aren't shipped.
      The folder <Out>\<Name>-linux\ (unless -NoLinux): start-server, the same host\ files, dawngate.service (the
      systemd unit) and README.txt (re\scripts\release\README-Linux.txt), LICENSE.txt, THIRD-PARTY-NOTICES.txt (for
@@ -152,7 +153,8 @@ try {
 }
 $goVersion = "$(& $go version)".Trim()
 
-# our classes in the game's UI movies, the server picker and the CREATE GAME dialog's bot check box: each compiled
+# our classes in the game's UI movies, the server picker, the CREATE GAME dialog's bot check box and the chat rooms
+# opened by default: each compiled
 # class (client_ui\<folder>\<Class>.abc.hex) must be inside the four SWF tags that Start-Client.exe embeds
 # (server\internal\setup\moviepatch\<name>_tags.hex, go:embed), and those tags' text must be in the built
 # Start-Client.exe (the release ships no other file of them)
@@ -179,6 +181,7 @@ function Test-UiClass([string]$what, [string]$tagsName, [string]$folder, [string
 }
 $picker = Test-UiClass 'the server picker' 'picker_tags.hex' 'serverpicker' 'ServerPicker'
 $botBox = Test-UiClass 'the bot check box' 'matchoptions_tags.hex' 'matchoptions' 'BotCheckbox'
+$chatRooms = Test-UiClass 'the chat rooms opened by default' 'chatrooms_tags.hex' 'chatrooms' 'AutoRooms'
 $tagsBytes = $picker.Bytes; $firstLine = $picker.First
 # start-server links the setup with the tags too (only Start-Client.exe uses them); its notice names them if it holds them
 $linuxPicker = $Linux -and ([IO.File]::ReadAllText((Join-Path $ldir 'start-server'), $latin1)).Contains($firstLine)
@@ -281,11 +284,12 @@ function New-Notices([string]$sep, [string]$programs, [string]$contain, [string[
     }
     $n += @('', 'The MSVC static runtime in dgsim.dll needs no notice.')
     if ($pickerFirst) {
-        $n += @('', '---- The server picker on the login screen and the bot check box of CREATE GAME ----', '',
+        $n += @('', '---- The server picker, the bot check box of CREATE GAME and the chat rooms opened by default ----', '',
             $pickerFirst,
             "this project's own code under the GNU AGPL v3 (LICENSE.txt); their sources are client_ui/serverpicker/ServerPicker.as",
-            'and client_ui/matchoptions/BotCheckbox.as in the source repository, published with the rest of the code. On the',
-            'player''s PC, Start-Client adds these tags to copies of the login screen''s and the CREATE GAME dialog''s movies taken',
+            'client_ui/matchoptions/BotCheckbox.as and client_ui/chatrooms/AutoRooms.as in the source repository, published with',
+            'the rest of the code. On the player''s PC, Start-Client adds these tags to copies of the login screen''s, the CREATE',
+            'GAME dialog''s and the chat''s movies taken',
             'from the player''s own game files; no file of the game is in this release.',
             'Two tools are used only during development, to compile and inspect those classes; nothing of them is in this release',
             'and none of their code is in the compiled classes: the Apache Flex SDK compiler (mxmlc, Apache License 2.0) and',
@@ -295,11 +299,12 @@ function New-Notices([string]$sep, [string]$programs, [string]$contain, [string[
 }
 $tagsKB = [int][Math]::Ceiling($tagsBytes.Length / 1024)
 $botKB = [int][Math]::Ceiling($botBox.Bytes.Length / 1024)
+$roomsKB = [int][Math]::Ceiling($chatRooms.Bytes.Length / 1024)
 $notices = New-Notices '\' 'Start-Server.exe and Start-Client.exe' 'contain' $modules `
-    "Start-Client.exe embeds the compiled ActionScript 3 classes of the server picker and the bot check box (four SWF tags each, $tagsKB KB and $botKB KB). They are"
+    "Start-Client.exe embeds the compiled ActionScript 3 classes of the server picker, the bot check box and the chat rooms opened by default (four SWF tags each, $tagsKB KB, $botKB KB and $roomsKB KB). They are"
 [IO.File]::WriteAllText((Join-Path $dir 'THIRD-PARTY-NOTICES.txt'), (($notices -join "`r`n") + "`r`n"))
 if ($Linux) {
-    $pf = if ($linuxPicker) { "start-server holds the compiled ActionScript 3 classes of the server picker and the bot check box (four SWF tags each, $tagsKB KB and $botKB KB; only the Windows Start-Client.exe uses them). They are" } else { $null }
+    $pf = if ($linuxPicker) { "start-server holds the compiled ActionScript 3 classes of the server picker, the bot check box and the chat rooms opened by default (four SWF tags each, $tagsKB KB, $botKB KB and $roomsKB KB; only the Windows Start-Client.exe uses them). They are" } else { $null }
     $notices = New-Notices '/' 'start-server' 'contains' $linuxModules $pf
     [IO.File]::WriteAllText((Join-Path $ldir 'THIRD-PARTY-NOTICES.txt'), (($notices -join "`n") + "`n"))
 }

@@ -51,6 +51,7 @@
 #include "host/watchdog.h"
 #include "hunterroute.h"
 #include "log.h"
+#include "mapfix.h"
 #include "match.h"
 #include "passives.h"
 #include "perf.h"
@@ -622,11 +623,13 @@ void TickNetworkRate() { GmsHostTickNetworkRate(); }
 // slot of AGENT_AI.md §5).
 void TickMatch() {
   match::Tick(g_sim);
+  mapfix::Tick(g_sim);  // MAPLUA: dgsim_mapfix.Apply() again while a script's table is missing
   if (GmsHostActive()) banter::Tick(g_sim, match::MatchSeconds());  // D11b: the meeting banter (banter.h)
 }
 void MatchLevelStarted() {
   match::OnLevelStarted(g_sim);
   bots::OnLevelStarted(g_sim);  // D6a: Tuning.BotPlan, the lanes (the director's splines), dgsim_bots_api.lua
+  mapfix::OnLevelStarted(g_sim);  // MAPLUA: MM_Map_v3's script fix-ups (dgsim_mapfix.lua), MM's base regen (opt-in)
 }
 // D6a: the bots' lane fronts (bots.h), after the match's tick and before the agent step.
 void TickBots() { bots::Tick(g_sim); }
@@ -727,6 +730,8 @@ void Stats(unsigned now, bool histo) {
     if (agents::FormatLostStats(ag, sizeof ag)) Log("stats lost: %s", ag);         // BACKTOACTION
     if (agents::FormatNullPosStats(ag, sizeof ag)) Log("stats nullpos: %s", ag);   // NULLPOS
     if (agents::FormatKillFinishStats(ag, sizeof ag)) Log("stats killfinish: %s", ag);  // KILLFINISH
+    if (agents::FormatBotTowerStats(ag, sizeof ag)) Log("stats bottower: %s", ag);      // BOTTOWER
+    if (agents::FormatBotTowerBots(ag, sizeof ag)) Log("stats bottower bots: %s", ag);  // BOTTOWER
   }
   if (g_damage && histo) {
     char dm[640];
@@ -740,6 +745,9 @@ void Stats(unsigned now, bool histo) {
     char pa[200];
     passives::FormatStats(pa, sizeof pa);  // D6c
     Log("stats passives: %s", pa);
+    char mf[200];
+    mapfix::FormatStats(mf, sizeof mf);  // MAPLUA
+    Log("stats %s", mf);
   }
   if (shop::Enabled() && histo) {  // D15c
     char sh[300];
@@ -970,6 +978,10 @@ void ReadConfig() {
     ao.testNullPosFollowS = HostOptionInt("test_nullpos_follow", 0);       // NULLPOS: the forced case (test aid)
     ao.botBackStep = HostOptionInt("bot_back_step", 1) != 0 && ao.botReflex;  // BOTBACK
     ao.botKillFinish = HostOptionInt("bot_kill_finish", 1) != 0 && ao.botReflex;  // KILLFINISH
+    ao.botTowerAware = HostOptionInt("bot_tower_aware", 1) != 0 && ao.botReflex;      // BOTTOWER
+    ao.botTowerKeepOut = HostOptionInt("bot_tower_keepout", 1) != 0 && ao.botReflex;  // BOTTOWER
+    ao.botReflexWalk = HostOptionInt("bot_reflex_walk", 1) != 0 && ao.botReflex;      // BOTTOWER (REFLEXWALK)
+    ao.botTowerLogLimit = HostOptionInt("bot_tower_log_limit", ao.botTowerLogLimit);  // BOTTOWER
     ao.botPlanChain = HostOptionInt("bot_plan_chain", 1) != 0 && HostOptionInt("bot_fixups", 1) != 0;  // BOTCYCLE
     ao.botPlanDwellMs = HostOptionInt("bot_fixups", 1) != 0 ? HostOptionInt("bot_plan_dwell_ms", ao.botPlanDwellMs) : 0;
     if (ao.botPlanDwellMs < 0) ao.botPlanDwellMs = 0;
@@ -999,6 +1011,7 @@ void ReadConfig() {
     ao.minionChase.ignoreMs = HostOptionInt("minion_chase_ignore_ms", static_cast<int>(ao.minionChase.ignoreMs));
     ao.minionFollow.enabled = HostOptionInt("minion_follow_reset", 1) != 0;  // MINPURSUE
     ao.towerTarget.enabled = HostOptionInt("tower_target", 1) != 0;          // TOWERAGGRO
+    ao.towerTarget.stick = HostOptionInt("tower_stick", 1) != 0;             // TOWERSTICK
     ao.towerLogLimit = HostOptionInt("tower_log_limit", ao.towerLogLimit);
     // LEASH: jungle creatures and well workers (gms/core/agents/leash.h)
     // CAMPFINISH round 3 (the user: players found the leash "a bit strong"): the engine's own tether for a jungle
@@ -1170,7 +1183,11 @@ void Drive() {
         if (game.descriptors) match::SetDescriptors(static_cast<std::uint32_t>(game.descriptors));  // D8-live
         if (game.fillTeams) bots::SetFillTeams(static_cast<int>(game.fillTeams));  // B10d: the open seats' bots
         bots::SetGameMode(game.mode);  // BOTDRAFT: a custom game's bots draw after the humans
-        Log("createGame: level %s, seed %u, game id %lld", g_cfg.level, g_cfg.seed, static_cast<long long>(game.gameId));
+        // HOLIDAY1: the server's level flags (bit 0 = the Halloween decoration's markerset condition): the server
+        // simulator loads the level with them and GamePrepareForStart sends them, so every client loads it with them
+        if (game.levelFlags) g_cfg.flags = static_cast<unsigned>(game.levelFlags);
+        Log("createGame: level %s, seed %u, level flags %08X, game id %lld", g_cfg.level, g_cfg.seed, g_cfg.flags,
+            static_cast<long long>(game.gameId));
       }
       Log("phase 2: level %s", g_cfg.level);
       bool ok = WithServerSim("level", StepLevel) && g_level;

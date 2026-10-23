@@ -24,6 +24,9 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 | `tunnel` | `auto` | The encrypted tunnel: `auto` and `on` turn it on, for every address. Players then reach the server only on `gateway_port`. `off` is an option for developers: the server's plain ports instead, and players need `Start-Client.exe --tunnel off` (not allowed with `public`). A file from an earlier release keeps its value; `auto` now means on. |
 | `gateway_port` | `42128` | The tunnel's port, TCP and UDP. |
 | `shaper_select` | `on` | `off` skips shaper select, and everyone plays Fenmore. |
+| `halloween` | `off` | `on` shows the map's Halloween decoration (candles, pumpkins, jack-o'-lanterns and a tomb around the map) in every match on this server. `Start-Client.exe` prepares every player's game for it (`game\Data\zz_Halloween.snap`), and the game shows it only in matches on a server that has it on, so players can switch between servers with and without it. A change takes effect at the next start of `Start-Server.exe`. |
+| `map` | `SM_Map_v5` | The map of every match: `SM_Map_v5` (The Dawngate) or `MM_Map_v3` (the cut one-lane map, unfinished: it follows The Dawngate's rules, and every player's game and the match hosts' copy need `game\Data\zz_MM_Map_v3.snap`, which the setup makes from the game's own files). Another name stops the server at its start. See [The map](hosting.md#the-map). |
+| `custom_maps` | empty | The maps a custom game's creator may pick, comma-separated: in the CREATE GAME dialog's map list (it lists the maps of `map` and `custom_maps` that the player's game has the files of; Start-Client learns them at the login), which ends the game's name with the map's tag (`~#mm` for `MM_Map_v3`, `~#sm` for `SM_Map_v5`; typing the tag works too, and a typed tag beats the list's pick). A pick of a map not offered plays on `map`. `SM_Map_v5` and `map` are always allowed. The game browser shows such a game as `[MM] <name>`. |
 | `dedicated` | `no` | `yes` sets up and runs only the match hosts' copy `Dawngate-Data\host`, never a copy for playing, also with `tunnel = off`. A complete folder then starts without `Dawngate.zip`. See [A server that only hosts](hosting.md#a-server-that-only-hosts). |
 | `signup` | `open` | Who can make accounts: `open`, `invite` or `closed`. See [Accounts](hosting.md#accounts). |
 | `signups_per_address` | `3` | Under `open`: the most accounts one internet address may make per day. `0` means no limit. Home-network addresses never count. |
@@ -48,6 +51,9 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 | `discord_queue_edit` | `on` | `on` edits one queue message live; `off` posts a new message for each change. |
 | `discord_names` | `on` | `off` writes "a player" instead of player names in the posts. |
 | `discord_result_modes` | `pvp,custom` | The modes whose match results are posted, comma-separated: `pvp`, `custom`, `practice`, or `none`. A practice group's game against bots counts as `practice`. |
+| `online_count` | `on` | The main menu's status line and shaper select show how many players are online ("14 players online, 3 in a match") after the announcements. `off` turns it off. See [Announcements](hosting.md#announcements). |
+| `online_count_every` | `30s` | The players-online count updates at most this often (at least `1s`). A burst of logins and logouts makes one update. |
+| `chat_rooms` | `General, Looking for group, Matchmaking:queue:open` | The public chat rooms, comma-separated in the list's order: a name, optionally `:<capacity>` (2-1000, default 50), `:queue` (the room that gets the PvP queue's news, at most one) and `:open` (every player joins it by itself at each login, as a minimised tab; closed, it stays closed until the next login). `none` = no rooms. See [Chat rooms](hosting.md#chat-rooms). |
 
 ## Start-Server.exe options
 
@@ -153,7 +159,7 @@ It doesn't ask with `update_check = off`, `--check`, `--setup-only` or `--non-in
 
 - It starts at the first login to This PC, not at `Start-Client.exe`'s start. Its first start sets up the match-host copy `host\` (about half a minute and 1.5 GB, from `Dawngate.zip`); the login waits up to 50 seconds for it (a longer setup goes on, and the login is refused with `00E90001` until it is done), and the list shows the progress.
 - It listens on its own loopback address, `127.0.1.11` (`127.0.N.11` for a front on `127.0.0.N`): the tunnel's port 42128, the control port 10040 and its matches' UDP ports. Nothing else listens and no website runs.
-- It uses the folder's accounts (`data\accounts.db`), the same certificate set as the folder's `Start-Server.exe` (`certs\<its address>`, else `certs\127.0.1.11`), and the game options of a `Start-Server.ini` in the same folder (`shaper_select`, `signup`, `signups_per_address`, `log_days`, `server_flags`); without one, shaper select is on and sign-up is open.
+- It uses the folder's accounts (`data\accounts.db`), the same certificate set as the folder's `Start-Server.exe` (`certs\<its address>`, else `certs\127.0.1.11`), and the game options of a `Start-Server.ini` in the same folder (`shaper_select`, `halloween`, `map`, `custom_maps`, `signup`, `signups_per_address`, `log_days`, `server_flags`); without one, shaper select is on and sign-up is open.
 - It has no passwords while `local_trust` is `on` (the default): any login name logs in with any password, whatever the sign-up mode; a new name makes its account without a password, and none is checked or stored. The folder's `Start-Server.exe` checks passwords: an account made without one gets the password of its first login there from this PC (one of this PC's own addresses), and a login to it from anywhere else is refused.
 - Its log goes to `Dawngate-Data\logs`, as `Start-Server.exe`'s; the console shows its setup and one line when it runs.
 - A folder has one server at a time: `Start-Server.exe` refuses to start (or set up) while `Start-Client.exe` runs the folder's server.
@@ -242,6 +248,12 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 | `--kill-switches <names>` | `WalletTopUp` | Client features to switch off, comma-separated: `Matchmaking`, `WalletTopUp` (the add-funds button), `EUGameServers`, `PracticeSoloGames`, `FTUESoloGames`, `PurchaseWithWaypoints`, `PracticeGroupGames`, `CustomGames`, `ForwardRenderer`. `none` switches nothing off. |
 | `--broadcast <text>` | none | One announcement, in addition to `broadcast.txt`. |
 | `--broadcast-flags N` | `4` | Where announcements show by default (see [Announcements](hosting.md#announcements)). |
+| `--chat-rooms <rooms>` | `General, Looking for group, Matchmaking:queue:open` | The public chat rooms, as the key `chat_rooms`. |
+| `--halloween on\|off` | `off` | The map's Halloween decoration in every match, as the key `halloween`. |
+| `--map <name>` | `SM_Map_v5` | The map of every match, as the key `map`. `--level` is the same option. |
+| `--custom-maps <names>` | none | The maps custom games may pick by a name tag, as the key `custom_maps`; `none` = none. |
+| `--trust-maps none\|all\|<addresses>` | `none` | Which players connecting without the tunnel count as having the files of the maps beside `SM_Map_v5`: `all`, or comma-separated addresses and networks (`192.168.1.20,10.0.0.0/8`). The others can't join or queue for a game on `MM_Map_v3`, and their own games play on `SM_Map_v5`. Through the tunnel a player counts when their `Start-Client.exe` is the server's release. |
+| `--online-count on\|off`, `--online-count-every <time>` | `on`, `30s` | The players-online count in the status line, as the keys `online_count` and `online_count_every`. |
 | `--gms-ports <from>-<to>` | `10042-10051` | The match hosts' UDP ports, one per running match. |
 | `--gms-warm N` | `0` | Keep N idle match hosts ready, so a match starts instantly. Each holds a port and about 90 MB of memory. |
 | `--gms-runner auto\|none\|<command>` | `auto` | What starts the match hosts' `Dawngate.exe`: `auto` starts it directly on Windows and through `wine` on other systems, `none` always directly, or a command such as `/opt/wine-stable/bin/wine`. |

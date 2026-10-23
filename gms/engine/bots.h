@@ -90,6 +90,9 @@ struct Options {
   bool pingFollow = true;     // BOTJUNGLE: the bots follow their human teammates' minimap pings
   bool hunterParasiteStand = true;  // PRETUSBOT: the Hunter fights the parasite from its edge, not from its centre
   int draft = -1;  // BOTDRAFT: [host] bot_draft, -1 auto (custom, practice, PvP: gms::bots::DraftOn), 0 off, 1 always
+  // MAPHOST: [host] bot_hunter_seat, -1 auto (a bot Hunter only on a level with jungle camps: director::JungleCamps),
+  // 0 never (the seat is a laner: composition.h NoJungleSeat), 1 always (as before MAPHOST)
+  int hunterSeat = -1;
 };
 
 // BOTJUNGLE: a human's minimap ping (the command intake's ping relay, commands.cpp): kept (the last 32) for

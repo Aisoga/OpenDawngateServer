@@ -172,6 +172,21 @@ func Files(ts *assetdata.Types) ([]testgame.SnapFile, error) {
 		}
 		files = append(files, testgame.SnapFile{Name: "AssetData/Binary/PC_" + n + ".BotClass.bin", Data: b})
 	}
+	// the map's level and its unlisted holiday markerset (the Halloween archive, halloween): a Level of 0x620 bytes
+	// listing one markerset, a Markerset of 0x28 bytes with one 8-byte marker and the group "none", no condition
+	level := make([]byte, 0x620)
+	le.PutUint32(level[0x00:], 0x02000700)
+	le.PutUint32(level[0x04:], 1)
+	level = append(le.AppendUint32(level, 0x02000710), "SM_Map_v5_default.Markerset\x00"...)
+	ms := make([]byte, 0x28)
+	le.PutUint32(ms[0x00:], 0x02000800)
+	le.PutUint32(ms[0x04:], 1)
+	le.PutUint32(ms[0x08:], 0x2CA33BDB)
+	le.PutUint32(ms[0x14:], 0x02000810)
+	le.PutUint32(ms[0x18:], 0x3F800000)
+	ms = append(ms, "MARKER01none\x00"...)
+	files = append(files, testgame.SnapFile{Name: "AssetData/Binary/SM_Map_v5.Level.bin", Data: level},
+		testgame.SnapFile{Name: "AssetData/Binary/SM_Map_v5_holiday_treatment.Markerset.bin", Data: ms})
 	// a file that doesn't parse (left out, as assetdata.py dump leaves it out) and the catalog
 	files = append(files, testgame.SnapFile{Name: "AssetData/Binary/broken.CollectionItem.bin", Data: []byte{1, 2, 3}},
 		testgame.SnapFile{Name: "AssetData/Binary/catalog_153.bin", Data: catalog()})
@@ -227,6 +242,9 @@ func Write(dir string) error {
 		return err
 	}
 	if err := os.WriteFile(filepath.Join(data, "Battlegrounds.snap"), Battlegrounds(), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(data, "Global.snap"), Global(), 0o644); err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(data, "Locale", "en-us", "Locale.package"), Locale(), 0o644)

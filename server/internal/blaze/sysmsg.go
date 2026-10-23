@@ -244,9 +244,12 @@ func ParseBroadcasts(text string, defaultFlags int64) (out []Broadcast, notes []
 // list. mu also orders a login's system messages against a change pushed to everyone (sendSystemMessages,
 // SetBroadcasts), so the last list a client gets is the current one.
 type systemMessages struct {
-	mu   sync.Mutex
-	on   bool
-	list []Broadcast
+	mu    sync.Mutex
+	on    bool
+	list  []Broadcast
+	count onlineCount // ONLINECOUNT: the players-online count (onlinecount.go)
+	// mapNotes counts the map check's messages per connection (MAPGUARD, mapguard.go tellMap)
+	mapNotes map[*Conn]int
 }
 
 // SetBroadcasts makes list the current broadcast messages (ids 1, 2, ... in order) and turns broadcasts on: from now
@@ -267,7 +270,11 @@ func (s *Server) SetBroadcasts(list []Broadcast) bool {
 	conns := s.onlineConns()
 	s.Log.Logf("blaze", "broadcasts: %s; sent to %d logged-in connections", describeBroadcasts(list), len(conns))
 	for _, c := range conns {
-		s.pushSystemLocked(c, broadcastMessages(list))
+		msgs := broadcastMessages(list)
+		if _, got := sm.count.sent[c]; got { // TAG 1 hid the count too (a connection still before its login's gets it then)
+			msgs = append(msgs, s.countMessagesLocked(c)...)
+		}
+		s.pushSystemLocked(c, msgs)
 	}
 	return true
 }
@@ -301,28 +308,38 @@ func broadcastMessages(list []Broadcast) []ClientMessage {
 
 // sendSystemMessages sends a client its system messages right after its login (loginPersona; on the connection's
 // goroutine after the reply and its notifications): the kill switches (Server.KillSwitches) and, when broadcasts are
-// on, the broadcast messages. Nothing when neither is configured (the server before B14).
+// on, the broadcast messages, then with the players-online count on (StartOnlineCount) its own broadcast. Nothing when
+// none is configured (the server before B14).
 func (s *Server) sendSystemMessages(c *Conn, p store.Persona) {
 	sm := &s.sys
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
 	var msgs []ClientMessage
 	if len(s.KillSwitches) > 0 {
 		msgs = append(msgs, KillSwitchMessage(s.KillSwitches))
 	}
-	if sm.on {
+	if sm.on || sm.count.on {
 		msgs = append(msgs, broadcastMessages(sm.list)...)
 	}
+	count := s.countMessagesLocked(c) // ONLINECOUNT: after the operator's lines, so the marquee shows it last
+	msgs = append(msgs, count...)
 	if len(msgs) == 0 {
+		sm.mu.Unlock()
 		return
 	}
 	bc := "off"
-	if sm.on {
+	if sm.on || sm.count.on {
 		bc = strconv.Itoa(len(sm.list))
+	}
+	if len(count) > 0 {
+		bc += fmt.Sprintf("; online count %q", sm.count.sent[c])
 	}
 	s.Log.Logf("blaze", "   system messages for %d %q: kill switches %s; broadcasts %s", p.ID, p.Name,
 		DescribeKillSwitches(s.KillSwitches), bc)
 	s.pushSystemLocked(c, msgs)
+	sm.mu.Unlock()
+	if len(count) > 0 {
+		s.forgetCount(c)
+	}
 }
 
 // pushSystemLocked sends msgs to c as NotifyMessages (s.sys.mu held).

@@ -75,6 +75,20 @@ gateway_port = 42128
 ; Shaper select before every match: on, or off (then everyone plays Fenmore).
 shaper_select = on
 
+; The map's Halloween decoration (candles, pumpkins, jack-o'-lanterns and a tomb around the map) in every match on this
+; server: on, or off (the default). Start-Client.exe prepares every player's game for it; the game shows it only in
+; matches on a server that has it on.
+halloween = off
+
+; The map of every match on this server: SM_Map_v5 (the game's map, the default) or MM_Map_v3 (the cut one-lane map,
+; unfinished: it plays by the main map's rules; the setup makes its files, game\Data\zz_MM_Map_v3.snap, from the
+; game's own in every player's game and in the match hosts' copy). A change takes effect at the next start.
+map = SM_Map_v5
+
+; The maps a custom game's creator may pick by ending the game's name with a tag: ~#mm for MM_Map_v3, ~#sm for
+; SM_Map_v5 (always allowed, as is the map above). Comma-separated, for example MM_Map_v3; empty: none.
+custom_maps =
+
 ; Who can make an account. Players log in with a login name (3-32 of A-Z a-z 0-9 . _ - @) and a password
 ; (8-63 characters), which the server checks.
 ;   open    the first login with a new login name makes the account, with the password typed then (the default;
@@ -148,6 +162,18 @@ game_sources =
 ;        already in the folder is left alone. Or the flag  Start-Server.exe --dedicated
 dedicated = no
 
+; How many players are online, in the main menu's scrolling status line and in shaper select ("14 players online,
+; 3 in a match"), after your announcements (Dawngate-Data\data\broadcast.txt): on or off. A change reaches the
+; players at most every online_count_every (logins and logouts in a burst make one update).
+online_count = on
+online_count_every = 30s
+
+; The public chat rooms in the Social panel's Rooms tab, separated by commas in the tab's order: a name, optionally
+; followed by :<capacity> (2-1000, default 50), :queue (the room where the server posts the PvP queue's news, at
+; most one) and :open (every player is put into it at the login, as a tab in the bottom bar; one who closes it stays
+; out until the next login). Players join the other rooms by double-clicking them; none = no rooms.
+chat_rooms = General, Looking for group, Matchmaking:queue:open
+
 ; Discord channel posts by webhook (the hosting guide, "Discord channel posts"). Whoever has a webhook address
 ; (https://discord.com/api/webhooks/...) can post to its channel: keep this file private. In Discord: Server
 ; Settings, Integrations, Webhooks, New Webhook, choose the channel, Copy Webhook URL. Empty: no posts.
@@ -199,7 +225,8 @@ var manifest *archive.Manifest
 var serverKeys = []string{"address", "bind", RiskAckKey, "profile", "tunnel", "gateway_port", "shaper_select", "dedicated", "signup",
 	"signups_per_address", "log_days", "web_port", "web_domain", "web_email", "web_proxy", "folder", "zip", "server_flags",
 	"wine", ClientPackageKey, "discord_webhook", "discord_webhook_queue", "discord_webhook_result", "discord_webhook_server", "discord_queue_ping",
-	"discord_ping_cooldown", "discord_ping_min_wait", "discord_names", "discord_queue_edit", "discord_result_modes"}
+	"discord_ping_cooldown", "discord_ping_min_wait", "discord_names", "discord_queue_edit", "discord_result_modes",
+	"online_count", "online_count_every", "chat_rooms", "halloween", "map", "custom_maps"}
 
 // IO is where a launcher talks: the console normally, buffers in tests.
 type IO struct {
@@ -616,7 +643,7 @@ func RunServer(args []string, o IO) int {
 		return 0
 	}
 
-	own := append(append(loginFlags, web.Flags()...), DiscordFlags(cfg)...)
+	own := append(append(append(loginFlags, web.Flags()...), DiscordFlags(cfg)...), append(append(append(OnlineCountFlags(cfg), ChatRoomsFlags(cfg)...), HalloweenFlags(cfg)...), MapFlags(cfg)...)...)
 	if clientPackage {
 		own = append(own, "--client-package")
 	}

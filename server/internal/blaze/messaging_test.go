@@ -417,8 +417,8 @@ func TestMessagingLimits(t *testing.T) {
 		s.msgs.limits = MessagingLimits{MaxTargets: 4, MaxAttrs: 3, MaxAttrBytes: 16, InboxSize: 2, Burst: 7, Every: time.Hour}
 	})
 	a, b := ts.client("alpha@example.com"), ts.client("bravo@example.com")
-	rooms := tdf.ObjType{Component: ComponentRooms, Type: 1}
-	wantErr(t, "a room", a.sendMsg(msg(MessageTypeChat, 0, rooms, chatLine("x"), 1)), ErrMessagingTargetTypeInvalid)
+	other := tdf.ObjType{Component: ComponentRooms, Type: 2}
+	wantErr(t, "another type", a.sendMsg(msg(MessageTypeChat, 0, other, chatLine("x"), 1)), ErrMessagingTargetTypeInvalid)
 	wantErr(t, "no targets", a.sendMsg(msg(MessageTypeChat, 0, ObjTypeUser, chatLine("x"))), ErrMessagingInvalidParam)
 	wantErr(t, "five targets", a.sendMsg(msg(MessageTypeChat, 0, ObjTypeUser, chatLine("x"), b.id, b.id, b.id, b.id, b.id)), ErrMessagingInvalidParam)
 	wantErr(t, "four attributes", a.sendMsg(msg(MessageTypeChat, 0, ObjTypeUser, append(chatLine("x"), MsgAttr{1, "y"}), b.id)),

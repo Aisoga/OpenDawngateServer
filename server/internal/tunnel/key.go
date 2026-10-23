@@ -226,7 +226,30 @@ const (
 	// FactSignup is the server's sign-up mode: open (a first login makes the account), invite (an invite code on its
 	// website), closed (only the operator makes accounts) or local (This PC without passwords: any name logs in).
 	FactSignup = "signup"
+	// FactMaps are the maps besides The Dawngate (SM_Map_v5) that a custom game's creator may pick there: their name
+	// tags (blaze.PlayableLevel.Tag, "mm") joined by '+' ("" = none). Start-Client's front lists only those maps in
+	// the CREATE GAME dialog (moviepatch.WriteMapList); a gateway of a release before it doesn't name the fact.
+	FactMaps = "maps"
 )
+
+// MapsFact is FactMaps's value for the tags of the maps offered besides The Dawngate.
+func MapsFact(tags []string) string { return strings.Join(tags, "+") }
+
+// FactMapTags reads FactMaps from a probe's facts: the offered tags (lower case, none empty) and whether the server
+// named the fact at all (false: a release before it, or no facts).
+func FactMapTags(facts map[string]string) ([]string, bool) {
+	v, ok := facts[FactMaps]
+	if !ok {
+		return nil, false
+	}
+	var tags []string
+	for _, t := range strings.Split(v, "+") {
+		if t = strings.ToLower(strings.TrimSpace(t)); t != "" {
+			tags = append(tags, t)
+		}
+	}
+	return tags, true
+}
 
 // ProbeInfo is ProbePin plus the server's version, on the same connection: after the TLS handshake (no pin) it sends
 // the info hello, which opens no session. The error is the connection's (nothing answers, no tunnel there); a

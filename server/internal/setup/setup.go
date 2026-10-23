@@ -138,6 +138,7 @@ type Setup struct {
 	Progress func(step, phase string, pct int)
 
 	lines   []Line
+	mapMM   []byte // the MM_Map_v3 archive this setup built (the second copy reuses it)
 	zip     string
 	zipErr  error
 	zipDone bool
@@ -300,11 +301,14 @@ func (s *Setup) Server(o ServerOptions) error {
 		s.stepConfig("client config", s.ClientCopy(), o.Address)
 		s.stepLocale("client texts", s.ClientCopy(), o.Address)
 		s.stepBotProfiles("client bots", s.ClientCopy())
+		s.stepHalloween("halloween", s.ClientCopy())
+		s.stepMapMM("client MM_Map_v3", s.ClientCopy())
 	}
 	host := s.ensureCopy("host copy", s.HostCopy(), hostExempt) || (s.Check && isDir(s.HostCopy()))
 	patched := false
 	if host {
 		s.stepBotProfiles("host bots", s.HostCopy())
+		s.stepMapMM("host MM_Map_v3", s.HostCopy())
 		exe := false
 		if modulus != nil {
 			exe = s.stepExe("host exe", s.HostCopy(), modulus, hostOptions, exepatch.HostKeys)
@@ -353,7 +357,10 @@ func (s *Setup) Client(server string, ca []byte) error {
 		s.stepConfig("client config", s.ClientCopy(), server)
 		s.stepLocale("client texts", s.ClientCopy(), server)
 		s.stepBotProfiles("client bots", s.ClientCopy())
+		s.stepHalloween("halloween", s.ClientCopy())
+		s.stepMapMM("client MM_Map_v3", s.ClientCopy())
 		s.stepMatchOptions("bot check box", s.ClientCopy())
+		s.stepChatRooms("chat rooms", s.ClientCopy())
 		if s.Picker {
 			s.stepPicker("server picker", s.ClientCopy())
 		} else {

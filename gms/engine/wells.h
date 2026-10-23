@@ -46,7 +46,10 @@
 // wells_worker_owner (1: the well owns its workers; 0 = D9's owner 0), since D9b wells_capture_announce (0: the host
 // sends no MineUnderAttack of its own; 1 = D9's announcement at a capture's start) and wells_capture_announce_min_s (4:
 // only while the capture needs at least that long to complete, so the queued announcement plays before the well flips
-// [assumed margin: the def's 3-s lifetime and the announcer queue]).
+// [assumed margin: the def's 3-s lifetime and the announcer queue]); since MAPMINES wells_bots_unreachable (0: a well on
+// an island only NPCs may use, by the level's island markers (core/wells/islands.h: MM_Map_v3's two team gold mines),
+// is left out of the bots' GetMinesForTeam and Threats, so no HarassWell or AttackWell mission, team call or well
+// defence goes to it; 1 = listed as before).
 #pragma once
 
 #include <cstddef>
@@ -73,6 +76,7 @@ struct Options {
   double captureAnnounceMinSeconds = 4.0;  // with captureAnnounce: only while the capture needs at least this long
   bool damagePauseAny = false;             // D9c: false = only an enemy player's hit pauses; true = D9's any damage
   int hitLogLimit = 200;                   // D9c: the "wells: hit" lines (hits on a shaper inside an enemy well's ring)
+  bool botsUnreachable = false;            // MAPMINES: true = the bots also see wells out of the players' reach
 };
 
 // Reads the [host] keys (host mode only; match::Configure calls it).

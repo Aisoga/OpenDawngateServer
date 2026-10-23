@@ -5,6 +5,7 @@
 // client model (O2, O4 on loopback) is in test_session.cpp.
 #include <cstdio>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <variant>
@@ -437,6 +438,45 @@ GMS_TEST(ShaperSelectRandomPickAndLock) {
   Msg(again, 1, Req(gms::kShaperRequest, gms::kNounRandom), 1010, out2);
   Msg(again, 1, Req(gms::kShaperLockIn, gms::kNounRandom), 1020, out2);
   CHECK_EQ(again.Record(0)->shaper, s);
+}
+
+// SHAPERPOOL: Random (and the scripted player's Random without a list of its own) draws only from the match's lists,
+// and only their selectable entries: never a shaper no list offers (build 854's Weaver, left out by dgserver), nor an
+// entry that is unowned (flags 0) or hidden. Many seeds, every selectable one drawn at least once.
+GMS_TEST(ShaperSelectRandomStaysInTheList) {
+  QuietLog log;
+  const uint32_t kWeaver = gms::AssetIdOf("Weaver.Noun");     // in no list
+  const uint32_t kUnowned = gms::AssetIdOf("survivor.Noun");  // listed, flags 0: not selectable
+  const uint32_t kHidden = gms::AssetIdOf("golem.Noun");      // owned but hidden
+  std::set<uint32_t> human, scripted;
+  for (uint32_t seed = 1; seed <= 200; ++seed) {
+    gms::ShaperSelectConfig cfg;
+    cfg.timers = Timers(1000, 1000, 1000, 16);
+    cfg.seed = seed;
+    cfg.humanDefault.list = {Entry(kAlpha, gms::kShaperOwned), Entry(kArtificer, gms::kShaperFreeRotation),
+                             Entry(kGunman, gms::kShaperAvailable), Entry(kUnowned, 0),
+                             Entry(kHidden, gms::kShaperOwned | gms::kShaperHidden)};
+    cfg.players.push_back(Scripted(1, 2, gms::kNounRandom, 100, 200, 1));  // the other team, no list of its own
+    gms::ShaperSelect ss(cfg);
+    ss.AddHuman(1, 0, 1);
+    RecordingSender out;
+    ss.OnReady(1, 1000, out);
+    Msg(ss, 1, Req(gms::kShaperRequest, gms::kNounRandom), 1010, out);
+    Msg(ss, 1, Req(gms::kShaperLockIn, gms::kNounRandom), 1020, out);
+    for (int64_t t = 1100; t <= 1400; t += 100) ss.Tick(t, out);
+    const gms::ShaperRecord* h = ss.Record(0);
+    const gms::ShaperRecord* b = ss.Record(1);
+    CHECK(h != nullptr && b != nullptr);
+    if (!h || !b) return;
+    for (uint32_t s : {h->shaper, b->shaper}) {
+      CHECK(s == kAlpha || s == kArtificer || s == kGunman);
+      CHECK(s != kWeaver && s != kUnowned && s != kHidden && s != gms::kNounRandom);
+    }
+    human.insert(h->shaper);
+    scripted.insert(b->shaper);
+  }
+  CHECK_EQ(human.size(), 3u);
+  CHECK_EQ(scripted.size(), 3u);
 }
 
 // ---- O4: the timers with a silent client (L1's options: artificer and alpha owned, 8000/8000/4000/16 ms) ---------------

@@ -64,7 +64,26 @@ func (ts *tcpServer) client(email string) *tcpClient {
 // dial connects a fake client without logging it in (refused logins).
 func (ts *tcpServer) dial(email string) *tcpClient {
 	ts.t.Helper()
-	c, err := net.Dial("tcp4", ts.ln.Addr().String())
+	return ts.dialFrom(email, "")
+}
+
+// clientFrom is client from the local address local (a loopback address of its own: the map check's trust by
+// address, MAPGUARD).
+func (ts *tcpServer) clientFrom(email, local string) *tcpClient {
+	ts.t.Helper()
+	tc := ts.dialFrom(email, local)
+	tc.login(email)
+	return tc
+}
+
+// dialFrom is dial from the local address local ("" = the system's choice).
+func (ts *tcpServer) dialFrom(email, local string) *tcpClient {
+	ts.t.Helper()
+	d := net.Dialer{}
+	if local != "" {
+		d.LocalAddr = &net.TCPAddr{IP: net.ParseIP(local)}
+	}
+	c, err := d.Dial("tcp4", ts.ln.Addr().String())
 	if err != nil {
 		ts.t.Fatal(err)
 	}

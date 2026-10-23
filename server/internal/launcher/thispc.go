@@ -457,6 +457,10 @@ func (p *thisPC) flags() []string {
 	if err != nil {
 		own, _ = LoginFlags(Config{})
 	}
+	own = append(own, OnlineCountFlags(ini)...) // the folder's players-online count settings, as Start-Server's
+	own = append(own, ChatRoomsFlags(ini)...)   // and its chat rooms
+	own = append(own, HalloweenFlags(ini)...)   // and its Halloween decoration
+	own = append(own, MapFlags(ini)...)         // and its maps
 	f := ServerFlags(p.l, p.certsAddr, shaperSelect, append(own, SplitFlags(ini["server_flags"])...))
 	if p.localTrust { // no passwords: the server binds only ThisPCAddress, a loopback address (dgserver checks it)
 		f = append(f, "--local-trust")

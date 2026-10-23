@@ -2,6 +2,8 @@ package blaze
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -15,6 +17,7 @@ import (
 // D3-live step 4: the roster's shaper select content from an account (shaperselect.go).
 func TestShaperContent(t *testing.T) {
 	c := loadFixtureContent(t)
+	titleStone(c)
 	all, _, err := c.Grant(content.OwnAll)
 	if err != nil {
 		t.Fatal(err)
@@ -126,6 +129,134 @@ func TestShaperContent(t *testing.T) {
 	ShaperContent(nil, a, nil, &none)
 	if !reflect.DeepEqual(none, gmshost.RosterEntry{}) {
 		t.Errorf("without content: %+v", none)
+	}
+}
+
+// titleStone gives the fixture's stone its title: its longName is a key without text (as a dump made without the
+// Locale writes it), which in content with titles would make it a shaper the client can't show.
+func titleStone(c *content.Content) {
+	for i := range c.Items {
+		if c.Items[i].Name == "stone" {
+			c.Items[i].Title = "Stone"
+		}
+	}
+}
+
+// SHAPERPOOL: a shaper item without a title (build 854's Weaver and WeaponMaster: no string table, no art) is in no
+// roster's list, owned or not, in the free rotation or not, and neither are its skins or a saved skin of it; content
+// without any title keeps every shaper that isn't testing-only.
+func TestShaperContentLeavesOutUntitledShapers(t *testing.T) {
+	c := loadFixtureContent(t)
+	titleStone(c)
+	c.Items = append(c.Items,
+		content.Item{CatalogID: 0x10000E01, Name: "Wraith", Type: "shaper", ItemType: content.ItemShaper, Status: "none",
+			Asset: "Wraith.Noun", MaxOwnable: 1, Shaper: "PC_Wraith"},
+		content.Item{CatalogID: 0x10000E02, Name: "wraith_pale", Type: "shaper skin", ItemType: content.ItemShaperSkin,
+			Status: "none", Asset: "wraith_pale.Noun", Title: "Pale Wraith", MaxOwnable: 1, Shaper: "PC_Wraith"})
+	if err := reindex(t, c); err != nil {
+		t.Fatal(err)
+	}
+	all, _, err := c.Grant(content.OwnAll)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all[0x10000E01] == 0 || all[0x10000E02] == 0 {
+		t.Fatalf("the grant left out the untitled shaper or its skin: %v", all)
+	}
+	a := store.Account{Items: all, Settings: map[string]string{"SKIN_0x10000E01": fmt.Sprint(0x10000E02)}}
+	var e gmshost.RosterEntry
+	ShaperContent(c, a, []string{"Wraith", "PC_Wraith"}, &e)
+	var nouns []string
+	for _, o := range e.Shapers {
+		nouns = append(nouns, o.Noun)
+	}
+	if want := []string{"ember.Noun", "stone.Noun"}; !reflect.DeepEqual(nouns, want) {
+		t.Errorf("shapers %v, want %v", nouns, want)
+	}
+	if _, ok := e.Skins["Wraith.Noun"]; ok {
+		t.Errorf("skins of the untitled shaper: %v", e.Skins)
+	}
+	if _, ok := e.SavedSkins["Wraith.Noun"]; ok {
+		t.Errorf("a saved skin of the untitled shaper: %v", e.SavedSkins)
+	}
+
+	// no titles at all (a hand-made file): every shaper that isn't testing-only, Wraith included
+	for i := range c.Items {
+		c.Items[i].Title = ""
+	}
+	var bare gmshost.RosterEntry
+	ShaperContent(c, a, nil, &bare)
+	nouns = nil
+	for _, o := range bare.Shapers {
+		nouns = append(nouns, o.Noun)
+	}
+	if want := []string{"ember.Noun", "stone.Noun", "Wraith.Noun"}; !reflect.DeepEqual(nouns, want) {
+		t.Errorf("without titles: shapers %v, want %v", nouns, want)
+	}
+}
+
+// reindex rebuilds c's catalogID index after a test added items (through the file format, as Load does).
+func reindex(t *testing.T, c *content.Content) error {
+	path := filepath.Join(t.TempDir(), "content.json")
+	if err := c.Write(path); err != nil {
+		return err
+	}
+	d, err := content.Load(path)
+	if err != nil {
+		return err
+	}
+	*c = *d
+	return nil
+}
+
+// SHAPERPOOL with DG_CONTENT_FILE naming a content file made from build 854 (dgserver --make-content, e.g. the
+// setup's server\data\content.json): no roster gets Weaver or WeaponMaster, nor any shaper without a title or a
+// testing-only one, under either grant; every titled shaper that isn't testing-only is there.
+func TestShaperContentRealContent(t *testing.T) {
+	path := os.Getenv("DG_CONTENT_FILE")
+	if path == "" {
+		t.Skip("DG_CONTENT_FILE not set")
+	}
+	c, err := content.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byNoun := map[string]content.Item{}
+	want := 0
+	for _, it := range c.Items {
+		if it.ItemType == content.ItemShaper {
+			byNoun[it.Asset] = it
+			if it.Title != "" && !it.TestingOnly {
+				want++
+			}
+		}
+	}
+	for _, n := range []string{"Weaver.Noun", "WeaponMaster.Noun"} {
+		if it, ok := byNoun[n]; !ok || it.Title != "" || it.TestingOnly {
+			t.Fatalf("%s in the content: %+v (want an untitled shaper that isn't testing-only)", n, it)
+		}
+	}
+	for _, policy := range []string{content.OwnAll, content.OwnStarter} {
+		items, _, err := c.Grant(policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var e gmshost.RosterEntry
+		ShaperContent(c, store.Account{Items: items}, []string{"Weaver", "WeaponMaster"}, &e)
+		if len(e.Shapers) != want {
+			t.Errorf("%s: %d shapers, want %d", policy, len(e.Shapers), want)
+		}
+		for _, o := range e.Shapers {
+			if it := byNoun[o.Noun]; it.Title == "" || it.TestingOnly {
+				t.Errorf("%s: %s in the list (%+v)", policy, o.Noun, it)
+			}
+		}
+		for def := range e.Skins {
+			if it := byNoun[def]; it.Title == "" || it.TestingOnly {
+				t.Errorf("%s: skins of %s", policy, def)
+			}
+		}
+		t.Logf("%s: %d shapers, skins of %d", policy, len(e.Shapers), len(e.Skins))
 	}
 }
 

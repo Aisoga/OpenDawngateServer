@@ -56,6 +56,7 @@ func Files(t testing.TB) map[string][]byte {
 		"game/Data/AssetData.snap":              read("game/Data/AssetData.snap"),
 		"game/Data/LoginScreen.snap":            read("game/Data/LoginScreen.snap"),
 		"game/Data/Battlegrounds.snap":          read("game/Data/Battlegrounds.snap"),
+		"game/Data/Global.snap":                 read("game/Data/Global.snap"),
 		"game/Data/Locale/en-us/Locale.package": read("game/Data/Locale/en-us/Locale.package"),
 		"game/readme.txt":                       []byte("synthetic Dawngate for tests\r\n"),
 	}

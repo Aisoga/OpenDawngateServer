@@ -271,6 +271,14 @@ static void TestMessages() {
     CHECK(Decode("{\"t\":\"createGame\",\"gameId\":2,\"descriptors\":1}", back, &err) &&
           std::get<CreateGame>(back).fillTeams == 0);
     CHECK(Decode("{\"t\":\"createGame\",\"fillTeams\":null}", back, &err) && std::get<CreateGame>(back).fillTeams == 0);
+    // HOLIDAY1: the level flags (last, only when not 0); the line blaze's TestHalloweenLevelFlags pins is in the shared
+    // examples file
+    mm.levelFlags = 1;
+    CHECK(Encode(mm).find(",\"levelFlags\":1}") != std::string::npos);
+    CHECK(Decode(Encode(mm), back, &err) && std::get<CreateGame>(back).levelFlags == 1);
+    mm.levelFlags = 0;
+    CHECK(Encode(mm).find("levelFlags") == std::string::npos);
+    CHECK(Decode("{\"t\":\"createGame\",\"gameId\":2}", back, &err) && std::get<CreateGame>(back).levelFlags == 0);
     // D8b: a party's member carries the party (last in the entry, only when not 0); the line blaze's
     // TestMatchmakingHostedParty pins is in the shared examples file
     mm.fillTeams = 2;

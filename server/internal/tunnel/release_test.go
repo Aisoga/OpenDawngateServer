@@ -16,6 +16,13 @@ func v1SessionHello(h sessionHello) []byte {
 	return b
 }
 
+// gatewayAddr is an address of the gateway's session id, as a service's stream or datagram has it.
+func gatewayAddr(g *Gateway, id uint64) *Addr {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return &Addr{Session: id, sess: g.sessions[id]}
+}
+
 // TestSessionHelloWire pins the session hello's bytes: version 2, the 28 bytes of version 1, the release's length and
 // name; a name over version.MaxLen bytes is cut, and the gateway's reader cleans it.
 func TestSessionHelloWire(t *testing.T) {
@@ -96,6 +103,9 @@ func TestTunnelRelease(t *testing.T) {
 	}
 	defer same.Close()
 	s := same.session(time.Second)
+	if name, ok := gatewayAddr(g, s.id).Release(); name != "rel-A" || !ok {
+		t.Errorf("the same release's session: Release() = %q, %v", name, ok)
+	}
 	// a session taken up again names its release too
 	if st := rawHello(t, g, sessionHello{tunnelIP: lo, resumeID: s.id, resumeToken: s.token, release: "rel-B"}.encode()); st != StatusRelease {
 		t.Errorf("a session taken up again by another release: %s", StatusText(st))
@@ -135,7 +145,18 @@ func TestTunnelRelease(t *testing.T) {
 	if err := other.Start(); err != nil {
 		t.Fatalf("--allow-any-client, another release: %v", err)
 	}
+	// let in, but not of the server's release: the services see that (the Blaze map check)
+	if name, ok := gatewayAddr(open, other.session(time.Second).id).Release(); name != "rel-B" || ok {
+		t.Errorf("another release let in: Release() = %q, %v", name, ok)
+	}
 	other.Close()
+	if name, ok := (&Addr{}).Release(); name != "" || ok {
+		t.Errorf("an address without a session: Release() = %q, %v", name, ok)
+	}
+	var none *Addr
+	if _, ok := none.Release(); ok {
+		t.Error("a nil address has the release")
+	}
 	log = buf2.String()
 	for _, want := range []string{
 		"its Start-Client's release is not named (a Start-Client from before the release check), this server's rel-A: let in (--allow-any-client)",

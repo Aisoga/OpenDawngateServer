@@ -30,12 +30,13 @@ func TestConfigFiles(t *testing.T) {
 		t.Fatalf("LoadOrCreate: %v %v", created, err)
 	}
 	want := Config{"address": "127.0.0.1", "bind": "", "i_accept_the_risk": "no", "profile": "auto", "tunnel": "auto", "gateway_port": "42128",
-		"shaper_select": "on", "dedicated": "no", "signup": "open", "signups_per_address": "3", "log_days": "30", "web_port": "443", "web_domain": "",
+		"shaper_select": "on", "halloween": "off", "map": "SM_Map_v5", "custom_maps": "", "dedicated": "no", "signup": "open", "signups_per_address": "3", "log_days": "30", "web_port": "443", "web_domain": "",
 		"web_email": "", "web_proxy": "off", "client_package": "off", "folder": "Dawngate-Data",
 		"zip": "", GameSourcesKey: "", "server_flags": "",
 		"discord_webhook": "", "discord_webhook_queue": "", "discord_webhook_result": "", "discord_webhook_server": "", "discord_queue_ping": "",
 		"discord_ping_cooldown": "15m", "discord_ping_min_wait": "30s", "discord_queue_edit": "on", "discord_names": "on",
-		"discord_result_modes": "pvp,custom"}
+		"discord_result_modes": "pvp,custom", "online_count": "on", "online_count_every": "30s",
+		"chat_rooms": "General, Looking for group, Matchmaking:queue:open"}
 	if !reflect.DeepEqual(c, want) {
 		t.Errorf("defaults %v", c)
 	}

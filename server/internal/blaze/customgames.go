@@ -457,22 +457,49 @@ func (s *Server) startCustomGame(r *Request, g Game, p Player) []byte {
 		kind = "practice group game"
 	}
 	bots := false
-	if name, ok := strings.CutSuffix(g.Name, BotFillMarker); ok {
-		// the create dialog's bot checkbox; a practice group gets its bots anyway and a lobby without a match host
-		// has none to fill, so there only the marker goes
-		g.Name = strings.TrimSpace(name)
+	name, marked, tag, tagged := cutNameTags(g.Name)
+	if marked || tagged {
+		g.Name = name
 		if g.Name == "" {
 			g.Name = p.Name + "'s Game"
 		}
-		if lobby.browsable && s.Hosts != nil {
-			bots = true
-			g.Name = BotFillPrefix + g.Name
+	}
+	if marked && lobby.browsable && s.Hosts != nil {
+		// the create dialog's bot checkbox; a practice group gets its bots anyway and a lobby without a match host
+		// has none to fill, so there only the marker goes
+		bots = true
+		g.Name = BotFillPrefix + g.Name
+	}
+	// the map: the server's, or the one the name's tag picks if this server offers it (level.go)
+	level, why := s.hostedLevel(), "the server's map"
+	if tagged {
+		if s.customLevelOffered(tag.Name) {
+			level, why = tag.Name, "the name's tag "+MapTagPrefix+tag.Tag
+		} else {
+			why = "the name's tag " + MapTagPrefix + tag.Tag + " asks for " + tag.Name + ", which this server doesn't " +
+				"offer (--custom-maps), so the server's map"
 		}
+	}
+	// MAPGUARD: a creator whose copy may lack the map's files gets SM_Map_v5 (mapguard.go)
+	fellBack := false
+	if lv, changed := s.createLevel(r, g.ID, level); changed {
+		why = why + " " + level + ", but its creator's copy may lack its files (map check), so " + lv
+		level, fellBack = lv, true
+	}
+	if !strings.EqualFold(level, s.hostedLevel()) {
+		g.Level = level
+	}
+	g.Attrs = mergeAttrs(g.Attrs, levelAttrs(level)) // the game's level, not the dialog's
+	if l, ok := FindLevel(level); ok && l.Label != "" {
+		g.Name = l.Label + g.Name // the browser's Map column shows only SM_Map_v5's name
 	}
 	s.Log.Logf("blaze", "   game %d %q: a %s (GameFlags %#x, %d teams of %d, private %v); admin %d", g.ID, g.Name, kind,
 		flags, len(g.TeamIDs), g.TeamCap, attrValue(g.Attrs, AttrPrivateMatch) == "1", p.ID)
 	if bots {
 		s.Log.Logf("blaze", "   game %d: bots fill the open seats (the creator's checkbox)", g.ID)
+	}
+	if tagged || fellBack || !strings.EqualFold(level, HostedLevel) {
+		s.Log.Logf("blaze", "   game %d: map %s (LevelId %d; %s)", g.ID, level, LevelAssetID(level), why)
 	}
 	if s.Hosts != nil {
 		fill := 0
@@ -519,6 +546,14 @@ func (s *Server) joinCustomGame(r *Request, hg *hostedGame) []byte {
 	}
 	attrs := sortedAttrs(stringMap(r.Body, "ATTR"))
 	ext, in := unionAddress(r.Body, "PNET")
+	// MAPGUARD: a game on a map whose files the joiner's copy may lack (mapguard.go): JOIN, SPECTATE, an invite or a
+	// join code's YES, a reconnect
+	hg.mu.Lock()
+	level, gname := s.gameLevel(hg.game), hg.game.Name
+	hg.mu.Unlock()
+	if s.mapJoinRefused(r, gid, gname, level) {
+		return nil
+	}
 	hg.mu.Lock()
 	fail := func(code uint16, why string) []byte {
 		hg.mu.Unlock()

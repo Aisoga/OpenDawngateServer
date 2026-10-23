@@ -44,6 +44,7 @@ Usage:
         --client 127.0.0.2 --hosts 127.0.2.10
     .venv/Scripts/python -I re/scripts/tunnel_capture.py <session dir | capture.pcapng> --server 127.0.2.9
         --client 127.0.0.2 [--client 127.0.2.2] [--gateway-port 42128] [--server-own-port 10040] [--tshark <tshark.exe>]
+A session's bare name (no such path here) is its folder in the main checkout's re/logs, also when run from a worktree.
 """
 import argparse
 import collections
@@ -116,7 +117,18 @@ def main():
     services = set(a.service_port or [42127, 10041, 17502, 18080, 9988])
     if a.same_address and not a.hosts:
         ap.error("--same-address needs --hosts")
-    capture = a.session if a.session.endswith(".pcapng") else os.path.join(a.session, "capture.pcapng")
+    session = a.session
+    if not os.path.exists(session) and not os.path.isabs(session):
+        # a session's name: its folder in re/logs of this checkout or of a checkout this one lies inside (a worktree)
+        d = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        while True:
+            if os.path.isdir(os.path.join(d, "re", "logs", session)):
+                session = os.path.join(d, "re", "logs", session)
+                break
+            if os.path.dirname(d) == d:
+                break
+            d = os.path.dirname(d)
+    capture = session if session.endswith(".pcapng") else os.path.join(session, "capture.pcapng")
     if not os.path.isfile(capture):
         print(f"no capture: {capture}", file=sys.stderr)
         return 2

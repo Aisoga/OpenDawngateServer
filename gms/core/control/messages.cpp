@@ -114,6 +114,7 @@ struct Encoder {
     if (m.descriptors != 0) o.Set("descriptors", Json::Int(m.descriptors));
     if (m.shaperSelect) o.Set("shaperSelect", Json::Bool(true));
     if (m.fillTeams != 0) o.Set("fillTeams", Json::Int(m.fillTeams));  // B10d
+    if (m.levelFlags != 0) o.Set("levelFlags", Json::Int(m.levelFlags));  // HOLIDAY1
   }
   void operator()(const GameReady& m) { o.Set("port", Json::Int(m.port)); }
   void operator()(const AddPlayer& m) { o.Set("user", Json::Int(m.user)).Set("index", Json::Int(m.index)); }
@@ -478,6 +479,7 @@ bool Decode(std::string_view line, Message& out, std::string* err) {
     if (f.err.empty()) f.Int("descriptors", m.descriptors);
     if (f.err.empty()) f.Bool("shaperSelect", m.shaperSelect);
     if (f.err.empty()) f.Int("fillTeams", m.fillTeams);  // B10d
+    if (f.err.empty()) f.Int("levelFlags", m.levelFlags);  // HOLIDAY1
     out = std::move(m);
   } else if (type == "gameReady") {
     GameReady m;

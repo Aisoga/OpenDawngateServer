@@ -60,3 +60,7 @@
 # joined or one left); the host keeps startGame's players and takes the spectators (WithSpectatorsOf). Exactly what
 # blaze's TestCustomGameHosted sends when delta spectates the started game.
 {"t":"updateRoster","roster":[{"user":2000000001,"name":"alpha","index":0,"team":1,"noun":"","bot":false},{"user":2000000002,"name":"bravo","index":10,"team":0,"noun":"","bot":false,"spectator":true},{"user":2000000004,"name":"delta","index":11,"team":0,"noun":"","bot":false,"spectator":true}]}
+# HOLIDAY1: a server with the Halloween decoration on (dgserver --halloween) gives every createGame levelFlags 1 (the
+# level flags the host loads its level with and sends in GamePrepareForStart; omitted when 0). Exactly what blaze's
+# TestHalloweenLevelFlags sends for a custom game.
+{"t":"createGame","gameId":1,"level":"SM_Map_v5","mode":"custom","seed":7919,"roster":[{"user":2000000001,"name":"alpha","index":0,"team":1,"noun":"","bot":false}],"descriptors":2,"levelFlags":1}

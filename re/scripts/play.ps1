@@ -16,9 +16,13 @@
     certificates server\certs\server_cert.pem, server_key.pem, ca_modulus.bin                            -> prints make_certs.py
     client copy  client\run_854\Dawngate patched by patch_client.py and patch_config.py, with our CA      -> prints the copy/patch commands
     bot box      its game\Data\zz_MatchOptions.snap is current (CREATE GAME's bot check box, BOTBOX)      -> installs it (setup_lane.py's step)
+    chat rooms   its game\Data\zz_Chat.snap is current (the rooms the server opens by default, ROOMS3) -> installs it (setup_lane.py's step)
     bot profiles its game\Data\zz_BotProfiles.snap is current (bot_profiles.py --check; PLAYPROF)        -> installs it (bot_profiles.py)
+    halloween    its game\Data\zz_Halloween.snap is current (halloween.py --check; HOLIDAY1)            -> installs it (halloween.py)
+    MM_Map_v3    its game\Data\zz_MM_Map_v3.snap is current (its build-854 hash; MAPSHIP)               -> builds it (go run .\tools\mapmm)
     host copy    client\run_854_server\Dawngate patched, with the harness installed                     -> prints setup_server_copy.py
     bot profiles the host copy's game\Data\zz_BotProfiles.snap is current, as for the client copy        -> installs it (bot_profiles.py)
+    MM_Map_v3    the host copy's game\Data\zz_MM_Map_v3.snap is current, as for the client copy           -> builds it (go run .\tools\mapmm)
     gms build    gms\build\Release\dgsim.dll's last build newer than gms\host, gms\engine, gms\core, gms\script -> builds it (cmake), if gms\build is configured
                  (G5: its build stamp dgsim.dll.stamp; re\scripts\gms_stale.ps1)
     host DLL     the host copy's PhysXLoader.dll is that dgsim.dll                                      -> installs it (setup_server_copy.py)
@@ -173,18 +177,50 @@ function Update-BotProfiles([string]$copy, [string]$what) {
     # PLAYPROF: the copy's added game\Data\zz_BotProfiles.snap (the project's own bot profiles: the bots' shaper, role and
     # name), byte for byte what bot_profiles.py makes now from the copy's own AssetData.snap; a newer profile table makes
     # an older archive stale, so it is rewritten here (setup_lane.py's bot_profiles_step, setup_all.py's step too)
+    Update-AddedArchive $copy $what 'bot_profiles.py' "bot profiles ($what, game\Data\zz_BotProfiles.snap)" 'older profiles'
+}
+function Update-Halloween([string]$copy, [string]$what) {
+    # HOLIDAY1: the copy's added game\Data\zz_Halloween.snap (the map's Halloween decoration under level flag 1, shown
+    # only when the server runs with --halloween), byte for byte what halloween.py makes now from the copy's own
+    # AssetData.snap (setup_lane.py's halloween_step, setup_all.py's step too)
+    Update-AddedArchive $copy $what 'halloween.py' "Halloween decoration ($what, game\Data\zz_Halloween.snap)" 'an older one'
+}
+function Update-MapMM([string]$copy, [string]$what) {
+    # MAPSHIP: the copy's added game\Data\zz_MM_Map_v3.snap (the second map MM_Map_v3's level files), build 854's
+    # archive as the release setup makes it from the copy's own game files (server\tools\mapmm runs that code;
+    # setup_lane.py's mapship_step and setup_all.py's step do the same)
+    $label = "MM_Map_v3 level files ($what, game\Data\zz_MM_Map_v3.snap)"
+    $added = Join-Path $copy 'game\Data\zz_MM_Map_v3.snap'
+    $pin = '3e0496a84d6320b1c16017301a578278c8f794cb409e64614b8e13845bbdb9bc'
+    if ((Test-Path $added) -and (Get-FileHash $added -Algorithm SHA256).Hash -eq $pin) { Ok $label; return }
+    $goExe = (Get-Command go.exe -ErrorAction SilentlyContinue).Source
+    if (-not $goExe -and (Test-Path 'C:\Program Files\Go\bin\go.exe')) { $goExe = 'C:\Program Files\Go\bin\go.exe' }
+    if (-not $goExe) {
+        Missing "$label`: needs Go" @('install it from https://go.dev/dl/ (docs/development/building.md)')
+        return
+    }
+    Write-Host "  install  $label ($(if (Test-Path $added) { 'an older one' } else { 'not there' }))" -ForegroundColor Yellow
+    $env:GOTOOLCHAIN = 'local'
+    Push-Location (Join-Path $RepoRoot 'server')
+    try { & $goExe run ./tools/mapmm $copy | ForEach-Object { Write-Host "           $_" -ForegroundColor Gray } }
+    finally { Pop-Location }
+    if ((Test-Path $added) -and (Get-FileHash $added -Algorithm SHA256).Hash -eq $pin) { Ok $label }
+    else { Missing "installing the $label failed (is the game running from the $what?)" @("cd server; go run ./tools/mapmm $copy") }
+}
+
+function Update-AddedArchive([string]$copy, [string]$what, [string]$scriptName, [string]$label, [string]$staleWord) {
+    # one added archive that a script makes from the copy's own AssetData.snap (<script> <game\Data> [--check])
     $data = Join-Path $copy 'game\Data'
-    $script = Join-Path $PSScriptRoot 'bot_profiles.py'
-    $label = "bot profiles ($what, game\Data\zz_BotProfiles.snap)"
+    $script = Join-Path $PSScriptRoot $scriptName
     $show = $data.Replace("$RepoRoot\", '')
-    $fix = ".venv\Scripts\python -I re\scripts\bot_profiles.py $show"
+    $fix = ".venv\Scripts\python -I re\scripts\$scriptName $show"
     if (-not (Test-Path (Join-Path $data 'AssetData.snap'))) {
         Missing "$label`: $show\AssetData.snap is missing (an incomplete copy)" @('make the copy again: .venv\Scripts\python -I re\scripts\setup_all.py', "then: $fix")
         return
     }
     $out = @(& $Python -I $script $data --check)
     if ($LASTEXITCODE -eq 0) { Ok $label; return }
-    Write-Host "  install  $label ($(if ("$($out | Select-Object -Last 1)" -match '^missing:') { 'not there' } else { 'older profiles' }))" -ForegroundColor Yellow
+    Write-Host "  install  $label ($(if ("$($out | Select-Object -Last 1)" -match '^missing:') { 'not there' } else { $staleWord }))" -ForegroundColor Yellow
     & $Python -I $script $data | ForEach-Object { Write-Host "           $_" -ForegroundColor Gray }
     $null = & $Python -I $script $data --check
     if ($LASTEXITCODE -eq 0) { Ok $label }
@@ -230,8 +266,11 @@ try {
     if ((Test-Path $pack) -and (-not (Test-Path "$pack.orig") -or (Get-FileHash $pack).Hash -eq (Get-FileHash "$pack.orig").Hash)) {
         Info "Config_Pack.package is not patched (B6), so the main menu's home page stays empty: $($patchCmds[1])"
     }
+    # MAPSHIP: the second map's level files (a server may host MM_Map_v3: dgserver --map, --custom-maps)
+    if ((Test-Path $Python) -and (Test-Path (Join-Path $ClientDir 'game\Dawngate.exe'))) { Update-MapMM $ClientDir 'client copy' }
     # BOTBOX: CREATE GAME's "Fill open seats with bots" box is the added game\Data\zz_MatchOptions.snap, byte for byte what
-    # setup_lane.py's match_options_step makes from the copy's own Battlegrounds.snap (setup_all.py's step too)
+    # setup_lane.py's match_options_step makes from the copy's own Battlegrounds.snap (setup_all.py's step too); MAPDROP:
+    # its map dropdown lists the maps whose archives the copy has, so this comes after the MM_Map_v3 step
     if ((Test-Path $Python) -and (Test-Path (Join-Path $ClientDir 'game\Data\Battlegrounds.snap'))) {
         $data = Join-Path $ClientDir 'game\Data'
         $boxCode = "import sys; sys.path.insert(0, sys.argv[1]); import setup_lane; m = []; setup_lane.match_options_step(sys.argv[2], sys.argv[3] == 'check', m); sys.exit(1 if m else 0)"
@@ -246,8 +285,26 @@ try {
                 '.venv\Scripts\python -I re\scripts\patch_login_movie.py --spec matchoptions client\run_854\Dawngate\game\Data\Battlegrounds.snap client\run_854\Dawngate\game\Data\zz_MatchOptions.snap') }
         }
     }
+    # ROOMS3: the chat rooms the server marks as open by default are opened by the added game\Data\zz_Chat.snap, byte for
+    # byte what setup_lane.py's chat_rooms_step makes from the copy's own Global.snap (setup_all.py's step too)
+    if ((Test-Path $Python) -and (Test-Path (Join-Path $ClientDir 'game\Data\Global.snap'))) {
+        $data = Join-Path $ClientDir 'game\Data'
+        $roomsCode = "import sys; sys.path.insert(0, sys.argv[1]); import setup_lane; m = []; setup_lane.chat_rooms_step(sys.argv[2], sys.argv[3] == 'check', m); sys.exit(1 if m else 0)"
+        & $Python -I -c $roomsCode $PSScriptRoot $data 'check'
+        if ($LASTEXITCODE -eq 0) { Ok 'chat rooms opened by default (game\Data\zz_Chat.snap)' }
+        else {
+            Write-Host '  install  the chat rooms opened by default (game\Data\zz_Chat.snap)' -ForegroundColor Yellow
+            & $Python -I -c $roomsCode $PSScriptRoot $data 'install' | ForEach-Object { Write-Host "           $_" -ForegroundColor Gray }
+            & $Python -I -c $roomsCode $PSScriptRoot $data 'check'
+            if ($LASTEXITCODE -eq 0) { Ok 'chat rooms opened by default (game\Data\zz_Chat.snap)' }
+            else { Missing 'installing the chat rooms class failed (is the game running from client\run_854?)' @(
+                '.venv\Scripts\python -I re\scripts\patch_login_movie.py --spec chatrooms client\run_854\Dawngate\game\Data\Global.snap client\run_854\Dawngate\game\Data\zz_Chat.snap') }
+        }
+    }
     # PLAYPROF: the client shows the bots' shaper, role and name from these profiles
     if ((Test-Path $Python) -and (Test-Path (Join-Path $ClientDir 'game\Dawngate.exe'))) { Update-BotProfiles $ClientDir 'client copy' }
+    # HOLIDAY1: the Halloween decoration, shown when the server turns it on (dgserver --halloween)
+    if ((Test-Path $Python) -and (Test-Path (Join-Path $ClientDir 'game\Dawngate.exe'))) { Update-Halloween $ClientDir 'client copy' }
     # LBMIN: the client texts (game\Data\Locale\en-us\AA_Server.package: the login texts and links, the Leaderboard's
     # rule), byte for byte what patch_locale.py makes now for 127.0.0.1 (setup_all.py's step too); a copy whose links
     # go to a website (setup_all.py --web-domain) is left to setup_all.py, which knows the domain
@@ -282,6 +339,7 @@ try {
     } else { $hostReady = $true }
     # PLAYPROF: the match host loads the bots' profiles (BotClass assets) from the host copy's own archive
     if ((Test-Path $Python) -and (Test-Path (Join-Path $HostCopy 'game\Dawngate.exe'))) { Update-BotProfiles $HostCopy 'host copy' }
+    if ((Test-Path $Python) -and (Test-Path (Join-Path $HostCopy 'game\Dawngate.exe'))) { Update-MapMM $HostCopy 'host copy' }
 
     $stale = Get-StaleGmsSource
     if ($stale) {
@@ -339,7 +397,10 @@ try {
     if ($HostOptions) { $params.HostOptions = $HostOptions }
     if ($NoCapture) { $params.NoCapture = $true }
     if ($KeepAlive) { $params.KeepAlive = 60 }  # B12: opt-in; run_session.ps1 keeps it off in play mode otherwise
-    if ($ShaperSelect) { $params.ServerArgs = '--shaper-select' }  # D3-live: shaper select with the account's content
+    # MAPPICK: both copies have MM_Map_v3's archive (the MAPSHIP steps above), so a custom game may pick it by the
+    # name tag ~#mm or the CREATE GAME dropdown; without --custom-maps the server keeps SM_Map_v5 for every game
+    $params.ServerArgs = '--custom-maps MM_Map_v3'
+    if ($ShaperSelect) { $params.ServerArgs += ' --shaper-select' }  # D3-live: shaper select with the account's content
     if ($Check) {
         if ($Seconds -le 0) { $Seconds = 150 }
         $params.Seconds = $Seconds

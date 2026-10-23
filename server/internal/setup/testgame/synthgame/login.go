@@ -17,6 +17,10 @@ func Battlegrounds() []byte {
 	return movieSnap(moviepatch.MatchOptions.MoviePath, "maxis.MatchOptionsUI")
 }
 
+// Global is the synthetic Global.snap: the chat movie's path with the same kind of made-up movie, for the setup step
+// of the chat rooms opened by default.
+func Global() []byte { return movieSnap(moviepatch.ChatRooms.MoviePath, "maxis.chat.Chat") }
+
 func movieSnap(path, docClass string) []byte {
 	tag := func(code int, data []byte) []byte {
 		return append(binary.LittleEndian.AppendUint16(nil, uint16(code<<6|len(data))), data...)

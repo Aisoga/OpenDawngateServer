@@ -7,7 +7,11 @@
 //
 // The CREATE GAME dialog's bot check box (client_ui/matchoptions, matchoptions_tags.hex) goes into its movie the same
 // way: UI/Scaleform/Battlegrounds/MatchOptionsUI.gfx from game\Data\Battlegrounds.snap into game\Data\zz_MatchOptions.snap.
-// A Spec names one such movie (Picker, MatchOptions).
+// The same class shows the dialog's map dropdown when the copy has a map besides The Dawngate, so that archive also
+// holds the dialog's map list (MapListPath, MapList: the maps of ExtraMaps whose archives the copy has, CopyMaps).
+// So does the class that opens the chat rooms the server marks as open by default (client_ui/chatrooms,
+// chatrooms_tags.hex): UI/Scaleform/Global/Chat.gfx from game\Data\Global.snap into game\Data\zz_Chat.snap.
+// A Spec names one such movie (Picker, MatchOptions, ChatRooms).
 //
 // The output is deterministic: the movie keeps its CFX header (the version, the u32 length as stored plus the tags'
 // size) and its body is a zlib stream of stored blocks (65,535 bytes each, the last one final), which the archive
@@ -24,6 +28,8 @@ import (
 	"fmt"
 	"hash/adler32"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"dawngate/server/internal/setup/snap"
@@ -65,6 +71,13 @@ var MatchOptionsTags = mustHex(matchOptionsTagsHex)
 //go:embed matchoptions_tags.hex
 var matchOptionsTagsHex string
 
+// ChatRoomsTags are the chat rooms class's four tags: DefineSprite 2000, DoABC (the class), SymbolClass 2000 ->
+// AutoRooms, PlaceObject3 of 2000 at depth 2000 without an instance name.
+var ChatRoomsTags = mustHex(chatRoomsTagsHex)
+
+//go:embed chatrooms_tags.hex
+var chatRoomsTagsHex string
+
 // Spec is one added class: the archive in a copy its movie comes from (Source), the added archive (Rel), the movie's
 // path in both, the class's tags, its name, character id and root depth.
 type Spec struct {
@@ -72,6 +85,8 @@ type Spec struct {
 	Source, Rel, MoviePath, Class string
 	CharID, Depth                 int
 	Tags                          []byte
+	// MapList: the archive also holds the create dialog's map list (MapListPath; BuildMaps)
+	MapList bool
 }
 
 var (
@@ -81,7 +96,12 @@ var (
 	// MatchOptions is the CREATE GAME dialog's "Fill open seats with bots" check box (every player copy).
 	MatchOptions = Spec{What: "the bot check box", Source: "game/Data/Battlegrounds.snap",
 		Rel: "game/Data/zz_MatchOptions.snap", MoviePath: "UI/Scaleform/Battlegrounds/MatchOptionsUI.gfx",
-		Class: "BotCheckbox", CharID: 2000, Depth: 2000, Tags: MatchOptionsTags}
+		Class: "BotCheckbox", CharID: 2000, Depth: 2000, Tags: MatchOptionsTags, MapList: true}
+	// ChatRooms opens the chat rooms the server marks as open by default, once per login, minimised and without the
+	// focus (every player copy).
+	ChatRooms = Spec{What: "the chat rooms opened by default", Source: "game/Data/Global.snap",
+		Rel: "game/Data/zz_Chat.snap", MoviePath: "UI/Scaleform/Global/Chat.gfx",
+		Class: "AutoRooms", CharID: 2000, Depth: 2000, Tags: ChatRoomsTags}
 )
 
 // defining are the tags whose first u16 is the character id they define (standard SWF and Scaleform's 1001-1009).
@@ -305,11 +325,64 @@ func (sp Spec) PatchMovie(raw []byte) ([]byte, error) {
 	return append(out, ZlibStored(nb)...), nil
 }
 
+// MapListPath is the create dialog's map list in zz_MatchOptions.snap, which client_ui/matchoptions/BotCheckbox.as
+// reads as Battlegrounds/dgmaps.json (the game's file opener keeps only .json). The file (UTF-8, LF, tab-separated):
+//
+//	dawngate-maps	1
+//	map	<tag>	<label>     a map besides The Dawngate that the copy has: its name tag, the dropdown's text
+//	end
+//
+// Without a map line the dialog stays as the game made it (The Dawngate only). The text is padded with line ends to
+// MapListSize and stored as Snappy literals only, so every list has the same layout and Start-Client's front can
+// write the list of the server a login goes to into the archive in place while the game has it mounted
+// (WriteMapList; maplist.go).
+const MapListPath = "UI/Scaleform/Battlegrounds/dgmaps.json"
+
+// Map is a map besides The Dawngate that a copy can have: its name tag (a custom game's name ends with ~#<Tag>,
+// blaze.cutNameTags), its archive in game\Data, and the dropdown's text (the lobby and the browser show the server's
+// label instead, "[MM] ").
+type Map struct{ Tag, Archive, Label string }
+
+// ExtraMaps are the maps the dialog can offer besides The Dawngate (re/scripts/patch_login_movie.py's EXTRA_MAPS).
+var ExtraMaps = []Map{{Tag: "mm", Archive: "zz_MM_Map_v3.snap", Label: "MM (one lane)"}}
+
+// CopyMaps returns the maps of ExtraMaps whose archive is in the copy's game\Data folder dataDir.
+func CopyMaps(dataDir string) []Map {
+	var out []Map
+	for _, m := range ExtraMaps {
+		if fi, err := os.Stat(filepath.Join(dataDir, m.Archive)); err == nil && fi.Mode().IsRegular() {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// MapList returns the map list's bytes for maps: the text padded with line ends to MapListSize (maps that don't fit
+// are left out; ExtraMaps' lines take a few dozen bytes).
+func MapList(maps []Map) []byte {
+	var b strings.Builder
+	b.WriteString("dawngate-maps\t1\n")
+	for _, m := range maps {
+		line := "map\t" + m.Tag + "\t" + m.Label + "\n"
+		if b.Len()+len(line)+len("end\n") > MapListSize {
+			break
+		}
+		b.WriteString(line)
+	}
+	b.WriteString("end\n")
+	return []byte(b.String() + strings.Repeat("\n", MapListSize-b.Len()))
+}
+
 // Build returns zz_ServerPicker.snap's bytes from the player's LoginScreen.snap.
 func Build(loginSnap []byte) ([]byte, error) { return Picker.Build(loginSnap) }
 
-// Build returns the added archive's bytes (Rel) from the player's own Source archive.
-func (sp Spec) Build(source []byte) ([]byte, error) {
+// Build returns the added archive's bytes (Rel) from the player's own Source archive; a spec with a map list lists no
+// map besides The Dawngate (BuildMaps).
+func (sp Spec) Build(source []byte) ([]byte, error) { return sp.BuildMaps(source, nil) }
+
+// BuildMaps returns the added archive's bytes (Rel) from the player's own Source archive, with the map list of maps
+// when the spec has one (MapList; the setup passes CopyMaps of the copy).
+func (sp Spec) BuildMaps(source []byte, maps []Map) ([]byte, error) {
 	a, err := snap.Parse(source)
 	if err != nil {
 		return nil, err
@@ -326,7 +399,11 @@ func (sp Spec) Build(source []byte) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", sp.MoviePath, err)
 		}
-		return snap.Pack([]snap.File{{Name: sp.MoviePath, Data: movie}}), nil
+		files := []snap.File{{Name: sp.MoviePath, Data: movie}}
+		if sp.MapList {
+			files = append(files, snap.File{Name: MapListPath, Data: MapList(maps), Literals: true})
+		}
+		return snap.Pack(files), nil
 	}
 	return nil, fmt.Errorf("no %s in the archive", sp.MoviePath)
 }

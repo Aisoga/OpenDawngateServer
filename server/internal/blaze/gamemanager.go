@@ -127,6 +127,8 @@ type Game struct {
 	// hosted game has one), and GSTA (0 = PRE_GAME, the state at the start; a rejoin gets the state of the moment).
 	PersistedID string
 	State       int64
+	// Level is the level this game loads when it isn't the server's (a custom game's map tag, level.go; not sent).
+	Level string
 }
 
 // Player is the game's one player, the client that created it.
@@ -277,6 +279,10 @@ func registerGameManager(s *Server) {
 		p.Ext, p.Int = r.Server.ClientAddr(ext), r.Server.ClientAddr(in)
 		if IsLobbyGame(int64(g.descriptors())) { // B15: CREATE GAME's custom game (or a practice group): a lobby first
 			return r.Server.startCustomGame(r, g, p)
+		}
+		// MAPGUARD: practice on a map the creator's copy may lack plays on SM_Map_v5 (mapguard.go)
+		if lv, changed := r.Server.createLevel(r, g.ID, r.Server.gameLevel(g)); changed {
+			g.Level = lv
 		}
 		if r.Server.Hosts != nil { // C1: a match host per game; NotifyGameSetup once it is ready (gamehost.go)
 			return r.Server.startHostedGame(r, g, p)

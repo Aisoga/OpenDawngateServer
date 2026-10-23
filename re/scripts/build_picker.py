@@ -1,11 +1,13 @@
 """Builds the compiled bytes of our UI classes from their ActionScript source, or checks the committed ones.
 
-Two classes run inside the game's own UI movies, each placed there by four added SWF tags (the game's bytecode stays
+Three classes run inside the game's own UI movies, each placed there by four added SWF tags (the game's bytecode stays
 as it is; re/scripts/patch_login_movie.py and its Go port, server/internal/setup/moviepatch, insert them):
     picker        client_ui/serverpicker/ServerPicker.as, the server picker on the login screen (Start-Client's
                   picker mode), in UI/Scaleform/LoginScreen/LoginScreen_BG.gfx
     matchoptions  client_ui/matchoptions/BotCheckbox.as, the "Fill open seats with bots" check box of the CREATE GAME
                   dialog, in UI/Scaleform/Battlegrounds/MatchOptionsUI.gfx
+    chatrooms     client_ui/chatrooms/AutoRooms.as, which opens the chat rooms the server marks as open by default
+                  once per login (minimised, without the focus), in UI/Scaleform/Global/Chat.gfx
 Their compiled form is committed (as hex text, 32 bytes a line), so the release and the setup need no compiler:
     client_ui/<folder>/<Class>.abc.hex                 the class as an ABC (ActionScript bytecode) file
     server/internal/setup/moviepatch/<name>_tags.hex   the four SWF tags the setup adds to the movie:
@@ -21,10 +23,10 @@ of a folder above it), else the environment variables FLEX_SDK, PLAYERGLOBAL and
 the same source, so `check` can compare byte for byte.
 
 Usage:
-    python -I re/scripts/build_picker.py build [picker|matchoptions]   # compile and write both files (default: all)
-    python -I re/scripts/build_picker.py check [picker|matchoptions]   # compile into a temporary folder; exit 1 if a
+    python -I re/scripts/build_picker.py build [picker|matchoptions|chatrooms]   # compile and write both files (default: all)
+    python -I re/scripts/build_picker.py check [picker|matchoptions|chatrooms]   # compile into a temporary folder; exit 1 if a
                                                                          file differs
-    python -I re/scripts/build_picker.py tags <file.abc> <out.hex> [--spec picker|matchoptions]   # only the tags
+    python -I re/scripts/build_picker.py tags <file.abc> <out.hex> [--spec picker|matchoptions|chatrooms]   # only the tags
     python -I re/scripts/build_picker.py compile <Source.as> <out_tags.hex>   # a throwaway class (a spike): its tags,
                                                      character 2000 at depth 2000, class = the file's name
 """
@@ -60,6 +62,7 @@ class Spec:
 SPECS = {
     "picker": Spec("serverpicker", "ServerPicker", "picker_tags.hex"),
     "matchoptions": Spec("matchoptions", "BotCheckbox", "matchoptions_tags.hex"),
+    "chatrooms": Spec("chatrooms", "AutoRooms", "chatrooms_tags.hex"),
 }
 # The picker's names, as before the specs (the tests and older tools read them).
 SOURCE_DIR = SPECS["picker"].source_dir

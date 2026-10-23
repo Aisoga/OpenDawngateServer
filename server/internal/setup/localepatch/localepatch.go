@@ -1,6 +1,6 @@
 // Package localepatch makes a player copy's added locale package game\Data\Locale\en-us\AA_Server.package:
-// changed copies of five of the copy's own string tables with the server's login texts and links and the
-// Leaderboard's rule, byte for byte
+// changed copies of six of the copy's own string tables with the server's login texts and links, the
+// Leaderboard's rule and the custom lobby's map line, byte for byte
 // what re/scripts/patch_locale.py makes (that script's docstring has the rule). The client mounts every *.package of Locale\en-us and the one whose name
 // sorts first wins, so AA_Server.package overrides the shipped Locale.package, which stays untouched. The game's
 // text can't ship, so the package is made at setup time from the copy's own Locale.package.
@@ -27,8 +27,8 @@ const (
 	Comment = "# PH2b: lines the build lacks, added by the server's setup" // before appended lines
 )
 
-// The string tables' key parts and the five tables (FNV-1 of BlazeErrors, the URL table's id, LoginScreen,
-// FNV-1 of fe_leaderboard and fe_matchtype).
+// The string tables' key parts and the six tables (FNV-1 of BlazeErrors, the URL table's id, LoginScreen,
+// FNV-1 of fe_leaderboard, fe_matchtype and fe_customgamelobby).
 const (
 	StringType    = 0x02FAC0B6
 	StringGroup   = 0x02FABF01
@@ -37,7 +37,21 @@ const (
 	LoginScreen   = 0x69E51800
 	FELeaderboard = 0xE3B520DE
 	FEMatchType   = 0xFF007FE0
+	// FECustomGameLobby is the custom lobby's table (FNV-1 of fe_customgamelobby).
+	FECustomGameLobby = 0x7BE32E1A
 )
+
+// LobbyMapLine is the line CustomMatchLobbyUI falls back to (^FE_CustomGameLobby!0x0f2b57c5, after its resultName
+// assert) for a LevelId the client's one-entry map table can't name; build 854's table lacks it, so the lobby showed
+// the key itself.
+const LobbyMapLine = 0x0F2B57C5
+
+// LobbyLines are FE_CustomGameLobby's: the map line for a map the client can't name. Of the maps a server hosts
+// (blaze.PlayableLevels) only MM_Map_v3 gets there, so it is the create dialog's label for MM (moviepatch.ExtraMaps;
+// blaze's TestLobbyMapLabel keeps the two equal).
+var LobbyLines = map[uint32]string{
+	LobbyMapLine: "MM (one lane)",
+}
 
 // LeaderboardMinGames is the number the Leaderboard screen's rule names: dgserver's default
 // --leaderboard-min-games (blaze.LeaderboardMinGames). A server that changes the flag makes the screen's number wrong.
@@ -212,7 +226,7 @@ func Tables(o Options) (map[uint32]map[uint32]string, error) {
 		urls[SlotPassword+uint32(slot)] = fmt.Sprintf("http://%s:%d/%s", o.Host, port, SlotPath(slot, sitelinks.Password))
 	}
 	return map[uint32]map[uint32]string{BlazeErrors: ErrorLines, URLs: urls, LoginScreen: LoginLines,
-		FELeaderboard: LeaderboardLines, FEMatchType: MatchTypeLines}, nil
+		FELeaderboard: LeaderboardLines, FEMatchType: MatchTypeLines, FECustomGameLobby: LobbyLines}, nil
 }
 
 var bom = []byte{0xEF, 0xBB, 0xBF}
@@ -292,7 +306,7 @@ func table(p *dbpf.Package, inst uint32) ([]byte, error) {
 	return nil, nil
 }
 
-// Build makes AA_Server.package from the copy's Locale.package (its bytes): the five tables changed, in instance
+// Build makes AA_Server.package from the copy's Locale.package (its bytes): the six tables changed, in instance
 // order, stored uncompressed (dbpf.WritePackage). A table missing from it (a synthetic test build) is made of the
 // appended lines alone.
 func Build(locale []byte, o Options) ([]byte, error) {

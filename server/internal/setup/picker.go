@@ -24,9 +24,23 @@ func (s *Setup) stepPicker(step, copy string) bool {
 // stepMatchOptions installs the CREATE GAME dialog's "Fill open seats with bots" check box,
 // game\Data\zz_MatchOptions.snap: the copy's own MatchOptionsUI movie (from Battlegrounds.snap, which must be the
 // build's) with the check box's class added (moviepatch.MatchOptions). Every player copy gets it: ticked, the class
-// ends the game's name with the marker the server reads (blaze.BotFillMarker); unticked it changes nothing.
+// ends the game's name with the marker the server reads (blaze.BotFillMarker); unticked it changes nothing. The same
+// archive holds the dialog's map list: the maps besides The Dawngate whose archives the copy has (moviepatch.CopyMaps),
+// which the class offers in the dialog's map dropdown (none: no dropdown). A step that adds such a map's archive runs
+// before this one. Start-Client's front narrows the list in place to the maps the server of each login offers
+// (moviepatch.WriteMapList); a check counts such a list as current, the setup writes the copy's list again.
 func (s *Setup) stepMatchOptions(step, copy string) bool {
-	return s.stepMovie(step, copy, moviepatch.MatchOptions, "the create dialog's bot check box", "an older check box")
+	return s.stepMovie(step, copy, moviepatch.MatchOptions, "the create dialog's bot check box",
+		"an older check box or map list")
+}
+
+// stepChatRooms installs the class that opens the chat rooms the server marks as open by default,
+// game\Data\zz_Chat.snap: the copy's own chat movie (from Global.snap, which must be the build's) with the class added
+// (moviepatch.ChatRooms). Every player copy gets it: once per login it joins each room the server puts in a marked
+// category (blaze.AutoOpenCategoryMin) and opens its window minimised, without the focus; a server that marks no
+// room changes nothing.
+func (s *Setup) stepChatRooms(step, copy string) bool {
+	return s.stepMovie(step, copy, moviepatch.ChatRooms, "the chat rooms opened by default", "an older chat rooms class")
 }
 
 // stepMovie writes spec's added archive into the copy when it isn't byte for byte what moviepatch makes now.
@@ -44,7 +58,7 @@ func (s *Setup) stepMovie(step, copy string, spec moviepatch.Spec, what, older s
 		return s.report(Failed, step, fmt.Sprintf("%s is not the untouched build-854 file (docs/file_manifest.csv); "+
 			"delete %s and start again (it is extracted anew)", s.show(src), copy))
 	}
-	want, err := spec.Build(source)
+	want, err := spec.BuildMaps(source, moviepatch.CopyMaps(filepath.Dir(src)))
 	if err != nil {
 		return s.report(Failed, step, err.Error())
 	}
@@ -57,6 +71,13 @@ func (s *Setup) stepMovie(step, copy string, spec moviepatch.Spec, what, older s
 	why := older
 	if err != nil {
 		why = "not there"
+	} else if spec.MapList && moviepatch.MapListOnly(have, want) {
+		// Start-Client's front wrote the maps of the server a login went to (moviepatch.WriteMapList): current for a
+		// check; the setup puts the copy's own list back (the front writes the server's again at the next login)
+		if s.Check {
+			return s.report(OK, step, line+" (with the map list of the server logged in to last)")
+		}
+		why = "the map list of the server logged in to last"
 	}
 	if s.Check {
 		st := Stale

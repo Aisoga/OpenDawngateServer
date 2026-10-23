@@ -78,6 +78,18 @@ type Server struct {
 	// a match that formed with open seats (matchmaker.Match.Full false, after FillAfter) asks its host for bots
 	// up to the team size (createGame's fillTeams). Off = the open seats stay empty (B10b's 1 v 0).
 	MMBots bool
+	// Level is the level every hosted game loads (dgserver --map or --level, ParseLevel's form; level.go): createGame's
+	// level and a custom game's LevelId, unless the game's name picks another. Empty = HostedLevel.
+	Level string
+	// CustomLevels are the levels a custom game's creator may pick with a tag at the end of the game's name ("~#mm";
+	// dgserver --custom-maps, level.go) besides SM_Map_v5 and Level. Empty = only those two.
+	CustomLevels []string
+	// MapTrust names the clients without the tunnel that may play a map beside SM_Map_v5 (MAPGUARD, dgserver
+	// --trust-maps; mapguard.go). A client through the tunnel may when its Start-Client is this server's release. The
+	// zero value trusts none.
+	MapTrust MapTrust
+	// Release is the server's release name, which the map check's message to a player names ("" = not named).
+	Release string
 	// LeaderboardMinGames is the fewest games an account needs for the main menu's Leaderboard (LBFIX, dgserver
 	// --leaderboard-min-games; leaderboard.go). NewServer sets LeaderboardMinGames (10, the number the setup puts into the
 	// screen's text).
@@ -95,6 +107,11 @@ type Server struct {
 	// [assumed: their create dialog has no bot option]. A practice group's game (GameFlags 0x412: BotsFillTeams) gets
 	// its bots from the host's auto rule either way.
 	CustomBots bool
+	// Halloween shows the map's Halloween decoration in every hosted match (dgserver --halloween, Start-Server.ini
+	// halloween): createGame's levelFlags gets gmshost.LevelFlagHalloween, which the host loads its level with and sends
+	// in GamePrepareForStart; a client whose copy has zz_Halloween.snap then loads the holiday markerset. Off = level
+	// flags 0, the map as shipped.
+	Halloween bool
 	// Limits are the rate and count limits (dgserver --limits; limits.go): nil = off.
 	Limits *limits.Limiter
 	// SessionEnd is what a client hears before EndAccountSessions closes its connection (dgserver --session-end;
@@ -108,6 +125,8 @@ type Server struct {
 	// DISCORD2b: the live PvP queue message (SetDiscordQueue; nil = off)
 	discordQueue atomic.Pointer[DiscordQueue]
 	msgs         messaging // Messaging relay: online users, inboxes, rate limits (B10c)
+	// ROOMS2: the public chat rooms, their members and the view's subscribers (rooms.go)
+	rooms chatRooms
 	// G3: each persona's saved reconnect game id (BGOps::setGameID; reconnect.go)
 	reconnect reconnectIDs
 	// B13b: each online persona's presence (associationlists.go)
@@ -373,6 +392,7 @@ func (s *Server) ServeConn(c net.Conn) {
 	s.Log.Log(who, "connection from "+logging.Peer(c.RemoteAddr()))
 	conn := &Conn{nc: c, tun: tunnel.Local(c), gone: make(chan struct{})}
 	defer close(conn.gone)
+	defer s.forgetMapNotes(conn)
 	defer conn.endSession(true)
 	r := fire.NewReader(c)
 	gate := s.requestGate(conn) // requests per connection

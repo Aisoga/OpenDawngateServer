@@ -22,6 +22,12 @@ import (
 // (selectable), one named by --free-rotation is ShaperFreeRotation (selectable, with the rotation icon), every
 // other shaper that isn't testing-only is 0 (shown only under the client's "Any" filter, disabled). The offer id
 // is 0: the store has no PUII yet (B7b/B7c).
+//
+// Shapers the client can't show are left out (SHAPERPOOL): a shaper item without a title (content.Listed: no
+// longName string, so no collection entry and no art) is offered to nobody, owned or not, nor are its skins. In
+// build 854 that is, besides the five testing-only shapers, Weaver ("Rezen") and WeaponMaster: listed, the client
+// showed no card for them, but the host's Random and its phase-1 timer draw from this list, which made a ghost
+// (no model, no animations) of a human who chose Random.
 
 // ShaperSelect is dgserver's shaper select setup (--shaper-select, --free-rotation, --shaper-timers).
 type ShaperSelect struct {
@@ -89,9 +95,10 @@ func ShaperContent(c *content.Content, a store.Account, freeRotation []string, e
 		return free[strings.ToLower(it.Name)] || free[strings.ToLower(it.Asset)] || free[strings.ToLower(it.Shaper)] ||
 			free[strings.ToLower(it.Title)]
 	}
+	listed := c.Listed()
 	byClass := map[string]content.Item{} // PlayerClass -> its shaper item (the default skin is its asset)
 	for _, it := range c.Items {
-		if it.ItemType != content.ItemShaper || it.TestingOnly || it.Asset == "" {
+		if it.ItemType != content.ItemShaper || it.TestingOnly || it.Asset == "" || !listed(it) {
 			continue
 		}
 		byClass[it.Shaper] = it
@@ -151,6 +158,9 @@ func ShaperContent(c *content.Content, a store.Account, freeRotation []string, e
 		sk, ok2 := c.Item(uint32(skin))
 		if !ok1 || !ok2 || sh.ItemType != content.ItemShaper || sk.ItemType != content.ItemShaperSkin ||
 			sk.Shaper != sh.Shaper || !owned(a, sk) {
+			continue
+		}
+		if _, offered := byClass[sh.Shaper]; !offered { // a shaper the list leaves out (SHAPERPOOL)
 			continue
 		}
 		if e.SavedSkins == nil {

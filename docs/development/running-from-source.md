@@ -20,7 +20,7 @@ powershell -ExecutionPolicy Bypass -File re\scripts\play.ps1 [-ShaperSelect]
 
 One command does everything:
 
-1. It checks the setup. It rebuilds the match host and installs the new `dgsim.dll` when the sources changed, and it rewrites the CREATE GAME dialog's bot check box (`game\Data\zz_MatchOptions.snap`) and the bot profiles (`game\Data\zz_BotProfiles.snap`, in both the client and the host copy) when they are missing or older than the scripts that make them. For anything else missing, it prints the command to run.
+1. It checks the setup. It rebuilds the match host and installs the new `dgsim.dll` when the sources changed, and it rewrites the CREATE GAME dialog's bot check box (`game\Data\zz_MatchOptions.snap`), the chat's rooms opened by default (`game\Data\zz_Chat.snap`), the Halloween decoration (`game\Data\zz_Halloween.snap`, shown only when the server runs with `--halloween=on`) and the bot profiles (`game\Data\zz_BotProfiles.snap`, in both the client and the host copy) when they are missing or older than the scripts that make them. For anything else missing, it prints the command to run.
 2. It builds and starts the server, then starts the game in a normal window.
 3. When you close the game or press **Ctrl+C**, it cleans up: the game, the match hosts, the server and the packet capture. In a match, Ctrl+C closes the game after 10 seconds; a second Ctrl+C stops at once.
 

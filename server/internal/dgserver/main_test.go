@@ -281,6 +281,23 @@ func TestStartRejectsHostName(t *testing.T) {
 
 // B14: --kill-switches, --broadcast-flags and the default --broadcast-file; a login on a started server gets the kill
 // switches and the operator file's broadcast after loginPersona.
+// ONLINECOUNT: --online-count on/off and --online-count-every's floor.
+func TestOnlineCountFlags(t *testing.T) {
+	for _, c := range []struct {
+		on    string
+		every time.Duration
+		want  bool
+		bad   bool
+	}{{"on", 30 * time.Second, true, false}, {"OFF", time.Second, false, false}, {"maybe", 30 * time.Second, false, true},
+		{"on", 500 * time.Millisecond, true, true}} {
+		cfg := config{onlineCountEvery: c.every}
+		err := applyOnlineCount(&cfg, c.on)
+		if (err != nil) != c.bad || (!c.bad && cfg.onlineCount != c.want) {
+			t.Errorf("%+v: on %v, err %v", c, cfg.onlineCount, err)
+		}
+	}
+}
+
 func TestSystemMessages(t *testing.T) {
 	cfg := config{dataDir: "data", broadcastFlags: 4}
 	if err := applySystemFlags(&cfg, "WalletTopUp,CustomGames", map[string]bool{}); err != nil {
@@ -310,7 +327,7 @@ func TestSystemMessages(t *testing.T) {
 	}
 	logDir := t.TempDir()
 	in, err := start(config{bind: "127.0.0.1", certs: testCerts(t), logDir: logDir, killSwitches: cfg.killSwitches,
-		broadcastFile: file, broadcastFlags: 4})
+		broadcastFile: file, broadcastFlags: 4, onlineCount: true, onlineCountEvery: 30 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +345,7 @@ func TestSystemMessages(t *testing.T) {
 	send(0x28, 1, tdf.NewWriter().String("MAIL", "player@example.com").String("PASS", testPassword).String("TOKN", "").Int("TYPE", 0).Bytes())
 	send(0x6E, 2, tdf.NewWriter().String("PNAM", "player").Bytes())
 	var tags []string
-	for len(tags) < 3 {
+	for len(tags) < 4 {
 		bc.SetReadDeadline(time.Now().Add(5 * time.Second))
 		f, err := r.Next()
 		if err != nil {
@@ -352,7 +369,8 @@ func TestSystemMessages(t *testing.T) {
 		tags = append(tags, fmt.Sprintf("%d/%d %s", typ, tag, strings.Join(kv, " ")))
 	}
 	bc.Close()
-	want := []string{"300/0 0x2=1 0x8=1", "300/1 ", "300/2 0xb0000=1 0xb0001=6 0xb0002=604800 0xb0003=Server restart at 20:00 UTC"}
+	want := []string{"300/0 0x2=1 0x8=1", "300/1 ", "300/2 0xb0000=1 0xb0001=6 0xb0002=604800 0xb0003=Server restart at 20:00 UTC",
+		"300/2 0xb0000=100 0xb0001=4 0xb0002=604800 0xb0003=1 player online"} // ONLINECOUNT: the count after the operator's lines
 	if fmt.Sprint(tags) != fmt.Sprint(want) {
 		t.Errorf("system messages\n got %q\nwant %q", tags, want)
 	}
@@ -363,6 +381,8 @@ func TestSystemMessages(t *testing.T) {
 	for _, w := range []string{
 		"[stub] system messages (B14): kill switches 2 WalletTopUp, 8 CustomGames; broadcasts: 0 from --broadcast, then the lines of " + file,
 		`broadcasts: 1 "Server restart at 20:00 UTC" (flags 6); sent to 0 logged-in connections`,
+		"(read every 2s; edit it to announce, delete it to stop); the players-online count in the marquee (a change pushed at most every 30s)",
+		`broadcasts 1; online count "1 player online"`,
 	} {
 		if !strings.Contains(string(raw), w) {
 			t.Errorf("log lacks %q:\n%s", w, raw)

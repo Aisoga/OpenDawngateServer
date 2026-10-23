@@ -650,6 +650,21 @@ func TestCustomGameBots(t *testing.T) {
 	}
 }
 
+// dgserver --halloween: every hosted game's createGame carries levelFlags 1 (the Halloween decoration's bit), which the
+// host loads its level with and sends in GamePrepareForStart; without it the field is left out (TestCustomGameHosted).
+func TestHalloweenLevelFlags(t *testing.T) {
+	ts, host := newCustomHostServer(t, func(s *Server) { s.Halloween = true })
+	g := golden.Load(t)
+	a := ts.client("alpha@example.com")
+	wantReply(t, "create", a.gm(CmdGameManagerResetDedicatedServer, golden.Bytes(t, decodeCase(t, g, "resetdedicatedserver_custom_request"))))
+	cg := <-host.created
+	if cg.LevelFlags != gmshost.LevelFlagHalloween {
+		t.Errorf("createGame levelFlags %d, want %d", cg.LevelFlags, gmshost.LevelFlagHalloween)
+	}
+	wantLine(t, cg, `{"t":"createGame","gameId":1,"level":"SM_Map_v5","mode":"custom","seed":7919,"roster":[{"user":2000000001,`+
+		`"name":"alpha","index":0,"team":1,"noun":"","bot":false}],"descriptors":2,"levelFlags":1}`) // docs/data/host_control_examples.jsonl
+}
+
 // createRequest is the custom create request with its GameFlags attribute and, when name isn't "", its GNAM replaced.
 func createRequest(t *testing.T, g *golden.Data, flags, name string) []byte {
 	t.Helper()

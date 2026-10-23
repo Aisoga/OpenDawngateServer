@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "core/agents/leash.h"
+#include "core/wells/islands.h"
 #include "core/wells/wells.h"
 #include "death.h"
 #include "director.h"
@@ -78,6 +79,7 @@ struct Stats {
            pausedLeft = 0;
   double wellGold = 0, awardGold = 0, bountyGold = 0, vimGold = 0;  // granted, summed over the players
   unsigned grants = 0, grantFails = 0;
+  unsigned islandMarkers = 0, outOfReach = 0, hiddenFromBots = 0;  // MAPMINES
 } g_st;
 
 bool LogBudget() {
@@ -110,6 +112,41 @@ double OptionDouble(const char* key, double def) {
 char* Ui(void* sim) { return static_cast<char*>(sim) + matchsim::kUIData; }
 
 // ---- reading the level --------------------------------------------------------------------------------------------
+
+// MAPMINES: every island marker of the server level (a marker with navmeshMarkerData, cLabsMarker +0xA8:
+// {allowPlayersHere, allowNPCsHere}), in every markerset. False if the level can't be read.
+bool SehReadIslands(void* sim, std::vector<core::IslandMarker>* out) {
+  __try {
+    void* level = Field<void*>(sim, sim::kLevel);
+    char* ld = level ? Field<char*>(level, noun::kData) : nullptr;
+    if (!ld) return false;
+    void** setArr = Field<void**>(ld, level::kMarkersets);
+    const int ns = Field<int>(ld, level::kMarkersets + 4);
+    for (int s = 0; setArr && s < ns && s < 256; ++s) {
+      void* ms = setArr[s];
+      char* md = ms ? Field<char*>(ms, noun::kData) : nullptr;
+      if (!md) continue;
+      char* markers = Field<char*>(md, 0);
+      const int nm = Field<int>(md, 4);
+      for (int i = 0; markers && i < nm && i < 65536; ++i) {
+        char* m = markers + i * marker::kSize;
+        const unsigned char* nav = Field<const unsigned char*>(m, marker::kNavmeshMarkerData);
+        if (!nav) continue;
+        core::IslandMarker k;
+        const float* p = reinterpret_cast<const float*>(m + marker::kPos);
+        k.x = p[0];
+        k.y = p[1];
+        k.z = p[2];
+        k.players = nav[0] != 0;
+        k.npcs = nav[1] != 0;
+        out->push_back(k);
+      }
+    }
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "island markers")) {
+    return false;
+  }
+}
 
 // LevelGameplayTuning's well part and RewardsTuning.titanGoldRewardInterval into `t` (defaults: SM_Map_v5's values).
 bool SehReadTuning(void* sim, core::Tuning* t, void** followerNoun) {
@@ -739,7 +776,13 @@ int __cdecl LuaMinesForTeam(void* L) {
   std::vector<std::uint32_t> ids;
   if (Ours() && g_ready) {
     ++g_st.luaCalls;
-    ids = g_core.MinesForTeam(static_cast<int>(SehArgNumber(L, 1)), SehArgBool(L, 2));
+    const int team = static_cast<int>(SehArgNumber(L, 1));
+    const bool onlyUnlocked = SehArgBool(L, 2);
+    // MAPMINES: a well no player can reach is no mission and no team call (unless wells_bots_unreachable=1)
+    ids = g_core.MinesForTeam(team, onlyUnlocked, !g_opt.botsUnreachable);
+    if (!g_opt.botsUnreachable && g_st.outOfReach &&
+        g_core.MinesForTeam(team, onlyUnlocked, false).size() != ids.size())
+      ++g_st.hiddenFromBots;
   }
   SehPushIds(L, ids);
   return 1;
@@ -808,6 +851,7 @@ void Configure() {
   g_opt.captureAnnounceMinSeconds = OptionDouble("wells_capture_announce_min_s", g_opt.captureAnnounceMinSeconds);
   g_opt.damagePauseAny = HostOptionInt("wells_damage_pause_any", 0) != 0;  // D9c
   g_opt.hitLogLimit = HostOptionInt("wells_hit_log_limit", g_opt.hitLogLimit);
+  g_opt.botsUnreachable = HostOptionInt("wells_bots_unreachable", 0) != 0;  // MAPMINES
   g_trackerOk = CodeMatches(0x00880830, kIsPlayerPetBytes, sizeof kIsPlayerPetBytes) &&
                 CodeMatches(0x008E0FC0, kHasTakenDamageWithinBytes, sizeof kHasTakenDamageWithinBytes);
   if (g_opt.enabled && !g_trackerOk)
@@ -823,12 +867,13 @@ void Configure() {
   Log("wells (D9): %s; lock first %.0f s, after a capture %.0f s, worker period %.0f s (-1 = the tuning's), workers %d, "
       "gold %d, damage pause %d (D9c: %s), drop-off %.1f units from the centre, gather at the %s, transitions %.1f s, "
       "VimPer5 %d, trace %.0f s; D9b: workers owned by their well %d, the host's own MineUnderAttack %d (only with %.1f s "
-      "left)",
+      "left); MAPMINES: wells out of the players' reach %s the bots",
       g_opt.enabled ? "on" : "off ([host] wells = 0)", g_opt.lockFirst, g_opt.lockAfter, g_opt.workerPeriod,
       g_opt.workers, g_opt.gold, g_opt.damagePause,
       g_opt.damagePauseAny ? "any damage, D9's rule ([host] wells_damage_pause_any=1)" : "only an enemy player's hit",
       g_opt.dropOff, g_opt.gatherAtWell ? "well" : "spot", g_opt.transitionSeconds, g_opt.vimPer5, g_opt.traceSeconds,
-      g_opt.workerOwner, g_opt.captureAnnounce, g_opt.captureAnnounceMinSeconds);
+      g_opt.workerOwner, g_opt.captureAnnounce, g_opt.captureAnnounceMinSeconds,
+      g_opt.botsUnreachable ? "shown to ([host] wells_bots_unreachable=1)" : "hidden from");
 }
 
 bool Enabled() { return g_configured && g_opt.enabled; }
@@ -876,6 +921,26 @@ void OnLevelStarted(void* sim) {
     Log("wells: the node list could not be created; no wells");
     return;
   }
+  // MAPMINES: the island markers, and which wells stand on an island only NPCs may use
+  std::vector<core::IslandMarker> islands;
+  if (!SehReadIslands(sim, &islands)) Log("wells: MAPMINES: the level's island markers could not be read");
+  {
+    int both = 0, npcs = 0, players = 0, none = 0;
+    for (const core::IslandMarker& k : islands) {
+      if (k.players && k.npcs)
+        ++both;
+      else if (k.npcs)
+        ++npcs;
+      else if (k.players)
+        ++players;
+      else
+        ++none;
+    }
+    g_st.islandMarkers = static_cast<unsigned>(islands.size());
+    Log("wells: MAPMINES: %zu island markers (players and NPCs %d, NPCs only %d, players only %d, neither %d)",
+        islands.size(), both, npcs, players, none);
+  }
+  g_st.outOfReach = 0;
   std::vector<core::WellDef> defs;
   g_info.clear();
   for (size_t i = 0; i < wells.size(); ++i) {
@@ -885,6 +950,18 @@ void OnLevelStarted(void* sim) {
     d.team = w.team;
     d.pos = {w.pos[0], w.pos[1], w.pos[2]};
     d.displayIndex = static_cast<int>(i);  // marker order [assumed], as D1c-live
+    {
+      const core::IslandView v = core::ViewAt(w.pos[0], w.pos[1], islands, tu.captureRadius);
+      d.playersReach = !core::OutOfPlayersReach(w.pos[0], w.pos[1], islands, tu.captureRadius);
+      if (!d.playersReach) {
+        ++g_st.outOfReach;
+        Log("wells: MAPMINES: well %zu (team %d) at (%.1f, %.1f) stands on an island only NPCs may use (an NPC-only "
+            "island marker %.1f units from its centre, none for players within %.1f): out of the players' reach, %s "
+            "the bots' GetMinesForTeam; capture rules unchanged",
+            i, w.team, w.pos[0], w.pos[1], v.npcOnly, tu.captureRadius,
+            g_opt.botsUnreachable ? "still in ([host] wells_bots_unreachable=1)" : "left out of");
+      }
+    }
     float lo = 1e9f, hi = 0.f;
     for (const director::WellSpot& s : w.spots) {
       d.spots.push_back({s.pos[0], s.pos[1], s.pos[2]});
@@ -1030,6 +1107,7 @@ int Threats(int team, Threat* out, int max) {
   int n = 0;
   for (int i = 0; i < g_core.Count() && n < max; ++i) {
     if (g_core.Owner(i) != team || g_core.IsLocked(i) || static_cast<size_t>(i) >= g_info.size()) continue;
+    if (!g_opt.botsUnreachable && !g_core.PlayersReach(i)) continue;  // MAPMINES: nothing a bot could defend there
     const auto hit = g_workerHitAt.find(i);
     const bool attacked = hit != g_workerHitAt.end() && g_now - hit->second <= 5.0;
     const auto playerHit = g_workerPlayerHitAt.find(i);
@@ -1083,12 +1161,14 @@ void FormatStats(char* buf, std::size_t size) {
                 "%u, alive %zu, died %u, destroyed %u), 8C node writes %u in %u masks, gold granted: wells %.0f, award "
                 "%.0f, bounty %.0f, VimPer5 %.0f (grants %u, failed %u); announcer %u, bot getter calls %u; hits on "
                 "shapers %u (by enemy players %u), in an enemy ring %u (by enemy players %u); pauses: hit %u, contested "
-                "%u, left %u; exceptions %u",
+                "%u, left %u; MAPMINES: island markers %u, wells out of reach %u, left out of the bots' getter %u "
+                "times; exceptions %u",
                 g_ready ? "ready" : "not ready", g_st.ticks, g_st.states, g_st.captures, g_st.captureStarts,
                 g_st.combatEvents, g_st.spawns, g_st.spawnFails, g_workers.size(), g_st.workerDeaths, g_st.destroyed,
                 g_st.nodeWrites, g_st.sendMasks, g_st.wellGold, g_st.awardGold, g_st.bountyGold, g_st.vimGold,
                 g_st.grants, g_st.grantFails, g_st.announcer, g_st.luaCalls, g_st.hits, g_st.playerHits, g_st.ringHits,
-                g_st.ringPlayerHits, g_st.pausedHit, g_st.pausedContested, g_st.pausedLeft, g_st.exceptions);
+                g_st.ringPlayerHits, g_st.pausedHit, g_st.pausedContested, g_st.pausedLeft, g_st.islandMarkers,
+                g_st.outOfReach, g_st.hiddenFromBots, g_st.exceptions);
 }
 
 }  // namespace wells

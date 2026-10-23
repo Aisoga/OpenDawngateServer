@@ -216,6 +216,9 @@ func registerMatchmaking(s *Server) {
 		if err == nil && r.Server.MMRefuse {
 			err = errors.New("refused by --mm-refuse (test aid)")
 		}
+		if err == nil && r.Server.mapQueueRefused(r, t) { // MAPGUARD (mapguard.go)
+			return nil
+		}
 		if err == nil {
 			err = r.Server.MM.Add(t)
 		}

@@ -257,9 +257,7 @@ func (s *Server) discordQueueSync(started []MatchStarted, formed bool) {
 	} else if s.mm.forming > 0 {
 		return
 	}
-	q := s.discordQueue.Load()
-	if q == nil {
-		return
-	}
-	q.Update(QueueView{State: s.MM.Snapshot(gmshost.ModePvP), Bots: s.Hosts != nil && s.MMBots}, started)
+	v := QueueView{State: s.MM.Snapshot(gmshost.ModePvP), Bots: s.Hosts != nil && s.MMBots}
+	s.roomQueueNews(v, started) // ROOMS2: the same news in the queue chat room (rooms.go)
+	s.discordQueue.Load().Update(v, started)
 }

@@ -178,6 +178,8 @@ type Front struct {
 type frontSession struct {
 	b Bookmark
 	c *tunnel.Client
+	// facts are the gateway's facts from the connect's probe (tunnel.FactMaps: the create dialog's maps; nil: none)
+	facts map[string]string
 
 	mu         sync.Mutex
 	blaze, qos int // the server's Blaze port (from its redirector) and QoS port (from its preAuth); 0: not known
@@ -738,7 +740,7 @@ func (f *Front) connect(b Bookmark) (*frontSession, error) {
 		f.wantList()
 		return nil, err
 	}
-	s := &frontSession{b: b}
+	s := &frontSession{b: b, facts: r.facts}
 	s.c = &tunnel.Client{Log: f.Log, Gateway: gw, Pin: served, TunnelIP: f.TunnelIP, External: true, DialTimeout: f.ConnectTimeout,
 		Release: f.releaseFor(b, r.version)}
 	s.c.Deliver = f.deliverFor(s)

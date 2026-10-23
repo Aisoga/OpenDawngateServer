@@ -267,6 +267,7 @@ func (bc *blazeConn) login(fr fire.Frame, raw []byte) {
 		bc.errorReply(fr, asFrontError(err))
 		return
 	}
+	f.writeMapList(s) // the create dialog's maps on this server, before the game can open the dialog
 	up, err := bc.openBlaze(s, true)
 	if err != nil {
 		bc.errorReply(fr, asFrontError(err))

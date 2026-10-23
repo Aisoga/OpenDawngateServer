@@ -1177,6 +1177,19 @@ try {
         if ($HostOptions) { $stubArgs += "`"--gms-options=$HostOptions`"" }
         Say "GMS: dgserver starts the host per game: --gms-dir $GmsHostPath --gms-args '$GmsHostArgs'$(if ($HostOptions) { " --gms-options '$HostOptions'" })"
     }
+    # MAPGUARD: the server's map check trusts the session's client copies that hold MM_Map_v3's archive
+    # (setup_lane.py installs it), by the address each connects from; a copy
+    # without it is kept out of MM_Map_v3's games as a player's would be. -ServerArgs '--trust-maps=...' overrides it
+    # (the last flag wins). Through -Tunnel the server goes by the tunnel client's release instead.
+    $mapTrust = @()
+    $mapCopies = @(@{ Dir = $GameDir; Addr = $(if ($LanAddr) { $LanAddr } else { $LaneAddr }) })
+    if ($Second) { $mapCopies += @{ Dir = $GameDir2; Addr = $Second.Bind } }
+    foreach ($mc in $mapCopies) {
+        if (Test-Path (Join-Path $mc.Dir 'game\Data\zz_MM_Map_v3.snap')) { $mapTrust += $mc.Addr }
+    }
+    $trustFlag = "--trust-maps=$(if ($mapTrust.Count) { $mapTrust -join ',' } else { 'none' })"
+    $stubArgs += $trustFlag
+    Say "map check: $trustFlag (the session's copies with zz_MM_Map_v3.snap)"
     if ($ServerArgs) {
         # D8-live test aid: extra dgserver flags (e.g. --owned starter)
         $stubArgs += @($ServerArgs -split '\s+' | Where-Object { $_ })

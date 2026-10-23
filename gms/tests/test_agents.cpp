@@ -319,6 +319,99 @@ GMS_TEST(TowerOrderMinionsFirstUnlessDefended) {
   CHECK(v[0].id == 4 && v[1].id == 1);
 }
 
+// ---- TOWERSTICK: a tower keeps the minion it shoots ----
+
+GMS_TEST(TowerStickKeepsMinionUntilGone) {
+  using namespace gms::agents;
+  // the player's report: the Binding shot the first minion in (m1, 20 units: its passive's OnTargetEnterVolume), then
+  // took a nearer one (m2) or one a call for help named (m3) without killing m1
+  AggroCandidate m1 = Cand(1, 20.f, 0), m2 = Cand(2, 8.f, 1), m3 = Cand(3, 15.f, 2);
+  m1.sticky = true;               // what the tower shoots
+  m2.otherReportAgeMs = 300;      // an allied minion it hits called for help
+  m3.playerReportAgeMs = 500;     // it hit an allied shaper near the tower
+  AggroCandidate s = Cand(4, 5.f, 3);  // an enemy shaper, nearest, not defended
+  s.isPlayer = true;
+  std::vector<AggroCandidate> v = {m1, m2, m3, s};
+  OrderAggro(&v, kAggroTower, kCallForHelpTimeMs, true);  // TOWERAGGRO's order: the player's report first
+  CHECK(Ids(v) == (std::vector<unsigned>{3, 1, 2, 4}));
+  OrderAggro(&v, kAggroTower, kCallForHelpTimeMs, true, true);  // TOWERSTICK: the current target first
+  CHECK(Ids(v) == (std::vector<unsigned>{1, 3, 2, 4}));
+  // without the reports the old order took the nearer one (the first minion in wasn't the update's best target)
+  for (auto& c : v) c.playerReportAgeMs = c.otherReportAgeMs = -1;
+  for (auto& c : v) c.sticky = false;
+  OrderAggro(&v, kAggroTower, kCallForHelpTimeMs, true);
+  CHECK(v[0].id == 2);
+  for (auto& c : v) c.sticky = c.id == 1;
+  OrderAggro(&v, kAggroTower, kCallForHelpTimeMs, true, true);
+  CHECK(Ids(v) == (std::vector<unsigned>{1, 2, 3, 4}));
+  // m1 dies (off the list): the nearer next, the shaper last
+  v.erase(v.begin());
+  OrderAggro(&v, kAggroTower, kCallForHelpTimeMs, true, true);
+  CHECK(Ids(v) == (std::vector<unsigned>{2, 3, 4}));
+}
+
+GMS_TEST(TowerStickYieldsToDefendAndTaunt) {
+  using namespace gms::agents;
+  AggroCandidate m1 = Cand(1, 20.f, 0), m2 = Cand(2, 8.f, 1);
+  m1.sticky = true;
+  AggroCandidate s = Cand(3, 25.f, 2);
+  s.isPlayer = true;
+  std::vector<AggroCandidate> v = {m1, m2, s};
+  OrderAggro(&v, kAggroTower, kCallForHelpTimeMs, true, true);
+  CHECK(Ids(v) == (std::vector<unsigned>{1, 2, 3}));
+  // the defend rule (the shaper hit an allied shaper within the tower's range) still switches
+  for (auto& c : v) c.defend = c.id == 3;
+  OrderAggro(&v, kAggroTower, kCallForHelpTimeMs, true, true);
+  CHECK(v[0].id == 3);
+  bool first = false;
+  CHECK(AggroDecide(v[0], v[1], true, kCallForHelpTimeMs, true, true, &first) == kRuleDefend && first);
+  // a taunt before everything
+  for (auto& c : v) c.defend = false;
+  for (auto& c : v) c.taunting = c.id == 2;
+  OrderAggro(&v, kAggroTower, kCallForHelpTimeMs, true, true);
+  CHECK(v[0].id == 2);
+  // a sticky shaper doesn't hold against minions (stickiness within a class), and among shapers the old rules stay
+  for (auto& c : v) c.taunting = false;
+  for (auto& c : v) c.sticky = c.id == 3;
+  OrderAggro(&v, kAggroTower, kCallForHelpTimeMs, true, true);
+  CHECK(v[2].id == 3);
+  AggroCandidate s1 = Cand(5, 10.f, 0), s2 = Cand(6, 12.f, 1);
+  s1.isPlayer = s2.isPlayer = true;
+  s1.sticky = true;
+  s2.playerReportAgeMs = 100;
+  CHECK(AggroDecide(s2, s1, true, kCallForHelpTimeMs, true, true, &first) == kRulePlayerReport && first);
+}
+
+GMS_TEST(TowerStickRulesAndChanges) {
+  using namespace gms::agents;
+  AggroCandidate a = Cand(1, 20.f, 0), b = Cand(2, 8.f, 1);
+  bool first = true;
+  CHECK(AggroDecide(a, b, true, kCallForHelpTimeMs, true, false, &first) == kRuleNearer && !first);
+  a.sticky = true;
+  b.playerReportAgeMs = 0;
+  CHECK(AggroDecide(b, a, true, kCallForHelpTimeMs, true, false, &first) == kRulePlayerReport && first);
+  CHECK(AggroDecide(b, a, true, kCallForHelpTimeMs, true, true, &first) == kRuleStickyFirst && !first);
+  // stickFirst needs strict mode (the minions' and other agents' orders don't change)
+  CHECK(AggroDecide(b, a, true, kCallForHelpTimeMs, false, true, &first) == kRulePlayerReport && first);
+  CHECK(std::string(AggroRuleName(kRuleStickyFirst)) == "the current target (stick)");
+  CHECK(std::string(AggroRuleName(99)) == "?");
+  // the current target: the shot target while on the list, else the last best target; without stick the best target
+  CHECK(TowerStickyId(true, 7, true, 9) == 7);
+  CHECK(TowerStickyId(true, 7, false, 9) == 9);
+  CHECK(TowerStickyId(true, 0, false, 9) == 9);
+  CHECK(TowerStickyId(false, 7, true, 9) == 9);
+  // the change classes and the broken case
+  CHECK(ClassifyTowerChange(0, 5, false) == kTowerKeep);
+  CHECK(ClassifyTowerChange(5, 5, true) == kTowerKeep);
+  CHECK(ClassifyTowerChange(5, 6, false) == kTowerOldGone);
+  CHECK(ClassifyTowerChange(5, 6, true) == kTowerOffLiving);
+  CHECK(TowerStickBroken(kTowerOffLiving, false, false, 6));
+  CHECK(!TowerStickBroken(kTowerOffLiving, false, true, 6));   // for a shaper (defend, taunt)
+  CHECK(!TowerStickBroken(kTowerOffLiving, true, false, 6));   // a shaper left for a minion
+  CHECK(!TowerStickBroken(kTowerOldGone, false, false, 6));    // the old one died or left
+  CHECK(!TowerStickBroken(kTowerOffLiving, false, false, 0));  // nothing new
+}
+
 GMS_TEST(LeashOwnAndTarget) {
   using namespace gms::agents;
   LeashOptions o;  // 15 own, +4 reach, home 6, 3 s chase

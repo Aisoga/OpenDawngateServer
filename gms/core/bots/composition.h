@@ -63,10 +63,16 @@ struct WantedSeat {
   int lane = kLaneNone;
 };
 
-// The default 5v5 setup, in the order the seats are filled.
-inline std::vector<WantedSeat> DefaultSetup() {
+// MAPHOST: what a Hunter seat becomes on a level without jungle camps (MM_Map_v3: one lane, no camps; HUNTERROUTE's
+// steps and the Farm plan's MoveToNextCamp find nothing, so a bot Hunter stood in its base at level 1 for the whole
+// match, MAPLEVEL1). The original's rules for that map aren't known; the host's default [assumed]: a fifth laner, a
+// flex (Tactician) seat at the bottom.
+inline WantedSeat NoJungleSeat() { return {kRoleTactician, kLaneBottom}; }
+
+// The default 5v5 setup, in the order the seats are filled; `jungle` false: the Hunter's seat is NoJungleSeat().
+inline std::vector<WantedSeat> DefaultSetup(bool jungle = true) {
   return {{kRoleGladiator, kLaneTop},    {kRoleTactician, kLaneTop},  {kRoleGladiator, kLaneBottom},
-          {kRolePredator, kLaneBottom},  {kRoleHunter, kLaneBottom}};
+          {kRolePredator, kLaneBottom},  jungle ? WantedSeat{kRoleHunter, kLaneBottom} : NoJungleSeat()};
 }
 
 // A BotClass the composition may pick for a role: `roleOverride` says the seat's mRole is set to the wanted role
@@ -280,10 +286,11 @@ inline std::vector<int> ParseDropOrder(const std::string& text) {
 }
 
 // The wanted seats of a team: the default setup minus the known humans' roles, cut to `botSeats` by `dropOrder`, or
-// (more seats than entries) extended by repeating the setup. Entries keep the default order.
+// (more seats than entries) extended by repeating the setup. Entries keep the default order. `jungle` false (MAPHOST):
+// DefaultSetup(false), no Hunter seat.
 inline std::vector<WantedSeat> WantedSeats(int botSeats, const std::vector<int>& humanRoles,
-                                           const std::vector<int>& dropOrder) {
-  std::vector<WantedSeat> wanted = DefaultSetup();
+                                           const std::vector<int>& dropOrder, bool jungle = true) {
+  std::vector<WantedSeat> wanted = DefaultSetup(jungle);
   for (int role : humanRoles) {
     if (role < 0) continue;
     for (size_t i = 0; i < wanted.size(); ++i)
@@ -303,7 +310,7 @@ inline std::vector<WantedSeat> WantedSeats(int botSeats, const std::vector<int>&
     }
   }
   if (static_cast<int>(wanted.size()) > botSeats) wanted.resize(static_cast<size_t>(botSeats));
-  const std::vector<WantedSeat> base = DefaultSetup();
+  const std::vector<WantedSeat> base = DefaultSetup(jungle);
   for (size_t i = 0; static_cast<int>(wanted.size()) < botSeats; ++i) wanted.push_back(base[i % base.size()]);
   return wanted;
 }
@@ -378,10 +385,11 @@ inline std::vector<ComposedSeat> ComposeTeam(const std::vector<WantedSeat>& want
 // then the second Gladiator. Output order = top Gladiator, top flex, bottom Gladiator, bottom flex, Hunter.
 // DESECBOT: the flex classes are TacticianClasses() (the five above and PC_Desecrator_Tactician, as far as the copy
 // has it); `tacticianClass` (a [host] bot_tacticians pin) takes the first flex seat as a Tactician.
+// MAPHOST: `jungle` false (a level without camps): no Hunter, a third flex seat at the bottom in the Hunter's place.
 inline std::vector<ComposedSeat> ComposeTeamFree(int seats, const std::set<std::string>& available, unsigned seed,
                                                  const std::vector<int>& humanRoles = {},
                                                  const std::string& hunterClass = "",
-                                                 const std::string& tacticianClass = "") {
+                                                 const std::string& tacticianClass = "", bool jungle = true) {
   std::mt19937 rng(seed);
   std::vector<std::string> glad = {"PC_HighHuntress", "PC_Creature"};
   std::vector<std::string> flex = TacticianClasses();
@@ -404,7 +412,7 @@ inline std::vector<ComposedSeat> ComposeTeamFree(int seats, const std::set<std::
   for (size_t i = 0; i < glad.size(); ++i)
     if (have(glad[i])) g.push_back(seat(glad[i], kRoleGladiator, i == 0 ? kLaneTop : kLaneBottom));
   for (const std::string& c : flex) {
-    if (f.size() >= 2) break;
+    if (f.size() >= (jungle ? 2u : 3u)) break;
     if (!have(c)) continue;
     ComposedSeat s = seat(c, kRoleTactician, f.empty() ? kLaneTop : kLaneBottom);
     if (c == "PC_Warden" && c != pinned && (rng() & 1u)) {
@@ -415,8 +423,13 @@ inline std::vector<ComposedSeat> ComposeTeamFree(int seats, const std::set<std::
     }
     f.push_back(s);
   }
-  if (!hunterClass.empty() && have(hunterClass)) h.push_back(seat(hunterClass, kRoleHunter, kLaneBottom));  // HUNTERBOT
-  else if (have("PC_Artificer")) h.push_back(seat("PC_Artificer", kRoleHunter, kLaneBottom));
+  if (!jungle) {
+    // MAPHOST: no Hunter; a human Hunter takes nothing
+  } else if (!hunterClass.empty() && have(hunterClass)) {
+    h.push_back(seat(hunterClass, kRoleHunter, kLaneBottom));  // HUNTERBOT
+  } else if (have("PC_Artificer")) {
+    h.push_back(seat("PC_Artificer", kRoleHunter, kLaneBottom));
+  }
   // BOTTEAM: a human of known role takes that role's seat (a human Hunter: no bot Hunter; a human Gladiator: the bottom
   // Gladiator's seat; a human Tactician or Predator: a flex seat), as WantedSeats does for the fixed setup
   for (int role : humanRoles) {
@@ -439,7 +452,7 @@ inline std::vector<ComposedSeat> ComposeTeamFree(int seats, const std::set<std::
   }
   std::vector<ComposedSeat> out;
   auto add = [&](const std::vector<ComposedSeat>& v, size_t i) { if (i < v.size()) out.push_back(v[i]); };
-  add(g, 0); add(f, 0); add(g, 1); add(f, 1); add(h, 0);
+  add(g, 0); add(f, 0); add(g, 1); add(f, 1); add(h, 0); add(f, 2);
   if (static_cast<int>(out.size()) > seats) out.resize(static_cast<size_t>(seats));
   return out;
 }

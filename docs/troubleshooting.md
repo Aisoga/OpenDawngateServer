@@ -127,6 +127,9 @@ The game copy and the server don't match. This happens, for example, when the se
 **Nothing happens after PRACTICE DAWNGATE, and the envelope at the bottom right shows "1"**
 The server couldn't start a match. Click the envelope, then the notification: it says "Game creation failed - no servers available". Check the server window and its log in `Dawngate-Data\logs`. Ten matches at once is the default maximum.
 
+**"Dawngate is unable to continue. Please close the client and re-run the launcher. Error Code: 01310004" when you join a game or queue**
+The game is on the map MM_Map_v3 (the browser shows it as **[MM] <name>**), and the server can't be sure your game has that map's files. The *System* line in the chat says why: your `Start-Client.exe` is another release than the server's, or you're connected without the tunnel. Close the game and start it with the `Start-Client.exe` release the server runs; it makes the files at its start. A game you create on such a server is played on The Dawngate instead, with a *System* line saying so. Operators: the server's log has a `map check` line for each refused player; `--trust-maps` names players connecting without the tunnel whose games have the files ([hosting.md](hosting.md#the-map)).
+
 **"Failed to connect to game server" about 20 seconds after the click**
 The match host ended before it was ready. Its log is in `Dawngate-Data\logs\hosts\<match>\dgsim.log`.
 

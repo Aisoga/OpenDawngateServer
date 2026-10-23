@@ -302,6 +302,13 @@ func registerReconnect(s *Server) {
 		if hg.custom != nil { // B15: the game browser's JOIN GAME / SPECTATE GAME, or a reconnect into a custom game
 			return r.Server.joinCustomGame(r, hg)
 		}
+		// MAPGUARD: the player may have come back with another copy (mapguard.go)
+		hg.mu.Lock()
+		level, gname := r.Server.gameLevel(hg.game), hg.game.Name
+		hg.mu.Unlock()
+		if r.Server.mapJoinRefused(r, gid, gname, level) {
+			return nil
+		}
 		g, players, hp, ok := hg.rejoin(r.Conn, me)
 		if !ok {
 			r.Server.Log.Logf("blaze", "   joinGame: player %d is not on game %d's roster (or it ended)", me, gid)

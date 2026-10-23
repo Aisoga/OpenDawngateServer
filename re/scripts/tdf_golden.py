@@ -69,6 +69,16 @@ The LBFIX cases answer the requests the public server left unanswered: Stats::ge
 rows, and empty), GpsContentController::filePetition's and Rooms::selectCategoryUpdates' replies, written from the
 member tables, and the error reply frame for a request without a handler; the leaderboard request is rebuilt from the
 public server's log (49 bytes), the player report request from a static reading of its builder with made-up names.
+The ROOMS1 cases are the Social panel's public chat rooms: the view, category
+and room notifications the client waits for after selectViewUpdates and selectCategoryUpdates, joinRoom's and
+leaveRoom's replies, the member and population notifications and a room chat line's NotifyMessage, written from the
+member tables with made-up names and ids; their requests (selectViewUpdates, selectCategoryUpdates for the view,
+joinRoom, leaveRoom, toggleJoinedRoomNotifications, a room chat line's sendMessage) are rebuilt from a static reading
+of the client's senders (no live session yet: ROOMS2).
+The ROOMS3 cases are a room the client opens by itself at the login (our chat-movie mod joins every room in a
+category with CTID 1000 or more): the second category's RoomCategoryAdded, the Matchmaking room's RoomAdded, the
+joinRoom reply and the leaveRoom reply with CTID 1000, and the mod's joinRoom request (the double-click's call with
+the category it was told).
 
 Usage:
     .venv/Scripts/python -I re/scripts/tdf_golden.py [out_dir]
@@ -1056,6 +1066,23 @@ B14_CASES = {
     "notifymessage_broadcast_notification": lambda: b14_system_message(3, 2, B14_BROADCAST_ATTRS),
     "useradded_wins_notification": lambda: b14_user_added(B5_UID, B5_PID, B5_NAME, 0, 3),
     "memberdata_notification": lambda: b14_member_data(B5_PID, 0, 3),
+    # ONLINECOUNT: the players-online count, a broadcast of our own (id 100, the marquee only, after a login's list)
+    "notifymessage_onlinecount_notification": lambda: b14_system_message(4, 2, [
+        (0xB0000, "100"), (0xB0001, "4"), (0xB0002, "604800"), (0xB0003, "2 players online, 1 in a match")]),
+}
+
+# MAPGUARD: the map check's message to a player kept out of a game on MM_Map_v3 (server/internal/blaze/mapguard.go): a
+# broadcast of our own, id 101, display flags 3 (2 a "System" chat line, 1 the main menu's notification), 600 s, the
+# reason in the server's words; here a join from the browser by a client without the tunnel, server release "rel-A".
+# The error reply beside it is the frame joingame_mapcheck_reply (GameManager joinGame, error 0x0131: the client's
+# BlazeErrors line 0x01310004).
+MAPGUARD_REFUSED_TEXT = (
+    "You can't join \"[MM] Custom 1\": it plays on the map MM_Map_v3, and your copy of Dawngate may not have that "
+    "map's files (you are connected without the tunnel, so the server can't check your copy). Close the game and "
+    "start it again with Start-Client.exe of this server's release (rel-A), which adds them.")
+MAPGUARD_CASES = {
+    "notifymessage_mapcheck_notification": lambda: b14_system_message(1, 2, [
+        (0xB0000, "101"), (0xB0001, "3"), (0xB0002, "600"), (0xB0003, MAPGUARD_REFUSED_TEXT)]),
 }
 
 # G3: rejoining a running hosted game (server/internal/blaze/reconnect.go), written from the member tables: a hosted
@@ -1132,6 +1159,7 @@ G3_CASES = {
 B15_LEVEL = "2490188286"  # 0x946D41FE: SM_Map_v5, MatchOptionsUI's only map (.data 0x013E2B7C)
 B15_ATTRS = [("ExpectedPlayerCount", "10"), ("GameFlags", "2"), ("GameOwnerId", "77359401"),
              ("GameOwnerName", "player"), ("GameType", "1"), ("LevelId", B15_LEVEL)]
+MAPLEVEL1_LEVEL = "1108206894"  # 0x420DE52E: FNV-1 of "mm_map_v3.level", a server hosting MM_Map_v3 (dgserver --level)
 B15_JOIN_TEAM = 0xC4063947  # the roster manager's Join Team request to the admin (0x006A2D30)
 B15_AUTH_TOKEN = "1A2B3C4D"
 
@@ -1156,15 +1184,16 @@ B15_ROSTERS = b15_rosters(B5_PID, 2, [[B5_PID, 0, 0, 0, 0], [B11_SECOND_PID, 0, 
 B15_ROSTER_ATTRS = [("RosterLockedKey", "0"), ("SpectatorPlayerIdList", ""), ("TeamRostersKey", B15_ROSTERS)]
 
 
-def b15_attrs(extra=()):
+def b15_attrs(extra=(), level=B15_LEVEL):
     # the client searches attribute maps with _stricmp over the wire order (G3): keys sorted case-insensitively
-    return sorted(B15_ATTRS + [("ServerBuildVersion", B10A_VERSION)] + list(extra), key=lambda kv: kv[0].lower())
+    attrs = [(k, level if k == "LevelId" else v) for k, v in B15_ATTRS]
+    return sorted(attrs + [("ServerBuildVersion", B10A_VERSION)] + list(extra), key=lambda kv: kv[0].lower())
 
 
-def b15_game(w):
+def b15_game(w, level=B15_LEVEL):
     """Blaze::GameManager::ReplicatedGameData 0x014615A8 of custom game 1 in its lobby (PRE_GAME), hosted (PGID)."""
     w.list("ADMN", INT, [B5_PID])
-    w.map("ATTR", STRING, STRING, b15_attrs())
+    w.map("ATTR", STRING, STRING, b15_attrs(level=level))
     w.list("CAP", INT, [15, 0])
     w.int("GID", 1).string("GNAM", "Custom 1").int("GSET", 0x505).int("GSTA", 0x82)
     w.list("HNET", STRUCT, [tdf.UnionItem(2, ip_pair(tdf.Writer(), B8_GMS, B8_GMS))])
@@ -1192,10 +1221,10 @@ def b15_player(pid, name, slot, team, state, attrs=()):
     return p.int("UID", pid)
 
 
-def b15_setup(players, dctx):
+def b15_setup(players, dctx, level=B15_LEVEL):
     w = tdf.Writer()
     with w.struct("GAME"):
-        b15_game(w)
+        b15_game(w, level)
     w.list("PROS", STRUCT, players)
     with w.union("REAS", 0):  # DatalessSetupContext
         with w.struct("VALU"):
@@ -1203,13 +1232,13 @@ def b15_setup(players, dctx):
     return bytes(w)
 
 
-def b15_browser_game(w):
+def b15_browser_game(w, name="Custom 1", level=B15_LEVEL):
     """Blaze::GameManager::GameBrowserGameData 0x01461800 of custom game 1 in the game browser: both players (the
     creator's join completed), region "na", the team sizes in TINF."""
     w.list("ADMN", INT, [B5_PID])
-    w.map("ATTR", STRING, STRING, b15_attrs())
+    w.map("ATTR", STRING, STRING, b15_attrs(level=level))
     w.list("CAP", INT, [15, 0])
-    w.int("GID", 1).string("GNAM", "Custom 1").int("GSET", 0x505).int("GSTA", 0x82)
+    w.int("GID", 1).string("GNAM", name).int("GSET", 0x505).int("GSTA", 0x82)
     w.list("HNET", STRUCT, [tdf.UnionItem(2, ip_pair(tdf.Writer(), B8_GMS, B8_GMS))])
     w.int("HOST", 3000000001).int("NTOP", 1).list("PCNT", INT, [2, 0]).int("PRES", 1).string("PSAS", "na")
     rost = [tdf.Writer().int("EXID", 0).int("LOC", B5_LOCALE).string("NAME", B5_NAME).int("PID", B5_PID).int("STAT", 4)
@@ -1222,12 +1251,12 @@ def b15_browser_game(w):
     return w.string("VSTR", B10A_VERSION)
 
 
-def b15_list_update(with_game):
+def b15_list_update(with_game, name="Custom 1", level=B15_LEVEL):
     w = tdf.Writer().int("DONE", 1).int("GLID", 1)
     if with_game:
         m = tdf.Writer().int("FIT", 100)
         with m.struct("GAM"):
-            b15_browser_game(m)
+            b15_browser_game(m, name, level)
         w.list("UPDT", STRUCT, [m])
     else:
         w.list("REMV", INT, [1])
@@ -1243,6 +1272,9 @@ def b15_player_joining():  # NotifyPlayerJoining 0x012E7B98: GID, PDAT
 
 B15_CASES = {
     "notifygamesetup_custom_notification": lambda: b15_setup([b15_player(B5_PID, B5_NAME, 0, 0, 2)], 0),
+    # MAPLEVEL1: the same game on a server hosting MM_Map_v3 (dgserver --level): LevelId = FNV-1("mm_map_v3.level")
+    "notifygamesetup_custom_mm_notification": lambda: b15_setup([b15_player(B5_PID, B5_NAME, 0, 0, 2)], 0,
+                                                                MAPLEVEL1_LEVEL),
     "notifygamesetup_customjoin_notification": lambda: b15_setup(
         [b15_player(B5_PID, B5_NAME, 0, 0, 4), b15_player(B11_SECOND_PID, B11_SECOND_NAME, 1, 1, 2)], 1),
     "notifyplayerjoining_custom_notification": lambda: b15_player_joining(),
@@ -1257,6 +1289,9 @@ B15_CASES = {
     "getgamelist_reply": lambda: bytes(tdf.Writer().int("GLID", 1).int("MAXF", 100).int("NGD", 1)),
     "notifygamelistupdate_notification": lambda: b15_list_update(True),
     "notifygamelistupdate_removed_notification": lambda: b15_list_update(False),
+    # MAPPICK: the browser's row of a custom game on MM_Map_v3 (a name tag "~#mm", or dgserver --map MM_Map_v3): its
+    # LevelId, which the client's Map column can't name (one-entry table at 0x013F3A78), and the map's label in GNAM
+    "notifygamelistupdate_mm_notification": lambda: b15_list_update(True, "[MM] Custom 1", MAPLEVEL1_LEVEL),
 }
 
 
@@ -1767,6 +1802,89 @@ LBFIX_CASES = {
 }
 
 
+# ROOMS1: the Social panel's public chat rooms (component 0x15). The client asks only selectViewUpdates (UPDT 1, at the
+# login), selectCategoryUpdates (VWID 0, then the view's VWID; RoomsAPI 0x00C96430), joinRoom, leaveRoom,
+# toggleJoinedRoomNotifications and selectPseudoRoomUpdates; everything else is pushed. A view whose NAME starts with
+# "allRooms" is the one the rooms manager subscribes to (0x00AAAD60). Made-up ids and names: view 1, category 1, rooms
+# 1 and 2. Classes: RoomViewData 0x012FF778, RoomCategoryData 0x012FF7D8, RoomData 0x012FF8C8, RoomMemberData
+# 0x012FF9D0, JoinRoomResponse 0x012FFB70, LeaveRoomResponse 0x012FFBD0, RoomMemberRemoved 0x01300038,
+# RoomsPopulationUpdate 0x01300010, RoomRemoved 0x01300028, SelectCategoryUpdatesResponse 0x012FFAC0.
+ROOMS1_VIEW, ROOMS1_CATEGORY, ROOMS1_ROOM, ROOMS1_ROOM2 = 1, 1, 1, 2
+# ROOMS3: the category of the rooms the client opens by itself (rooms.go AutoOpenCategoryID, AutoRooms.as
+# AUTO_CATEGORY_MIN) and the default's open room, Matchmaking (id 3)
+ROOMS3_CATEGORY, ROOMS3_ROOM, ROOMS3_NAME = 1000, 3, "Matchmaking"
+ROOMS1_ROOM_OBJ = (0x15, 1)  # the room ObjectType (.data 0x01461144, copied to 0x01BEE294 by 0x01191F00)
+ROOMS1_TEXT = "hello room"
+ROOMS1_CHAT_ATTRS = [(0xFF02, ROOMS1_TEXT), (0xB0003, "0"), (0xB0009, ROOMS1_TEXT)]  # 0xB0003: channel kind 0 (room)
+
+
+def rooms1_view(w):  # RoomViewData: DISP, NAME (prefix "allRooms"), VWID
+    return w.string("DISP", "Chat rooms").string("NAME", "allRooms").int("VWID", ROOMS1_VIEW)
+
+
+def rooms1_category(w, ctid=ROOMS1_CATEGORY):  # RoomCategoryData: CAPA (the rooms' capacity when CAP is -1), CTID,
+    # DESC, DISP, FLAG 0, NAME, VWID; ROOMS3's category of the rooms opened at the login has its own texts
+    desc, disp, name = ("Public chat rooms opened at the login", "Open", "open") if ctid == ROOMS3_CATEGORY \
+        else ("Public chat rooms", "Public", "public")
+    w.int("CAPA", 50).int("CTID", ctid).string("DESC", desc).string("DISP", disp)
+    return w.int("FLAG", 0).string("NAME", name).int("VWID", ROOMS1_VIEW)
+
+
+def rooms1_room(w, rmid, name, popu, ctid=ROOMS1_CATEGORY):  # RoomData: CAP, CTID, NAME, POPU, PSWD "" (no lock), RMID
+    return w.int("CAP", 50).int("CTID", ctid).string("NAME", name).int("POPU", popu).string("PSWD", "") \
+        .int("RMID", rmid)
+
+
+def rooms1_member(w, bzid, rmid):  # RoomMemberData: BZID (the persona id), RMID
+    return w.int("BZID", bzid).int("RMID", rmid)
+
+
+def rooms1_one(build, *args):
+    return bytes(build(tdf.Writer(), *args))
+
+
+def rooms1_join_reply(bzid, popu, rmid=ROOMS1_ROOM, name="General", ctid=ROOMS1_CATEGORY):
+    # JoinRoomResponse: CDAT (the room's category), MDAT (the joiner), RDAT (POPU incl. the joiner), VDAT, VERS
+    w = tdf.Writer()
+    with w.struct("CDAT"):
+        rooms1_category(w, ctid)
+    with w.struct("MDAT"):
+        rooms1_member(w, bzid, rmid)
+    with w.struct("RDAT"):
+        rooms1_room(w, rmid, name, popu, ctid)
+    with w.struct("VDAT"):
+        rooms1_view(w)
+    return bytes(w.int("VERS", 0))
+
+
+ROOMS1_CASES = {
+    "roomviewadded_notification": lambda: rooms1_one(rooms1_view),
+    "roomcategoryadded_notification": lambda: rooms1_one(rooms1_category),
+    "roomadded_notification": lambda: rooms1_one(rooms1_room, ROOMS1_ROOM, "General", 0),
+    "roomadded_second_notification": lambda: rooms1_one(rooms1_room, ROOMS1_ROOM2, "Looking for group", 0),
+    "roomupdated_notification": lambda: rooms1_one(rooms1_room, ROOMS1_ROOM, "General", 2),
+    "selectcategoryupdates_view_reply": lambda: bytes(tdf.Writer().int("VWID", ROOMS1_VIEW)),
+    "joinroom_reply": lambda: rooms1_join_reply(B5_PID, 1),
+    "joinroom_second_reply": lambda: rooms1_join_reply(B11_SECOND_PID, 2),
+    "roommemberjoined_notification": lambda: rooms1_one(rooms1_member, B5_PID, ROOMS1_ROOM),
+    "roommemberjoined_second_notification": lambda: rooms1_one(rooms1_member, B11_SECOND_PID, ROOMS1_ROOM),
+    "roommemberleft_notification": lambda: bytes(tdf.Writer().int("MBID", B11_SECOND_PID).int("RMID", ROOMS1_ROOM)),
+    "leaveroom_reply": lambda: bytes(tdf.Writer().int("CTID", ROOMS1_CATEGORY).int("RMID", ROOMS1_ROOM)),
+    "roompopulationupdated_notification": lambda: bytes(tdf.Writer().map("POPM", INT, INT, [(ROOMS1_ROOM, 2)])),
+    "roomremoved_notification": lambda: bytes(tdf.Writer().int("RMID", ROOMS1_ROOM2)),
+    "notifymessage_room_notification":
+        lambda: notify_message(9, B5_NAME, B5_PID, ROOMS1_CHAT_ATTRS, 6, [ROOMS1_ROOM], ROOMS1_ROOM_OBJ, B10C_CHAT),
+}
+
+
+ROOMS3_CASES = {
+    "roomcategoryadded_open_notification": lambda: rooms1_one(rooms1_category, ROOMS3_CATEGORY),
+    "roomadded_open_notification": lambda: rooms1_one(rooms1_room, ROOMS3_ROOM, ROOMS3_NAME, 0, ROOMS3_CATEGORY),
+    "joinroom_open_reply": lambda: rooms1_join_reply(B5_PID, 1, ROOMS3_ROOM, ROOMS3_NAME, ROOMS3_CATEGORY),
+    "leaveroom_open_reply": lambda: bytes(tdf.Writer().int("CTID", ROOMS3_CATEGORY).int("RMID", ROOMS3_ROOM)),
+}
+
+
 WRITER_CASES = {
     "ints": case_ints, "labels": case_labels, "strings": case_strings, "blobs": case_blobs,
     "structs": case_structs, "lists": case_lists, "maps": case_maps, "unions": case_unions,
@@ -1797,10 +1915,13 @@ WRITER_CASES = {
     **G3_CASES,
     **B13B_CASES,
     **B14_CASES,
+    **MAPGUARD_CASES,
     **B15_CASES,
     **PH5B_CASES,
     **LBFIX_CASES,
     **DISCORD3A_CASES,
+    **ROOMS1_CASES,
+    **ROOMS3_CASES,
 }
 
 
@@ -1907,6 +2028,20 @@ DECODE_CASES = {
     "getleaderboard_daily_request": lbfix_leaderboard_request("SkillDaily", 1),
     "filepetition_request": lbfix_petition_request(),
     "selectcategoryupdates_request": bytes(tdf.Writer().int("VWID", 0)),
+    # ROOMS1: the rooms requests as the client's senders build them (static reading; every member written, defaults
+    # where the caller sets none): selectViewUpdates at the login (0x00C921D0), selectCategoryUpdates for the view
+    # (0x00C93BF0's second step), joinRoom from the Rooms tab (0x00C97800: no password, no invite, no pseudo value),
+    # leaveRoom (0x00C96980), toggleJoinedRoomNotifications (0x00C92990), a room chat line (0x00AB0200)
+    "selectviewupdates_request": bytes(tdf.Writer().int("UPDT", 1)),
+    "selectcategoryupdates_view_request": bytes(tdf.Writer().int("VWID", ROOMS1_VIEW)),
+    "joinroom_request": bytes(tdf.Writer().int("CTID", ROOMS1_CATEGORY).int("INID", 0).int("INVT", 0)
+                              .string("PASS", "").string("PVAL", "").int("RMID", ROOMS1_ROOM)),
+    "leaveroom_request": bytes(tdf.Writer().int("RMID", ROOMS1_ROOM)),
+    "togglejoinedroomnotifications_request": bytes(tdf.Writer().int("ENBL", 1)),
+    "sendmessage_room_request": b10c_request(ROOMS1_CHAT_ATTRS, 6, [ROOMS1_ROOM], ROOMS1_ROOM_OBJ, B10C_CHAT),
+    # ROOMS3: the mod's join of the open room (ChatManager.JoinRoom = the double-click's MaxisChat.JoinRoom 0x004960D0)
+    "joinroom_open_request": bytes(tdf.Writer().int("CTID", ROOMS3_CATEGORY).int("INID", 0).int("INVT", 0)
+                                   .string("PASS", "").string("PVAL", "").int("RMID", ROOMS3_ROOM)),
 }
 
 ERROR_CASES = {
@@ -1937,6 +2072,9 @@ FRAMES = [  # name, component, command, type, msg id, error, payload
     # when no command of the component has one), here UserSessions::resumeSession (0x23), which the client sends after
     # a lost session
     ("resumesession_notfound_reply", 0x7802, 0x23, 3, 5, 0x4003, b""),
+    # MAPGUARD: joinGame (GameManager 4, cmd 9) refused by the map check: error 0x0131, which the client makes
+    # 0x01310004 (GAMEMANAGER_ERR_DYNAMIC_GAME_CREATION_TIMED_OUT) and shows as BlazeErrors' line for it
+    ("joingame_mapcheck_reply", 4, 9, 3, 12, 0x0131, b""),
 ]
 
 

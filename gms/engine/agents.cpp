@@ -10,6 +10,7 @@
 #include <map>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "core/agents/aggro.h"
@@ -25,6 +26,7 @@
 #include "core/agents/recall.h"
 #include "core/agents/reflex.h"
 #include "core/agents/tower_target.h"
+#include "core/agents/towersafety.h"
 #include "core/agents/welldef.h"
 #include "core/bots/kits.h"
 #include "core/bots/lanes.h"
@@ -183,6 +185,16 @@ struct AgentState {
   gms::agents::WellDefState wellDef;
   unsigned wellWalkInst = 0;
   unsigned long long wellWalkAskedMs = 0;
+  // BOTTOWER (gms/core/agents/towersafety.h): the last enemy tower that targeted the bot within range (the frame
+  // snapshot), its retreat step's own instance (REFLEXWALK, as the well walk's above), the measurement of its time under
+  // tower fire, and the path its brain took at this think
+  std::uint32_t lastTargetedTowerId = 0;
+  unsigned long long lastTargetedTowerMs = 0;
+  unsigned backWalkInst = 0;
+  unsigned long long backWalkAskedMs = 0;
+  gms::agents::TowerExposureTrack towerExp;
+  unsigned long long towerExpFrameMs = 0;
+  int towerThink = -1;
   // HUNTERBOT: the shaper's kit rules (gms/core/bots/kits.h; looked up once from the noun) and the finisher's next try
   bool kitRead = false;
   const gms::bots::ShaperKit* kit = nullptr;
@@ -269,6 +281,8 @@ struct AgentState {
   // defended-against shapers
   int towerRule = -1;
   gms::agents::TowerDefend towerDefend;
+  // TOWERSTICK: the last target change logged (what it shot -> the new best target), so a pair counts once
+  std::uint32_t towerChangeFrom = 0, towerChangeTo = 0;
   // BACKTOACTION (gms/core/agents/lost.h): the Pursue leaf after a point pursuit, the net's windows; the centre stand's
   // start for the stats (0 = not on the centre without a target)
   gms::agents::LostState lost;
@@ -325,6 +339,11 @@ struct Stats {
   // updates whose best target was a shaper while a non-player stood on the list (defended or not), tower log lines
   unsigned towerHits = 0, towerLocks = 0, towerReleasedRange = 0, towerReleasedList = 0, towerShaperDefended = 0,
            towerShaperOther = 0, towerUpdates = 0, towerLogged = 0;
+  // TOWERSTICK: a tower's target changes (from what it shot to the new best target): the old one gone, the old one
+  // still on the list (for a shaper: defend or taunt), a living non-player left for another non-player (by the rule
+  // that decided), the change lines logged
+  unsigned towerChanges = 0, towerOldGone = 0, towerOffLiving = 0, towerOffForShaper = 0, towerStickBroken = 0,
+           towerBrokenByRule[gms::agents::kAggroRuleCount] = {}, towerChangeLogged = 0, towerWatchedUpdates = 0;
 };
 Stats g_st;
 unsigned g_logLines;
@@ -1103,17 +1122,111 @@ bool TowerLogBudget() {
   return g_st.towerLogged <= static_cast<unsigned>(g_opt.towerLogLimit) || g_st.towerLogged % 50 == 0;
 }
 
-// Aggro type tower (Bindings, the Locus; nubs have aggro range 0), not the Guardian, and [host] tower_target on.
-bool TowerRuleApplies(void* o, AgentState& st, const AgentInfo& a) {
-  if (!g_opt.towerTarget.enabled || a.aggroType != gms::agents::kAggroTower || a.aggro <= 0.f) return false;
+// A tower the rule is for: aggro type tower (Bindings, the Locus; nubs have aggro range 0), not the Guardian.
+// TOWERSTICK watches their target changes whatever [host] tower_target says.
+bool TowerWatched(void* o, AgentState& st, const AgentInfo& a) {
+  if (a.aggroType != gms::agents::kAggroTower || a.aggro <= 0.f) return false;
   if (st.towerRule < 0) {
     st.towerRule = SehNpcType(o) == kTowerRuleSkipNpcType ? 0 : 1;
-    if (st.towerRule && TowerLogBudget())
+    if (st.towerRule && g_opt.towerTarget.enabled && TowerLogBudget())
       Log("towers: %08X %s: minions before shapers, a shaper that hits a shaper of team %d within %.1f stays the "
-          "target until it leaves %.1f (TOWERAGGRO)",
-          a.self.id, st.noun, a.self.team, static_cast<double>(a.aggro), static_cast<double>(a.aggro));
+          "target until it leaves %.1f (TOWERAGGRO); %s",
+          a.self.id, st.noun, a.self.team, static_cast<double>(a.aggro), static_cast<double>(a.aggro),
+          g_opt.towerTarget.stick ? "its current target first among the non-players (TOWERSTICK)"
+                                  : "the old order within a class (tower_stick=0)");
   }
   return st.towerRule == 1;
+}
+
+// ... and [host] tower_target on.
+bool TowerRuleApplies(void* o, AgentState& st, const AgentInfo& a) {
+  return g_opt.towerTarget.enabled && TowerWatched(o, st, a);
+}
+
+const char* AgentNoun(std::uint32_t id) {
+  const auto it = g_agents.find(id);
+  return it != g_agents.end() ? it->second.noun : "?";
+}
+
+// TOWERSTICK: a watched tower's target change at this update, from what it shot (`shot`, its mTarget) to `best`: the
+// rule that decided (the old one on the list) or why the old one left it, both targets' HP and edge distance.
+// `hpOf` holds the HP of every candidate, `removed` the entries this update pruned with their reason.
+void TowerChangeCheck(AgentState& st, const AgentInfo& a,
+                      const std::vector<gms::agents::AggroCandidate>& cands, std::uint32_t shot, std::uint32_t best,
+                      std::uint32_t bestBefore, const std::vector<std::pair<std::uint32_t, float>>& hpOf,
+                      const std::vector<std::pair<std::uint32_t, const char*>>& removed, bool stickFirst,
+                      bool strict, unsigned long long nowMs) {
+  ++g_st.towerWatchedUpdates;
+  const gms::agents::AggroCandidate* from = nullptr;
+  const gms::agents::AggroCandidate* to = nullptr;
+  for (const auto& c : cands) {
+    if (c.id == shot) from = &c;
+    if (c.id == best) to = &c;
+  }
+  const gms::agents::TowerChange change = gms::agents::ClassifyTowerChange(shot, best, from != nullptr);
+  if (change == gms::agents::kTowerKeep) return;
+  if (st.towerChangeFrom == shot && st.towerChangeTo == best) return;  // counted at an earlier update
+  st.towerChangeFrom = shot;
+  st.towerChangeTo = best;
+  ++g_st.towerChanges;
+  auto hp = [&hpOf](std::uint32_t id) {
+    for (const auto& h : hpOf)
+      if (h.first == id) return h.second;
+    return -1.f;
+  };
+  // the old target: on the list (its candidate), or looked up (gone, dead, out of range)
+  float fromHp = -1.f, fromDist = -1.f;
+  bool fromPlayer = false;
+  const char* why = "not on the list";
+  if (from) {
+    fromHp = hp(shot);
+    fromDist = from->distance;
+    fromPlayer = from->isPlayer;
+  } else {
+    for (const auto& r : removed)
+      if (r.first == shot) why = r.second;
+    ObjInfo oi;
+    void* t = SehFind(shot);
+    if (t && SehObjInfo(t, &oi)) {
+      fromHp = oi.hp;
+      fromPlayer = oi.player;
+      const float dx = oi.pos[0] - a.self.pos[0], dy = oi.pos[1] - a.self.pos[1];
+      fromDist = std::sqrt(dx * dx + dy * dy) - a.self.radius - oi.radius;
+    } else {
+      why = "gone";
+    }
+  }
+  const bool toPlayer = to && to->isPlayer;
+  char what[160];
+  bool broken = false;
+  if (change == gms::agents::kTowerOldGone) {
+    ++g_st.towerOldGone;
+    std::snprintf(what, sizeof what, "the old one left the list (%s)", why);
+  } else {
+    ++g_st.towerOffLiving;
+    bool newFirst = false;
+    const int rule = to ? gms::agents::AggroDecide(*to, *from, gms::agents::NonPlayersFirst(a.aggroType),
+                                                   gms::agents::kCallForHelpTimeMs, strict, stickFirst, &newFirst)
+                        : -1;
+    broken = gms::agents::TowerStickBroken(change, fromPlayer, toPlayer, best);
+    if (toPlayer) ++g_st.towerOffForShaper;
+    if (broken) {
+      ++g_st.towerStickBroken;
+      if (rule >= 0) ++g_st.towerBrokenByRule[rule];
+    }
+    std::snprintf(what, sizeof what, "the old one still on the list, %s%s",
+                  to ? gms::agents::AggroRuleName(rule) : "no new target",
+                  to && !newFirst ? " (but our order puts the old one first: the client's pick)" : "");
+  }
+  const bool log = broken ? ++g_st.towerChangeLogged <= 2000u : TowerLogBudget();
+  if (!log) return;
+  Log("towers: %08X %s target %08X %s (%s, hp %.0f, %.1f units) -> %08X %s (%s, hp %.0f, %.1f units): %s%s (best "
+      "before %08X; %u on the list) (t %.2f s)",
+      a.self.id, st.noun, shot, AgentNoun(shot), fromPlayer ? "shaper" : "non-player", static_cast<double>(fromHp),
+      static_cast<double>(fromDist), best, AgentNoun(best), toPlayer ? "shaper" : "non-player",
+      static_cast<double>(hp(best)), static_cast<double>(to ? to->distance : -1.f), what,
+      broken ? "; STICK BROKEN: a living non-player left for another" : "", bestBefore,
+      static_cast<unsigned>(cands.size()), static_cast<double>(nowMs) / 1000.0);
 }
 
 // The new hits since the tower's last update lock their attackers; a lock ends when its shaper left the list or the
@@ -1237,6 +1350,10 @@ void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long now
     // prune
     std::vector<AggroEntry> kept;
     std::vector<gms::agents::AggroCandidate> cands;
+    // TOWERSTICK: a tower's candidates' HP and the entries pruned with their reason, for its target-change log
+    const bool towerWatch = !selfDead && TowerWatched(o, st, a);
+    std::vector<std::pair<std::uint32_t, float>> hpOf;
+    std::vector<std::pair<std::uint32_t, const char*>> removedWhy;
     for (const AggroEntry& e : list) {
       void* t = SehFind(e.Id());
       ObjInfo ti;
@@ -1259,8 +1376,10 @@ void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long now
                                            "outside the tether"};
         if (e.Id() == st.chaseLogTarget) st.chaseEndWhy = kWhy[why - 1];
         if (e.Id() == st.fightTarget) st.fightEndWhy = kWhy[why - 1];  // LEASH
+        if (towerWatch) removedWhy.emplace_back(e.Id(), kWhy[why - 1]);
         continue;
       }
+      if (towerWatch) hpOf.emplace_back(e.Id(), ti.hp);
       gms::agents::AggroCandidate c;
       c.id = e.Id();
       c.taunting = e.U64(0x10) > nowMs;
@@ -1293,6 +1412,7 @@ void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long now
           continue;
         }
         ++g_st.added;
+        if (towerWatch) hpOf.emplace_back(p.info.id, p.info.hp);
         gms::agents::AggroCandidate c;
         c.id = p.info.id;
         c.isPlayer = p.info.player;
@@ -1367,8 +1487,17 @@ void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long now
       }
     }
     // TOWERAGGRO: a tower's defended-against shapers, then the strict order (gms/core/agents/tower_target.h)
-    const bool towerRule = !selfDead && TowerRuleApplies(o, st, a);
+    const bool towerRule = towerWatch && g_opt.towerTarget.enabled;
     if (towerRule) TowerDefendUpdate(st, a, &cands, nowMs);
+    // TOWERSTICK: what the tower shoots (its passive's last SetTargetID) is its current target while on the list
+    const std::uint32_t towerShot = towerWatch ? SehRawTarget(o) : 0u;
+    const bool towerStick = towerRule && g_opt.towerTarget.stick;
+    if (towerStick) {
+      bool shotOnList = false;
+      for (const auto& c : cands) shotOnList = shotOnList || c.id == towerShot;
+      const std::uint32_t stickyId = gms::agents::TowerStickyId(true, towerShot, shotOnList, st.bestTarget);
+      for (auto& c : cands) c.sticky = c.id == stickyId;
+    }
     // order (the targeting priority, gms/core/agents/aggro.h); the entries are re-read (the adds appended theirs)
     std::vector<AggroEntry> now;
     bool readOk = SehReadAggro(a.agent, &now);
@@ -1381,7 +1510,7 @@ void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long now
       if (!SehWriteAggro(a.agent, now)) ++g_st.bbExceptions;
     }
     if (readOk && now.size() == cands.size() && now.size() > 1) {
-      gms::agents::OrderAggro(&cands, a.aggroType, gms::agents::kCallForHelpTimeMs, strict || towerRule);
+      gms::agents::OrderAggro(&cands, a.aggroType, gms::agents::kCallForHelpTimeMs, strict || towerRule, towerStick);
       std::vector<AggroEntry> ordered;
       ordered.reserve(now.size());
       bool moved = false;
@@ -1400,6 +1529,9 @@ void UpdateBlackboard(void* sim, void* o, AgentState& st, unsigned long long now
     }
     best = SehBestTarget(a.agent);
     if (towerRule) TowerAfterUpdate(st, cands, best);
+    if (towerWatch)
+      TowerChangeCheck(st, a, cands, towerShot, best, st.bestTarget, hpOf, removedWhy, towerStick,
+                       strict || towerRule, nowMs);
     if (a.aggroType == gms::agents::kAggroMinion) {
       MinionChaseAfterUpdate(o, st, a, cands, best, nowMs);
       MinionFollowAfterUpdate(o, st, a, cands, best, nowMs);  // MINPURSUE
@@ -2744,8 +2876,18 @@ struct Snap {
   int team = 0;
   float pos[3] = {};
   float hp = 0.f, maxHp = 1.f;
+  // BOTTOWER, towers only: the tower's mTarget, its aggro range (0: a structure that doesn't shoot) and the lane minions
+  // of the other team within that range
+  std::uint32_t target = 0;
+  float reach = 0.f;
+  int minionsIn = 0;
   float HpFrac() const { return maxHp > 0.f ? hp / maxHp : 1.f; }
 };
+struct MinionSnap {
+  int team = 0;
+  float pos[2] = {};
+};
+std::vector<MinionSnap> g_snapMinions;  // BOTTOWER: the lane minions (nNPCType 0-3), once per frame
 std::vector<Snap> g_snapPlayers, g_snapTowers, g_snapObjectives;  // objectives: NPC type 8 (the parasite)
 
 // DESECBOT-3: each shaper's motion and recent damage (the frame snapshot) and its last shaper hits (OnDamaged), for the
@@ -2823,6 +2965,169 @@ int BotRoleOf(std::uint32_t creature) {
   for (const bots::Bot& b : bots::Players())
     if (b.creature == creature) return b.role;
   return -1;
+}
+
+// BOTTOWER (gms/core/agents/towersafety.h): the counts ("stats bottower:", "stats bottower bots:"), the towers as one bot
+// sees them, the keep-out test of a target and the measurement of the bots' time under tower fire.
+struct BotTowerStats {
+  unsigned backBy[4] = {};  // tower back-offs decided, by danger (1 a hit, 2 the tower targets it, 3 no minions there)
+  unsigned stepsStarted = 0, stepsOwn = 0, stepsAdopted = 0, walksEnded = 0, stepsBlind = 0, stepsRefused = 0;
+  unsigned otherBacks = 0;  // back-offs of rules 2 and 4 (an attacker, a jungle enemy), by the same step code
+  unsigned planRetreats = 0;  // back-offs left to the plan's own retreat that holds the bot
+  unsigned keptOutGambits = 0, keptOutFights = 0, keptOutFallbacks = 0, dives = 0;
+  unsigned shotsOnBots = 0, shotsInEpisodes = 0, lethalShots = 0;
+  gms::agents::TowerExposureTotals totals;
+  unsigned logged = 0;
+};
+BotTowerStats g_tw;
+struct BotTowerBot {
+  const char* noun = "?";
+  long long targetedMs = 0;
+  unsigned episodes = 0, shots = 0, died = 0;
+};
+std::map<std::uint32_t, BotTowerBot> g_twBots;
+constexpr long long kTowerEpisodeGapMs = 1500;  // a tower that stopped targeting the bot this long ends the episode
+constexpr float kTowerViewReach = 60.f;          // the towers a bot looks at for its own danger
+
+gms::agents::TowerSafetyConfig TowerSafetyCfg() {
+  gms::agents::TowerSafetyConfig c;
+  c.aware = g_opt.botTowerAware;
+  c.keepOut = g_opt.botTowerKeepOut;
+  return c;
+}
+
+gms::agents::TowerView MakeTowerView(const AgentState& st, std::uint32_t selfId, const float* selfPos, const Snap& t,
+                                     unsigned long long nowMs) {
+  gms::agents::TowerView v;
+  v.dist = Dist2(t.pos, selfPos);
+  v.aggro = t.reach;
+  v.targetsMe = t.target == selfId;
+  if (st.lastTowerId == t.id && st.lastTowerHitMs) v.hitAgeMs = static_cast<long long>(nowMs - st.lastTowerHitMs);
+  if (st.lastTargetedTowerId == t.id && st.lastTargetedTowerMs)
+    v.targetedAgeMs = static_cast<long long>(nowMs - st.lastTargetedTowerMs);
+  v.minionsIn = t.minionsIn;
+  return v;
+}
+
+// The most urgent tower danger for the bot now (nullptr: none) and its kind.
+const Snap* BotTowerDanger(const AgentState& st, const ObjInfo& self, unsigned long long nowMs,
+                           gms::agents::TowerDangerKind* kind) {
+  const gms::agents::TowerSafetyConfig c = TowerSafetyCfg();
+  constexpr int kMax = 8;
+  gms::agents::TowerView v[kMax];
+  const Snap* sn[kMax] = {};
+  int n = 0;
+  for (const Snap& t : g_snapTowers) {
+    if (t.team == self.team || n >= kMax) continue;
+    if (!(t.reach > 0.f) && t.id != st.lastTowerId) continue;  // a structure that doesn't shoot (unless it hit the bot)
+    if (Dist2(t.pos, self.pos) > kTowerViewReach) continue;
+    v[n] = MakeTowerView(st, self.id, self.pos, t, nowMs);
+    sn[n++] = &t;
+  }
+  const int i = gms::agents::WorstTowerDanger(v, n, c, kind);
+  return i >= 0 ? sn[i] : nullptr;
+}
+
+// True: the bot leaves the target (an object, else a point) alone because an enemy tower that would shoot it covers it.
+bool TowerKeepsOutTarget(const AgentState& st, const ObjInfo& self, float selfHpFrac, std::uint32_t target,
+                         const float* point, bool finishing, unsigned long long nowMs) {
+  if (!g_opt.botTowerKeepOut || g_snapTowers.empty()) return false;
+  gms::agents::KeepOutTarget g;
+  float pos[3] = {};
+  if (target) {
+    if (const Snap* p = FindSnap(g_snapPlayers, target)) {
+      if (p->team == self.team) return false;
+      std::memcpy(pos, p->pos, sizeof pos);
+      g.isShaper = true;
+      g.shaperHpFrac = p->HpFrac();
+      g.finishing = finishing;
+    } else if (const Snap* t = FindSnap(g_snapTowers, target)) {
+      std::memcpy(pos, t->pos, sizeof pos);
+    } else {
+      void* tobj = SehFind(target);
+      ObjInfo ti;
+      if (!tobj || !SehObjInfo(tobj, &ti)) return false;
+      std::memcpy(pos, ti.pos, sizeof pos);
+    }
+  } else if (point && (point[0] != 0.f || point[1] != 0.f)) {
+    std::memcpy(pos, point, sizeof pos);
+  } else {
+    return false;
+  }
+  const gms::agents::TowerSafetyConfig c = TowerSafetyCfg();
+  for (const Snap& t : g_snapTowers) {
+    if (t.team == self.team || !(t.reach > 0.f)) continue;
+    g.distToTower = Dist2(t.pos, pos);
+    if (g.distToTower > t.reach + c.keepOutMargin) continue;
+    g.isThatTower = t.id == target;
+    g.towerHpFrac = t.HpFrac();
+    if (gms::agents::TowerKeepsOut(MakeTowerView(st, self.id, self.pos, t, nowMs), g, selfHpFrac, c)) return true;
+  }
+  return false;
+}
+
+bool BotTowerLogBudget() {
+  ++g_tw.logged;
+  return g_tw.logged <= static_cast<unsigned>(g_opt.botTowerLogLimit) || g_tw.logged % 20 == 0;
+}
+
+void EndTowerEpisode(std::uint32_t id, const AgentState& st, const gms::agents::TowerEpisode& e,
+                     unsigned long long nowMs) {
+  g_tw.totals.Add(e);
+  BotTowerBot& b = g_twBots[id];
+  b.noun = st.noun;
+  b.targetedMs += e.targetedMs;
+  ++b.episodes;
+  b.shots += static_cast<unsigned>(e.shots);
+  if (e.died) ++b.died;
+  if (!BotTowerLogBudget()) return;
+  std::string paths;
+  for (int i = 0; i < gms::agents::kTtPathCount; ++i) {
+    if (!e.thinks[i]) continue;
+    char one[48];
+    std::snprintf(one, sizeof one, "%s%s %d", paths.empty() ? "" : ", ", gms::agents::TowerThinkPathName(i), e.thinks[i]);
+    paths += one;
+  }
+  void* tobj = SehFind(e.tower);
+  const std::string what = DescribeBot(id);
+  Log("bottower: bot %08X %s targeted by %08X %s for %.1f s (episode %.1f s): tower shots %d%s, hp %.0f%% -> %.0f%%, "
+      "%.1f -> %.1f units, %s; thinks: %s; now %s (BOTTOWER) (t %.2f s)",
+      id, st.noun, e.tower, tobj ? SehNounName(tobj) : "gone", static_cast<double>(e.targetedMs) / 1000.0,
+      static_cast<double>(e.DurationMs()) / 1000.0, e.shots, e.lethal ? " (lethal)" : "",
+      static_cast<double>(e.hpStart * 100.f), static_cast<double>(e.hpEnd * 100.f), static_cast<double>(e.distStart),
+      static_cast<double>(e.distEnd), e.died ? "died" : "left", paths.empty() ? "none" : paths.c_str(),
+      what.empty() ? "?" : what.c_str(), static_cast<double>(nowMs) / 1000.0);
+}
+
+// Once per frame, after the snapshot: which enemy tower targets each bot within range, and the episodes.
+void BotTowerFrame(unsigned long long nowMs) {
+  const gms::agents::TowerSafetyConfig c = TowerSafetyCfg();
+  for (auto& kv : g_agents) {
+    AgentState& st = kv.second;
+    if (st.isBot != 1) continue;
+    const Snap* p = FindSnap(g_snapPlayers, kv.first);
+    std::uint32_t tower = 0;
+    float dist = 0.f;
+    if (p) {
+      for (const Snap& t : g_snapTowers) {
+        if (t.team == p->team || t.target != p->id || !(t.reach > 0.f)) continue;
+        const float d = Dist2(t.pos, p->pos);
+        if (d > t.reach + c.targetedMargin) continue;
+        tower = t.id;
+        dist = d;
+        break;
+      }
+      if (tower) {
+        st.lastTargetedTowerId = tower;
+        st.lastTargetedTowerMs = nowMs;
+      }
+    }
+    gms::agents::TowerEpisode e;
+    if (st.towerExp.Frame(static_cast<long long>(nowMs), static_cast<long long>(st.towerExpFrameMs), tower,
+                          p ? p->HpFrac() : 0.f, dist, p == nullptr, kTowerEpisodeGapMs, &e))
+      EndTowerEpisode(kv.first, st, e, nowMs);
+    st.towerExpFrameMs = nowMs;
+  }
 }
 
 // HUNTERBOT: the bot's kit rules (gms/core/bots/kits.h), looked up once from its noun; nullptr = none.
@@ -3782,6 +4087,61 @@ int WellDefenseWalk(void* o, AgentState& st, const ObjInfo& self, const ::wells:
   return 1;
 }
 
+// BOTTOWER (REFLEXWALK, towersafety.h ChooseHeldWalk): a retreat step's request result. A walk of the same ability that
+// isn't the bot's own step (the plan's, e.g. the Hunter's MoveToNextCamp, or a gambit's walk) answers -0x270B, which
+// BOTREFLEX counted as done, so the step never started: with bot_reflex_walk that walk is ended and the step starts at
+// the next think (WELLDEF's well walk does the same). Returns the result BOTREFLEX acts on (1 = the step goes on).
+int ReflexStepResult(void* o, AgentState& st, const ObjInfo& self, int res, bool towerBack, unsigned long long nowMs) {
+  unsigned hid = 0;
+  const char* hname = nullptr;
+  const bool known = res == gms::agents::kResultHoldsAgent && SehHeldAbility(o, &hid, &hname);
+  const long long since = st.backWalkAskedMs ? static_cast<long long>(nowMs - st.backWalkAskedMs) : -1;
+  const gms::agents::HeldWalkAction a = gms::agents::ChooseHeldWalk(res, known, hid, st.backWalkInst, since);
+  int path = gms::agents::kTtBackRefused;
+  switch (a) {
+    case gms::agents::kHeldWalkStarted:
+      st.backWalkAskedMs = nowMs;
+      st.backWalkInst = 0;
+      ++g_tw.stepsStarted;
+      path = gms::agents::kTtBackStarted;
+      break;
+    case gms::agents::kHeldWalkOwn:
+    case gms::agents::kHeldWalkAdopt:
+      if (a == gms::agents::kHeldWalkAdopt) {
+        st.backWalkInst = hid;
+        ++g_tw.stepsAdopted;
+      } else {
+        ++g_tw.stepsOwn;
+      }
+      res = 1;
+      path = gms::agents::kTtBackOwn;
+      break;
+    case gms::agents::kHeldWalkEnd:
+      if (g_opt.botReflexWalk) {
+        const bool ended = SehEndAbility(hid);
+        if (ended) ++g_tw.walksEnded;
+        if (BotTowerLogBudget())
+          Log("agents: bot %08X %s: its back-off step was held off by %s (instance %08X): %s (BOTTOWER, REFLEXWALK) "
+              "(t %.2f s)",
+              self.id, st.noun, hname ? hname : "?", hid, ended ? "ended" : "gone already",
+              static_cast<double>(nowMs) / 1000.0);
+        st.backWalkInst = 0;
+        st.backWalkAskedMs = 0;
+        path = gms::agents::kTtBackEnded;
+      } else {
+        ++g_tw.stepsBlind;  // BOTREFLEX's rule: counted as done
+        path = gms::agents::kTtBackBlind;
+      }
+      res = 1;
+      break;
+    default:
+      ++g_tw.stepsRefused;
+      break;
+  }
+  if (towerBack) st.towerThink = path;
+  return res;
+}
+
 // Returns true when a reflex acted this think (the plan's gambits are skipped).
 bool BotReflexStep(void* o, AgentState& st, const ObjInfo& self, const BotView& v, const BotPlayerView& pv,
                    std::uint32_t mtarget, unsigned long long nowMs) {
@@ -3789,6 +4149,7 @@ bool BotReflexStep(void* o, AgentState& st, const ObjInfo& self, const BotView& 
   if (!(maxHp > 0.f) || self.hp <= 0.f) return false;
   gms::agents::ReflexConfig cfg;
   cfg.junglerHpPoints = g_opt.botJungleFight;  // PRETUSBOT
+  if (g_opt.botTowerAware) cfg.finishTowerShotHp = gms::agents::TowerSafetyConfig().finishTowerShotHp;  // BOTTOWER
   // DESECBOT-3: a Desecrator at level 1-3 never stays under an enemy tower for a shaper (DESECBOT-1's early deaths)
   constexpr int kDesecEarlyLevel = 3;
   if (DesecLayer(st)) {
@@ -3799,13 +4160,12 @@ bool BotReflexStep(void* o, AgentState& st, const ObjInfo& self, const BotView& 
   s.role = BotRoleOf(self.id);
   s.hpFrac = self.hp / maxHp;
   s.hp = self.hp;
-  // the tower that hit it last, while it stands and the bot is still within its reach
-  const Snap* hitTower = nullptr;
-  if (st.lastTowerHitMs && nowMs - st.lastTowerHitMs <= static_cast<unsigned long long>(cfg.towerZoneMs))
-    if (const Snap* t = FindSnap(g_snapTowers, st.lastTowerId)) {
-      s.inTowerZone = Dist2(t->pos, self.pos) <= cfg.towerRange;
-      hitTower = t;
-    }
+  // the tower that hit it last, while it stands and the bot is still within its reach; BOTTOWER (bot_tower_aware): also
+  // a tower that targets it, or one with none of its minions in range (towersafety.h TowerDanger)
+  gms::agents::TowerDangerKind towerKind = gms::agents::kTowerSafe;
+  const Snap* hitTower = BotTowerDanger(st, self, nowMs, &towerKind);
+  s.inTowerZone = hitTower != nullptr;
+  s.towerKind = towerKind;
   // its target, when it is an enemy shaper
   if (const Snap* t = mtarget ? FindSnap(g_snapPlayers, mtarget) : nullptr) {
     if (t->team != self.team) {
@@ -3894,21 +4254,43 @@ bool BotReflexStep(void* o, AgentState& st, const ObjInfo& self, const BotView& 
     dive.noShaperDive = false;
     if (gms::agents::DecideReflex(s, dive).kind != gms::agents::kReflexBack) ++g_desec.earlyNoDive;
   }
+  const bool towerBack = d.kind == gms::agents::kReflexBack && d.why[0] == 't';
   if (d.kind == gms::agents::kReflexNone) {
     st.reflexKind = 0;
+    st.towerThink = s.inTowerZone ? gms::agents::kTtDive : gms::agents::kTtNotSeen;
+    if (s.inTowerZone) ++g_tw.dives;
     return false;
   }
+  st.towerThink = towerBack ? gms::agents::kTtBackRefused : gms::agents::kTtOtherReflex;
   int res = 0;
   if (d.kind == gms::agents::kReflexBack) {
     // away from what threatens it: the tower, else the attacker, else the jungle shaper
-    const float* from = d.why[0] == 't' && hitTower ? hitTower->pos : attacker ? attacker->pos : jungle ? jungle->pos : nullptr;
+    const float* from = towerBack && hitTower ? hitTower->pos : attacker ? attacker->pos : jungle ? jungle->pos : nullptr;
     float goal[3];
     StepPoint(self.pos, from ? from : self.pos, kRetreatStep, false, self.team, goal);
-    res = BotRequest(st.noun, "reflex back-off", gms::agents::NullPosUse::kGoal, kAbilityBotMoveToTarget, -1, self.id,
-                     0, goal, 1);
-    if (res == gms::agents::kResultHoldsAgent) res = 1;
+    if (towerBack) ++g_tw.backBy[towerKind >= 1 && towerKind <= 3 ? towerKind : 0];
+    else ++g_tw.otherBacks;
+    // BOTTOWER: the plan retreats already (its Back gambit, FleeTowerTargeting's, or a recall): a step of ours would abort
+    // it and the tree's UseAbility abort ours in turn (round 1: a bot hovered 95 s at a tower's edge that way)
+    unsigned hid = 0;
+    const char* hname = nullptr;
+    if (g_opt.botTowerAware && SehHeldAbility(o, &hid, &hname) && hname &&
+        (std::strstr(hname, "Bot_Back") || std::strstr(hname, "ReturnToBase") || std::strstr(hname, "Recall"))) {
+      ++g_tw.planRetreats;
+      res = 1;
+      if (towerBack) st.towerThink = gms::agents::kTtPlanRetreat;
+    } else {
+      res = BotRequest(st.noun, "reflex back-off", gms::agents::NullPosUse::kGoal, kAbilityBotMoveToTarget, -1, self.id,
+                       0, goal, 1);
+      res = ReflexStepResult(o, st, self, res, towerBack, nowMs);
+    }
   } else if (d.kind == gms::agents::kReflexFight) {
     const Snap* tgt = d.why[0] == 'r' ? attacker : jungle;  // "retaliate" / "jungle"
+    // BOTTOWER: no fight under an enemy tower that would shoot the bot (a dive aside)
+    if (tgt && TowerKeepsOutTarget(st, self, s.hpFrac, tgt->id, nullptr, s.finishing, nowMs)) {
+      ++g_tw.keptOutFights;
+      tgt = nullptr;
+    }
     if (tgt) res = ReflexAttack(o, st, self, pv, mtarget, *tgt, nowMs);
   } else {  // defend: whoever attacks the well, else walk to it
     const Snap* tgt = nullptr;
@@ -4607,6 +4989,14 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
   }
   if (nowMs < st.botNextThinkMs) return;
   st.botNextThinkMs = nowMs + static_cast<unsigned long long>(g_opt.botThinkMs > 0 ? g_opt.botThinkMs : 200);
+  // BOTTOWER: what the brain did at this think, counted into an open episode under tower fire when the think ends
+  struct TowerThinkNote {
+    AgentState& st;
+    ~TowerThinkNote() {
+      if (st.towerExp.open()) st.towerExp.Think(st.towerThink);
+    }
+  } towerThinkNote{st};
+  st.towerThink = gms::agents::kTtBeforeReflex;
   ObjInfo self;
   if (!SehObjInfo(o, &self) || GameOver(sim)) return;
   if (self.hasHp && self.hp <= 0.f) {
@@ -4905,6 +5295,8 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
   AgentInfo a;
   if (!SehAgentInfo(o, &a)) return;
   const std::uint32_t mtarget = SehBestTarget(a.agent);
+  const float maxHpNow = SehMaxHp(o);  // BOTTOWER: the keep-out's own HP fraction
+  const float selfHpFrac = maxHpNow > 0.f ? self.hp / maxHpNow : 1.f;
   // HUNTERBOT: a Hunter's R at a low enemy shaper first
   if (g_opt.botHunterUlt && HunterFinisherStep(o, st, self, pv, mtarget, nowMs)) {
     st.idleSinceMs = 0;
@@ -5082,6 +5474,18 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
         ++g_kf.backSkipped;
         KillFinishHold(o, st, self, nowMs);
       }
+      // BOTTOWER: no target under an enemy tower that would shoot the bot (towersafety.h TowerKeepsOut; a dive or a
+      // tower's finish aside); the Back gambit and the items always pass
+      if (gv.conditionsPass && g_opt.botTowerKeepOut && g.guid != kAbilityBotBack &&
+          !gms::agents::SlotIsConsumable(g.slot)) {
+        const float* sp = &spots[i * 3];
+        const bool hasSpot = sp[0] != 0.f || sp[1] != 0.f;
+        const std::uint32_t gt = hasSpot ? 0u : (targets[i] ? targets[i] : (pointOnly[i] ? 0u : mtarget));
+        if (TowerKeepsOutTarget(st, self, selfHpFrac, gt, hasSpot ? sp : nullptr, KillFinishing(st, nowMs), nowMs)) {
+          gv.conditionsPass = false;
+          ++g_tw.keptOutGambits;
+        }
+      }
       if (prioritized && gv.conditionsPass) {
         chosen = gv.coolingDown ? -1 : static_cast<int>(i);  // a waiting gambit holds the list while it cools down
         break;
@@ -5199,7 +5603,8 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
         ObjInfo at;
         if (aobj && SehObjInfo(aobj, &at) && at.hasHp && at.hp > 0.f && at.team != self.team &&
             Distance2D(at.pos, self.pos) <= kFallbackReach &&
-            gms::agents::FallbackAttackerType(SehNpcType(aobj), at.player) && SehHostile(self.team, at.id)) {
+            gms::agents::FallbackAttackerType(SehNpcType(aobj), at.player) && SehHostile(self.team, at.id) &&
+            !(TowerKeepsOutTarget(st, self, selfHpFrac, at.id, nullptr, false, nowMs) && ++g_tw.keptOutFallbacks)) {
           ++g_bot.fallbackTries;
           if (at.id != mtarget) SehSetTarget(o, at.id);
           const int fr = SehBotRequest(0, gms::agents::kSlotBasic, self.id, at.id, at.pos, 1);
@@ -5487,8 +5892,9 @@ bool Install(const Options& options) {
       g_opt.keepNodeTimers, g_opt.respectCanInterrupt, g_opt.botPursuePoint, g_opt.objectiveOnSight,
       g_opt.npcConditionTarget, g_opt.npcLazyConditions, g_opt.npcRangeFallthrough);
   Log("agents: a lane minion's follow ends when its object is no longer the best target (MINPURSUE) %d; towers: "
-      "minions before shapers, a shaper that hits a shaper in range kept until it leaves the range (TOWERAGGRO) %d",
-      g_opt.minionFollow.enabled ? 1 : 0, g_opt.towerTarget.enabled ? 1 : 0);
+      "minions before shapers, a shaper that hits a shaper in range kept until it leaves the range (TOWERAGGRO) %d; "
+      "a tower's current target first among the non-players (TOWERSTICK) %d",
+      g_opt.minionFollow.enabled ? 1 : 0, g_opt.towerTarget.enabled ? 1 : 0, g_opt.towerTarget.stick ? 1 : 0);
   return true;
 }
 
@@ -5529,6 +5935,7 @@ void Tick(void* sim, float dt) {
   g_snapPlayers.clear();
   g_snapTowers.clear();
   g_snapObjectives.clear();
+  g_snapMinions.clear();
   if ((g_opt.botReflex || g_opt.botCampFinish) && g_opt.botBrain) {  // BOTREFLEX, CAMPFINISH: the players' creatures
                                                                        // and the standing towers, once per frame
     for (void* o : objs) {
@@ -5536,6 +5943,14 @@ void Tick(void* sim, float dt) {
       if (!SehObjInfo(o, &i) || !i.hasHp || i.hp <= 0.f) continue;
       const int npcType = i.player ? -1 : SehNpcType(o);
       const bool tower = npcType == kNpcTower;
+      if (npcType >= 0 && npcType <= 3) {  // BOTTOWER: a lane minion, what a tower shoots before a shaper
+        MinionSnap m;
+        m.team = i.team;
+        m.pos[0] = i.pos[0];
+        m.pos[1] = i.pos[1];
+        g_snapMinions.push_back(m);
+        continue;
+      }
       if (!i.player && !tower && npcType != kNpcObjective) continue;
       Snap sn;
       sn.obj = o;
@@ -5545,6 +5960,11 @@ void Tick(void* sim, float dt) {
       sn.hp = i.hp;
       sn.maxHp = SehMaxHp(o);
       if (!(sn.maxHp > 0.f)) sn.maxHp = i.hp;
+      if (tower) {  // BOTTOWER: what it shoots and how far it reaches (the Bindings, the Locus; not the nubs)
+        sn.target = SehRawTarget(o);
+        AgentInfo ta;
+        if (SehAgentInfo(o, &ta) && ta.aggroType == gms::agents::kAggroTower && ta.aggro > 0.f) sn.reach = ta.aggro;
+      }
       (tower ? g_snapTowers : npcType == kNpcObjective ? g_snapObjectives : g_snapPlayers).push_back(sn);
       if (i.player) {  // DESECBOT-3: the shapers' motion and recent damage (also KILLFINISH's damage taken)
         ShaperTrack& tr = g_tracks[i.id];
@@ -5552,6 +5972,15 @@ void Tick(void* sim, float dt) {
         tr.damage.Note(i.hp, static_cast<long long>(nowMs));
       }
     }
+    for (Snap& t : g_snapTowers) {  // BOTTOWER: the other team's lane minions within each tower's reach
+      if (!(t.reach > 0.f)) continue;
+      for (const MinionSnap& m : g_snapMinions) {
+        if (m.team == t.team) continue;
+        const float dx = m.pos[0] - t.pos[0], dy = m.pos[1] - t.pos[1];
+        if (dx * dx + dy * dy <= t.reach * t.reach) ++t.minionsIn;
+      }
+    }
+    BotTowerFrame(nowMs);  // BOTTOWER: the measurement
   }
   for (void* o : objs) {
     std::uint32_t id = 0;
@@ -5638,6 +6067,9 @@ void OnDamaged(void* victim, void* attacker, unsigned descLo, unsigned descHi, b
       } else if (SehNpcType(attacker) == kNpcTower) {
         it->second.lastTowerId = at.id;
         it->second.lastTowerHitMs = NowMs(g_sim);
+        ++g_tw.shotsOnBots;  // BOTTOWER
+        if (lethal) ++g_tw.lethalShots;
+        if (it->second.towerExp.Shot(at.id, lethal)) ++g_tw.shotsInEpisodes;
       }
     }
   }
@@ -5967,6 +6399,48 @@ void NoteBailWhy(std::uint32_t bot, const char* why) {
   it->second.bailWhyMs = NowMs(g_sim);
 }
 
+bool FormatBotTowerStats(char* buf, std::size_t size) {
+  const BotTowerStats& w = g_tw;
+  const gms::agents::TowerExposureTotals& t = w.totals;
+  if (!t.episodes && !w.shotsOnBots && !w.backBy[1] && !w.backBy[2] && !w.backBy[3]) return false;
+  std::string paths;
+  for (int i = 0; i < gms::agents::kTtPathCount; ++i) {
+    char one[48];
+    std::snprintf(one, sizeof one, "%s%s %u", i ? ", " : "", gms::agents::TowerThinkPathName(i), t.thinks[i]);
+    paths += one;
+  }
+  std::snprintf(buf, size,
+                "BOTTOWER (aware %d, keep-out %d, reflex walk %d): under tower fire: episodes %u, bot-seconds targeted "
+                "%.1f, episode mean %.2f s max %.1f s (over 3 s %u), tower shots on bots %u (in episodes %u, lethal %u), "
+                "episodes with 2+ shots %u, 3+ %u, deaths in episodes %u, HP lost %.2f (in max HP), entered under 30 %% "
+                "HP %u (died %u); thinks while targeted: %s; tower back-offs: a hit %u, targeted %u, no minions %u "
+                "(other back-offs %u); steps started %u, own %u (adopted %u), walks ended %u, held and counted as done "
+                "%u, refused %u, left to the plan's retreat %u; dive thinks %u; kept out: gambits %u, fights %u, idle "
+                "fallbacks %u",
+                g_opt.botTowerAware ? 1 : 0, g_opt.botTowerKeepOut ? 1 : 0, g_opt.botReflexWalk ? 1 : 0, t.episodes,
+                static_cast<double>(t.targetedMs) / 1000.0,
+                t.episodes ? static_cast<double>(t.durationMs) / 1000.0 / t.episodes : 0.0,
+                static_cast<double>(t.maxDurationMs) / 1000.0, t.over3s, w.shotsOnBots, w.shotsInEpisodes,
+                w.lethalShots, t.shots2, t.shots3, t.died, t.hpLost, t.lowEntries, t.lowDeaths, paths.c_str(),
+                w.backBy[1], w.backBy[2], w.backBy[3], w.otherBacks, w.stepsStarted, w.stepsOwn, w.stepsAdopted, w.walksEnded, w.stepsBlind,
+                w.stepsRefused, w.planRetreats, w.dives, w.keptOutGambits, w.keptOutFights, w.keptOutFallbacks);
+  return true;
+}
+
+bool FormatBotTowerBots(char* buf, std::size_t size) {
+  if (g_twBots.empty()) return false;
+  std::string out;
+  for (const auto& kv : g_twBots) {
+    char one[128];
+    std::snprintf(one, sizeof one, "%s%08X %s %.1f s, %u episodes, %u shots, %u died", out.empty() ? "" : "; ",
+                  kv.first, kv.second.noun, static_cast<double>(kv.second.targetedMs) / 1000.0, kv.second.episodes,
+                  kv.second.shots, kv.second.died);
+    out += one;
+  }
+  std::snprintf(buf, size, "%s", out.c_str());
+  return true;
+}
+
 bool FormatKillFinishStats(char* buf, std::size_t size) {
   const KillFinishStats& k = g_kf;
   if (!k.thinks && !k.luaQueries && !g_bot.passThroughs && !k.dwellHeld && !k.joins) return false;
@@ -6094,13 +6568,27 @@ bool FormatMinionStats(char* buf, std::size_t size) {
 }
 
 bool FormatTowerStats(char* buf, std::size_t size) {
-  if (!g_installed || !size || !g_st.towerUpdates) return false;
+  if (!g_installed || !size || (!g_st.towerUpdates && !g_st.towerWatchedUpdates)) return false;
+  // TOWERSTICK: the rules that broke a tower's hold on a living non-player, the non-zero ones
+  std::string byRule;
+  for (int r = 0; r < gms::agents::kAggroRuleCount; ++r)
+    if (g_st.towerBrokenByRule[r]) {
+      char part[64];
+      std::snprintf(part, sizeof part, "%s%s %u", byRule.empty() ? "" : ", ", gms::agents::AggroRuleName(r),
+                    g_st.towerBrokenByRule[r]);
+      byRule += part;
+    }
   std::snprintf(buf, size,
-                "rule %s: updates %u; shaper-on-shaper hits %u; defend locks %u, released: left the range %u, left "
-                "the list %u; a shaper as the best target with a non-player on the list: defended or taunting %u, "
-                "other %u",
-                g_opt.towerTarget.enabled ? "on" : "off", g_st.towerUpdates, g_st.towerHits, g_st.towerLocks,
-                g_st.towerReleasedRange, g_st.towerReleasedList, g_st.towerShaperDefended, g_st.towerShaperOther);
+                "rule %s, stick %s: updates %u; shaper-on-shaper hits %u; defend locks %u, released: left the range "
+                "%u, left the list %u; a shaper as the best target with a non-player on the list: defended or "
+                "taunting %u, other %u; target changes %u: the old one gone %u, the old one on the list %u (for a "
+                "shaper %u), a living non-player left for another non-player %u%s%s%s",
+                g_opt.towerTarget.enabled ? "on" : "off",
+                g_opt.towerTarget.enabled && g_opt.towerTarget.stick ? "on" : "off",
+                g_st.towerWatchedUpdates, g_st.towerHits, g_st.towerLocks, g_st.towerReleasedRange,
+                g_st.towerReleasedList, g_st.towerShaperDefended, g_st.towerShaperOther, g_st.towerChanges,
+                g_st.towerOldGone, g_st.towerOffLiving, g_st.towerOffForShaper, g_st.towerStickBroken,
+                byRule.empty() ? "" : " (", byRule.c_str(), byRule.empty() ? "" : ")");
   return true;
 }
 

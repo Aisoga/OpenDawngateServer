@@ -42,6 +42,8 @@ struct ReflexConfig {
   float diveSelfHp = 0.4f;          // the diver's own HP fraction at least
   float finishTowerHp = 0.5f;       // an enemy tower at or below this HP fraction is finished, tower fire or not
   float finishSelfHp = 0.5f;        // ... by a bot with at least this HP fraction
+  float finishTowerShotHp = 0.5f;   // BOTTOWER: ... at or below this while that tower hits or targets the bot (the host
+                                    // sets towersafety.h's 0.2 with bot_tower_aware; two bots died finishing a 50 % tower)
   float weakAbsolute = 0.35f;       // below this HP fraction a bot does not start a fight
   float weakMargin = 0.15f;         // ... nor when its HP fraction is lower than the enemy's by more than this
   long long hitWindowMs = 3000;     // an enemy shaper's hit counts as an attack this long
@@ -59,7 +61,10 @@ struct ReflexSensors {
   int role = 0;                    // mRole
   float hpFrac = 1.f;              // own HP / max HP
   float hp = 0.f;                  // own HP points (PRETUSBOT; 0 = unknown: the fractions decide)
-  bool inTowerZone = false;        // within towerRange of a standing tower that hit the bot within towerZoneMs
+  bool inTowerZone = false;        // within towerRange of a standing tower that hit the bot within towerZoneMs (BOTTOWER:
+                                   // any tower danger of towersafety.h's TowerDanger)
+  int towerKind = 1;               // BOTTOWER: which danger (towersafety.h TowerDangerKind; 1 the hit, 2 targeted,
+                                   // 3 no minions), for the reason's name
   bool targetIsShaper = false;     // its current target (mTarget / best target) is an enemy shaper
   float targetHpFrac = 1.f;
   bool targetInTowerZone = false;  // that target stands within towerRange of a standing enemy tower
@@ -106,7 +111,8 @@ inline bool ReflexOutnumbered(const ReflexSensors& s) { return s.enemiesNear > s
 
 // Diving under a tower for a kill: a weak enemy shaper under it, and the bot itself in shape.
 inline bool ReflexDiving(const ReflexSensors& s, const ReflexConfig& c) {
-  if (s.targetIsTower && s.targetTowerHpFrac <= c.finishTowerHp && s.hpFrac >= c.finishSelfHp) return true;  // finishing a tower
+  const float towerFinish = s.inTowerZone && (s.towerKind == 1 || s.towerKind == 2) ? c.finishTowerShotHp : c.finishTowerHp;
+  if (s.targetIsTower && s.targetTowerHpFrac <= towerFinish && s.hpFrac >= c.finishSelfHp) return true;  // finishing a tower
   if (c.noShaperDive || !s.targetIsShaper) return false;
   if (s.finishing) return true;  // KILLFINISH: a near-certain kill under the tower
   if (!s.targetInTowerZone || s.hpFrac < c.diveSelfHp) return false;
@@ -117,7 +123,7 @@ inline ReflexDecision DecideReflex(const ReflexSensors& s, const ReflexConfig& c
   ReflexDecision d;
   if (s.inTowerZone && !ReflexDiving(s, c)) {
     d.kind = kReflexBack;
-    d.why = "tower";
+    d.why = s.towerKind == 2 ? "tower targets it" : s.towerKind == 3 ? "tower, no minions" : "tower";  // all 't...'
     return d;
   }
   if (!ReflexIsJungler(s.role)) {

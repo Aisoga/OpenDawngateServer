@@ -7,6 +7,7 @@
 //   4. reported by a non-player ally within callForHelpTime (entry +0x20);
 //   5. for the aggro types minion and tower: non-players before players;
 //   6. nearer first (edge distance); then the old list order.
+// Strict mode (MINTARGET, TOWERAGGRO) and stickFirst (TOWERSTICK) move some of these rules up: AggroDecide.
 // Header-only, so the harness (dgsim.dll) uses it with or without gms_core; gms_tests checks it.
 #pragma once
 
@@ -56,33 +57,85 @@ inline bool AddsOnSight(int aggroType) {
 
 inline bool Recent(std::int64_t ageMs, std::int64_t windowMs) { return ageMs >= 0 && ageMs <= windowMs; }
 
-// True if `a` goes before `b`.
-// `strict` (MINTARGET, lane minions): after a taunt the defended shaper, then every non-player (tower, structure,
-// minion) before every shaper, ahead of call-for-help reports and stickiness (which kept a shaper first once chosen).
-inline bool AggroBefore(const AggroCandidate& a, const AggroCandidate& b, bool nonPlayersFirst,
-                        std::int64_t windowMs = kCallForHelpTimeMs, bool strict = false) {
-  if (a.taunting != b.taunting) return a.taunting;
-  if (strict) {
-    if (a.defend != b.defend) return a.defend;
-    if (a.isPlayer != b.isPlayer) return !a.isPlayer;
-  }
+// The rule that decides between two candidates (TOWERSTICK's log names it when a tower's target changes).
+enum AggroRule : int {
+  kRuleTaunt = 0,
+  kRuleDefend,        // strict: a defended-against shaper (MINTARGET, TOWERAGGRO)
+  kRuleClass,         // strict: every non-player before every shaper
+  kRuleStickyFirst,   // stickFirst (TOWERSTICK): a tower's current non-player target before the reports
+  kRulePlayerReport,  // reported by a player-controlled ally within the window
+  kRuleSticky,        // the current best target
+  kRuleOtherReport,   // reported by a non-player ally within the window
+  kRuleNonPlayers,    // rule 5 (not strict): non-players before players for minions and towers
+  kRuleNearer,        // the nearer first
+  kRuleListOrder,     // equal on everything: the old list order
+  kAggroRuleCount
+};
+
+inline const char* AggroRuleName(int rule) {
+  static const char* const kNames[kAggroRuleCount] = {"taunt",
+                                                      "defend",
+                                                      "non-players first (strict)",
+                                                      "the current target (stick)",
+                                                      "a player's report",
+                                                      "sticky",
+                                                      "a non-player's report",
+                                                      "non-players first",
+                                                      "the nearer",
+                                                      "the list order"};
+  return rule >= 0 && rule < kAggroRuleCount ? kNames[rule] : "?";
+}
+
+// Which rule orders `a` and `b`; *aFirst tells whether `a` goes before `b`.
+// `strict` (MINTARGET, lane minions; TOWERAGGRO, towers): after a taunt the defended shaper, then every non-player
+// (tower, structure, minion) before every shaper, ahead of call-for-help reports and stickiness (which kept a shaper
+// first once chosen). `stickFirst` (TOWERSTICK, towers; only with `strict`): within the non-players the current target
+// goes before the reports, so it stays until it dies or leaves the list (range, sight, targetable); only a taunt and
+// the defend rule come first.
+inline AggroRule AggroDecide(const AggroCandidate& a, const AggroCandidate& b, bool nonPlayersFirst,
+                             std::int64_t windowMs, bool strict, bool stickFirst, bool* aFirst) {
+  AggroRule rule = kRuleListOrder;
+  bool first = a.index < b.index;
   const bool ap = Recent(a.playerReportAgeMs, windowMs), bp = Recent(b.playerReportAgeMs, windowMs);
-  if (ap != bp) return ap;
-  if (a.sticky != b.sticky) return a.sticky;
   const bool ao = Recent(a.otherReportAgeMs, windowMs), bo = Recent(b.otherReportAgeMs, windowMs);
-  if (ao != bo) return ao;
-  if (nonPlayersFirst && a.isPlayer != b.isPlayer) return !a.isPlayer;
-  if (a.distance != b.distance) return a.distance < b.distance;
-  return a.index < b.index;
+  if (a.taunting != b.taunting) {
+    rule = kRuleTaunt, first = a.taunting;
+  } else if (strict && a.defend != b.defend) {
+    rule = kRuleDefend, first = a.defend;
+  } else if (strict && a.isPlayer != b.isPlayer) {
+    rule = kRuleClass, first = !a.isPlayer;
+  } else if (strict && stickFirst && !a.isPlayer && a.sticky != b.sticky) {
+    rule = kRuleStickyFirst, first = a.sticky;
+  } else if (ap != bp) {
+    rule = kRulePlayerReport, first = ap;
+  } else if (a.sticky != b.sticky) {
+    rule = kRuleSticky, first = a.sticky;
+  } else if (ao != bo) {
+    rule = kRuleOtherReport, first = ao;
+  } else if (nonPlayersFirst && a.isPlayer != b.isPlayer) {
+    rule = kRuleNonPlayers, first = !a.isPlayer;
+  } else if (a.distance != b.distance) {
+    rule = kRuleNearer, first = a.distance < b.distance;
+  }
+  *aFirst = first;
+  return rule;
+}
+
+// True if `a` goes before `b`.
+inline bool AggroBefore(const AggroCandidate& a, const AggroCandidate& b, bool nonPlayersFirst,
+                        std::int64_t windowMs = kCallForHelpTimeMs, bool strict = false, bool stickFirst = false) {
+  bool aFirst = false;
+  AggroDecide(a, b, nonPlayersFirst, windowMs, strict, stickFirst, &aFirst);
+  return aFirst;
 }
 
 // Orders the candidates in place (the agent's aggro list in its new order).
 inline void OrderAggro(std::vector<AggroCandidate>* list, int aggroType, std::int64_t windowMs = kCallForHelpTimeMs,
-                       bool strict = false) {
+                       bool strict = false, bool stickFirst = false) {
   const bool npf = NonPlayersFirst(aggroType);
   std::stable_sort(list->begin(), list->end(),
-                   [npf, windowMs, strict](const AggroCandidate& a, const AggroCandidate& b) {
-                     return AggroBefore(a, b, npf, windowMs, strict);
+                   [npf, windowMs, strict, stickFirst](const AggroCandidate& a, const AggroCandidate& b) {
+                     return AggroBefore(a, b, npf, windowMs, strict, stickFirst);
                    });
 }
 

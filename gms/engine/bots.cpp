@@ -345,6 +345,20 @@ bool SehBrainInfo(std::uint32_t id, BrainInfo* b) {
   }
 }
 
+// MAPHOST: whether the setup seats a bot Hunter ([host] bot_hunter_seat; auto: only with jungle camps), logged once
+bool HunterSeat() {
+  static int logged = -2;
+  const int camps = director::JungleCamps();
+  const bool on = g_opt.hunterSeat > 0 || (g_opt.hunterSeat < 0 && camps != 0);
+  if (logged != (on ? 1 : 0)) {
+    logged = on ? 1 : 0;
+    Log("bots: MAPHOST: %s ([host] bot_hunter_seat %d, the level's jungle camps %d%s)",
+        on ? "a Hunter seat per team" : "no Hunter seat: its seat is a laner at the bottom (flex)", g_opt.hunterSeat,
+        camps, camps < 0 ? ": not read yet" : "");
+  }
+  return on;
+}
+
 // ---- the lane fronts --------------------------------------------------------------------------------------------
 
 void SetLanes() {
@@ -366,6 +380,10 @@ void SetLanes() {
     s += b;
   }
   Log("bots: lane fronts over the director's team-1 splines:%s", lanes.empty() ? " none (the shims' static centres)" : s.c_str());
+  if (lanes.size() >= 2)
+    Log("bots: MAPHOST: the lanes run up to %.1f units apart: %s", static_cast<double>(g_state.fronts.Separation()),
+        g_state.fronts.Shared() ? "one shared path (a Binding stands in every lane, the fronts count the whole path)"
+                                : "separate lanes");
 }
 
 struct RawUnit {
@@ -504,6 +522,19 @@ int __cdecl LuaClosestLane(void* L) {
     ++g_st.calls[5];
   }
   SehPushNumber(L, static_cast<float>(lane));
+  return 1;
+}
+
+// MAPHOST: nBotHost.SharedLanes() -> true when the level's lanes are one path (gms/core/bots/lanes.h LanesShareOnePath)
+int __cdecl LuaSharedLanes(void* L) {
+  bool shared = false;
+  if (Ours()) {
+    if (!g_lanesSet) SetLanes();
+    shared = g_state.fronts.Shared();
+  } else {
+    ++g_st.calls[5];
+  }
+  SehPushBoolean(L, shared);
   return 1;
 }
 
@@ -1514,6 +1545,7 @@ const LuaReg kBotHostRegs[] = {
     {"AssignLane", &LuaAssignLane},
     {"GetLane", &LuaGetLane},
     {"ClosestLane", &LuaClosestLane},
+    {"SharedLanes", &LuaSharedLanes},  // MAPHOST
     {"LaneCenterAndDirection", &LuaLaneCenterAndDirection},
     {"ClosestCamp", &LuaClosestCamp},
     {"CampFight", &LuaCampFight},  // CAMPFINISH
@@ -1718,6 +1750,7 @@ void Configure(const Options& o) {
   }
   g_opt.guideBuilds = HostOptionInt("bot_guide_builds", o.guideBuilds ? 1 : 0) != 0;  // DESECBOT-2
   g_opt.draft = HostOptionInt("bot_draft", o.draft);  // BOTDRAFT: -1 auto (custom, practice, pvp), 0 off, 1 always
+  g_opt.hunterSeat = HostOptionInt("bot_hunter_seat", o.hunterSeat);  // MAPHOST: -1 auto (camps), 0 never, 1 always
   g_opt.kits = HostOptionInt("bot_kits", o.kits ? 1 : 0) != 0;               // HUNTERBOT
   g_opt.hunterFix = HostOptionInt("bot_hunter_fix", o.hunterFix ? 1 : 0) != 0;  // HUNTERBOT
   g_opt.campFinish = HostOptionInt("bot_camp_finish", o.campFinish ? 1 : 0) != 0;  // CAMPFINISH
@@ -1875,6 +1908,7 @@ std::vector<DraftOut> Draft(void* sim, const std::vector<DraftHumanIn>& humans) 
   o.huntersPinned = !(g_opt.hunters.empty() || g_opt.hunters == "default" || g_opt.hunters == "1");
   o.tacticians = gb::ParseTacticianList(g_opt.tacticians);
   o.gladiators = gb::ParseGladiatorList(g_opt.gladiators);
+  o.jungle = HunterSeat();  // MAPHOST
   const std::map<int, std::vector<gb::ComposedSeat>> drawn = gb::DraftMatch(teams, hs, g_available, o);
   Log("bots: BOTDRAFT: draw with seed %u: humans%s", g_draftSeed, hdesc.empty() ? " none" : hdesc.c_str());
   std::map<int, size_t> nth;
@@ -2061,7 +2095,7 @@ const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& human
                 : "off: the bots are composed now",
         g_opt.draft, g_gameMode.c_str());
     plan = gb::PlanBotPlayersComposed(counted, g_teamSize, teams, available, anyClass, gb::ParseDropOrder(g_opt.compositionDrop),
-                                      0, seed, hunters, tacticians, gladiators);
+                                      0, seed, hunters, tacticians, gladiators, HunterSeat());
     for (const gb::HumanPlayer& h : counted)
       Log("bots: BOTCOMP: human index %d team %d: role %s", h.index, h.team, gb::RoleName(h.role));
   } else {

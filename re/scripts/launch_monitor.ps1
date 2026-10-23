@@ -28,13 +28,16 @@
     '<t>:keydown=<vk>' / '<t>:keyup=<vk>' (G3b) a key held from one t to a later one (WM_KEYDOWN, then WM_KEYUP), e.g.
                       Tab for the in-game scoreboard with a screenshot in between (the shot at a t comes before its actions)
     '<t>:text=<chars>' (A5b) type letters, digits and _ @ . - (since D8b also /, for chat commands such as /surrender;
-                      since SP1-live also #, since SP3 also +) as posted WM_CHARs into whatever has the game's keyboard focus (click the
-                      text field first, e.g. the PvP lobby invite dialog's name field)
+                      since SP1-live also #, since SP3 also +, since MAPPICK also ~) as posted WM_CHARs, which carry
+                      the character code, so the keyboard layout doesn't matter, into whatever has the game's
+                      keyboard focus (click the text field first, e.g. the PvP lobby invite dialog's name field)
     '<t>:login=<name>|<password>' (SP1-live) -Login's form once more, e.g. on the login screen again after a logout or
                       a kick: each field clicked, emptied (End, then 40 backspaces) and typed, then LOGIN clicked; the
                       name may hold a server tag (alex#b, the server picker; since SP3 also + for an add, alex#+host)
     '<t>:wheel=<delta>[x<n>]' n posted WM_MOUSEWHEELs (default 1) of <delta> (120 = one notch away from the user,
                       -120 towards) at the window's centre, 250 ms apart: the in-game camera's zoom
+    '<t>:dbl<fx>,<fy>' (ROOMS2) a left double-click: down, up, WM_LBUTTONDBLCLK, up, posted within 200 ms (the
+                      Social panel's Rooms tab joins a room on a double-click)
     '<t>:shot'        screenshot only
     '<t>:fshot'       (SP1-live) a focused screenshot f<t>.png, as -ShotFocus on takes them, also when the session's
                       other shots aren't focused: one picture of a parked window without taking the focus for the rest
@@ -209,6 +212,25 @@ function RightClickAt($h, $fx, $fy) {
     Start-Sleep -Milliseconds 300
     return "($x,$y)"
 }
+function DoubleClickAt($h, $fx, $fy) {
+    # ROOMS2: a left double-click in posted messages, as Windows delivers one to a CS_DBLCLKS window: down, up,
+    # WM_LBUTTONDBLCLK, up, well within the double-click time (the Rooms tab joins a room on a double-click)
+    $r = New-Object W+RECT
+    [void][W]::GetClientRect($h, [ref]$r)
+    $x = [int](($r.R - $r.L) * $fx); $y = [int](($r.B - $r.T) * $fy)
+    $lp = [IntPtr](($y -shl 16) -bor ($x -band 0xFFFF))
+    [void][W]::PostMessage($h, 0x0200, [IntPtr]0, $lp)   # WM_MOUSEMOVE
+    Start-Sleep -Milliseconds 150
+    [void][W]::PostMessage($h, 0x0201, [IntPtr]1, $lp)   # WM_LBUTTONDOWN (MK_LBUTTON)
+    Start-Sleep -Milliseconds 40
+    [void][W]::PostMessage($h, 0x0202, [IntPtr]0, $lp)   # WM_LBUTTONUP
+    Start-Sleep -Milliseconds 60
+    [void][W]::PostMessage($h, 0x0203, [IntPtr]1, $lp)   # WM_LBUTTONDBLCLK (MK_LBUTTON)
+    Start-Sleep -Milliseconds 40
+    [void][W]::PostMessage($h, 0x0202, [IntPtr]0, $lp)   # WM_LBUTTONUP
+    Start-Sleep -Milliseconds 300
+    return "($x,$y)"
+}
 function DragFromTo($h, $fx1, $fy1, $fx2, $fy2) {
     # B7b: a left-button drag in posted messages only (Scaleform takes the points from the messages, as for clicks)
     $r = New-Object W+RECT
@@ -283,7 +305,7 @@ if ($Actions) {
         if ($a -notmatch '^(\d+):(.+)$') { throw "bad -Actions item '$a'" }
         $at = [int]$Matches[1]; $what = $Matches[2].Trim()
         if ($at % 2) { throw "-Actions time $at must be even" }
-        if ($what -notmatch '^([rh]?\d*\.?\d+,\d*\.?\d+|d\d*\.?\d+,\d*\.?\d+,\d*\.?\d+,\d*\.?\d+|key=\d+(\+\d+)?|keydown=\d+|keyup=\d+|wheel=-?\d+(x\d+)?|text=[A-Za-z0-9_@./#+-]+|login=[A-Za-z0-9_@.#+-]+\|[^|]+|shot|fshot|pshot|lockfg=\d+|front|back)$') { throw "bad -Actions item '$($a -replace '\|.*$', '|...')'" }
+        if ($what -notmatch '^(([rh]|dbl)?\d*\.?\d+,\d*\.?\d+|d\d*\.?\d+,\d*\.?\d+,\d*\.?\d+,\d*\.?\d+|key=\d+(\+\d+)?|keydown=\d+|keyup=\d+|wheel=-?\d+(x\d+)?|text=[A-Za-z0-9_@./#+~-]+|login=[A-Za-z0-9_@.#+-]+\|[^|]+|shot|fshot|pshot|lockfg=\d+|front|back)$') { throw "bad -Actions item '$($a -replace '\|.*$', '|...')'" }
         if (-not $ActionsAt.ContainsKey($at)) { $ActionsAt[$at] = @() }
         $ActionsAt[$at] += $what
     }
@@ -338,6 +360,10 @@ function DoActions($p, $at) {
             $pos = HoverAt $h ([double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)) ([double]::Parse($Matches[2], [Globalization.CultureInfo]::InvariantCulture))
             Shot $p "h$at"
             Log "action t=${at}: hovered ($what) at $pos, screenshot h$at"; continue
+        }
+        if ($what -match '^dbl(.+),(.+)$') {
+            $pos = DoubleClickAt $h ([double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)) ([double]::Parse($Matches[2], [Globalization.CultureInfo]::InvariantCulture))
+            Log "action t=${at}: double-clicked ($what) at $pos"; continue
         }
         if ($what -match '^r(.+),(.+)$') {
             $pos = RightClickAt $h ([double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture)) ([double]::Parse($Matches[2], [Globalization.CultureInfo]::InvariantCulture))

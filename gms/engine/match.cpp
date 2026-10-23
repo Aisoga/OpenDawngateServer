@@ -13,6 +13,7 @@
 #include "agents.h"
 #include "core/matchflow/flow.h"
 #include "core/matchflow/guardcore.h"
+#include "core/matchflow/mapbase.h"
 #include "crowd.h"
 #include "death.h"
 #include "game.h"
@@ -51,8 +52,17 @@ struct Guardian {
   std::uint32_t shield = 0;  // D14: its modifier_Tower_Immunity instance while a core of its team lives
   int livingCores = -1;      // D14: at the last shield step (logged on a change)
   int coreMask = -1;         // GUARDCORE: bit i = Core A+i of its team alive (HP > 0); -1 before the first look
+  unsigned presentMask = flow::kAllCores;  // MAPBASE: the Cores its team has on the level (MM_Map_v3: A, B, C)
 };
 std::vector<Guardian> g_guardians;
+
+// MAPBASE: the base defence (the Locus, gms::flow::IsLocusNoun), watched for the stats line only.
+struct Locus {
+  std::uint32_t id = 0;
+  std::string noun;
+  int team = 0;
+};
+std::vector<Locus> g_loci;
 
 struct Tower {
   std::uint32_t id = 0;
@@ -311,6 +321,42 @@ int SehScanByPrefix(void* sim, const char* prefix, RawTower* out, int max) {
     }
     return n;
   } __except (SehNote(GetExceptionInformation(), "ScanByPrefix")) {
+    return -1;
+  }
+}
+
+// MAPBASE: the server level's LevelGameplayTuning towerRespawnEnabled and tower[] (sim +0x19DF0 -> Level data +0x614
+// -> the tuning's data; game.h gameplayTuning). Returns the list's length (at most `max` copied), -1 if unreadable.
+int SehReadTowerTuning(void* sim, bool* enabled, flow::TowerTuning* out, int max) {
+  __try {
+    void* level = Field<void*>(sim, sim::kLevel);
+    char* ld = level ? Field<char*>(level, noun::kData) : nullptr;
+    void* asset = ld ? Field<void*>(ld, level::kGameplayTuning) : nullptr;
+    char* d = asset ? Field<char*>(asset, noun::kData) : nullptr;
+    if (!d) return -1;
+    *enabled = Field<unsigned char>(d, gameplayTuning::kTowerRespawnEnabled) != 0;
+    char* list = Field<char*>(d, gameplayTuning::kTowers);
+    const int n = Field<int>(d, gameplayTuning::kTowers + 4);
+    if (n < 0 || n > 64 || (n > 0 && !list)) return -1;
+    for (int i = 0; i < n && i < max; ++i) {
+      char* e = list + i * gameplayTuning::kTowerSize;
+      out[i].respawnTime = Field<float>(e, gameplayTuning::kTowerEntryRespawnTime);
+      out[i].laneAgentAdjust = Field<int>(e, gameplayTuning::kTowerLaneAgentAdjust);
+    }
+    return n;
+  } __except (SehNote(GetExceptionInformation(), "ReadTowerTuning")) {
+    return -1;
+  }
+}
+
+// MAPBASE: an object's NPC type (NonPlayerClass +0x68), -1 without one.
+int SehNpcTypeOf(std::uint32_t id) {
+  __try {
+    void* o = id ? GetObjectById(id) : nullptr;
+    void* npcAsset = o ? Field<void*>(o, npc::kOfObject) : nullptr;
+    char* d = npcAsset ? Field<char*>(npcAsset, noun::kData) : nullptr;
+    return d ? Field<int>(d, npc::kType) : -1;
+  } __except (SehNote(GetExceptionInformation(), "NpcTypeOf")) {
     return -1;
   }
 }
@@ -747,10 +793,11 @@ void UpdateGuardianCores(const char* why) {
       float nhp = 0.f;
       if (n.team == g.team && n.core >= 0 && SehHp(n.id, &nhp) == 1) mask |= 1u << n.core;
     }
+    const unsigned present = g.presentMask;  // MAPBASE: a Core the level lacks can't die, so its special stays
     if (g.coreMask < 0) {
       Log("match: GUARDCORE %s %08X (team %d) at %s: cores %s, specials %s, special cooldown %.0f s", g.noun.c_str(),
-          g.id, g.team, why, flow::CoreMaskString(mask).c_str(), flow::SpecialsOf(mask).c_str(),
-          flow::SpecialCooldownSeconds(mask));
+          g.id, g.team, why, flow::CoreMaskString(mask, present).c_str(), flow::SpecialsOf(mask, present).c_str(),
+          flow::SpecialCooldownSeconds(mask, present));
     } else if (static_cast<unsigned>(g.coreMask) != mask) {
       for (int i = 0; i < flow::kGuardianCores; ++i) {
         const bool was = (static_cast<unsigned>(g.coreMask) >> i) & 1u, is = (mask >> i) & 1u;
@@ -760,7 +807,8 @@ void UpdateGuardianCores(const char* why) {
         Log("match: GUARDCORE %s %08X (team %d): core %c (%s, %s, %s) %s at match %.2f s (t %.2f s); cores %s, specials "
             "%s, special cooldown %.0f s",
             g.noun.c_str(), g.id, g.team, c.letter, c.special, c.name, c.place, is ? "restored" : "destroyed", g_t, clockS,
-            flow::CoreMaskString(mask).c_str(), flow::SpecialsOf(mask).c_str(), flow::SpecialCooldownSeconds(mask));
+            flow::CoreMaskString(mask, present).c_str(), flow::SpecialsOf(mask, present).c_str(),
+            flow::SpecialCooldownSeconds(mask, present));
       }
     }
     g.coreMask = static_cast<int>(mask);
@@ -792,6 +840,78 @@ void Start() {
       g_opt.descriptors);
   Announce("MatchStart");
   director::OnMatchStarted();
+}
+
+// MAPBASE (gms/core/matchflow/mapbase.h): at the level load, after the tower table and the
+// nubs. Sets each Guardian's present Cores (GUARDCORE's specials and cooldown count only Cores the level has) and
+// finds the Locus; the rest is logged only, no rule changes:
+//   match: MAPBASE: team 1's Bindings: 2, tiers Middle, Inner; team 2's ...
+//   match: MAPBASE: LevelGameplayTuning towerRespawnEnabled 0, tower[] 2: 900 s (laneAgentRespawnCounterAdjustment
+//          0), 600 s (-1): a destroyed Binding stays down
+//   match: MAPBASE: <Guardian> (team N): 3 Core(s) on the level (ABC..); ...
+//   match: MAPBASE: the Locus <noun> <id> (team N) at (x, y): NPC type T, HP H: ...
+void LogMapBase(void* sim) {
+  for (int team = 1; team <= 2; ++team) {
+    std::vector<int> tiers;
+    for (const Tower& tw : g_towers)
+      if (tw.team == team) tiers.push_back(tw.tier);
+    Log("match: MAPBASE: team %d's Bindings: %zu, tiers %s (every one attackable at any time: no tier lock)", team,
+        tiers.size(), flow::TierNames(flow::TierMask(tiers)).c_str());
+  }
+  bool enabled = false;
+  flow::TowerTuning list[8];
+  const int n = SehReadTowerTuning(sim, &enabled, list, 8);
+  if (n < 0) {
+    Log("match: MAPBASE: LevelGameplayTuning's tower part could not be read");
+  } else {
+    std::string s;
+    for (int i = 0; i < n && i < 8; ++i) {
+      char b[96];
+      std::snprintf(b, sizeof b, "%s%.0f s (laneAgentRespawnCounterAdjustment %d)", i ? ", " : "", list[i].respawnTime,
+                    list[i].laneAgentAdjust);
+      s += b;
+    }
+    Log("match: MAPBASE: LevelGameplayTuning towerRespawnEnabled %d, tower[] %d: %s: %s", enabled ? 1 : 0, n,
+        s.empty() ? "-" : s.c_str(),
+        enabled ? "towerRespawnEnabled is set, but the host resurrects no Binding (NOT IMPLEMENTED; no shipped level sets "
+                  "it)"
+                : "a destroyed Binding stays down");
+  }
+  for (Guardian& g : g_guardians) {
+    unsigned present = 0;
+    int count = 0;
+    for (const Nub& nb : g_nubs)
+      if (nb.team == g.team && nb.core >= 0) {
+        present |= 1u << nb.core;
+        ++count;
+      }
+    g.presentMask = present;
+    std::string absent;
+    for (int i = 0; i < flow::kGuardianCores; ++i)
+      if (!((present >> i) & 1u)) absent += (absent.empty() ? "" : ", ") + std::string(1, static_cast<char>('A' + i));
+    const std::string extra =
+        absent.empty() ? std::string()
+                       : "; absent " + absent +
+                             ": their specials stay allowed (no modifier_Guardian_Nub<X>_Destroyed can come)";
+    Log("match: MAPBASE: %s %08X (team %d): %d Core(s) on the level (%s)%s; its shield needs all of them dead",
+        g.noun.c_str(), g.id, g.team, count, flow::CoreMaskString(present, present).c_str(), extra.c_str());
+  }
+  RawTower raw[8];
+  const int nl = SehScanByPrefix(sim, "DEST_prefab_", raw, 8);
+  for (int i = 0; i < nl; ++i) {
+    if (!flow::IsLocusNoun(raw[i].noun)) continue;
+    Locus l;
+    l.id = raw[i].id;
+    l.noun = raw[i].noun;
+    l.team = raw[i].team;
+    g_loci.push_back(l);
+    float hp = 0.f;
+    SehHp(l.id, &hp);
+    Log("match: MAPBASE: the Locus %s %08X (team %d) at (%.1f, %.1f): NPC type %d, HP %.0f: the base's defence "
+        "(ability_Tower_MegaZap), not a Core: neither the shield nor the end depends on it",
+        l.noun.c_str(), l.id, l.team, raw[i].pos[0], raw[i].pos[1], SehNpcTypeOf(l.id), hp);
+  }
+  if (g_loci.empty()) Log("match: MAPBASE: no Locus (DEST_prefab_<blue|red>_tower[_v5]) on the level");
 }
 
 }  // namespace
@@ -930,6 +1050,7 @@ void OnLevelStarted(void* sim) {
     }
     Log("match: base structures: %d nubs [%s] and %zu Guardians", n, list.c_str(), g_guardians.size());
   }
+  LogMapBase(sim);  // MAPBASE: the level's tiers, the Binding respawn rule, the Cores a team has, the Locus
   UpdateGuardianShields("the level load");  // D14: invincible while a core lives
   UpdateGuardianCores("the level load");    // GUARDCORE: which specials its Cores allow
   // D9: the spirit wells (wells.h; replaces D1c-live's minimal wells, R10 §4.3)
@@ -1032,9 +1153,18 @@ void FormatStats(char* buf, std::size_t size) {
     char b[128];
     std::snprintf(b, sizeof b, " %08X team %d hp %.0f%s, cores %d (%s), shield %s", g.id, g.team, hp,
                   st < 0 ? " gone" : "", g.livingCores,
-                  g.coreMask < 0 ? "?" : flow::CoreMaskString(static_cast<unsigned>(g.coreMask)).c_str(),
+                  g.coreMask < 0 ? "?" : flow::CoreMaskString(static_cast<unsigned>(g.coreMask), g.presentMask).c_str(),
                   g.shield ? "on" : "off");
     gs += b;
+  }
+  std::string ls;  // MAPBASE: the Locus of each team
+  for (const Locus& l : g_loci) {
+    float hp = 0.f;
+    const int st = SehHp(l.id, &hp);
+    char b[96];
+    std::snprintf(b, sizeof b, "%s%08X team %d hp %.0f%s", ls.empty() ? "" : ", ", l.id, l.team, hp,
+                  st < 0 ? " gone" : "");
+    ls += b;
   }
   if (g_sim) SetCurrentSim(prev);
   char dir[400];
@@ -1042,13 +1172,13 @@ void FormatStats(char* buf, std::size_t size) {
   std::snprintf(buf, size,
                 "%s, match %.1f s; Guardians%s; towers destroyed %u; lua calls guardian %u, destroyed %u, energy %u, nub "
                 "tuning %u, base structures %u (marked some %u, none %u); level checks %u (ups %u); announcer %u; "
-                "Guardian shield on %u, off %u, refused %u (D14); cores lost %u, restored %u (GUARDCORE); exceptions "
-                "%u; director: %s",
+                "Guardian shield on %u, off %u, refused %u (D14); cores lost %u, restored %u (GUARDCORE); Locus %s "
+                "(MAPBASE); exceptions %u; director: %s",
                 g_ended ? "ENDED" : g_started ? "running" : "not started", g_t, gs.empty() ? " none" : gs.c_str(),
                 g_st.towersDestroyed, g_st.luaCalls[0], g_st.luaCalls[1], g_st.luaCalls[2], g_st.luaCalls[3],
                 g_st.luaCalls[4], g_st.baseMarked, g_st.baseEmpty, g_st.levelChecks, g_st.levelUps, g_st.announcer,
-                g_st.shieldsOn, g_st.shieldsOff, g_st.shieldsRefused, g_st.coresLost, g_st.coresBack, g_st.exceptions,
-                dir);
+                g_st.shieldsOn, g_st.shieldsOff, g_st.shieldsRefused, g_st.coresLost, g_st.coresBack,
+                ls.empty() ? "none" : ls.c_str(), g_st.exceptions, dir);
 }
 
 }  // namespace match

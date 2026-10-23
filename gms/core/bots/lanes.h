@@ -119,6 +119,31 @@ inline int ClosestLane(const std::vector<LanePath>& lanes, const Vec3& p, float*
   return best;
 }
 
+// MAPHOST: how far apart the lanes run: the largest 2-D distance of any lane's knot from any other lane's polyline; 0
+// with fewer than two lanes. SM_Map_v5's team-1 Top and Bottom splines: 193 (their middles are far apart); MM_Map_v3's:
+// 45.2 / 40.6 (its two splines a side run along the one diagonal lane, median 23 apart; the levels' SplinePathNode markers).
+inline float LaneSeparation(const std::vector<LanePath>& lanes) {
+  float worst = 0.f;
+  for (const LanePath& a : lanes)
+    for (const LanePath& b : lanes) {
+      if (&a == &b || b.knots.size() < 2) continue;
+      for (const Vec3& k : a.knots) {
+        float d = 0.f;
+        b.Project(k, &d);
+        worst = std::max(worst, d);
+      }
+    }
+  return worst;
+}
+
+// MAPHOST: the lanes are one path (a one-lane level such as MM_Map_v3, whose data still names a Top and a Bottom spline
+// a side): at least two lanes and every knot within `tolerance` of every other lane [assumed tolerance: 60, between
+// MM's 45 and SM's 193]. Then a Binding stands in every lane (the shims' GetNumTowers, GetOuterTower) and a lane's front
+// counts the minions of the whole path.
+inline bool LanesShareOnePath(const std::vector<LanePath>& lanes, float tolerance = 60.f) {
+  return lanes.size() >= 2 && LaneSeparation(lanes) <= tolerance;
+}
+
 // SM_Map_v5 without lane data: the map is mirrored across y = x, the Top lane runs through the half with y > x (every
 // knot of `blue_top` has y - x between 20.8 and 135.1; every Top-lane Binding has y - x >= 47.5), the Bottom lane
 // through the other half. The Lua shims use the same rule as their fallback (dgsim_bots_api.lua).
@@ -188,12 +213,21 @@ class LaneFronts {
   void SetLanes(const std::vector<LanePath>& lanes) {
     lanes_ = lanes;
     fronts_.clear();
+    separation_ = LaneSeparation(lanes_);
+    shared_ = LanesShareOnePath(lanes_);
   }
   const std::vector<LanePath>& Lanes() const { return lanes_; }
+  // MAPHOST: the lanes are one path (LanesShareOnePath), and how far apart they run
+  bool Shared() const { return shared_; }
+  float Separation() const { return separation_; }
+  // On a shared path a lane's front counts every minion within the lane width plus the lanes' separation of it, so both
+  // lanes see the whole path's minions (one front per team, as on a one-lane map).
   void Update(const std::vector<Unit>& minions, const FrontConfig& cfg = FrontConfig()) {
     fronts_.clear();
+    FrontConfig c = cfg;
+    if (shared_) c.laneWidth += separation_;
     for (const LanePath& l : lanes_)
-      for (int team = 1; team <= 2; ++team) fronts_[Key(l.lane, team)] = ComputeFront(l, team, minions, cfg);
+      for (int team = 1; team <= 2; ++team) fronts_[Key(l.lane, team)] = ComputeFront(l, team, minions, c);
   }
   // False for an unknown lane or team (the shim then falls back to its static centre).
   bool Get(int lane, int team, Front* out) const {
@@ -208,6 +242,8 @@ class LaneFronts {
   static int Key(int lane, int team) { return lane * 16 + team; }
   std::vector<LanePath> lanes_;
   std::map<int, Front> fronts_;
+  bool shared_ = false;
+  float separation_ = 0.f;
 };
 
 // nBot.AssignLane(bot, lane) / GetLaneID(bot): the lane each bot was told to hold. Team fill gives the first ones

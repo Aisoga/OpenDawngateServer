@@ -67,6 +67,35 @@ GMS_TEST(CampreachLeavesOthersAlone) {
   CHECK_EQ(CreepTierIdentity(4), 0u);
 }
 
+// CAMPREACH-live: the auto obstacles. LocomotionData_InitObstacleFlags (0x0088E7F0): an NPC's obstacle blockage 0x17,
+// its auto obstacle identity 2 (a player's 1, noRepulsion 0).
+GMS_TEST(CampreachObstacleTiers) {
+  const ObstacleFlags npc = {0x17u, 2u};
+  const ObstacleFlags minor = CampCreepObstacle(0, npc), medium = CampCreepObstacle(1, npc),
+                      major = CampCreepObstacle(2, npc);
+  CHECK_EQ(minor.blockage, 0x17u);  // a minor still plans around everything
+  CHECK_EQ(minor.autoIdentity, 0x102u);
+  CHECK_EQ(medium.blockage, 0x15u | 0xE00u);
+  CHECK_EQ(medium.autoIdentity, 0x202u);
+  CHECK_EQ(major.blockage, 0x15u | 0xC00u);
+  CHECK_EQ(major.autoIdentity, 0x402u);
+  // the major plans through the minor's and the medium's obstacle, not through another major's
+  CHECK(!RepulsorBlocks(major.blockage, minor.autoIdentity));
+  CHECK(!RepulsorBlocks(major.blockage, medium.autoIdentity));
+  CHECK(RepulsorBlocks(major.blockage, major.autoIdentity));
+  CHECK(!RepulsorBlocks(medium.blockage, minor.autoIdentity));
+  CHECK(RepulsorBlocks(medium.blockage, major.autoIdentity));
+  // the smaller ones and everyone else (blockage 0x17) still plan around every creature
+  CHECK(RepulsorBlocks(minor.blockage, major.autoIdentity));
+  CHECK(RepulsorBlocks(0x17u, minor.autoIdentity));
+  // and the bigger ones still around a player's obstacle (identity 1)
+  CHECK(RepulsorBlocks(major.blockage, 1u));
+  // unchanged: no auto obstacle, a player's, no such tier
+  CHECK_EQ(CampCreepObstacle(2, ObstacleFlags{0x17u, 0u}).blockage, 0x17u);
+  CHECK_EQ(CampCreepObstacle(2, ObstacleFlags{0x17u, 1u}).autoIdentity, 1u);
+  CHECK_EQ(CampCreepObstacle(4, npc).blockage, 0x17u);
+}
+
 GMS_TEST(CampleashChaseTimeSparesTheCamp) {
   const LeashOptions o = CreepLeash();
   // a bot match: a Boar major 10.6 from its spot, its target 6.0 from it, no hit for 5 s: kept now

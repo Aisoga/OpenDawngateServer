@@ -26,6 +26,7 @@
 #include "death.h"
 #include "director.h"
 #include "game.h"
+#include "hook.h"
 #include "host/host.h"
 #include "hunterroute.h"
 #include "log.h"
@@ -665,6 +666,8 @@ ShopStats g_ss;
 struct FireStats {
   bool on = false;
   unsigned calls = 0, unsafe = 0, offGrid = 0;
+  bool zonesStubbed = false;  // FIREZONE: 0x00877870 replaced (once a process)
+  unsigned zonesSkipped = 0;  // FIREZONE: fire zones the stub didn't cut into the nav graph
 };
 FireStats g_fs;
 
@@ -813,7 +816,16 @@ int __cdecl LuaLaneSplit(void* L) {
           others.push_back(gb::LaneMember{b.role, g_state.lanes.LaneOf(b.creature)});
       if (!gb::MoveKeepsSplit(me->role, from, lane, others)) out = from;
     }
-    if (from != lane && (lane == gb::kLaneTop || lane == gb::kLaneBottom)) {
+    // A repeat of the bot's last question with the same answer is neither counted nor logged: the Lua's
+    // condition_Bot_AssignedToThreatenedLane asks at every think while the gambit stays refused, which used up the
+    // bots' log budget within the first waves.
+    const bool repeat = me && me->splitAsk[0] == from && me->splitAsk[1] == lane && me->splitAsk[2] == out;
+    if (me) {
+      me->splitAsk[0] = from;
+      me->splitAsk[1] = lane;
+      me->splitAsk[2] = out;
+    }
+    if (!repeat && from != lane && (lane == gb::kLaneTop || lane == gb::kLaneBottom)) {
       if (out == lane) ++g_splitTaken;
       else ++g_splitKept;
       if (LogBudget())
@@ -1459,12 +1471,30 @@ bool SehIsPositionSafe(void* director, int team, const float* xy, bool* safe) {
   }
 }
 
+// FIREZONE: replaces the fire zone 0x00877870 (thiscall, 6 stack arguments: __fastcall with edx unused pops the same
+// 0x18 bytes). Its callers mark the tracker's cells and request the dodge themselves; only the nav graph's penalty box
+// and its timed list entry are left out.
+void __fastcall NoFireZone(void* /*tracker*/, void* /*edx*/, void*, void*, void*, void*, void*, void*) {
+  ++g_fs.zonesSkipped;
+}
+
+void StubFireZones() {
+  if (g_opt.fireZones || g_fs.zonesStubbed) return;
+  g_fs.zonesStubbed = HookReplace(kFireTrackerAddFireZone, kFireTrackerAddFireZoneBytes,
+                                  sizeof kFireTrackerAddFireZoneBytes, reinterpret_cast<void*>(&NoFireZone));
+  Log("bots: FIREZONE: the fire tracker's NavPower fire zones (00877870) %s",
+      g_fs.zonesStubbed ? "replaced by a stub (no BotObstacle_FireZone cut into the nav graph; [host] bot_fire_zones=1 "
+                          "keeps them)"
+                        : "NOT replaced (other bytes): the game's code runs");
+}
+
 void EnableFireTracker(void* sim) {
   if (g_fs.on || !g_opt.fireTracker) return;
   if (!CodeMatches(0x00876900, kFireTrackerIsSafeBytes, sizeof kFireTrackerIsSafeBytes)) {
     Log("bots: FireTracker_IsPositionSafe at 00876900 has other bytes; the fire tracker stays off");
     return;
   }
+  StubFireZones();
   void* director = SehDirector(sim);
   g_fs.on = director && SehFireTrackerOn(director);
   Log("bots: the bot director %p's fire tracker (+0x978) %s: the Guardian's and the parasite's area abilities mark their "
@@ -1740,6 +1770,7 @@ void LoadApi(void* sim) {
                           " dgsim_bots.engageFixWanted = " + (g_opt.engageFix ? "true" : "false") +
                           " dgsim_bots.joinFixWanted = " + (g_opt.joinFix ? "true" : "false") +
                           " dgsim_bots.desecKitWanted = " + (g_opt.desecKit ? "true" : "false") +
+                          " dgsim_bots.fogCheckWanted = " + (g_opt.fogCheck ? "true" : "false") +
                           " return 'ok'";
   SehRunLua(sim, pre.c_str(), static_cast<unsigned>(pre.size()), "dgsim_bots_pre", out, sizeof out);
   const bool ok = SehRunLua(sim, chunk.c_str(), static_cast<unsigned>(chunk.size()), "dgsim_bots_api.lua", out, sizeof out);
@@ -1808,6 +1839,7 @@ void Configure(const Options& o) {
   g_opt.shopping = HostOptionInt("bot_shopping", o.shopping ? 1 : 0) != 0;
   g_opt.potions = HostOptionInt("bot_potions", o.potions);
   g_opt.fireTracker = HostOptionInt("bot_fire_tracker", o.fireTracker ? 1 : 0) != 0;
+  g_opt.fireZones = HostOptionInt("bot_fire_zones", o.fireZones ? 1 : 0) != 0;  // FIREZONE
   g_opt.fixups = HostOptionInt("bot_fixups", o.fixups ? 1 : 0) != 0;
   g_opt.parasiteGuard = HostOptionInt("bot_parasite_guard", o.parasiteGuard ? 1 : 0) != 0;
   g_opt.laneFixes = HostOptionInt("bot_lane_fixes", o.laneFixes ? 1 : 0) != 0;  // BOTLANE
@@ -1845,6 +1877,7 @@ void Configure(const Options& o) {
   g_opt.engageFix = HostOptionInt("bot_engage_fix", o.engageFix ? 1 : 0) != 0;  // DESECBOT-3
   g_opt.joinFix = HostOptionInt("bot_join_fix", o.joinFix ? 1 : 0) != 0;        // BOTCYCLE
   g_opt.desecKit = HostOptionInt("bot_desec_kit", o.desecKit ? 1 : 0) != 0;     // DESECBOT-3
+  g_opt.fogCheck = HostOptionInt("bot_fog_check", o.fogCheck ? 1 : 0) != 0;     // BOTBUSH
   g_opt.harassStartWorkers = HostOptionInt("bot_harass_start_workers", o.harassStartWorkers);
   g_opt.harassEndWorkers = HostOptionInt("bot_harass_end_workers", o.harassEndWorkers);
   g_opt.team = HostOptionInt("bot_team", o.team ? 1 : 0) != 0;                   // BOTTEAM
@@ -1861,7 +1894,8 @@ void Configure(const Options& o) {
       "%d ms), shopping %d (potions %d), fire tracker %d, script fix-ups %d; BOTCOMP composition %d (drop '%s'), harass "
       "workers %d..%d, Hunter gank %d; BOTTEAM team layer %d, pings %d; BOTTEMPO %d, team status every %d s; "
       "BOTJUNGLE jungler %d, ping following %d; PRETUSBOT Hunter stand at the parasite %d; BOTPROFILE profiles %d; "
-      "HUNTERBOT Hunters '%s', kits %d, Hunter fixes %d; DESECBOT Tacticians '%s', guide builds %d",
+      "HUNTERBOT Hunters '%s', kits %d, Hunter fixes %d; DESECBOT Tacticians '%s', guide builds %d; BOTBUSH sight "
+      "check %d",
       g_opt.teamSize,
       g_opt.teamSize < 0
           ? " (auto: createGame's fillTeams a team, else 5 a team when the game's descriptors have BotsFillTeams 0x400)"
@@ -1871,7 +1905,7 @@ void Configure(const Options& o) {
       g_opt.compositionDrop.c_str(), g_opt.harassStartWorkers, g_opt.harassEndWorkers, g_opt.hunterGank,
       g_opt.team && g_opt.laneFixes, g_opt.teamPings, g_opt.tempo, g_opt.teamStatusS, g_opt.jungle, g_opt.pingFollow,
       g_opt.hunterParasiteStand, g_opt.profiles, g_opt.hunters.c_str(), g_opt.kits, g_opt.hunterFix,
-      g_opt.tacticians.c_str(), g_opt.guideBuilds);
+      g_opt.tacticians.c_str(), g_opt.guideBuilds, g_opt.fogCheck);
 }
 
 void OnHumanPing(int team, std::uint32_t pinger, std::uint32_t target, const float* pos, int type) {
@@ -2458,7 +2492,7 @@ void FormatMissionStats(char* buf, std::size_t size) {
         "taken by type:%s; ended: CheckEnd %u, expired %u, target gone %u; plan layer: accepted %u, refused %u, opened %u, "
         "again %u, kept %u, left %u; nBotHost mission calls %u/%u/%u/%u/%u/%u/%u/%u/%u; shopping: calls %u/%u/%u/%u, bought %u "
         "items and %u potions for %.0f gold, refused %u, away from the shop %u, bots without a build %u, guide builds %u (bought %u, choices %u, deferred %u); fire tracker "
-        "%s (IsPositionSafe %u, unsafe %u, off the grid %u)",
+        "%s (IsPositionSafe %u, unsafe %u, off the grid %u, fire zone stub %s, skipped %u)",
         g_ms.ticks, g_ms.tickFailed, g_ms.checks, g_ms.checkEnds, g_ms.luaErrors, g_state.missions.Count(),
         open.empty() ? " none;" : open.c_str(), types.empty() ? " none" : types.c_str(), g_ms.endedByCheck, g_ms.expired,
         g_ms.gone, g_ms.planAccepted, g_ms.planRefused, g_ms.planOpened, g_ms.planAgain, g_ms.planKept, g_ms.planLeft,
@@ -2468,7 +2502,7 @@ void FormatMissionStats(char* buf, std::size_t size) {
         static_cast<double>(g_ss.spent), g_ss.refused, g_ss.awayFromShop, g_ss.noBuild, g_ss.guideBots, g_ss.guideBought,
         g_ss.guideChoices, g_ss.guideDeferred, g_fs.on ? "on" : "off",
         g_fs.calls, g_fs.unsafe,
-        g_fs.offGrid);
+        g_fs.offGrid, g_fs.zonesStubbed ? "on" : "off", g_fs.zonesSkipped);
     if (n < 0 || len + static_cast<std::size_t>(n) >= size) return;
     len += static_cast<std::size_t>(n);
   }

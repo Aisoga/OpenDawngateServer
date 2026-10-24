@@ -178,17 +178,19 @@ func (s *Server) releaseWords() string {
 }
 
 // mapRefusedText is the player's message for a refused join, mapFallbackText for a game it creates that plays on
-// SM_Map_v5 instead.
+// SM_Map_v5 instead. The players' messages name the maps as players see them (levelDisplay: Anshavar Pass, The
+// Dawngate); the log keeps the levels' names.
 func (s *Server) mapRefusedText(level, what string, mc mapCheck) string {
 	return fmt.Sprintf("You can't join %s: it plays on the map %s, and your copy of Dawngate may not have that map's "+
 		"files (%s). Close the game and start it again with Start-Client.exe of %s, which adds them.",
-		what, level, mc.tell, s.releaseWords())
+		what, levelDisplay(level), mc.tell, s.releaseWords())
 }
 
 func (s *Server) mapFallbackText(level string, mc mapCheck) string {
+	shown := levelDisplay(level)
 	return fmt.Sprintf("Your game plays on %s instead of %s: your copy of Dawngate may not have %s's files (%s). "+
-		"Start the game with Start-Client.exe of %s to play %s.", HostedLevel, level, level, mc.tell,
-		s.releaseWords(), level)
+		"Start the game with Start-Client.exe of %s to play %s.", levelDisplay(HostedLevel), shown, shown, mc.tell,
+		s.releaseWords(), shown)
 }
 
 // tellMap sends c's player the map check's message (MapNoteID; a repeated text gets a number so the client shows it
@@ -300,8 +302,8 @@ func (s *Server) mapQueueRefused(r *Request, t *matchmaker.Ticket) bool {
 	}
 	if len(others) > 0 { // the owner hears who keeps the party out
 		owner, text := ms.members[0].conn, fmt.Sprintf("The PvP queue plays on the map %s, whose files the copies of %s "+
-			"may not have; they start the game again with Start-Client.exe of %s.", level, strings.Join(others, ", "),
-			s.releaseWords())
+			"may not have; they start the game again with Start-Client.exe of %s.", levelDisplay(level),
+			strings.Join(others, ", "), s.releaseWords())
 		r.After(func() { s.tellMap(owner, text) })
 	}
 	s.Log.Logf("blaze", "   matchmaking for %d refused: the queue plays on %s, and %s may lack its files (map check); "+
@@ -318,8 +320,8 @@ func (s *Server) mapQueueText(level, leader string, mc mapCheck) string {
 		who = fmt.Sprintf("%s's party can't queue with you", leader)
 	}
 	return fmt.Sprintf("%s: the PvP queue plays on the map %s, and your copy of Dawngate may not have that map's files "+
-		"(%s). Close the game and start it again with Start-Client.exe of %s, which adds them.", who, level, mc.tell,
-		s.releaseWords())
+		"(%s). Close the game and start it again with Start-Client.exe of %s, which adds them.", who,
+		levelDisplay(level), mc.tell, s.releaseWords())
 }
 
 // refuseMapJoin answers a join into game gid on level with ErrMapFilesMissing, logs why and tells the player.

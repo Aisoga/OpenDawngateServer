@@ -94,7 +94,7 @@ func TestMatchOptionsMapList(t *testing.T) {
 	if got, want := string(MapList(nil)), pad("dawngate-maps\t1\nend\n"); got != want {
 		t.Errorf("MapList(nil) = %q", strings.TrimRight(got, "\n"))
 	}
-	if got, want := string(MapList(ExtraMaps)), pad("dawngate-maps\t1\nmap\tmm\tMM (one lane)\nend\n"); got != want {
+	if got, want := string(MapList(ExtraMaps)), pad("dawngate-maps\t1\nmap\tmm\tAnshavar Pass\nend\n"); got != want {
 		t.Errorf("MapList(ExtraMaps) = %q", strings.TrimRight(got, "\n"))
 	}
 	many := make([]Map, 100) // more than fit: cut at a whole line, still the fixed size
@@ -130,7 +130,7 @@ func TestMatchOptionsMapList(t *testing.T) {
 		want string
 	}{
 		{nil, "e4994e8df80b86886df2a24a92f90ab698bd91a572be6e0a66cff9ab3a881471"},
-		{ExtraMaps, "ea32a187414f66c510cea4473c00b166be6db1188d0710b61e6622c43b3e5e9b"},
+		{ExtraMaps, "4ecdc1bab98e4ace5f43e7a8711757aaf0da066d4a7f3ec264558bf6e1068105"},
 	} {
 		out, err := sp.BuildMaps(src, c.maps)
 		if err != nil {

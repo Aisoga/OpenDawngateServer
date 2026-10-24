@@ -32,15 +32,26 @@ type PlayableLevel struct {
 	Tag     string // a custom game's name tag picks it: "<name>~#<Tag>" (MapTagPrefix)
 	Label   string // put in front of the game's name in the game browser, whose Map column can't show the level
 	Archive string // the added archive in game\Data that holds its files ("" = they ship with the game)
+	Display string // the map's name in what players read (the create dialog's list and the lobby's map line say it too)
 }
 
 // PlayableLevels are the levels dgserver accepts. SM_Map_v5 ships whole; MM_Map_v3 (the cut one-lane map) needs
 // zz_MM_Map_v3.snap in every player's copy and the host copy, which the release's setup makes from the copy's own
 // files; a player whose copy may lack it is kept out of its games (the map check, mapguard.go). Every other Level asset
 // lacks its graphs, physics mesh and ground.
+// MM_Map_v3 is shown to players as Anshavar Pass ("[Pass] " in front of a game's name); its name, tag and archive
+// stay the internal ones.
 var PlayableLevels = []PlayableLevel{
-	{Name: HostedLevel, Tag: "sm"},
-	{Name: "MM_Map_v3", Tag: "mm", Label: "[MM] ", Archive: "zz_MM_Map_v3.snap"},
+	{Name: HostedLevel, Tag: "sm", Display: "The Dawngate"},
+	{Name: "MM_Map_v3", Tag: "mm", Label: "[Pass] ", Archive: "zz_MM_Map_v3.snap", Display: "Anshavar Pass"},
+}
+
+// levelDisplay is the map's name for players' messages: its Display, else the level's own name.
+func levelDisplay(level string) string {
+	if l, ok := FindLevel(level); ok && l.Display != "" {
+		return l.Display
+	}
+	return level
 }
 
 // MapTagPrefix starts a custom game's map tag at the end of its name ("Friday fun~#mm"); the server strips it, as it

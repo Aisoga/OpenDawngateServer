@@ -104,25 +104,76 @@ test('GetNearbyObjects and players near', function()
   shaper('eDead', 2, 3, 0, { alive = false, hp = 0 })
   local a1 = shaper('a1', 1, 6, 0)
   local m1 = W.add({ name = 'minion', team = 2, pos = P(4, 0), npc = nNPCType.MeleeMinion, minion = true })
+  -- BOTBUSH (bot_fog_check, on): the enemy shaper team 1 doesn't see is dropped also without the FoW flag
   local list = nBot.GetNearbyObjects(bot, 30, nTargetType.EnemyPlayers, 0)
-  check(#list == 3 and list[1] == eHidden and list[2] == e2 and list[3] == e1, 'enemy players nearest first, no dead')
+  check(#list == 2 and list[1] == e2 and list[2] == e1, 'enemy players nearest first, no dead, none hidden')
   list = nBot.GetNearbyObjects(bot, 30, nTargetType.EnemyPlayers, nGetObjectsFlags.CheckFoWVisibility)
   check(#list == 2 and list[1] == e2, 'fog of war flag')
   list = nBot.GetNearbyObjects(bot, 30, nTargetType.EnemyPlayers + nTargetType.EnemyNPCs, 0)
-  check(#list == 4 and list[1] == m1, 'players and NPCs')
+  check(#list == 3 and list[1] == m1, 'players and NPCs')
+  -- [host] bot_fog_check=0: as before
+  dgsim_bots.fogCheckWanted = false
+  list = nBot.GetNearbyObjects(bot, 30, nTargetType.EnemyPlayers, 0)
+  check(#list == 3 and list[1] == eHidden and list[2] == e2 and list[3] == e1, 'check off: the hidden one too')
+  list = nBot.GetNearbyObjects(bot, 30, nTargetType.EnemyPlayers + nTargetType.EnemyNPCs, 0)
+  check(#list == 4 and list[1] == m1, 'check off: players and NPCs')
+  check(#nBot.GetEnemyPlayersNearPosition(1, nGameObject.GetPosition(bot), 10) == 2, 'check off: enemies near')
+  dgsim_bots.fogCheckWanted = nil
   list = nBot.GetNearbyObjects(bot, 30, nTargetType.AllyPlayers, 0)
   check(#list == 1 and list[1] == a1, 'allies without self')
   check(#nBot.GetNearbyObjects(kObjIDNone, 30, nTargetType.EnemyPlayers, 0) == 0, 'none')
   -- enemy players near a position: a table, nearest first; the 5th argument is the fog-of-war check
   local p = nGameObject.GetPosition(bot)
   list = nBot.GetEnemyPlayersNearPosition(1, p, 10)
-  check(type(list) == 'table' and #list == 2 and list[1] == eHidden, 'enemies near a position')
+  check(type(list) == 'table' and #list == 1 and list[1] == e2, 'enemies near a position (BOTBUSH: by sight)')
+  list = nBot.GetEnemyPlayersNearPosition(1, p, 10, 0, false)
+  check(#list == 2 and list[1] == eHidden, 'enemies near a position, checkFoW false: all')
   list = nBot.GetEnemyPlayersNearPosition(1, p, 10, 0, true)
   check(#list == 1 and list[1] == e2, 'enemies near a position, fog of war')
   check(#nBot.GetEnemyPlayersNearPosition(1, nil, 10) == 0, 'no position: empty table')
   -- allies near a position: a number, the caller included
   check(nBot.GetAllyPlayersNearPosition(1, p, 10) == 2, 'allies near: bot + a1')
   check(nBot.GetAllyPlayersNearPosition(2, p, 10) == 2, 'team 2 allies near: e2, eHidden')
+end)
+
+test('BOTBUSH: targets and queries by the team\'s sight', function()
+  local lines = {}
+  nBotHost = { Log = function(t) lines[#lines + 1] = t end }
+  local bot = shaper('bot', 1, 0, 0, { bot = true })
+  local hid = shaper('hid', 2, 5, 0, { visible = { [0] = true, [1] = false, [2] = true } })
+  local seen = shaper('seen', 2, 9, 0)
+  local mHid = W.add({ name = 'minion', team = 2, pos = P(4, 0), npc = nNPCType.MeleeMinion, minion = true,
+                       visible = { [0] = true, [1] = false, [2] = true } })
+  -- the scripts' gate: a hidden enemy shaper is no valid target, a hidden minion still is (only shapers filtered)
+  check(nBot.ValidateHostileBotTarget(1, hid, false, true) == false, 'hidden shaper: not valid')
+  check(nBot.ValidateHostileBotTarget(1, seen, false, true) == true, 'seen shaper: valid')
+  check(nBot.ValidateHostileBotTarget(1, mHid, false, true) == true, 'hidden minion: valid as before')
+  check(dgsim_bots.ValidTargetIgnoringSight(1, hid, false, true) == true, 'the gank memory ignores sight')
+  -- the neutral team (creeps) is never filtered
+  check(dgsim_bots.SeenBy(0, hid) == true, 'team 0 unfiltered')
+  -- one log line per change: lost, then seen again
+  nBot.GetEnemyPlayersNearPosition(1, nGameObject.GetPosition(bot), 20)
+  nBot.GetEnemyPlayersNearPosition(1, nGameObject.GetPosition(bot), 20)
+  check(#lines == 1 and string.find(lines[1], 'BOTBUSH: team 1 no longer knows of hid', 1, true) ~= nil,
+    'one line for the loss: ' .. tostring(lines[1]))
+  W.get(hid).visible[1] = true
+  local list = nBot.GetEnemyPlayersNearPosition(1, nGameObject.GetPosition(bot), 20)
+  check(#list == 2 and list[1] == hid, 'seen again: back in the list')
+  check(#lines == 2 and string.find(lines[2], 'BOTBUSH: team 1 sees again hid', 1, true) ~= nil,
+    'one line for seeing it again: ' .. tostring(lines[2]))
+  check((dgsim_bots.stats.calls['BOTBUSH dropped (GetEnemyPlayersNearPosition)'] or 0) == 2, 'drops counted')
+  -- the scripts' own sight-checked calls are unchanged; the switch off keeps the hidden one
+  W.get(hid).visible[1] = false
+  check(#nBot.GetEnemyPlayersNearPosition(1, nGameObject.GetPosition(bot), 20, 0, true) == 1, 'checkFoW true: as before')
+  dgsim_bots.fogCheckWanted = false
+  check(nBot.ValidateHostileBotTarget(1, hid, false, true) == true, 'check off: hidden shaper valid')
+  check(#nBot.GetEnemyPlayersNearPosition(1, nGameObject.GetPosition(bot), 20) == 2, 'check off: all enemies')
+  dgsim_bots.fogCheckWanted = nil
+  -- Overextended's level test (a self-preservation check) by sight too: a hidden higher-level enemy is unknown
+  W.get(hid).level = 9
+  check(nBot.IsEnemyStronger(bot, 20, 2) == false, 'a hidden stronger enemy is unknown')
+  W.get(hid).visible[1] = true
+  check(nBot.IsEnemyStronger(bot, 20, 2) == true, 'a seen stronger enemy counts')
 end)
 
 test('GetNumPlayersNearPosition', function()

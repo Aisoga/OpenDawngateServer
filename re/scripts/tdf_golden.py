@@ -1077,7 +1077,7 @@ B14_CASES = {
 # The error reply beside it is the frame joingame_mapcheck_reply (GameManager joinGame, error 0x0131: the client's
 # BlazeErrors line 0x01310004).
 MAPGUARD_REFUSED_TEXT = (
-    "You can't join \"[MM] Custom 1\": it plays on the map MM_Map_v3, and your copy of Dawngate may not have that "
+    "You can't join \"[Pass] Custom 1\": it plays on the map Anshavar Pass, and your copy of Dawngate may not have that "
     "map's files (you are connected without the tunnel, so the server can't check your copy). Close the game and "
     "start it again with Start-Client.exe of this server's release (rel-A), which adds them.")
 MAPGUARD_CASES = {
@@ -1291,7 +1291,7 @@ B15_CASES = {
     "notifygamelistupdate_removed_notification": lambda: b15_list_update(False),
     # MAPPICK: the browser's row of a custom game on MM_Map_v3 (a name tag "~#mm", or dgserver --map MM_Map_v3): its
     # LevelId, which the client's Map column can't name (one-entry table at 0x013F3A78), and the map's label in GNAM
-    "notifygamelistupdate_mm_notification": lambda: b15_list_update(True, "[MM] Custom 1", MAPLEVEL1_LEVEL),
+    "notifygamelistupdate_mm_notification": lambda: b15_list_update(True, "[Pass] Custom 1", MAPLEVEL1_LEVEL),
 }
 
 

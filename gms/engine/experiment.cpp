@@ -723,6 +723,7 @@ void Stats(unsigned now, bool histo) {
     if (agents::FormatLeashStats(ag, sizeof ag)) Log("stats leash: %s", ag);      // LEASH
     if (agents::FormatTowerStats(ag, sizeof ag)) Log("stats towers: %s", ag);     // TOWERAGGRO
     if (agents::FormatHunterStats(ag, sizeof ag)) Log("stats hunters: %s", ag);   // HUNTERBOT
+    if (agents::FormatSightStats(ag, sizeof ag)) Log("stats botbush: %s", ag);   // BOTBUSH
     if (hunterroute::FormatStats(ag, sizeof ag)) Log("stats hunterroute: %s", ag);  // HUNTERROUTE
     if (agents::FormatCampFinishStats(ag, sizeof ag)) Log("stats campfinish: %s", ag);  // CAMPFINISH
     if (agents::FormatDesecStats(ag, sizeof ag)) Log("stats desecrator: %s", ag);  // DESECBOT-3
@@ -971,6 +972,7 @@ void ReadConfig() {
     ao.botHoldStuckMs = HostOptionInt("bot_hold_stuck_ms", ao.botHoldStuckMs);  // BOTTEMPO
     if (ao.botHoldStuckMs < 0) ao.botHoldStuckMs = 0;
     ao.botStaleTarget = HostOptionInt("bot_stale_target", 1) != 0;  // BOTTEMPO
+    ao.botFogCheck = HostOptionInt("bot_fog_check", 1) != 0;        // BOTBUSH
     ao.botPointFollowFix = HostOptionInt("bot_point_follow_fix", 1) != 0;  // BACKTOACTION
     ao.botLostMs = HostOptionInt("bot_lost_ms", ao.botLostMs);             // BACKTOACTION
     if (ao.botLostMs < 0) ao.botLostMs = 0;
@@ -1104,7 +1106,7 @@ void ReadConfig() {
     mo.director.campIcons = HostOptionInt("camp_icons", 3);  // CAMPICONS: each team's knowledge (director::Configure reads it too)
     crowd::Options co;  // D1k: NavPower's constraint solver for the server space
     co.constraintSolver = HostOptionInt("navpower_constraint_solver", 1) != 0;
-    co.campReach = HostOptionInt("camp_reach", 1) != 0;  // CAMPREACH: a camp's bigger creatures pass its smaller ones
+    co.campReach = HostOptionInt("camp_reach", 2);  // CAMPREACH(-live): 1 the repulsors, 2 also the auto obstacles
     crowd::Configure(co);
     match::Configure(mo);
     // D6a: the bot players (bots.h)

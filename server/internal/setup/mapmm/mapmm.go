@@ -11,7 +11,8 @@
 //	                                                  platforms cut out; SM_Map_v5's graphs give the header values)
 //	levels/MM_Map_v3/MM_Map_v3.bin                    the PhysX triangle mesh: a floor and the walls (physmesh),
 //	                                                  shipped cooked; the copy's map must be the one it was made from
-//	levels/MM_Map_v3/MM_Map_v3.out                    the fog of war's wall outlines (fogmap)
+//	levels/MM_Map_v3/MM_Map_v3.out                    the fog of war's wall outlines (fogmap) and its bushes'
+//	                                                  (grassmap)
 //	textures/minimap/MM_Map_v3_minimap.dds            the minimap (fogmap's picture, DXT5 with 7 mips)
 //	Environments/prototype/mm_v3_terrain.bmdl        the ground model and its two textures (ground: SM_Map_v5's
 //	environments/prototype/textures/mm_v3_dirt_D.dds  terrain materials, our own dirt, the game's grass pixels)
@@ -22,10 +23,13 @@
 //	                                                  moved onto it (EndMarkers, AppendMarkers)
 //	AssetData/Binary/MM_Map_v3.Level.bin             the map's own level (MMLevel): the first map's three end
 //	                                                  cinematics (EndScriptsLevel), so a match ends with the victory
-//	                                                  view, and the tag map's path (EditLevel), so the game loads the
-//	                                                  next two
+//	                                                  view, the tag map's path (EditLevel), so the game loads the
+//	                                                  next two, and an energy-line tuning (EnergyLinesLevel), without
+//	                                                  which the game shows no Binding's death
 //	levels/MM_Map_v3/MM_Map_v3.tags                   the level tag names (the first map's own file) and the tag map
 //	images/32bit/MM_Map_v3_Tags.tga                   from the map's markers (tagmap)
+//	images/32bit/MM_Map_v3_GrassMap.tga              the bushes' grass map from the map's grass markers (grassmap),
+//	                                                  so they hide what stands in them
 //
 // The bytes equal the developers' Python reference's, pinned by hashes on made-up inputs in each part's tests and,
 // on build 854's files, by Game854SHA256.
@@ -40,6 +44,7 @@ import (
 	"dawngate/server/internal/setup/assetdata"
 	"dawngate/server/internal/setup/dds"
 	"dawngate/server/internal/setup/mapmm/fogmap"
+	"dawngate/server/internal/setup/mapmm/grassmap"
 	"dawngate/server/internal/setup/mapmm/ground"
 	"dawngate/server/internal/setup/mapmm/los"
 	"dawngate/server/internal/setup/mapmm/navgraph"
@@ -52,13 +57,13 @@ const (
 	File = "zz_MM_Map_v3.snap"
 	Rel  = "game/Data/" + File // in a copy
 	// Game854SHA256 is the archive Build makes from build 854's files.
-	Game854SHA256 = "3e0496a84d6320b1c16017301a578278c8f794cb409e64614b8e13845bbdb9bc"
+	Game854SHA256 = "eed1e14c861eb5a68e315410aedc994d99a11079bfdf16ace1c23e0702b98bbf"
 	minimapMips   = 7
 )
 
 // Sources are the copy's archives Build reads, in Inputs' order: the line-of-sight map, SM_Map_v5's graphs (the
 // template, its level tag names), the grass texture, the terrain model (the template of the ground's materials) and the
-// asset data (the design markerset, the Level).
+// asset data (the design markerset, the Level, the grass markers).
 var Sources = []string{"game/Data/" + los.Archive, "game/Data/SM_Map_v5.snap", "game/Data/anshavar3.snap",
 	"game/Data/anshavar4.snap", "game/Data/AssetData.snap"}
 
@@ -91,8 +96,9 @@ type Inputs struct {
 
 // state is what the generators share: the decoded inputs.
 type state struct {
-	in  Inputs
-	los los.Image
+	in    Inputs
+	los   los.Image
+	grass []grassmap.Patch // the grass markers' patches (grassPatches)
 }
 
 // parts are the archive's entries in order, one generator each: a new file is one more line.
@@ -108,6 +114,7 @@ var parts = []struct {
 	{[]string{DesignEntry}, makeBases},
 	{[]string{LevelEntry}, makeLevel},
 	{[]string{tagsEntry, tagImageEntry}, makeTags},
+	{[]string{grassmap.Entry}, makeGrass},
 }
 
 // Files makes the archive's entries in order.
@@ -177,6 +184,17 @@ func makeFog(st *state) ([][]byte, error) {
 	}
 	out, err := fogmap.OutlinesFrom(st.los, f, los.Size, los.Size)
 	if err != nil {
+		return nil, err
+	}
+	ps, err := grassPatches(st)
+	if err != nil {
+		return nil, err
+	}
+	bushes, err := grassmap.Outlines(ps, los.Size)
+	if err != nil {
+		return nil, err
+	}
+	if out, err = fogmap.AppendGrass(out, bushes); err != nil {
 		return nil, err
 	}
 	rgba := fogmap.MinimapRGBAFrom(st.los, f, los.Size, los.Size)
@@ -289,13 +307,49 @@ func EditLevel(b []byte) ([]byte, error) {
 }
 
 // MMLevel is the second map's Level as the archive ships it, every change in one place: the first map's three end
-// cinematic names (EndScriptsLevel), then levelFields (EditLevel: the tag map).
+// cinematic names (EndScriptsLevel), then levelFields (EditLevel: the tag map), then the energy-line tuning
+// (EnergyLinesLevel).
 func MMLevel(mm, sm []byte) ([]byte, error) {
 	b, err := EndScriptsLevel(mm, sm)
 	if err != nil {
 		return nil, err
 	}
-	return EditLevel(b)
+	if b, err = EditLevel(b); err != nil {
+		return nil, err
+	}
+	return EnergyLinesLevel(b, sm)
+}
+
+// The Bindings' death. The game shows a Binding's death (its destroyed state, the explosion and its sound, the
+// announcement and the "Binding destroyed" message) from its tower graphics, which start only when the level names an
+// energy-line tuning (the Level's energyLineTuning, an asset reference at +0x618); the second map's is null, so its
+// Bindings died unseen. The first map's old tuning, SM_Map_v4_EnergyLines, names no line model and no lines, so with it
+// the graphics start and no energy line is drawn. The reference is a pointer word (any non-zero value means "present")
+// and the asset's name as out-of-line data; it is the Level's last member with out-of-line data, so the name goes at
+// the file's end.
+const (
+	energyLinesOff = 0x618
+	// EnergyLines is the energy-line tuning the second map's Level names.
+	EnergyLines = "SM_Map_v4_EnergyLines.EnergyLineTuning"
+)
+
+// EnergyLinesLevel is the second map's Level naming EnergyLines: the pointer word copied from the first map's Level
+// (which names its own tuning there), the name appended.
+func EnergyLinesLevel(mm, sm []byte) ([]byte, error) {
+	o := energyLinesOff
+	if len(mm) < levelStructSize || len(sm) < levelStructSize {
+		return nil, fmt.Errorf("a Level asset shorter than its fixed part")
+	}
+	if binary.LittleEndian.Uint32(mm[o:]) != 0 {
+		return nil, fmt.Errorf("the second map's level already names an energy-line tuning")
+	}
+	if binary.LittleEndian.Uint32(sm[o:]) == 0 {
+		return nil, fmt.Errorf("the first map's level names no energy-line tuning")
+	}
+	out := append([]byte{}, mm[:o]...)
+	out = append(out, sm[o:o+4]...)
+	out = append(out, mm[o+4:]...)
+	return append(append(out, EnergyLines...), 0), nil
 }
 
 func makeLevel(st *state) ([][]byte, error) {
@@ -312,6 +366,43 @@ func makeLevel(st *state) ([][]byte, error) {
 		return nil, err
 	}
 	return [][]byte{b}, nil
+}
+
+// grassPatches are the second map's bushes, read once from its grass markers.
+func grassPatches(st *state) ([]grassmap.Patch, error) {
+	if st.grass != nil {
+		return st.grass, nil
+	}
+	set, err := los.FromArchive(st.in.AssetData, grassmap.MarkersetEntry)
+	if err != nil {
+		return nil, err
+	}
+	ts, err := assetdata.Embedded()
+	if err != nil {
+		return nil, err
+	}
+	ps, err := grassmap.Patches(ts, set, grassmap.Entry)
+	if err != nil {
+		return nil, err
+	}
+	if len(ps) == 0 {
+		return nil, fmt.Errorf("%s: no grass markers naming %s", grassmap.MarkersetEntry, grassmap.Entry)
+	}
+	st.grass = ps
+	return ps, nil
+}
+
+// makeGrass paints the bushes' grass map (the line-of-sight map's size, as the game asserts).
+func makeGrass(st *state) ([][]byte, error) {
+	ps, err := grassPatches(st)
+	if err != nil {
+		return nil, err
+	}
+	img, err := grassmap.Image(ps, los.Size, st.los.W, st.los.H)
+	if err != nil {
+		return nil, err
+	}
+	return [][]byte{img}, nil
 }
 
 // makeTags copies the first map's .tags file (the game's 16 tag names and their hashes) and paints the tag map in its

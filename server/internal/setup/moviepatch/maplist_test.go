@@ -79,7 +79,7 @@ func TestWriteMapList(t *testing.T) {
 	}
 	// the layout before MAPDROP-server (a compressed list): not written, the file as it was
 	old := snap.Pack([]snap.File{{Name: MatchOptions.MoviePath, Data: synth()},
-		{Name: MapListPath, Data: []byte("dawngate-maps\t1\nmap\tmm\tMM (one lane)\nend\n")}})
+		{Name: MapListPath, Data: []byte("dawngate-maps\t1\nmap\tmm\tAnshavar Pass\nend\n")}})
 	if err := os.WriteFile(path, old, 0o644); err != nil {
 		t.Fatal(err)
 	}

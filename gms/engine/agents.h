@@ -132,6 +132,9 @@ struct Options {
   // unreachable point or on the spot of a target that became untargetable
   int botHoldStuckMs = 15000;        // [host] bot_hold_stuck_ms: an instance holding a bot that hasn't moved 3 units this long ends (0 = off)
   bool botStaleTarget = true;        // [host] bot_stale_target: a bot's mTarget that is no longer a valid hostile target is dropped
+  // BOTBUSH (gms/core/agents/sight.h): no ability, recall check or fallback hit of a bot on an enemy shaper its team
+  // doesn't see (fog, grass, stealth); the Lua side reads the same key (dgsim_bots.fogCheckWanted)
+  bool botFogCheck = true;           // [host] bot_fog_check
   // BACKTOACTION (gms/core/agents/lost.h): a Pursue leaf that outlived its point pursuit walked to the zero vector (the
   // map's centre); the net for every bot: a Pursue leaf without anything to follow, a bot lost on the centre
   bool botPointFollowFix = true;     // [host] bot_point_follow_fix: restart the Pursue leaf after a point pursuit ends
@@ -215,6 +218,8 @@ std::string DescribeBot(std::uint32_t objectId);
 bool FormatNpcStats(char* buf, std::size_t size);
 // HUNTERBOT: the kits' and the Hunters' counts (its own "stats hunters:" line; false before any bot thought)
 bool FormatHunterStats(char* buf, std::size_t size);
+// BOTBUSH: what the sight rule left out (gambits, fallback hits, kit Es, recall checks); false before any bot think.
+bool FormatSightStats(char* buf, std::size_t size);
 // CAMPFINISH round 3: a Hunter's current camp fight (nBotHost.CampFight): its nearest living creature's position, the
 // camp's share of its full HP, whether he finishes it first; false without one
 bool HunterCampFight(std::uint32_t bot, float* pos, float* frac, bool* finishing);

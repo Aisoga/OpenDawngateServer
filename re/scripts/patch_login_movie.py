@@ -80,8 +80,9 @@ MAP_LIST_MAGIC = "dawngate-maps\t1"
 # archive mounted (write_map_list; moviepatch.MapListSize, WriteMapList).
 MAP_LIST_SIZE = 1 << 10
 # The maps besides The Dawngate a copy can have: its name tag (the server's ~#<tag>), its archive in game/Data, the
-# dropdown's text (the lobby and the browser show the server's label, "[MM] ").
-EXTRA_MAPS = (("mm", "zz_MM_Map_v3.snap", "MM (one lane)"),)
+# dropdown's text, the map's display name (the lobby's map line says the same, patch_locale.LOBBY_LINES; the browser
+# and the lobby's title show the server's prefix, "[Pass] "). MM_Map_v3 is shown to players as Anshavar Pass.
+EXTRA_MAPS = (("mm", "zz_MM_Map_v3.snap", "Anshavar Pass"),)
 # The picker's names, as before the specs.
 TAGS = PICKER.tags
 MOVIE_PATH = PICKER.movie_path

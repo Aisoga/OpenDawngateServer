@@ -85,7 +85,7 @@ func TestFrontMapList(t *testing.T) {
 	if err := f.WriteServerList(copyDir); err != nil {
 		t.Fatal(err)
 	}
-	const withMM, without = "dawngate-maps\t1\nmap\tmm\tMM (one lane)\nend", "dawngate-maps\t1\nend"
+	const withMM, without = "dawngate-maps\t1\nmap\tmm\tAnshavar Pass\nend", "dawngate-maps\t1\nend"
 	g := fakeGame{t: t}
 	confirmed := map[string]bool{}
 	logIn := func(tag string) {
@@ -119,7 +119,7 @@ func TestFrontMapList(t *testing.T) {
 	if got := readMapList(t, copyDir); got != withMM {
 		t.Errorf("the list after the login to A: %q", got)
 	}
-	waitLog(t, logDir, "the create dialog's maps for a: The Dawngate, MM (one lane) (the server offers mm; the copy has mm), written into", 0)
+	waitLog(t, logDir, "the create dialog's maps for a: The Dawngate, Anshavar Pass (the server offers mm; the copy has mm), written into", 0)
 	// without MM's files the copy never lists it, also for A
 	if err := os.Remove(filepath.Join(data, "zz_MM_Map_v3.snap")); err != nil {
 		t.Fatal(err)

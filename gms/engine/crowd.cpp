@@ -146,7 +146,34 @@ bool SehCampFlags(std::uint32_t id, int tier, gms::agents::RepulsorFlags* before
   }
 }
 
-unsigned g_campCreatures, g_campLogged;
+// CAMPREACH-live: the creature's auto obstacle and obstacle blockage (gms::agents::CampCreepObstacle). The mover exists
+// at the spawn and read the locomotion's +0x9C/+0xA0 at its creation only, so the host rewrites its MoverTune the way
+// the client's own per-frame update does (get, change, set) and the locomotion's words as well (a mover made again
+// later reads them). 0 if there is no mover, -1 on an exception.
+int SehCampObstacle(std::uint32_t id, int tier, gms::agents::ObstacleFlags* before, gms::agents::ObstacleFlags* after) {
+  __try {
+    void* o = GetObjectById(id);
+    char* l = o ? Field<char*>(o, loco::kOfObject) : nullptr;
+    void* mover = o ? Field<void*>(o, obj::kMover) : nullptr;
+    if (!l || !mover) return 0;
+    alignas(4) unsigned char tune[navpower::kMoverTuneSize];
+    reinterpret_cast<navpower::MoverGetTuneFn>(navpower::kMoverGetTune)(mover, tune);
+    before->blockage = Field<std::uint32_t>(tune, navpower::kTuneObstacleBlockage);
+    before->autoIdentity = Field<std::uint32_t>(tune, navpower::kTuneAutoObstacleIdentity);
+    *after = gms::agents::CampCreepObstacle(tier, *before);
+    if (after->blockage == before->blockage && after->autoIdentity == before->autoIdentity) return 1;
+    Field<std::uint32_t>(tune, navpower::kTuneObstacleBlockage) = after->blockage;
+    Field<std::uint32_t>(tune, navpower::kTuneAutoObstacleIdentity) = after->autoIdentity;
+    reinterpret_cast<navpower::MoverSetTuneFn>(navpower::kMoverSetTune)(mover, tune);
+    Field<std::uint32_t>(l, loco::kObstacleBlockage) = after->blockage;
+    Field<std::uint32_t>(l, loco::kAutoObstacle) = after->autoIdentity;
+    return 1;
+  } __except (SehNote(GetExceptionInformation(), "camp obstacle flags")) {
+    return -1;
+  }
+}
+
+unsigned g_campCreatures, g_campObstacles, g_campLogged;
 
 }  // namespace
 
@@ -155,11 +182,23 @@ bool CampCreature(std::uint32_t id, int tier, const char* noun) {
   gms::agents::RepulsorFlags before, after;
   if (!SehCampFlags(id, tier, &before, &after)) return false;
   ++g_campCreatures;
-  if (g_campLogged < 12) {
+  gms::agents::ObstacleFlags obBefore, obAfter;
+  int ob = 0;
+  if (g_opt.campReach >= 2) {
+    ob = SehCampObstacle(id, tier, &obBefore, &obAfter);
+    if (ob > 0) ++g_campObstacles;
+  }
+  if (g_campLogged < 60) {  // one camp spawn's worth (CAMPREACH-live: the 12 before missed the buff camps' majors)
     ++g_campLogged;
-    Log("crowd: camp creature %08X %s tier %d: repulsor blockage %08X -> %08X, identity %08X -> %08X (CAMPREACH: not "
+    char obText[128] = "";
+    if (ob > 0)
+      std::snprintf(obText, sizeof obText, "; obstacle blockage %08X -> %08X, auto obstacle %08X -> %08X",
+                    obBefore.blockage, obAfter.blockage, obBefore.autoIdentity, obAfter.autoIdentity);
+    else if (g_opt.campReach >= 2)
+      std::snprintf(obText, sizeof obText, "; obstacle flags not written (%s)", ob < 0 ? "exception" : "no mover");
+    Log("crowd: camp creature %08X %s tier %d: repulsor blockage %08X -> %08X, identity %08X -> %08X%s (CAMPREACH: not "
         "blocked by its camp's lower tiers)",
-        id, noun ? noun : "?", tier, before.blockage, after.blockage, before.identity, after.identity);
+        id, noun ? noun : "?", tier, before.blockage, after.blockage, before.identity, after.identity, obText);
   }
   return true;
 }
@@ -177,8 +216,8 @@ void FormatStats(char* buf, std::size_t size) {
     void* sim = GetCurrentSim();
     if (sim && SehSpace(sim, &h, &s, &n) && h == g_handle) flag = SehSolverFlag(n);
   }
-  std::snprintf(buf, size, "constraint solver %d, navigators %d, repulsors %d, camp creatures %u (camp_reach %d)", flag,
-                navigators, repulsors, g_campCreatures, g_opt.campReach ? 1 : 0);
+  std::snprintf(buf, size, "constraint solver %d, navigators %d, repulsors %d, camp creatures %u, their obstacles %u (camp_reach %d)",
+                flag, navigators, repulsors, g_campCreatures, g_campObstacles, g_opt.campReach);
 }
 
 }  // namespace crowd

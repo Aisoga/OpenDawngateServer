@@ -339,12 +339,13 @@ func (sp Spec) PatchMovie(raw []byte) ([]byte, error) {
 const MapListPath = "UI/Scaleform/Battlegrounds/dgmaps.json"
 
 // Map is a map besides The Dawngate that a copy can have: its name tag (a custom game's name ends with ~#<Tag>,
-// blaze.cutNameTags), its archive in game\Data, and the dropdown's text (the lobby and the browser show the server's
-// label instead, "[MM] ").
+// blaze.cutNameTags), its archive in game\Data, and the dropdown's text, the map's display name (the lobby's map line
+// says the same, localepatch.LobbyLines; the browser and the lobby's title show the server's prefix, "[Pass] ").
 type Map struct{ Tag, Archive, Label string }
 
 // ExtraMaps are the maps the dialog can offer besides The Dawngate (re/scripts/patch_login_movie.py's EXTRA_MAPS).
-var ExtraMaps = []Map{{Tag: "mm", Archive: "zz_MM_Map_v3.snap", Label: "MM (one lane)"}}
+// MM_Map_v3 is shown to players as Anshavar Pass; its tag, level and archive keep the internal name.
+var ExtraMaps = []Map{{Tag: "mm", Archive: "zz_MM_Map_v3.snap", Label: "Anshavar Pass"}}
 
 // CopyMaps returns the maps of ExtraMaps whose archive is in the copy's game\Data folder dataDir.
 func CopyMaps(dataDir string) []Map {

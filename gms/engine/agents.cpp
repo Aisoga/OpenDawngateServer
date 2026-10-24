@@ -25,6 +25,7 @@
 #include "core/agents/nullpos.h"
 #include "core/agents/recall.h"
 #include "core/agents/reflex.h"
+#include "core/agents/sight.h"
 #include "core/agents/tower_target.h"
 #include "core/agents/towersafety.h"
 #include "core/agents/welldef.h"
@@ -174,6 +175,7 @@ struct AgentState {
   std::uint32_t pwTarget = 0;
   float pwDist = 0.f;
   int skipGambit = -1, skipResult = 0, fallbackResult = 0x7FFFFFFF;
+  std::uint32_t fogSkipTarget = 0;  // BOTBUSH: the hidden enemy shaper a gambit was last left out on (logged on change)
   // BOTREFLEX: the last tower that hit the bot and the last enemy shaper that did (OnDamaged), and the reflex now active
   std::uint32_t lastTowerId = 0, lastShaperAttacker = 0;
   unsigned long long lastTowerHitMs = 0, lastShaperHitMs = 0;
@@ -2645,6 +2647,9 @@ struct BotStats {
   unsigned recalls = 0;  // BOTRECALL: Back gambits that cast Return to Base instead of walking
   unsigned skipped = 0, skippedThenActed = 0, pursuitStuck = 0, fallbackTries = 0, fallbackActed = 0;
   unsigned holdStuck = 0, staleTargets = 0;  // BOTTEMPO: holds ended by the watchdog, stale mTargets dropped
+  // BOTBUSH: gambits on an enemy shaper the bot's team doesn't see left out, idle fallback hits and Hunter kit Es not
+  // made on one, recall checks that passed over a hidden enemy shaper within the recall's range
+  unsigned fogGambitSkips = 0, fogFallbackSkips = 0, fogKitESkips = 0, fogRecallIgnored = 0;
   // WELLDEF: defences started per role (Tactician, Hunter, Predator), how they ended, the plans' walks ended for one
   unsigned wellStarts[3] = {}, wellSafe = 0, wellLowHp = 0, wellOutnumbered = 0, wellSlow = 0, wellTooLong = 0;
   unsigned wellOwnFight = 0;
@@ -2966,6 +2971,27 @@ const Snap* FindSnap(const std::vector<Snap>& v, std::uint32_t id) {
   for (const Snap& s : v)
     if (s.id == id) return &s;
   return nullptr;
+}
+
+// BOTBUSH (core/agents/sight.h): whether `target` is an enemy shaper of the bot (in the frame's snapshot of living
+// shapers, another team), and whether the bot may use it: anything else, or an enemy shaper the bot sees
+// (Agent_IsVisibleTo with the bot's creature as the viewer: the "everything" rule, mVisibleToTeam, so fog, grass and
+// stealth hide). Always true with [host] bot_fog_check=0.
+bool EnemyShaperOf(const ObjInfo& self, std::uint32_t target, const Snap** out = nullptr) {
+  const Snap* p = target ? FindSnap(g_snapPlayers, target) : nullptr;
+  if (out) *out = p;
+  return p && p->team != self.team;
+}
+bool BotMayKnow(void* o, const ObjInfo& self, std::uint32_t target) {
+  if (!g_opt.botFogCheck) return true;
+  const Snap* p = nullptr;
+  const bool enemyShaper = EnemyShaperOf(self, target, &p);
+  return gms::agents::BotMayKnow(true, enemyShaper, enemyShaper && SehVisible(o, p->obj));
+}
+unsigned g_botBushLines = 0;
+bool BotBushLogBudget() {
+  ++g_botBushLines;
+  return g_botBushLines <= 300 || g_botBushLines % 20 == 0;
 }
 
 float Dist2(const float* a, const float* b) {
@@ -3934,7 +3960,7 @@ void CampFinishDeath(AgentState& st, std::uint32_t id, unsigned long long nowMs)
 }
 
 // The recall rule's inputs from the per-frame snapshots (BOTREFLEX's: players, towers, the parasite) and OnDamaged.
-bool RecallPossible(const AgentState& st, const ObjInfo& self, const char* phaseName, unsigned long long nowMs) {
+bool RecallPossible(void* o, const AgentState& st, const ObjInfo& self, const char* phaseName, unsigned long long nowMs) {
   if (!g_opt.botRecall || !g_opt.botReflex || !g_sim) return false;
   gms::agents::RecallInputs in;
   in.fleePhase = InFleePhase(phaseName);
@@ -3945,8 +3971,17 @@ bool RecallPossible(const AgentState& st, const ObjInfo& self, const char* phase
     const long long since = static_cast<long long>(nowMs - at);
     if (in.sinceHitMs < 0 || since < in.sinceHitMs) in.sinceHitMs = since;
   }
-  for (const Snap& p : g_snapPlayers)
-    if (p.team != self.team) in.nearestEnemyShaper = std::min(in.nearestEnemyShaper, Dist2(p.pos, self.pos));
+  // BOTBUSH: only the enemy shapers the bot sees (RecallConfig's "no visible enemy shaper this close"); one hidden in
+  // reach is passed over and counted
+  for (const Snap& p : g_snapPlayers) {
+    if (p.team == self.team) continue;
+    const float d = Dist2(p.pos, self.pos);
+    if (g_opt.botFogCheck && !SehVisible(o, p.obj)) {
+      if (d <= kRecall.enemyShaperRange) ++g_bot.fogRecallIgnored;
+      continue;
+    }
+    in.nearestEnemyShaper = std::min(in.nearestEnemyShaper, d);
+  }
   for (const Snap& t : g_snapTowers)
     if (t.team != self.team) in.nearestEnemyTower = std::min(in.nearestEnemyTower, Dist2(t.pos, self.pos));
   for (const Snap& ob : g_snapObjectives) in.nearestObjective = std::min(in.nearestObjective, Dist2(ob.pos, self.pos));
@@ -4408,8 +4443,13 @@ bool HunterKitEStep(void* o, AgentState& st, const ObjInfo& self, const BotPlaye
   const int rank = pv.ranks[gms::agents::kSlotQ + 2];
   void* tobj = SehFind(mtarget);
   ObjInfo t;
-  const bool live = tobj && SehObjInfo(tobj, &t) && t.hasHp && t.hp > 0.f && t.team != self.team &&
-                    SehHostile(self.team, mtarget);
+  bool live = tobj && SehObjInfo(tobj, &t) && t.hasHp && t.hp > 0.f && t.team != self.team &&
+              SehHostile(self.team, mtarget);
+  // BOTBUSH: no E at an enemy shaper the bot doesn't see (mTarget, the bot director's keep, has no sight test)
+  if (live && !BotMayKnow(o, self, mtarget)) {
+    if (gms::bots::KitEWanted(kit, rank, true, Distance2D(t.pos, self.pos))) ++g_bot.fogKitESkips;
+    live = false;
+  }
   const float d = live ? Distance2D(t.pos, self.pos) : 1e9f;
   if (!gms::bots::KitEWanted(kit, rank, live, d)) return false;
   ++g_bot.kitETries;
@@ -5393,7 +5433,7 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
         // BOTRECALL: a Flee phase's walk home is a recall once the bot is out of immediate danger; a recall that runs
         // already (ours or the data's own Flee gambit) answers -0x270B and counts as started, never as a refusal that
         // falls through to the walk (the walk would abort it)
-        if (flee && g_opt.botRecall && RecallPossible(st, self, v.phaseName, nowMs)) {
+        if (flee && g_opt.botRecall && RecallPossible(o, st, self, v.phaseName, nowMs)) {
           // NULLPOS: the one request with the zero vector on purpose: Return to Base takes no position, and the zero
           // vector is the engine's own "none" [assumed: BOTRECALL's live recalls worked with it]; not a goal, so it skips
           // BotRequest's check (an offset or the bot's own position could become a destination)
@@ -5416,6 +5456,16 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
     }
     NoteKitW(o, st, self, g.slot, res, v.phaseName, nowMs);
     NoteKitWReach(st, self, g.slot, res, target, v.phaseName, nowMs);
+    // BOTBUSH: the shaper a gambit was left out on is aimed at again by one of the shaper's own abilities (its team sees
+    // it now; a bot ability such as Back on it proves nothing)
+    if (st.fogSkipTarget && target == st.fogSkipTarget && g.guid == 0 && !gms::agents::SlotIsConsumable(g.slot) &&
+        (res == 1 || res == 2 || res == 5) && BotMayKnow(o, self, target)) {
+      if (BotBushLogBudget())
+        Log("agents: bot %08X %s phase %d (%s) gambit %d (slot %d) on %08X again: its team sees it (BOTBUSH) -> %d "
+            "(t %.2f s)",
+            self.id, st.noun, st.botPhase, v.phaseName, idx, g.slot, target, res, static_cast<double>(nowMs) / 1000.0);
+      st.fogSkipTarget = 0;
+    }
     if (res == 1 || res == 2) {
       ++g_bot.started;
       st.gambitReadyMs[static_cast<std::size_t>(idx)] =
@@ -5495,6 +5545,27 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
         if (TowerKeepsOutTarget(st, self, selfHpFrac, gt, hasSpot ? sp : nullptr, KillFinishing(st, nowMs), nowMs)) {
           gv.conditionsPass = false;
           ++g_tw.keptOutGambits;
+        }
+      }
+      // BOTBUSH (core/agents/sight.h): none of the shaper's own abilities at an enemy shaper the bot's team doesn't see:
+      // the condition's target (also with a point: a skillshot's lead), else mTarget, the bot director's keep, which has
+      // no sight test of its own
+      if (gv.conditionsPass && g_opt.botFogCheck) {
+        const float* sp = &spots[i * 3];
+        const bool hasSpot = sp[0] != 0.f || sp[1] != 0.f;
+        const std::uint32_t gt = targets[i] ? targets[i] : (hasSpot || pointOnly[i] ? 0u : mtarget);
+        const Snap* p = nullptr;
+        const bool enemyShaper = EnemyShaperOf(self, gt, &p);
+        if (gms::agents::SightBlocksGambit(true, gt != 0, gms::agents::SlotIsConsumable(g.slot), g.guid != 0,
+                                           enemyShaper, enemyShaper && SehVisible(o, p->obj))) {
+          gv.conditionsPass = false;
+          ++g_bot.fogGambitSkips;
+          if (gt != st.fogSkipTarget && BotBushLogBudget())
+            Log("agents: bot %08X %s phase %d (%s) gambit %d (slot %d) on %08X left out: an enemy shaper its team "
+                "doesn't see (BOTBUSH, %s) (t %.2f s)",
+                self.id, st.noun, st.botPhase, v.phaseName, static_cast<int>(i), g.slot, gt,
+                targets[i] ? "the condition's target" : "mTarget", static_cast<double>(nowMs) / 1000.0);
+          st.fogSkipTarget = gt;
         }
       }
       if (prioritized && gv.conditionsPass) {
@@ -5612,7 +5683,10 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
                                        kFallbackHitWindowMs)) {
         void* aobj = SehFind(st.lastAttacker);
         ObjInfo at;
-        if (aobj && SehObjInfo(aobj, &at) && at.hasHp && at.hp > 0.f && at.team != self.team &&
+        // BOTBUSH: not at an enemy shaper the bot doesn't see (a hit from the grass that revealed nothing)
+        const bool hidden = aobj && !BotMayKnow(o, self, st.lastAttacker);
+        if (hidden) ++g_bot.fogFallbackSkips;
+        if (!hidden && aobj && SehObjInfo(aobj, &at) && at.hasHp && at.hp > 0.f && at.team != self.team &&
             Distance2D(at.pos, self.pos) <= kFallbackReach &&
             gms::agents::FallbackAttackerType(SehNpcType(aobj), at.player) && SehHostile(self.team, at.id) &&
             !(TowerKeepsOutTarget(st, self, selfHpFrac, at.id, nullptr, false, nowMs) && ++g_tw.keptOutFallbacks)) {
@@ -6304,6 +6378,17 @@ void FormatStats(char* buf, std::size_t size) {
 
 bool HunterCampFight(std::uint32_t bot, float* pos, float* frac, bool* finishing) {
   return CampFightOf(bot, pos, frac, finishing);
+}
+
+bool FormatSightStats(char* buf, std::size_t size) {
+  if (!g_st.brainSteps) return false;
+  std::snprintf(buf, size,
+                "BOTBUSH (bot_fog_check %d): gambits left out on an enemy shaper the bot's team doesn't see %u, idle "
+                "fallback hits not made on one %u, Hunter kit Es not made on one %u, recall checks that passed over a "
+                "hidden enemy shaper in range %u",
+                g_opt.botFogCheck ? 1 : 0, g_bot.fogGambitSkips, g_bot.fogFallbackSkips, g_bot.fogKitESkips,
+                g_bot.fogRecallIgnored);
+  return true;
 }
 
 bool FormatHunterStats(char* buf, std::size_t size) {

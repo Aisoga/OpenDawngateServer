@@ -191,7 +191,7 @@ function Update-MapMM([string]$copy, [string]$what) {
     # setup_lane.py's mapship_step and setup_all.py's step do the same)
     $label = "MM_Map_v3 level files ($what, game\Data\zz_MM_Map_v3.snap)"
     $added = Join-Path $copy 'game\Data\zz_MM_Map_v3.snap'
-    $pin = '3e0496a84d6320b1c16017301a578278c8f794cb409e64614b8e13845bbdb9bc'
+    $pin = 'eed1e14c861eb5a68e315410aedc994d99a11079bfdf16ace1c23e0702b98bbf'
     if ((Test-Path $added) -and (Get-FileHash $added -Algorithm SHA256).Hash -eq $pin) { Ok $label; return }
     $goExe = (Get-Command go.exe -ErrorAction SilentlyContinue).Source
     if (-not $goExe -and (Test-Path 'C:\Program Files\Go\bin\go.exe')) { $goExe = 'C:\Program Files\Go\bin\go.exe' }

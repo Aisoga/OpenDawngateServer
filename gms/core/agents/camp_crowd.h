@@ -13,7 +13,7 @@
 //   - blockage: a creature is no longer blocked by the creatures of lower tiers (their bits cleared): the major walks
 //     through the medium and the minors, the medium through the minors; the smaller ones are still blocked by the
 //     bigger (so the solver pushes them aside where it moves them [assumed]), and creatures of one tier still collide.
-// The obstacle flags (+0x9C, the auto obstacle of a standing NPC) are left as they are.
+// The obstacle flags (+0x9C, the auto obstacle of a standing NPC): CampCreepObstacle below (since CAMPREACH-live).
 // Header-only and engine-free; gms_tests (test_camp_crowd.cpp) checks it.
 #pragma once
 
@@ -47,6 +47,38 @@ inline RepulsorFlags CampCreepRepulsor(int tier, RepulsorFlags in) {
   std::uint32_t lower = 0;
   for (int t = 0; t < tier; ++t) lower |= CreepTierIdentity(t);
   out.blockage = in.blockage & ~lower;
+  return out;
+}
+
+// CAMPREACH-live: the obstacle half. The repulsor flags alone weren't enough: in campreach_on3c the major stopped 3.1
+// from the standing minor's centre (inside the repulsor's reach, so that part worked) and flipped between Pursue and
+// CombatIdle every frame without a hit for 14 s, its path cut by the minor's auto obstacle. A standing NPC's mover makes
+// an auto obstacle of identity 2 (MoverTune +0x68, from locomotion +0xA0), and every NPC's planner avoids obstacles
+// whose identity shares a bit with its obstacle blockage (MoverTune +0x4C, 0x17 from locomotion +0x9C) [inferred: the
+// same and-test as the repulsors]. So for a camp creature:
+//   - its auto obstacle's identity keeps the NPC bit (2), so players, bots, minions, workers and its camp's smaller
+//     creatures plan around it as before, and gets its tier's bit;
+//   - a medium or bigger creature's obstacle blockage loses the NPC bit and gets the bits of its own and the higher
+//     tiers: it plans through its camp's smaller creatures (the repulsors then let it pass) and still around creatures
+//     of its tier or bigger and every non-NPC obstacle (bits 0x1, 0x4, 0x10). The cost [assumed]: it also plans through
+//     other NPCs that stand (a minion, a worker); its repulsor still collides with them.
+// A minor is unchanged but for its obstacle's tier bit. Unchanged: a tier out of range, a mover without an auto
+// obstacle (identity 0: noRepulsion) or not an NPC's (identity other than 2).
+struct ObstacleFlags {
+  std::uint32_t blockage = 0;      // MoverTune +0x4C m_obstacleBlockageFlags (locomotion +0x9C)
+  std::uint32_t autoIdentity = 0;  // MoverTune +0x68, the auto obstacle's identity (locomotion +0xA0)
+};
+
+inline ObstacleFlags CampCreepObstacle(int tier, ObstacleFlags in) {
+  const std::uint32_t own = CreepTierIdentity(tier);
+  if (!own || in.autoIdentity != kRepulsorIdentityNpc) return in;
+  ObstacleFlags out = in;
+  out.autoIdentity = in.autoIdentity | own;
+  if (tier > 0 && (in.blockage & kRepulsorIdentityNpc) != 0) {
+    std::uint32_t sameOrHigher = 0;
+    for (int t = tier; t < kCreepTiers; ++t) sameOrHigher |= CreepTierIdentity(t);
+    out.blockage = (in.blockage & ~kRepulsorIdentityNpc) | sameOrHigher;
+  }
   return out;
 }
 

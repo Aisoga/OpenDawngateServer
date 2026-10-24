@@ -19,8 +19,8 @@
 // Both tell the server through the game's name: when the player confirms (the Create button, or Enter in the name or
 // password field) the name gets its markers at its end just before the game's own handler reads it (the game's C++
 // reads the field at once, inside that handler), and the typed name is put back right after: the map's tag (~#sm for
-// The Dawngate, ~#mm for MM; only while the dropdown shows) and ~#bots when the box is ticked. The server takes the
-// markers off, shows the game as "[MM] [Bots] <name>", plays it on that map (a map the server doesn't offer: its own)
+// The Dawngate, ~#mm for Anshavar Pass; only while the dropdown shows) and ~#bots when the box is ticked. The server
+// takes the markers off, shows the game as "[Pass] [Bots] <name>", plays it on that map (one it doesn't offer: its own)
 // and fills the open seats with bots at the start. A name too long for the markers is cut so that name and markers
 // fit the dialog's limit (the field's maxChars, which the game sets from its own maximum).
 //
@@ -31,6 +31,7 @@ package {
     import flash.display.MovieClip;
     import flash.events.Event;
     import flash.events.IOErrorEvent;
+    import flash.geom.Matrix;
     import flash.net.URLLoader;
     import flash.net.URLRequest;
     import flash.text.TextField;
@@ -58,10 +59,12 @@ package {
         // The dialog's "Map:" (the game's own line, which it shows before the map's name).
         private static const MAP_KEY:String = "^FE_MatchOptions!0x0f31b981";
         private static const DROP_MIN_WIDTH:Number = 140;
-        private static const DROP_HEIGHT:Number = 30;
+        // The dropdown's own height (MOpt_DDMenu is 426 x 36): its label's text field is made for it, and the
+        // component's constraints give the field what a lower box loses, which cut the label's lower part off.
+        private static const DROP_HEIGHT:Number = 36;
         private static const DROP_GAP:Number = 8;
         private static const ROW_TEXT_SIZE:int = 13; // the list's rows (the renderer's own size is 12, the label's 14)
-        private static const DROP_RAISE:Number = 3; // the skin's field sits low in its box: level with "Map:"
+        private static const ARROW_FROM:Number = 0.5; // the dropdown's parts right of its middle are its arrow
         private static const BOX_WIDTH:Number = 165; // the bot box with its label, as it settles
 
         private var dlg:DisplayObjectContainer;
@@ -85,6 +88,8 @@ package {
         private var list:DisplayObjectContainer = null;            // the dropdown's open list (the game's popup)
         private var listHooked:Dictionary = new Dictionary(true);   // lists with our ADDED listener
         private var fixedTexts:Dictionary = new Dictionary(true);   // row text fields given the dialog's font
+        private var arrowParts:Dictionary = new Dictionary(true);   // the arrow's parts: their own matrices
+        private var dropRight:Number = NaN; // the dropdown's right edge in its own coordinates (426)
 
         public function BotCheckbox() {
             super();
@@ -287,7 +292,8 @@ package {
         }
 
         // placeDrop puts the dropdown on the map line after "Map:", up to the bot box (the game made it as wide as the
-        // fields, 426 x 36: it is narrowed and made a little lower to fit the line).
+        // fields, 426 x 36: it is narrowed and keeps its height, centred on the line, which puts its label level with
+        // "Map:"; keepArrow keeps the arrow at its own size).
         private function placeDrop():void {
             var x:Number = Number(pwIn["x"]) + 10;
             var mid:Number = Number(pwIn["y"]) + Number(pwIn["height"]) + 8 + DROP_HEIGHT / 2;
@@ -303,7 +309,53 @@ package {
             drop["width"] = Math.max(right - x, DROP_MIN_WIDTH);
             drop["height"] = DROP_HEIGHT;
             drop["x"] = Math.round(x);
-            drop["y"] = Math.round(mid - DROP_HEIGHT / 2) - DROP_RAISE;
+            drop["y"] = Math.round(mid - DROP_HEIGHT / 2);
+        }
+
+        // keepArrow keeps the dropdown's arrow (its button, the separator and the triangle at the right end) at its own
+        // size: narrowing the component scales all of it in x, and the game's constraints counter-scale only the
+        // label, which left the arrow at half its width. Each part right of the middle gets its own matrix scaled back
+        // by 1 / scaleX about the component's right edge, so it looks as in the full-width dropdown. Run every frame:
+        // the component applies its scale when it redraws, and a state change of its timeline may place a part anew.
+        private function keepArrow():void {
+            if (!dropShown()) {
+                return;
+            }
+            try {
+                var c:DisplayObjectContainer = DisplayObjectContainer(drop);
+                var sx:Number = Number(drop["scaleX"]);
+                if (!(sx > 0) || c.numChildren == 0) {
+                    return;
+                }
+                if (isNaN(dropRight)) {
+                    var bg:DisplayObject = c.getChildAt(0); // the background, as wide as the component (426)
+                    dropRight = bg.getBounds(c).right;
+                }
+                for (var i:int = 1; i < c.numChildren; i++) {
+                    var p:DisplayObject = c.getChildAt(i);
+                    if (p is TextField) {
+                        continue;
+                    }
+                    var own:Matrix = arrowParts[p] as Matrix;
+                    if (own == null) {
+                        own = p.transform.matrix; // a copy, as the timeline placed it
+                        if (own.tx < dropRight * ARROW_FROM) {
+                            continue;
+                        }
+                        arrowParts[p] = own;
+                    }
+                    var m:Matrix = own.clone();
+                    m.a = own.a / sx;
+                    m.c = own.c / sx;
+                    m.tx = dropRight - (dropRight - own.tx) / sx;
+                    var now:Matrix = p.transform.matrix;
+                    if (Math.abs(now.a - m.a) > 0.0001 || Math.abs(now.c - m.c) > 0.0001 ||
+                            Math.abs(now.tx - m.tx) > 0.01) {
+                        p.transform.matrix = m;
+                    }
+                }
+            } catch (err:Error) {
+            }
         }
 
         // hookDrop adds the dropdown's click listeners once: should a click leave the list closed (the game couldn't
@@ -349,6 +401,7 @@ package {
         }
 
         private function onExitFrame(e:Event):void {
+            keepArrow();
             if (list != null && dropOpen()) {
                 fixTexts(DisplayObject(list));
             }

@@ -36,7 +36,8 @@
 // none), bots_allies (1: fill the humans' teams too), bot_classes ("" = Tuning.BotPlan's bots; "PC_Warden,PC_Guardian"
 // replaces the list), bots_lua (1), bot_lanes (1), bot_ftue (1: the humans of an IsFTUE game are first-time players for
 // nBot.IsEnemyOfFirstTimePlayer), bot_log_limit (300); D6b: bot_missions (1), bot_mission_ms (1000), bot_shopping (1),
-// bot_potions (2: carried at most), bot_fire_tracker (1), bot_fixups (1: dgsim_bots_api.lua's two script fix-ups); the
+// bot_potions (2: carried at most), bot_fire_tracker (1), bot_fire_zones (0: FIREZONE's stub for the tracker's NavPower
+// penalty boxes; 1 = the game's code), bot_fixups (1: dgsim_bots_api.lua's two script fix-ups); the
 // brain's bot_think_ms is agents.h's.
 #pragma once
 
@@ -62,6 +63,7 @@ struct Options {
   bool shopping = true;
   int potions = 2;
   bool fireTracker = true;
+  bool fireZones = false;  // FIREZONE: [host] bot_fire_zones, 1 = keep the game's NavPower fire zones (0x00877870)
   bool fixups = true;
   bool parasiteGuard = true;  // BOTPARA: dgsim_bots_api.lua's fourth fix-up (the parasite missions)
   bool composition = true;    // BOTCOMP: the preferred 5v5 setup (2 Gladiators, Tactician, Predator, Hunter); 0 = Tuning.BotPlan's fill
@@ -78,6 +80,7 @@ struct Options {
   bool joinFix = true;          // BOTCYCLE: [host] bot_join_fix, a KillShaper join takes the mission's target and only
                                 // when BailOnKill would stay (or the host would finish: KILLFINISH)
   bool desecKit = true;         // DESECBOT-3: [host] bot_desec_kit, the Desecrator's early no-dive, no-chase rule (Lua)
+  bool fogCheck = true;         // BOTBUSH: [host] bot_fog_check, the bots' enemy-shaper queries and target checks by sight (Lua)
   int harassStartWorkers = 4; // BOTCOMP: a well's workers above which the Predator may harass it (the script's HarassWell: 16)
   int harassEndWorkers = 2;   // BOTCOMP: ... and below which the harass ends (the script's 4)
   bool team = true;           // BOTTEAM: the team layer (one call per team: farm, parasite, contest, well, push, defend)
@@ -137,6 +140,9 @@ struct Bot {
   bool created = false;      // the server player exists
   std::uint32_t noun = 0;    // D3-live: its mpNounDef's asset id (BotClass.nounDef: a default skin, as a list entry)
   int role = 0;              // D3-live: its mRole (BotClass.role)
+  // BOTLANESPLIT: the last lane change it was asked (from, to, the answer), so that the same question at every think
+  // (the threatened-lane condition asks it) is counted and logged once.
+  mutable int splitAsk[3] = {-1, -1, -1};
 };
 
 // Plans and creates the bot players once (later calls return the same list): `humans` (connected) and `waiting`

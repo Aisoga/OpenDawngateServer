@@ -26,14 +26,14 @@ import dbpf  # noqa: E402
 import patch_locale as pl  # noqa: E402
 
 MADE_UP_SHA = "97766712cea3cf54c20204922cc472d86ac9d592c40e955f7c1a635e0567f25e"
-MADE_UP_LANE_B = "ee5628e48171b9180ad8594353b7f9c6080c11f0b201cee6e5ec6a85c173d77d"  # --host 127.0.0.2
-MADE_UP_WEB = "ff457ba688e065e38e55fd0ff725d49daf06840ffb079d62238398e94b0dbc53"  # 192.168.1.20, Play.Example.org:8443
+MADE_UP_LANE_B = "22bac3760a4fd4936147491875e75f044f20b1ba076a468918e7d1c98b148856"  # --host 127.0.0.2
+MADE_UP_WEB = "e87a2d5611bb2d08db838ae5795a0bc97fc1f0245281cb8959d0e8749bc24c81"  # 192.168.1.20, Play.Example.org:8443
 SYNTH_LOCALE_SHA = "528ce9623b3b1542fa600b1036136a3c39e8e68bb586019fb3a6d3c2f6374832"
-SYNTH_LOCAL = "c9fc88d87bc633d3f6a6f5ae1b335268b8847bb62050df7d206dac8c6fbf6088"  # the synthetic game, 127.0.0.1
+SYNTH_LOCAL = "cb454f8ce19f26dd777cca56bbb0aebb0bf38207f3bcd4cbacaaa7741bc760ae"  # the synthetic game, 127.0.0.1
 GAME_854 = {  # build 854's Locale.package
-    ("127.0.0.1", None): "45bc4fa5c35f647c88eafa213a82ca289e42273d727b3a4ec29e80d187f242b8",
-    ("127.0.0.2", None): "c6aa134d04e2c1cf7762903cc491fbc83a8163cf6b77f2afe5f1bf3683c0f120",
-    ("203.0.113.7", "dawngate.example.org"): "e9392a09c68e3f167917683dc19897db9075274d63efcaffd9a3cb031426eca4",
+    ("127.0.0.1", None): "a3db940fc902ec578930ab4f98d1d63ea28023333b68c51b015c4b1aae321bb4",
+    ("127.0.0.2", None): "d80e798c989d969aa45a7ab6b83ffa05be0c16feb5601c2b280bae2786cde897",
+    ("203.0.113.7", "dawngate.example.org"): "ff5d0169de6e8351a536cf5cbee4f20a4d2b3c2242a05b2e8344f26a1f344550",
 }
 # synthgame.Locale() (server/internal/setup/testgame/synthgame): one RefPack-compressed table, no login table
 SYNTH_LOCALE = bytes.fromhex(
@@ -121,7 +121,7 @@ class SameAsGo(Temp):
             lobby = [pkg.read(e) for e in pkg.entries if e.instance == pl.FE_CUSTOM_GAME_LOBBY]
             self.assertTrue(shipped.endswith(b"0x0f2b5801 Please Wait"), shipped[-40:])
             self.assertNotIn(b"0x0f2b57c5", shipped)
-            self.assertEqual(lobby, [shipped + b"\r\n" + pl.ADDED_COMMENT.encode() + b"\r\n0x0f2b57c5 MM (one lane)\r\n"])
+            self.assertEqual(lobby, [shipped + b"\r\n" + pl.ADDED_COMMENT.encode() + b"\r\n0x0f2b57c5 Anshavar Pass\r\n"])
             self.assertEqual(len(pkg.entries), 6)
 
 
@@ -152,7 +152,7 @@ class Rule(unittest.TestCase):
     def test_lobby_map_label(self):
         # the lobby's line for the map the client can't name is the create dialog's label for it: one such map
         import patch_login_movie as plm
-        self.assertEqual(pl.tables("127.0.0.1")[0x7BE32E1A], {0x0F2B57C5: "MM (one lane)"})  # fe_customgamelobby
+        self.assertEqual(pl.tables("127.0.0.1")[0x7BE32E1A], {0x0F2B57C5: "Anshavar Pass"})  # fe_customgamelobby
         self.assertEqual([m[2] for m in plm.EXTRA_MAPS], [pl.LOBBY_LINES[pl.LOBBY_MAP_LINE]])
 
     def test_pages(self):

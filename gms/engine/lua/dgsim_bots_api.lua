@@ -26,7 +26,7 @@
 
 dgsim_bots = dgsim_bots or {}
 local B = dgsim_bots
-B.version = '19'  -- 19: BOTLANESPLIT's threatened-lane fix-up (nBotHost.LaneSplit); 18: MAPHOST's shared lanes (nBotHost.SharedLanes: a Binding stands in every lane of a one-lane level); 17: HUNTERROUTE's opening route (nBotHost.HunterRoute); 16: KILLFINISH's BailOnKill reasons, BOTCYCLE's KillShaper join (fix-up 3c) and engage block; 15: CAMPFINISH's camp finishing (nBotHost.CampFight); 14: NULLPOS's Follow guard and lane-centre check; 13: DESECBOT-3's EngageForKill fix-up 3b and the early Desecrator; 12: DESECBOT's Tactician kit (Desecrator's W); 11: HUNTERBOT's kits (Faris, Freia) and the shared Hunter fixes; 10: PRETUSBOT's stand at the parasite; 9: BOTJUNGLE's Hunter tasks and ping following; 8: BOTTEAM's team calls; 7: BOTCOMP's composition rules (Predator harass, Hunter parasite, lane lock); 2: D6b's script fix-ups; 3: D6c's BailOnKill fix-up; 4: D6e's GetClosestCampPosition; 5: BOTPARA's parasite fix-up; 6: BOTIDLE's camp radius
+B.version = '20'  -- 20: BOTBUSH's sight check (bot_fog_check: enemy shapers in fog or grass unknown); 19: BOTLANESPLIT's threatened-lane fix-up (nBotHost.LaneSplit); 18: MAPHOST's shared lanes (nBotHost.SharedLanes: a Binding stands in every lane of a one-lane level); 17: HUNTERROUTE's opening route (nBotHost.HunterRoute); 16: KILLFINISH's BailOnKill reasons, BOTCYCLE's KillShaper join (fix-up 3c) and engage block; 15: CAMPFINISH's camp finishing (nBotHost.CampFight); 14: NULLPOS's Follow guard and lane-centre check; 13: DESECBOT-3's EngageForKill fix-up 3b and the early Desecrator; 12: DESECBOT's Tactician kit (Desecrator's W); 11: HUNTERBOT's kits (Faris, Freia) and the shared Hunter fixes; 10: PRETUSBOT's stand at the parasite; 9: BOTJUNGLE's Hunter tasks and ping following; 8: BOTTEAM's team calls; 7: BOTCOMP's composition rules (Predator harass, Hunter parasite, lane lock); 2: D6b's script fix-ups; 3: D6c's BailOnKill fix-up; 4: D6e's GetClosestCampPosition; 5: BOTPARA's parasite fix-up; 6: BOTIDLE's camp radius
 B.config = B.config or {
   scanSeconds = 5,            -- game seconds between walks of the object pool (structures, wells)
   scanLimit = 4096,           -- pool slots walked at most
@@ -235,6 +235,71 @@ function B.RememberEnemies(team)
   return mem
 end
 
+-- ---- BOTBUSH: what a bot may know of an enemy shaper ---------------------------------------------------------------
+-- [host] bot_fog_check (1; the host sets dgsim_bots.fogCheckWanted, false = the old behaviour): the bots' enemy-shaper
+-- queries (GetEnemyPlayersNearPosition unless a caller passes checkFoW = false, GetNearbyObjects) and their target check
+-- (ValidateHostileBotTarget, the scripts' gate at 63 files) keep only the enemy shapers the asking team sees
+-- (nGameObject.IsVisibleToTeam: the host's mVisibleToTeam, which hides fog, grass and stealth). Minions, creeps,
+-- structures and allies are left as they were. The history the scripts ask for (GetNumPlayersNearPosition's historySec,
+-- GetLastSeenEnemyPosition) stays. The host's half (gambits, recall, fallback hits): gms/core/agents/sight.h.
+B.bush = B.bush or { hidden = {}, lines = 0 }
+local function fogCheckOn() return B.fogCheckWanted ~= false end
+B.FogCheckOn = fogCheckOn
+
+local function isShaper(id)
+  local f = nPlayer and nPlayer.IsPlayerControlledObject
+  if type(f) ~= 'function' then return false end
+  return f(id) == true
+end
+
+-- One host-log line per change of what `team`'s queries keep of an enemy shaper (hidden <-> seen), at most 400.
+local function bushNote(team, id, seen, where)
+  local h = B.bush.hidden[team]
+  if h == nil then
+    h = {}
+    B.bush.hidden[team] = h
+  end
+  if seen then
+    if not h[id] then return end
+    h[id] = nil
+    count('BOTBUSH seen again')
+  else
+    count('BOTBUSH dropped (' .. where .. ')')
+    if h[id] then return end
+    h[id] = true
+  end
+  B.bush.lines = B.bush.lines + 1
+  if B.bush.lines > 400 then return end
+  local f = hostfn('Log')
+  if f then
+    local p = nGameObject.GetPosition(id)
+    f(string.format('BOTBUSH: team %d %s %s at (%.1f, %.1f)%s', team,
+      seen and 'sees again' or 'no longer knows of', tostring(nGameObject.GetAssetName(id)), p.x, p.y,
+      seen and '' or (' (' .. where .. ': in fog or grass)')))
+  end
+end
+
+-- B.SeenBy(team, id [, where]) -> false only for an enemy shaper of `team` that `team` doesn't see (with the check on).
+-- `where` (a caller's name) logs the change. Only the two shaper teams (the bots'); the neutral team 0 (creeps, the
+-- parasite) is never asked here (no NPC phase uses the nBot queries: re/out/assetdata Phase.json) and stays unfiltered.
+function B.SeenBy(team, id, where)
+  if not fogCheckOn() or (team ~= nTeamID.Blue and team ~= nTeamID.Red) or not exists(id) then return true end
+  if nGameObject.GetTeam(id) == team or not isShaper(id) then return true end
+  local seen = nGameObject.IsVisibleToTeam(id, team) == true
+  if where then bushNote(team, id, seen, where) end
+  return seen
+end
+
+-- The query's result without the enemy shapers `team` doesn't see (a new table; the order kept).
+function B.SightFilter(list, team, where)
+  if not fogCheckOn() or type(list) ~= 'table' then return list end
+  local out = {}
+  for _, o in ipairs(list) do
+    if B.SeenBy(team, o, where) then out[#out + 1] = o end
+  end
+  return out
+end
+
 -- ---- nBattlegrounds: the bot-only getters ------------------------------------------------------------------------
 
 -- GetNumTowers(team, lane) -> the standing Bindings of `team` in `lane` (3 per lane on SM_Map_v5). Callers: bots
@@ -346,8 +411,9 @@ end
 -- and SpiritSide for team 1, MortalSide otherwise) or where the fire tracker marks danger for `team` (nBotHost.
 -- IsPositionSafe; the tracker is off in the client), then nGameObject.ValidateHostileTarget(team, target, flag)
 -- (targetable, attackable, HP > 0 unless flag, another team). 71 of 82 sites pass (..., false, true): no fire check.
-function nBot.ValidateHostileBotTarget(team, target, flag, skipFireCheck, skipLocusCheck)
-  count('ValidateHostileBotTarget')
+-- BOTBUSH: also false for an enemy shaper `team` doesn't see (B.SeenBy; [host] bot_fog_check=0 drops this test). The
+-- original BotDirector_IsValidTarget has no sight test [code: no call of Agent_IsVisibleTo or the mVisibleToTeam read].
+local function validTarget(team, target, flag, skipFireCheck, skipLocusCheck)
   if type(team) ~= 'number' or not exists(target) then return false end
   if not skipLocusCheck and nLevel and nLevel.ObjectPositionMatchesLevelTag then
     local side = nLevelTags.MortalSide
@@ -365,19 +431,38 @@ function nBot.ValidateHostileBotTarget(team, target, flag, skipFireCheck, skipLo
   end
   return nGameObject.ValidateHostileTarget(team, target, flag == true) == true
 end
+B.ValidTargetIgnoringSight = validTarget  -- the team layer's gank memory (a target out of sight for a moment)
+
+function nBot.ValidateHostileBotTarget(team, target, flag, skipFireCheck, skipLocusCheck)
+  count('ValidateHostileBotTarget')
+  if not validTarget(team, target, flag, skipFireCheck, skipLocusCheck) then return false end
+  return B.SeenBy(team, target, 'ValidateHostileBotTarget')
+end
 
 -- GetNearbyObjects(obj, radius, targetTypes, getObjectsFlags) -> array, nearest first, relative to obj's team
 -- (nObjectManager.GetObjectsInRadius with sort Distance and obj as "self"; dead objects never come back).
+-- BOTBUSH: with enemy shapers among the types and no CheckFoWVisibility, those obj's team doesn't see are dropped
+-- (only they: an enemy minion in fog stays, as before).
 function nBot.GetNearbyObjects(obj, radius, targetTypes, flags)
   count('GetNearbyObjects')
   if not exists(obj) then return {} end
-  return query(nGameObject.GetPosition(obj), radius, nGetObjectsSortType.Distance, num(targetTypes, 0),
-               nGameObject.GetTeam(obj), obj, num(flags, 0))
+  local types, f = num(targetTypes, 0), num(flags, 0)
+  local team = nGameObject.GetTeam(obj)
+  local r = query(nGameObject.GetPosition(obj), radius, nGetObjectsSortType.Distance, types, team, obj, f)
+  local ep, fow = nTargetType.EnemyPlayers, nGetObjectsFlags.CheckFoWVisibility
+  if fogCheckOn() and math.floor(types / ep) % 2 == 1 and math.floor(f / fow) % 2 == 0 then
+    r = B.SightFilter(r, team, 'GetNearbyObjects')
+  end
+  return r
 end
 
 -- GetEnemyPlayersNearPosition(team, position, radius [, descriptors, checkFoW]) -> array of enemy shapers, nearest
 -- first (always a table; condition_Bot_EngageForKill tests it for nil). The 4th argument (0 at its one site) is taken
 -- as the descriptor filter and the 5th (true) as the fog-of-war check [assumed].
+-- BOTBUSH: without the 5th argument (eleven of the twelve sites: Counterattack, ShouldGank, EnemiesNearMissionTarget,
+-- Overextended(_Short), the nearest_player conditions, Artist_ButterflyControl, BotUtils) the shapers `team` doesn't
+-- see are dropped too (counted and logged); only checkFoW == false (no site) or [host] bot_fog_check=0 keeps them.
+-- That one site passing `true` suggests the original's default was no check [inferred].
 function nBot.GetEnemyPlayersNearPosition(team, position, radius, descriptors, checkFoW)
   count('GetEnemyPlayersNearPosition')
   if position == nil or num(radius, 0) <= 0 then return {} end
@@ -387,6 +472,7 @@ function nBot.GetEnemyPlayersNearPosition(team, position, radius, descriptors, c
                                               nTargetType.EnemyPlayers, num(team, 0), kObjIDNone, kObjIDNone,
                                               descriptors or 0, flags)
   if type(r) ~= 'table' then return {} end
+  if checkFoW == nil and fogCheckOn() then r = B.SightFilter(r, num(team, 0), 'GetEnemyPlayersNearPosition') end
   return r
 end
 
@@ -3091,7 +3177,8 @@ function B.HunterDecide(s, st, h, hs, cfg)
   if s.ftue then return nil, 'a first-time player' end
   if cur ~= nil and cur.kind == 'gank' then
     local g = cur.target
-    if not standing(g) or not nBot.ValidateHostileBotTarget(s.team, g, false, true) then return nil, 'the target is down' end
+    -- BOTBUSH: out of sight is not "down": the gank's own memory (gankLostS) below decides that
+    if not standing(g) or not B.ValidTargetIgnoringSight(s.team, g, false, true) then return nil, 'the target is down' end
     if t - cur.since > cfg.gankMax then return nil, 'the gank took too long' end
     local visible = nGameObject.IsVisibleToTeam(g, s.team)
     if visible then cur.seen = t end

@@ -231,6 +231,13 @@ constexpr std::uintptr_t kBotDirectorFireTracker = 0xBF0;
 using FireTrackerIsSafeFn = bool(__thiscall*)(void* tracker, int team, const float* xy);
 inline FireTrackerIsSafeFn FireTrackerIsPositionSafe = At<FireTrackerIsSafeFn>(0x00876900);
 constexpr unsigned char kFireTrackerIsSafeBytes[] = {0x8B, 0x44, 0x24, 0x08, 0xD9, 0x40, 0x04, 0x56};
+// FIREZONE: the fire zone (0x00877870, thiscall (tracker, 6 stack arguments), ret 0x18; called only by
+// FireTracker_RecordLine 0x00877960 and FireTracker_RecordCircle 0x00877AC0) cuts a NavPower area-penalty box
+// "BotObstacle_FireZone" into the A* system's space (0x0089D360) and keeps it in a timed list. NavPower once didn't
+// come back from such a cut (a live match frozen until the watchdog ended it), so the host replaces the function with
+// a stub; the tracker's cells and the bots' dodge (ability_Bot_AvoidFireNP) are recorded by the callers.
+constexpr std::uintptr_t kFireTrackerAddFireZone = 0x00877870;
+constexpr unsigned char kFireTrackerAddFireZoneBytes[] = {0x6A, 0xFF, 0x68, 0xB0, 0xEE, 0x09, 0x01};  // push -1; push SEH
 
 // --- GMS messages ---------------------------------------------------------------------------
 // The message factory (GetMessageFactory 0x00ADA7F0 caches it here) maps a GMS id (kGms*, 0-76) to
@@ -985,6 +992,20 @@ constexpr std::uintptr_t kNavigatorCount = 0x24;    // in the navigator module
 constexpr std::uintptr_t kRepulsorCount = 0x28;
 constexpr std::uintptr_t kMoverRepulsor = 0x1B8;    // in a bfx mover (object +0x8DC): its repulsor
 constexpr std::uintptr_t kMoverRepulsorOn = 0x1C0;  // u8: the repulsor exists (Mover::EnableRepulsor)
+// CAMPREACH-live: a bfx mover's MoverTune (0x140 bytes behind the pointer at mover +0x330). The client's per-frame
+// update Locomotion_UpdateMoverTune (0x0089D890) copies it out with Mover_GetTune (0x00BEDB80, thiscall (mover, out),
+// under the bfx lock), changes the repulsor words and hands it back with Mover_SetTune (0x00BED320, thiscall (mover,
+// tune): 0x00BFD670 on mover +0x160, then 0x00BFB8F0). Pathfinder_CreateNavPowerMover (0x0089F3A0) fills it at the
+// mover's creation: +0x4C obstacle blockage (locomotion +0x9C), +0x50 u8 auto obstacle on, +0x54 its delay (0.1 s),
+// +0x68 the auto obstacle's identity (locomotion +0xA0); the locomotion's two words are not read again after that.
+using MoverGetTuneFn = void(__thiscall*)(void* mover, void* out);
+using MoverSetTuneFn = void(__thiscall*)(void* mover, const void* tune);
+constexpr std::uintptr_t kMoverGetTune = 0x00BEDB80;
+constexpr std::uintptr_t kMoverSetTune = 0x00BED320;
+constexpr unsigned kMoverTuneSize = 0x140;
+constexpr std::uintptr_t kTuneObstacleBlockage = 0x4C;   // u32 m_obstacleBlockageFlags
+constexpr std::uintptr_t kTuneAutoObstacleOn = 0x50;     // u8
+constexpr std::uintptr_t kTuneAutoObstacleIdentity = 0x68;  // u32
 using EnableConstraintSolverFn = void(__cdecl*)(void* spaceHandle, int enable);
 inline EnableConstraintSolverFn EnableConstraintSolver = At<EnableConstraintSolverFn>(0x00C173E0);
 constexpr unsigned char kEnableConstraintSolverBytes[] = {0x55, 0x8B, 0xEC, 0x6A, 0xFF, 0x68, 0x28, 0x1F, 0x0B, 0x01};

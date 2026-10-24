@@ -6,7 +6,7 @@
 // stay closed), in tiles of Tile cells that are split in four while a tile's blocked part has a hole: every
 // outline is a simple counter-clockwise polygon without holes (the seams lie inside blocked ground), simplified by
 // Douglas-Peucker to Tolerance cells. They are written in the client's .out format (see Encode), terrain outlines
-// only.
+// only; AppendGrass adds the bushes' grass outlines (package grassmap makes them).
 package fogmap
 
 import (
@@ -449,6 +449,32 @@ func Encode(outlines []Outline) ([]byte, error) {
 		if o.Grass != 0 {
 			out = le.AppendUint32(out, o.Grass)
 		}
+		if out, err = encodeOutline(out, o.Points); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// AppendGrass is an outline file with grass outlines appended after its own (the grass count in the header grows):
+// the level's bushes after its walls.
+func AppendGrass(file []byte, grass []Outline) ([]byte, error) {
+	le := binary.LittleEndian
+	if len(file) < 16 || string(file[:4]) != "ltuo" || le.Uint16(file[8:]) != 0x0300 || le.Uint32(file[12:]) != 0 {
+		return nil, errors.New("fogmap: not an outline file")
+	}
+	n := int(le.Uint16(file[10:])) + len(grass)
+	if n > 0xFFFF {
+		return nil, errors.New("fogmap: too many grass outlines")
+	}
+	out := append([]byte(nil), file...)
+	le.PutUint16(out[10:], uint16(n))
+	var err error
+	for _, o := range grass {
+		if o.Grass == 0 {
+			return nil, errors.New("fogmap: a grass outline without a grass id")
+		}
+		out = le.AppendUint32(out, o.Grass)
 		if out, err = encodeOutline(out, o.Points); err != nil {
 			return nil, err
 		}

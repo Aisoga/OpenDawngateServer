@@ -78,7 +78,7 @@ var allSteps = []string{"certificates", "client copy", "client exe", "client con
 
 // synthLocal is the client copy's AA_Server.package for 127.0.0.1 from the synthetic archive's Locale.package: what
 // re/scripts/patch_locale.py makes from the same file (test_ph2b.py and localepatch_test.go pin the same SHA-256).
-const synthLocal = "c9fc88d87bc633d3f6a6f5ae1b335268b8847bb62050df7d206dac8c6fbf6088"
+const synthLocal = "cb454f8ce19f26dd777cca56bbb0aebb0bf38207f3bcd4cbacaaa7741bc760ae"
 
 func localeSHA(t *testing.T, copy string) string {
 	t.Helper()
@@ -332,7 +332,7 @@ func TestClientForAnotherServer(t *testing.T) {
 			t.Fatalf("%s: %v", added, err)
 		}
 		list, _ := a.Read(a.Entries[1])
-		if got := bytes.Contains(list, []byte("map\tmm\tMM (one lane)\n")); got != withMM {
+		if got := bytes.Contains(list, []byte("map\tmm\tAnshavar Pass\n")); got != withMM {
 			t.Errorf("with MM's archive %v: the dialog's map list names MM %v (%q)", withMM, got, list)
 		}
 	}

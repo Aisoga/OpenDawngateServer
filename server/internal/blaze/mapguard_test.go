@@ -65,7 +65,7 @@ func TestMapCheckMessageMatchesGolden(t *testing.T) {
 	if mc.ok {
 		t.Fatal("a client without the tunnel and no --trust-maps may play MM_Map_v3")
 	}
-	got := SystemMessageNotification(1, MapNoteMessage(s.mapRefusedText("MM_Map_v3", `"[MM] Custom 1"`, mc)), testTime)
+	got := SystemMessageNotification(1, MapNoteMessage(s.mapRefusedText("MM_Map_v3", `"[Pass] Custom 1"`, mc)), testTime)
 	tdfcheck.Require(t, "Blaze::Messaging::ServerMessage", got)
 	if h, want := hex.EncodeToString(got), g.WriterCase(t, "notifymessage_mapcheck_notification").Hex; h != want {
 		t.Errorf("got %s\nwant %s", h, want)
@@ -150,7 +150,7 @@ func TestMapCheckCustomJoin(t *testing.T) {
 	b := ts.clientFrom("bravo@example.com", untrustedIP)
 	wantError(t, "B joins", b.gm(CmdGameManagerJoinGame, golden.Bytes(t, decodeCase(t, g, "joingame_browser_request"))), ErrMapFilesMissing)
 	text := b.mapNote()
-	if want := `You can't join "[MM] MP1": it plays on the map MM_Map_v3, and your copy of Dawngate may not have that ` +
+	if want := `You can't join "[Pass] MP1": it plays on the map Anshavar Pass, and your copy of Dawngate may not have that ` +
 		"map's files (you are connected without the tunnel, so the server can't check your copy). Close the game and " +
 		"start it again with Start-Client.exe of this server's release (rel-A), which adds them."; text != want {
 		t.Errorf("the message\n got %s\nwant %s", text, want)
@@ -199,13 +199,13 @@ func TestMapCheckCreateFallsBack(t *testing.T) {
 			if cg.Level != HostedLevel || cg.Mode != tc.mode {
 				t.Errorf("createGame level %q mode %q, want %s %s", cg.Level, cg.Mode, HostedLevel, tc.mode)
 			}
-			if text := b.mapNote(); !strings.HasPrefix(text, "Your game plays on SM_Map_v5 instead of MM_Map_v3: your copy of Dawngate may not have MM_Map_v3's files") {
+			if text := b.mapNote(); !strings.HasPrefix(text, "Your game plays on The Dawngate instead of Anshavar Pass: your copy of Dawngate may not have Anshavar Pass's files") {
 				t.Errorf("the message %q", text)
 			}
 			if tc.gnam != "" {
 				game, _ := decode(t, b.note(ComponentGameManager, NotifyGameSetupID)).Sub("GAME")
 				if name, _ := game.Str("GNAM"); name != tc.gnam {
-					t.Errorf("GNAM %q, want %q (no [MM] label)", name, tc.gnam)
+					t.Errorf("GNAM %q, want %q (no [Pass] label)", name, tc.gnam)
 				}
 				if v := attrValue(stringMap(game, "ATTR"), AttrLevelID); v != "2490188286" {
 					t.Errorf("LevelId %q", v)
@@ -237,10 +237,10 @@ func TestMapCheckQueue(t *testing.T) {
 	f := a.reply(ComponentGameManager, CmdGameManagerStartMatchmaking,
 		a.send(ComponentGameManager, CmdGameManagerStartMatchmaking, golden.Bytes(t, decodeCase(t, g, "startmatchmaking_party_request"))))
 	wantError(t, "the party's queue", f, ErrMapFilesMissing)
-	if text := b.mapNote(); !strings.HasPrefix(text, "alpha's party can't queue with you: the PvP queue plays on the map MM_Map_v3") {
+	if text := b.mapNote(); !strings.HasPrefix(text, "alpha's party can't queue with you: the PvP queue plays on the map Anshavar Pass") {
 		t.Errorf("the member's message %q", text)
 	}
-	if text := a.mapNote(); !strings.HasPrefix(text, "The PvP queue plays on the map MM_Map_v3, whose files the copies of bravo may not have") {
+	if text := a.mapNote(); !strings.HasPrefix(text, "The PvP queue plays on the map Anshavar Pass, whose files the copies of bravo may not have") {
 		t.Errorf("the leader's message %q", text)
 	}
 	if ts.s.MM.Len() != 0 {
@@ -250,7 +250,7 @@ func TestMapCheckQueue(t *testing.T) {
 	a.queue(60000)
 	wantError(t, "bravo alone", b.reply(ComponentGameManager, CmdGameManagerStartMatchmaking,
 		b.send(ComponentGameManager, CmdGameManagerStartMatchmaking, startMatchmakingRequest(60000))), ErrMapFilesMissing)
-	if text := b.mapNote(); !strings.HasPrefix(text, "You can't queue: the PvP queue plays on the map MM_Map_v3") {
+	if text := b.mapNote(); !strings.HasPrefix(text, "You can't queue: the PvP queue plays on the map Anshavar Pass") {
 		t.Errorf("bravo's message %q", text)
 	}
 	log := ts.log.String()

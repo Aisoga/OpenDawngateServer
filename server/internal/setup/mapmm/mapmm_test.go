@@ -131,16 +131,20 @@ func TestEditLevel(t *testing.T) {
 	}
 }
 
-// mmLevelMadeUpSHA256 is the Python reference's Level with both edits on TestEndMadeUp's made-up pair.
-const mmLevelMadeUpSHA256 = "e5e2b986a316d7b6ea5fc7d43c5f5384f5268d2b689eecbbfdcd2f57d23771fe"
+// mmLevelMadeUpSHA256 is the Python reference's Level with every edit on TestEndMadeUp's made-up pair (the first
+// map's level naming an energy-line tuning).
+const mmLevelMadeUpSHA256 = "74c68d36242c88464b1515c504ca10401a6c0579310a256861900a718bfbbac0"
 
-// TestMMLevelMadeUp: the archive's one Level edit is the end cinematics, then levelFields.
+// TestMMLevelMadeUp: the archive's one Level edit is the end cinematics, then levelFields, then the energy-line
+// tuning (the pointer word copied, the name at the end); a level naming one already, or a first map's naming none, is
+// refused.
 func TestMMLevelMadeUp(t *testing.T) {
 	mm := append(make([]byte, 0x620), "tail"...)
 	sm := make([]byte, 0x620)
 	for k, s := range []string{"custom", "matchmade", "practice"} {
 		copy(sm[endScriptsLo+128*k:], "cinematic_game_end_"+s)
 	}
+	binary.LittleEndian.PutUint32(sm[energyLinesOff:], 0x03547B00)
 	sm = append(sm, "other"...)
 	got, err := MMLevel(mm, sm)
 	if err != nil {
@@ -150,15 +154,29 @@ func TestMMLevelMadeUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := EditLevel(end)
+	edited, err := EditLevel(end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := EnergyLinesLevel(edited, sm)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(got, want) {
-		t.Error("MMLevel is not EditLevel(EndScriptsLevel)")
+		t.Error("MMLevel is not EnergyLinesLevel(EditLevel(EndScriptsLevel))")
+	}
+	if !bytes.HasSuffix(got, []byte("tail"+EnergyLines+"\x00")) ||
+		!bytes.Equal(got[energyLinesOff:energyLinesOff+4], sm[energyLinesOff:energyLinesOff+4]) {
+		t.Errorf("the energy-line reference: %x ... %q", got[energyLinesOff:energyLinesOff+4], got[len(got)-50:])
 	}
 	if d := digest(got); d != mmLevelMadeUpSHA256 {
 		t.Errorf("SHA-256 %s, the reference's %s", d, mmLevelMadeUpSHA256)
+	}
+	if _, err := EnergyLinesLevel(got, sm); err == nil {
+		t.Error("a level naming an energy-line tuning already was taken")
+	}
+	if _, err := EnergyLinesLevel(mm, mm); err == nil {
+		t.Error("a first map's level naming no energy-line tuning was taken")
 	}
 }
 

@@ -6,7 +6,8 @@
 --           the bot's snapshot) so a heal can show; Drain requested from the human on the bot;
 --   parts 2-4: the records so far, the human's HP (expected: up 0.9 x each tick's damage, about 0.9 x 13.5 a tick at
 --           level 1 after the bot's magic resist, five ticks), whether the handler is on the human;
---   part 5: the bot hurt the same way and Drain requested from the bot on the human (the bot's side);
+--   part 5: the bot (the next enemy bot if the first died) healed to full, hurt the same way and Drain requested
+--           from the bot on the human (the bot's side);
 --   parts 6-8: the records and the bot's HP.
 -- Every call returns its lines (logged by the host).
 dgsim_drainheal_log = dgsim_drainheal_log or {}
@@ -102,7 +103,17 @@ local ok, err = pcall(function()
       tostring(bot), nGameObject.GetAssetName(bot) or '?', hp(bot), tostring(request('ability_Item_Drain', me, bot))))
   elseif part == 5 then
     local bot = dgsim_drainheal_bot
-    if not bot or not nGameObject.IsAlive(bot) then p('drainheal 5: the bot is gone') return end
+    if not bot or not nGameObject.IsAlive(bot) then
+      -- the human's auto-attacks may have killed part 1's bot (drainheal_live_d1): take the next one
+      bot = nearestEnemyBot(me)
+      if not bot then p('drainheal 5: no living enemy bot') return end
+      dgsim_drainheal_bot = bot
+      local sp = nGameObject.GetPosition(me)
+      nLocomotion.TeleportToPositionAndFacing(bot, nVector.create(sp.x + 10, sp.y, sp.z), nGameObject.GetFacing(bot))
+    end
+    -- back to full first, so the 40 % below leaves it alive under the human's auto-attacks for Drain's 5 s
+    nGameObject.HealDamage(nAttribute.CreateAttributeSnapshot_FromObject(bot, kObjIDNone), bot,
+      nGameObject.GetMaxHitPoints(bot), 0, 0, false, false)
     hurt(bot, me)
     p(string.format('drainheal 5: bot %s hp %s, human hp %s; Drain bot -> human: %s', tostring(bot), hp(bot), hp(me),
       tostring(request('ability_Item_Drain', bot, me))))

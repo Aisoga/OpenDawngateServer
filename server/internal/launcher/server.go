@@ -80,13 +80,15 @@ shaper_select = on
 ; matches on a server that has it on.
 halloween = off
 
-; The map of every match on this server: SM_Map_v5 (the game's map, the default) or MM_Map_v3 (the cut one-lane map,
-; unfinished: it plays by the main map's rules; the setup makes its files, game\Data\zz_MM_Map_v3.snap, from the
-; game's own in every player's game and in the match hosts' copy). A change takes effect at the next start.
+; The map of every match on this server: SM_Map_v5 (The Dawngate, the game's map, the default) or MM_Map_v3 (Anshavar
+; Pass, the cut one-lane map, unfinished: it plays by the main map's rules; the setup makes its files,
+; game\Data\zz_MM_Map_v3.snap, from the game's own in every player's game and in the match hosts' copy). A change takes
+; effect at the next start.
 map = SM_Map_v5
 
-; The maps a custom game's creator may pick by ending the game's name with a tag: ~#mm for MM_Map_v3, ~#sm for
-; SM_Map_v5 (always allowed, as is the map above). Comma-separated, for example MM_Map_v3; empty: none.
+; The maps a custom game's creator may pick in the CREATE GAME dialog's map list, or by ending the game's name with a
+; tag: ~#mm for MM_Map_v3, ~#sm for SM_Map_v5 (always allowed, as is the map above). Players see MM_Map_v3's games as
+; "[Pass] <name>". Comma-separated, for example MM_Map_v3; empty: none.
 custom_maps =
 
 ; Who can make an account. Players log in with a login name (3-32 of A-Z a-z 0-9 . _ - @) and a password

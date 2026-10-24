@@ -191,6 +191,7 @@ function nPlayer.GetPlayerControlledObjects()
   return out
 end
 function nPlayer.IsBot(id) local o = live(id); return o ~= nil and o.bot == true end
+function nPlayer.IsPlayerControlledObject(id) local o = live(id); return o ~= nil and o.player == true end
 
 nAgent = {}
 function nAgent.GetBestTarget(id) local o = live(id); return o and o.best or kObjIDNone end

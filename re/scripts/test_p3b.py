@@ -53,7 +53,7 @@ import halloween  # noqa: E402
 
 # the archive the setup makes from build 854's files (server/internal/setup/mapmm's pin)
 MM_ARCHIVE = "zz_MM_Map_v3.snap"
-MM_ARCHIVE_SHA256 = "3e0496a84d6320b1c16017301a578278c8f794cb409e64614b8e13845bbdb9bc"
+MM_ARCHIVE_SHA256 = "eed1e14c861eb5a68e315410aedc994d99a11079bfdf16ace1c23e0702b98bbf"
 import patch_client  # noqa: E402
 import patch_config  # noqa: E402
 import patch_locale  # noqa: E402

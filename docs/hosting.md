@@ -300,8 +300,8 @@ only: it doesn't block movement or sight.
 ## The map
 
 Every match on your server is played on The Dawngate (`SM_Map_v5`), the game's map. The game also holds a cut
-one-lane map, `MM_Map_v3`, which can be played for testing, unfinished: its navigation, physics, ground and fog are
-rebuilt, but its matches still follow The Dawngate's rules where the map has no rules of its own: each base has The
+one-lane map, `MM_Map_v3`, shown to players as **Anshavar Pass**, which can be played for testing, unfinished: its navigation, physics, ground and fog are
+rebuilt (its four bushes too, as ovals: their real shapes are lost), but its matches still follow The Dawngate's rules where the map has no rules of its own: each base has The
 Dawngate's shop zone, shop keepers and healing, a match ends with The Dawngate's end screen (the victory view and the
 loot bag), the bots have no jungler (the map has no camps) and all lane, and the map's super
 minions don't spawn yet. Instead of spirit wells each team has one gold mine, on an island behind its base that no
@@ -333,9 +333,10 @@ custom_maps = MM_Map_v3
 - `map` is the map of every match: practice, the queue and custom games. Only `SM_Map_v5` and `MM_Map_v3` are
   accepted; another name stops the server at its start.
 - `custom_maps` lists the maps a custom game's creator may pick, comma-separated. Players pick in the CREATE GAME
-  dialog's map list (The Dawngate or MM), which adds the map's tag to the game's name: `~#mm` for `MM_Map_v3`, `~#sm`
-  for `SM_Map_v5` (always allowed, as is `map`); typing the tag at the end of the name does the same. The game browser
-  shows such a game as `[MM] <name>`: the game itself can only name The Dawngate in its Map column. The dialog lists
+  dialog's map list (The Dawngate or Anshavar Pass), which adds the map's tag to the game's name: `~#mm` for
+  `MM_Map_v3`, `~#sm` for `SM_Map_v5` (always allowed, as is `map`); typing the tag at the end of the name does the
+  same. The game browser and the lobby's title show such a game as `[Pass] <name>`, and the lobby's map line says
+  *Anshavar Pass*: the game itself can only name The Dawngate in its Map column. The dialog lists
   the maps your server offers (`map` and `custom_maps`) to players whose game has their files: `Start-Client.exe`
   learns them from the server when the player logs in. Without `MM_Map_v3` in either setting players see
   *Map: The Dawngate* only. A pick of a map that isn't offered (a typed tag) is dropped, and that game is played

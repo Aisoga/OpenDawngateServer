@@ -748,3 +748,26 @@ GMS_TEST(BacktoactionTheNetWalksABotLostOnTheCentre) {
   CHECK(NearCentre(3.f, 1.f, 20.f));
   CHECK(!NearCentre(100.f, -36.f, 20.f));
 }
+
+// ---- BOTBUSH (gms/core/agents/sight.h) -------------------------------------------------------------------------------
+#include "core/agents/sight.h"
+
+GMS_TEST(BotBushMayKnowOnlySeenEnemyShapers) {
+  using gms::agents::BotMayKnow;
+  CHECK(BotMayKnow(true, false, false));   // not an enemy shaper (minion, creep, tower, ally): always
+  CHECK(BotMayKnow(true, true, true));     // an enemy shaper the team sees
+  CHECK(!BotMayKnow(true, true, false));   // in fog or grass: unknown
+  CHECK(BotMayKnow(false, true, false));   // [host] bot_fog_check=0: the old behaviour
+}
+
+GMS_TEST(BotBushGambitsOnHiddenShapers) {
+  using gms::agents::SightBlocksGambit;
+  // (fogCheck, hasObject, consumable, botAbility, enemyShaper, seen)
+  CHECK(SightBlocksGambit(true, true, false, false, true, false));    // a basic attack or Q at a hidden shaper
+  CHECK(!SightBlocksGambit(true, true, false, false, true, true));     // ... at one the team sees
+  CHECK(!SightBlocksGambit(true, true, false, true, true, false));     // ability_Bot_FollowTarget: to the last-seen spot
+  CHECK(!SightBlocksGambit(true, true, true, false, true, false));     // a potion
+  CHECK(!SightBlocksGambit(true, false, false, false, false, false));  // aimed at a point alone
+  CHECK(!SightBlocksGambit(true, true, false, false, false, false));   // a hidden minion: as before
+  CHECK(!SightBlocksGambit(false, true, false, false, true, false));   // the switch off
+}

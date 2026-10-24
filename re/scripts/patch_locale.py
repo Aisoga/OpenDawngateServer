@@ -31,7 +31,7 @@ copy's own file at setup time):
                             0x0ec1b32d): group PvP queue games count
   FE_CustomGameLobby 0x7BE32E1A the custom lobby's map line for a level the client's map table can't name: the
                             client falls back to ^FE_CustomGameLobby!0x0f2b57c5, which the build lacks (it showed
-                            that key), so the line 0x0f2b57c5 "MM (one lane)", the create dialog's label (MM_Map_v3
+                            that key), so the line 0x0f2b57c5 "Anshavar Pass", the create dialog's label (MM_Map_v3
                             is the only such map a server hosts; test_ph2b.py checks the label against
                             patch_login_movie.EXTRA_MAPS)
 
@@ -191,7 +191,7 @@ MATCH_TYPE_LINES = {
 # asserts resultName and shows ^FE_CustomGameLobby!0x0f2b57c5, a line build 854 lacks. Of the maps a server hosts
 # (blaze.PlayableLevels) only MM_Map_v3 gets there, so the create dialog's label for it (EXTRA_MAPS).
 LOBBY_MAP_LINE = 0x0F2B57C5
-LOBBY_LINES = {LOBBY_MAP_LINE: "MM (one lane)"}
+LOBBY_LINES = {LOBBY_MAP_LINE: "Anshavar Pass"}
 URL_PAGES = {  # line id -> page
     0x00000001: "terms", 0x00000002: "privacy", 0x00000003: "password", 0x00000004: "signup",
     0x00000005: "signup", 0x00000006: "signup", 0x00000007: "terms", 0x00000100: "", 0x00000101: "",

@@ -144,7 +144,7 @@ def main(argv):
     def pad(text):
         return text + b"\n" * (plm.MAP_LIST_SIZE - len(text))
     check(plm.map_list([]) == pad(b"dawngate-maps\t1\nend\n") and
-          plm.map_list(plm.EXTRA_MAPS) == pad(b"dawngate-maps\t1\nmap\tmm\tMM (one lane)\nend\n") and
+          plm.map_list(plm.EXTRA_MAPS) == pad(b"dawngate-maps\t1\nmap\tmm\tAnshavar Pass\nend\n") and
           len(plm.map_list([("t", "", "a label of some twenty chars")] * 100)) == plm.MAP_LIST_SIZE,
           "the map list's bytes, padded to 1 KB, as moviepatch's MapList")
     check(plm.snappy_literals(b"") == b"\0" and plm.snappy_literals(b"ab") == b"\x02\x04ab" and
@@ -164,7 +164,7 @@ def main(argv):
         with open(os.path.join(d, "zz_MM_Map_v3.snap"), "wb") as f:
             f.write(b"x")
         mm = plm.build(bsnap, b"OURTAGS", mo)  # the map's archive beside it
-        check(sha(mm) == "ea32a187414f66c510cea4473c00b166be6db1188d0710b61e6622c43b3e5e9b" and len(mm) == 1326,
+        check(sha(mm) == "4ecdc1bab98e4ace5f43e7a8711757aaf0da066d4a7f3ec264558bf6e1068105" and len(mm) == 1326,
               "with MM's archive in the copy: the list names MM, as moviepatch_test.go pins it")
         check(plm.build(bsnap, b"OURTAGS", mo, maps=[]) == none, "maps=[] lists none")
         # the front's in-place write (moviepatch.WriteMapList; TestWriteMapList pins the same)

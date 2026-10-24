@@ -130,7 +130,7 @@ func TestCustomGameHostedLevel(t *testing.T) {
 	if v := attrValue(stringMap(game, "ATTR"), AttrLevelID); v != "1108206894" {
 		t.Errorf("LevelId %q, want 1108206894 (MM_Map_v3.Level)", v)
 	}
-	if name, _ := game.Str("GNAM"); !strings.HasPrefix(name, "[MM] ") {
+	if name, _ := game.Str("GNAM"); !strings.HasPrefix(name, "[Pass] ") {
 		t.Errorf("GNAM %q, want the map's label in front", name)
 	}
 	if log := ts.log.String(); !strings.Contains(log, "game 1: map MM_Map_v3 (LevelId 1108206894; the server's map)") {
@@ -152,24 +152,24 @@ func TestCustomGameMapTag(t *testing.T) {
 		levelID, why string
 		fill         int
 	}{
-		{"offered", "", []string{"MM_Map_v3"}, "Friday Night~#mm", "MM_Map_v3", "[MM] Friday Night", "1108206894",
+		{"offered", "", []string{"MM_Map_v3"}, "Friday Night~#mm", "MM_Map_v3", "[Pass] Friday Night", "1108206894",
 			"the name's tag ~#mm", 0},
 		{"offered, with bots", "", []string{"MM_Map_v3"}, "Friday Night~#mm" + BotFillMarker, "MM_Map_v3",
-			"[MM] [Bots] Friday Night", "1108206894", "the name's tag ~#mm", 5},
+			"[Pass] [Bots] Friday Night", "1108206894", "the name's tag ~#mm", 5},
 		{"not offered", "", nil, "Friday Night~#mm", HostedLevel, "Friday Night", "2490188286",
 			"asks for MM_Map_v3, which this server doesn't offer (--custom-maps), so the server's map", 0},
 		{"SM_Map_v5 on an MM server", "MM_Map_v3", nil, "Friday Night~#sm", HostedLevel, "Friday Night", "2490188286",
 			"the name's tag ~#sm", 0},
-		{"no tag on an MM server", "MM_Map_v3", nil, "Friday Night", "MM_Map_v3", "[MM] Friday Night", "1108206894",
+		{"no tag on an MM server", "MM_Map_v3", nil, "Friday Night", "MM_Map_v3", "[Pass] Friday Night", "1108206894",
 			"the server's map", 0},
 		{"no tag", "", []string{"MM_Map_v3"}, "Friday Night", HostedLevel, "Friday Night", "2490188286", "", 0},
 		// a tag typed before the one the create dialog's map list appends wins (MAPPICK-label, mappick_label1c)
-		{"typed ~#mm, the list's ~#sm", "", []string{"MM_Map_v3"}, "ML1~#mm~#sm", "MM_Map_v3", "[MM] ML1",
+		{"typed ~#mm, the list's ~#sm", "", []string{"MM_Map_v3"}, "ML1~#mm~#sm", "MM_Map_v3", "[Pass] ML1",
 			"1108206894", "the name's tag ~#mm", 0},
 		{"typed ~#sm, the list's ~#mm", "", []string{"MM_Map_v3"}, "ML1~#sm~#mm", HostedLevel, "ML1", "2490188286",
 			"the name's tag ~#sm", 0},
 		{"typed ~#mm, the list's ~#sm, bots", "", []string{"MM_Map_v3"}, "ML1~#mm~#sm" + BotFillMarker, "MM_Map_v3",
-			"[MM] [Bots] ML1", "1108206894", "the name's tag ~#mm", 5},
+			"[Pass] [Bots] ML1", "1108206894", "the name's tag ~#mm", 5},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			ts, host := newCustomHostServer(t, func(s *Server) { s.Level, s.CustomLevels, s.MapTrust = tc.server, tc.custom, MapTrust{All: true} })
@@ -215,18 +215,22 @@ func TestCustomGameMapTag(t *testing.T) {
 // The custom lobby's map line for a level the client can't name (localepatch.LobbyLines, the player copy's
 // FE_CustomGameLobby 0x0f2b57c5) is the create dialog's label for that level (moviepatch.ExtraMaps): it names one map,
 // so exactly one hosted level besides HostedLevel (the only one in the client's own map table) may exist. A third map
-// needs another text (or a patch of the client's map table).
+// needs another text (or a patch of the client's map table). The players' messages name it the same (Display), and
+// the browser's prefix names it too: Anshavar Pass, "[Pass] ".
 func TestLobbyMapLabel(t *testing.T) {
 	var other []string
+	var display []string
 	for _, l := range PlayableLevels {
 		if l.Name != HostedLevel {
 			other = append(other, l.Tag)
+			display = append(display, l.Display+" "+l.Label)
 		}
 	}
 	line := localepatch.LobbyLines[localepatch.LobbyMapLine]
 	if len(other) != 1 || len(moviepatch.ExtraMaps) != 1 || moviepatch.ExtraMaps[0].Tag != other[0] ||
-		moviepatch.ExtraMaps[0].Label != line || len(localepatch.LobbyLines) != 1 {
-		t.Errorf("levels besides %s %v, the dialog's maps %+v, the lobby's line %q", HostedLevel, other,
+		moviepatch.ExtraMaps[0].Label != line || len(localepatch.LobbyLines) != 1 ||
+		display[0] != "Anshavar Pass [Pass] " || line != "Anshavar Pass" || levelDisplay(HostedLevel) != "The Dawngate" {
+		t.Errorf("levels besides %s %v (%q), the dialog's maps %+v, the lobby's line %q", HostedLevel, other, display,
 			moviepatch.ExtraMaps, line)
 	}
 }

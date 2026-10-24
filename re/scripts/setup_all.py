@@ -113,7 +113,7 @@ COPY_BYTES = int(1.6 * GB)  # one copy of the build (1.53 GB)
 MARGIN = 1 * GB
 # the archive zz_MM_Map_v3.snap the setup makes from build 854's files (server/internal/setup/mapmm's pin)
 MM_ARCHIVE = "zz_MM_Map_v3.snap"
-MM_ARCHIVE_SHA256 = "3e0496a84d6320b1c16017301a578278c8f794cb409e64614b8e13845bbdb9bc"
+MM_ARCHIVE_SHA256 = "eed1e14c861eb5a68e315410aedc994d99a11079bfdf16ace1c23e0702b98bbf"
 
 OK, DONE, NOTE, SKIP = "ok", "done", "note", "skipped"
 MISSING, STALE, FAILED = "MISSING", "STALE", "FAILED"

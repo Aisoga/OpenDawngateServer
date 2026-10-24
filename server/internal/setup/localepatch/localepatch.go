@@ -50,7 +50,7 @@ const LobbyMapLine = 0x0F2B57C5
 // (blaze.PlayableLevels) only MM_Map_v3 gets there, so it is the create dialog's label for MM (moviepatch.ExtraMaps;
 // blaze's TestLobbyMapLabel keeps the two equal).
 var LobbyLines = map[uint32]string{
-	LobbyMapLine: "MM (one lane)",
+	LobbyMapLine: "Anshavar Pass",
 }
 
 // LeaderboardMinGames is the number the Leaderboard screen's rule names: dgserver's default

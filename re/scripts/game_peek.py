@@ -39,6 +39,9 @@ SPGearsCamera_SetFollowObject (0x006AE1A0) writes when the camera snaps to an ob
 Since X2a a "tower graphics" line: the client's per-tower slot stride (0x01542889, a copy of the UI data's
 mNumTowersPerLane taken at EnterGame; 3 on SM_Map_v5, 0 when the full UIDataState came after EnterGame) and the 16
 slot states, so a live check sees whether a destroyed Binding keeps replaying its death (docs/ASSERTS.md *X2a*).
+Since MAPFEEL the line also says whether the tower graphics are initialised at all (0x0154288C: 0 on a level without an
+energy-line tuning, where no Binding's death is shown) and the energy-line count (0x0154288B: 12 on SM_Map_v5, 0 on
+MM_Map_v3).
 
 Since D8-live `--postgame [catalogID ...]` prints instead what the post-game left in the client, in any game state: the
 account data's FLAG (bit 0, set by C1 04's FTUE byte), the inventory counts of the given catalogIDs (C1 04's items), and
@@ -495,8 +498,11 @@ def main():
     # X2a: the tower graphics' slot stride (TowerGraphics_Init 0x00539310 copies mNumTowersPerLane, cBattlegroundsUIData
     # at sim +0xC930 + 0xD0, at EnterGame; 0 makes all four lane groups share slots) and the per-slot states that
     # TowerGraphics_Update (0x00538D50) compares (0 standing, 1 destroyed, 2/3 respawning): docs/ASSERTS.md *X2a*
+    # MAPFEEL: the init flag (0x0154288C; TowerGraphics_Update does nothing while it is 0, and the init sets it only
+    # when the level names an energy-line tuning) and the energy-line count (0x0154288B, the tuning's numNubLines)
     slot_states = struct.unpack('<16I', p.read(0x01542840, 64) or bytes(64))
-    say(f'tower graphics: towers per lane {p.u8(0x01542889)} (the UI data has {p.u32(sim + 0xC930 + 0xD0)}), '
+    say(f'tower graphics: initialised {p.u8(0x0154288C)}, energy lines {p.u8(0x0154288B)}, '
+        f'towers per lane {p.u8(0x01542889)} (the UI data has {p.u32(sim + 0xC930 + 0xD0)}), '
         f'slot states {list(slot_states)}')
 
     # CAMPICONS: the client's camp list (cBattlegroundsUIData at sim +0xC930: +0x368 entries of 0x18 bytes, +0x36C

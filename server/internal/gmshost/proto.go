@@ -326,14 +326,15 @@ type GMSError struct {
 // reportGMSError's codes (H5; gms/core/control/messages.h kErr*, the same numbers and names;
 // docs/HOST_CONTROL.md *A frozen host (H5)*).
 const (
-	ErrGMSEndpoint   = 1 // the GMS port could not be bound (gms_script's host mode; fatal)
+	ErrGMSEndpoint   = 1 // the GMS port could not be bound (gms_script's host mode, the host DLL since PORTSTUCK; fatal, exit code 2)
 	ErrTickStalled   = 2 // the host's watchdog: no server tick for [host] watchdog_s (fatal; the host exits with code 6)
 	ErrStepFailing   = 3 // a step of the host's frame threw in every run for [host] step_fail_s (fatal; exit code 7)
 	ErrStepException = 4 // a step of the host's frame threw; that run was skipped and the tick went on (not fatal)
+	ErrLevelLoad     = 5 // the host DLL's level did not load (PORTSTUCK; fatal, exit code 2, but not the port's fault)
 )
 
 // ErrorName names a reportGMSError code as both sides do: "GMS endpoint", "tick stalled", "step
-// failing", "step exception"; "error" for any other.
+// failing", "step exception", "level load"; "error" for any other.
 func ErrorName(code int) string {
 	switch code {
 	case ErrGMSEndpoint:
@@ -344,6 +345,8 @@ func ErrorName(code int) string {
 		return "step failing"
 	case ErrStepException:
 		return "step exception"
+	case ErrLevelLoad:
+		return "level load"
 	}
 	return "error"
 }

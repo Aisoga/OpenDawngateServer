@@ -439,6 +439,7 @@ const char* ErrorCodeName(int64_t code) {
     case kErrTickStalled: return "tick stalled";
     case kErrStepFailing: return "step failing";
     case kErrStepException: return "step exception";
+    case kErrLevelLoad: return "level load";
     default: return "error";
   }
 }

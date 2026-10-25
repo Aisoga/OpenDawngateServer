@@ -12,9 +12,9 @@
 //     has room for the whole group (TeamSize per team); a ticket that fits nowhere waits.
 //   - A match starts at once when both teams are full. With fewer players it starts once there are at
 //     least MinPlayers and its fill deadline has passed (the empty slots are for bots: M8): FillAfter
-//     after the anchor queued, and FillExtend later for each ticket of the match that queued after the
-//     anchor (MMWAIT: 90 s, then 30 s more per joining ticket, so a 5v5 of solo players waits at most
-//     90 + 8 × 30 = 330 s; the tenth player fills the match).
+//     after the anchor queued, and never less than FillExtend after the last ticket of the match joined
+//     (MMWAIT, MMLAST: 90 s, and a join with less than 30 s left sets the rest to 30 s, so a 5v5 of solo
+//     players waits at most 90 + 8 × 30 = 330 s; the tenth player fills the match).
 //   - A ticket whose own Timeout has passed expires (Blaze: SESSION_TIMED_OUT).
 //
 // This is our own design: the original matchmaker ran on EA's Blaze server and isn't in the client. The
@@ -81,7 +81,7 @@ type Config struct {
 	TeamSize   int           // players per team, 1 (1v1) to MaxTeamSize (5v5)
 	MinPlayers int           // fewest humans a match starts with after its fill deadline (1 = a lone player gets a game)
 	FillAfter  time.Duration // how long the oldest ticket waits for full teams before a smaller match starts
-	FillExtend time.Duration // MMWAIT: how much later a smaller match starts for each ticket that joined it
+	FillExtend time.Duration // MMWAIT, MMLAST: the least time a smaller match still waits after a ticket joins it
 	// MaxWait caps every ticket's Timeout (0 = the ticket's own: the client asks for 3 h, DUR). B10b: the
 	// client has no queue timer of its own, so this is the server's only limit on a wait.
 	MaxWait time.Duration
@@ -120,7 +120,7 @@ func (m *Matchmaker) Config() Config { return m.cfg }
 func (c Config) String() string {
 	s := fmt.Sprintf("%dv%d, start with %d+ players after %s", c.TeamSize, c.TeamSize, c.MinPlayers, c.FillAfter)
 	if c.FillExtend > 0 {
-		s += fmt.Sprintf(" (+%s per joining session)", c.FillExtend)
+		s += fmt.Sprintf(" (at least %s after the last session joins)", c.FillExtend)
 	}
 	if c.MaxWait > 0 {
 		s += fmt.Sprintf(", wait at most %s", c.MaxWait)
@@ -246,21 +246,18 @@ func (m *Matchmaker) form(a *Ticket, now time.Time) (Match, bool) {
 }
 
 // fillDeadline is when mt, if not full, may start with open slots: FillAfter after its oldest ticket
-// queued, then FillExtend more for each later ticket, counted from its join if it came after the
-// deadline so far (MinPlayers held the match back). The oldest ticket, not the anchor: a younger anchor
-// must not start the match before the older ticket's extended deadline.
+// queued, and at least FillExtend after its last ticket joined (MMLAST, the user's rule of 2026-10-25:
+// the time left never adds up per join, a join only lifts it to FillExtend if less was left). The oldest
+// ticket, not the anchor: a younger anchor must not start the match before the older ticket's deadline.
 func (m *Matchmaker) fillDeadline(mt Match) time.Time {
 	joined := mt.Tickets()
 	sort.SliceStable(joined, func(x, y int) bool { return joined[x].queued.Before(joined[y].queued) })
 	at := joined[0].queued.Add(m.cfg.FillAfter)
-	if m.cfg.FillExtend <= 0 {
+	if m.cfg.FillExtend <= 0 || len(joined) == 1 {
 		return at
 	}
-	for _, t := range joined[1:] {
-		if t.queued.After(at) {
-			at = t.queued
-		}
-		at = at.Add(m.cfg.FillExtend)
+	if last := joined[len(joined)-1].queued.Add(m.cfg.FillExtend); last.After(at) {
+		at = last
 	}
 	return at
 }
@@ -309,8 +306,8 @@ type QueueState struct {
 	Players  int           // humans in Tickets (a party counts each member)
 	Capacity int           // seats of one match (2 × TeamSize)
 	// StartsAt is the earliest time a match of this mode starts by the rules above: now when one is full already
-	// (Tick forms it at once), else the earliest fill deadline (FillAfter after its oldest ticket, FillExtend more
-	// per later one) among the matches the queued tickets would anchor that have MinPlayers. Zero: none has
+	// (Tick forms it at once), else the earliest fill deadline (FillAfter after its oldest ticket, at least
+	// FillExtend after its last one) among the matches the queued tickets would anchor that have MinPlayers. Zero: none has
 	// MinPlayers yet (or the queue is empty), so no start time is known.
 	StartsAt time.Time
 }

@@ -187,14 +187,18 @@ struct GMSError {
 };
 
 // reportGMSError's codes (H5; Go: gmshost.Err*, the same numbers and names; docs/HOST_CONTROL.md *A frozen host (H5)*).
-inline constexpr int64_t kErrGmsEndpoint = 1;    // the GMS port could not be bound (gms_script's host mode; fatal)
+inline constexpr int64_t kErrGmsEndpoint = 1;    // the GMS port could not be bound (gms_script's host mode, and since
+                                                 // PORTSTUCK the host DLL; fatal, exit code 2): dgserver quarantines
+                                                 // the port and starts the game once more on another
 inline constexpr int64_t kErrTickStalled = 2;    // the host's watchdog: no server tick for [host] watchdog_s (fatal;
                                                  // the host exits with code 6)
 inline constexpr int64_t kErrStepFailing = 3;    // one step of the host's frame threw in every run for [host]
                                                  // step_fail_s (fatal; exit code 7)
 inline constexpr int64_t kErrStepException = 4;  // a step of the host's frame threw: that run skipped, counted, the
                                                  // tick goes on (not fatal; the 1st, 10th, 100th, ... of a step)
-// "GMS endpoint", "tick stalled", "step failing", "step exception"; "error" for any other code.
+inline constexpr int64_t kErrLevelLoad = 5;      // the host DLL's level did not load (PORTSTUCK; fatal, exit code 2:
+                                                 // not the port's fault, so no retry)
+// "GMS endpoint", "tick stalled", "step failing", "step exception", "level load"; "error" for any other code.
 const char* ErrorCodeName(int64_t code);
 
 // host -> server: the last line before the host exits.

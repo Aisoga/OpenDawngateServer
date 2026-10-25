@@ -80,9 +80,9 @@ var matchmakingResultNames = map[int64]string{MatchmakingCreatedGame: "SUCCESS_C
 	MatchmakingTerminated: "SESSION_TERMINATED", MatchmakingGameSetupFailed: "SESSION_ERROR_GAME_SETUP_FAILED"}
 
 // DefaultMatchmaking is the matchmaker's default rules: 5v5 (the client asks for TEAM.PCAP 5 of an
-// ExpectedPlayerCount of 10), and a lone player gets a game after 90 s, 30 s later for each player who
-// joined meanwhile (MMWAIT, the user's rule of 2026-10-21: at most 330 s; the empty slots get bots with
-// Server.MMBots, B10d).
+// ExpectedPlayerCount of 10), and a lone player gets a game after 90 s, but never less than 30 s after
+// the last player joined (MMWAIT, the user's rule of 2026-10-21: at most 330 s; MMLAST of 2026-10-25: the
+// 30 s don't add up per join; the empty slots get bots with Server.MMBots, B10d).
 func DefaultMatchmaking() matchmaker.Config {
 	return matchmaker.Config{TeamSize: 5, MinPlayers: 1, FillAfter: 90 * time.Second, FillExtend: 30 * time.Second}
 }

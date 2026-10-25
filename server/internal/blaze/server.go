@@ -141,6 +141,8 @@ type Server struct {
 	joins joinCodes
 	// where finished matches are posted on Discord (SetResultPosts; results.go); nil = nowhere
 	results atomic.Pointer[ResultPosts]
+	// the last finished matches for the home page, without names (recent.go)
+	recent recentResults
 
 	handlers map[key]Handler
 }

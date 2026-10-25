@@ -12,6 +12,7 @@ bool GmsHostStart(void*, void*, const char*, unsigned, unsigned) {
 void GmsHostPoll() {}
 bool GmsHostActive() { return false; }
 unsigned GmsHostPort() { return 0; }
+const char* GmsHostError() { return "dgsim.dll was built without RakNet"; }
 int GmsHostConnections() { return 0; }
 void GmsHostShutdown() {}
 void GmsHostFormatStats(char* buf, std::size_t size) { std::snprintf(buf, size, "no endpoint (built without RakNet)"); }

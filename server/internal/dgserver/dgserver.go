@@ -78,6 +78,7 @@ type config struct {
 	mm                   matchmaker.Config  // B10a: the PvP matchmaker's rules
 	mmRefuse             bool               // B10b test aid: refuse every startMatchmaking
 	testLoginErrors      []uint16           // test aid: the n-th login's error reply (--test-login-errors)
+	testHomeJSON         string             // test aid: home.json from this file (--test-home-json)
 	mmBots               bool               // B10d: bots in a matchmade game's open seats (--mm-bots, on by default)
 	leaderboardMinGames  int                // LBFIX: the fewest games for the Leaderboard (--leaderboard-min-games)
 	customBots           bool               // B15: bots in a custom game's open seats (--custom-bots)
@@ -171,6 +172,9 @@ func openData(cfg config) (*store.Store, *content.Content, string, error) {
 		return nil, nil, "", err
 	}
 	info := fmt.Sprintf("content %s: %d items, %d shapers", file, len(c.Items), len(c.Shapers))
+	if len(c.Withheld) > 0 { // content.withheldItems: never granted, sold, listed or dropped
+		info += fmt.Sprintf(", %d withheld", len(c.Withheld))
+	}
 	if c.Old() { // B7a's format: no gem sockets, loot drops or loot tuning (B7c)
 		info += fmt.Sprintf(" (format %s: no gem sockets or loot drops; rebuild it with --make-content)", c.Format)
 	} else if !c.HasPerkStats() { // D3-perks: a file from before it has no perk stats (shaper select's C0 02)
@@ -295,6 +299,7 @@ func startHosts(cfg config, log *logging.Log) (*gmshost.Manager, string, error) 
 			return nil, "", err
 		}
 		mc.Pool = gmshost.NewPool(first, last)
+		mc.ProbePorts = true // PORTSTUCK: skip a port something holds before the start (an agent's are its own)
 		mc.Launcher = &gmshost.ExecLauncher{Path: exe, Args: strings.Fields(cfg.gmsArgs), Prepare: prepareHosts,
 			DataDir: cfg.gmsData, Options: cfg.gmsOptions, Runner: gmshost.RunnerFor(cfg.gmsRunner, exe)}
 		notes = append(notes, fmt.Sprintf("match hosts %s %s, ports %d-%d", exe, cfg.gmsArgs, first, last))
@@ -642,6 +647,11 @@ func start(cfg config) (*instance, error) {
 		go qos.ServeUDP()
 	}
 	httpSrv, tel := &web.HTTP{Log: log, WWW: www, Extra: extra}, &telemetry.Sink{Log: log}
+	httpSrv.Home = newHomeCache(homeStatus(homeSourceOf(bz)), bz.Now).JSON // HOME1: the home page's live data (home.go)
+	if cfg.testHomeJSON != "" {
+		httpSrv.Home = testHomeFile(cfg.testHomeJSON, httpSrv.Home)
+		log.Logf("stub", "TEST: home.json answered from %s, read at every request (--test-home-json, a test aid)", cfg.testHomeJSON)
+	}
 	if pkg != nil {
 		httpSrv.Download, cfg.web.download = webDownload(pkg), siteDownload(pkg)
 	}
@@ -1084,9 +1094,10 @@ func Run(args []string, h Hooks) int {
 	fs.IntVar(&cfg.mm.TeamSize, "mm-team-size", cfg.mm.TeamSize, "PvP matchmaking: players per team (1 = 1v1 ... 5 = 5v5)")
 	fs.IntVar(&cfg.mm.MinPlayers, "mm-min-players", cfg.mm.MinPlayers, "PvP matchmaking: fewest players a match starts with once --mm-fill-after has passed (the empty slots get bots, --mm-bots)")
 	fs.DurationVar(&cfg.mm.FillAfter, "mm-fill-after", cfg.mm.FillAfter, "PvP matchmaking: how long the oldest player waits for full teams before a smaller match starts")
-	fs.DurationVar(&cfg.mm.FillExtend, "mm-fill-extend", cfg.mm.FillExtend, "PvP matchmaking: how much longer a smaller match waits for each player (session) who joins it (0 = no extension)")
+	fs.DurationVar(&cfg.mm.FillExtend, "mm-fill-extend", cfg.mm.FillExtend, "PvP matchmaking: the least time a smaller match still waits after a player (session) joins it; a join with less left sets the rest to this, it does not add up (0 = no extension)")
 	fs.DurationVar(&cfg.mm.MaxWait, "mm-max-wait", 0, "PvP matchmaking: the longest a player waits in the queue before it gives up (SESSION_TIMED_OUT; 0 = the client's 3 h)")
 	testLoginErrors := fs.String("test-login-errors", "", "test aid: comma-separated 16-bit error codes (hex 0x.. or decimal); the n-th login gets the n-th as its error reply (0 = answered as usual), later logins are answered as usual; e.g. 0x0C,0x4072,0")
+	fs.StringVar(&cfg.testHomeJSON, "test-home-json", "", "test aid: answer the home page's home.json with this file's bytes, read anew at every request (the live data while it can't be read)")
 	fs.BoolVar(&cfg.mmRefuse, "mm-refuse", false, "PvP matchmaking test aid: refuse every startMatchmaking (GAMEMANAGER_ERR_INVALID_MATCHMAKING_CRITERIA)")
 	fs.BoolVar(&cfg.mmBots, "mm-bots", true, "PvP matchmaking with match hosts: a game that starts with open seats (after --mm-fill-after) gets bots in them, up to --mm-team-size a team (B10d); --mm-bots=false leaves them empty")
 	discordOpts := addDiscordFlags(fs)

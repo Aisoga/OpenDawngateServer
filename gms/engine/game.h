@@ -1995,6 +1995,9 @@ constexpr int kTotalHealthRegen = 72 + 33;  // derived: HealthRegen x (1 + HealI
 }  // namespace regenAttr
 namespace combatant {
 constexpr std::uintptr_t kResourcePoints = 0x58;  // mResourcePoints (CombatantDataUpdate member 4)
+// RENZO9999: the struct's size (ReflectionRegistry_RegisterType 0x01104320: "cCombatantData", 5 members, 0x88; the
+// field state at +0x5C is inside it). The replication writes a copy whose resource it may change (resource_wire.h).
+constexpr std::uintptr_t kSize = 0x88;
 }  // namespace combatant
 // GameObject_GetClassAttributes (0x008DE350, cdecl object): object +0x7C (the ClassAttributes asset) +0x68, its data
 // (+0 characterResourceType, +8/+0xC tieredHealth array and count; docs/data/assetdata_types.txt).

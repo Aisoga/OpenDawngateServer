@@ -92,6 +92,10 @@ bool Replicated(std::int32_t nounType, bool all);
 // marker id +0x84), and those spawn points are networked, so the client has them only from the server.
 bool Replicated(const NetObject& o, bool all);
 void SetIconSpawnPoints(const std::vector<std::uint32_t>& markerIds);
+// RENZO9999 ([host] resource_wire_floor, 1): a pool's resource of exactly 0 goes out in every A0 (create, delta, fog
+// exit) as gms::kResourceWireFloor, so the client's bar shows "0" and the maximum instead of its placeholder "9999"
+// (core/replication/resource_wire.h). The server's value is not changed. Off: the exact value.
+void SetResourceWireFloor(bool on);
 const char* NounTypeName(std::int32_t nounType);
 
 // The create messages of one object (8E, 9D, 9C, 9F, A0, A2, A1, 8F + `modifierRecords`), full state. With

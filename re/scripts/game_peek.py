@@ -29,7 +29,8 @@ noun name (noun +0), position (+0x10), team (+0x4D), client flags (+0x5A: 1 disa
 enable), visible (+0x54), whether the model exists (mpGraphicsData +0x890, made by ObjectCreateComplete through
 GameGraphics_CreateObjectGraphics 0x00575850), HP (cCombatantData* +0x8EC, mHitPoints +0x48) and MaxHealth
 (cAttributeData* +0x8E0, +0x10), since D1i "res": mResourcePoints (combatant +0x58) of MaxResourcePoints
-(attribute data +0x14) when the object has a resource pool, since D2g-live "mods": the modifier instances in the
+(attribute data +0x14) when the object has a resource pool (since RENZO9999 a value between 0 and 1, the host's floor
+for an empty pool, with three decimals), since D2g-live "mods": the modifier instances in the
 object's agent summary (+0x8C8; ModifierCreated adds them, ModifierDeleted and ObjectExitFoW remove them) and
 "fx": the used attached-effect slots (+0x90 + 0x38 i, asset +0x10; AttachedEffectUpdate 92), "bar" when a health bar exists (combatant +0x38,
 GameplayUI_CreateHealthBar 0x004A5BC0) and "player-controlled" (+0x56). It also prints the camera globals
@@ -606,7 +607,9 @@ def main():
         # D1i: the resource (mResourcePoints, combatant +0x58) of an object with a resource pool (MaxResourcePoints,
         # attribute data +0x14)
         mres = p.f32(attr + 0x14) if attr else 0.0
-        res = f' res {p.f32(comb + 0x58):.0f}/{mres:.0f}' if comb and mres > 0 else ''
+        # RENZO9999: a value between 0 and 1 (the host's floor for an empty pool, 0.001) with three decimals
+        rv = p.f32(comb + 0x58) if comb else 0.0
+        res = (f' res {rv:.3f}/{mres:.0f}' if 0 < rv < 1 else f' res {rv:.0f}/{mres:.0f}') if comb and mres > 0 else ''
         sid = p.u32(nc + 8) if nc else 0
         mapped = by_client.get(oid)
         # D2g-live: the agent summary's modifiers (object +0x8C8: +0xC buckets, +0x10 count; nodes {u32 instance, u32

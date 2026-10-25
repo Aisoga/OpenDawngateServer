@@ -31,12 +31,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include "abilities.h"
 #include "agents.h"
 #include "banter.h"
 #include "bots.h"
 #include "components.h"
+#include "control/messages.h"
 #include "volumes.h"
 #include "crowd.h"
 #include "damage.h"
@@ -1216,7 +1218,11 @@ void Drive() {
       if (g_cfg.directAbility && g_cfg.luaProbes) WithServerSim("direct ability", DirectAbility);
       LogHisto();
       if (!ok) {
-        if (hostctl::Active()) hostctl::Exit(2, "the level did not load");
+        if (hostctl::Active()) {
+          // PORTSTUCK: say why before exit code 2, so dgserver does not take it for a port it should quarantine
+          hostctl::ReportError(dggms::control::kErrLevelLoad, "level load: the level did not load", true);
+          hostctl::Exit(2, "the level did not load");
+        }
         g_phase = -1;
         return;
       }
@@ -1225,7 +1231,12 @@ void Drive() {
         const bool bound = GmsHostStart(g_sim, g_level, g_cfg.level, g_cfg.seed, g_cfg.flags);
         // C1b: gameReady {port} once the level is loaded and the port listens
         if (hostctl::Active()) {
-          if (!bound) hostctl::Exit(2, "no GMS endpoint (DGGMS_BIND)");
+          if (!bound) {
+            // PORTSTUCK: the port could not be bound (or DGGMS_BIND is bad): dgserver quarantines the port and
+            // starts the game once more on another (older hosts: the bare exit code 2 means the same to it)
+            hostctl::ReportError(dggms::control::kErrGmsEndpoint, std::string("GMS endpoint: ") + GmsHostError(), true);
+            hostctl::Exit(2, "no GMS endpoint (DGGMS_BIND)");
+          }
           hostctl::Ready(static_cast<int>(GmsHostPort()));
         }
         HeadlessAfterLevel();  // H1-live: [host] laa_reserve (the low-memory reservation test)

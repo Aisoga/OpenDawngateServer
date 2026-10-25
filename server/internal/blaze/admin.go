@@ -22,6 +22,14 @@ type HostedMatch struct {
 	Host    int64  // the match host's id (gmshost.Match.ID; 0 before it started)
 	Pid     int
 	Players []HostedMatchPlayer
+	// HOME1, the home page's view (no names there):
+	Level    string    // the level it loads (gameLevel; LevelDisplay names it)
+	Kind     string    // resultKind's: "PvP match", "Custom game", "Practice group", "Practice match"
+	Lobby    bool      // a custom game whose admin hasn't started it yet (its lobby isn't a match)
+	InGameAt time.Time // when the clients went IN_GAME (zero while loading and in shaper select)
+	// Bots are the bots on each team by the host's fill rule (botSeats, as the result post counts them) [assumed: the
+	// host reports no bots; a host whose [host] bots is set differs].
+	Bots [2]int
 }
 
 // HostedMatchPlayer is one human player of a hosted game (bots aren't on the Blaze side).
@@ -61,14 +69,21 @@ func (s *Server) HostedMatches() []HostedMatch {
 			hg.mu.Unlock()
 			continue
 		}
-		m := HostedMatch{GameID: hg.game.ID, Name: hg.game.Name, Mode: hg.mode, Started: hg.started, State: stateName(hg.state)}
+		m := HostedMatch{GameID: hg.game.ID, Name: hg.game.Name, Mode: hg.mode, Started: hg.started, State: stateName(hg.state),
+			Level: hg.s.gameLevel(hg.game), Lobby: hg.custom != nil && !hg.custom.started, InGameAt: hg.inGameAt}
+		m.Kind, _ = resultKind(hg.mode, hg.game.descriptors())
 		if hg.match != nil {
 			m.Host, m.Pid = hg.match.ID, hg.match.Pid()
 		}
+		var humans [2]int // counted as resultLocked counts them for the bots
 		for _, hp := range hg.players {
 			m.Players = append(m.Players, HostedMatchPlayer{PersonaID: hp.p.ID, UserID: hp.userID, Name: hp.p.Name,
 				Team: hp.p.Team, Joined: hp.joined, Left: hp.removed})
+			if hp.p.Team >= 0 && hp.p.Team <= 1 && (hg.custom == nil || hp.joined) {
+				humans[hp.p.Team]++
+			}
 		}
+		m.Bots = botSeats(hg.fillTeams, hg.game.descriptors(), humans)
 		hg.mu.Unlock()
 		out = append(out, m)
 	}

@@ -92,8 +92,12 @@ type Content struct {
 	Rarities []Rarity `json:"rarities,omitempty"`
 	// LootTuning is the rest of LootBagTuning (B7c).
 	LootTuning LootTuning `json:"lootTuning"`
+	// Withheld holds the items the server never hands out (withheldItems, WIPSTONES), ordered by catalogID: moved
+	// here from Items when content is built or loaded, so nothing that lists Items or looks an item up sees them.
+	Withheld []Item `json:"withheld,omitempty"`
 
-	byID map[uint32]int
+	byID     map[uint32]int
+	withheld map[uint32]bool // the catalogIDs in Withheld
 }
 
 // Item is one CollectionItem: something a player can own.
@@ -318,9 +322,9 @@ func (c *Content) Rarity(name string) (Rarity, bool) {
 	return Rarity{}, false
 }
 
-// Perk returns the perk shape or gem whose CollectionItem has this catalogID.
+// Perk returns the perk shape or gem whose CollectionItem has this catalogID; false for a withheld item.
 func (c *Content) Perk(id uint32) (Perk, bool) {
-	if c != nil && id != 0 {
+	if c != nil && id != 0 && !c.withheld[id] {
 		for _, p := range c.Perks {
 			if p.CatalogID == id {
 				return p, true
@@ -396,6 +400,7 @@ func (c *Content) Item(id uint32) (Item, bool) {
 func (c *Content) Empty() bool { return c == nil || len(c.Items) == 0 }
 
 func (c *Content) index() error {
+	c.applyWithheld()
 	c.byID = make(map[uint32]int, len(c.Items))
 	for i, it := range c.Items {
 		if it.CatalogID == 0 {

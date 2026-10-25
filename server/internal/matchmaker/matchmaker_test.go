@@ -251,8 +251,9 @@ func TestSeveralMatchesPerTick(t *testing.T) {
 	}
 }
 
-// MMWAIT: a smaller match waits FillAfter after its anchor, FillExtend more for each session that joins;
-// a full match starts at once. Nine solo players joining just in time keep a 5v5 waiting 90 + 8 × 30 s.
+// MMWAIT, MMLAST: a smaller match waits FillAfter after its oldest session, and at least FillExtend after the
+// last one joined (a join lifts the time left to FillExtend, it doesn't add FillExtend); a full match starts
+// at once. Nine solo players joining just in time keep a 5v5 waiting at most 90 + 8 × 30 s.
 func TestFillExtend(t *testing.T) {
 	c := newClock()
 	start := c.t
@@ -262,6 +263,35 @@ func TestFillExtend(t *testing.T) {
 	if d := m.NextDeadline(); !d.Equal(start.Add(90 * time.Second)) {
 		t.Fatalf("next deadline %v", d.Sub(start))
 	}
+	// joins with more than 30 s left change nothing
+	c.t = start.Add(10 * time.Second)
+	mustAdd(t, m, ticket("pvp", "", 1))
+	c.t = start.Add(60 * time.Second)
+	mustAdd(t, m, ticket("pvp", "", 1))
+	if d := m.NextDeadline().Sub(start); d != 90*time.Second {
+		t.Fatalf("deadline after early joins %v", d)
+	}
+	// the user's case: three join at once with 10 s left: 30 s from their join, once, not 3 × 30 s
+	c.t = start.Add(80 * time.Second)
+	for i := 0; i < 3; i++ {
+		mustAdd(t, m, ticket("pvp", "", 1))
+	}
+	if d := m.NextDeadline().Sub(start); d != 110*time.Second {
+		t.Fatalf("deadline after three late joins %v", d)
+	}
+	c.t = start.Add(110*time.Second - time.Millisecond)
+	if ms, _ := m.Tick(); len(ms) != 0 {
+		t.Fatal("started before 110 s")
+	}
+	c.t = start.Add(110 * time.Second)
+	if ms, _ := m.Tick(); len(ms) != 1 || ms[0].Full || teams(ms[0]) != "[1 3 5|2 4 6]" {
+		t.Fatalf("matches %v", ms)
+	}
+
+	// joins just in time: each lifts the time left to 30 s
+	c.t = start
+	nextID = 0
+	mustAdd(t, m, ticket("pvp", "", 1))
 	for i := 0; i < 8; i++ { // each joins 1 s before the deadline so far
 		c.t = m.NextDeadline().Add(-time.Second)
 		if ms, _ := m.Tick(); len(ms) != 0 {
@@ -269,14 +299,13 @@ func TestFillExtend(t *testing.T) {
 		}
 		mustAdd(t, m, ticket("pvp", "", 1))
 	}
-	if d := m.NextDeadline().Sub(start); d != 330*time.Second {
+	if d := m.NextDeadline().Sub(start); d != 90*time.Second+8*29*time.Second {
 		t.Fatalf("deadline after 8 joins %v", d)
 	}
-	c.t = start.Add(330*time.Second - time.Millisecond)
 	if ms, _ := m.Tick(); len(ms) != 0 {
-		t.Fatal("started before 330 s")
+		t.Fatal("started right after the last join")
 	}
-	c.t = start.Add(330 * time.Second)
+	c.t = start.Add(90*time.Second + 8*29*time.Second)
 	if ms, _ := m.Tick(); len(ms) != 1 || ms[0].Full || teams(ms[0]) != "[1 3 5 7 9|2 4 6 8]" {
 		t.Fatalf("matches %v", ms)
 	}
@@ -292,15 +321,14 @@ func TestFillExtend(t *testing.T) {
 		t.Fatalf("full match %v", ms)
 	}
 
-	// a party is one join: +30 s once
+	// a party is one join; a cancel takes its extension back
 	c.t = start
 	mustAdd(t, m, ticket("pvp", "", 1))
-	c.advance(10 * time.Second)
+	c.advance(80 * time.Second)
 	mustAdd(t, m, ticket("pvp", "", 3))
-	if d := m.NextDeadline().Sub(start); d != 120*time.Second {
+	if d := m.NextDeadline().Sub(start); d != 110*time.Second {
 		t.Fatalf("deadline with a party %v", d)
 	}
-	// a cancel takes its extension back
 	m.Remove(nextID)
 	if d := m.NextDeadline().Sub(start); d != 90*time.Second {
 		t.Fatalf("deadline after the cancel %v", d)
@@ -323,7 +351,7 @@ func TestSnapshot(t *testing.T) {
 	if len(st.Tickets) != 2 || st.Players != 4 || st.Tickets[1].Players[0].Name != "p2_0" || !st.Tickets[0].Queued.Equal(start) {
 		t.Fatalf("snapshot %+v", st)
 	}
-	if d := st.StartsAt.Sub(start); d != 120*time.Second { // 90 s after the first, +30 s for the party
+	if d := st.StartsAt.Sub(start); d != 90*time.Second { // 90 s after the first; the party joined with 80 s left (MMLAST)
 		t.Fatalf("starts after %v", d)
 	}
 	if st := m.Snapshot("custom"); st.Players != 1 || st.StartsAt.Sub(start) != 100*time.Second {

@@ -217,13 +217,13 @@ func TestErrorNames(t *testing.T) {
 		code int
 		want string
 	}{{ErrGMSEndpoint, "GMS endpoint"}, {ErrTickStalled, "tick stalled"}, {ErrStepFailing, "step failing"},
-		{ErrStepException, "step exception"}, {0, "error"}, {99, "error"}} {
+		{ErrStepException, "step exception"}, {ErrLevelLoad, "level load"}, {0, "error"}, {99, "error"}} {
 		if got := ErrorName(c.code); got != c.want {
 			t.Errorf("ErrorName(%d) = %q, want %q", c.code, got, c.want)
 		}
 	}
-	if ErrGMSEndpoint != 1 || ErrTickStalled != 2 || ErrStepFailing != 3 || ErrStepException != 4 {
-		t.Error("the codes moved: both sides and the example lines use 1-4")
+	if ErrGMSEndpoint != 1 || ErrTickStalled != 2 || ErrStepFailing != 3 || ErrStepException != 4 || ErrLevelLoad != 5 {
+		t.Error("the codes moved: both sides and the example lines use 1-5")
 	}
 }
 

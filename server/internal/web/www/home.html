@@ -4,25 +4,90 @@
 <meta charset="utf-8">
 <title>Dawngate</title>
 <!--
-  Dawngate restoration server: the main menu's home page (docs/WEB_CONTENT.md). The client's
-  HomePageBodyView loads ~webContentUrlRootCommon~/home.html into an EAWebKit view and runs
-  onLivingLoreVoteUpdate() and onRegionKillswitchEuUpdate() in it; it reloads the page itself when the
-  web content version changes. The native object Client (bound by the client) answers the calls below.
-  Self-contained on purpose: no scripts, styles or images from other hosts.
+  Dawngate restoration server: the main menu's home page. The client's HomePageBodyView loads
+  ~webContentUrlRootCommon~/home.html into an EAWebKit view (WebKit 535, 1440 x 633, transparent: the menu
+  art shows through) and runs onLivingLoreVoteUpdate() and onRegionKillswitchEuUpdate() in it; it reloads
+  the page itself when the web content version changes, and on every return to Home. The native object
+  Client (bound by the client) opens the menu's screens.
+
+  The page polls home.json beside it every 10 s (the server's live data: the queue, the running matches,
+  the open custom games, the last results) and updates itself in place. Self-contained on purpose: no
+  scripts, styles or images from other hosts; the pictures and fonts are the client's own (game:// and
+  the font families the client registers), so in a normal browser they fall back to Arial and no art.
+  ES5 only: the view has no Function.prototype.bind and no flexbox. Text from the server (a custom
+  game's title) is always inserted as text, never as HTML.
 -->
 <style type="text/css">
-  html, body { margin: 0; padding: 0; }
-  body { background: #0d1117; color: #c9d1d9; font-family: Arial, Helvetica, sans-serif; font-size: 15px; }
-  .page { padding: 28px 36px; }
-  h1 { margin: 0 0 4px 0; font-size: 30px; font-weight: normal; letter-spacing: 3px; color: #e6c87a; }
-  .sub { margin: 0 0 22px 0; color: #8b949e; }
-  .panel { background: #161b22; border: 1px solid #30363d; padding: 16px 20px; margin-bottom: 16px; }
-  .panel h2 { margin: 0 0 8px 0; font-size: 17px; font-weight: normal; color: #e6c87a; }
-  .panel p { margin: 0 0 6px 0; line-height: 1.4; }
-  .buttons a { display: inline-block; margin: 4px 8px 4px 0; padding: 7px 16px; border: 1px solid #e6c87a;
-               color: #e6c87a; text-decoration: none; cursor: pointer; }
-  .buttons a:hover { background: #e6c87a; color: #0d1117; }
-  .foot { color: #6e7681; font-size: 12px; }
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body { color: #bcbcbc; font-family: FrizQuaReg, Arial, sans-serif; font-size: 15px; overflow-x: hidden; }
+  ::-webkit-scrollbar { width: 15px; }
+  ::-webkit-scrollbar-track { background-color: #262626; }
+  ::-webkit-scrollbar-thumb { background: -webkit-linear-gradient(left, #3d3d3d 0%, #333333 100%); border: 1px solid #262626; }
+  a { color: #b3814e; text-decoration: none; cursor: pointer; }
+  .wrap { width: 1120px; margin: 0 auto; padding: 12px 0 18px 0; }
+  .head { font-family: MasonSansAlternate, Cinzel, Arial, sans-serif; color: #cfd4b3; letter-spacing: 2px; }
+  .label { font-family: MasonSansAlternate, Cinzel, Arial, sans-serif; color: #b3814e; font-size: 14px; letter-spacing: 3px; }
+  .muted { color: #8c8f80; }
+  .panel { background: rgba(50, 50, 50, .85); border: 1px solid rgba(179, 129, 78, .28);
+           -webkit-box-shadow: 0 2px 10px rgba(0, 0, 0, .6); box-shadow: 0 2px 10px rgba(0, 0, 0, .6); }
+
+  /* Play now: one card, one button. The Dawngate itself stands behind the button. */
+  #play { position: relative; height: 150px; overflow: hidden;
+          background: rgba(22, 24, 24, .88) url(game://UI/XHTML/labs/images/picture1.png) no-repeat 640px -16px;
+          background-size: 520px 170px; }
+  #play .shade { position: absolute; left: 0; top: 0; width: 1120px; height: 150px;
+                 background: -webkit-linear-gradient(left, rgba(22, 24, 24, .96) 0%, rgba(22, 24, 24, .9) 48%, rgba(22, 24, 24, .15) 78%, rgba(22, 24, 24, .35) 100%); }
+  #play .label { position: absolute; left: 26px; top: 16px; }
+  #playTitle { position: absolute; left: 26px; top: 40px; width: 700px; font-size: 30px; white-space: nowrap;
+               overflow: hidden; text-overflow: ellipsis; }
+  #playLine { position: absolute; left: 26px; top: 84px; width: 700px; font-size: 18px; color: #cfd4b3; white-space: nowrap; }
+  #playNote { position: absolute; left: 26px; top: 112px; width: 700px; font-size: 14px; white-space: nowrap; }
+  #playBtn { position: absolute; left: 850px; top: 47px; width: 230px; height: 56px; line-height: 56px; text-align: center;
+             font-family: MasonSansAlternate, Cinzel, Arial, sans-serif; font-size: 24px; letter-spacing: 5px; color: #fbeedd;
+             background: -webkit-linear-gradient(top, #e05a33 0%, #b93a1f 48%, #8f2513 100%);
+             border: 1px solid #f19a6d; -webkit-border-radius: 3px; border-radius: 3px;
+             -webkit-box-shadow: 0 0 14px rgba(232, 92, 50, .55), inset 0 1px 0 rgba(255, 220, 190, .35);
+             box-shadow: 0 0 14px rgba(232, 92, 50, .55), inset 0 1px 0 rgba(255, 220, 190, .35);
+             text-shadow: 0 1px 2px rgba(0, 0, 0, .7); cursor: pointer; }
+  #playBtn:hover { background: -webkit-linear-gradient(top, #f06a40 0%, #cc4526 48%, #a02c17 100%); }
+
+  /* The live strip. */
+  #live { margin-top: 10px; margin-bottom: 14px; height: 50px; }
+  #live .cell { float: left; width: 278px; height: 50px; border-left: 1px solid rgba(179, 129, 78, .22); }
+  #live .cell.first { border-left: 0; }
+  #live .num { display: block; margin: 5px 0 0 22px; font-family: MasonSansAlternate, Cinzel, Arial, sans-serif;
+               font-size: 22px; color: #8fd8cc; letter-spacing: 1px; text-shadow: 0 0 8px rgba(80, 200, 190, .35); }
+  #live .what { display: block; margin: 0 0 0 22px; font-size: 12px; color: #9a9d8d; letter-spacing: 1px; }
+
+  /* Lists. */
+  .section { margin-top: 4px; }
+  .section h2 { margin: 0 0 6px 0; font-weight: normal; font-size: 18px; }
+  .section h2 .more { float: right; font-family: FrizQuaReg, Arial, sans-serif; font-size: 13px; letter-spacing: 0; margin-top: 3px; }
+  .col { float: left; width: 549px; }
+  .col.right { margin-left: 22px; }
+  .clear { clear: both; }
+  table.list { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  table.list td { height: 27px; padding: 0 10px; border-top: 1px solid rgba(255, 255, 255, .05); white-space: nowrap;
+                  overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
+  table.list tr.top td { border-top: 0; }
+  table.list th { height: 22px; padding: 0 10px; text-align: left; font-weight: normal; font-size: 12px; color: #8c8f80;
+                  letter-spacing: 1px; background: rgba(0, 0, 0, .25); }
+  table.list td.empty { color: #8c8f80; font-style: italic; }
+  .t1 { color: #7fb2e5; }
+  .t2 { color: #e58a7f; }
+  .live { color: #8fd8cc; }
+  .tag { display: inline-block; margin-left: 6px; padding: 0 5px; font-size: 11px; line-height: 16px; color: #9a9d8d;
+         border: 1px solid rgba(154, 157, 141, .45); -webkit-border-radius: 2px; border-radius: 2px; }
+  .rowwrap { padding: 6px 0 8px 0; }
+
+  #notes p { margin: 0; padding: 8px 14px; font-size: 14px; line-height: 1.4; border-top: 1px solid rgba(255, 255, 255, .05); }
+  #notes p.top { border-top: 0; }
+  #goto { padding: 12px 14px; }
+  #goto a { display: inline-block; margin: 0 10px 0 0; padding: 6px 18px; font-family: MasonSansAlternate, Cinzel, Arial, sans-serif;
+            font-size: 15px; letter-spacing: 2px; color: #cfd4b3; border: 1px solid rgba(179, 129, 78, .6);
+            background: -webkit-linear-gradient(top, rgba(70, 64, 56, .9) 0%, rgba(38, 36, 33, .9) 100%); }
+  #goto a:hover { border-color: #b3814e; color: #ffffff; }
+  .foot { margin-top: 14px; font-size: 12px; color: #77796d; text-align: center; }
 </style>
 <script type="text/javascript">
   // Calls a function of the client's native Client object; null if there is none (e.g. in a browser).
@@ -35,60 +100,401 @@
     return null;
   }
 
-  function setText(id, text) {
-    var el = document.getElementById(id);
-    if (el) {
-      el.innerHTML = "";
-      el.appendChild(document.createTextNode(text == null ? "" : String(text)));
-    }
-  }
-
-  function refresh() {
-    var name = clientCall("getLocalPlayerName");
-    setText("player", name ? name : "Shaper");
-    var eu = clientCall("getEuServersAvailable");
-    setText("eu", eu === null ? "unknown" : (eu ? "available" : "unavailable"));
-    setText("build", clientCall("getBuildVersion") || "?");
-    setText("webver", clientCall("webContentGetVersion") || "?");
-  }
-
-  // Main menu content ids (the client's MainMenuContent).
+  // Main menu content ids (the client's MainMenuContent): 5 the PLAY screen, 9 Custom Games, 12 Collection,
+  // 10 Profile, 11 Leaderboard, 0 Lore, 2 Help.
   function show(content) {
     clientCall("requestMainMenuContent", content);
     return false;
   }
 
-  // Hooks the client runs in this page.
-  function onLivingLoreVoteUpdate() { refresh(); }
-  function onRegionKillswitchEuUpdate() { refresh(); }
-  function onWebVersionUpdate() { refresh(); }
+  var POLL_MS = 10000;
+  var SEP = " " + String.fromCharCode(183) + " ";  // a middle dot, kept out of the ASCII source
+  var data = null;       // the last home.json
+  var gotAt = 0;         // when it came (ms, our clock): its times count from here
+  var playContent = 5;   // what the Play now button opens
+  var tickers = [];      // {el, base, dir, fmt}: a time that changes every second
+  var polls = 0;
+  var lastLists = "";
 
-  window.onload = refresh;
+  function el(id) { return document.getElementById(id); }
+  function now() { return (new Date()).getTime(); }
+
+  function setText(node, text) {
+    if (typeof node == "string") { node = el(node); }
+    if (!node) { return; }
+    var t = text == null ? "" : String(text);
+    if (node.firstChild && node.firstChild.nodeType == 3 && !node.firstChild.nextSibling) {
+      if (node.firstChild.nodeValue != t) { node.firstChild.nodeValue = t; }
+      return;
+    }
+    while (node.firstChild) { node.removeChild(node.firstChild); }
+    node.appendChild(document.createTextNode(t));
+  }
+
+  function make(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) { n.className = cls; }
+    if (text != null) { n.appendChild(document.createTextNode(String(text))); }
+    return n;
+  }
+
+  function pad2(n) { return n < 10 ? "0" + n : "" + n; }
+
+  // 0:42, 12:34, 1:02:03
+  function clock(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    var h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s = sec % 60;
+    return h > 0 ? h + ":" + pad2(m) + ":" + pad2(s) : m + ":" + pad2(s);
+  }
+
+  function ago(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    if (sec < 60) { return "just now"; }
+    if (sec < 3600) { return Math.floor(sec / 60) + " min ago"; }
+    if (sec < 86400) { return Math.floor(sec / 3600) + " h ago"; }
+    return Math.floor(sec / 86400) + " d ago";
+  }
+
+  function plural(n, one, many) { return n + " " + (n == 1 ? one : many); }
+
+  // A ticker counts from the home.json it was made from (at: when that came), so a list that isn't rebuilt
+  // keeps counting without a jump.
+  function addTicker(node, base, dir, fmt) {
+    tickers.push({ el: node, base: base, at: gotAt || now(), dir: dir, fmt: fmt });
+    tickOne(tickers[tickers.length - 1]);
+  }
+
+  function tickOne(t) {
+    var v = t.base + t.dir * (now() - t.at) / 1000;
+    setText(t.el, t.fmt(v < 0 ? 0 : v));
+  }
+
+  function tick() {
+    for (var i = 0; i < tickers.length; i++) { tickOne(tickers[i]); }
+  }
+
+  function list(v) { return v && v.length ? v : []; }
+
+  // ---- Play now -------------------------------------------------------------------------------------
+  function startsText(sec) { return sec <= 0 ? "starting now" : "starts in " + clock(sec); }
+
+  function renderPlay(d) {
+    var q = d ? d.queue : null;
+    var title = el("playTitle"), line = el("playLine"), note = el("playNote"), btn = el("playBtn");
+    var lineText = "", noteText = "", ticking = null;
+    var lobby = null, games = d ? list(d.customGames) : [];
+    for (var i = 0; i < games.length; i++) {
+      var g = games[i];
+      if (!g.private && g.players < g.seats && (!lobby || g.players > lobby.players)) { lobby = g; }
+    }
+    // Remove the old Play now tickers (the list tickers are rebuilt with the lists).
+    var kept = [];
+    for (var k = 0; k < tickers.length; k++) { if (!tickers[k].play) { kept.push(tickers[k]); } }
+    tickers = kept;
+
+    if (q && q.players > 0) {
+      setText(title, q.players + " of " + q.capacity + " in the PvP queue");
+      var fill = q.botsFill && q.players < q.capacity ? " (bots fill the empty seats)" : "";
+      if (q.startsInSec != null) {
+        ticking = { base: q.startsInSec, fill: fill };
+      } else if (q.players < q.minPlayers) {
+        lineText = "needs " + plural(q.minPlayers - q.players, "more player", "more players") + " to start" + fill;
+      } else {
+        lineText = "waiting for players" + fill;
+      }
+      noteText = "Join them: PLAY, then QUEUE SOLO on the Versus tab.";
+      setText(btn, "PLAY");
+      playContent = 5;
+    } else if (lobby) {
+      setText(title, lobby.title || "Custom game");
+      lineText = "Custom game" + SEP + lobby.map + SEP + lobby.players + " of " + lobby.seats + " seats taken";
+      noteText = lobby.bots ? "Bots fill the empty seats when it starts." : "Open to join now.";
+      setText(btn, "BROWSE GAMES");
+      playContent = 9;
+    } else {
+      setText(title, "Quiet right now");
+      lineText = "Start a practice match against bots: PLAY, then Practice.";
+      if (q && q.botsFill) {
+        noteText = "Or queue for PvP: if no one joins within " + clock(q.fillAfterSec) + ", bots fill the empty seats.";
+      } else if (q) {
+        noteText = "Or queue for PvP and wait for other players.";
+      }
+      setText(btn, "PLAY");
+      playContent = 5;
+    }
+    btn.style.fontSize = playContent == 9 ? "19px" : "24px";
+    btn.style.letterSpacing = playContent == 9 ? "3px" : "5px";
+    if (ticking) {
+      var fillText = ticking.fill;
+      var t = { el: line, base: ticking.base, at: gotAt || now(), dir: -1, play: true,
+                fmt: function (v) { return startsText(Math.ceil(v)) + fillText; } };
+      tickers.push(t);
+      tickOne(t);
+    } else {
+      setText(line, lineText);
+    }
+    setText(note, noteText);
+  }
+
+  function playClicked() { return show(playContent); }
+
+  // ---- The live strip -------------------------------------------------------------------------------
+  function renderLive(d) {
+    var o = d ? d.online : null;
+    setText("liveOnline", o ? o.players : "-");
+    setText("liveInMatches", o ? o.inMatches : "-");
+    setText("liveMatches", o ? o.matches : "-");
+    setText("liveRelease", d && d.server && d.server.release ? d.server.release : "-");
+    setText("liveMatchesWhat", o && o.matches == 1 ? "match running" : "matches running");
+  }
+
+  // ---- Happening now and Just finished --------------------------------------------------------------
+  // "2 + 3 bots", "2 players", "5 bots"
+  function sideText(humans, bots) {
+    if (humans > 0 && bots > 0) { return humans + " + " + plural(bots, "bot", "bots"); }
+    if (humans > 0) { return plural(humans, "player", "players"); }
+    return bots > 0 ? plural(bots, "bot", "bots") : "nobody";
+  }
+
+  function emptyRow(tbody, cols, text) {
+    var tr = make("tr", "top"), td = make("td", "empty", text);
+    td.colSpan = cols;
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+
+  function fillBody(id) {
+    var tb = el(id);
+    while (tb.firstChild) { tb.removeChild(tb.firstChild); }
+    return tb;
+  }
+
+  function renderMatches(d) {
+    var tb = fillBody("matchRows"), ms = d ? list(d.matches) : [];
+    if (!ms.length) { emptyRow(tb, 3, d ? "No matches running." : "-"); }
+    for (var i = 0; i < ms.length && i < 4; i++) {
+      var m = ms[i], tr = make("tr", i == 0 ? "top" : "");
+      tr.appendChild(make("td", "", m.kind + SEP + m.map));
+      var sides = make("td", "");
+      sides.appendChild(make("span", "t1", sideText(m.teams[0].humans, m.teams[0].bots)));
+      sides.appendChild(make("span", "muted", "  vs  "));
+      sides.appendChild(make("span", "t2", sideText(m.teams[1].humans, m.teams[1].bots)));
+      tr.appendChild(sides);
+      var when = make("td", "live");
+      when.style.textAlign = "right";
+      tr.appendChild(when);
+      if (m.state == "playing") {
+        addTicker(when, m.elapsedSec, 1, clock);
+      } else {
+        setText(when, m.state == "starting" ? "starting" : "ending");
+      }
+      tb.appendChild(tr);
+    }
+    setText("matchMore", ms.length > 4 ? "+" + (ms.length - 4) + " more" : "");
+  }
+
+  function renderCustom(d) {
+    var tb = fillBody("customRows"), gs = d ? list(d.customGames) : [];
+    if (!gs.length) { emptyRow(tb, 3, d ? "No open custom games." : "-"); }
+    for (var i = 0; i < gs.length && i < 4; i++) {
+      var g = gs[i], tr = make("tr", i == 0 ? "top" : ""), name = make("td", "");
+      name.appendChild(document.createTextNode(g.title || "Custom game"));
+      if (g.private) { name.appendChild(make("span", "tag", "password")); }
+      if (g.bots) { name.appendChild(make("span", "tag", "bots")); }
+      tr.appendChild(name);
+      tr.appendChild(make("td", "muted", g.map));
+      var seats = make("td", "", g.players + " / " + g.seats);
+      seats.style.textAlign = "right";
+      tr.appendChild(seats);
+      tb.appendChild(tr);
+    }
+    setText("customMore", gs.length > 4 ? "+" + (gs.length - 4) + " more" : "");
+  }
+
+  function shapersText(side) {
+    var names = [], unknown = 0, s = list(side.shapers);
+    for (var i = 0; i < s.length; i++) { if (s[i]) { names.push(s[i]); } else { unknown++; } }
+    if (unknown) { names.push(plural(unknown, "player", "players")); }
+    if (side.bots > 0) { names.push(plural(side.bots, "bot", "bots")); }
+    return names.length ? names.join(", ") : "-";
+  }
+
+  function resultText(r) {
+    if (r.winner != 1 && r.winner != 2) { return "No winner"; }
+    var why = r.reason == "guardian" ? " (Guardian fell)" : r.reason == "surrender" ? " (surrender)" : "";
+    return "Team " + r.winner + " won" + why;
+  }
+
+  function renderResults(d) {
+    var tb = fillBody("resultRows"), rs = d ? list(d.results) : [];
+    if (!rs.length) { emptyRow(tb, 6, d ? "No match has finished since the server started." : "-"); }
+    for (var i = 0; i < rs.length && i < 5; i++) {
+      var r = rs[i], tr = make("tr", i == 0 ? "top" : "");
+      tr.appendChild(make("td", "", r.kind + SEP + r.map));
+      tr.appendChild(make("td", r.winner == 1 ? "t1" : r.winner == 2 ? "t2" : "muted", resultText(r)));
+      tr.appendChild(make("td", "", clock(r.durationSec)));
+      tr.appendChild(make("td", "t1", shapersText(r.teams[0])));
+      tr.appendChild(make("td", "t2", shapersText(r.teams[1])));
+      var when = make("td", "muted");
+      when.style.textAlign = "right";
+      tr.appendChild(when);
+      addTicker(when, r.endedAgoSec, 1, ago);
+      tb.appendChild(tr);
+    }
+  }
+
+  function renderNotes(d) {
+    var box = el("notes"), s = d ? d.server : null, notes = [];
+    if (s && s.halloween) {
+      notes.push("Halloween on this server: candles, pumpkins and tombs decorate the Dawngate.");
+    }
+    var maps = s ? list(s.customMaps) : [];
+    for (var i = 0; i < maps.length; i++) {
+      if (maps[i] == "Anshavar Pass") {
+        notes.push("Anshavar Pass, the unfinished one-lane map, is open in custom games: choose it under Map: in CREATE GAME.");
+      } else {
+        notes.push(maps[i] + " is open in custom games: choose it under Map: in CREATE GAME.");
+      }
+    }
+    while (box.firstChild) { box.removeChild(box.firstChild); }
+    for (var j = 0; j < notes.length; j++) { box.appendChild(make("p", j == 0 ? "top" : "", notes[j])); }
+    el("notesSection").style.display = notes.length ? "block" : "none";
+  }
+
+  // The lists are rebuilt only when they change; their times tick in place and aren't part of the key.
+  function noTimes(k, v) { return k == "elapsedSec" || k == "minutes" || k == "endedAgoSec" ? undefined : v; }
+
+  function renderLists(d) {
+    var key = d ? JSON.stringify([d.matches, d.customGames, d.results, d.server], noTimes) : "none";
+    if (key == lastLists && d) {
+      return;
+    }
+    lastLists = key;
+    var kept = [];
+    for (var k = 0; k < tickers.length; k++) { if (tickers[k].play) { kept.push(tickers[k]); } }
+    tickers = kept;
+    renderMatches(d);
+    renderCustom(d);
+    renderResults(d);
+    renderNotes(d);
+  }
+
+  function render(d) {
+    renderPlay(d);
+    renderLive(d);
+    renderLists(d);
+  }
+
+  // ---- Polling --------------------------------------------------------------------------------------
+  function poll() {
+    var x;
+    try {
+      x = new XMLHttpRequest();
+      x.open("GET", "home.json?n=" + (++polls), true);
+      x.onreadystatechange = function () {
+        if (x.readyState != 4) { return; }
+        var d = null;
+        if (x.status == 200) {
+          try { d = JSON.parse(x.responseText); } catch (e) { d = null; }
+        }
+        if (d && d.version == 1) {
+          data = d;
+          gotAt = now();
+          render(d);
+        } else if (!data) {
+          render(null);
+        }
+        setTimeout(poll, POLL_MS);
+      };
+      x.send(null);
+    } catch (e) {
+      if (!data) { render(null); }
+      setTimeout(poll, POLL_MS);
+    }
+  }
+
+  function refreshClient() {
+    setText("build", clientCall("getBuildVersion") || "?");
+    setText("webver", clientCall("webContentGetVersion") || "?");
+  }
+
+  // Hooks the client runs in this page.
+  function onLivingLoreVoteUpdate() { refreshClient(); }
+  function onRegionKillswitchEuUpdate() { refreshClient(); }
+  function onWebVersionUpdate() { refreshClient(); }
+
+  window.onload = function () {
+    refreshClient();
+    render(null);
+    poll();
+    setInterval(tick, 1000);
+  };
 </script>
 </head>
 <body>
-<div class="page">
-  <h1>DAWNGATE</h1>
-  <p class="sub">Welcome back, <span id="player">Shaper</span>.</p>
-
-  <div class="panel">
-    <h2>A restored server</h2>
-    <p>This server is part of a community project that keeps the 2014 client playable after the
-       official servers closed. It is not run by Waystone Games or Electronic Arts.</p>
-    <p>Press PLAY to start a practice match.</p>
+<div class="wrap">
+  <div id="play" class="panel">
+    <div class="shade"></div>
+    <div class="label">PLAY NOW</div>
+    <div id="playTitle" class="head">Dawngate</div>
+    <div id="playLine"></div>
+    <div id="playNote" class="muted"></div>
+    <a id="playBtn" onclick="return playClicked();">PLAY</a>
   </div>
 
-  <div class="panel buttons">
-    <h2>Go to</h2>
-    <a onclick="return show(12);">Collection</a>
-    <a onclick="return show(10);">Profile</a>
-    <a onclick="return show(11);">Leaderboard</a>
-    <a onclick="return show(0);">Lore</a>
-    <a onclick="return show(2);">Help</a>
+  <div id="live" class="panel">
+    <div class="cell first"><span id="liveOnline" class="num">-</span><span class="what">players online</span></div>
+    <div class="cell"><span id="liveInMatches" class="num">-</span><span class="what">in matches</span></div>
+    <div class="cell"><span id="liveMatches" class="num">-</span><span id="liveMatchesWhat" class="what">matches running</span></div>
+    <div class="cell"><span id="liveRelease" class="num">-</span><span class="what">server release</span></div>
   </div>
 
-  <p class="foot">EU servers: <span id="eu">unknown</span> &middot; client <span id="build">?</span>
-     &middot; web content <span id="webver">?</span></p>
+  <div class="section">
+    <h2 class="head">HAPPENING NOW</h2>
+    <div class="col">
+      <table class="list panel">
+        <colgroup><col style="width: 232px"><col><col style="width: 82px"></colgroup>
+        <thead><tr><th>MATCHES</th><th>TEAM 1 VS TEAM 2</th><th style="text-align: right"><span id="matchMore"></span></th></tr></thead>
+        <tbody id="matchRows"></tbody>
+      </table>
+    </div>
+    <div class="col right">
+      <table class="list panel">
+        <colgroup><col><col style="width: 140px"><col style="width: 82px"></colgroup>
+        <thead><tr><th>OPEN CUSTOM GAMES <a onclick="return show(9);">browse</a></th><th>MAP</th><th style="text-align: right"><span id="customMore"></span></th></tr></thead>
+        <tbody id="customRows"></tbody>
+      </table>
+    </div>
+    <div class="clear"></div>
+  </div>
+
+  <div class="section" style="margin-top: 14px">
+    <h2 class="head">JUST FINISHED</h2>
+    <table class="list panel">
+      <colgroup><col style="width: 250px"><col style="width: 232px"><col style="width: 70px"><col><col><col style="width: 100px"></colgroup>
+      <thead><tr><th>MATCH</th><th>RESULT</th><th>LENGTH</th><th>TEAM 1</th><th>TEAM 2</th><th></th></tr></thead>
+      <tbody id="resultRows"></tbody>
+    </table>
+  </div>
+
+  <div id="notesSection" class="section" style="margin-top: 14px; display: none">
+    <h2 class="head">SERVER NOTES</h2>
+    <div id="notes" class="panel"></div>
+  </div>
+
+  <div class="section" style="margin-top: 14px">
+    <h2 class="head">GO TO</h2>
+    <div id="goto" class="panel">
+      <a onclick="return show(12);">Collection</a>
+      <a onclick="return show(10);">Profile</a>
+      <a onclick="return show(11);">Leaderboard</a>
+      <a onclick="return show(0);">Lore</a>
+      <a onclick="return show(2);">Help</a>
+    </div>
+  </div>
+
+  <p class="foot">A restored community server: not run by Waystone Games or Electronic Arts.
+     &middot; client <span id="build">?</span> &middot; web content <span id="webver">?</span></p>
 </div>
 </body>
 </html>

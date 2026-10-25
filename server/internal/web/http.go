@@ -86,6 +86,12 @@ type HTTP struct {
 	// Download is the server's client package (dgserver --client-package; nil: none): its file streamed at
 	// Download.Path, its page at DownloadPagePath.
 	Download *Download
+	// Home is the home page's live data (HOME1, dgserver's home.json; nil: none, 404), served at every path that ends
+	// with HomeJSONSuffix before --www and the built-ins (ServeHome). It must be cheap: every client on the home page
+	// polls it.
+	Home func() []byte
+
+	homeLog homeLog
 }
 
 // Download is the client package on the HTTP port.
@@ -165,6 +171,12 @@ func (h *HTTP) ServeConn(c net.Conn) {
 	}
 	if req == nil {
 		return // closed without a request
+	}
+	if h.Home != nil {
+		if f := strings.Fields(req.line); len(f) >= 2 && strings.HasSuffix(urlPath(f[1]), HomeJSONSuffix) {
+			h.serveHome(c, peer, f[0], f[1])
+			return
+		}
 	}
 	var hdrs []string
 	for _, hd := range req.headers {

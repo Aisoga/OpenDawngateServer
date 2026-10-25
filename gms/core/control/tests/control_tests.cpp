@@ -801,12 +801,14 @@ static void TestHostControlErrors(const std::string& examplesPath) {
   CHECK_STR(ErrorCodeName(kErrTickStalled), "tick stalled");
   CHECK_STR(ErrorCodeName(kErrStepFailing), "step failing");
   CHECK_STR(ErrorCodeName(kErrStepException), "step exception");
+  CHECK_STR(ErrorCodeName(kErrLevelLoad), "level load");
   CHECK_STR(ErrorCodeName(0), "error");
   CHECK_STR(ErrorCodeName(99), "error");
   CHECK_EQ(kErrGmsEndpoint, int64_t(1));
   CHECK_EQ(kErrTickStalled, int64_t(2));
   CHECK_EQ(kErrStepFailing, int64_t(3));
   CHECK_EQ(kErrStepException, int64_t(4));
+  CHECK_EQ(kErrLevelLoad, int64_t(5));
   std::string stallLine, stepLine;  // from the shared examples
   for (const std::string& l : ReadExamples(examplesPath)) {
     if (l.find("\"t\":\"reportGMSError\",\"code\":2,") != std::string::npos) stallLine = l;

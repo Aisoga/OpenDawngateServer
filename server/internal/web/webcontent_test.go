@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -208,21 +209,30 @@ func TestDynamicLoreXML(t *testing.T) {
 	}
 }
 
-// The home page defines the hooks the client calls, uses only the native Client object and loads
-// nothing from another host.
+// The home page defines the hooks the client calls, uses only the native Client object, polls the relative
+// home.json, loads nothing from another host (only the client's own game:// pictures) and keeps to what the
+// client's web view runs (no bind, no flexbox, no unprefixed gradients).
 func TestHomePage(t *testing.T) {
 	page := string(HomePage())
 	for _, want := range []string{
 		"function onLivingLoreVoteUpdate()", "function onRegionKillswitchEuUpdate()", "function onWebVersionUpdate()",
-		`clientCall("getLocalPlayerName")`, `clientCall("requestMainMenuContent", content)`, "<!DOCTYPE html>",
+		`clientCall("requestMainMenuContent", content)`, "<!DOCTYPE html>", `"home.json?n="`, "JSON.parse(",
+		"show(playContent)", "playContent = 5", "playContent = 9", "return show(12);", "return show(10);",
+		"return show(11);", "return show(0);", "return show(2);", "not run by Waystone Games or Electronic Arts",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("home.html lacks %q", want)
 		}
 	}
-	for _, bad := range []string{"http://", "https://", "src=", "<link", "@import"} {
+	for _, bad := range []string{"http://", "https://", "src=", "<link", "@import", "@font-face", ".bind(",
+		"display: flex", "display:flex", "linear-gradient(to ", "innerHTML", "const ", "let ", "=>"} {
 		if strings.Contains(page, bad) {
-			t.Errorf("home.html contains %q (it must be self-contained)", bad)
+			t.Errorf("home.html contains %q (self-contained, ES5, text never as HTML)", bad)
+		}
+	}
+	for _, m := range regexp.MustCompile(`url\(([^)]*)\)`).FindAllStringSubmatch(page, -1) {
+		if !strings.HasPrefix(m[1], "game://UI/XHTML/labs/images/") {
+			t.Errorf("home.html: url(%s): only the client's own game:// pictures", m[1])
 		}
 	}
 	for i, c := range page {

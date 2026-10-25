@@ -27,6 +27,8 @@ func (s *Server) SetResultPosts(r ResultPosts) { s.results.Store(&r) }
 type matchResult struct {
 	GameID     int64
 	Kind       string // resultKind's: "PvP match", "Custom game", "Practice group", "Practice match"
+	Mode       string // gmshost.ModePvP, ModeCustom, ModePractice
+	Level      string // the level it was played on (gameLevel)
 	WinnerTeam int    // 1 or 2; anything else = no winner
 	Reason     string // finishGame's: "guardian", "surrender", ...
 	Duration   time.Duration
@@ -92,16 +94,17 @@ func botSeats(fillTeams int, descriptors uint32, humans [2]int) [2]int {
 	return bots
 }
 
-// postResult posts a finished game's result (Finish, after persist) when a result webhook is set and the game's
-// mode posts. Never waits: Hook.Post only queues.
+// postResult keeps a finished game's result for the home page (Finish, after persist; HOME1, recent.go) and posts it
+// when a result webhook is set and the game's mode posts. Never waits: Hook.Post only queues.
 func (hg *hostedGame) postResult(f gmshost.FinishGame) {
+	hg.mu.Lock()
+	r := hg.resultLocked(f, hg.s.Now())
+	hg.mu.Unlock()
+	hg.s.recent.add(recentResultOf(r, hg.s.Content))
 	rp := hg.s.results.Load()
 	if rp == nil || rp.Hook == nil {
 		return
 	}
-	hg.mu.Lock()
-	r := hg.resultLocked(f, hg.s.Now())
-	hg.mu.Unlock()
 	_, postMode := resultKind(hg.mode, hg.game.descriptors())
 	if !rp.Settings.PostsResults(postMode) {
 		hg.s.Log.Logf("blaze", "   game %d: result not posted to Discord (%s results are off)", hg.game.ID, postMode)
@@ -118,8 +121,8 @@ func (hg *hostedGame) postResult(f gmshost.FinishGame) {
 // keeps their seats). A custom game's spectators are left out.
 func (hg *hostedGame) resultLocked(f gmshost.FinishGame, at time.Time) matchResult {
 	kind, _ := resultKind(hg.mode, hg.game.descriptors())
-	r := matchResult{GameID: hg.game.ID, Kind: kind, WinnerTeam: f.WinnerTeam, Reason: f.Reason,
-		Duration: time.Duration(f.DurationMs) * time.Millisecond, At: at}
+	r := matchResult{GameID: hg.game.ID, Kind: kind, Mode: hg.mode, Level: hg.s.gameLevel(hg.game),
+		WinnerTeam: f.WinnerTeam, Reason: f.Reason, Duration: time.Duration(f.DurationMs) * time.Millisecond, At: at}
 	var humans [2]int
 	for _, hp := range hg.players {
 		if hp.p.Team < 0 || hp.p.Team > 1 || (hg.custom != nil && !hp.joined) {
@@ -212,22 +215,27 @@ func playerLine(p resultPlayer, names bool, c *content.Content) string {
 // the name the game shows, "Fenmore"; else its asset name, "alpha"), "?" when the host reported none or the content
 // doesn't know it.
 func shaperName(noun uint32, c *content.Content) string {
-	id, ok := c.ShaperOf(noun)
-	if !ok {
-		return "?"
-	}
-	it, ok := c.Item(id)
-	if !ok {
-		return "?"
-	}
-	name := strings.TrimSpace(it.Title)
-	if name == "" {
-		name = strings.TrimSpace(it.Name)
-	}
+	name := shaperTitle(noun, c)
 	if name == "" {
 		return "?"
 	}
 	return discordhook.Escape(name)
+}
+
+// shaperTitle is shaperName's name unescaped, "" when the host reported none or the content doesn't know it.
+func shaperTitle(noun uint32, c *content.Content) string {
+	id, ok := c.ShaperOf(noun)
+	if !ok {
+		return ""
+	}
+	it, ok := c.Item(id)
+	if !ok {
+		return ""
+	}
+	if name := strings.TrimSpace(it.Title); name != "" {
+		return name
+	}
+	return strings.TrimSpace(it.Name)
 }
 
 // clock is a match length as m:ss (h:mm:ss from an hour on).

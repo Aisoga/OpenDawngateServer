@@ -200,6 +200,16 @@ func TestCustomGameMapTag(t *testing.T) {
 			if v := attrValue(stringMap(gam, "ATTR"), AttrLevelID); v != tc.levelID {
 				t.Errorf("browser LevelId %q, want %q", v, tc.levelID)
 			}
+			// HOME1: the home page's lobby, its title without the server's prefixes; a lobby, not a match
+			title := strings.TrimPrefix(strings.TrimPrefix(tc.gnam, "[Pass] "), BotFillPrefix)
+			if ls := ts.s.CustomLobbies(); len(ls) != 1 || ls[0].Title != title || ls[0].Level != tc.level ||
+				ls[0].Bots != (tc.fill > 0) || ls[0].Started || ls[0].Private || ls[0].Players != 1 || ls[0].Spectators != 0 ||
+				ls[0].Seats != 10 {
+				t.Errorf("CustomLobbies %+v, want %q on %s", ls, title, tc.level)
+			}
+			if ms := ts.s.HostedMatches(); len(ms) != 1 || !ms[0].Lobby || ms[0].Level != tc.level || ms[0].Kind != kindCustom {
+				t.Errorf("HostedMatches %+v", ms)
+			}
 			log := ts.log.String()
 			if tc.why == "" {
 				if strings.Contains(log, "game 1: map ") {
@@ -229,7 +239,7 @@ func TestLobbyMapLabel(t *testing.T) {
 	line := localepatch.LobbyLines[localepatch.LobbyMapLine]
 	if len(other) != 1 || len(moviepatch.ExtraMaps) != 1 || moviepatch.ExtraMaps[0].Tag != other[0] ||
 		moviepatch.ExtraMaps[0].Label != line || len(localepatch.LobbyLines) != 1 ||
-		display[0] != "Anshavar Pass [Pass] " || line != "Anshavar Pass" || levelDisplay(HostedLevel) != "The Dawngate" {
+		display[0] != "Anshavar Pass [Pass] " || line != "Anshavar Pass" || LevelDisplay(HostedLevel) != "The Dawngate" {
 		t.Errorf("levels besides %s %v (%q), the dialog's maps %+v, the lobby's line %q", HostedLevel, other, display,
 			moviepatch.ExtraMaps, line)
 	}

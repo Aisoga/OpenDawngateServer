@@ -15,8 +15,10 @@ import (
 // contentSHA is the SHA-256 of the content.json the Python pipeline makes from build 854 (snap.py extract
 // + assetdata.py dump --locale + dgserver --make-content), in content.Format
 // dawngate-content-2. A change of content.Build changes it on purpose: then make the file with the pipeline
-// again (or check TestBuildMatchesDump against a fresh dump) and update the hash.
-const contentSHA = "be325ff9af795fe25e20ef316e470a5b42c1193421b4428054804ddaab9f75d6"
+// again (or check TestBuildMatchesDump against a fresh dump) and update the hash. Since the withheld items
+// (content's withheldItems: 16 of the 276 items under "withheld") it is the pipeline's earlier file
+// (be325ff9…) loaded and written again by content.Load and Marshal, which gives the same bytes as Build.
+const contentSHA = "2e8de1d5c25a8d89f4003f136f8277fe6465cf2e663e7e9fd4f6538611222b24"
 
 func TestBuildMatchesPipeline(t *testing.T) {
 	dir := testgame.Dir(t)
@@ -42,7 +44,7 @@ func TestBuildMatchesPipeline(t *testing.T) {
 	if raw, _ := os.ReadFile(file); !bytes.Equal(raw, got) {
 		t.Error("Write wrote other bytes than JSON")
 	}
-	if len(c.Items) != 276 || len(c.Shapers) != 42 || len(c.Perks) != 108 || len(c.MatchItems) != 106 || len(c.LootBags) != 5 {
+	if len(c.Items) != 260 || len(c.Withheld) != 16 || len(c.Shapers) != 42 || len(c.Perks) != 108 || len(c.MatchItems) != 106 || len(c.LootBags) != 5 {
 		t.Errorf("%d items, %d shapers, %d perks, %d match items, %d loot bags", len(c.Items), len(c.Shapers), len(c.Perks),
 			len(c.MatchItems), len(c.LootBags))
 	}

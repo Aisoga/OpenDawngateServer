@@ -420,6 +420,13 @@ func TestCustomGameHosted(t *testing.T) {
 	}
 	wantLine(t, hostNext[gmshost.StartGame](t, host), `{"t":"startGame","roster":[{"user":2000000001,"name":"alpha","index":0,`+
 		`"team":1,"noun":"","bot":false},{"user":2000000002,"name":"bravo","index":10,"team":0,"noun":"","bot":false,"spectator":true}]}`)
+	// HOME1: started, it is a match for the home page, no longer an open lobby (still in the browser's list)
+	if ls := ts.s.CustomLobbies(); len(ls) != 1 || !ls[0].Started || ls[0].Players != 1 || ls[0].Spectators != 1 {
+		t.Errorf("CustomLobbies %+v", ls)
+	}
+	if ms := ts.s.HostedMatches(); len(ms) != 1 || ms[0].Lobby || ms[0].InGameAt.IsZero() || ms[0].Mode != gmshost.ModeCustom {
+		t.Errorf("HostedMatches %+v", ms)
+	}
 	// now only a spectator may join
 	d := ts.client("delta@example.com")
 	wantError(t, "D joins the started game", d.gm(CmdGameManagerJoinGame, golden.Bytes(t, decodeCase(t, g, "joingame_browser_request"))), ErrGameInProgress)

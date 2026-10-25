@@ -144,7 +144,8 @@ type hostedGame struct {
 	mu       sync.Mutex
 	match    *gmshost.Match
 	players  []*hostedPlayer
-	state    int64 // the GSTA the clients know
+	state    int64     // the GSTA the clients know
+	inGameAt time.Time // when state first became IN_GAME (zero before)
 	ended    bool
 	finishes map[int64]gmshost.PlayerFinish // the host's playerFinish per user (B7c), used at finishGame
 	held     map[int64]*heldRewards         // D8c: the rewards that wait for the karma vote, by user
@@ -245,11 +246,12 @@ func (s *Server) launchHostedGame(g Game, mode string, fillTeams int, players []
 		who += fmt.Sprintf(", bots fill each team to %d", fillTeams)
 	}
 	on := ""
-	if mt.Site != gmshost.LocalSite {
-		on = fmt.Sprintf(" on agent %s (GMS host %s)", mt.Site, mt.GMSHost)
+	site, gmsHost, port, pid := mt.Placement() // the match's goroutine may move it already (gmshost's port retry)
+	if site != gmshost.LocalSite {
+		on = fmt.Sprintf(" on agent %s (GMS host %s)", site, gmsHost)
 	}
 	s.Log.Logf("blaze", "   game %d %q: match host %d starting%s (pid %d, GMS port %d), %s; NotifyGameSetup follows gameReady",
-		g.ID, g.Name, mt.ID, on, mt.Pid(), mt.Port, who)
+		g.ID, g.Name, mt.ID, on, pid, port, who)
 	for _, hp := range players {
 		conn, id := hp.conn, hp.p.ID
 		conn.OnSessionEnd(func() { hg.sessionEnded(conn, id) })
@@ -367,6 +369,9 @@ func (hg *hostedGame) setState(state int64) {
 	hg.mu.Lock()
 	changed := hg.state != state
 	hg.state = state
+	if state == GameStateInGame && hg.inGameAt.IsZero() {
+		hg.inGameAt = hg.s.Now() // HOME1: the home page's match minutes count from here
+	}
 	hg.mu.Unlock()
 	if changed {
 		hg.push(NotifyGameStateChangeID, "NotifyGameStateChange", func(*hostedPlayer) []byte {
@@ -502,7 +507,12 @@ func (hg *hostedGame) events() gmshost.Events {
 				// takes B8's path (the GMS connection fails after about 21 s; the client returns to the
 				// Practice screen and sends removePlayer; b8_run5/b8_run6).
 				g.GMS = hostAddr(g.GMS, mt, mt.Port)
-				s.Log.Logf("blaze", "   game %d: match host gone before gameReady (%s); NotifyGameSetup names the dead GMS %s", gid, o.Reason, g.GMS)
+				again := ""
+				if o.Retries > 0 { // gmshost started it once more on another port, and that host failed too
+					again = ", the second host too"
+				}
+				s.Log.Logf("blaze", "   game %d: match host gone before gameReady (%s%s); NotifyGameSetup names the dead GMS %s", gid,
+					o.Reason, again, g.GMS)
 				hg.push(NotifyGameSetupID, "NotifyGameSetup", func(hp *hostedPlayer) []byte { return hg.setup(g, hp) })
 			case o.Finished:
 				hg.push(NotifyPlayerRemovedID, "NotifyPlayerRemoved", func(hp *hostedPlayer) []byte {

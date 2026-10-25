@@ -136,7 +136,7 @@ func TestServerWithoutContent(t *testing.T) {
 		files, _ := filepath.Glob(filepath.Join(logDir, "*.log"))
 		raw, _ := os.ReadFile(files[0])
 		text := strings.ReplaceAll(string(raw), "\r\n", "\n")
-		for _, want := range []string{c.want, "[stub] PvP matchmaking: 5v5, start with 1+ players after 1m30s (+30s per joining session)\n"} { // B10a, MMWAIT
+		for _, want := range []string{c.want, "[stub] PvP matchmaking: 5v5, start with 1+ players after 1m30s (at least 30s after the last session joins)\n"} { // B10a, MMWAIT
 			if !strings.Contains(text, want) {
 				t.Errorf("log lacks %q:\n%s", want, text)
 			}

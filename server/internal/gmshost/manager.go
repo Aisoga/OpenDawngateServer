@@ -66,7 +66,24 @@ type Config struct {
 	// resetDedicatedServer and gameReady, and starts its replacement in the background. Each holds a
 	// port of the pool. 0 = a host per game, started by Start (C1).
 	Warm int
+	// PORTSTUCK: a host that ends before gameReady because it could not bind its GMS port (its fatal
+	// reportGMSError ErrGMSEndpoint, or exit code 2 without another fatal report, which is all an older host
+	// says) puts that port in quarantine for Quarantine (twice as long for each repeat before a good host
+	// on it, at most QuarantineMax), and its game is started once more on another port (pickSite again), if
+	// no more than RetryWindow has passed since the game was given to a host and the server didn't end it
+	// (0 = the defaults). ProbePorts: before a start on this machine the server binds the port itself (UDP
+	// on BindHost, closed at once) and quarantines one it can't bind; dgserver sets it with --gms-dir.
+	Quarantine, QuarantineMax, RetryWindow time.Duration
+	ProbePorts                             bool
 }
+
+// PORTSTUCK's defaults (Config.Quarantine, QuarantineMax, RetryWindow). The client waits at least 90 s for
+// NotifyGameSetup, and a host is ready in 2 to 8 s.
+const (
+	DefaultQuarantine    = 5 * time.Minute
+	DefaultQuarantineMax = time.Hour
+	DefaultRetryWindow   = 60 * time.Second
+)
 
 // The warm pool's states of a Match (Match.warm, under Manager.mu).
 const (
@@ -119,6 +136,9 @@ type Outcome struct {
 	// ErrStepFailing, ...); without finishGame before it, Reason is "host error <code> (<name>): <text>".
 	Error  *GMSError
 	Errors int // reportGMSError lines that weren't fatal (H5: a step's exceptions, 1st, 10th, 100th, ...)
+	// PORTSTUCK: hosts started again for this game because the one before could not bind its port (0 or
+	// 1); the other fields are the last host's.
+	Retries int
 }
 
 // Manager runs the control listener and the matches.
@@ -153,6 +173,9 @@ func NewManager(cfg Config) *Manager {
 	def(&cfg.ExitTimeout, DefaultExitTimeout)
 	def(&cfg.AgentTimeout, DefaultAgentTimeout)
 	def(&cfg.LaunchTimeout, DefaultLaunchTimeout)
+	def(&cfg.Quarantine, DefaultQuarantine)
+	def(&cfg.QuarantineMax, DefaultQuarantineMax)
+	def(&cfg.RetryWindow, DefaultRetryWindow)
 	if cfg.BindHost == "" {
 		cfg.BindHost = "127.0.0.1"
 	}
@@ -226,15 +249,19 @@ type SiteInfo struct {
 	Ports    string // the GMS port range
 	Free     int    // free GMS ports
 	Running  int    // its running matches
+	// Quarantined: ports in quarantine because a host could not bind them (PORTSTUCK; not in Free)
+	Quarantined int
 }
 
 // Sites lists the machines that run hosts: this one first (if it does), then the registered agents.
 func (m *Manager) Sites() []SiteInfo {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.expireQuarantines()
 	var out []SiteInfo
 	for _, s := range m.sites {
-		si := SiteInfo{Name: s.name, BindHost: s.bindHost, GMSHost: s.gmsHost, Ports: s.pool.String(), Free: s.pool.Free()}
+		si := SiteInfo{Name: s.name, BindHost: s.bindHost, GMSHost: s.gmsHost, Ports: s.pool.String(), Free: s.pool.Free(),
+			Quarantined: len(s.pool.InQuarantine())}
 		if s.agent != nil {
 			si.Addr = s.agent.ip.String()
 		}
@@ -255,19 +282,68 @@ var ErrClosed = errors.New("gmshost: manager closed")
 // to the earlier one (this machine, then the agents in registration order).
 func (m *Manager) pickSite() (*site, error) {
 	var best *site
-	bestFree := 0
+	bestFree, stuck := 0, 0
 	for _, s := range m.sites {
 		if f := s.pool.Free(); f > bestFree {
 			best, bestFree = s, f
 		}
+		stuck += len(s.pool.InQuarantine())
 	}
 	switch {
 	case best != nil:
 		return best, nil
 	case len(m.sites) == 0:
 		return nil, ErrNoSite
+	case stuck > 0:
+		return nil, fmt.Errorf("%w (%d in quarantine: their hosts could not bind them)", ErrNoPort, stuck)
 	}
 	return nil, ErrNoPort
+}
+
+// takePort picks a machine (pickSite; only: that one) and takes a port there, m.mu held (PORTSTUCK). The
+// quarantines that are over end first (logged). With Config.ProbePorts a port of this machine that the
+// server can't bind itself is quarantined (logged) and the next one taken.
+func (m *Manager) takePort(only *site) (*site, int, error) {
+	m.expireQuarantines()
+	for {
+		st := only
+		if st == nil {
+			var err error
+			if st, err = m.pickSite(); err != nil {
+				return nil, 0, err
+			}
+		}
+		port, err := st.pool.Acquire() // only takePort acquires, under m.mu, so pickSite's free port is still free
+		if err != nil {
+			return nil, 0, err
+		}
+		if !m.cfg.ProbePorts || st.agent != nil { // an agent's ports are on its machine: only its hosts' exits tell
+			return st, port, nil
+		}
+		perr := probeUDP(st.bindHost, port)
+		if perr == nil {
+			return st, port, nil
+		}
+		d := st.pool.Quarantine(port, m.cfg.Quarantine, m.cfg.QuarantineMax)
+		m.log.Logf(who, "port %d quarantined for %v: it is taken before the start (%v)", port, d, perr)
+	}
+}
+
+// expireQuarantines puts the ports whose quarantine is over back into their pools (m.mu held; logged).
+func (m *Manager) expireQuarantines() {
+	for _, s := range m.sites {
+		for _, e := range s.pool.Expire() {
+			m.log.Logf(who, "port %d%s back in the pool: its quarantine of %v is over", e.Port, onSite(s), e.After)
+		}
+	}
+}
+
+// onSite is "" for this machine, " on agent <name>" for an agent's.
+func onSite(s *site) string {
+	if s.agent != nil {
+		return " on agent " + s.name
+	}
+	return ""
 }
 
 // Start spawns a host for game: it picks a machine (pickSite) and a port there, starts the process
@@ -301,11 +377,7 @@ func (m *Manager) Start(game CreateGame, ev Events) (*Match, error) {
 	}
 	m.nextID++
 	id := m.nextID
-	st, err := m.pickSite()
-	var port int
-	if err == nil {
-		port, err = st.pool.Acquire() // only Start and FillWarm acquire, under m.mu, so pickSite's free port is still free
-	}
+	st, port, err := m.takePort(nil)
 	if err != nil {
 		m.mu.Unlock()
 		m.log.Logf(who, "match %d (game %d): not started: %v", id, game.GameID, err)
@@ -381,8 +453,7 @@ func (m *Manager) FillWarm() {
 			m.mu.Unlock()
 			return
 		}
-		st := m.sites[0]
-		port, err := st.pool.Acquire()
+		st, port, err := m.takePort(m.sites[0])
 		if err != nil {
 			m.mu.Unlock()
 			m.log.Logf(who, "warm pool: no port for another warm host (%v)", err)
@@ -632,7 +703,9 @@ func (cc *ctlConn) readLoop(mt *Match) {
 	}
 }
 
-// Match is one host process and its match.
+// Match is one host process and its match. Port, Site, Bind and GMSHost change once if the game is
+// started again on another port before its gameReady (PORTSTUCK): read them in the events, or with
+// Placement.
 type Match struct {
 	ID   int64
 	Port int    // the pool port in DGGMS_BIND
@@ -705,8 +778,22 @@ func (mt *Match) Done() <-chan struct{} { return mt.done }
 // Outcome returns how the match ended; valid after Done.
 func (mt *Match) Outcome() Outcome { return mt.outcome }
 
-// Pid returns the host's process id.
-func (mt *Match) Pid() int { return mt.proc.Pid() }
+// Pid returns the host's process id (the second host's after a PORTSTUCK retry).
+func (mt *Match) Pid() int {
+	mt.m.mu.Lock()
+	defer mt.m.mu.Unlock()
+	return mt.proc.Pid()
+}
+
+// Placement returns where the match's host runs now: Site, GMSHost, Port and the pid. PORTSTUCK's retry
+// moves a match that has no gameReady yet to another port (maybe another machine), on the match's
+// goroutine and under the manager's lock: the events may read the fields themselves, any other goroutine
+// reads them here.
+func (mt *Match) Placement() (site, gmsHost string, port, pid int) {
+	mt.m.mu.Lock()
+	defer mt.m.mu.Unlock()
+	return mt.Site, mt.GMSHost, mt.Port, mt.proc.Pid()
+}
 
 type exitInfo struct {
 	code int
@@ -717,11 +804,7 @@ type exitInfo struct {
 func (mt *Match) run() {
 	m, cfg := mt.m, mt.m.cfg
 	defer m.wg.Done()
-	exited := make(chan exitInfo, 1)
-	go func() {
-		code, err := mt.proc.Wait()
-		exited <- exitInfo{code, err}
-	}()
+	exited := waitExit(mt.proc)
 
 	const (
 		waitHello = iota
@@ -742,6 +825,8 @@ func (mt *Match) run() {
 		timerWhat  = fmt.Sprintf("no hello within %v", cfg.HelloTimeout)
 		timer      = time.NewTimer(cfg.HelloTimeout)
 		abortCause string
+		stopped    bool         // the server ended it (abortGame, shutdown): never started again (PORTSTUCK)
+		launched   = mt.started // this host's start (a second one's after a PORTSTUCK retry)
 	)
 	defer timer.Stop()
 	setTimer := func(d time.Duration, what string) { timer.Reset(d); timerWhat = what }
@@ -786,6 +871,7 @@ func (mt *Match) run() {
 				return
 			}
 			phase, o.Ready = running, true
+			mt.site.pool.Good(mt.Port) // PORTSTUCK: the port works; its next quarantine starts short again
 			if !ending {
 				setTimer(cfg.HeartbeatTimeout, fmt.Sprintf("no message within %v", cfg.HeartbeatTimeout))
 			}
@@ -871,129 +957,178 @@ func (mt *Match) run() {
 		conn, msgs, gone = nil, nil, nil
 	}
 
-	var exit exitInfo
-loop:
+	var (
+		exit     exitInfo
+		noGame   bool   // a warm host without a game
+		portNote string // "port N in quarantine" (PORTSTUCK); "" = released at the end
+	)
 	for {
-		select {
-		case cc := <-mt.attach:
-			if conn != nil || phase != waitHello || killed {
-				m.log.Logf(who, "match %d: second control connection rejected", mt.ID)
-				cc.c.Close()
-				continue
-			}
-			conn, msgs, gone = cc, cc.msgs, cc.gone
-			m.log.Logf(who, "match %d: hello from pid %d (%s), %.1f s after the start", mt.ID, cc.hello.PID,
-				cc.hello.Build, time.Since(mt.started).Seconds())
-			if cc.hello.PID != 0 && cc.hello.PID != mt.proc.Pid() {
-				m.log.Logf(who, "match %d: hello names pid %d, the process we started is %d", mt.ID, cc.hello.PID, mt.proc.Pid())
-			}
-			if m.warmReady(mt) { // H1-live: a warm host waits for its game (no timer: the connection is its liveness)
-				phase = idle
-				setTimer(time.Duration(1<<62), "")
-				m.log.Logf(who, "match %d: warm host ready, waiting for a game", mt.ID)
-				continue
-			}
-			phase = waitReady
-			setTimer(cfg.ReadyTimeout, fmt.Sprintf("no gameReady within %v", cfg.ReadyTimeout))
-			send(mt.Game)
-		case msg := <-msgs:
-			handle(msg)
-		case <-gone:
-			drain()
-			if conn.err != nil && !errors.Is(conn.err, net.ErrClosed) {
-				m.log.Logf(who, "match %d: control connection ended: %v", mt.ID, conn.err)
-			} else {
-				m.log.Logf(who, "match %d: control connection closed", mt.ID)
-			}
-			dropConn()
-			if phase == idle && !unassignedWarm && m.leaveWarm(mt) {
-				unassignedWarm = true // no game can come any more
-			}
-			if !ending { // a crashing host drops the connection just before it exits: give it a moment
-				ending = true
-				setTimer(exitDrain, "control connection lost")
-			}
-		case cmd := <-mt.cmds:
-			switch v := cmd.(type) {
-			case assignGame: // H1-live: Start gave this warm host a game (mt.Game, mt.ev)
-				if phase != idle || ending || killed {
-					m.log.Logf(who, "match %d: (a game for a warm host that is not waiting: it ends)", mt.ID)
+	loop:
+		for {
+			select {
+			case cc := <-mt.attach:
+				if conn != nil || phase != waitHello || killed {
+					m.log.Logf(who, "match %d: second control connection rejected", mt.ID)
+					cc.c.Close()
+					continue
+				}
+				conn, msgs, gone = cc, cc.msgs, cc.gone
+				m.log.Logf(who, "match %d: hello from pid %d (%s), %.1f s after the start", mt.ID, cc.hello.PID,
+					cc.hello.Build, time.Since(launched).Seconds())
+				if cc.hello.PID != 0 && cc.hello.PID != mt.proc.Pid() {
+					m.log.Logf(who, "match %d: hello names pid %d, the process we started is %d", mt.ID, cc.hello.PID, mt.proc.Pid())
+				}
+				if m.warmReady(mt) { // H1-live: a warm host waits for its game (no timer: the connection is its liveness)
+					phase = idle
+					setTimer(time.Duration(1<<62), "")
+					m.log.Logf(who, "match %d: warm host ready, waiting for a game", mt.ID)
 					continue
 				}
 				phase = waitReady
-				since = time.Now()
 				setTimer(cfg.ReadyTimeout, fmt.Sprintf("no gameReady within %v", cfg.ReadyTimeout))
 				send(mt.Game)
-			case RemovePlayer, PlayerRewards:
-				send(v)
-			case UpdateRoster: // B15: createGame (not sent yet: before the hello, or a warm host's) carries it then
-				mt.Game.Roster = v.Roster
-				if phase != waitHello && phase != idle {
+			case msg := <-msgs:
+				handle(msg)
+			case <-gone:
+				drain()
+				if conn.err != nil && !errors.Is(conn.err, net.ErrClosed) {
+					m.log.Logf(who, "match %d: control connection ended: %v", mt.ID, conn.err)
+				} else {
+					m.log.Logf(who, "match %d: control connection closed", mt.ID)
+				}
+				dropConn()
+				if phase == idle && !unassignedWarm && m.leaveWarm(mt) {
+					unassignedWarm = true // no game can come any more
+				}
+				if !ending { // a crashing host drops the connection just before it exits: give it a moment
+					ending = true
+					setTimer(exitDrain, "control connection lost")
+				}
+			case cmd := <-mt.cmds:
+				switch v := cmd.(type) {
+				case assignGame: // H1-live: Start gave this warm host a game (mt.Game, mt.ev)
+					if phase != idle || ending || killed {
+						m.log.Logf(who, "match %d: (a game for a warm host that is not waiting: it ends)", mt.ID)
+						continue
+					}
+					phase = waitReady
+					since = time.Now()
+					setTimer(cfg.ReadyTimeout, fmt.Sprintf("no gameReady within %v", cfg.ReadyTimeout))
+					send(mt.Game)
+				case RemovePlayer, PlayerRewards:
 					send(v)
+				case UpdateRoster: // B15: createGame (not sent yet: before the hello, or a warm host's) carries it then
+					mt.Game.Roster = v.Roster
+					if phase != waitHello && phase != idle {
+						send(v)
+					}
+				case StartGame:
+					mt.Game.Roster = v.Roster
+					send(v)
+				case AbortGame:
+					stopped = true
+					if abortCause == "" {
+						abortCause = "abortGame: " + v.Reason
+					}
+					if ending || killed {
+						continue
+					}
+					ending = true
+					if conn == nil && phase == waitHello {
+						kill(abortCause)
+						continue
+					}
+					send(v)
+					setTimer(cfg.ExitTimeout, fmt.Sprintf("no exit within %v of abortGame", cfg.ExitTimeout))
+				case shutdown:
+					stopped = true
+					kill("server shutting down")
 				}
-			case StartGame:
-				mt.Game.Roster = v.Roster
-				send(v)
-			case AbortGame:
-				if abortCause == "" {
-					abortCause = "abortGame: " + v.Reason
+			case <-timer.C:
+				if killed {
+					m.log.Logf(who, "match %d: pid %d %s; giving up on it", mt.ID, mt.proc.Pid(), timerWhat)
+					break loop
 				}
-				if ending || killed {
-					continue
+				kill(timerWhat)
+			case exit = <-exited:
+				if conn != nil { // the rest of what the host wrote before it exited
+					grace := time.NewTimer(exitDrain)
+				wait:
+					for {
+						select {
+						case msg := <-msgs:
+							handle(msg)
+						case <-gone:
+							drain()
+							break wait
+						case <-grace.C:
+							break wait
+						}
+					}
+					grace.Stop()
+					dropConn()
 				}
-				ending = true
-				if conn == nil && phase == waitHello {
-					kill(abortCause)
-					continue
-				}
-				send(v)
-				setTimer(cfg.ExitTimeout, fmt.Sprintf("no exit within %v of abortGame", cfg.ExitTimeout))
-			case shutdown:
-				kill("server shutting down")
-			}
-		case <-timer.C:
-			if killed {
-				m.log.Logf(who, "match %d: pid %d %s; giving up on it", mt.ID, mt.proc.Pid(), timerWhat)
+				o.ExitCode = exit.code
 				break loop
 			}
-			kill(timerWhat)
-		case exit = <-exited:
-			if conn != nil { // the rest of what the host wrote before it exited
-				grace := time.NewTimer(exitDrain)
-			wait:
-				for {
-					select {
-					case msg := <-msgs:
-						handle(msg)
-					case <-gone:
-						drain()
-						break wait
-					case <-grace.C:
-						break wait
-					}
-				}
-				grace.Stop()
-				dropConn()
-			}
-			o.ExitCode = exit.code
-			break loop
 		}
+		dropConn()
+		// H1-live: a warm host that ended without a game has no events (computed once: leaveWarm takes it out)
+		noGame = unassignedWarm || m.leaveWarm(mt)
+		// PORTSTUCK: a host that could not bind its port: the port goes into quarantine, and the game (if it
+		// has one) is started once more on another port while the client still waits
+		why, fault := portFault(o, exit, stopped)
+		if !fault {
+			break
+		}
+		d := mt.site.pool.Quarantine(mt.Port, cfg.Quarantine, cfg.QuarantineMax)
+		portNote = fmt.Sprintf("port %d in quarantine", mt.Port)
+		m.log.Logf(who, "match %d: port %d%s quarantined for %v: its host could not bind it (%s)", mt.ID, mt.Port,
+			onSite(mt.site), d, why)
+		if noGame {
+			break
+		}
+		notAgain := ""
+		switch {
+		case o.Retries > 0:
+			notAgain = "it was started again once already"
+		case time.Since(since) > cfg.RetryWindow:
+			notAgain = fmt.Sprintf("%.1f s since its start, more than %v", time.Since(since).Seconds(), cfg.RetryWindow)
+		}
+		if notAgain == "" {
+			if err := m.restart(mt); err != nil {
+				notAgain = err.Error()
+			}
+		}
+		if notAgain != "" {
+			m.log.Logf(who, "match %d: game %d not started again: %s", mt.ID, mt.Game.GameID, notAgain)
+			break
+		}
+		m.log.Logf(who, "match %d: started pid %d%s for game %d again (the first host could not bind its port), GMS %s",
+			mt.ID, mt.proc.Pid(), onSite(mt.site), mt.Game.GameID, mt.Bind)
+		o = Outcome{ExitCode: -1, Retries: o.Retries + 1}
+		phase, ending, killed, abortCause, exit, portNote = waitHello, false, false, "", exitInfo{}, ""
+		launched = time.Now()
+		setTimer(cfg.HelloTimeout, fmt.Sprintf("no hello within %v", cfg.HelloTimeout))
+		exited = waitExit(mt.proc)
 	}
-	dropConn()
-	mt.site.pool.Release(mt.Port)
+	if portNote == "" {
+		mt.site.pool.Release(mt.Port)
+		portNote = fmt.Sprintf("port %d free", mt.Port)
+	}
 	m.mu.Lock()
 	delete(m.matches, mt.ID)
 	m.mu.Unlock()
 
 	// H1-live: a warm host that ended without a game has no events; the pool gets a replacement
-	if unassignedWarm || m.leaveWarm(mt) {
+	if noGame {
 		ready := phase != waitHello
 		when := "before its hello"
 		if ready {
 			when = "after its hello"
 		}
-		m.log.Logf(who, "match %d: warm host ended without a game after %.1f s (%s; exit code %d, killed %v); port %d free",
-			mt.ID, time.Since(mt.started).Seconds(), when, exit.code, o.Killed, mt.Port)
+		m.log.Logf(who, "match %d: warm host ended without a game after %.1f s (%s; exit code %d, killed %v); %s",
+			mt.ID, time.Since(mt.started).Seconds(), when, exit.code, o.Killed, portNote)
 		close(mt.done)
 		m.warmEnded(ready)
 		return
@@ -1017,11 +1152,74 @@ loop:
 	if exit.err != nil {
 		m.log.Logf(who, "match %d: (wait: %v)", mt.ID, exit.err)
 	}
-	m.log.Logf(who, "match %d: ended after %.1f s: %s: %s; exit code %d, killed %v; port %d free", mt.ID,
-		o.Duration.Seconds(), result, o.Reason, o.ExitCode, o.Killed, mt.Port)
+	m.log.Logf(who, "match %d: ended after %.1f s: %s: %s; exit code %d, killed %v; %s", mt.ID,
+		o.Duration.Seconds(), result, o.Reason, o.ExitCode, o.Killed, portNote)
 	mt.outcome = o
 	if mt.ev.End != nil {
 		mt.ev.End(mt, o)
 	}
 	close(mt.done)
+}
+
+// waitExit reports proc's end on the channel it returns.
+func waitExit(proc Process) chan exitInfo {
+	exited := make(chan exitInfo, 1)
+	go func() {
+		code, err := proc.Wait()
+		exited <- exitInfo{code, err}
+	}()
+	return exited
+}
+
+// portFault says whether a host ended because it could not bind its GMS port (PORTSTUCK), and why: it
+// ended by itself before gameReady (not killed, not ended by the server, its end seen, so not a lost
+// agent), with its own fatal report ErrGMSEndpoint, or with exit code 2 and no other fatal report. Exit
+// code 2 is "no level or GMS endpoint"; a host DLL since PORTSTUCK says which (ErrLevelLoad for the
+// level), an older one doesn't, so its bare exit code 2 counts as the port's.
+func portFault(o Outcome, exit exitInfo, stopped bool) (string, bool) {
+	switch {
+	case o.Ready || o.Killed || stopped || exit.err != nil:
+		return "", false
+	case o.Error != nil:
+		if o.Error.Code != ErrGMSEndpoint {
+			return "", false
+		}
+		return fmt.Sprintf("host error %d (%s): %s", o.Error.Code, ErrorName(o.Error.Code), o.Error.Text), true
+	case o.ExitCode == 2:
+		return "exit code 2 before gameReady", true
+	}
+	return "", false
+}
+
+// restart starts mt's game once more after its host could not bind its port (PORTSTUCK), on the match's
+// goroutine: a machine and a port as Start picks them (takePort; the old port is in quarantine already),
+// a new token (the old one was used), the same match id and createGame (with the roster's latest update).
+// On an error mt keeps its old place.
+func (m *Manager) restart(mt *Match) error {
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return ErrClosed
+	}
+	st, port, err := m.takePort(nil)
+	if err != nil {
+		m.mu.Unlock()
+		return err
+	}
+	oldSite, oldPort, oldBind := mt.site, mt.Port, mt.Bind
+	mt.site, mt.Site, mt.GMSHost, mt.Port = st, st.name, st.gmsHost, port
+	mt.Bind = net.JoinHostPort(st.bindHost, strconv.Itoa(port))
+	mt.token, mt.helloSeen = newToken(), false
+	env := Env{Control: m.ln.Addr().String(), Match: mt.ID, Token: mt.token, Bind: mt.Bind}
+	m.mu.Unlock()
+	proc, err := st.launcher.Launch(env)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err != nil {
+		st.pool.Release(port)
+		mt.site, mt.Site, mt.GMSHost, mt.Port, mt.Bind = oldSite, oldSite.name, oldSite.gmsHost, oldPort, oldBind
+		return fmt.Errorf("launch failed: %w", err)
+	}
+	mt.proc = proc
+	return nil
 }

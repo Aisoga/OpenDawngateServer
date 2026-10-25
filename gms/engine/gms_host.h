@@ -58,6 +58,8 @@ bool GmsHostActive();
 // C1b: the bound GMS port (0 = none), the number of GMS connections, and the session's last state lines before the
 // host exits (control.h).
 unsigned GmsHostPort();
+// PORTSTUCK: why the last GmsHostStart returned false ("" after a success), for the reportGMSError before exit 2.
+const char* GmsHostError();
 int GmsHostConnections();
 void GmsHostShutdown();
 

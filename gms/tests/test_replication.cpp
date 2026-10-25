@@ -11,6 +11,7 @@
 #include "core/replication/fow_data.h"
 #include "core/replication/modifiers.h"
 #include "core/replication/outgoing.h"
+#include "core/replication/resource_wire.h"
 #include "core/vision/fog.h"
 #include "tests/check.h"
 
@@ -469,4 +470,27 @@ GMS_TEST(FowDataRouterKeepsEveryRecipientInStep) {
   }
   CHECK_EQ(client[0].level, 5u);
   CHECK_EQ(client[3].level, 5u);  // the teammate got every change
+}
+
+// RENZO9999: a pool's exact 0 goes out as the floor, so the client's bar widget (which rewrites its numbers only when
+// value / maximum changes, from a cached 0) shows "0" and the maximum instead of its placeholder.
+GMS_TEST(ResourceWireFloor) {
+  // Renzo's Inspiration at the start (0 of 5) and Viridian's rage (0 of 100): the floor
+  CHECK_EQ(gms::ResourceWireValue(0.f, 5.f, false), gms::kResourceWireFloor);
+  CHECK_EQ(gms::ResourceWireValue(0.f, 100.f, false), gms::kResourceWireFloor);
+  CHECK_EQ(gms::ResourceWireValue(-0.f, 5.f, false), gms::kResourceWireFloor);
+  // any other value as it is (Freia's 50 of 100, a full pool, a value just above 0)
+  CHECK_EQ(gms::ResourceWireValue(50.f, 100.f, false), 50.f);
+  CHECK_EQ(gms::ResourceWireValue(5.f, 5.f, false), 5.f);
+  CHECK_EQ(gms::ResourceWireValue(0.5f, 5.f, false), 0.5f);
+  // no pool (the mana shapers, every NPC: maximum 0) and a health resource: unchanged
+  CHECK_EQ(gms::ResourceWireValue(0.f, 0.f, false), 0.f);
+  CHECK_EQ(gms::ResourceWireValue(0.f, 100.f, true), 0.f);
+  // what the widget computes from it: a fraction that differs from its cached 0, and the whole numbers "0" and "5"
+  const float wire = gms::ResourceWireValue(0.f, 5.f, false);
+  CHECK(wire / 5.f != 0.f);
+  CHECK_EQ(static_cast<int>(wire), 0);
+  // a pool far larger than any in the data keeps a non-zero fraction; the floor stays below any cost of 1 or more
+  CHECK(wire / 100000.f != 0.f);
+  CHECK(wire < 1.f);
 }

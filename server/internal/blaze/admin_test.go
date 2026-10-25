@@ -37,6 +37,10 @@ func TestAdminEndsHostedMatch(t *testing.T) {
 		Name: "player", Team: 0, Joined: true}) || m.Started.IsZero() {
 		t.Errorf("match %+v", m)
 	}
+	// HOME1's fields: the map, the kind, in game since the host's IN_GAME, the bots by the host's fill rule
+	if m.Level != HostedLevel || m.Kind != kindPractice || m.Lobby || m.InGameAt.IsZero() || m.InGameAt.Before(m.Started) {
+		t.Errorf("match's home fields %+v", m)
+	}
 	if err := hs.s.EndHostedMatch(99, "x"); !errors.Is(err, ErrNoHostedGame) {
 		t.Errorf("an unknown game: %v", err)
 	}

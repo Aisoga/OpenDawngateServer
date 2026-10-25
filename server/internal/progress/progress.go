@@ -239,7 +239,8 @@ func (r *Rewards) AddKarma(g Game) {
 
 // Resolve turns dropped catalogIDs into reward items (at most MaxLootItems): an item the player already
 // owns as many of as one can (counting the items before it) is a duplicate worth DuplicateCC crafting
-// currency; it also returns the crafting currency in all.
+// currency; it also returns the crafting currency in all. A withheld item (content.IsWithheld, e.g. in a host's
+// proposal) is dropped.
 func Resolve(c *content.Content, owned func(id uint32) uint32, ids []uint32) ([]Item, uint32) {
 	var out []Item
 	var cc uint32
@@ -247,6 +248,9 @@ func Resolve(c *content.Content, owned func(id uint32) uint32, ids []uint32) ([]
 	for _, id := range ids {
 		if len(out) == MaxLootItems {
 			break
+		}
+		if c.IsWithheld(id) {
+			continue
 		}
 		it := Item{CatalogID: id}
 		ci, known := c.Item(id)

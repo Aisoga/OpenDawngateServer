@@ -65,8 +65,8 @@
 //
 // PvP matchmaking (roadmap B10a, internal/matchmaker, docs/BLAZE.md *PvP matchmaking (B10a)*):
 // GameManager::startMatchmaking queues the player (or the PvP party it leads) per region; a game forms
-// when both teams of --mm-team-size are full, or once the oldest session has waited --mm-fill-after, plus
-// --mm-fill-extend for each session that joined it, with at least --mm-min-players. The game is announced like a practice game: the --gms-port address, or a
+// when both teams of --mm-team-size are full, or once the oldest session has waited --mm-fill-after and the
+// last session to join has waited --mm-fill-extend, with at least --mm-min-players. The game is announced like a practice game: the --gms-port address, or a
 // match host per game with --gms-dir, which since B10d fills the empty slots with bots up to
 // --mm-team-size a team (--mm-bots=false leaves them empty). --mm-max-wait caps a session's wait (the
 // client asks for 3 h; B10b); --mm-refuse (a test aid) refuses every request.

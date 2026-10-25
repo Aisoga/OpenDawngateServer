@@ -8,8 +8,10 @@
 #include <cstdio>
 #include <cstring>
 
+#include "core/damage/regen.h"
 #include "core/protocol/wire.h"
 #include "core/replication/create_order.h"
+#include "core/replication/resource_wire.h"
 #include "game.h"
 #include "log.h"
 #include "passives.h"
@@ -317,6 +319,51 @@ void* SehFieldState(const NetObject& o, int p) {
   }
 }
 
+// RENZO9999: the resource of a pool that is exactly 0 goes out as gms::kResourceWireFloor
+// (core/replication/resource_wire.h). The writers get a copy of the combatant data with that value; the field state
+// they fill is still the object's own, so the next delta compares the server's value with what the clients have.
+bool g_resourceFloor = true;
+std::uint32_t g_floorLogged[64];  // the objects whose first floored body was logged
+int g_floorLoggedCount;
+unsigned g_floorBodies;
+
+void NoteFloor(const NetObject& o, float maximum, const char* what) {
+  ++g_floorBodies;
+  for (int i = 0; i < g_floorLoggedCount; ++i)
+    if (g_floorLogged[i] == o.id) return;
+  if (g_floorLoggedCount >= static_cast<int>(sizeof g_floorLogged / sizeof g_floorLogged[0])) return;
+  g_floorLogged[g_floorLoggedCount++] = o.id;
+  Log("replication: %08X %s: resource 0 of %.1f goes out as %.3f in its %s and later A0s (the HUD bar's numbers; "
+      "[host] resource_wire_floor 1; %u floored bodies so far)",
+      o.id, o.name, maximum, gms::kResourceWireFloor, what, g_floorBodies);
+}
+
+// `data` (the object's combatant data), or `copy` holding it with the resource the clients get.
+void* SehCombatantWire(const NetObject& o, void* data, unsigned char* copy, const char* what) {
+  if (!g_resourceFloor || !data) return data;
+  __try {
+    const float value = Field<float>(data, combatant::kResourcePoints);
+    if (value != 0.f) return data;  // the common case, without an engine call
+    void* ad = o.data[kPartAttributes];
+    if (!ad) return data;
+    const float maximum = GetAttribute(ad, regenAttr::kMaxResourcePoints, 1);
+    const bool health = GetResourceType(o.object) == gms::damage::kResourceTypeHealth;
+    const float wire = gms::ResourceWireValue(value, maximum, health);
+    if (wire == value) return data;
+    std::memcpy(copy, data, combatant::kSize);
+    Field<float>(copy, combatant::kResourcePoints) = wire;
+    NoteFloor(o, maximum, what);
+    return copy;
+  } __except (SehNote(GetExceptionInformation(), "combatant wire value")) {
+    return data;
+  }
+}
+
+// The data a part's body is written from: the object's own, except the combatant data (above).
+void* WireData(const NetObject& o, int p, unsigned char* combatantCopy, const char* what) {
+  return p == kPartCombatant ? SehCombatantWire(o, o.data[p], combatantCopy, what) : o.data[p];
+}
+
 // Euler angles in degrees from the object's quaternion (x, y, z, w), the inverse of the reader's q = Rz * Ry * Rx
 // (Math_EulerToQuaternion 0x00673A90).
 void EulerDegrees(const float q[4], float* rx, float* ry, float* rz) {
@@ -615,6 +662,8 @@ std::vector<std::uint32_t> g_iconSpawnPoints;  // PARAMAP: the camp markers whos
 
 void SetIconSpawnPoints(const std::vector<std::uint32_t>& markerIds) { g_iconSpawnPoints = markerIds; }
 
+void SetResourceWireFloor(bool on) { g_resourceFloor = on; }
+
 bool Replicated(const NetObject& o, bool all) {
   if (o.nounType == noun::kTypeSpawnPoint && o.markerId)
     for (std::uint32_t m : g_iconSpawnPoints)
@@ -668,10 +717,12 @@ bool BuildCreate(const NetObject& o, bool withFieldState, const Bytes& modifierR
     return false;
   msgs.push_back(begin);
   char parts[96] = "";
+  alignas(8) unsigned char combatantCopy[combatant::kSize];
   for (int p = kPartProjectile; p < kNumParts; ++p) {
     if (!o.data[p]) continue;
     WorldMessage m{IdMessage(kParts[p].wire, o.id), std::string(kParts[p].name) + " of " + o.name};
-    if (!AppendFull(m.msg, o.data[p], kParts[p].type, withFieldState ? SehFieldState(o, p) : nullptr, o.id, o.name))
+    if (!AppendFull(m.msg, WireData(o, p, combatantCopy, "create"), kParts[p].type,
+                    withFieldState ? SehFieldState(o, p) : nullptr, o.id, o.name))
       return false;
     msgs.push_back(m);
     std::strncat(parts, " ", sizeof parts - std::strlen(parts) - 1);
@@ -714,10 +765,12 @@ bool BuildFullState(const NetObject& o, std::vector<WorldMessage>* out, std::vec
   WorldMessage obj{IdMessage(gms::kGmsObjectUpdate, o.id), std::string("fog exit: object of ") + o.name};
   if (!AppendFull(obj.msg, o.object, kObject, nullptr, o.id, o.name)) return false;
   msgs.push_back(obj);
+  alignas(8) unsigned char combatantCopy[combatant::kSize];
   for (int p = kPartProjectile; p < kNumParts; ++p) {
     if (!o.data[p]) continue;
     WorldMessage m{IdMessage(kParts[p].wire, o.id), std::string("fog exit: ") + kParts[p].name + " of " + o.name};
-    if (!AppendFull(m.msg, o.data[p], kParts[p].type, nullptr, o.id, o.name)) return false;
+    if (!AppendFull(m.msg, WireData(o, p, combatantCopy, "fog exit"), kParts[p].type, nullptr, o.id, o.name))
+      return false;
     msgs.push_back(m);
   }
   // D2g-live step 3: every override (the client may hold older ones), and after 95 the attached effects (cleared
@@ -848,10 +901,12 @@ int BuildDelta(const NetObject& o, int p, Bytes* out) {
   void* fs = SehFieldState(o, p);
   if (!fs) return 0;
   void* type = g_types[kParts[p].type];
-  if (!AnyDelta(o.data[p], type, fs, kModeIncremental)) return 0;
+  alignas(8) unsigned char combatantCopy[combatant::kSize];
+  void* data = WireData(o, p, combatantCopy, "delta");
+  if (!AnyDelta(data, type, fs, kModeIncremental)) return 0;
   static unsigned char buf[2048];
   int written = 0;
-  const int n = WriteBody(o.data[p], type, kModeIncremental, nullptr, fs, true, buf, sizeof buf, &written);
+  const int n = WriteBody(data, type, kModeIncremental, nullptr, fs, true, buf, sizeof buf, &written);
   if (n < 0) {
     Log("replication: delta %s of %08X (%s) not written (%d: %s)", kParts[p].name, o.id, o.name, n, WriteError(n));
     return n;

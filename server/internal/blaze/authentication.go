@@ -85,6 +85,7 @@ func handleLogin(r *Request) []byte {
 	}
 	r.Server.Log.Logf("blaze", "   %s", res.Note)
 	acct := r.Server.grant(res.Account)
+	acct = r.Server.withhold(acct)    // WIPSTONES: an older account loses the withheld items
 	acct = r.Server.ensurePages(acct) // B7c: a perk page per loadout page owned
 	sess := &Session{Account: acct, Key: r.Server.NewKey(), First: res.First}
 	r.Conn.Session = sess

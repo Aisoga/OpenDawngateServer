@@ -46,8 +46,8 @@ var PlayableLevels = []PlayableLevel{
 	{Name: "MM_Map_v3", Tag: "mm", Label: "[Pass] ", Archive: "zz_MM_Map_v3.snap", Display: "Anshavar Pass"},
 }
 
-// levelDisplay is the map's name for players' messages: its Display, else the level's own name.
-func levelDisplay(level string) string {
+// LevelDisplay is the map's name for players' messages: its Display, else the level's own name.
+func LevelDisplay(level string) string {
 	if l, ok := FindLevel(level); ok && l.Display != "" {
 		return l.Display
 	}
@@ -136,9 +136,10 @@ func containsFold(list []string, s string) bool {
 	return false
 }
 
-// hostedLevel is the level this server's hosted games load: Server.Level, else HostedLevel.
+// hostedLevel is the level this server's hosted games load: Server.Level, else HostedLevel (also for a nil *Server, a
+// test's bare hostedGame).
 func (s *Server) hostedLevel() string {
-	if s.Level != "" {
+	if s != nil && s.Level != "" {
 		return s.Level
 	}
 	return HostedLevel
@@ -164,12 +165,21 @@ func (s *Server) customLevelOffered(level string) bool {
 // PlayableLevels' order: the tunnel's FactMaps, from which Start-Client lists the maps in the CREATE GAME dialog.
 func OfferedMapTags(level string, custom []string) []string {
 	var tags []string
-	for _, l := range PlayableLevels {
-		if !strings.EqualFold(l.Name, HostedLevel) && (strings.EqualFold(l.Name, level) || containsFold(custom, l.Name)) {
-			tags = append(tags, l.Tag)
-		}
+	for _, l := range OfferedLevels(level, custom) {
+		tags = append(tags, l.Tag)
 	}
 	return tags
+}
+
+// OfferedLevels are OfferedMapTags' levels themselves (the home page names them by their Display, HOME1).
+func OfferedLevels(level string, custom []string) []PlayableLevel {
+	var out []PlayableLevel
+	for _, l := range PlayableLevels {
+		if !strings.EqualFold(l.Name, HostedLevel) && (strings.EqualFold(l.Name, level) || containsFold(custom, l.Name)) {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // levelAttrs is what a custom game's attributes get for its level: its LevelId when it is another level than the

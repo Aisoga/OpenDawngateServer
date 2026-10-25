@@ -170,6 +170,16 @@ func tunnelThroughServer(t *testing.T, plainOff bool) {
 		t.Errorf("latency echo names %v:%d (from %v), want %v", net.IP(buf[20:24]), binary.BigEndian.Uint16(buf[24:]), from, me)
 	}
 
+	// HOME1: the home page's live data on the tunnel's HTTP port, and on the plain one
+	checkHomeJSON(t, "through the tunnel", dial(in.ports[3]))
+	if !plainOff {
+		pc, err := net.DialTimeout("tcp4", in.listeners[3].Addr().String(), 5*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checkHomeJSON(t, "on the plain port", pc)
+	}
+
 	// the NAT test: the firewall reply names the tunnel address; the packet comes through; OPEN
 	qc := dial(in.ports[2])
 	fmt.Fprint(qc, "GET /qos/firewall?vers=1&nint=2 HTTP/1.1\r\nHost: x\r\n\r\n")

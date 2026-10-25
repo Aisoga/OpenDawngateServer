@@ -3762,12 +3762,22 @@ void LimitGauges(gms::timing::Gauges*, std::string* line, int minute) {
 
 }  // namespace
 
+namespace {
+std::string g_startError;  // PORTSTUCK: GmsHostError
+}  // namespace
+
+const char* GmsHostError() { return g_startError.c_str(); }
+
 bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned seed, unsigned levelFlags) {
   const HostConfig& host = HostGet();
-  if (!host.enabled || g_gms) return false;
+  if (!host.enabled || g_gms) {
+    g_startError = !host.enabled ? "not in host mode" : "already started";
+    return false;
+  }
   std::string bind = host.bind[0] ? host.bind : "127.0.0.1:10042";
   if (_stricmp(bind.c_str(), "off") == 0) {
     Log("host: GMS endpoint off (DGGMS_BIND=off; another process serves the GMS port)");
+    g_startError = "DGGMS_BIND=off";
     return false;
   }
   const size_t colon = bind.rfind(':');
@@ -3776,6 +3786,7 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   const std::uint32_t ipv4 = ParseIpv4(ip);
   if (!ipv4 || port == 0 || port > 65535) {
     Log("host: DGGMS_BIND '%s' is not <IPv4>:<port>; no GMS endpoint", bind.c_str());
+    g_startError = "DGGMS_BIND '" + bind + "' is not <IPv4>:<port>";
     return false;
   }
   gms::SetLogSink(GmsLogLine);
@@ -3928,6 +3939,7 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   const unsigned maxConn = static_cast<unsigned>(HostOptionInt("max_connections", 16));
   if (!g->ep.Start(ip, static_cast<uint16_t>(port), maxConn, &error)) {
     Log("host: GMS endpoint FAILED: %s", error.c_str());
+    g_startError = error;
     delete g;
     return false;
   }
@@ -3991,6 +4003,11 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   Log("host: a step's creates %s", createOrderParents
           ? "after their owners and locomotion parents ([host] create_order_parents 1, FARISW)"
           : "in pool order ([host] create_order_parents 0: an attached object can lose its parent on the client)");
+  const bool resourceFloor = HostOptionInt("resource_wire_floor", 1) != 0;
+  repl::SetResourceWireFloor(resourceFloor);
+  Log("host: a pool's resource of exactly 0 goes out %s", resourceFloor
+          ? "as 0.001 ([host] resource_wire_floor 1, RENZO9999: the HUD bar shows 0 of its maximum, not 9999)"
+          : "as 0 ([host] resource_wire_floor 0: a pool that starts empty shows 9999 until it changes)");
   const bool createOrderTargets = HostOptionInt("create_order_targets", 1) != 0,
              shortEffects = HostOptionInt("short_effects", 1) != 0;
   g->match->SetCreateOrderTargets(createOrderTargets);
@@ -4192,6 +4209,7 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
             mo.slot.team, mo.slot.noun, mo.inject.size(), so.nameHumans ? "yes" : "no",
             so.waitForPlayers ? "yes" : "no", so.waitPlayersMs);
   HostMark("GMS endpoint bound");
+  g_startError.clear();
   return true;
 }
 

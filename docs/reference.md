@@ -240,7 +240,7 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 | `--mm-team-size N` | `5` | Players per team in the queue (1 = 1v1 … 5 = 5v5). |
 | `--mm-min-players N` | `1` | The fewest players a queue match starts with. |
 | `--mm-fill-after <time>` | `90s` | How long the queue waits for full teams before starting a smaller match. |
-| `--mm-fill-extend <time>` | `30s` | How much longer the queue waits each time another player (or group) joins the match. With the defaults a 5v5 waits at most 330 seconds; the tenth player starts it at once. `0s` turns the extension off. |
+| `--mm-fill-extend <time>` | `30s` | The least time the queue still waits after another player (or group) joins the match: a join with less time left sets the rest to this; it doesn't add up per join. With the defaults a 5v5 waits at most 330 seconds; the tenth player starts it at once. `0s` turns the extension off. |
 | `--mm-max-wait <time>` | `0` (no limit) | The longest a player waits in the queue before being told it timed out. |
 | `--mm-bots=false` | on | Leave the empty seats of a queue match empty instead of filling them with bots. |
 | `--custom-bots` | off | Fill a custom game's empty seats with bots. In shaper select the bots pick their shapers and roles after the players have chosen, as in every game with bots. |
@@ -254,7 +254,7 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 | `--custom-maps <names>` | none | The maps custom games may pick by a name tag, as the key `custom_maps`; `none` = none. |
 | `--trust-maps none\|all\|<addresses>` | `none` | Which players connecting without the tunnel count as having the files of the maps beside `SM_Map_v5`: `all`, or comma-separated addresses and networks (`192.168.1.20,10.0.0.0/8`). The others can't join or queue for a game on `MM_Map_v3`, and their own games play on `SM_Map_v5`. Through the tunnel a player counts when their `Start-Client.exe` is the server's release. |
 | `--online-count on\|off`, `--online-count-every <time>` | `on`, `30s` | The players-online count in the status line, as the keys `online_count` and `online_count_every`. |
-| `--gms-ports <from>-<to>` | `10042-10051` | The match hosts' UDP ports, one per running match. |
+| `--gms-ports <from>-<to>` | `10042-10051` | The match hosts' UDP ports, one per running match. A port that something else holds, or that a match host can't bind, is left out for a while (5 minutes, longer if it keeps failing; the server log says when it's back), and the game starts on the next free port. |
 | `--gms-warm N` | `0` | Keep N idle match hosts ready, so a match starts instantly. Each holds a port and about 90 MB of memory. |
 | `--gms-runner auto\|none\|<command>` | `auto` | What starts the match hosts' `Dawngate.exe`: `auto` starts it directly on Windows and through `wine` on other systems, `none` always directly, or a command such as `/opt/wine-stable/bin/wine`. |
 | `--limits auto\|on\|off` | `auto` | The limits: `auto` turns them on for a public address. |

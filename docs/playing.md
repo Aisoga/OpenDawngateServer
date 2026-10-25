@@ -146,11 +146,13 @@ The match runs as in the original game. The server uses the game's own data and 
 ## The main menu
 
 - **Your account** keeps everything between sessions: currencies, collection, perk pages, settings and match history. A new account starts with 10,000 Destiny (the currency you earn by playing) and 1,000 Waypoints (the store's other currency). By default it owns every shaper, skin, ward and announcer pack.
+- **Home** (the page you see after logging in, and again when you click the Dawngate logo) shows what the server is doing right now and offers one way into a match: when players are queuing for PvP it says how many and when their match starts (bots fill the empty seats), and **PLAY** takes you to the queue; when someone has an open custom game with free seats, it shows that game and **BROWSE GAMES** opens the game browser; otherwise **PLAY** leads to a practice match against bots. Below that: how many players are online and in matches, the matches running now, the open custom games, the last five results with their shapers, notes about the server (such as Halloween decorations or Anshavar Pass in custom games) and links to your Collection, Profile, the Leaderboard, Lore and Help. It updates itself every 10 seconds.
 - **Collection:** your shapers, skins and so on. You buy Spiritstones (perk shapes) and Sparks (gems) here with Destiny.
 - **Loadouts:** your perk pages. Drag a Spiritstone onto the grid, then fill its sockets with Sparks from the *Sparks* tab, and click **Save**.
   - A page only counts in a match when every socket of its Spiritstone holds a matching Spark.
   - Your first page, **Starter**, comes filled: the Blue Spiritstone of Vigor on the left half of the grid, the Green Spiritstone of Bravery at the top right and two Red Spiritstones of Fervor sharing the bottom-right square, with a Spark in every socket (Health +108, Power +9, Haste +4, Armor +4). Every account owns these Spiritstones and Sparks, also on a server where new accounts start with only the basics. Change or clear the page as you like; once you have saved a page, the server leaves your pages alone. An account from before this page existed gets it at its next login, but only if it has never saved a page.
   - The **+** beside the page tabs buys another page, up to 10.
+  - Six Spiritstones that were never in the live game (Vanguard, Savant, Piledriver, Colossus, Spellweaver, Marauder) aren't offered, and a few unfinished or duplicate skins and two ward skins can't be picked. If one of your pages used such a Spiritstone, it leaves the page at your next login; its Sparks go back to your collection.
 - **Leaderboard:** the server's top 200 players with at least 10 games (the server's operator can change the number), ranked by wins, then by fewer games. Only PvP games (queued alone or as a group) and custom games count, for both the games and the wins; practice games (alone or with a group, against bots) don't. Your profile still counts every game. The arrows show how a rank changed since the start of the day (UTC).
 - **Profile:** your career, recent history and all-time statistics.
 - **Wins** show on the trophy at the top right.
@@ -159,7 +161,7 @@ The match runs as in the original game. The server uses the game's own data and 
 
 Everyone on a server needs their own account. The ways to play together:
 
-- **The solo queue:** on the **VERSUS** tab, click **QUEUE SOLO**. The server waits 90 seconds for other players, and 30 seconds more each time someone joins, then starts a match (at once when all ten seats are taken; at most about five and a half minutes). Bots fill any empty seats, and they don't go easier on you here. **CANCEL MATCHMAKING** takes you out of the queue.
+- **The solo queue:** on the **VERSUS** tab, click **QUEUE SOLO**. The server waits 90 seconds for other players, and at least 30 seconds after the last one joined, then starts a match (at once when all ten seats are taken; at most about five and a half minutes). Bots fill any empty seats, and they don't go easier on you here. **CANCEL MATCHMAKING** takes you out of the queue.
 - **A party:**
   1. The leader clicks **CREATE A GROUP**, then the add-players icon below the team list.
   2. The leader types the other player's name (shown at the top right of their main menu) and clicks the small person-plus icon.

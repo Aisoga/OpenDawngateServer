@@ -91,7 +91,8 @@ func (s *Setup) stepContent(game, what string) bool {
 	why := "missing"
 	switch {
 	case err == nil && bytes.Equal(cur, want):
-		return s.report(OK, step, fmt.Sprintf("%s (%s, %d items, %d shapers)", s.show(file), c.Format, len(c.Items), len(c.Shapers)))
+		return s.report(OK, step, fmt.Sprintf("%s (%s, %d items, %d shapers, %d match items)", s.show(file), c.Format,
+			len(c.Items), len(c.Shapers), len(c.MatchItems)))
 	case err == nil:
 		why = "not what the game data gives now"
 		if old, err := content.Load(file); err == nil && old.Format != content.Format {
@@ -110,6 +111,6 @@ func (s *Setup) stepContent(game, what string) bool {
 	if err := c.Write(file); err != nil {
 		return s.report(Failed, step, err.Error())
 	}
-	return s.report(Done, step, fmt.Sprintf("%s built from the game data (%s, %d items, %d shapers; %.1f s; was: %s)",
-		s.show(file), c.Format, len(c.Items), len(c.Shapers), time.Since(t0).Seconds(), why))
+	return s.report(Done, step, fmt.Sprintf("%s built from the game data (%s, %d items, %d shapers, %d match items; %.1f s; was: %s)",
+		s.show(file), c.Format, len(c.Items), len(c.Shapers), len(c.MatchItems), time.Since(t0).Seconds(), why))
 }

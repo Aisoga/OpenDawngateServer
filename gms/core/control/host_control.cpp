@@ -193,6 +193,10 @@ void HostControl::SendFinish(const FinishGame& m) { SendMsg(m); }
 
 void HostControl::SendPlayerKarma(const PlayerKarma& m) { SendMsg(m); }
 
+void HostControl::SendSeatStats(const SeatStats& m) { SendMsg(m); }
+
+void HostControl::SendTimeline(const MatchTimeline& m) { SendMsg(m); }
+
 bool HostControl::SendError(int64_t code, const std::string& text, bool fatal) {
   GMSError e;
   e.code = code;

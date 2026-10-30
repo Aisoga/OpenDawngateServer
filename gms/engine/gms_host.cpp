@@ -54,8 +54,10 @@
 #include "host/host.h"
 #include "log.h"
 #include "match.h"
+#include "matchstats_cc.h"
 #include "perf.h"
 #include "perks.h"
+#include "refund.h"
 #include "replicate.h"
 #include "surrender.h"
 #include "script/roster_shaper.h"
@@ -2251,10 +2253,12 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
               teams, r.recipients);
       }
       if (m.msg.size() > 1 && m.msg[0] == gms::kGmsModifierCreated) {
+        matchstats::cc::OnModifierCreated(m.msg.data() + 1, m.msg.size() - 1);  // MSTATS4
         if (mods_.OnCreated(m.msg.data() + 1, m.msg.size() - 1)) ++modsRegistered_;
         else Log("replication: ModifierCreated of %zu B not registered: %s", m.msg.size() - 1, gms::Hex(m.msg).c_str());
         if (modTrace_.OnCreated(m.msg.data() + 1, m.msg.size() - 1)) traced[i] = true;
       } else if (m.msg.size() > 1 && m.msg[0] == gms::kGmsModifierUpdated) {
+        matchstats::cc::OnModifierUpdated(m.msg.data() + 1, m.msg.size() - 1);  // MSTATS4
         if (!mods_.OnUpdated(m.msg.data() + 1, m.msg.size() - 1)) {
           // BUFFICON: an AC without an AB is an ability's (type 0): LabsAbilities_ReleaseAgent and nAbility.BindAgent
           // send it for an agent ability's instance, which the client ignores (GameClient_ApplyModifierUpdate finds no
@@ -2282,6 +2286,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       if (!evTrace_.empty() && evTrace_.count(r.wire)) TraceEvent(m, r, to);
       if (m.kind == 0) {
         animShadow_.erase(m.object);
+        matchstats::cc::OnCarrierDeleted(m.object);  // MSTATS4
         const int recs = mods_.RemoveCarrier(m.object);
         ++deletes_;
         Log("replication: delete %08X -> ObjectDelete to players 0x%04x (known 0x%04x)%s", m.object, to, r.recipients,
@@ -2481,6 +2486,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     for (uint32_t inst : mods_.Instances()) {
       if (repl::InstanceExists(inst)) continue;
       const uint32_t carrier = mods_.CarrierOf(inst);
+      matchstats::cc::OnModifierEnded(inst);  // MSTATS4
       gms::Bytes ad;
       mods_.Remove(inst, &ad);
       uint16_t seers = 0;
@@ -2736,6 +2742,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     const std::vector<gms::vision::FogAction> actions = planner_.Plan(fos, players, &after);
     struct Exit {
       std::vector<repl::WorldMessage> state, after;  // between 94 and 95; after 95 (step 3: 92, B1)
+      std::string effects;                           // FOGSTACKS: the attached effects sent, for the log line
     };
     std::map<size_t, Exit> fullStates;  // per object, built once per tick
     for (const gms::vision::FogAction& a : actions) {
@@ -2759,6 +2766,8 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
           Exit e;
           int bytes = 0;
           if (!repl::BuildFullState(o, &e.state, &e.after, &bytes)) e = Exit();  // logged; 95 still enables the object
+          char fx[512];
+          if (repl::EffectSlotNames(o.object, fx, sizeof fx) > 0) e.effects = std::string("; effects ") + fx;
           it = fullStates.emplace(i, std::move(e)).first;
         }
         int bytes = 0;
@@ -2776,9 +2785,10 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
         fogExitBytes_ += bytes;
         if (++fogLogged_ <= fogLogLimit_)
           Log("fog: %08X %-30s team %u at (%.1f, %.1f) exits fog for player %d (team bits %u): 94, %zu full-state "
-              "message(s) (%d B), 95 with %zu modifier record(s)",
+              "message(s) (%d B), 95 with %zu modifier record(s)%s",
               o.id, o.name, ents[i].team, info[i].pos[0], info[i].pos[1], a.player, model_.Bits(i),
-              it->second.state.size() + it->second.after.size(), bytes, recs.size() / gms::kModifierRecordSize);
+              it->second.state.size() + it->second.after.size(), bytes, recs.size() / gms::kModifierRecordSize,
+              it->second.effects.c_str());
       } else {
         SendTo(out, bit, gms::vision::BuildDisabledObjectUpdate(o.id, info[i].pos[0], info[i].pos[1]), nullptr);
         ++fogA3_;
@@ -4020,6 +4030,14 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
       createOrderTargets ? "after its target object's" : "in pool order (its target may be unknown to the client)",
       createOrderTargets ? 1 : 0, shortEffects ? "still goes out (create, then its delete)" : "is never sent",
       shortEffects ? 1 : 0, holdMs);
+  int effectsFirst = HostOptionInt("effects_before_complete", 1);
+  if (effectsFirst < 0 || effectsFirst > 2) effectsFirst = 1;
+  repl::SetEffectsBeforeComplete(effectsFirst);
+  Log("host: ABILVFX-WALLS: a create's attached effects (92) %s ([host] effects_before_complete %d)",
+      effectsFirst == 0   ? "after 8F (a draw box, Kensu's R path, never reaches the client's renderer)"
+      : effectsFirst == 1 ? "before 8F for an object with a draw box (the client makes it at 8F), else after 8F"
+                          : "before 8F for every object",
+      effectsFirst);
   const bool uiBefore = HostOptionInt("ui_before_entergame", 1) != 0;
   g->match->SetUiBeforeEnterGame(uiBefore);
   Log("host: the full UI data (8B/8C/8D) %s (X2a: the client's tower graphics read mNumTowersPerLane at EnterGame)",
@@ -4128,6 +4146,9 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
     co.groundCastZ = HostOptionInt("ground_cast_z", 1) != 0;            // Sakari's W on the terrain
     co.queueTrace = HostOptionInt("queue_trace", 1) != 0;               // D7c
     co.queueLogLimit = HostOptionInt("queue_log_limit", co.queueLogLimit);
+    // REFUND1: a sale in the base after a purchase undoes it (refund.h)
+    refund::Configure(co.itemTransactions && HostOptionInt("item_undo", 1) != 0,
+                      HostOptionInt("item_undo_log_limit", 400));
     cmds::Install(co);
     char commandsFile[MAX_PATH];
     HostOptionString("commands_file", "", commandsFile, sizeof commandsFile);

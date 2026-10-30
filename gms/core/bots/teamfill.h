@@ -20,6 +20,7 @@
 // the game stores them (ShaperTypeOf, SlotPatternOf).
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <set>
 #include <string>
@@ -227,6 +228,8 @@ inline std::vector<BotPlayer> PlanBotPlayers(const std::vector<Slot>& slots, con
 // finds no class (none available) is left out. `slot` is the seat's position in the team's wanted list.
 // BOTLANESPLIT (`laneSplit`): then each team's bots divide their roles over the lanes, the team's humans of known role
 // counted (lanesplit.h SplitSeatLanes).
+// BOTS2c: a non-empty `mirror` (composition.h MirrorLineup, [host] bot_mirror) replaces every team's seats with that
+// lineup (its first seats when humans take some), no draw and no pin, so both teams field the same classes seat by seat.
 inline std::vector<BotPlayer> PlanBotPlayersComposed(const std::vector<HumanPlayer>& humans, int teamSize,
                                                      const std::vector<int>& teams, const std::set<std::string>& available,
                                                      const std::vector<std::string>& anyClass,
@@ -236,7 +239,8 @@ inline std::vector<BotPlayer> PlanBotPlayersComposed(const std::vector<HumanPlay
                                                      const std::vector<std::string>& tacticians = {},
                                                      const std::vector<std::string>& gladiators = {},
                                                      bool jungle = true,  // MAPHOST: false = no Hunter seat
-                                                     bool laneSplit = true) {
+                                                     bool laneSplit = true,
+                                                     const std::vector<ComposedSeat>& mirror = {}) {
   unsigned taken = reserved;
   for (const HumanPlayer& h : humans)
     if (h.index >= 0 && h.index < kMaxPlayerIndexes) taken |= 1u << h.index;
@@ -261,12 +265,18 @@ inline std::vector<BotPlayer> PlanBotPlayersComposed(const std::vector<HumanPlay
         ++mineCount;
       }
     // seed != 0: the free draw (any class in any seat, ComposeTeamFree); 0: the fixed setup
-    std::vector<ComposedSeat> seats =
-        seed ? ComposeTeamFree(teamSize - mineCount, available, seed + static_cast<unsigned>(team) * 7919u, roles,
-                               hunterClass, tacticianClass, jungle)
-             : ComposeTeam(WantedSeats(teamSize - mineCount, roles, dropOrder, jungle), available, anyClass, 0u,
-                           hunterClass, tacticianClass);
-    PinGladiator(seats, gladiatorOf[ti], available);  // MIKELLABOT
+    std::vector<ComposedSeat> seats;
+    if (!mirror.empty()) {  // BOTS2c: [host] bot_mirror, the same lineup on every team (its first seats)
+      seats = mirror;
+      if (static_cast<int>(seats.size()) > teamSize - mineCount)
+        seats.resize(static_cast<size_t>(std::max(0, teamSize - mineCount)));
+    } else {
+      seats = seed ? ComposeTeamFree(teamSize - mineCount, available, seed + static_cast<unsigned>(team) * 7919u, roles,
+                                     hunterClass, tacticianClass, jungle)
+                   : ComposeTeam(WantedSeats(teamSize - mineCount, roles, dropOrder, jungle), available, anyClass, 0u,
+                                 hunterClass, tacticianClass);
+      PinGladiator(seats, gladiatorOf[ti], available);  // MIKELLABOT
+    }
     if (laneSplit) SplitSeatLanes(seats, roles);       // BOTLANESPLIT
     int slot = 0;
     for (const ComposedSeat& s : seats) {

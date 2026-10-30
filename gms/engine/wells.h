@@ -114,6 +114,24 @@ struct Threat {
 };
 int Threats(int team, Threat* out, int max);
 
+// BOTS2c: every well as the second bot brain reads it (gms/core/bots2 World::wells): owner, lock, workers, the
+// capture (its capturers in the ring, moving, seconds left), an enemy player's hit on a worker within 5 s, whether a
+// player can reach it, the ring's radius. Returns the number written (0 before the level's wells are read).
+struct View {
+  std::uint32_t object = 0;
+  float pos[3] = {};
+  int owner = 0;
+  bool locked = true;
+  int workers = 0;
+  int capturers = 0;
+  bool moving = false;
+  double secondsToCapture = -1.0;
+  bool workerPlayerHit = false;
+  bool reachable = true;
+  float radius = 12.f;
+};
+int Views(View* out, int max);
+
 // LEASH: the platform of `worker`'s well: the well's object, its centre and the platform radius (its farthest worker
 // spot from the centre). False if `worker` is no live worker of a well.
 bool WorkerPlatform(std::uint32_t worker, std::uint32_t* well, float centre[3], float* radius);

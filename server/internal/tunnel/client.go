@@ -73,6 +73,13 @@ type Client struct {
 	// gateway lets in only its own release (unless it allows any); Start-Client's front names the server's own for
 	// This PC, which is never refused.
 	Release string
+	// Maps are the player copy's installed map archives with their SHA-256 (ReadInstalledMaps), named in the session
+	// hello: the server lets the player into a game on a map of its maps folder only with its own version. An empty
+	// list names a copy without such maps; nil names no list (a version 2 hello: the server keeps its release rule).
+	Maps []InstalledMap
+	// helloVer is the session hello's version this client writes: sessionVersion, or releaseVersion after a gateway
+	// of an earlier release refused the maps' version (connect)
+	helloVer atomic.Uint32
 
 	HeartbeatEvery, HeartbeatTimeout, Keepalive, DialTimeout time.Duration
 
@@ -189,8 +196,8 @@ func (c *Client) Start() error {
 	if c.External {
 		where = "for the game's sockets on " + c.TunnelIP.String()
 	}
-	c.logf("session %d to %s (key %s): %s, TCP %s, UDP %s", s.id, c.Gateway, c.Pin.Fingerprint(), where,
-		intList(c.tcp), intList(c.udpP))
+	c.logf("session %d to %s (key %s): %s, TCP %s, UDP %s; the copy's maps named: %s", s.id, c.Gateway, c.Pin.Fingerprint(),
+		where, intList(c.tcp), intList(c.udpP), c.mapsNamed())
 	c.wg.Add(2)
 	go c.controlLoop(s)
 	go c.gatewayLoop()
@@ -205,6 +212,14 @@ func (c *Client) Start() error {
 	c.wg.Add(1)
 	go c.keepaliveLoop()
 	return nil
+}
+
+// mapsNamed words the maps the session hello named, for the log.
+func (c *Client) mapsNamed() string {
+	if c.Maps == nil || c.helloVer.Load() == releaseVersion {
+		return "none (session hello version 2)"
+	}
+	return MapsWords(c.Maps)
 }
 
 func intList(ps []int) string {
@@ -254,7 +269,15 @@ func (c *Client) connect(resumeID uint64, resumeToken [16]byte) (*clientSession,
 		return nil, rep, fmt.Errorf("the tunnel gateway at %s: %w", c.Gateway, err)
 	}
 	conn.SetDeadline(time.Now().Add(c.DialTimeout))
-	h := sessionHello{tunnelIP: ip4(c.TunnelIP), resumeID: resumeID, resumeToken: resumeToken, release: c.Release}
+	ver := byte(c.helloVer.Load())
+	if ver == 0 {
+		ver = sessionVersion
+	}
+	if c.Maps == nil {
+		ver = releaseVersion
+	}
+	h := sessionHello{ver: ver, tunnelIP: ip4(c.TunnelIP), resumeID: resumeID, resumeToken: resumeToken, release: c.Release,
+		maps: c.Maps}
 	if _, err := conn.Write(h.encode()); err != nil {
 		conn.Close()
 		return nil, rep, err
@@ -262,6 +285,13 @@ func (c *Client) connect(resumeID uint64, resumeToken [16]byte) (*clientSession,
 	if rep, err = readSessionReply(conn); err != nil {
 		conn.Close()
 		return nil, rep, fmt.Errorf("the tunnel gateway at %s: %w", c.Gateway, err)
+	}
+	if rep.status == StatusVersion && ver > releaseVersion {
+		// a gateway of a release before the map list: say hello again without it (it then checks the release alone)
+		conn.Close()
+		c.helloVer.Store(releaseVersion)
+		c.logf("the gateway at %s takes no map list (a release before it): session hello version %d", c.Gateway, releaseVersion)
+		return c.connect(resumeID, resumeToken)
 	}
 	if rep.status != StatusOK {
 		conn.Close()

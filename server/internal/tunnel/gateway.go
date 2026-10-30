@@ -83,6 +83,10 @@ type Gateway struct {
 	// before the release check, which names none) is answered StatusVersion, another release StatusRelease.
 	AllowAnyClient bool
 
+	// maxSessionHello, when set, answers a session hello of a later version StatusVersion, as a gateway of an earlier
+	// release does (a test's gateway from before the map list)
+	maxSessionHello byte
+
 	listeners map[int]*listener
 	handlers  map[int]PacketHandler
 	forwarded map[int]bool
@@ -382,7 +386,12 @@ func randomID() (uint64, [16]byte) {
 // the hello's version: the release check (checkRelease) comes first, for a session taken up again too.
 func (g *Gateway) serveSession(c *tls.Conn, peer string, ver byte) {
 	defer c.Close()
-	if ver != sessionVersion && !g.AllowAnyClient {
+	if g.maxSessionHello != 0 && ver > g.maxSessionHello {
+		c.Write([]byte{StatusVersion})
+		g.logf("%s: tunnel version %d not supported", peer, ver)
+		return
+	}
+	if ver < releaseVersion && !g.AllowAnyClient {
 		c.Write([]byte{StatusVersion})
 		g.logf("%s: session refused: its Start-Client names no release (session hello version %d: a Start-Client from "+
 			"before the release check); this server is release %s and lets in only Start-Client of the same release, "+
@@ -435,7 +444,7 @@ func (g *Gateway) serveSession(c *tls.Conn, peer string, ver byte) {
 	g.mu.Unlock()
 	keys, err := DeriveKeys(c.ConnectionState(), s.id)
 	if err == nil {
-		err = s.attach(c, keys, ip, h.release, ver == sessionVersion && build.Same(g.Version, h.release))
+		err = s.attach(c, keys, ip, h.release, ver >= releaseVersion && build.Same(g.Version, h.release), h.maps)
 	}
 	if err != nil {
 		g.logf("%s: session %d: %v", peer, s.id, err)
@@ -451,7 +460,8 @@ func (g *Gateway) serveSession(c *tls.Conn, peer string, ver byte) {
 	if resumed {
 		what = "taken up again, new UDP keys"
 	}
-	g.logf("session %d from %s (%s): tunnel address %s, release %s", s.id, peer, what, ip, releaseName(ver, h.release))
+	g.logf("session %d from %s (%s): tunnel address %s, release %s, maps %s", s.id, peer, what, ip, releaseName(ver, h.release),
+		mapsName(ver, h.maps))
 	err = heartbeat(c, g.HeartbeatEvery, g.HeartbeatTimeout, g.done)
 	s.detach(c, err)
 }
@@ -459,7 +469,7 @@ func (g *Gateway) serveSession(c *tls.Conn, peer string, ver byte) {
 // releaseName words a session hello's release for the log.
 func releaseName(ver byte, release string) string {
 	switch {
-	case ver != sessionVersion:
+	case ver < releaseVersion:
 		return "not named (a Start-Client from before the release check)"
 	case release == "":
 		return "empty"
@@ -467,10 +477,18 @@ func releaseName(ver byte, release string) string {
 	return release
 }
 
+// mapsName words a session hello's maps for the log.
+func mapsName(ver byte, maps []InstalledMap) string {
+	if ver < sessionVersion {
+		return "not named (a Start-Client from before the map check per version)"
+	}
+	return MapsWords(maps)
+}
+
 // checkRelease refuses a session whose Start-Client names another release than the server's, or an empty one
 // (StatusRelease, logged with both names), unless AllowAnyClient; then a difference is only logged.
 func (g *Gateway) checkRelease(c *tls.Conn, peer string, ver byte, release string) bool {
-	if ver == sessionVersion && build.Same(g.Version, release) {
+	if ver >= releaseVersion && build.Same(g.Version, release) {
 		return true
 	}
 	if g.AllowAnyClient {
@@ -661,14 +679,16 @@ type session struct {
 	// gateway's Version (false for any session let in only by AllowAnyClient)
 	release     string
 	sameRelease bool
-	up          *Opener
-	down        *Sealer
-	endpoint    *net.UDPAddr
-	control     net.Conn
-	lost        time.Time
-	flows       map[flowKey]*flow
-	routes      map[int]*net.UDPAddr
-	ended       bool
+	// maps are the copy's map archives the hello named (sessionVersion; nil for an earlier hello: not named)
+	maps     []InstalledMap
+	up       *Opener
+	down     *Sealer
+	endpoint *net.UDPAddr
+	control  net.Conn
+	lost     time.Time
+	flows    map[flowKey]*flow
+	routes   map[int]*net.UDPAddr
+	ended    bool
 
 	upN, upBytes, downN, downBytes, streams       atomic.Uint64
 	dropAuth, dropReplay, dropBig, dropRoute, eps atomic.Uint64
@@ -689,8 +709,9 @@ type flow struct {
 }
 
 // The release named in the hello and whether it is the gateway's own (a resumed session takes the new hello's: the
-// same Start-Client normally, checked again by checkRelease) are what SameRelease tells the services.
-func (s *session) attach(c net.Conn, k Keys, ip net.IP, release string, same bool) error {
+// same Start-Client normally, checked again by checkRelease) are what SameRelease tells the services; the maps it
+// named, Addr.Maps.
+func (s *session) attach(c net.Conn, k Keys, ip net.IP, release string, same bool, maps []InstalledMap) error {
 	up, err := NewOpener(k.Up, s.id)
 	if err != nil {
 		return err
@@ -702,7 +723,7 @@ func (s *session) attach(c net.Conn, k Keys, ip net.IP, release string, same boo
 	s.mu.Lock()
 	old := s.control
 	s.control, s.lost, s.up, s.down, s.tunnelIP = c, time.Time{}, up, down, ip
-	s.release, s.sameRelease = release, same
+	s.release, s.sameRelease, s.maps = release, same, maps
 	s.mu.Unlock()
 	if old != nil && old != c {
 		old.Close()

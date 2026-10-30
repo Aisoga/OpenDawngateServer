@@ -95,6 +95,8 @@ type homeCustom struct {
 
 // homeResult is a finished match.
 type homeResult struct {
+	// MatchID is the match's id in the match history (game.json?id=; MHIST2), 0 when it wasn't stored
+	MatchID     int64             `json:"matchId"`
 	Mode        string            `json:"mode"`
 	Kind        string            `json:"kind"`
 	Map         string            `json:"map"`
@@ -198,7 +200,7 @@ func homeStatus(src homeSource) func() homeData {
 				Players: c.Players, Seats: c.Seats, Spectators: c.Spectators, Bots: c.Bots, Private: c.Private})
 		}
 		for _, r := range src.results() {
-			hr := homeResult{Mode: r.Mode, Kind: r.Kind, Map: blaze.LevelDisplay(r.Level), Reason: r.Reason,
+			hr := homeResult{MatchID: r.MatchID, Mode: r.Mode, Kind: r.Kind, Map: blaze.LevelDisplay(r.Level), Reason: r.Reason,
 				DurationSec: secs(r.Duration), EndedAgoSec: max(secs(now.Sub(r.At)), 0)}
 			if r.WinnerTeam == 1 || r.WinnerTeam == 2 {
 				hr.Winner = r.WinnerTeam

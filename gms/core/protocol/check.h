@@ -64,7 +64,19 @@ inline bool PlausibleObjectId(uint32_t id) { return id != 0 && (id & 0xFFFFu) < 
 // Consumable_Debug_GrantExp and Consumable_Debug_GrantGold are left out (the shipped shop doesn't offer them [assumed:
 // no session ever bought one]). Asset ids are FNV-1 of the lower-cased "<name>.Item" (asset +0x60).
 bool IsShopItem(uint32_t assetId);
-const std::vector<uint32_t>& ShopItems();  // sorted
+const std::vector<uint32_t>& ShopItems();  // sorted; the table (SM_Map_v5's), whatever the level set
+
+// MAPED4: the level's own data, read by the match host when the level starts (Level +0x5C8 levelSize, +0x604
+// activeItems), so a compiled map (in neither table) gets its own area and shop. Thread-safe.
+// SetLevelSize: BoundsForLevel(levelAssetId) gives this size from now on (it takes precedence over the table).
+void SetLevelSize(uint32_t levelAssetId, float sizeX, float sizeY);
+// SetLevelShopItems: IsShopItem answers from these items (the level's activeItems without the debug consumables)
+// instead of the table; an empty list goes back to the table.
+void SetLevelShopItems(const std::vector<uint32_t>& assetIds);
+// Counts the calls of both, so a holder of BoundsForLevel's result can tell it is out of date.
+unsigned LevelDataGeneration();
+// The two debug consumables of every ItemSet, which no shop offers (the table leaves them out too).
+bool IsDebugItemName(const std::string& name);
 
 // The status bits a client reports in PlayerStatusUpdate: 0x1 (with 0x400),
 // 0x80 clock synchronised, 0x400 level loaded, 0x10000/0x20000 match accepted/declined, 0x40000 left the game, 0x80000

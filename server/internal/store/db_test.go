@@ -1,11 +1,13 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -306,6 +308,19 @@ func TestSchema(t *testing.T) {
 		if err := r.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&rows); err != nil || rows != 0 {
 			t.Errorf("%s: %d rows left (%v)", table, rows, err)
 		}
+	}
+	// every table of the schema (version 6: the match history, which an account's deletion leaves alone)
+	var tables []string
+	each(r.db, func(rows *sql.Rows) error {
+		var name string
+		err := rows.Scan(&name)
+		tables = append(tables, name)
+		return err
+	}, `SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`)
+	if want := []string{"accounts", "audit", "counters", "history_day_roles", "history_day_shapers", "history_days",
+		"history_shapers", "invites", "items", "list_members", "match_seats", "matches", "perk_pages", "personas",
+		"schema_version", "server_settings", "settings", "signups", "stats"}; !slices.Equal(tables, want) {
+		t.Errorf("tables %q\nwant %q", tables, want)
 	}
 }
 

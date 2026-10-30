@@ -78,6 +78,14 @@ discord_join = on
 
 ; The Discord application the status is shown as (its id, a number). Empty: the one built into this release.
 discord_app_id =
+
+; Map delivery: on (the default) downloads the maps a server offers that this game copy lacks, or has in another
+; version, when you log in to it (only from a server whose key you trusted), checks them and puts them into the maps
+; folder beside this program; the next start installs them. off never: copy map packages into the maps folder by hand.
+map_download = on
+
+; The largest map package map delivery takes, in MB. Empty: 512.
+map_download_max_mb =
 `
 
 // oldClientComments are the tunnel and picker keys' comments that earlier releases wrote into Start-Client.ini (when
@@ -131,6 +139,7 @@ func RunClient(args []string, o IO) int {
 		"with any password; off checks passwords there (Start-Client.ini local_trust)")
 	discordFlag := fs.String("discord", "", "your Discord status while the game runs: on (the default) or off (Start-Client.ini discord)")
 	discordJoinFlag := fs.String("discord-join", "", "Join from Discord: on (the default) or off (Start-Client.ini discord_join)")
+	mapDownloadFlag := fs.String("map-download", "", "map delivery: on (the default) downloads a server's maps this copy lacks at the login, off never (Start-Client.ini map_download)")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -366,7 +375,8 @@ func RunClient(args []string, o IO) int {
 		}
 		return p, err
 	},
-		Manifest: manifest, WebDomain: ownServerDomain(scfg, o.ExeDir, l.Root, server), DataSuffix: *lane, Picker: picker}
+		Manifest: manifest, WebDomain: ownServerDomain(scfg, o.ExeDir, l.Root, server), DataSuffix: *lane, Picker: picker,
+		Maps: MapsDir(o.ExeDir)}
 	var release func()
 	if !*check {
 		if release, err = setup.Lock(l.Root); err != nil {
@@ -410,7 +420,12 @@ func RunClient(args []string, o IO) int {
 		if dc.on {
 			tracker = newPresenceTracker(nil)
 		}
-		stop, flog, front, err := startFront(o, l, bookmarks, patchFor, tunnelTLS, preselect, pc, tracker, dc)
+		md, mdWhy, err := mapDownloadSetting(*mapDownloadFlag, ccfg, o.ExeDir, o.Out)
+		if err != nil {
+			return o.fail("%v", err)
+		}
+		fmt.Fprintf(o.Out, "  maps     %s\n", mdWhy)
+		stop, flog, front, err := startFront(o, l, bookmarks, patchFor, tunnelTLS, preselect, pc, tracker, dc, md)
 		if err != nil {
 			return o.fail("The server picker didn't start: %v", err)
 		}

@@ -155,6 +155,10 @@ type hostedGame struct {
 
 	// fillTeams is createGame's fillTeams (B10d; 0 = the host's auto rule): the Discord result counts the bots by it
 	fillTeams int
+
+	// M18: the host's seatStats by seat and its matchTimeline, kept until finishGame for the match history (matchhistory.go)
+	seatStats map[int]gmshost.SeatStats
+	timeline  *gmshost.MatchTimeline
 }
 
 // heldRewards is one player's finished game whose rewards wait for the host's playerKarma (D8c).
@@ -179,6 +183,10 @@ type hostedPlayer struct {
 	slot      int64
 	completed bool
 	setupCtx  int64
+
+	// M18: the gameplay index the host's addPlayer reported (indexed false before), the player's seat in the history
+	index   int
+	indexed bool
 }
 
 // startHostedGame is resetDedicatedServer with a match host: reply now, announce the game once the
@@ -426,6 +434,7 @@ func (hg *hostedGame) events() gmshost.Events {
 			for _, hp := range hg.players {
 				if hp.p.ID == a.User {
 					hp.joined = true
+					hp.index, hp.indexed = a.Index, true // M18: the seat in the match history
 				}
 			}
 			hg.mu.Unlock()
@@ -455,9 +464,13 @@ func (hg *hostedGame) events() gmshost.Events {
 			s.Log.Logf("blaze", "   game %d finished: winner team %d, %.1f s, %s", gid, f.WinnerTeam,
 				float64(f.DurationMs)/1000, f.Reason)
 			hg.persist(mt, f)
-			hg.postResult(f) // DISCORD2c: the result on Discord (results.go), store or not
+			id := hg.storeMatch(f) // M18: the match history (matchhistory.go)
+			hg.postResult(f, id)   // DISCORD2c: the result on Discord (results.go), store or not; HOME1's ring with the id
 			hg.setState(GameStatePostGame)
 		},
+		// M18: the match's statistics, kept for the match history until finishGame (matchhistory.go)
+		SeatStats: func(mt *gmshost.Match, ss gmshost.SeatStats) { hg.keepSeatStats(ss) },
+		Timeline:  func(mt *gmshost.Match, tl gmshost.MatchTimeline) { hg.keepTimeline(tl) },
 		PlayerKarma: func(mt *gmshost.Match, k gmshost.PlayerKarma) {
 			s.Log.Logf("blaze", "   game %d: player %d karma votes: party %d, team %d, enemy %d", gid, k.User, k.Party,
 				k.Team, k.Enemy)

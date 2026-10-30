@@ -17,7 +17,7 @@ A read-only evidence tool for live sessions in which the GMS creates objects (do
     the client's panels decide it (0x005326F0, 0x00433AD0); since D1h also the counters the host sends: mKills/
     mDeaths/mAssists (+0x240/+0x244/+0x248, A9 members 3-5), the creep score (+0x24C, AA member 3), XP (+0xA4), total
     gold (+0xAC) and level (+0xB0); since D7b the available gold (+0xA8), spell points (+0x20) and the inventory
-    (mItems[11] at +0xB4, 0x24 bytes each: asset, count +0x18), and the player creature's Power and HealthRegen;
+    (mItems[11] at +0xB4, 0x24 bytes each: asset, count +0x18; since REFUND1 the build path +0x1C/+0x20), and the player creature's Power and HealthRegen;
     since WARDSKIN the vanity slots (+0x314 ward skin, +0x318 announcer pack; 0 = the default);
     since D14b-live any object's crowd control when set ("cc imm N immNoRot N sup N": Immobilized, ImmobilizedNoRotate,
     Suppressed);
@@ -55,6 +55,9 @@ sets +0x10/+0x14, and FogOfWarRenderer_LoadOutlines 0x0055E1A0), its size, and t
 +0x24 the sphere-tree node); with a .out file it says whether the renderer holds that file's outlines (centre, radius
 and grass id of every one). Before a level it holds none at size 599.215.
 
+Since ABILVFX-WALLS `--drawbox` prints first the draw boxes the client renders (Kensu's R path: the renderer
+[[0x0159A038] + 0x64], each box's position, direction, width, height, length now and aimed at, fill rate, material).
+
 Usage (64-bit Python from .venv; the game runs as the same user, no admin needed):
     .venv/Scripts/python -I re/scripts/game_peek.py <pid> [--all] [--vision] [--mods [--names CSV]] [--out FILE]
     .venv/Scripts/python -I re/scripts/game_peek.py <pid> --postgame [0x10A4638F 0x10A46383] [--out FILE]
@@ -75,6 +78,8 @@ its script name with `--names <csv>`, a ServerData script index with `key` and `
 read from the summary component pool
 (type 0xB405A5D9 in the client simulator's component manager, sim +0x550: +4 a hash {+4 buckets, +8 count} of type ->
 pool; entry +4 instance, +8 ability, +0x20 duration, +0x24 stacks; AgentSummary_OnModifierCreated 0x00658480).
+Since FOGSTACKS `--mods` also lists such a creature's used attached-effect slots ("fx of": slot, the ServerEventDef's
+name, the attach handle, counter << 8 | slot), which the A4 effect events and the 92 of a create or a fog exit fill.
 Exit code: 0 ok, 2 process not readable or no client simulator yet.
 """
 import argparse
@@ -384,6 +389,34 @@ def read_out_headers(path):
     return nterr, ngrass, outs
 
 
+def draw_boxes(p, say):
+    """ABILVFX-WALLS: the draw boxes the client renders (Kensu's R path; DrawBoxRenderer, [[0x0159A038] + 0x64]: +4 the
+    box pointers, +8 the boxes in use, +0xC the pool's size; DrawBoxRenderer_Acquire 0x00431DE0 hands out
+    pointer[+8]++, GameGraphics_CreateDrawBox 0x00571770 fills it, DrawBoxRenderer::Render 0x00431E60 draws boxes
+    0..+8-1). Returns the number in use (-1: no renderer)."""
+    gfx = p.u32(FOG_GFX_GLOBAL)
+    r = p.u32(gfx + 0x64) if gfx else 0
+    if not r:
+        say(f'draw boxes: no renderer (graphics global [0x{FOG_GFX_GLOBAL:08x}] = 0x{gfx:08x})')
+        return -1
+    arr, used, size = p.u32(r + 4), p.u32(r + 8), p.u32(r + 0xC)
+    say(f'draw box renderer 0x{r:08x}: {used} in use of {size}')
+    for i in range(min(used, 16)):
+        b = p.u32(arr + 4 * i)
+        raw = p.read(b, 0x44) if b else b''
+        if len(raw) < 0x44:
+            say(f'  box {i}: 0x{b:08x} unreadable')
+            continue
+        f = struct.unpack_from('<17f', raw)
+        mat, t1, t2 = struct.unpack_from('<3I', raw, 0x30)
+        # +0 position (the object's graphics +0x10), +0xC width, +0x10 direction, +0x1C height, +0x20 up,
+        # +0x2C length now, +0x3C fill rate, +0x40 length aimed at (A4 type 3 sets it)
+        say(f'  box {i} 0x{b:08x}: at ({f[0]:.2f}, {f[1]:.2f}, {f[2]:.2f}) dir ({f[4]:.2f}, {f[5]:.2f}, {f[6]:.2f}) '
+            f'width {f[3]:.1f} height {f[7]:.1f} up ({f[8]:.2f}, {f[9]:.2f}, {f[10]:.2f}) length {f[11]:.2f} '
+            f'-> {f[16]:.2f} fill {f[15]:.1f} material 0x{mat:08x} textures 0x{t1:08x} 0x{t2:08x}')
+    return used
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('pid', type=int)
@@ -399,6 +432,8 @@ def main():
     ap.add_argument('--fog', nargs='?', const='', metavar='LEVEL.out',
                     help="MAPFILES-fog: the fog renderer's size and outlines instead of the objects (any state after "
                          "the level load); with a .out file also whether the renderer holds that file's outlines")
+    ap.add_argument('--drawbox', action='store_true',
+                    help="ABILVFX-WALLS: the draw boxes the client renders (Kensu's R path) before the objects")
     a = ap.parse_args()
     lines = []
     say = lines.append
@@ -407,6 +442,8 @@ def main():
     except OSError as e:
         print(e)
         return 2
+    if a.drawbox:
+        draw_boxes(p, say)
     if a.fog is not None:
         n = fog_renderer(p, say, a.fog or None)
         text = '\n'.join(lines)
@@ -478,7 +515,10 @@ def main():
             item = pl + 0xB4 + s * 0x24
             asset = p.u32(item)
             if asset:
-                inv.append(f'{s}: {p.cstr(p.u32(asset))} x{p.u32(item + 0x18)}')
+                # REFUND1: the build path (+0x1C/+0x20, two component asset pointers) when the slot has one
+                path = [p.cstr(p.u32(a)) for a in (p.u32(item + 0x1C), p.u32(item + 0x20)) if a]
+                inv.append(f'{s}: {p.cstr(p.u32(asset))} x{p.u32(item + 0x18)}'
+                           + (f' path {"/".join(path)}' if path else ''))
         say(f'  available gold (+0xA8) {p.f32(pl + 0xA8):.2f}, spell points (+0x20) {p.u32(pl + 0x20)}, items '
             f'[{", ".join(inv) if inv else "none"}]')
         # WARDSKIN: the vanity slots (+0x314 ward skin Noun, +0x318 AnnouncerPack; LabsPlayer_SetVanityAsset 0x009113F0,
@@ -636,6 +676,16 @@ def main():
         # the attach ServerEvents fill them)
         fx = [k for k in range(16) if struct.unpack_from('<I', blob, i * stride + 0x90 + 0x38 * k + 0x10)[0]]
         fxs = f' fx {len(fx)}' if fx else ''
+        # FOGSTACKS (--mods): a player-controlled creature's used slots with their asset names (asset +0 the name)
+        # and attach handles (+0x34)
+        if a.mods and blob[i * stride + 0x56] and fx:
+            parts = []
+            for k in fx:
+                slot = i * stride + 0x90 + 0x38 * k
+                asset, handle = struct.unpack_from('<I', blob, slot + 0x10)[0], struct.unpack_from('<I', blob, slot + 0x34)[0]
+                parts.append(f'{k}:{p.cstr(p.u32(asset)) or "?"} {handle:08x}')
+            fxd = f'    fx of 0x{oid:08x}: {len(fx)}: ' + '; '.join(parts)
+            detail = f'{detail}\n{fxd}' if detail else fxd
         # D2g-rest (--vision): the vision fields the host writes (sporelabsObject members 0-3: mVisibleToTeam +0x888, the
         # server's grass id +0x87C and cell +0x880, mVisionRadius +0x884), the client's own grass id (+0x878, the fog
         # renderer's LineOfSight_UpdateGrassId), and the blackboard's mStealthed/mbInGrass (+0x8C4 -> +0x1E74/+0x1E75, A2)

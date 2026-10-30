@@ -20,7 +20,7 @@ powershell -ExecutionPolicy Bypass -File re\scripts\play.ps1 [-ShaperSelect]
 
 One command does everything:
 
-1. It checks the setup. It rebuilds the match host and installs the new `dgsim.dll` when the sources changed, and it rewrites the CREATE GAME dialog's bot check box (`game\Data\zz_MatchOptions.snap`), the chat's rooms opened by default (`game\Data\zz_Chat.snap`), the Halloween decoration (`game\Data\zz_Halloween.snap`, shown only when the server runs with `--halloween=on`) and the bot profiles (`game\Data\zz_BotProfiles.snap`, in both the client and the host copy) when they are missing or older than the scripts that make them. For anything else missing, it prints the command to run.
+1. It checks the setup. It rebuilds the match host and installs the new `dgsim.dll` when the sources changed, and it rewrites the CREATE GAME dialog's bot check box (`game\Data\zz_MatchOptions.snap`), the chat's rooms opened by default (`game\Data\zz_Chat.snap`), the After Action Review's tabs (`game\Data\zz_AfterActionReview.snap`), the item shop's refund (`game\Data\zz_ItemShop.snap`), the Halloween decoration (`game\Data\zz_Halloween.snap`, shown only when the server runs with `--halloween=on`) and the bot profiles (`game\Data\zz_BotProfiles.snap`, in both the client and the host copy) when they are missing or older than the scripts that make them. For anything else missing, it prints the command to run.
 2. It builds and starts the server, then starts the game in a normal window.
 3. When you close the game or press **Ctrl+C**, it cleans up: the game, the match hosts, the server and the packet capture. In a match, Ctrl+C closes the game after 10 seconds; a second Ctrl+C stops at once.
 
@@ -57,8 +57,8 @@ To try purchases with an account that doesn't own everything, run the session th
 
 `Start-Server.cmd` and `Start-Client.cmd` in the repository folder do the same as the release's programs, but for a checkout:
 
-- **Start-Server.cmd** checks and builds the setup like `play.ps1 -SetupOnly`, then runs the server in its own window with shaper select. Stop it with Ctrl+C or by closing the window.
-- **Start-Client.cmd** starts the game against it, directly (no tunnel and no server list). Start the client again after a match or a crash; the server keeps running. Unlike the release's `Start-Client.exe`, which runs a server on the PC by itself (This PC), it needs `Start-Server.cmd` running.
+- **Start-Server.cmd** checks and builds the setup like `play.ps1 -SetupOnly`, then runs the server in its own window with shaper select. Since `Start-Client.cmd` connects without the tunnel, the server can't ask the game which maps it has: `Start-Server.cmd` tells it (`--trust-maps=127.0.0.1` when the copy has Anshavar Pass, `--client-maps` with the SHA-256 of the copy's archives of the maps folder), so games on those maps play them. Stop it with Ctrl+C or by closing the window.
+- **Start-Client.cmd** starts the game against it, directly (no tunnel and no server list). Start the client again after a match or a crash; the server keeps running. Unlike the release's `Start-Client.exe`, which runs a server on the PC by itself (This PC), it needs `Start-Server.cmd` running. Before the game starts it sets the CREATE GAME dialog's map list to the maps the server offers (`--map`, `--custom-maps` in `-ServerArgs`), as `Start-Client.exe` does at a login; without that the list would name every map the copy has, and picking one the server doesn't offer plays The Dawngate.
 
 There's no packet capture or egress check here. Logs go to `re\logs\manual_<date>-<time>\`. `re\scripts\start_server.ps1 -NoShaperSelect` skips shaper select, and `-ServerArgs '<flags>'` passes [server options](../reference.md#extra-server-options-server_flags).
 
@@ -84,6 +84,8 @@ There's no packet capture or egress check here. Logs go to `re\logs\manual_<date
 | `bot_draft=0`, `bot_draft=1` | The bots pick their shapers and roles at once instead of after the players (`0`), or wait for the players even in a match host the server didn't start (`1`; by default they wait in custom, practice and queue games) |
 | `bot_lane_split=0` | The bots no longer divide each role between the lanes: they keep the lanes their team setup gave them and follow every lane change of their scripts, even to a lane where a bot of their role already is (the older behaviour) |
 | `bot_draft_grace_ms=N` | How long the bots wait after the last lock-in for a player who said no role (default 10000) |
+| `bot_ai=classic`, `bot_ai=v2` | Which brain plays the bots. The default `hybrid` (since 2026-10-29) keeps the original game's bot AI for laning, farming, fights, retreats and recalls, and adds the second brain's team plan: pushes, wells, the parasite after a won fight, and from the open enemy base on the whole team gathers and goes in together. `classic` is the original bot AI alone; `v2` is the second, simpler brain alone (it lanes, fights when the odds are even, backs off when outnumbered or low, steps out of tower fire, recalls to shop, defends its Cores and Guardian, and from minute 14 or after a won fight pushes one lane together until the Guardian falls). `bot_ai_team1=…`, `bot_ai_team2=…` choose a brain per team |
+| `bot2_tune='key=value,...'` | With `bot_ai=hybrid` or `v2`: change the second brain's thresholds and timings for one match (for example `groupAtS=600` to push from minute 10); the host log lists every key and its value |
 | `banter=0`, `banter_window=0` | No banter lines, or banter at any time of the match |
 | `test_wave=20` | Spawn test minions after 20 seconds |
 | `grant_xp=2200` | Give each player enough experience to rank all four abilities |

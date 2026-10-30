@@ -11,7 +11,15 @@
 // holds the dialog's map list (MapListPath, MapList: the maps of ExtraMaps whose archives the copy has, CopyMaps).
 // So does the class that opens the chat rooms the server marks as open by default (client_ui/chatrooms,
 // chatrooms_tags.hex): UI/Scaleform/Global/Chat.gfx from game\Data\Global.snap into game\Data\zz_Chat.snap.
-// A Spec names one such movie (Picker, MatchOptions, ChatRooms).
+// So do the After Action Review's tabs (client_ui/aftaction, aftaction_tags.hex):
+// UI/Scaleform/Battlegrounds/AfterActionReviewUI.gfx from game\Data\Battlegrounds.snap into
+// game\Data\zz_AfterActionReview.snap, with the web root of the copy's server (WebRootPath, webroot.go).
+// So does the item shop's inline refund (client_ui/itemshop, itemshop_tags.hex): UI/Scaleform/HUD/ItemShopUI.gfx from
+// game\Data\HUD.snap into game\Data\zz_ItemShop.snap.
+// So does the Collection's Items category (client_ui/collection, collection_tags.hex; collection.go):
+// UI/Scaleform/CDN/swf/code/UIRuntime.gfx from game\Data\code.snap into game\Data\zz_CollectionItems.snap, with the
+// item list (ItemsPath, ItemList).
+// A Spec names one such movie (Picker, MatchOptions, ChatRooms, AfterAction, ItemShop, Collection).
 //
 // The output is deterministic: the movie keeps its CFX header (the version, the u32 length as stored plus the tags'
 // size) and its body is a zlib stream of stored blocks (65,535 bytes each, the last one final), which the archive
@@ -78,6 +86,21 @@ var ChatRoomsTags = mustHex(chatRoomsTagsHex)
 //go:embed chatrooms_tags.hex
 var chatRoomsTagsHex string
 
+// AfterActionTags are the After Action Review tabs' four tags: DefineSprite 2000, DoABC (the class), SymbolClass
+// 2000 -> AfterActionTabs, PlaceObject3 of 2000 at depth 2000 without an instance name.
+var AfterActionTags = mustHex(afterActionTagsHex)
+
+//go:embed aftaction_tags.hex
+var afterActionTagsHex string
+
+// ItemShopTags are the item shop's inline refund's four tags: DefineSprite 2000, DoABC (the class), SymbolClass 2000 ->
+// ShopRefund and 250 (the shop's own vim symbol, mcCoins' character) -> ShopVim, PlaceObject3 of 2000 at depth 2000
+// without an instance name.
+var ItemShopTags = mustHex(itemShopTagsHex)
+
+//go:embed itemshop_tags.hex
+var itemShopTagsHex string
+
 // Spec is one added class: the archive in a copy its movie comes from (Source), the added archive (Rel), the movie's
 // path in both, the class's tags, its name, character id and root depth.
 type Spec struct {
@@ -87,7 +110,24 @@ type Spec struct {
 	Tags                          []byte
 	// MapList: the archive also holds the create dialog's map list (MapListPath; BuildMaps)
 	MapList bool
+	// WebRoot: the archive also holds the web root of the server WebHost (WebRootPath; DefaultWebHost when empty)
+	WebRoot bool
+	WebHost string
+	// Extra are more files of the archive, after the movie (the shop refund's default settings, RefundSettings)
+	Extra []snap.File
+	// Items: the archive also holds the Collection's item list (ItemsPath), ItemList's bytes, which the setup sets
+	Items    bool
+	ItemList []byte
 }
+
+// RefundSettingsPath is the shop refund's settings file in zz_ItemShop.snap, which client_ui/itemshop/ShopRefund.as
+// reads as HUD/dgrefund.json. The setup writes the default (no settings): the class always asks for the file, and a
+// missing one costs the player's game a FileDepot.cpp 138 assert ("load failed") at every match start. A test writes
+// its own.
+const RefundSettingsPath = "UI/Scaleform/HUD/dgrefund.json"
+
+// RefundSettings is that default: the file's first line, then its end.
+var RefundSettings = []byte("dawngate-refund\t1\nend\n")
 
 var (
 	// Picker is the login screen's server picker (Start-Client's picker mode).
@@ -102,6 +142,18 @@ var (
 	ChatRooms = Spec{What: "the chat rooms opened by default", Source: "game/Data/Global.snap",
 		Rel: "game/Data/zz_Chat.snap", MoviePath: "UI/Scaleform/Global/Chat.gfx",
 		Class: "AutoRooms", CharID: 2000, Depth: 2000, Tags: ChatRoomsTags}
+	// AfterAction is the After Action Review's tabs: Scoreboard, Match Stats and Recent Games, the last two the
+	// server's match history pages (every player copy; the setup sets WebHost to the copy's server).
+	AfterAction = Spec{What: "the After Action Review's tabs", Source: "game/Data/Battlegrounds.snap",
+		Rel: "game/Data/zz_AfterActionReview.snap", MoviePath: "UI/Scaleform/Battlegrounds/AfterActionReviewUI.gfx",
+		Class: "AfterActionTabs", CharID: 2000, Depth: 2000, Tags: AfterActionTags, WebRoot: true}
+	// ItemShop is the item shop's inline refund: a badge on each slot whose purchase of this visit to the base can
+	// be undone, and the shop's Sell turned into Refund for the full price there (every player copy; the server's
+	// rule, the texts in localepatch.HUDLines).
+	ItemShop = Spec{What: "the shop's inline refund", Source: "game/Data/HUD.snap",
+		Rel: "game/Data/zz_ItemShop.snap", MoviePath: "UI/Scaleform/HUD/ItemShopUI.gfx",
+		Class: "ShopRefund", CharID: 2000, Depth: 2000, Tags: ItemShopTags,
+		Extra: []snap.File{{Name: RefundSettingsPath, Data: RefundSettings}}}
 )
 
 // defining are the tags whose first u16 is the character id they define (standard SWF and Scaleform's 1001-1009).
@@ -347,10 +399,11 @@ type Map struct{ Tag, Archive, Label string }
 // MM_Map_v3 is shown to players as Anshavar Pass; its tag, level and archive keep the internal name.
 var ExtraMaps = []Map{{Tag: "mm", Archive: "zz_MM_Map_v3.snap", Label: "Anshavar Pass"}}
 
-// CopyMaps returns the maps of ExtraMaps whose archive is in the copy's game\Data folder dataDir.
-func CopyMaps(dataDir string) []Map {
+// CopyMaps returns the maps of ExtraMaps, then of folder (the maps folder's packages), whose archive is in the copy's
+// game\Data folder dataDir.
+func CopyMaps(dataDir string, folder ...Map) []Map {
 	var out []Map
-	for _, m := range ExtraMaps {
+	for _, m := range append(append([]Map(nil), ExtraMaps...), folder...) {
 		if fi, err := os.Stat(filepath.Join(dataDir, m.Archive)); err == nil && fi.Mode().IsRegular() {
 			out = append(out, m)
 		}
@@ -382,7 +435,7 @@ func Build(loginSnap []byte) ([]byte, error) { return Picker.Build(loginSnap) }
 func (sp Spec) Build(source []byte) ([]byte, error) { return sp.BuildMaps(source, nil) }
 
 // BuildMaps returns the added archive's bytes (Rel) from the player's own Source archive, with the map list of maps
-// when the spec has one (MapList; the setup passes CopyMaps of the copy).
+// when the spec has one (MapList; the setup passes CopyMaps of the copy) and the web root of WebHost when it has one.
 func (sp Spec) BuildMaps(source []byte, maps []Map) ([]byte, error) {
 	a, err := snap.Parse(source)
 	if err != nil {
@@ -404,6 +457,24 @@ func (sp Spec) BuildMaps(source []byte, maps []Map) ([]byte, error) {
 		if sp.MapList {
 			files = append(files, snap.File{Name: MapListPath, Data: MapList(maps), Literals: true})
 		}
+		if sp.WebRoot {
+			host := sp.WebHost
+			if host == "" {
+				host = DefaultWebHost
+			}
+			web, err := WebRootFile(host, WebPort)
+			if err != nil {
+				return nil, err
+			}
+			files = append(files, snap.File{Name: WebRootPath, Data: web})
+		}
+		if sp.Items {
+			if sp.ItemList == nil {
+				return nil, fmt.Errorf("%s: no item list", sp.What)
+			}
+			files = append(files, snap.File{Name: ItemsPath, Data: sp.ItemList})
+		}
+		files = append(files, sp.Extra...)
 		return snap.Pack(files), nil
 	}
 	return nil, fmt.Errorf("no %s in the archive", sp.MoviePath)

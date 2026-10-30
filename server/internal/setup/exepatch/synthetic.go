@@ -16,6 +16,7 @@ var synthSections = []secSpec{
 	{".text", 0x1000, 0xDAA0FB, 0x400, 0xDAA200},
 	{".rdata", 0xDAC000, 0x22CCC5, 0xDAA600, 0x22CE00},
 	{".data", 0xFD9000, 0x826F00, 0xFD7400, 0xAF400},
+	{".tls", 0x1800000, 0x39, 0x1086800, 0x200},
 }
 
 func synthOffset(va uint32) int {
@@ -57,6 +58,9 @@ func SyntheticExe() []byte {
 		binary.LittleEndian.PutUint32(b[h+12:], s.va)
 		binary.LittleEndian.PutUint32(b[h+16:], s.rawLen)
 		binary.LittleEndian.PutUint32(b[h+20:], s.raw)
+		if s.name == ".tls" {
+			binary.LittleEndian.PutUint32(b[h+36:], 0xC0000040) // initialised data, read, write
+		}
 	}
 	put := func(va uint32, data []byte) { copy(b[synthOffset(va):], data) }
 	put(otg3Entry+0x180, []byte("OTG3 Certificate Authority\x00"))
@@ -77,5 +81,9 @@ func SyntheticExe() []byte {
 		put(f.va, wide(f.name))
 	}
 	put(preloadCount, preloadCountOrig)
+	put(mapLoop, mapLoopOrig)
+	put(mapMiss, mapMissOrig)
+	put(mapFound, mapFoundOrig)
+	put(mapResume, mapResumeOrig)
 	return b
 }

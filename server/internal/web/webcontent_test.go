@@ -25,6 +25,8 @@ func TestBuiltinWebContent(t *testing.T) {
 		{"/battlegrounds_test/live/www/client/1/common/home.html", "text/html", HomePage()},
 		{"http://127.0.0.1:18080/battlegrounds_test/live/www/client/7/de-de/dynamic_strings/dynamic_strings.xml?x=1", "text/xml", DynamicStrings()},
 		{"/battlegrounds_test/live/www/client/7/common/home.html", "text/html", HomePage()},
+		{"/battlegrounds_test/live/www/client/1/common/history.html", "text/html", HistoryPage()},
+		{"/battlegrounds_test/live/www/client/1/common/history.html?embed=1&latest=1", "text/html", HistoryPage()},
 	}
 	for _, c := range cases {
 		resp, log := roundTrip(t, &HTTP{}, "GET "+c.target+" HTTP/1.1\r\nhost: 127.0.0.1:18080\r\n"+
@@ -219,25 +221,139 @@ func TestHomePage(t *testing.T) {
 		`clientCall("requestMainMenuContent", content)`, "<!DOCTYPE html>", `"home.json?n="`, "JSON.parse(",
 		"show(playContent)", "playContent = 5", "playContent = 9", "return show(12);", "return show(10);",
 		"return show(11);", "return show(0);", "return show(2);", "not run by Waystone Games or Electronic Arts",
+		// MHIST3: the match history in the same view, a stored result's match by its id (0: no link)
+		`location.href = "history.html" + where;`, `openHistory("#match=" + id)`, "r.matchId > 0", `return openHistory('');">Recent games</a>`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("home.html lacks %q", want)
 		}
 	}
+	checkPageRules(t, "home.html", page)
+}
+
+// checkPageRules are the rules of every page the client's web view shows: self-contained (no other host, no
+// served fonts or style sheets; url() only the client's game:// pictures), ES5 without bind, no flexbox or unprefixed
+// gradients, server text never as HTML, ASCII with LF.
+func checkPageRules(t *testing.T, name, page string) {
+	t.Helper()
 	for _, bad := range []string{"http://", "https://", "src=", "<link", "@import", "@font-face", ".bind(",
 		"display: flex", "display:flex", "linear-gradient(to ", "innerHTML", "const ", "let ", "=>"} {
 		if strings.Contains(page, bad) {
-			t.Errorf("home.html contains %q (self-contained, ES5, text never as HTML)", bad)
+			t.Errorf("%s contains %q (self-contained, ES5, text never as HTML)", name, bad)
 		}
 	}
 	for _, m := range regexp.MustCompile(`url\(([^)]*)\)`).FindAllStringSubmatch(page, -1) {
-		if !strings.HasPrefix(m[1], "game://UI/XHTML/labs/images/") {
-			t.Errorf("home.html: url(%s): only the client's own game:// pictures", m[1])
+		switch {
+		case strings.HasPrefix(m[1], "game://UI/XHTML/labs/images/"):
+		default:
+			t.Errorf("%s: url(%s): only the client's own game:// pictures", name, m[1])
 		}
 	}
 	for i, c := range page {
 		if c > 0x7E || (c < 0x20 && c != '\n') {
-			t.Fatalf("home.html: character %U at %d (keep it ASCII, LF)", c, i)
+			t.Fatalf("%s: character %U at %d (keep it ASCII, LF)", name, c, i)
+		}
+	}
+}
+
+// historyCatalogue is every key of the stats catalogue (the match host's seat lines, gms/core/stats) that the history
+// page must label; a package that adds a key adds it here and its label in the page's LABELS. The per-kind crowd
+// control keys (ccCaused<Kind>Ms, ccEndured<Kind>Ms) are labelled by CC_KINDS.
+var historyCatalogue = []string{"kills", "deaths", "assists", "creeps", "gold", "level",
+	"damageDealt", "damageDealtPhysical", "damageDealtMagical", "damageDealtTrue", "damageOverload", "largestHit", "overkill",
+	"damageToShapers", "damageToMinions", "damageToJungle", "damageToObjectives", "damageToStructures", "damageToGuardian",
+	"damageToWells", "damageToWorkers", "damageToPets",
+	"damageTaken", "damageTakenPhysical", "damageTakenMagical", "damageTakenTrue", "damageTakenFromShapers",
+	"damageTakenFromNpcs", "damageAbsorbed", "shieldingDone",
+	"killsShapers", "killsMinions", "killsJungle", "killsObjectives", "killsStructures", "killsGuardian", "killsWells",
+	"killsWorkers", "killsPets", "timeDeadMs", "wellsCaptured",
+	"goldTotal", "goldFromTower", "goldFromPlayerKill", "goldFromAssist", "goldFromMinion", "goldFromJungle",
+	"goldFromObjective", "goldFromWorkers", "goldFromWellPassive", "goldFromWellBounty", "goldStart", "goldPassive",
+	"goldCheat", "goldUnknown", "goldRole", "xpTotal", "xpFromTower", "xpFromPlayerKill", "xpFromAssist", "xpFromMinion",
+	"xpFromJungle", "xpFromObjective", "xpFromWorkers", "xpPassive", "xpRole", "xpCheat", "xpUnknown",
+	"goldRoleGladiatorLastHit", "goldRoleGladiatorStored", "goldRoleTacticianProximity", "goldRoleTacticianHarass",
+	"goldRolePredatorKill", "goldRolePredatorAssist", "goldRolePredatorWorkers", "xpRolePredator", "goldRoleHunterProc",
+	"damageRoleHunterBonus", "healRoleHunter", "goldRoleOther", "healingDone", "healingSelf", "healingAllies", "healingOther",
+	"healingReceived", "lifeDrain", "overheal", "ccCausedMs", "ccEnduredMs", "wardsPlaced"}
+
+// historyFinishKeys is every playerFinish.stats key the host sends (gms/engine/death.cpp LogPlayerFinish), which
+// dgserver stores with the seat's stats (blaze/matchhistory.go mergeStats). historyHidden is the part of them the
+// page shows otherwise or that means nothing to a player (MHIST3b): its HIDDEN; the rest needs a label.
+// historyDropped are keys the host sent once and no longer does (WARDSTAT: a ward can't be hit or killed in build
+// 854, so they were always 0); an older stored match may still hold them, so the page keeps them in HIDDEN.
+var (
+	historyFinishKeys = []string{"won", "team", "kills", "deaths", "assists", "creeps", "gold", "level", "bestStreak",
+		"doubleKills", "tripleKills", "tetraKills", "omniKills", "durationMs", "noun", "role"}
+	historyHidden  = []string{"won", "team", "durationMs", "noun", "role"}
+	historyDropped = []string{"damageToWards", "killsWards", "wardsDestroyed"}
+)
+
+// The history page (MHIST3): the page rules, the data it reads beside it with the player as me=, its views and
+// tabs, the AAR's embed and latest modes, the links back, the "not recorded" state, and a label for every catalogue key.
+func TestHistoryPage(t *testing.T) {
+	page := string(HistoryPage())
+	checkPageRules(t, "history.html", page)
+	for _, want := range []string{
+		"<!DOCTYPE html>", `"games.json?player="`, `"game.json?id="`, `"&me=" + encodeURIComponent(ME)`,
+		`clientCall("getLocalPlayerName")`, "JSON.parse(", `param("embed") == "1"`, `param("latest") == "1"`,
+		`location.hash = "match=" + id`, `/match=(\d+)/`, "nextBefore", "LOAD MORE", `location.href = "home.html"`,
+		"&larr; Recent games", "Not recorded for this match.", "body.embed",
+		`name: "Overview"`, `name: "Damage"`, `name: "Healing"`, `name: "Vim & XP"`, `name: "Crowd control"`,
+		`name: "Vision & objectives"`, `name: "Timeline"`, "My games", "All games", `"Wins"`, `"Losses"`,
+		"function onLivingLoreVoteUpdate()", "not run by Waystone Games or Electronic Arts",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("history.html lacks %q", want)
+		}
+	}
+	labels := page[strings.Index(page, "var LABELS = {"):]
+	labels = labels[:strings.Index(labels, "};")]
+	for _, key := range historyCatalogue {
+		if !regexp.MustCompile(`\b` + key + `: "`).MatchString(labels) {
+			t.Errorf("history.html: no label for the catalogue key %s", key)
+		}
+	}
+	// MHIST3b: every key a seat can carry is labelled or deliberately hidden, never both, so nothing the host
+	// sends lands under Other stats as a raw name.
+	hidden := page[strings.Index(page, "var HIDDEN = {"):]
+	hidden = hidden[:strings.Index(hidden, "};")]
+	labelled := func(key string) bool { return regexp.MustCompile(`\b` + key + `: "`).MatchString(labels) }
+	isHidden := func(key string) bool { return regexp.MustCompile(`\b` + key + `: 1\b`).MatchString(hidden) }
+	for _, key := range append(append([]string{}, historyHidden...), historyDropped...) {
+		if !isHidden(key) {
+			t.Errorf("history.html: the bookkeeping or dropped key %s isn't in HIDDEN", key)
+		}
+	}
+	for _, key := range append(append(append([]string{}, historyCatalogue...), historyFinishKeys...), historyDropped...) {
+		if labelled(key) == isHidden(key) {
+			t.Errorf("history.html: the key %s is labelled %v and hidden %v (want exactly one)", key, labelled(key), isHidden(key))
+		}
+	}
+	// The host's literal keys (gms: m.stats["..."]) are all known here; skipped where gms/ isn't beside server/.
+	if files, _ := filepath.Glob(filepath.Join("..", "..", "..", "gms", "*", "*", "*.cpp")); len(files) > 0 {
+		more, _ := filepath.Glob(filepath.Join("..", "..", "..", "gms", "*", "*.cpp"))
+		re := regexp.MustCompile(`stats\["([A-Za-z0-9]+)"\]`)
+		for _, f := range append(files, more...) {
+			b, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, m := range re.FindAllStringSubmatch(string(b), -1) {
+				if !labelled(m[1]) && !isHidden(m[1]) {
+					t.Errorf("history.html: %s writes the stat %s, which is neither labelled nor hidden", f, m[1])
+				}
+			}
+		}
+	}
+	for _, want := range []string{`id="bottomHome" onclick="return goHome();"`, `id="bottomBack" onclick="return showList();"`,
+		"function bottomNav(inMatch)", `title: "Kill streaks"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("history.html lacks %q", want)
+		}
+	}
+	for _, kind := range []string{"Stun", "Root", "Slow", "Fear", "Silence", "Knockback", "Pin", "Suppression"} {
+		if !strings.Contains(page, kind+": \"") {
+			t.Errorf("history.html: no label for the crowd-control kind %s", kind)
 		}
 	}
 }

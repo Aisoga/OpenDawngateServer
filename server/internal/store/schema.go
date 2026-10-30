@@ -191,6 +191,48 @@ ALTER TABLE accounts ADD COLUMN ranked_wins INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE history_days ADD COLUMN ranked_games INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE history_days ADD COLUMN ranked_wins INTEGER NOT NULL DEFAULT 0;
 `},
+	// every finished match (M18, matches.go): its own id (Blaze game ids restart with each server start), how it ended,
+	// the host's timeline as JSON ('' = none), and a row per seat. A seat's persona_id and user_id are NULL for a bot and
+	// carry no foreign key: save() rewrites personas (DELETE + INSERT), and a match stays when an account goes. Names are
+	// read from personas when a match is read. stats is a JSON object of integers, sources the host's JSON list ('' =
+	// none).
+	{6, "match history: every finished match and its seats (MHIST1)", `
+CREATE TABLE matches (
+	id          INTEGER PRIMARY KEY,
+	game_id     INTEGER NOT NULL,
+	kind        TEXT    NOT NULL,
+	mode        TEXT    NOT NULL,
+	level       TEXT    NOT NULL DEFAULT '',
+	winner      INTEGER NOT NULL DEFAULT 0,
+	reason      TEXT    NOT NULL DEFAULT '',
+	started     TEXT    NOT NULL,
+	ended       TEXT    NOT NULL,
+	duration_ms INTEGER NOT NULL DEFAULT 0,
+	timeline    TEXT    NOT NULL DEFAULT ''
+);
+CREATE TABLE match_seats (
+	match_id   INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+	seat       INTEGER NOT NULL,
+	persona_id INTEGER,
+	user_id    INTEGER,
+	team       INTEGER NOT NULL,
+	bot        INTEGER NOT NULL DEFAULT 0,
+	noun       INTEGER NOT NULL DEFAULT 0,
+	role       INTEGER NOT NULL DEFAULT 0,
+	won        INTEGER NOT NULL DEFAULT 0,
+	left_match INTEGER NOT NULL DEFAULT 0,
+	kills      INTEGER NOT NULL DEFAULT 0,
+	deaths     INTEGER NOT NULL DEFAULT 0,
+	assists    INTEGER NOT NULL DEFAULT 0,
+	cs         INTEGER NOT NULL DEFAULT 0,
+	gold       INTEGER NOT NULL DEFAULT 0,
+	level      INTEGER NOT NULL DEFAULT 0,
+	stats      TEXT    NOT NULL DEFAULT '{}',
+	sources    TEXT    NOT NULL DEFAULT '',
+	PRIMARY KEY (match_id, seat)
+) WITHOUT ROWID;
+CREATE INDEX match_seats_persona ON match_seats (persona_id, match_id DESC);
+`},
 }
 
 // SchemaVersion is the schema version this build writes (the last migration's).

@@ -101,6 +101,28 @@ GMS_TEST(HunterrouteStartsAtGreenAndWalksTheSteps) {
   CHECK(NextRouteStep(s, c, &m, 5, 0.9f, 300.0, cfg).step == -1);
 }
 
+// HUNTERROUTE-2 (hr2_mf_on2b): Faris flipped between blue and a small mushroom camp twice a second for 3 minutes at
+// about 50 % HP. A buff he is on holds down to 40 %; one he left for a small camp not over needs 60 %.
+GMS_TEST(HunterrouteBuffHpHysteresis) {
+  const std::vector<RouteStep> s = OpeningRoute(2);
+  const RouteConfig cfg;
+  RouteMemory m;
+  std::vector<RouteCamp> c = Unspawned(s.size(), 90.0);
+  for (RouteCamp& x : c) Up(&x);
+  for (int i = 0; i < 4; ++i) Cleared(&c[static_cast<std::size_t>(i)], 400.0);
+  CHECK(NextRouteStep(s, c, &m, 3, 0.49f, 300.0, cfg).step == 5);  // blue below 50 %: the small camp
+  CHECK(m.current == 5);
+  CHECK(NextRouteStep(s, c, &m, 3, 0.51f, 300.5, cfg).step == 5);  // no flip at 51 %
+  CHECK(NextRouteStep(s, c, &m, 3, 0.59f, 301.0, cfg).step == 5);
+  CHECK(NextRouteStep(s, c, &m, 3, 0.61f, 301.5, cfg).step == 4);  // 60 %: blue
+  CHECK(NextRouteStep(s, c, &m, 3, 0.49f, 302.0, cfg).step == 4);  // on blue: holds below 50 %
+  CHECK(NextRouteStep(s, c, &m, 3, 0.41f, 302.5, cfg).step == 4);
+  CHECK(NextRouteStep(s, c, &m, 3, 0.39f, 303.0, cfg).step == 5);  // below 40 %: the small camp again
+  // the small camp cleared: blue at 50 % as before (no step he is on that isn't over)
+  Cleared(&c[5], 500.0);
+  CHECK(NextRouteStep(s, c, &m, 3, 0.5f, 304.0, cfg).step == 4);
+}
+
 GMS_TEST(HunterrouteEndsAtLevelSixOrTheTime) {
   const std::vector<RouteStep> s = OpeningRoute(2);
   const RouteConfig cfg;

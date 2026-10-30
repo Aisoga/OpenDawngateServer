@@ -70,8 +70,38 @@ func inHole(r [4]float64, holes []Hole) bool {
 func GridPolygons(mask []bool, w, h int, sizeX, sizeY float64, cell int, z float64, keep []Point,
 	holes []Hole) []Polygon {
 	cw, ch := sizeX/float64(w), sizeY/float64(h)
-	bw, bh := w/cell, h/cell
-	blk := make([]bool, bw*bh)
+	blk, bw, bh := KeptBlocks(mask, w, h, sizeX, sizeY, cell, keep, holes)
+	var polys []Polygon
+	for by := 0; by < bh; by++ {
+		for bx := 0; bx < bw; bx++ {
+			if blk[by*bw+bx] {
+				r := square(bx, by, cell, w, h, cw, ch)
+				polys = append(polys, Polygon{{r[0], r[1], z}, {r[2], r[1], z}, {r[2], r[3], z}, {r[0], r[3], z}})
+			}
+		}
+	}
+	return polys
+}
+
+// BlockOf is the grid block (bx, by) holding world point p, for a w x h map spanning sizeX x sizeY in blocks of
+// cell x cell cells (it may lie outside the grid).
+func BlockOf(p Point, w, h int, sizeX, sizeY float64, cell int) (bx, by int) {
+	cw, ch := sizeX/float64(w), sizeY/float64(h)
+	return int(pyFloorDiv(p.X/cw+float64(w)/2+0.5, float64(cell))), int(pyFloorDiv(p.Y/ch+float64(h)/2+0.5, float64(cell)))
+}
+
+// BlockRect is the world rectangle (x0, y0, x1, y1) of grid block (bx, by).
+func BlockRect(bx, by, cell, w, h int, sizeX, sizeY float64) [4]float64 {
+	return square(bx, by, cell, w, h, sizeX/float64(w), sizeY/float64(h))
+}
+
+// KeptBlocks are GridPolygons' squares as a bw x bh grid of blocks (row by, column bx at by*bw+bx): true where the
+// graph has a square.
+func KeptBlocks(mask []bool, w, h int, sizeX, sizeY float64, cell int, keep []Point, holes []Hole) (blk []bool,
+	bw, bh int) {
+	cw, ch := sizeX/float64(w), sizeY/float64(h)
+	bw, bh = w/cell, h/cell
+	blk = make([]bool, bw*bh)
 	for by := 0; by < bh; by++ {
 		for bx := 0; bx < bw; bx++ {
 			ok := true
@@ -148,16 +178,7 @@ func GridPolygons(mask []bool, w, h int, sizeX, sizeY float64, cell int, z float
 			blk[k] = blk[k] && wanted[comp[k]]
 		}
 	}
-	var polys []Polygon
-	for by := 0; by < bh; by++ {
-		for bx := 0; bx < bw; bx++ {
-			if blk[by*bw+bx] {
-				r := square(bx, by, cell, w, h, cw, ch)
-				polys = append(polys, Polygon{{r[0], r[1], z}, {r[2], r[1], z}, {r[2], r[3], z}, {r[0], r[3], z}})
-			}
-		}
-	}
-	return polys
+	return blk, bw, bh
 }
 
 // IslandPolygon is a regular n-gon (counter-clockwise) of circumradius r at (x, y), height z: a Guardian's own

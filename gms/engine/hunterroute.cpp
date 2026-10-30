@@ -74,9 +74,64 @@ Hunter* HunterOfTeam(int team) {
   return nullptr;
 }
 
+// MAPED4: each team's route from the level's camps (gb::DeriveRoute: their markers, roles and the Guardians), made once
+// the director has read them; [host] bot_hunter_route_table=1 keeps SM_Map_v5's coordinates (gb::OpeningRoute).
+std::vector<gb::RouteStep> g_steps[3];
+bool g_stepsMade = false;
+
+void MakeSteps() {
+  if (g_stepsMade) return;
+  const std::vector<director::CampView> views = director::CampViews();
+  if (views.empty()) return;  // the level not read yet (a level without camps seats no Hunter)
+  g_stepsMade = true;
+  const char* source = "the level's camps (MAPED4)";
+  if (g_opt.table) {
+    g_steps[1] = gb::OpeningRoute(1);
+    g_steps[2] = gb::OpeningRoute(2);
+    source = "SM_Map_v5's table ([host] bot_hunter_route_table 1)";
+  } else {
+    std::vector<gb::CampMarker> camps;
+    for (const director::CampView& v : views) {
+      gb::CampMarker c;
+      c.x = v.pos[0];
+      c.y = v.pos[1];
+      c.role = static_cast<gms::flow::CampRole>(v.role);
+      c.name = v.name;
+      const std::size_t dot = c.name.rfind('.');
+      if (dot != std::string::npos) c.name.resize(dot);
+      camps.push_back(c);
+    }
+    float g[3][2] = {};
+    bool have[3] = {};
+    for (const director::TitanSpawn& t : director::Guardians())
+      if (t.team == 1 || t.team == 2) {
+        g[t.team][0] = t.pos[0];
+        g[t.team][1] = t.pos[1];
+        have[t.team] = true;
+      }
+    const bool both = have[1] && have[2];
+    for (int team = 1; team <= 2; ++team)
+      g_steps[team] = gb::DeriveRoute(camps, team, both ? g[team] : nullptr, both ? g[3 - team] : nullptr);
+    if (!both) source = "the level's camps (MAPED4; no two Guardians: the halves by the diagonal)";
+  }
+  for (int team = 1; team <= 2; ++team) {
+    std::string list;
+    for (std::size_t i = 0; i < g_steps[team].size(); ++i) {
+      const gb::RouteStep& s = g_steps[team][i];
+      char b[160];
+      std::snprintf(b, sizeof b, "%s%zu %s (%.1f, %.1f) L%d", i ? "; " : "", i, s.label.c_str(),
+                    static_cast<double>(s.x), static_cast<double>(s.y), s.minLevel);
+      list += b;
+    }
+    Log("hunterroute: team %d's route from %s: %zu steps: %s (HUNTERROUTE)", team, source, g_steps[team].size(),
+        list.c_str());
+  }
+}
+
 const std::vector<gb::RouteStep>& Steps(int team) {
-  static const std::vector<gb::RouteStep> s1 = gb::OpeningRoute(1), s2 = gb::OpeningRoute(2), none;
-  return team == 1 ? s1 : team == 2 ? s2 : none;
+  static const std::vector<gb::RouteStep> none;
+  MakeSteps();
+  return team == 1 || team == 2 ? g_steps[team] : none;
 }
 
 // The route steps' camps now, and each step's camp view (-1 none).
@@ -124,7 +179,8 @@ void Decide(Hunter& h, double now) {
   for (std::size_t i = 0; i < steps.size() && i < 32; ++i) {
     if ((doneBefore >> i & 1u) || !(h.mem.done >> i & 1u) || !LogBudget()) continue;
     Log("agents: bot %08X %s hunter route: step %zu %s over (%s), level %d (HUNTERROUTE) (t %.2f s)", h.id,
-        h.noun.c_str(), i, steps[i].label, camps[i].found ? "its camp cleared" : "no such camp", h.level, now);
+        h.noun.c_str(), i, steps[i].label.c_str(), camps[i].found ? "its camp cleared" : "no such camp", h.level,
+        now);
   }
   if (c.step != h.step) {
     if (c.step >= 0) {
@@ -134,7 +190,8 @@ void Decide(Hunter& h, double now) {
       if (LogBudget())
         Log("agents: bot %08X %s hunter route: step %d %s (%s at (%.1f, %.1f)): %s; level %d, hp %.0f %%, at (%.1f, "
             "%.1f) (HUNTERROUTE) (t %.2f s)",
-            h.id, h.noun.c_str(), c.step, steps[static_cast<std::size_t>(c.step)].label, v ? v->name.c_str() : "?",
+            h.id, h.noun.c_str(), c.step, steps[static_cast<std::size_t>(c.step)].label.c_str(),
+            v ? v->name.c_str() : "?",
             v ? static_cast<double>(v->pos[0]) : 0.0, v ? static_cast<double>(v->pos[1]) : 0.0, c.why, h.level,
             static_cast<double>(h.hp * 100.f), static_cast<double>(h.pos[0]), static_cast<double>(h.pos[1]), now);
       if (h.taken.size() < 200) {
@@ -169,9 +226,10 @@ void Configure(const Options& o) {
     g_opt.vanquish = false;
     g_opt.pull = 0;
   }
-  Log("hunterroute: route %s, Vanquish rule %s, pull %d (1: the kits that want it, 2: every Hunter, 0: none); %zu "
-      "steps per team (HUNTERROUTE)",
-      g_opt.route ? "on" : "off", g_opt.vanquish ? "on" : "off", g_opt.pull, Steps(1).size());
+  Log("hunterroute: route %s, Vanquish rule %s, pull %d (1: the kits that want it, 2: every Hunter, 0: none); the "
+      "steps from %s when the level's camps are read (HUNTERROUTE)",
+      g_opt.route ? "on" : "off", g_opt.vanquish ? "on" : "off", g_opt.pull,
+      g_opt.table ? "SM_Map_v5's table" : "the level's camps (MAPED4)");
 }
 
 const Options& Opts() { return g_opt; }

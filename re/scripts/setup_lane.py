@@ -15,16 +15,24 @@ in docs/RUNNING_THE_CLIENT.md *How to start it*, or by setup_all.py); this scrip
               Q3b LARGE_ADDRESS_AWARE) with the lane's CA, and by patch_config.py --host 127.0.0.N (CDN, telemetry and crash hosts). It runs with
               -multipleInstances, since lane a's client holds the Global\\Dawngate mutex. also
               patch_locale.py --host 127.0.0.N (game/Data/Locale/en-us/AA_Server.package: the login texts, the
-              links at the lane's dgserver pages; also in the copies e, f and lan below), and bot_profiles.py
-              (game/Data/zz_BotProfiles.snap: the bot profiles, a Warden with the Predator role; also in the host
-              copy and the copies e, f, h and lan), and patch_login_movie.py --spec matchoptions
-              (game/Data/zz_MatchOptions.snap: the CREATE GAME dialog's bot check box and, when the copy has
-              zz_MM_Map_v3.snap, its map dropdown; also in the copies e, f and lan, not in the host copy) and --spec chatrooms (game/Data/zz_Chat.snap: the class that opens the
-              chat rooms the server marks as open by default; the same copies), and halloween.py
+              links at the lane's dgserver pages, and with --maps the lobby's map line; also in the copies e, f and
+              lan below), and patch_login_movie.py --spec chatrooms (game/Data/zz_Chat.snap: the class that opens the
+              chat rooms the server marks as open by default; the same copies), and patch_login_movie.py --spec
+              aftaction --host 127.0.0.N (game/Data/zz_AfterActionReview.snap: the After Action Review's tabs with
+              the lane's web root; the same copies), and patch_login_movie.py --spec itemshop
+              (game/Data/zz_ItemShop.snap: the item shop's inline refund; the same copies), and
+              patch_login_movie.py --spec collection --content <main checkout's server/data/content.json>
+              (game/Data/zz_CollectionItems.snap: the Collection's Items category; the same copies; left out
+              without that file), and halloween.py
               (game/Data/zz_Halloween.snap: the map's Halloween decoration under level flag 1, shown when the
-              server runs with --halloween; the same copies), and the release setup's
-              MM_Map_v3 step (server/tools/mapmm: game/Data/zz_MM_Map_v3.snap, the second map's level files, made
-              from the copy's own game files; also in the host copy and the copies e, f, h and lan; needs Go).
+              server runs with --halloween; the same copies), and the release setup's map steps (MAPED2b;
+              server/tools/mapsetup --maps <this checkout's maps/; from a worktree without a package, the main
+              checkout's (MAPCLEAN)>; needs Go): game/Data/zz_MM_Map_v3.snap (the
+              second map's level files, made from the copy's own game files), zz_<name>.snap for every package in
+              maps/ (CM_Ring: compiled from its map.json and the copy's files), zz_BotProfiles.snap (the bot
+              profiles, a Warden with the Predator role, and the maps' catalog entries), all also in the host copy
+              and the copies e, f, h and lan; and in the player copies zz_MatchOptions.snap (the CREATE GAME
+              dialog's bot check box and its map dropdown of the maps whose archives the copy has).
   certs       server/certs/lane_X (make_certs.py, CN=127.0.0.N: the client checks the CN against the redirector
               host it connected to).
   host copy   client/run_854_server/Dawngate's twin client/run_854_server_X/Dawngate (setup_server_copy.py from
@@ -82,7 +90,6 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)  # -I drops the script folder
 import patch_client  # noqa: E402
-import bot_profiles  # noqa: E402
 import halloween  # noqa: E402
 import patch_locale  # noqa: E402
 import patch_login_movie  # noqa: E402
@@ -165,7 +172,7 @@ def expected_exe(lane, root):
     ca = os.path.join(root, cfg["certs"], "ca_modulus.bin")
     want = {"redirector": cfg["address"], "bind": cfg["address"], "appdata": "DawngateData" + cfg["suffix"],
             "documents": "Dawngate" + cfg["suffix"], "raknet_loopback": cfg["address"], "ca_flag": "0",
-            "laa": "on", "preload": "all"}
+            "laa": "on", "preload": "all", "maptable": "on"}
     if os.path.exists(ca):
         with open(ca, "rb") as f:
             want["ca_sha256"] = hashlib.sha256(f.read()).hexdigest()[:16]
@@ -196,34 +203,42 @@ def config_patched(data_dir, address):
         return f"http://{address}:18080".encode() in f.read()
 
 
+def has_map_packages(folder):
+    """True when folder holds a map package (a sub-folder with map.json)."""
+    try:
+        return any(os.path.isfile(os.path.join(folder, n, "map.json")) for n in os.listdir(folder))
+    except OSError:
+        return False
+
+
+def maps_dir():
+    """MAPED2b: the maps folder the copies are set up with, this checkout's maps/ (its packages are compiled into
+    every copy; run_session.ps1 gives the session's dgserver --maps with the same folder). MAPCLEAN: no package is
+    in git, so a worktree's maps/ is empty unless a package was copied in; then the main checkout's maps/ (the
+    user's packages) is the folder, as run_session.ps1 and play.ps1 choose it."""
+    own = os.path.join(code_root(), "maps")
+    if has_map_packages(own):
+        return own
+    main = os.path.join(main_root(), "maps")
+    return main if has_map_packages(main) else own
+
+
 def locale_step(data_dir, address, check_only, missing):
-    """the client copy's added locale package (patch_locale.py --host <address>: the login texts, the links at
-    the lane's dgserver pages), byte for byte what patch_locale.py makes from the copy's own Locale.package."""
+    """the client copy's added locale package (patch_locale.py --host <address> --maps <maps/>: the login texts, the
+    links at the lane's dgserver pages, the lobby's map lines), byte for byte what patch_locale.py makes from the copy's
+    own Locale.package."""
     shipped, added = patch_locale.paths(data_dir)
-    want = patch_locale.build(shipped, address)
+    want = patch_locale.build(shipped, address, lobby_map=patch_locale.lobby_map_for(maps_dir()),
+                              maps=patch_locale.folder_maps(maps_dir()))
     if os.path.isfile(added):
         with open(added, "rb") as f:
             if f.read() == want:
                 return
     if check_only:
-        missing.append(f"{added} (patch_locale.py --host {address})")
+        missing.append(f"{added} (patch_locale.py --host {address} --maps {maps_dir()})")
         return
-    run([sys.executable, "-I", os.path.join(HERE, "patch_locale.py"), data_dir, "--host", address])
-
-
-def bot_profiles_step(data_dir, check_only, missing):
-    """a copy's added bot profiles archive (bot_profiles.py: game/Data/zz_BotProfiles.snap, a Warden with the Predator
-    role, Faris and Freia as Hunters, Desecrator as a Tactician), byte for byte what bot_profiles.py makes from the copy's own AssetData.snap; client and host copies."""
-    src, added = bot_profiles.paths(data_dir)
-    want = bot_profiles.build(src)
-    if os.path.isfile(added):
-        with open(added, "rb") as f:
-            if f.read() == want:
-                return
-    if check_only:
-        missing.append(f"{added} (bot_profiles.py)")
-        return
-    run([sys.executable, "-I", os.path.join(HERE, "bot_profiles.py"), data_dir])
+    run([sys.executable, "-I", os.path.join(HERE, "patch_locale.py"), data_dir, "--host", address,
+         "--maps", maps_dir()])
 
 
 # the archive zz_MM_Map_v3.snap that the setup makes from build 854's files (server/internal/setup/mapmm's pin)
@@ -235,26 +250,29 @@ def go_exe():
     for p in (shutil.which("go"), r"C:\Program Files\Go\bin\go.exe"):
         if p and os.path.isfile(p):
             return p
-    sys.exit("Go is needed for the MM_Map_v3 step (https://go.dev/dl/)")
+    sys.exit("Go is needed for the map steps (https://go.dev/dl/)")
 
 
-def mapship_step(data_dir, check_only, missing):
-    """a copy's added archive game/Data/zz_MM_Map_v3.snap (the second map MM_Map_v3's level files: the graphs, the
-    PhysX mesh, the fog outlines, the minimap and the ground, made from the copy's own game files) by the release
-    setup's own code (`go run ./tools/mapmm`); current means build 854's
-    archive (MM_ARCHIVE_SHA256); client and host copies."""
-    added = os.path.join(data_dir, MM_ARCHIVE)
-    if os.path.isfile(added) and sha256(added) == MM_ARCHIVE_SHA256:
-        return
-    if check_only:
-        missing.append(f"{added} (server/tools/mapmm)")
-        return
+def maps_step(data_dir, client, check_only, missing):
+    """MAPED2b: a copy's map files by the release setup's own code (`go run ./tools/mapsetup --maps <maps/>
+    [--client] <copy>`): game/Data/zz_MM_Map_v3.snap (build 854's archive), zz_<name>.snap of every package in maps/,
+    zz_BotProfiles.snap (the bot profiles and the maps' catalog entries) and, in a player copy (client),
+    zz_MatchOptions.snap (the CREATE GAME dialog's bot check box and map dropdown, after the archives it lists);
+    client and host copies. Current means byte for byte what the Go setup makes now."""
     copy = os.path.dirname(os.path.dirname(os.path.abspath(data_dir)))
-    print("  $ go run ./tools/mapmm " + copy)
-    r = subprocess.run([go_exe(), "run", "./tools/mapmm", copy],
-                       cwd=os.path.join(code_root(), "server"), env=dict(os.environ, GOTOOLCHAIN="local"))
+    cmd = [go_exe(), "run", "./tools/mapsetup", "--maps", maps_dir()] + (["--client"] if client else [])
+    env = dict(os.environ, GOTOOLCHAIN="local")
+    cwd = os.path.join(code_root(), "server")
+    if check_only:
+        r = subprocess.run(cmd + ["--check", copy], cwd=cwd, env=env, capture_output=True, text=True)
+        if r.returncode:
+            bad = [ln.strip() for ln in r.stdout.splitlines() if "[ok]" not in ln and ln.strip()]
+            missing.extend(f"{b} (server/tools/mapsetup)" for b in bad or [f"{copy}: exit {r.returncode}"])
+        return
+    print(f"  $ go run ./tools/mapsetup --maps {maps_dir()}{' --client' if client else ''} {copy}")
+    r = subprocess.run(cmd + [copy], cwd=cwd, env=env)
     if r.returncode:
-        sys.exit(f"the MM_Map_v3 step failed (exit {r.returncode}) for {copy}")
+        sys.exit(f"the map steps failed (exit {r.returncode}) for {copy}")
 
 
 def halloween_step(data_dir, check_only, missing):
@@ -272,14 +290,6 @@ def halloween_step(data_dir, check_only, missing):
     run([sys.executable, "-I", os.path.join(HERE, "halloween.py"), data_dir])
 
 
-def match_options_step(data_dir, check_only, missing):
-    """a client copy's added CREATE GAME dialog with the bot check box and the map dropdown (patch_login_movie.py
-    --spec matchoptions: game/Data/zz_MatchOptions.snap), byte for byte what it makes from the copy's own
-    Battlegrounds.snap and the map archives beside it (its map list: run this again when a map's archive comes or
-    goes)."""
-    movie_step(data_dir, check_only, missing, "matchoptions")
-
-
 def chat_rooms_step(data_dir, check_only, missing):
     """a client copy's added chat movie with the class that opens the rooms the server marks as open by default
     (patch_login_movie.py --spec chatrooms: game/Data/zz_Chat.snap), byte for byte what it makes from the copy's own
@@ -287,12 +297,42 @@ def chat_rooms_step(data_dir, check_only, missing):
     movie_step(data_dir, check_only, missing, "chatrooms")
 
 
-def movie_step(data_dir, check_only, missing, name):
-    """one of patch_login_movie.py's added archives (spec `name`) in a client copy's game/Data."""
+def after_action_step(data_dir, address, check_only, missing):
+    """a client copy's added After Action Review movie with its tabs (Scoreboard, Match Stats, Recent Games) and the
+    web root of the copy's server (patch_login_movie.py --spec aftaction --host <address>:
+    game/Data/zz_AfterActionReview.snap), byte for byte what it makes from the copy's own Battlegrounds.snap."""
+    movie_step(data_dir, check_only, missing, "aftaction", address)
+
+
+def item_shop_step(data_dir, check_only, missing):
+    """a client copy's added item shop movie with the inline refund (patch_login_movie.py --spec itemshop:
+    game/Data/zz_ItemShop.snap), byte for byte what it makes from the copy's own HUD.snap."""
+    movie_step(data_dir, check_only, missing, "itemshop")
+
+
+def content_file():
+    """The content file the lanes' servers read (the main checkout's server/data/content.json, setup_all.py's content
+    step)."""
+    return os.path.join(main_root(), "server", "data", "content.json")
+
+
+def collection_step(data_dir, check_only, missing):
+    """a client copy's added front-end movie with the Collection's Items category and the item list of the lanes'
+    content file (patch_login_movie.py --spec collection --content <content_file()>: game/Data/zz_CollectionItems.snap),
+    byte for byte what it makes from the copy's own code.snap; left out (with a line) without the content file."""
+    if not os.path.isfile(content_file()):
+        print(f"  the Collection's items left out: no {content_file()} (setup_all.py's content step)")
+        return
+    movie_step(data_dir, check_only, missing, "collection", content=content_file())
+
+
+def movie_step(data_dir, check_only, missing, name, host=None, content=None):
+    """one of patch_login_movie.py's added archives (spec `name`; `host` the copy's server for a spec with the web
+    root, `content` the content.json of a spec with the item list) in a client copy's game/Data."""
     spec = patch_login_movie.SPECS[name]
     src = os.path.join(data_dir, *spec.source.split("/")[2:])
     added = os.path.join(data_dir, *spec.rel.split("/")[2:])
-    want = patch_login_movie.build(src, spec=spec)
+    want = patch_login_movie.build(src, spec=spec, host=host, content=content)
     if os.path.isfile(added):
         with open(added, "rb") as f:
             have = f.read()
@@ -300,10 +340,11 @@ def movie_step(data_dir, check_only, missing, name):
             return
         if check_only and spec.map_list and patch_login_movie.map_list_only(have, want):
             return  # the map list a tunnel front wrote for the server of the last login: current (the setup resets it)
+    host_args = (["--host", host] if host and spec.web_root else []) + (["--content", content] if content else [])
     if check_only:
-        missing.append(f"{added} (patch_login_movie.py --spec {name})")
+        missing.append(f"{added} (patch_login_movie.py --spec {name}{''.join(' ' + a for a in host_args)})")
         return
-    run([sys.executable, "-I", os.path.join(HERE, "patch_login_movie.py"), "--spec", name, src, added])
+    run([sys.executable, "-I", os.path.join(HERE, "patch_login_movie.py"), "--spec", name] + host_args + [src, added])
 
 
 def run(cmd):
@@ -377,11 +418,12 @@ def setup(lane, dll, with_host, check_only, root=None):
             else:
                 run([py, "-I", os.path.join(HERE, "patch_config.py"), data_dir, "--host", cfg["address"]])
         locale_step(data_dir, cfg["address"], check_only, missing)
-        bot_profiles_step(data_dir, check_only, missing)
-        mapship_step(data_dir, check_only, missing)
+        maps_step(data_dir, True, check_only, missing)
         halloween_step(data_dir, check_only, missing)
-        match_options_step(data_dir, check_only, missing)
         chat_rooms_step(data_dir, check_only, missing)
+        after_action_step(data_dir, cfg["address"], check_only, missing)
+        item_shop_step(data_dir, check_only, missing)
+        collection_step(data_dir, check_only, missing)
     # 4. the match-host copy with the harness (setup_server_copy.py copies the lane's client copy once)
     host_keys = HOST_KEYS if lane == "a" else None
     if with_host:
@@ -395,8 +437,7 @@ def setup(lane, dll, with_host, check_only, root=None):
             elif dll and os.path.exists(dll) and sha256(dll) != sha256(loader):
                 missing.append(f"{loader} is not {dll} (setup_server_copy.py installs it)")
             if os.path.exists(hexe):
-                bot_profiles_step(os.path.join(host, "game", "Data"), check_only, missing)
-                mapship_step(os.path.join(host, "game", "Data"), check_only, missing)
+                maps_step(os.path.join(host, "game", "Data"), False, check_only, missing)
         else:
             if not dll or not os.path.exists(dll):
                 sys.exit(f"the host copy needs dgsim.dll: {dll} is missing (build gms/, or pass --dll; --no-host skips)")
@@ -408,8 +449,7 @@ def setup(lane, dll, with_host, check_only, root=None):
             if not config_patched(os.path.join(host, "game", "Data"), cfg["address"]):
                 run([py, "-I", os.path.join(HERE, "patch_config.py"), os.path.join(host, "game", "Data"),
                      "--host", cfg["address"]])
-            bot_profiles_step(os.path.join(host, "game", "Data"), check_only, missing)
-            mapship_step(os.path.join(host, "game", "Data"), check_only, missing)
+            maps_step(os.path.join(host, "game", "Data"), False, check_only, missing)
     # 5. A6b: the lane's accounts folder (dgserver --data; it would also make it at its first save, so --check doesn't
     # count it as missing)
     data = j(cfg["data"])
@@ -441,7 +481,7 @@ def expected_extra(name, root):
     lane = LANES[cfg["lane"]]
     want = {"redirector": lane["address"], "bind": cfg["bind"], "appdata": "DawngateData" + cfg["suffix"],
             "documents": "Dawngate" + cfg["suffix"], "raknet_loopback": cfg["bind"], "ca_flag": "0",
-            "laa": "on", "preload": "all"}
+            "laa": "on", "preload": "all", "maptable": "on"}
     sha = ca_sha(os.path.join(root, *lane["certs"].split("/")))
     if sha:
         want["ca_sha256"] = sha
@@ -453,7 +493,7 @@ def expected_lan(address, root):
     sockets narrowed to it, RakNet's start-up send test to it, its own data folders."""
     want = {"redirector": address, "bind": address, "appdata": "DawngateData" + LAN["suffix"],
             "documents": "Dawngate" + LAN["suffix"], "raknet_loopback": address, "ca_flag": "0",
-            "laa": "on", "preload": "all"}
+            "laa": "on", "preload": "all", "maptable": "on"}
     sha = ca_sha(os.path.join(root, *LAN["certs"].split("/")))
     if sha:
         want["ca_sha256"] = sha
@@ -544,11 +584,12 @@ def setup_extra(name, check_only, root=None):
             else:
                 run([py, "-I", os.path.join(HERE, "patch_config.py"), data_dir, "--host", lane["address"]])
         locale_step(data_dir, lane["address"], check_only, missing)
-        bot_profiles_step(data_dir, check_only, missing)
-        mapship_step(data_dir, check_only, missing)
+        maps_step(data_dir, True, check_only, missing)
         halloween_step(data_dir, check_only, missing)
-        match_options_step(data_dir, check_only, missing)
         chat_rooms_step(data_dir, check_only, missing)
+        after_action_step(data_dir, lane["address"], check_only, missing)
+        item_shop_step(data_dir, check_only, missing)
+        collection_step(data_dir, check_only, missing)
     return finish(f"copy {name}", missing, check_only)
 
 
@@ -603,11 +644,12 @@ def setup_lan(address, check_only, new_certs=False, root=None):
             else:
                 run([py, "-I", os.path.join(HERE, "patch_config.py"), data_dir, "--host", address])
         locale_step(data_dir, address, check_only, missing)
-        bot_profiles_step(data_dir, check_only, missing)
-        mapship_step(data_dir, check_only, missing)
+        maps_step(data_dir, True, check_only, missing)
         halloween_step(data_dir, check_only, missing)
-        match_options_step(data_dir, check_only, missing)
         chat_rooms_step(data_dir, check_only, missing)
+        after_action_step(data_dir, address, check_only, missing)
+        item_shop_step(data_dir, check_only, missing)
+        collection_step(data_dir, check_only, missing)
     return finish("lan copy", missing, check_only)
 
 

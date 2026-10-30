@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"dawngate/server/internal/setup/gamecontent"
 	"dawngate/server/internal/setup/moviepatch"
 )
 
@@ -43,6 +44,43 @@ func (s *Setup) stepChatRooms(step, copy string) bool {
 	return s.stepMovie(step, copy, moviepatch.ChatRooms, "the chat rooms opened by default", "an older chat rooms class")
 }
 
+// stepAfterAction installs the After Action Review's tabs, game\Data\zz_AfterActionReview.snap: the copy's own review
+// movie (from Battlegrounds.snap, which must be the build's) with the tabs' class added (moviepatch.AfterAction) and
+// the web root of the server host the copy is set up for (moviepatch.WebRootFile: the root its config packages give
+// the web content, the same in a tunnelled copy). Every player copy gets it: after a match the review shows the tabs
+// Scoreboard, Match Stats and Recent Games, the last two the server's history pages in a web view.
+func (s *Setup) stepAfterAction(step, copy, host string) bool {
+	sp := moviepatch.AfterAction
+	sp.WebHost = host
+	return s.stepMovie(step, copy, sp, "the After Action Review's tabs", "an older tabs class or another server's web root")
+}
+
+// stepItemShop installs the item shop's inline refund, game\Data\zz_ItemShop.snap: the copy's own shop movie (from
+// HUD.snap, which must be the build's) with the refund's class added (moviepatch.ItemShop). Every player copy gets it:
+// a purchase made during the current visit to the base wears a badge in the shop, and selecting it turns the shop's
+// Sell into Refund for the full price (the server undoes the purchase; its texts are localepatch.HUDLines).
+func (s *Setup) stepItemShop(step, copy string) bool {
+	return s.stepMovie(step, copy, moviepatch.ItemShop, "the shop's inline refund", "an older refund class")
+}
+
+// stepCollection installs the Collection's Items category, game\Data\zz_CollectionItems.snap: the copy's own front-end
+// movie (UIRuntime.gfx from code.snap, which must be the build's) with the class added (moviepatch.Collection) and the
+// item list of the copy's own game data (gamecontent.Build, the content the server's setup writes; moviepatch.ItemList).
+// Every player copy gets it: the Collection's menu shows a category Items whose options show the match items as the
+// Collection's own cards.
+func (s *Setup) stepCollection(step, copy string) bool {
+	c, err := gamecontent.Build(copy)
+	if err != nil {
+		if s.Check {
+			return s.report(Missing, step, fmt.Sprintf("the item data of %s: %v", s.show(copy), err))
+		}
+		return s.report(Failed, step, err.Error())
+	}
+	sp := moviepatch.Collection
+	sp.ItemList = moviepatch.ItemList(c, false)
+	return s.stepMovie(step, copy, sp, "the Collection's items", "an older Collection class or item list")
+}
+
 // stepMovie writes spec's added archive into the copy when it isn't byte for byte what moviepatch makes now.
 func (s *Setup) stepMovie(step, copy string, spec moviepatch.Spec, what, older string) bool {
 	src := filepath.Join(copy, filepath.FromSlash(spec.Source))
@@ -58,7 +96,7 @@ func (s *Setup) stepMovie(step, copy string, spec moviepatch.Spec, what, older s
 		return s.report(Failed, step, fmt.Sprintf("%s is not the untouched build-854 file (docs/file_manifest.csv); "+
 			"delete %s and start again (it is extracted anew)", s.show(src), copy))
 	}
-	want, err := spec.BuildMaps(source, moviepatch.CopyMaps(filepath.Dir(src)))
+	want, err := spec.BuildMaps(source, moviepatch.CopyMaps(filepath.Dir(src), DialogMaps(s.FolderMaps())...))
 	if err != nil {
 		return s.report(Failed, step, err.Error())
 	}

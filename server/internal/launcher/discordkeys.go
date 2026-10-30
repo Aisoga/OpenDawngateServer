@@ -26,6 +26,16 @@ func OnlineCountFlags(cfg Config) []string { return keyFlags(cfg, onlineCountKey
 // file from an earlier release, keeps dgserver's default rooms). It comes before server_flags; dgserver checks it.
 func ChatRoomsFlags(cfg Config) []string { return keyFlags(cfg, []string{"chat_rooms"}) }
 
+// MatchHistoryFlags is dgserver's --match-history-names for the match_history_names key when it is set (an empty or
+// missing key, as in a file from an earlier release, keeps dgserver's default: on). It comes before server_flags;
+// dgserver checks it.
+func MatchHistoryFlags(cfg Config) []string { return keyFlags(cfg, []string{"match_history_names"}) }
+
+// MatchRecordFlags is dgserver's --match-record for the match_record key when it is set (an empty or missing key, as
+// in a file from an earlier release, keeps dgserver's default: off). It comes before server_flags; dgserver checks
+// it.
+func MatchRecordFlags(cfg Config) []string { return keyFlags(cfg, []string{"match_record"}) }
+
 // HalloweenFlags is dgserver's --halloween for the halloween key when it is set (an empty or missing key, as in a file
 // from an earlier release, keeps dgserver's default: off). It comes before server_flags; dgserver checks it.
 func HalloweenFlags(cfg Config) []string { return keyFlags(cfg, []string{"halloween"}) }

@@ -36,9 +36,21 @@ var MM = Spec{
 // Build makes the two graphs of spec from an 8-bit line-of-sight map, the header values taken from the two
 // template graphs (the Player and the NPC one).
 func Build(img los.Image, spec Spec, playerTemplate, npcTemplate []byte) (player, npc []byte, err error) {
-	if img.Bpp != 8 || len(img.Pix) < img.W*img.H {
-		return nil, nil, fmt.Errorf("navgraph: an 8-bit line-of-sight map is expected (%d bits, %d of %d bytes)",
-			img.Bpp, len(img.Pix), img.W*img.H)
+	return BuildTwo(img, img, spec, playerTemplate, npcTemplate)
+}
+
+// BuildTwo is Build with the NPC graph cut from its own walkable map of the same size: ground only NPCs walk is open
+// in npcImg and blocked in img.
+func BuildTwo(img, npcImg los.Image, spec Spec, playerTemplate, npcTemplate []byte) (player, npc []byte, err error) {
+	for _, im := range []los.Image{img, npcImg} {
+		if im.Bpp != 8 || len(im.Pix) < im.W*im.H {
+			return nil, nil, fmt.Errorf("navgraph: an 8-bit line-of-sight map is expected (%d bits, %d of %d bytes)",
+				im.Bpp, len(im.Pix), im.W*im.H)
+		}
+	}
+	if npcImg.W != img.W || npcImg.H != img.H {
+		return nil, nil, fmt.Errorf("navgraph: the NPC map is %d x %d, the Player map %d x %d", npcImg.W, npcImg.H,
+			img.W, img.H)
 	}
 	pt, err := Parse(playerTemplate)
 	if err != nil {
@@ -58,6 +70,7 @@ func Build(img los.Image, spec Spec, playerTemplate, npcTemplate []byte) (player
 	mask := WalkableMask(img.Pix, img.W, img.H, spec.Erode)
 	polys := GridPolygons(mask, img.W, img.H, spec.SizeX, spec.SizeY, spec.Cell, spec.Z, spec.Keep, holes)
 	player = Write(FromPolygons(polys, pt))
+	mask = WalkableMask(npcImg.Pix, img.W, img.H, spec.Erode)
 	polys = GridPolygons(mask, img.W, img.H, spec.SizeX, spec.SizeY, spec.Cell, spec.Z, spec.NPCKeep, holes)
 	for _, ho := range holes {
 		polys = append(polys, IslandPolygon(ho.X, ho.Y, spec.IslandRadius, spec.IslandZ, spec.IslandSides))

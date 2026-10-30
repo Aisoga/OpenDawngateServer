@@ -11,6 +11,8 @@ This guide is for whoever runs the server that other people play on. It uses the
 - [The website and the admin page](#the-website-and-the-admin-page)
 - [Announcements](#announcements)
 - [Chat rooms](#chat-rooms)
+- [The match history](#the-match-history)
+- [Recording matches](#recording-matches)
 - [Discord channel posts](#discord-channel-posts)
 - [Backups](#backups)
 - [Logs](#logs)
@@ -47,7 +49,7 @@ To change your answers later, run `Start-Server.exe --configure`, or edit `Start
 
 Every start checks the setup and repairs anything missing, which usually takes a second. `Start-Server.exe --check` only reports what's missing.
 
-You can play on the same PC that runs the server: just start `Start-Client.exe` there too. **This PC**, the first row of the login screen's server list, is this server while it runs in the same folder, and `Start-Client.exe` knows its key. When `Start-Server.exe` isn't running, This PC is a server that `Start-Client.exe` runs itself on the same folder, with the same accounts and `Start-Server.ini`'s game options (`shaper_select`, `halloween`, `map`, `custom_maps`, `signup`, `server_flags`; never the website or the public settings), only for the player on this PC. A folder has one server at a time: `Start-Server.exe` refuses to start while `Start-Client.exe` runs the folder's server ("This folder's server already runs inside Start-Client.exe"); close the game first.
+You can play on the same PC that runs the server: just start `Start-Client.exe` there too. **This PC**, the first row of the login screen's server list, is this server while it runs in the same folder, and `Start-Client.exe` knows its key. When `Start-Server.exe` isn't running, This PC is a server that `Start-Client.exe` runs itself on the same folder, with the same accounts and `Start-Server.ini`'s game options (`shaper_select`, `halloween`, `map`, `custom_maps`, `match_history_names`, `signup`, `server_flags`; never the website or the public settings), only for the player on this PC. A folder has one server at a time: `Start-Server.exe` refuses to start while `Start-Client.exe` runs the folder's server ("This folder's server already runs inside Start-Client.exe"); close the game first.
 
 **Every server uses the encrypted tunnel.** Players reach it on one port, **42128, TCP and UDP**; everything else the server runs answers inside the tunnel. Its match hosts listen on a loopback address of their own, so a server and a player's game run side by side on one PC. (`tunnel = off` in `Start-Server.ini` turns the tunnel off; that's an option for developers, and players then need `Start-Client.exe --tunnel off`.)
 
@@ -161,7 +163,7 @@ So when you update the server, tell your players which release it runs now, and 
 
 1. Stop the server (Ctrl+C, or close its window). This ends running matches.
 2. Unpack the new release into the same folder, replacing the old files. `Start-Server.ini` and `Dawngate-Data` (accounts, keys, the match hosts' copy) stay.
-3. Start `Start-Server.exe`. The start checks the setup and brings the match hosts' copy up to date.
+3. Start `Start-Server.exe`. The start checks the setup and brings the match hosts' copy up to date. When a release reads more from the game files than the one before, this first start builds `Dawngate-Data\data\content.json` again from your game files, which takes a few seconds; a server started with `--check` only reports it (`content … stale`) until it runs the setup.
 
 Players unpack the same release's `Start-Client.exe` into their folder the same way. Until they do, their logins to your server are refused, with a message that names both versions in their server list. **This PC**, the server in a player's own folder, is never refused.
 
@@ -282,6 +284,54 @@ rooms off. Rooms have no passwords, nobody can create rooms in the game, and the
 start. A `Start-Server.ini` from before this setting keeps its own line (`…Matchmaking:queue`, no room opens); add
 `:open` to the rooms you want opened.
 
+## The match history
+
+The server keeps every finished match in its accounts database (`Dawngate-Data\data\accounts.db`, so a backup keeps
+it too): mode, map, winner, length, and for each of the ten seats the player or bot, team, shaper, role, kills, deaths,
+assists, creeps, gold, level and the match statistics the match host reports. A match that was cut short without an end
+isn't kept. Players read it on the game's home page, newest first; names are the players' current names (a renamed
+player shows the new name, a deleted account "Deleted player"), and bots show as "Bot".
+
+By default every player sees everyone's games with the players' names. With
+
+```ini
+match_history_names = off
+```
+
+each player sees only their own name: everyone's games still show, with the other players' names left blank, and a
+list of one player's games only for that player themselves. The game says who is asking and the server has no other
+check, so this keeps names off the pages rather than hiding a known player's games.
+
+## Recording matches
+
+The match recorder writes down every match in detail, for studying how matches are played (for example to compare
+players with the bots, or to tune the bots). It is off by default. To turn it on, set
+
+```ini
+match_record = on
+```
+
+in `Start-Server.ini` and start `Start-Server.exe` again. Every match that starts after that gets a file in its
+match folder, `Dawngate-Data\logs\hosts\<match>\matchrec_<match>_<start time>.txt`, next to the match host's log.
+It holds the map and every seat (team, shaper, role, human or bot, and the player's account number, not the name),
+every command each player gave (the bots' too), every player's position and state five times a second (health,
+resource, level, gold, alive, dead or recalling, current target, which teams see them) and the match's events
+(kills and assists, objectives, purchases, wells, the end).
+
+- **Speed:** the recorder writes in large blocks and costs the match host about 0.02 ms per game tick (a tick has
+  33 ms); players don't notice it.
+- **Size:** about 350 KB per match minute with ten players, so about 10 MB for a 30-minute match. A file stops
+  at 64 MB (about three hours of match); the match itself goes on. Twenty matches a day take about 200 MB a day.
+- **How long they stay:** `log_days` deletes the match folders, and the files with them, after 30 days by default.
+- **Collecting them:** copy the `matchrec_*.txt` files out of `Dawngate-Data\logs\hosts\` (on Linux the same
+  folder in the server's data folder), for example with `robocopy Dawngate-Data\logs\hosts <target> matchrec_*.txt /S`
+  on Windows or `rsync -a --include='*/' --include='matchrec_*.txt' --exclude='*' <data folder>/logs/hosts/ <target>/`
+  from Linux, and zip them to move them to another PC. The files are plain text and compress to a fraction of
+  their size. A file whose last line starts with `X` is complete; one without it is from a match host that
+  stopped before the match ended.
+- **Privacy:** the files hold account numbers and how each player played. Treat them like the logs; tell your
+  players if you record their matches.
+
 ## The Halloween decoration
 
 The game ships a Halloween decoration for its map that it never showed: candles, pumpkins, jack-o'-lanterns and a tomb
@@ -330,18 +380,64 @@ map = SM_Map_v5
 custom_maps = MM_Map_v3
 ```
 
-- `map` is the map of every match: practice, the queue and custom games. Only `SM_Map_v5` and `MM_Map_v3` are
-  accepted; another name stops the server at its start.
+- `map` is the map of every match: practice, the queue and custom games. `SM_Map_v5`, `MM_Map_v3` and the maps of
+  your `maps` folder (below) are accepted, by their name or their tag; another name stops the server at its start.
 - `custom_maps` lists the maps a custom game's creator may pick, comma-separated. Players pick in the CREATE GAME
   dialog's map list (The Dawngate or Anshavar Pass), which adds the map's tag to the game's name: `~#mm` for
   `MM_Map_v3`, `~#sm` for `SM_Map_v5` (always allowed, as is `map`); typing the tag at the end of the name does the
-  same. The game browser and the lobby's title show such a game as `[Pass] <name>`, and the lobby's map line says
-  *Anshavar Pass*: the game itself can only name The Dawngate in its Map column. The dialog lists
+  same. The game browser and the lobby's title show such a game as `[Pass] <name>`, and the lobby's map line and the
+  browser's Map column say *Anshavar Pass*. The dialog lists
   the maps your server offers (`map` and `custom_maps`) to players whose game has their files: `Start-Client.exe`
   learns them from the server when the player logs in. Without `MM_Map_v3` in either setting players see
   *Map: The Dawngate* only. A pick of a map that isn't offered (a typed tag) is dropped, and that game is played
   on `map`.
 
+### Maps from the maps folder
+
+New maps come as **map packages**: a folder with a `map.json` in it (for example `CM_Ring\map.json`, the test map
+*Test Ring*). No map package comes with the release or the project's code; you get one from whoever made it. The
+release has a `maps` folder beside `Start-Server.exe`; it comes empty, with only a `README.txt`. To offer a map:
+
+1. Copy its package folder into `maps`.
+2. Name the map in `Start-Server.ini`: `map = CM_Ring` (every match) or `custom_maps = CM_Ring` (custom games may
+   pick it, by the dialog's list or the tag in the package, `~#ring` for Test Ring), then start `Start-Server.exe`
+   again.
+
+At its start the setup builds each package's files into the match hosts' copy (`game\Data\zz_<name>.snap`, about
+a second per map, from the game's own files), and the server offers the maps of the folder by their names and tags.
+A package that can't be built is left out with a line in the setup's output saying why. Every player who plays the
+map needs the same package in the `maps` folder beside their `Start-Client.exe`: their setup builds the files into
+their game, and the CREATE GAME dialog lists the map. The browser and the lobby's title show the map's prefix
+(`[Ring] <name>`).
+
+**Handing your maps to the players.** You don't have to send the packages around: the server hands them out. When a
+player logs in and their game lacks a map your server offers (by `map` or `custom_maps`), or has another version of
+it, their `Start-Client.exe` downloads the package from your server through the tunnel, checks it and puts it into
+the `maps` folder beside it; their next start of `Start-Client.exe` builds it into their game, as for a package
+copied by hand. Only these maps are handed out, read from your `maps` folder; nothing else of the server is reachable
+this way. Each player's `Start-Client.exe` builds the package against their own game and keeps it only when the
+result is exactly your version (the fingerprint in your start-up log), so a package that doesn't build, or builds to
+something else, never reaches their game. The start-up log lists what is handed out (`map delivery: hands out …`)
+and each download (`GET /dawngate/mappkg/<tag>`). At most four downloads run at a time; a fifth player gets theirs at
+their next login. A package bigger than 512 MB isn't handed out (`--serve-maps-max-mb` in `server_flags` changes
+that). `serve_maps = off` in `Start-Server.ini` turns this off; players then copy the packages by hand. A package
+holds the map's `map.json` and the pictures it names, nothing of the game: each player's game makes the map's files
+from its own. When you change a package, restart `Start-Server.exe`: players then get the new version at their next
+login.
+
+**Who may play a map from the maps folder.** When a player logs in, `Start-Client.exe` tells the server which maps
+the player's game has, with a fingerprint of each map's built file (its SHA-256). The server compares it with the
+file in its match hosts' copy and lets the player into a game on that map only when both are the same. A player
+whose game doesn't have the map, or has another version of it (a changed package, or an older copy of it), can't
+join a game on it or queue for it, and a practice or custom game they create is played on The Dawngate instead; a
+*System* line tells them which and that the fix is your version of the package in their `maps` folder (which their
+`Start-Client.exe` downloads when your server hands the map out, above). The server
+also tells `Start-Client.exe` its fingerprint of each map it offers, so a player's CREATE GAME dialog doesn't list a
+map their game has in another version (with a server of an older release it still does). So when you
+change a package, give every player the new one. The start-up log lists each map's fingerprint (`map check by
+version`), and each refusal names the player's and yours. Players connecting without the tunnel can't report their
+maps; they are checked as for Anshavar Pass (`--trust-maps`). The lobby's map line and the browser's Map column
+name each map whose package the player has (its `display` name); a map the player lacks has an empty Map column.
 ## Discord channel posts
 
 The server can post to channels of your Discord server through webhooks. Nothing is posted until you set a webhook address in `Start-Server.ini`.
@@ -387,6 +483,7 @@ Accounts live in one database, `Dawngate-Data\data\accounts.db`, with `accounts.
 
 - The server's logs and one folder per match are in `Dawngate-Data\logs`.
 - They contain login names and players' addresses, never passwords. Keep them private.
+- With `match_record = on` each match folder also holds the match's recording ([Recording matches](#recording-matches)).
 - `log_days` in `Start-Server.ini` (30 by default) deletes logs older than that.
 
 ## Security: what is protected and what isn't

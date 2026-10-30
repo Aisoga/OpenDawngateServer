@@ -17,7 +17,10 @@ references are computed with the Go setup's own ca_modulus.bin):
   certificates   certs\\<address>: the five files, the CA modulus = the CA certificate's, CN = the address
   client texts   the client copy's game\\Data\\Locale\\en-us\\AA_Server.package = patch_locale.build(its own
                  Locale.package, the address [, --web-domain]); the host copy has none
-  bot profiles   both copies' game\\Data\\zz_BotProfiles.snap = bot_profiles.build(its own AssetData.snap)
+  bot profiles   both copies' game\\Data\\zz_BotProfiles.snap = bot_profiles.build(its own AssetData.snap); not
+                 compared when the release's maps folder holds a package (its catalog entries are the Go setup's)
+  maps folder    the release has maps\\README.txt; a package in it makes the client texts' lobby line
+                 patch_locale.LOBBY_MAP_ANY and the create dialog's map list differ only in the list
   server picker  the client copy's game\\Data\\zz_ServerPicker.snap (Start-Client's picker mode) =
                  patch_login_movie.build(its own LoginScreen.snap), when it is there or with --picker; the server
                  list's archive zz_ServerList.snap (written by Start-Client before each game start) isn't compared
@@ -25,7 +28,13 @@ references are computed with the Go setup's own ca_modulus.bin):
                  Battlegrounds.snap, spec matchoptions); the host copy has none
   chat rooms     the client copy's game\\Data\\zz_Chat.snap = patch_login_movie.build(its own Global.snap, spec
                  chatrooms); the host copy has none
-  halloween      the client copy's game\\Data\\zz_Halloween.snap = halloween.build(its own AssetData.snap); the host
+  review tabs    the client copy's game\\Data\\zz_AfterActionReview.snap = patch_login_movie.build(its own
+                 Battlegrounds.snap, spec aftaction, the client copy's address: its web root); the host copy has none
+  shop refund    the client copy's game\\Data\\zz_ItemShop.snap = patch_login_movie.build(its own HUD.snap, spec
+                 itemshop); the host copy has none
+  collection items  the client copy's game\\Data\\zz_CollectionItems.snap = patch_login_movie.build(its own
+                 code.snap, spec collection, the release's data\\content.json); the host copy has none
+  halloween     the client copy's game\\Data\\zz_Halloween.snap = halloween.build(its own AssetData.snap); the host
                  copy has none
   MM_Map_v3      both copies' game\\Data\\zz_MM_Map_v3.snap = build 854's archive (MM_ARCHIVE_SHA256: the Go
                  setup's pin, which its Python twin makes too; the PhysX mesh is the cooked one the setup ships
@@ -183,11 +192,18 @@ def main(argv):
             r.check(got == want, f"{name} {os.path.basename(rel)} = patch_config.py --host {cfg_host}")
             print(f"{name} {os.path.basename(rel)}: {sha(got)}  ({'equal' if got == want else 'DIFFERENT'})")
 
+    print("maps folder (MAPED2b)")
+    maps = j(a.release, "maps")
+    lobby = patch_locale.lobby_map_for(maps)
+    r.check(os.path.isfile(j(maps, "README.txt")), "the release has maps\\README.txt")
+    r.line(f"map packages in {maps}: {'yes (the lobby line ' + repr(lobby) + ')' if lobby else 'none'}")
+
     print("client texts (PH2b)")
     added = j(client, *patch_locale.REL.split("/"))
     if have_client:
         src = j(client, *patch_locale.SOURCE.split("/"))
-        want = patch_locale.build(src, client_host, web_domain=a.web_domain)
+        want = patch_locale.build(src, client_host, web_domain=a.web_domain, lobby_map=lobby,
+                                  maps=patch_locale.folder_maps(maps))
         got = read(added) if os.path.isfile(added) else b""
         r.check(got == want, f"client {patch_locale.PACKAGE} = patch_locale.py --host {client_host}",
                 f"{sha(got)[:16]} vs {sha(want)[:16]}")
@@ -197,6 +213,9 @@ def main(argv):
     print("bot profiles")
     for label, copy, there in (("client", client, have_client), ("host", host, have_host)):
         if not there:
+            continue
+        if lobby:  # the maps' catalog entries are the Go setup's only (server/internal/setup's TestFolderMapsStep)
+            r.line(f"{label} {bot_profiles.ARCHIVE}: not compared (it carries the maps folder's catalog entries)")
             continue
         want = bot_profiles.build(j(copy, *bot_profiles.SOURCE.split("/")))
         p = j(copy, *bot_profiles.REL.split("/"))
@@ -218,14 +237,16 @@ def main(argv):
         r.line("client: no server picker (not set up in picker mode)")
 
     for title, name, what in (("bot check box", "matchoptions", "bot check box"),
-                              ("chat rooms", "chatrooms", "chat rooms class")):
+                              ("chat rooms", "chatrooms", "chat rooms class"),
+                              ("review tabs", "aftaction", "After Action Review tabs"),
+                              ("shop refund", "itemshop", "shop refund class")):
         print(title)
         mo = patch_login_movie.SPECS[name]
         base = mo.rel.split("/")[-1]
         if not have_client:
             r.line("no client copy")
             continue
-        want = patch_login_movie.build(j(client, *mo.source.split("/")), spec=mo)
+        want = patch_login_movie.build(j(client, *mo.source.split("/")), spec=mo, host=client_host)
         p = j(client, *mo.rel.split("/"))
         got = read(p) if os.path.isfile(p) else b""
         # the front writes the maps of the server a login went to into the map list (MAPDROP-server): the rest equal
@@ -235,6 +256,24 @@ def main(argv):
                 f"{sha(got)[:16]} vs {sha(want)[:16]}")
         r.check(not os.path.isfile(j(host, *mo.rel.split("/"))), f"the host copy has no {what}")
         print(f"client {base}: {sha(got)}  ({'equal' if got == want else 'equal but the map list' if front else 'DIFFERENT'})")
+
+    print("collection items")
+    cs = patch_login_movie.SPECS["collection"]
+    content_file = j(a.root, "data", "content.json")
+    if not have_client:
+        r.line("no client copy")
+    elif not os.path.isfile(content_file):
+        r.line(f"no {content_file}: the item list isn't compared")
+    else:
+        # Start-Client's setup makes the list from the copy's own game data, the server's setup the content file from
+        # the same files: the same items
+        want = patch_login_movie.build(j(client, *cs.source.split("/")), spec=cs, content=content_file)
+        p = j(client, *cs.rel.split("/"))
+        got = read(p) if os.path.isfile(p) else b""
+        r.check(got == want, "client zz_CollectionItems.snap = patch_login_movie.py --spec collection --content "
+                "<the release's content.json>", f"{sha(got)[:16]} vs {sha(want)[:16]}")
+        r.check(not os.path.isfile(j(host, *cs.rel.split("/"))), "the host copy has no Collection items")
+        print(f"client zz_CollectionItems.snap: {sha(got)}  ({'equal' if got == want else 'DIFFERENT'})")
 
     print("halloween")
     hw_rel = "game/Data/" + halloween.ARCHIVE
@@ -299,7 +338,10 @@ def main(argv):
                         label == "host" and (rel.startswith("game/dgsim") or rel == "game/PhysXLoader_orig.dll")) and not (
                         label == "client" and rel in (patch_locale.REL, patch_login_movie.REL, LIST_ARCHIVE,
                                                       patch_login_movie.SPECS["matchoptions"].rel,
-                                                      patch_login_movie.SPECS["chatrooms"].rel, hw_rel)):
+                                                      patch_login_movie.SPECS["chatrooms"].rel,
+                                                      patch_login_movie.SPECS["aftaction"].rel,
+                                                      patch_login_movie.SPECS["itemshop"].rel,
+                                                      patch_login_movie.SPECS["collection"].rel, hw_rel)):
                     extra.append(rel)
         r.line(f"{label}: extra files {extra[:5] if extra else 'none'}")
 

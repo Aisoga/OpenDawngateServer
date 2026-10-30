@@ -78,7 +78,7 @@ var allSteps = []string{"certificates", "client copy", "client exe", "client con
 
 // synthLocal is the client copy's AA_Server.package for 127.0.0.1 from the synthetic archive's Locale.package: what
 // re/scripts/patch_locale.py makes from the same file (test_ph2b.py and localepatch_test.go pin the same SHA-256).
-const synthLocal = "cb454f8ce19f26dd777cca56bbb0aebb0bf38207f3bcd4cbacaaa7741bc760ae"
+const synthLocal = "476b2381284742ffbb866771e082af47beb87900b1567f35fc15c2cf3d420a7f"
 
 func localeSHA(t *testing.T, copy string) string {
 	t.Helper()
@@ -276,17 +276,26 @@ func TestClientForAnotherServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.Client("192.168.1.20", set.CAModulus); err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v:\n%s", err, s.Out.(*bytes.Buffer).String())
 	}
 	expect(t, s, map[string]Status{"client copy": Done, "client exe": Done, "client config": Done, "client texts": Done,
-		"bot check box": Done, "chat rooms": Done, "halloween": Done})
-	for _, sp := range []moviepatch.Spec{moviepatch.MatchOptions, moviepatch.ChatRooms} {
+		"bot check box": Done, "chat rooms": Done, "after action review": Done, "shop refund": Done, "halloween": Done,
+		"collection items": Done})
+	aar := moviepatch.AfterAction
+	aar.WebHost = "192.168.1.20" // the review's pages come from the copy's server
+	for _, sp := range []moviepatch.Spec{moviepatch.MatchOptions, moviepatch.ChatRooms, aar, moviepatch.ItemShop} {
 		src, _ := os.ReadFile(filepath.Join(s.ClientCopy(), filepath.FromSlash(sp.Source)))
 		want, err := sp.Build(src)
 		if b, err2 := os.ReadFile(filepath.Join(s.ClientCopy(), filepath.FromSlash(sp.Rel))); err != nil ||
 			err2 != nil || !bytes.Equal(b, want) {
 			t.Errorf("%s: %v, %v", sp.What, err, err2)
 		}
+	}
+	// the Collection's items: the movie and the item list of the copy's own game data
+	if b, err := os.ReadFile(filepath.Join(s.ClientCopy(), filepath.FromSlash(moviepatch.Collection.Rel))); err != nil {
+		t.Errorf("%s: %v", moviepatch.Collection.What, err)
+	} else if a, err := snap.Parse(b); err != nil || len(a.Entries) != 2 || a.Entries[1].Name != moviepatch.ItemsPath {
+		t.Errorf("%s: %v, %+v", moviepatch.Collection.What, err, a)
 	}
 	if b, _ := os.ReadFile(filepath.Join(s.ClientCopy(), filepath.FromSlash(localepatch.Rel))); !bytes.Contains(b,
 		[]byte("0x00000003 http://192.168.1.20:18080/dawngate/password\r\n")) {
@@ -309,7 +318,7 @@ func TestClientForAnotherServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	expect(t, s2, map[string]Status{"client copy": OK, "client exe": OK, "client config": OK, "client texts": OK,
-		"bot check box": OK, "chat rooms": OK, "halloween": OK})
+		"bot check box": OK, "chat rooms": OK, "after action review": OK, "halloween": OK})
 	// a map's archive in the copy: the create dialog's map list names it (its dropdown), and drops it again
 	mmArchive := filepath.Join(s.ClientCopy(), "game", "Data", "zz_MM_Map_v3.snap")
 	added := filepath.Join(s.ClientCopy(), filepath.FromSlash(moviepatch.MatchOptions.Rel))
@@ -325,7 +334,7 @@ func TestClientForAnotherServer(t *testing.T) {
 		if err := sm.Client("192.168.1.20", set.CAModulus); err != nil {
 			t.Fatal(err)
 		}
-		expect(t, sm, map[string]Status{"bot check box": Done, "chat rooms": OK})
+		expect(t, sm, map[string]Status{"bot check box": Done, "chat rooms": OK, "after action review": OK})
 		b, _ := os.ReadFile(added)
 		a, err := snap.Parse(b)
 		if err != nil || len(a.Entries) != 2 {

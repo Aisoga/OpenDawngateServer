@@ -35,3 +35,9 @@ server/data/
 
 # gms/ (C++ match host): CMake build tree (cmake -S gms -B gms/build -A Win32)
 gms/build/
+
+# maps/: infrastructure only (MAPCLEAN, the user's decision of 2026-10-28): the folder and its README are in git,
+# no map package is (everything else under maps/ stays on disk untracked); the tests' packages are fixtures in
+# server/testdata/maps
+/maps/*
+!/maps/README.md

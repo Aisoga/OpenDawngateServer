@@ -43,7 +43,7 @@ func (o *Object) Len() int { return len(o.keys) }
 func (o *Object) MarshalJSON() ([]byte, error) { return AppendJSON(nil, o), nil }
 
 // AppendJSON appends v as JSON, keys in order, so that it decodes as Python's json.dump output of the same
-// values does (spacing and float digits aside: a float is Go's shortest form, always with a point or an
+// values does (spacing and float digits aside; a float32 is its own shortest form: a float is Go's shortest form, always with a point or an
 // exponent, as Python's repr). NaN and the infinities become NaN, Infinity and -Infinity as with
 // Python's default allow_nan, which no JSON reader takes (so a dump that holds one fails to load in both
 // pipelines).
@@ -59,6 +59,16 @@ func AppendJSON(buf []byte, v any) []byte {
 		return strconv.AppendUint(buf, x, 10)
 	case int:
 		return strconv.AppendInt(buf, int64(x), 10)
+	case float32: // ParseExact's floats: the shortest text that reads back as the same float32
+		if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
+			return AppendJSON(buf, float64(x))
+		}
+		start := len(buf)
+		buf = strconv.AppendFloat(buf, float64(x), 'g', -1, 32)
+		if !strings.ContainsAny(string(buf[start:]), ".e") {
+			buf = append(buf, '.', '0')
+		}
+		return buf
 	case float64:
 		switch {
 		case math.IsNaN(x):

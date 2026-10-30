@@ -250,3 +250,62 @@ func TestGame(t *testing.T) {
 		t.Errorf("MM_Map_v3_NPC.bfx: sha256 %s, want %s", got, wantMMNPC)
 	}
 }
+
+// TestCells: a made-up graph's two areas (a square and a triangle) cover the cells whose centres lie in them, an
+// edge's own centres included; SM_Map_v5's shipped Player graph covers 98,554 cells of its 512 x 512 grid, none of
+// them blocked in its line-of-sight map.
+func TestCells(t *testing.T) {
+	area := func(pts ...[2]float32) Area {
+		a := Area{}
+		for _, p := range pts {
+			a.Edges = append(a.Edges, Edge{Pos: [3]float32{p[0], p[1], 0.7}})
+		}
+		return a
+	}
+	g := &Graph{Areas: []Area{area([2]float32{-2, -2}, [2]float32{2, -2}, [2]float32{2, 2}, [2]float32{-2, 2}),
+		area([2]float32{3, 0}, [2]float32{5, 0}, [2]float32{3, 2})}}
+	on := Cells(g, 16, 16) // cells of 1 m, cell (i, j) centred on (i - 8, j - 8)
+	want := map[[2]int]bool{}
+	for j := 6; j <= 10; j++ {
+		for i := 6; i <= 10; i++ {
+			want[[2]int{i, j}] = true
+		}
+	}
+	for _, c := range [][2]int{{11, 8}, {12, 8}, {13, 8}, {11, 9}, {12, 9}, {11, 10}} {
+		want[c] = true
+	}
+	for k, v := range on {
+		if c := [2]int{k % 16, k / 16}; v != want[c] {
+			t.Errorf("cell %v: %v", c, v)
+		}
+	}
+	snapSM := testgame.Read(t, "SM_Map_v5.snap")
+	raw, err := los.FromArchive(snapSM, "levels/SM_Map_v5/SM_Map_v5_Player.bfx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lraw, err := los.FromArchive(testgame.Read(t, los.Archive), "images/8bit/SM_Map_v5_LineOfSight.tga")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lim, err := los.Read(lraw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, blocked := 0, 0
+	for k, v := range Cells(img.Graphs[0], 525.434, 512) {
+		if v {
+			n++
+			if lim.Pix[k] != 0 {
+				blocked++
+			}
+		}
+	}
+	if n != 98554 || blocked != 0 {
+		t.Errorf("SM_Map_v5_Player: %d cells, %d of them blocked", n, blocked)
+	}
+}

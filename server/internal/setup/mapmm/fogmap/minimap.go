@@ -12,11 +12,24 @@ var (
 	baseRGB    = [3]int{139, 141, 172}
 	islandRGB  = [3]int{183, 177, 194} // SM_Map_v5's jungle
 	wallRGB    = [3]int{139, 103, 103}
-	wallFarRGB = [3]int{104, 78, 76}                             // SM_Map_v5's outer walls
-	rimRGB     = [3]int{34, 28, 30}                              // the dark line along every wall
-	bases      = [2][2]float64{{-206.0, -206.0}, {206.0, 206.0}} // MM_Map_v3's base ends, metres
-	islands    = [2][2]float64{{-260.8, -260.1}, {260.6, 261.1}} // its corner islands
+	wallFarRGB = [3]int{104, 78, 76} // SM_Map_v5's outer walls
+	rimRGB     = [3]int{34, 28, 30}  // the dark line along every wall
+	chasmRGB   = [3]int{38, 42, 58}  // a chasm (ours: SM_Map_v5 has none)
 )
+
+// MinimapSpec are the places a minimap colours apart from the lane: the two base ends (metres) and the islands.
+type MinimapSpec struct {
+	Bases   [2][2]float64
+	Islands [][2]float64
+	// Chasm marks open cells (index j*W+i, rows from the bottom) drawn as a chasm: seen through, not walked (nil: none).
+	Chasm []bool
+}
+
+// MM is MM_Map_v3's: its base ends and its two corner islands.
+var MM = MinimapSpec{
+	Bases:   [2][2]float64{{-206.0, -206.0}, {206.0, 206.0}},
+	Islands: [][2]float64{{-260.8, -260.1}, {260.6, 261.1}},
+}
 
 const (
 	baseRadius   = 50.0
@@ -40,6 +53,12 @@ func MinimapRGBA(img los.Image, sx, sy float64) ([]byte, error) {
 
 // MinimapRGBAFrom is MinimapRGBA with the map's field already computed.
 func MinimapRGBAFrom(img los.Image, f Field, sx, sy float64) []byte {
+	return MinimapRGBASpec(img, f, sx, sy, MM)
+}
+
+// MinimapRGBASpec is MinimapRGBAFrom with another map's bases and islands.
+func MinimapRGBASpec(img los.Image, f Field, sx, sy float64, spec MinimapSpec) []byte {
+	bases, islands := spec.Bases, spec.Islands
 	w, h := img.W, img.H
 	fw, fh := float64(w), float64(h)
 	out := make([]byte, w*h*4)
@@ -57,7 +76,9 @@ func MinimapRGBAFrom(img los.Image, f Field, sx, sy float64) []byte {
 			x := (float64(i) - fw/2) * sx / fw
 			k := j*w + i
 			var c [3]int
-			if img.Pix[k] == 0 {
+			if img.Pix[k] == 0 && spec.Chasm != nil && spec.Chasm[k] {
+				c = chasmRGB
+			} else if img.Pix[k] == 0 {
 				island := false
 				for _, p := range islands {
 					if hypot(x-p[0], y-p[1]) <= islandRadius {

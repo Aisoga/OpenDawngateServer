@@ -113,8 +113,11 @@ func TestBuildFromDump(t *testing.T) {
 	if !c.HasPerkStats() {
 		t.Error("HasPerkStats false")
 	}
-	if want := []MatchItem{{Name: "Basic_Blade", Title: "Blade", Category: "Stat", Tier: "Basic", Cost: 300}}; !reflect.DeepEqual(c.MatchItems, want) {
+	if len(c.MatchItems) != 7 || c.MatchItems[0].Name != "Advanced_Edge" || c.MatchItems[4].Name != "Consumable_Tonic" {
 		t.Errorf("match items: %+v", c.MatchItems)
+	}
+	if !c.HasItemDetails() {
+		t.Error("HasItemDetails false")
 	}
 	shiny := Drop{Type: "IndependentEvents", Chance: 1, Rarity: "Shiny"}
 	bags := []LootBag{{Name: "Copper", Title: "Common", RequiredBagScore: 25, ID: AssetID("Copper.LootBag")},

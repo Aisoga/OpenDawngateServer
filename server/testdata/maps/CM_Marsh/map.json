@@ -1,0 +1,172 @@
+{
+  "format": 1,
+  "name": "CM_Marsh",
+  "display": "Marsh",
+  "tag": "marsh",
+  "prefix": "[Marsh] ",
+  "size": 450,
+  "symmetry": "point",
+  "environment": "SM_Map_v5",
+  "tuning": "SM_Map_v5",
+  "lanes": [
+    {"id": 1, "width": 24, "knots": [[-170, -145], [-170, -100], [-182, -35], [-168, 35], [-150, 112],
+      [-112, 150], [-30, 174], [30, 174], [100, 170], [145, 170]]},
+    {"id": 2, "width": 24, "knots": [[-145, -170], [-100, -170], [-30, -174], [30, -174], [112, -150],
+      [150, -112], [168, -35], [182, 35], [170, 100], [170, 145]]}
+  ],
+  "base": {
+    "locus": [-196, -196],
+    "guardian": [-142, -142],
+    "shop": [-204, -204],
+    "spawns": [[-188.9, -183.9], [-183.3, -189.8], [-178.7, -186.6], [-179.7, -180.2], [-186.3, -178.7]],
+    "cores": [[-109.5, -109.5], [-158.9, -98.9], [-98.9, -158.9], [-189.1, -138.0], [-135.0, -189.1]],
+    "bindings": {
+      "1": [[-157.0, 106.1], [-161.5, 31.4], [-186.4, -46.3]],
+      "2": [[111.6, -159.8], [32.9, -165.7], [-44.7, -179.6]]
+    }
+  },
+  "wells": [{"pos": [-60, -130]}, {"pos": [-136, -66]}],
+  "camps": [
+    {"kind": "buff", "noun": "SpawnPoint_v5_Buff_Fungus.Noun", "pos": [-100, -15]},
+    {"kind": "buff", "noun": "SpawnPoint_v5_Buff_Fish.Noun", "pos": [-15, -100]},
+    {"kind": "camp", "noun": "SpawnPoint_v5_CreepsUgger.Noun", "pos": [-108, 52]},
+    {"kind": "camp", "noun": "SpawnPoint_v5_CreepsFungus.Noun", "pos": [60, -105]},
+    {"kind": "parasite", "noun": "SpawnPoint_Objective_Titan.Noun", "pos": [-3.4, 3.2]}
+  ],
+  "terrain": {
+    "default": "wall",
+    "shapes": [
+      {"type": "open", "lane": 1},
+      {"type": "open", "lane": 2},
+      {"type": "open", "circle": [-150, -150], "r": 60},
+      {"type": "open", "circle": [-192, -192], "r": 20},
+      {"type": "open", "circle": [-60, -130], "r": 26},
+      {"type": "open", "path": [[-60, -130], [-60, -172]], "width": 14},
+      {"type": "open", "path": [[-60, -130], [-100, -140]], "width": 14},
+      {"type": "open", "circle": [-136, -66], "r": 26},
+      {"type": "open", "path": [[-136, -66], [-172, -60]], "width": 14},
+      {"type": "open", "path": [[-136, -66], [-140, -100]], "width": 14},
+      {"type": "open", "path": [[-110, -110], [-65, -65]], "width": 16},
+      {"type": "open", "circle": [-65, -65], "r": 22},
+      {"type": "open", "path": [[-65, -65], [-100, -15]], "width": 14},
+      {"type": "open", "circle": [-100, -15], "r": 16},
+      {"type": "open", "path": [[-100, -15], [-172, -15]], "width": 12},
+      {"type": "open", "path": [[-100, -15], [-108, 52]], "width": 14},
+      {"type": "open", "circle": [-108, 52], "r": 16},
+      {"type": "open", "path": [[-108, 52], [-133, 129]], "width": 14},
+      {"type": "open", "path": [[-65, -65], [-15, -100]], "width": 14},
+      {"type": "open", "circle": [-15, -100], "r": 16},
+      {"type": "open", "path": [[-15, -100], [-15, -162]], "width": 12},
+      {"type": "open", "path": [[-15, -100], [60, -105]], "width": 14},
+      {"type": "open", "circle": [60, -105], "r": 16},
+      {"type": "open", "path": [[60, -105], [140, -140]], "width": 14},
+      {"type": "open", "path": [[-131, 131], [131, -131]], "width": 24},
+      {"type": "open", "path": [[-65, -65], [-20, -20]], "width": 14},
+      {"type": "open", "circle": [0, 0], "r": 28},
+      {"type": "open", "circle": [-112.0, -88.0], "r": 20},
+      {"type": "chasm", "circle": [-112.0, -88.0], "r": 10, "water": true},
+      {"type": "wall", "circle": [-14, -10], "r": 5},
+      {"type": "bush", "polygon": [[-87, -45], [-77, -45], [-77, -35], [-87, -35]]},
+      {"type": "bush", "polygon": [[-45, -87], [-35, -87], [-35, -77], [-45, -77]]},
+      {"type": "bush", "polygon": [[-61, 49], [-49, 49], [-49, 61], [-61, 61]]},
+      {"type": "bush", "polygon": [[-101, 89], [-89, 89], [-89, 101], [-101, 101]]},
+      {"type": "bush", "polygon": [[-186, -24], [-178, -24], [-178, -4], [-186, -4]]},
+      {"type": "bush", "polygon": [[-168, 60], [-160, 60], [-160, 80], [-168, 80]]},
+      {"type": "bush", "circle": [-99, -80], "r": 4.5},
+      {"type": "bush", "polygon": [[-92, -182], [-82, -182], [-82, -175], [-92, -175]]}
+    ]
+  },
+  "ground": {
+    "style": "baked",
+    "texels": 2048,
+    "tiles": 2,
+    "layers": [
+      {"name": "earth", "texture": {"procedural": "dirt"}, "scale": 40, "break": 0.8, "tint": [0.82, 0.86, 0.7]},
+      {
+        "name": "grass",
+        "texture": {"game": "environments/anshavar/textures/OutsouceGroundMap02_D.dds", "archive": "anshavar3.snap"},
+        "scale": 32,
+        "auto": "high",
+        "soft": 3,
+        "noise": 2,
+        "break": 0.8
+      },
+      {
+        "name": "path",
+        "texture": {"procedural": "dirt"},
+        "scale": 16,
+        "shapes": [
+          {"path": [[-110, -110], [-65, -65]], "width": 6, "soft": 2},
+          {"path": [[-65, -65], [-82.5, -40], [-100, -15]], "width": 5, "soft": 2},
+          {"path": [[-65, -65], [-15, -100]], "width": 5, "soft": 2},
+          {"path": [[-136, -66], [-172, -66]], "width": 4, "soft": 1.5}
+        ],
+        "tint": [1.4, 1.32, 1.15],
+        "break": 0.6
+      },
+      {
+        "name": "marsh moss",
+        "texture": {"file": "ground/marsh_moss.png"},
+        "scale": 12,
+        "shapes": [
+          {"circle": [-112.0, -88.0], "r": 26, "soft": 8},
+          {"path": [[-130, -100], [-95, -60]], "width": 10, "soft": 4}
+        ],
+        "noise": 2
+      },
+      {
+        "name": "pond mud",
+        "texture": {"procedural": "dirt"},
+        "scale": 14,
+        "auto": "chasm",
+        "tint": [0.45, 0.42, 0.36],
+        "soft": 3,
+        "shapes": []
+      }
+    ],
+    "stamps": [
+      {
+        "image": {"game": "environments/anshavar/textures/Mine_Disc_01_D.dds", "archive": "anshavar3.snap"},
+        "pos": [-136, -66],
+        "size": [16, 16]
+      }
+    ]
+  },
+  "props": [
+    {
+      "noun": "rock_forest_large_03",
+      "pos": [-65, -65],
+      "rot": 25,
+      "scale": 0.7,
+      "blocks": true,
+      "footprint": [9.3, 9.4],
+      "shadow": true
+    },
+    {
+      "noun": "tree_mangrove_trunk_02",
+      "pos": [-128, -74],
+      "rot": 140,
+      "scale": 1,
+      "blocks": true,
+      "footprint": [2.5, 2.5],
+      "shadow": true
+    },
+    {"noun": "plants_lilypad_groupt_01", "pos": [-114, -91, -1.9], "rot": 0, "scale": 1},
+    {"noun": "plants_lilypad_groupt_02", "pos": [-107, -84, -1.9], "rot": 60, "scale": 1},
+    {"noun": "plants_waterleaves_groupt_01", "pos": [-121, -98], "rot": 200, "scale": 1},
+    {
+      "group": {"level": "SM_Map_v5", "sets": ["D_IvyNFlowers", "D_VFX"], "at": [-60, -60], "r": 12},
+      "pos": [-128, -118],
+      "rot": 0,
+      "scale": 1
+    }
+  ],
+  "scatter": [
+    {
+      "nouns": ["tree_mangrove_trunk_02", "tree_mangrove_roots_01", "plants_waterleaves_groupt_01",
+        "rock_forest_small_02"],
+      "seed": 52731,
+      "polygon": [[-142, -112], [-92, -112], [-92, -62], [-142, -62]]
+    }
+  ]
+}

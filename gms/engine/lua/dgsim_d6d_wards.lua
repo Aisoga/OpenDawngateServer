@@ -2,7 +2,8 @@
 -- objects on the server now. Walks the live objects (nObjectManager.GetObjectIdByIndex, stopping at the first slot
 -- that returns none) and lists every one whose nGameObject.GetNPCType is nNPCType.Ward: its id, asset, team, position
 -- and the nearest of condition_Bot_Ward's 18 ward spots (Conditions!condition_Bot_Ward.lua's vectors; each side's
--- table holds 11 of them; name and distance), then the count per team.
+-- table holds 11 of them; name and distance; on a compiled map with its own spots the level's, MAPED4b), then the
+-- count per team.
 local out = {}
 local function p(...)
   local t = {}
@@ -22,6 +23,20 @@ local kSpots = {
 local ok, err = pcall(function()
   local spots = {}
   for _, s in ipairs(kSpots) do spots[#spots + 1] = {name = s[1], pos = nVector.create(s[2], s[3], 0)} end
+  -- MAPED4b: a compiled map's own spots (nBotHost.WardSpot) instead of the data's, named LevelMortal<k>/LevelSpirit<k>
+  local fn = type(nBotHost) == 'table' and nBotHost.WardSpot or nil
+  if type(fn) == 'function' then
+    local own = {}
+    for side = 1, 2 do
+      for k = 1, 64 do
+        local state, x, y = fn(side, k)
+        if state ~= 2 then break end
+        own[#own + 1] = {name = (side == 1 and 'LevelMortal' or 'LevelSpirit') .. k, pos = nVector.create(x, y, 0)}
+      end
+    end
+    if #own > 0 then spots = own end
+    p(string.format('d6d wards: %s spots (%d)', #own > 0 and "the level's" or "the data's", #spots))
+  end
   local seen, wards, perTeam = {}, 0, {}
   for i = 0, 1023 do
     local id = nObjectManager.GetObjectIdByIndex(i)

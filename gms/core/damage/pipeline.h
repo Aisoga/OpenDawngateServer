@@ -327,10 +327,11 @@ inline int DurationMsFromSeconds(float seconds) {
 }
 
 enum class AtDeath { kKeep, kEnd, kInterrupt, kKeepReleased };
-// D1f-live step 5 / Q3 (gms/engine/death.cpp): at a death (3 Lua scheduler runs later) the victim's modifiers with
-// OnAgentDeath end, except a player's item passives, which its item slots hold (death_keep_item_passives; 20 of the 77
-// item passives have OnAgentDeath, among them Purity's and Devotion's heal and Faith's regeneration) [assumed: the
-// original kept or re-created them]. Lockouts and debuffs on the victim (Mortal Strike, Recently Transfused) end then.
+// D1f-live step 5 (gms/engine/death.cpp): at a death (3 Lua scheduler runs later) the victim's modifiers with
+// OnAgentDeath end, a player's item passives among them (20 of the 77 item passives have OnAgentDeath: Purity's and
+// Devotion's heal, the Legendary auras, Faith's regeneration); they start again at the respawn (itempassives.h).
+// `itemPassiveKept`: Q3's rule (death_keep_item_passives=1), which kept them running through the death. Lockouts and
+// debuffs on the victim (Mortal Strike, Recently Transfused) end then.
 inline AtDeath ModifierAtDeath(unsigned deactivationType, bool itemPassiveKept) {
   if (itemPassiveKept) return AtDeath::kKeep;
   return (deactivationType & kDeactOnAgentDeath) ? AtDeath::kEnd : AtDeath::kKeep;

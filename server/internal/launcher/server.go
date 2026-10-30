@@ -82,14 +82,21 @@ halloween = off
 
 ; The map of every match on this server: SM_Map_v5 (The Dawngate, the game's map, the default) or MM_Map_v3 (Anshavar
 ; Pass, the cut one-lane map, unfinished: it plays by the main map's rules; the setup makes its files,
-; game\Data\zz_MM_Map_v3.snap, from the game's own in every player's game and in the match hosts' copy). A change takes
-; effect at the next start.
+; game\Data\zz_MM_Map_v3.snap, from the game's own in every player's game and in the match hosts' copy), or a map
+; package copied into the maps folder beside Start-Server.exe, by its name (for example CM_Ring); every player then
+; needs the same package in the maps folder beside their Start-Client.exe, which downloads it from this server at the
+; login (serve_maps below). A change takes effect at the next start.
 map = SM_Map_v5
 
 ; The maps a custom game's creator may pick in the CREATE GAME dialog's map list, or by ending the game's name with a
 ; tag: ~#mm for MM_Map_v3, ~#sm for SM_Map_v5 (always allowed, as is the map above). Players see MM_Map_v3's games as
 ; "[Pass] <name>". Comma-separated, for example MM_Map_v3; empty: none.
 custom_maps =
+
+; Map delivery: on (the default) hands the maps folder's packages of the maps above (map, custom_maps) to the players'
+; Start-Client.exe through the tunnel when they log in without them; each player's Start-Client checks a package and
+; installs it at its next start. off hands out none: players copy the packages into their maps folder by hand.
+serve_maps = on
 
 ; Who can make an account. Players log in with a login name (3-32 of A-Z a-z 0-9 . _ - @) and a password
 ; (8-63 characters), which the server checks.
@@ -176,6 +183,15 @@ online_count_every = 30s
 ; out until the next login). Players join the other rooms by double-clicking them; none = no rooms.
 chat_rooms = General, Looking for group, Matchmaking:queue:open
 
+; The match history (every finished match with its statistics, on the game's home page): players see everyone's
+; games with the players' names (on), or each player sees only their own name and their own games' list (off).
+match_history_names = on
+
+; The match recorder: on writes a file per match next to the match's logs (Dawngate-Data\logs\hosts\<match>\
+; matchrec_<match>_<start>.txt): the seats, every player's commands, every player's position and state five times a
+; second and the match's events, at most 64 MB a match. For studying how matches are played; off by default.
+match_record = off
+
 ; Discord channel posts by webhook (the hosting guide, "Discord channel posts"). Whoever has a webhook address
 ; (https://discord.com/api/webhooks/...) can post to its channel: keep this file private. In Discord: Server
 ; Settings, Integrations, Webhooks, New Webhook, choose the channel, Copy Webhook URL. Empty: no posts.
@@ -228,7 +244,8 @@ var serverKeys = []string{"address", "bind", RiskAckKey, "profile", "tunnel", "g
 	"signups_per_address", "log_days", "web_port", "web_domain", "web_email", "web_proxy", "folder", "zip", "server_flags",
 	"wine", ClientPackageKey, "discord_webhook", "discord_webhook_queue", "discord_webhook_result", "discord_webhook_server", "discord_queue_ping",
 	"discord_ping_cooldown", "discord_ping_min_wait", "discord_names", "discord_queue_edit", "discord_result_modes",
-	"online_count", "online_count_every", "chat_rooms", "halloween", "map", "custom_maps"}
+	"online_count", "online_count_every", "chat_rooms", "match_history_names", "halloween", "map", "custom_maps",
+	"match_record"}
 
 // IO is where a launcher talks: the console normally, buffers in tests.
 type IO struct {
@@ -593,7 +610,7 @@ func RunServer(args []string, o IO) int {
 	l := setup.Layout{Root: root}
 	// with a web domain the client copy's login links go to https://<domain>/<page> (sitelinks.Base)
 	s := &setup.Setup{Layout: l, Out: o.Out, Live: o.Live, Check: *check, FindZip: zipFinder(o, in, zipConf, sources), HostFiles: files,
-		Manifest: manifest, WebDomain: web.Domain}
+		Manifest: manifest, WebDomain: web.Domain, Maps: MapsDir(o.ExeDir)}
 	var release func()
 	if !*check {
 		if release, err = setup.Lock(root); err != nil {
@@ -645,7 +662,7 @@ func RunServer(args []string, o IO) int {
 		return 0
 	}
 
-	own := append(append(append(loginFlags, web.Flags()...), DiscordFlags(cfg)...), append(append(append(OnlineCountFlags(cfg), ChatRoomsFlags(cfg)...), HalloweenFlags(cfg)...), MapFlags(cfg)...)...)
+	own := append(append(append(loginFlags, web.Flags()...), DiscordFlags(cfg)...), append(append(append(append(append(OnlineCountFlags(cfg), ChatRoomsFlags(cfg)...), MatchHistoryFlags(cfg)...), HalloweenFlags(cfg)...), MatchRecordFlags(cfg)...), append(append(MapFlags(cfg), MapsFlags(o.ExeDir)...), ServeMapsFlags(cfg)...)...)...)
 	if clientPackage {
 		own = append(own, "--client-package")
 	}

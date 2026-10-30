@@ -17,6 +17,7 @@ import (
 	"dawngate/server/internal/logging"
 	"dawngate/server/internal/redirector"
 	"dawngate/server/internal/setup"
+	"dawngate/server/internal/setup/moviepatch"
 	"dawngate/server/internal/telemetry"
 	"dawngate/server/internal/tunnel"
 	"dawngate/server/internal/version"
@@ -164,6 +165,13 @@ type Front struct {
 	slots     map[string]int // the servers' link slots by tag (slotOf), kept for the run
 	slotTags  []string       // the tags by slot
 	lastSts   []serverStatus // the statuses of the list written last (the pages' server list)
+
+	// Maps are the create dialog's entries of the maps folder beside the programs (folderDialogMaps): the dialog's list
+	// per server (writeMapList) offers them too when the copy has their archives.
+	Maps []moviepatch.Map
+	// MapDownload is map delivery (front_mapdist.go; nil: off): at a login, the server's maps the copy lacks.
+	MapDownload *MapDownload
+	mapDL       frontMapDL
 
 	listMu     sync.Mutex
 	listCopy   string // the player copy the server list is written into (WriteServerList)
@@ -742,7 +750,7 @@ func (f *Front) connect(b Bookmark) (*frontSession, error) {
 	}
 	s := &frontSession{b: b, facts: r.facts}
 	s.c = &tunnel.Client{Log: f.Log, Gateway: gw, Pin: served, TunnelIP: f.TunnelIP, External: true, DialTimeout: f.ConnectTimeout,
-		Release: f.releaseFor(b, r.version)}
+		Release: f.releaseFor(b, r.version), Maps: f.installedMaps()}
 	s.c.Deliver = f.deliverFor(s)
 	if err := s.c.Start(); err != nil {
 		if errors.Is(err, tunnel.ErrPinMismatch) {

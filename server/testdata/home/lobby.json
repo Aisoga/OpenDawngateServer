@@ -7,6 +7,6 @@
   {"title":"Saturday <brawl> & bots","map":"Anshavar Pass","players":3,"seats":10,"spectators":1,"bots":true,"private":false}
  ],
  "results":[
-  {"mode":"pvp","kind":"PvP match","map":"The Dawngate","winner":1,"reason":"guardian","durationSec":1453,"endedAgoSec":190,"teams":[{"shapers":["Ember","Kel"],"bots":3},{"shapers":["Nissa"],"bots":4}]}
+  {"matchId":42,"mode":"pvp","kind":"PvP match","map":"The Dawngate","winner":1,"reason":"guardian","durationSec":1453,"endedAgoSec":190,"teams":[{"shapers":["Ember","Kel"],"bots":3},{"shapers":["Nissa"],"bots":4}]}
  ],
  "server":{"release":"v0.99","map":"SM_Map_v5","halloween":false,"customMaps":["Anshavar Pass"]}}

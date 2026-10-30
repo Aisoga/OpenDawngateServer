@@ -292,7 +292,7 @@ this server for your logins too. If they differ, close this page.</p>
 	}
 	f.forwardPage(c, req, b, page, func() (net.Conn, func(), error) {
 		tc := &tunnel.Client{Log: f.Log, Gateway: b.Gateway(), Pin: info.Pin, TunnelIP: f.TunnelIP, External: true, DialTimeout: f.ConnectTimeout,
-			Release: f.releaseFor(b, info.Version)}
+			Release: f.releaseFor(b, info.Version), Maps: f.installedMaps()}
 		if err := tc.Start(); err != nil {
 			return nil, nil, err
 		}

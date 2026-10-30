@@ -243,4 +243,67 @@ func TestLobbyMapLabel(t *testing.T) {
 		t.Errorf("levels besides %s %v (%q), the dialog's maps %+v, the lobby's line %q", HostedLevel, other, display,
 			moviepatch.ExtraMaps, line)
 	}
+	// MAPTABLE: the patched client names each map by the line of its LevelId, which the setup writes for the built-in
+	// maps (localepatch.BuiltInMaps) and the maps folder's: the same ids and names as here
+	for _, m := range localepatch.BuiltInMaps {
+		if l, ok := FindLevel(m.Name); !ok || l.Display != m.Display || localepatch.LevelID(m.Name) != LevelAssetID(l.Name) {
+			t.Errorf("built-in map %+v: level %+v", m, l)
+		}
+	}
+	if len(localepatch.BuiltInMaps) != len(PlayableLevels)-1 {
+		t.Errorf("localepatch.BuiltInMaps %v, PlayableLevels %v", localepatch.BuiltInMaps, PlayableLevels)
+	}
+}
+
+// withLevels adds levels for one test and takes them away after it.
+func withLevels(t *testing.T, ls ...PlayableLevel) {
+	t.Helper()
+	orig := PlayableLevels
+	t.Cleanup(func() { PlayableLevels = orig })
+	if err := AddLevels(ls...); err != nil {
+		t.Fatal(err)
+	}
+}
+
+var ringLevel = PlayableLevel{Name: "CM_Ring", Tag: "ring", Label: "[Ring] ", Archive: "zz_CM_Ring.snap",
+	Display: "Test Ring"}
+
+// TestAddLevels: a maps folder's map is parsed by name and tag, cut from a game's name, offered by --custom-maps and
+// named by its display name; a taken name or tag, a bad name or a missing field adds nothing.
+func TestAddLevels(t *testing.T) {
+	withLevels(t, ringLevel)
+	for _, in := range []string{"CM_Ring", "cm_ring.Level", "ring"} {
+		if got, err := ParseLevel(in); err != nil || got != "CM_Ring" {
+			t.Errorf("ParseLevel(%q) = %q, %v", in, got, err)
+		}
+	}
+	if rest, _, tag, ok := cutNameTags("Friday~#ring"); !ok || tag.Name != "CM_Ring" || rest != "Friday" {
+		t.Errorf("cutNameTags: %q %+v %v", rest, tag, ok)
+	}
+	if got := OfferedMapTags("", []string{"MM_Map_v3", "CM_Ring"}); strings.Join(got, ",") != "mm,ring" {
+		t.Errorf("OfferedMapTags %v", got)
+	}
+	if got := OfferedMapTags("CM_Ring", nil); strings.Join(got, ",") != "ring" {
+		t.Errorf("OfferedMapTags for the server's own map %v", got)
+	}
+	if LevelDisplay("CM_Ring") != "Test Ring" {
+		t.Errorf("LevelDisplay %q", LevelDisplay("CM_Ring"))
+	}
+	n := len(PlayableLevels)
+	for _, bad := range [][]PlayableLevel{
+		{{Name: "CM_Two", Tag: "two", Archive: "zz_CM_Two.snap", Display: "Two"},
+			{Name: "CM_Ring", Tag: "r2", Archive: "a", Display: "d"}},
+		{{Name: "CM_X", Tag: "mm", Archive: "a", Display: "d"}},
+		{{Name: "CM_X", Tag: "ring", Archive: "a", Display: "d"}},
+		{{Name: "CM X", Tag: "x", Archive: "a", Display: "d"}},
+		{{Name: "CM_X", Tag: "x", Display: "d"}},
+		{{Name: "CM_X", Tag: "sm_map_v5", Archive: "a", Display: "d"}},
+	} {
+		if err := AddLevels(bad...); err == nil {
+			t.Errorf("AddLevels(%+v) took it", bad)
+		}
+		if len(PlayableLevels) != n {
+			t.Fatalf("a refused AddLevels left %d levels, %d before", len(PlayableLevels), n)
+		}
+	}
 }

@@ -27,6 +27,22 @@ list as current (map_list_only).
 And for the chat rooms the server marks as open by default (--spec chatrooms): client_ui/chatrooms/AutoRooms.as, its tags
 server/internal/setup/moviepatch/chatrooms_tags.hex, the chat movie UI/Scaleform/Global/Chat.gfx from
 game/Data/Global.snap, the added archive game/Data/zz_Chat.snap (the same id and depth, 2000).
+And for the After Action Review's tabs (--spec aftaction): client_ui/aftaction/AfterActionTabs.as, its tags
+server/internal/setup/moviepatch/aftaction_tags.hex, the movie UI/Scaleform/Battlegrounds/AfterActionReviewUI.gfx from
+game/Data/Battlegrounds.snap, the added archive game/Data/zz_AfterActionReview.snap (the same id and depth, 2000). That
+archive also holds the web root of the server the copy is set up for, UI/Scaleform/Battlegrounds/dgweb.json
+(web_root_file: the root the config packages' web content URLs use, http://<host>:18080/battlegrounds_test/live/www/
+client/1/common; --host names the copy's server, default 127.0.0.1), from which the class loads the match history pages.
+And for the item shop's inline refund (--spec itemshop): client_ui/itemshop/ShopRefund.as, its tags
+server/internal/setup/moviepatch/itemshop_tags.hex, the shop movie UI/Scaleform/HUD/ItemShopUI.gfx from
+game/Data/HUD.snap, the added archive game/Data/zz_ItemShop.snap (the same id and depth, 2000). The class's optional
+settings file (HUD/dgrefund.json: a gate, a debug text box) is in the archive with no settings (REFUND_SETTINGS; a
+missing file would log a FileDepot.cpp 138 assert at every match start); a test writes its own.
+And for the Collection's Items category (--spec collection): client_ui/collection/CollectionItems.as, its tags
+server/internal/setup/moviepatch/collection_tags.hex, the front end's movie UI/Scaleform/CDN/swf/code/UIRuntime.gfx from
+game/Data/code.snap, the added archive game/Data/zz_CollectionItems.snap (the same id and depth, 2000). That archive
+also holds the item list, UI/Scaleform/Collection/dgitems.json (item_list), written from the server's content.json
+(--content; the item icons are the game's own textures, which the front end has mounted).
 
 Usage (python -I: the game's files are untrusted input):
     python -I re/scripts/patch_login_movie.py <game/Data/LoginScreen.snap> <out zz_ServerPicker.snap> [--tags <file>]
@@ -34,8 +50,15 @@ Usage (python -I: the game's files are untrusted input):
                                               [--maps mm|none]   # the map list's maps (default: the copy's own)
     python -I re/scripts/patch_login_movie.py --read-map-list <copy holding game/Data>   # print the copy's map list
     python -I re/scripts/patch_login_movie.py --spec chatrooms <game/Data/Global.snap> <out zz_Chat.snap>
-    python -I re/scripts/patch_login_movie.py [--spec matchoptions|chatrooms] --movie <in .gfx> <out .gfx> [--tags <file>]
+    python -I re/scripts/patch_login_movie.py --spec aftaction <game/Data/Battlegrounds.snap> <out zz_AfterActionReview.snap>
+                                              [--host <address>]   # the copy's server (patch_config.py's --host)
+    python -I re/scripts/patch_login_movie.py --spec itemshop <game/Data/HUD.snap> <out zz_ItemShop.snap>
+    python -I re/scripts/patch_login_movie.py --spec collection --content <server/data/content.json> <game/Data/code.snap>
+                                              <out zz_CollectionItems.snap> [--debug]   # --debug: the class's log lines
+    python -I re/scripts/patch_login_movie.py [--spec matchoptions|chatrooms|aftaction|itemshop|collection] --movie <in .gfx> <out .gfx> [--tags <file>]
 """
+import json
+import math
 import os
 import struct
 import sys
@@ -52,10 +75,14 @@ MOVIEPATCH = os.path.join(REPO, "server", "internal", "setup", "moviepatch")
 class Spec:
     """One added class: the archive its movie comes from, the added archive, the movie's path, the committed tags."""
 
-    def __init__(self, what, source, rel, movie_path, tags, class_name, char_id=2000, depth=2000, map_list=False):
+    def __init__(self, what, source, rel, movie_path, tags, class_name, char_id=2000, depth=2000, map_list=False,
+                 web_root=False, extra=(), items=False):
         self.what, self.source, self.rel, self.movie_path = what, source, rel, movie_path
         self.tags, self.class_name, self.char_id, self.depth = tags, class_name, char_id, depth
         self.map_list = map_list  # the archive also holds the create dialog's map list (MAP_LIST_PATH)
+        self.web_root = web_root  # the archive also holds the server's web root (WEB_ROOT_PATH)
+        self.extra = tuple(extra)  # more files of the archive, after the movie: (path, bytes)
+        self.items = items  # the archive also holds the Collection's item list (ITEMS_PATH, from a content.json)
 
 
 SPECS = {
@@ -67,7 +94,20 @@ SPECS = {
                          os.path.join(MOVIEPATCH, "matchoptions_tags.hex"), "BotCheckbox", map_list=True),
     "chatrooms": Spec("the chat rooms opened by default", "game/Data/Global.snap", "game/Data/zz_Chat.snap",
                       "UI/Scaleform/Global/Chat.gfx", os.path.join(MOVIEPATCH, "chatrooms_tags.hex"), "AutoRooms"),
+    "aftaction": Spec("the After Action Review's tabs", "game/Data/Battlegrounds.snap",
+                      "game/Data/zz_AfterActionReview.snap", "UI/Scaleform/Battlegrounds/AfterActionReviewUI.gfx",
+                      os.path.join(MOVIEPATCH, "aftaction_tags.hex"), "AfterActionTabs", web_root=True),
+    "itemshop": Spec("the shop's inline refund", "game/Data/HUD.snap", "game/Data/zz_ItemShop.snap",
+                     "UI/Scaleform/HUD/ItemShopUI.gfx", os.path.join(MOVIEPATCH, "itemshop_tags.hex"), "ShopRefund",
+                     extra=(("UI/Scaleform/HUD/dgrefund.json", b"dawngate-refund\t1\nend\n"),)),
+    "collection": Spec("the Collection's items", "game/Data/code.snap", "game/Data/zz_CollectionItems.snap",
+                       "UI/Scaleform/CDN/swf/code/UIRuntime.gfx", os.path.join(MOVIEPATCH, "collection_tags.hex"),
+                       "CollectionItems", items=True),
 }
+# The shop refund's settings file (client_ui/itemshop/ShopRefund.as reads it as HUD/dgrefund.json): the setup writes
+# the default (no settings), since the class always asks for it and a missing file costs a FileDepot.cpp 138 assert
+# ("load failed") at every match start; a test writes its own. moviepatch.RefundSettings.
+REFUND_SETTINGS_PATH, REFUND_SETTINGS = SPECS["itemshop"].extra[0]
 PICKER = SPECS["picker"]
 
 # The create dialog's map list (client_ui/matchoptions/BotCheckbox.as reads it as Battlegrounds/dgmaps.json; the game's
@@ -83,6 +123,179 @@ MAP_LIST_SIZE = 1 << 10
 # dropdown's text, the map's display name (the lobby's map line says the same, patch_locale.LOBBY_LINES; the browser
 # and the lobby's title show the server's prefix, "[Pass] "). MM_Map_v3 is shown to players as Anshavar Pass.
 EXTRA_MAPS = (("mm", "zz_MM_Map_v3.snap", "Anshavar Pass"),)
+# The After Action Review's web root (client_ui/aftaction/AfterActionTabs.as reads it as Battlegrounds/dgweb.json):
+# "dawngate-web<TAB>1", "common<TAB><the web content's common root>", "end"; LF, ASCII. The root is the one the copy's
+# config packages give the game's web content (patch_config.py: http://<host>:18080, the client's DRC path 1; the
+# server's web.webContentRoot), the same in a tunnelled copy (the front passes the HTTP port to the current server).
+WEB_ROOT_PATH = "UI/Scaleform/Battlegrounds/dgweb.json"
+WEB_ROOT_MAGIC = "dawngate-web\t1"
+WEB_PORT = 18080
+WEB_CONTENT_ROOT = "battlegrounds_test/live/www/client/1/common"
+DEFAULT_HOST = "127.0.0.1"
+
+
+# The Collection's item list (client_ui/collection/CollectionItems.as reads it as Collection/dgitems.json), written from
+# the server's content.json (its matchItems and itemFilters, the game's own item data; moviepatch.ItemList in Go, the
+# same bytes). The file (UTF-8, LF, tab-separated):
+#     dawngate-collitems	2
+#     filter	<group>	<tag>	<title>             one per tag of the shop's filter groups, in their order
+#     item	<name>	<title>	<kind>	<cost>	<group>	<icon>     one per match item a player can buy, then its details:
+#     stat	<runs>                              one per stat: the shop's line ("+20 Haste")
+#     passive	<kind>	<title>	<runs>              one per passive (kind unique, stackable or empty)
+#     active	<kind>	<title>	<cooldown>	<runs>  its active (a spell's ability, a consumable's effect; cooldown in s)
+#     from	<name>                              one per item it builds from (in the list)
+#     into	<name>                              one per item it builds into (in the list)
+#     tags	<tag> <tag> ...                     its stats' attributes and its tags (the shop filters' keys)
+#     end
+# kind: basic, advanced or legendary (the item's tier), consumable or spell (its category); group: a spell's own
+# (AbilityItemCategory: Offense, Utility or Defense), any other item's the shop's filter groups (their titles) that hold
+# one of its tags, in the shop's order, joined by " / " ("Offense / Utility"), empty without such a tag (COLLITEMS10:
+# the game gives the other items no category of their own); icon: its ShopIcons texture in UI_Icons.snap (forward
+# slashes). <runs> is text in colours: pairs <colour><TAB><text>, the colour "#RRGGBB" or
+# empty (plain) or "n" (a line break, empty text). Items ordered by kind (ITEM_KIND_ORDER), cost, then title; without
+# the cheat items (the flag, or a name starting consumable_debug or holding cheat, as the server's isCheatItem) and
+# without an item whose own fields hold a tab or a line end; in the details a tab or CR is a space. debug=True adds
+# "debug<TAB>1" (the class's Assert lines; research only).
+ITEMS_PATH = "UI/Scaleform/Collection/dgitems.json"
+ITEMS_MAGIC = "dawngate-collitems\t2"
+ITEM_KIND_ORDER = {"basic": 0, "advanced": 1, "legendary": 2, "consumable": 3, "spell": 4}
+
+
+def _flat(s):
+    """A detail field: tabs, CR and line ends as spaces."""
+    return str(s or "").replace("\t", " ").replace("\r", " ").replace("\n", " ")
+
+
+def _runs(parts, text=""):
+    """Text runs as list fields (colour, text, ...): parts [{t, c}] (else `text` plain); a line end is the pair ("n", "")."""
+    if not parts:
+        parts = [{"t": text}] if text else []
+    out = []
+    for p in parts:
+        c = str(p.get("c") or "")
+        if not (len(c) == 7 and c[0] == "#" and all(x in "0123456789abcdefABCDEF" for x in c[1:])):
+            c = ""
+        for k, piece in enumerate(str(p.get("t") or "").split("\n")):
+            if k > 0:
+                out += ["n", ""]
+            piece = piece.replace("\t", " ").replace("\r", " ")
+            if piece:
+                out += [c, piece]
+    return out
+
+
+def _item_tags(it):
+    """A match item's tags in the list: its stats' attributes, then its tags, each once, none with a space."""
+    tags = []
+    for t in [str(s.get("id") or "") for s in it.get("stats") or []] + [str(t) for t in it.get("tags") or []]:
+        if _tag_ok(t) and t not in tags:
+            tags.append(t)
+    return tags
+
+
+def _tag_ok(t):
+    """A tag the list carries: not empty, without a space, tab or line end."""
+    return bool(t) and not any(c in t for c in " \t\r\n")
+
+
+def _filter_groups(content):
+    """The shop's filter groups as [(title, [tag, ...])] in the shop's order (the tags the list's filter lines carry)."""
+    return [(_flat(f.get("title") or f.get("name")),
+             [str(t.get("tag") or "") for t in f.get("tags") or [] if _tag_ok(str(t.get("tag") or ""))])
+            for f in content.get("itemFilters") or []]
+
+
+def item_group(it, groups):
+    """A match item's group in the list: a spell's own, else the titles of the filter groups (`_filter_groups`) that
+    hold one of its tags, in their order, joined by " / " (empty: none)."""
+    if item_kind(it) == "spell":
+        return str(it.get("group") or "")
+    tags = set(_item_tags(it))
+    out = []
+    for title, gtags in groups:
+        if title and title not in out and tags.intersection(gtags):
+            out.append(title)
+    return " / ".join(out)
+
+
+def _details(it, listed):
+    """The detail lines (without line ends) of a match item; `listed` the names of the items in the list."""
+    lines = []
+    for s in it.get("stats") or []:
+        runs = _runs(s.get("parts") or [], str(s.get("id") or ""))
+        if runs:
+            lines.append("stat\t" + "\t".join(runs))
+    for p in it.get("passives") or []:
+        lines.append("\t".join(["passive", _flat(p.get("kind")), _flat(p.get("title"))]
+                               + _runs(p.get("parts") or [], str(p.get("text") or ""))))
+    a = it.get("activeInfo") or {}
+    runs = _runs(a.get("parts") or [], str(a.get("text") or ""))
+    if runs:
+        cd = float(a.get("cooldown") or 0)
+        lines.append("\t".join(["active", _flat(a.get("kind")), _flat(a.get("title")),
+                                str(int(math.floor(cd + 0.5)) if cd > 0 else 0)] + runs))
+    for key in ("from", "into"):
+        for st in it.get(key) or []:
+            if str(st.get("item") or "") in listed:
+                lines.append(key + "\t" + str(st.get("item")))
+    tags = _item_tags(it)
+    if tags:
+        lines.append("tags\t" + " ".join(tags))
+    return lines
+
+
+def item_kind(it):
+    """A match item's kind in the list: spell (category Ability), consumable (category Consumable), else its tier."""
+    if it.get("category") == "Ability":
+        return "spell"
+    if it.get("category") == "Consumable":
+        return "consumable"
+    return str(it.get("tier") or "").lower()
+
+
+def item_list(content, debug=False):
+    """The Collection's item list (bytes) from a content.json's data (a dict) or its path."""
+    if isinstance(content, str):
+        with open(content, encoding="utf-8") as f:
+            content = json.load(f)
+    rows = []
+    groups = _filter_groups(content)
+    for it in content.get("matchItems") or []:
+        name = str(it.get("name") or "")
+        low = name.lower()
+        if it.get("cheat") or low.startswith("consumable_debug") or "cheat" in low:
+            continue
+        kind = item_kind(it)
+        cost = int(it.get("cost") or 0)
+        fields = [name, str(it.get("title") or name), kind, str(cost), item_group(it, groups),
+                  str(it.get("icon") or "").replace("\\", "/")]
+        if any("\t" in x or "\n" in x or "\r" in x for x in fields):
+            continue
+        rows.append((ITEM_KIND_ORDER.get(kind, len(ITEM_KIND_ORDER)), cost, fields[1].encode("utf-8"), fields, it))
+    rows.sort(key=lambda r: r[:3])
+    listed = {r[3][0] for r in rows}
+    out = [ITEMS_MAGIC] + (["debug\t1"] if debug else [])
+    for f in content.get("itemFilters") or []:
+        group = _flat(f.get("title") or f.get("name"))
+        for t in f.get("tags") or []:
+            tag = str(t.get("tag") or "")
+            if _tag_ok(tag):
+                out.append("\t".join(["filter", group, tag, _flat(t.get("title") or tag)]))
+    for r in rows:
+        out.append("item\t" + "\t".join(r[3]))
+        out += _details(r[4], listed)
+    return ("\n".join(out + ["end"]) + "\n").encode("utf-8")
+
+
+def web_root_file(host=DEFAULT_HOST, port=WEB_PORT):
+    """dgweb.json's bytes for the copy's server `host` (moviepatch.WebRootFile)."""
+    if not host or any(c <= " " or c >= "\x7f" or c in "\"'<>" for c in host):
+        raise ValueError(f"web root: host {host!r}: only printable ASCII without spaces, quotes or angle brackets")
+    if not 1 <= port <= 65535:
+        raise ValueError(f"web root: port {port}: must be 1..65535")
+    return f"{WEB_ROOT_MAGIC}\ncommon\thttp://{host}:{port}/{WEB_CONTENT_ROOT}\nend\n".encode("ascii")
+
+
 # The picker's names, as before the specs.
 TAGS = PICKER.tags
 MOVIE_PATH = PICKER.movie_path
@@ -343,10 +556,16 @@ def map_list_only(have, want):
             text.startswith((MAP_LIST_MAGIC + "\n").encode("utf-8")) and b"\nend\n" in text)
 
 
-def build(snap_path, tags=None, spec=PICKER, maps=None):
+def build(snap_path, tags=None, spec=PICKER, maps=None, host=None, content=None, debug=False):
     """The added archive's bytes (zz_ServerPicker.snap from the player's LoginScreen.snap; with the matchoptions spec
-    zz_MatchOptions.snap from Battlegrounds.snap, with the chatrooms spec zz_Chat.snap from Global.snap). The
-    matchoptions archive also holds the map list of `maps` (None: the maps whose archives are beside snap_path)."""
+    zz_MatchOptions.snap from Battlegrounds.snap, with the chatrooms spec zz_Chat.snap from Global.snap, with the
+    aftaction spec zz_AfterActionReview.snap from Battlegrounds.snap, with the itemshop spec zz_ItemShop.snap from
+    HUD.snap, with the collection spec zz_CollectionItems.snap from code.snap). The matchoptions archive also holds the
+    map list of `maps` (None: the maps whose archives are beside snap_path), the aftaction archive the web root of the
+    server `host` (None: DEFAULT_HOST), the collection archive the item list of `content` (a content.json's path or
+    data; required)."""
+    if spec.items and content is None:
+        raise ValueError(f"{spec.what} needs the server's content.json (its item list)")
     tags = read_tags(spec.tags) if tags is None else tags
     s = snap.Snap(snap_path)
     entry = next((e for e in s.entries if e.name == spec.movie_path), None)
@@ -358,6 +577,11 @@ def build(snap_path, tags=None, spec=PICKER, maps=None):
         if maps is None:
             maps = copy_maps(os.path.dirname(os.path.abspath(snap_path)))
         files.append((MAP_LIST_PATH, map_list(maps), True))
+    if spec.web_root:
+        files.append((WEB_ROOT_PATH, web_root_file(host or DEFAULT_HOST)))
+    if spec.items:
+        files.append((ITEMS_PATH, item_list(content, debug)))
+    files.extend(spec.extra)
     return pack_bytes(files)
 
 
@@ -417,6 +641,25 @@ def main(argv):
             sys.exit(f"--maps takes none or a comma-separated list of {', '.join(known)}")
         maps = [known[n] for n in names if n != "none"]
         del args[i:i + 2]
+    host = None
+    if "--host" in args:
+        i = args.index("--host")
+        if i + 1 >= len(args) or not spec.web_root:
+            sys.exit("--host takes the copy's server address (only with --spec aftaction)")
+        host = args[i + 1]
+        del args[i:i + 2]
+    content = None
+    if "--content" in args:
+        i = args.index("--content")
+        if i + 1 >= len(args) or not spec.items:
+            sys.exit("--content takes the server's content.json (only with --spec collection)")
+        content = args[i + 1]
+        del args[i:i + 2]
+    debug = "--debug" in args
+    if debug:
+        if not spec.items:
+            sys.exit("--debug only with --spec collection")
+        args.remove("--debug")
     tags_path = spec.tags
     if "--tags" in args:
         i = args.index("--tags")
@@ -437,17 +680,27 @@ def main(argv):
     if len(args) != 2:
         print(__doc__)
         return 2
-    out = build(args[0], tags, spec, maps)
+    try:
+        out = build(args[0], tags, spec, maps, host, content, debug)
+    except MovieError:
+        raise
+    except ValueError as e:
+        sys.exit(str(e))
     with open(args[1], "wb") as f:
         f.write(out)
     back = snap.Snap(args[1])
     movie = back.read(back.entries[0])
-    print(f"{args[1]}: {len(out)} bytes, the movie {len(movie)} bytes with {len(tags)} bytes of {spec.what}'s tags")
+    print(f"{args[1]}: {len(out)} bytes, the movie {len(movie)} bytes with {len(tags)} bytes of tags ({spec.what})")
     if spec.map_list:
         listed = [line.split("\t")[1] for line in back.read(back.entries[1]).decode("utf-8").splitlines()
                   if line.startswith("map\t")]
         print(f"  the map list ({MAP_LIST_PATH}): The Dawngate{''.join(', ' + t for t in listed)}"
               f"{'' if listed else ' only (no dropdown)'}")
+    if spec.web_root:
+        print(f"  the web root ({WEB_ROOT_PATH}): {back.read(back.entries[1]).decode('ascii').splitlines()[1][7:]}")
+    if spec.items:
+        listed = back.read(back.entries[1]).decode("utf-8").count("\nitem\t")
+        print(f"  the item list ({ITEMS_PATH}): {listed} items")
     return 0
 
 

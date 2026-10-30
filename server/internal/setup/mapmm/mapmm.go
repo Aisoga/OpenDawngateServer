@@ -92,6 +92,11 @@ var smCameraEntries = []string{"AssetData/Binary/SM_Map_v5_cameraMortal.Markerse
 // Inputs are the copy's archives (their whole bytes).
 type Inputs struct {
 	Images, SMMap, Anshavar3, Anshavar4, AssetData []byte
+	GroundCut                                      float64 // ground.Spec.Cut (0: the shipped ground)
+	// Backdrop and its texture (BackdropDDS, archived at Backdrop.Texture): ground.Spec.Backdrop (nil: none)
+	Backdrop    *ground.Backdrop
+	BackdropDDS []byte
+	Mist        *ground.Backdrop // ground.Spec.Mist (nil: none; its material has no texture)
 }
 
 // state is what the generators share: the decoded inputs.
@@ -140,6 +145,9 @@ func Files(in Inputs) ([]snap.File, error) {
 		for i, b := range blobs {
 			out = append(out, snap.File{Name: p.names[i], Data: b})
 		}
+	}
+	if in.Backdrop != nil {
+		out = append(out, snap.File{Name: in.Backdrop.Texture, Data: in.BackdropDDS})
 	}
 	return out, nil
 }
@@ -214,7 +222,9 @@ func makeGround(st *state) ([][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	model, dirt, g, err := ground.Build(st.los, tmpl, grass)
+	spec := ground.MM
+	spec.Cut, spec.Backdrop, spec.Mist = st.in.GroundCut, st.in.Backdrop, st.in.Mist
+	model, dirt, g, err := ground.BuildSpec(st.los, spec, tmpl, grass, [2]string{ground.DirtEntry, ground.GrassEntry})
 	if err != nil {
 		return nil, err
 	}

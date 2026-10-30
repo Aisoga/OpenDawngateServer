@@ -13,13 +13,18 @@
 //   blue   = SpawnPoint_v5_Buff_Fungus  (Jungle_Fungus_Major -> modifier_Jungle_BlueBuff:   +20 Haste, more on casts)
 //   orange = SpawnPoint_v5_Buff_Ugger   (Jungle_Ugger_Major  -> modifier_Jungle_OrangeBuff: +20 armor, damage reduction)
 //   small fish / mushroom / Ugger camps = SpawnPoint_v5_CreepsFish / CreepsFungus / CreepsUgger
-//   the Gold (Money) Pigs = SpawnPoint_v5_CreepsBoar (a Boar medium and major: 162 gold, 215 XP; first spawn 120 s)
+//   the Gold (Money) Pigs = SpawnPoint_v5_CreepsBoar (a Boar medium and major: 162 gold, 215 XP; first spawn 210 s, its noun's;
+//   the marker's 120 s with [host] camp_timers=marker, CAMPTIMER)
 // Every buff camp alone gives level 2 (260-280 XP; level 2 needs 260), a small camp 135-200.
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <vector>
+
+#include "core/matchflow/camprole.h"
 
 namespace gms::bots {
 
@@ -29,7 +34,7 @@ struct RouteStep {
   float x = 0.f, y = 0.f;  // the camp's marker (team 1's; team 2's through the map's centre, SM_Map_v5 is point-symmetric)
   int kind = kRouteSmall;
   int minLevel = 1;        // taken only from this level on (else later steps first)
-  const char* label = "";  // the guides' name
+  std::string label;       // the guides' name (MAPED4's derived route: the camp's role and noun)
 };
 
 // The opening of team `team` (1, 2); empty for any other. Team 1's camps in the guides' order on its half (base at
@@ -61,11 +66,115 @@ inline std::vector<RouteStep> OpeningRoute(int team) {
   return out;
 }
 
+// ---- MAPED4: the opening route from the level's camps ---------------------------------------------------------------
+// OpeningRoute is SM_Map_v5's camps by coordinates: on a compiled map every step found no camp ("no such camp", MAPED3's
+// CM_Grove). DeriveRoute builds the route from the level's camp markers and their roles (gms/core/matchflow/camprole.h)
+// by one rule, and on SM_Map_v5's 22 camps gives OpeningRoute's 11 steps again (gms_tests MapedRouteSmIsTheTable):
+//   - the team's half: the camps nearer the team's Guardian than the enemy's (without both Guardians: x + y < 0 for
+//     team 1, the diagonal rule of jungle.h);
+//   - the order: from a buff camp of that half (any camp when it has none), each next step the nearest camp not taken
+//     yet; of the buff camps the start whose walk is shortest (SM_Map_v5's team 1: green 632 units, blue 775, orange
+//     834). That is the guides' route on SM_Map_v5 (green, the small camps toward blue, blue, ..., orange, the pigs);
+//   - the levels: the first `buffsAtLevel1` buff camps of the route and every small camp from level 1, a later buff
+//     camp and the big camps (the pigs) from `lateMinLevel` (HUNTERROUTE's orange and pigs at 3) [assumed];
+//   - at most 32 steps (RouteMemory's bits).
+struct CampMarker {
+  float x = 0.f, y = 0.f;
+  flow::CampRole role = flow::CampRole::kSmall;
+  std::string name;  // the camp's noun (the step's label)
+};
+
+struct RouteDeriveConfig {
+  int buffsAtLevel1 = 2;
+  int lateMinLevel = 3;
+};
+
+// Whether (x, y) is on `team`'s half: nearer its own Guardian `own` than the enemy's `enemy` (both non-null), else the
+// diagonal (team 1: x + y < 0; team 2: x + y > 0).
+inline bool OnOwnHalf(float x, float y, int team, const float* own, const float* enemy) {
+  if (own && enemy) {
+    const float ox = x - own[0], oy = y - own[1], ex = x - enemy[0], ey = y - enemy[1];
+    return ox * ox + oy * oy < ex * ex + ey * ey;
+  }
+  return team == 1 ? x + y < 0.f : team == 2 ? x + y > 0.f : false;
+}
+
+inline std::vector<RouteStep> DeriveRoute(const std::vector<CampMarker>& camps, int team, const float* ownGuardian,
+                                          const float* enemyGuardian, const RouteDeriveConfig& cfg = RouteDeriveConfig()) {
+  std::vector<RouteStep> out;
+  if (team != 1 && team != 2) return out;
+  std::vector<int> own;
+  for (int i = 0; i < static_cast<int>(camps.size()); ++i) {
+    const CampMarker& c = camps[static_cast<std::size_t>(i)];
+    if (OnOwnHalf(c.x, c.y, team, ownGuardian, enemyGuardian)) own.push_back(i);
+  }
+  if (own.empty()) return out;
+  auto dist = [&](int a, int b) {
+    const float dx = camps[static_cast<std::size_t>(a)].x - camps[static_cast<std::size_t>(b)].x;
+    const float dy = camps[static_cast<std::size_t>(a)].y - camps[static_cast<std::size_t>(b)].y;
+    return std::sqrt(dx * dx + dy * dy);
+  };
+  // the walk from `start`: the nearest camp not taken yet, every time (ties: the earlier camp)
+  auto walk = [&](int start, float* length) {
+    std::vector<int> order(1, start);
+    std::vector<bool> taken(camps.size(), false);
+    taken[static_cast<std::size_t>(start)] = true;
+    *length = 0.f;
+    while (order.size() < own.size()) {
+      int best = -1;
+      float bd = 0.f;
+      for (int k : own) {
+        if (taken[static_cast<std::size_t>(k)]) continue;
+        const float d = dist(order.back(), k);
+        if (best < 0 || d < bd) {
+          best = k;
+          bd = d;
+        }
+      }
+      taken[static_cast<std::size_t>(best)] = true;
+      order.push_back(best);
+      *length += bd;
+    }
+    return order;
+  };
+  bool anyBuff = false;
+  for (int k : own) anyBuff = anyBuff || camps[static_cast<std::size_t>(k)].role == flow::CampRole::kBuff;
+  std::vector<int> bestOrder;
+  float bestLen = 0.f;
+  for (int k : own) {
+    if (anyBuff && camps[static_cast<std::size_t>(k)].role != flow::CampRole::kBuff) continue;
+    float len = 0.f;
+    std::vector<int> order = walk(k, &len);
+    if (bestOrder.empty() || len < bestLen) {
+      bestOrder = order;
+      bestLen = len;
+    }
+  }
+  int buffs = 0;
+  for (int k : bestOrder) {
+    if (out.size() >= 32) break;
+    const CampMarker& c = camps[static_cast<std::size_t>(k)];
+    RouteStep s;
+    s.x = c.x;
+    s.y = c.y;
+    s.kind = c.role == flow::CampRole::kBuff ? kRouteBuff : c.role == flow::CampRole::kBig ? kRoutePigs : kRouteSmall;
+    if (c.role == flow::CampRole::kBuff) ++buffs;
+    const bool late = c.role == flow::CampRole::kBig || (c.role == flow::CampRole::kBuff && buffs > cfg.buffsAtLevel1);
+    s.minLevel = late && !out.empty() ? cfg.lateMinLevel : 1;
+    s.label = std::string(flow::CampRoleName(c.role)) + " " + (c.name.empty() ? "camp" : c.name);
+    out.push_back(s);
+  }
+  return out;
+}
+
 struct RouteConfig {
   int endLevel = 6;         // the route ends at this level (the guides: "you're 6. Gank.") [assumed]
   double endS = 600.0;      // ... or at this match time [assumed]
   double waitS = 20.0;      // a camp not up yet is walked to when it spawns within this [assumed]
   float buffHpMin = 0.5f;   // a buff or pig step (but the first) only at this HP share or more [assumed]
+  float buffHpHyst = 0.1f;  // HUNTERROUTE-2: a buff step he is on holds down to buffHpMin - this; one he left for
+                            // another step not over needs buffHpMin + this (Faris flipped between blue and a small
+                            // camp twice a second at 50 % HP for 3 minutes, hr2_mf_on2b) [assumed]
   float matchRadius = 6.f;  // (host) a step's camp: the camp marker within this of the step's point
 };
 
@@ -82,7 +191,7 @@ struct RouteMemory {
   std::uint32_t done = 0;  // bit i: step i is over (its camp cleared, by anyone, or missing)
   bool over = false;
   const char* overWhy = "";
-  int current = -1;        // the last choice (-1 none)
+  int current = -1;        // the last choice (-1 none; NextRouteStep sets it, for the buff HP's hysteresis)
 };
 
 struct RouteChoice {
@@ -96,8 +205,15 @@ inline bool RouteStepDone(const RouteMemory& m, int i) { return i >= 0 && i < 32
 // first step not over that the Hunter's level and HP allow wins when its camp is up or spawns within waitS; with no
 // such step, the earliest spawning one (the match's start: the camps come at 90 s); else none (the default route
 // meanwhile, the route goes on later). The route ends at endLevel, at endS or with every step over.
-inline RouteChoice NextRouteStep(const std::vector<RouteStep>& steps, const std::vector<RouteCamp>& camps,
-                                 RouteMemory* m, int level, float hpFrac, double now, const RouteConfig& cfg) {
+// A buff or pig step's HP floor: buffHpMin, lower for the step he is on, higher while he is on another step not over.
+inline float RouteBuffHpMin(const RouteMemory& m, int i, const RouteConfig& cfg) {
+  if (m.current == i) return cfg.buffHpMin - cfg.buffHpHyst;
+  if (m.current >= 0 && !RouteStepDone(m, m.current)) return cfg.buffHpMin + cfg.buffHpHyst;
+  return cfg.buffHpMin;
+}
+
+inline RouteChoice NextRouteStepPick(const std::vector<RouteStep>& steps, const std::vector<RouteCamp>& camps,
+                                     RouteMemory* m, int level, float hpFrac, double now, const RouteConfig& cfg) {
   if (m->over) return {-1, m->overWhy};
   if (level >= cfg.endLevel) {
     m->over = true;
@@ -125,7 +241,7 @@ inline RouteChoice NextRouteStep(const std::vector<RouteStep>& steps, const std:
     const RouteStep& s = steps[static_cast<std::size_t>(i)];
     const RouteCamp& c = camps[static_cast<std::size_t>(i)];
     if (level < s.minLevel) continue;
-    if (s.kind != kRouteSmall && anyDone && hpFrac < cfg.buffHpMin) continue;
+    if (s.kind != kRouteSmall && anyDone && hpFrac < RouteBuffHpMin(*m, i, cfg)) continue;
     if (c.alive) return {i, "up"};
     if (c.dueAt >= 0.0 && c.dueAt - now <= cfg.waitS) return {i, "spawns soon"};
     if (c.dueAt >= 0.0 && (waitBest < 0 || c.dueAt < waitDue)) {
@@ -143,6 +259,14 @@ inline RouteChoice NextRouteStep(const std::vector<RouteStep>& steps, const std:
     if (!RouteStepDone(*m, i) && camps[static_cast<std::size_t>(i)].alive) anyUp = true;
   if (waitBest >= 0 && !anyUp) return {waitBest, "waits for its spawn"};
   return {-1, "nothing for his level or HP now"};
+}
+
+// The step to walk to now (above); remembers it as the current one.
+inline RouteChoice NextRouteStep(const std::vector<RouteStep>& steps, const std::vector<RouteCamp>& camps,
+                                 RouteMemory* m, int level, float hpFrac, double now, const RouteConfig& cfg) {
+  const RouteChoice r = NextRouteStepPick(steps, camps, m, level, hpFrac, now, cfg);
+  m->current = r.step;
+  return r;
 }
 
 // ---- Vanquish (spell1 of every Hunter profile: 300 + 30 x level true damage, range 17.65, cooldown 75 s) ----------

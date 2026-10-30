@@ -8,6 +8,12 @@ package blaze
 // release (tunnel.Addr.Release; another release gets in only with --allow-any-client). A client that comes without
 // the tunnel can't be told apart; MapTrust (dgserver --trust-maps) names those the server takes as having the files.
 //
+// The maps of a maps folder (MAPED-GUARD) are copied in by hand, so a client of this release may lack one or have
+// another version of it. Their compiler is deterministic, so one SHA-256 per map: the server knows its host copy's
+// (MapVersions), a Start-Client names its copy's in the tunnel's session hello (tunnel.Addr.Maps), and a player gets
+// into a game on such a map only with the same hash; refusals as for MM_Map_v3. A client that named no list (a
+// Start-Client from before it, a direct client --client-maps doesn't name) keeps the release rule and MapTrust.
+//
 // What the client shows (Dawngate.exe 854, read statically):
 //   - a failed joinGame (in-flight op 2, GameEntryManager_HandleNetworkGameJoinResult 0x0068EFC0): any Blaze error
 //     but GAMEMANAGER_ERR_TEAM_FULL (0x00FF0004, which retries the other team) goes to the listeners' slot 9; the
@@ -27,11 +33,13 @@ package blaze
 // own words, which reach any copy.
 
 import (
+	"encoding/hex"
 	"fmt"
 	"net/netip"
 	"strings"
 
 	"dawngate/server/internal/matchmaker"
+	"dawngate/server/internal/tunnel"
 )
 
 // ErrMapFilesMissing is the error a join into a game on a map whose files the client may lack gets: shown as
@@ -90,6 +98,39 @@ func ParseMapTrust(s string) (MapTrust, error) {
 	return m, nil
 }
 
+// ParseClientMaps reads --client-maps: comma-separated "<address>=<archive>:<sha256 hex>+<archive>:<hex>..." (an
+// address with nothing after "=" has no maps), e.g. "127.0.0.4=zz_CM_Ring.snap:85d8...,127.0.4.2=". "" = none.
+func ParseClientMaps(s string) (map[netip.Addr][]tunnel.InstalledMap, error) {
+	out := map[netip.Addr][]tunnel.InstalledMap{}
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		addr, list, ok := strings.Cut(part, "=")
+		a, err := netip.ParseAddr(strings.TrimSpace(addr))
+		if !ok || err != nil {
+			return nil, fmt.Errorf("--client-maps: %q is no <address>=<archive>:<sha256>+... (an address and its maps)", part)
+		}
+		maps := []tunnel.InstalledMap{}
+		for _, m := range strings.Split(list, "+") {
+			if m = strings.TrimSpace(m); m == "" {
+				continue
+			}
+			name, h, ok := strings.Cut(m, ":")
+			b, err := hex.DecodeString(strings.TrimSpace(h))
+			if !ok || err != nil || len(b) != 32 || tunnel.CleanArchive(name) != name || name == "" {
+				return nil, fmt.Errorf("--client-maps: %q is no <archive>:<sha256 in 64 hex digits>", m)
+			}
+			im := tunnel.InstalledMap{Archive: name}
+			copy(im.SHA256[:], b)
+			maps = append(maps, im)
+		}
+		out[a.Unmap()] = maps
+	}
+	return out, nil
+}
+
 // String is the log's form: "none", "all" or the list.
 func (m MapTrust) String() string {
 	switch {
@@ -136,13 +177,25 @@ func levelArchive(level string) string {
 type mapCheck struct {
 	ok        bool
 	why, tell string
+	// version: decided by the map's version (MAPED-GUARD): tell says what the copy has, and the player's fix is the
+	// map package, not Start-Client's release
+	version bool
 }
 
-// canLoad reports whether c's client may play level: SM_Map_v5 always; another map when its Start-Client came through
-// the tunnel and is this server's release, or when it came without the tunnel from an address MapTrust names.
+// canLoad reports whether c's client may play level: SM_Map_v5 always; a map of the maps folder whose version the
+// server knows (MapVersions) when the client's copy names the same archive hash (versionCheck: the tunnel hello's
+// maps, ClientMaps); another map, and a versioned one whose client named no maps (a Start-Client from before the
+// list, a direct client ClientMaps doesn't name), when its Start-Client came through the tunnel and is this server's
+// release, or when it came without the tunnel from an address MapTrust names.
 func (s *Server) canLoad(c *Conn, level string) mapCheck {
-	if levelArchive(level) == "" {
+	arch := levelArchive(level)
+	if arch == "" {
 		return mapCheck{ok: true}
+	}
+	if want, ok := s.MapVersions[strings.ToLower(arch)]; ok {
+		if maps, how, named := s.clientMaps(c); named {
+			return versionCheck(level, arch, want, maps, how)
+		}
 	}
 	if t := c.TunnelAddr(); t != nil {
 		name, same := t.Release()
@@ -169,6 +222,58 @@ func (s *Server) canLoad(c *Conn, level string) mapCheck {
 		tell: "you are connected without the tunnel, so the server can't check your copy"}
 }
 
+// clientMaps are the installed maps c's client named: its tunnel session hello's (tunnel.Addr.Maps), else ClientMaps'
+// entry for its address (the direct path's test aid). how says where they come from, for the log; named is false
+// when neither names a list.
+func (s *Server) clientMaps(c *Conn) (maps []tunnel.InstalledMap, how string, named bool) {
+	if t := c.TunnelAddr(); t != nil {
+		maps, named = t.Maps()
+		return maps, "its Start-Client's tunnel hello", named
+	}
+	if a := c.Addr(); a.IsValid() {
+		maps, named = s.ClientMaps[a.Unmap()]
+		return maps, "--client-maps for " + a.Unmap().String(), named
+	}
+	return nil, "", false
+}
+
+// versionCheck is the map check of a map whose version the server knows: archive arch with the hash want. The client
+// may play level when its copy's maps (how: where they were named) have arch with the same hash.
+func versionCheck(level, arch string, want [32]byte, maps []tunnel.InstalledMap, how string) mapCheck {
+	server := tunnel.InstalledMap{Archive: arch, SHA256: want}
+	shown := LevelDisplay(level)
+	for _, m := range maps {
+		if !strings.EqualFold(m.Archive, arch) {
+			continue
+		}
+		if m.SHA256 == want {
+			return mapCheck{ok: true, version: true, why: fmt.Sprintf("its copy's %s is the server's version %s (%s)", arch,
+				server.Short(), how)}
+		}
+		return mapCheck{version: true, why: fmt.Sprintf("its copy's %s is %s, not the server's version %s (%s)", arch,
+			m.Short(), server.Short(), how),
+			tell: fmt.Sprintf("has another version of %s (yours %s, this server's %s)", shown, m.Short(), server.Short())}
+	}
+	return mapCheck{version: true, why: fmt.Sprintf("its copy has no %s (%s names %s)", arch, how, tunnel.MapsWords(maps)),
+		tell: fmt.Sprintf("doesn't have %s", shown)}
+}
+
+// mapFix is the player's fix after "your copy of Dawngate": the release's Start-Client (MAPGUARD), or this server's
+// version of the map package (a version check): Start-Client downloads it when the server hands it out (map
+// delivery, MapServed), else the player copies it.
+func (s *Server) mapFix(level string, mc mapCheck) string {
+	if mc.version && s.mapServed(level) {
+		return mc.tell + ". Start-Client downloads this server's version of it when you log in: close the game and " +
+			"start it again with Start-Client.exe, which installs it."
+	}
+	if mc.version {
+		return mc.tell + ". Copy this server's version of its map package into the maps folder beside " +
+			"Start-Client.exe, then close the game and start it again with Start-Client.exe, which installs it."
+	}
+	return fmt.Sprintf("may not have that map's files (%s). Close the game and start it again with Start-Client.exe of "+
+		"%s, which adds them.", mc.tell, s.releaseWords())
+}
+
 // releaseWords is "this server's release (<name>)" for the player's message.
 func (s *Server) releaseWords() string {
 	if s.Release == "" {
@@ -181,13 +286,22 @@ func (s *Server) releaseWords() string {
 // SM_Map_v5 instead. The players' messages name the maps as players see them (LevelDisplay: Anshavar Pass, The
 // Dawngate); the log keeps the levels' names.
 func (s *Server) mapRefusedText(level, what string, mc mapCheck) string {
-	return fmt.Sprintf("You can't join %s: it plays on the map %s, and your copy of Dawngate may not have that map's "+
-		"files (%s). Close the game and start it again with Start-Client.exe of %s, which adds them.",
-		what, LevelDisplay(level), mc.tell, s.releaseWords())
+	return fmt.Sprintf("You can't join %s: it plays on the map %s, and your copy of Dawngate %s", what,
+		LevelDisplay(level), s.mapFix(level, mc))
 }
 
 func (s *Server) mapFallbackText(level string, mc mapCheck) string {
 	shown := LevelDisplay(level)
+	if mc.version && s.mapServed(level) {
+		return fmt.Sprintf("Your game plays on %s instead of %s: your copy of Dawngate %s. Start-Client downloads this "+
+			"server's version of it when you log in: close the game and start it again with Start-Client.exe to play %s.",
+			LevelDisplay(HostedLevel), shown, mc.tell, shown)
+	}
+	if mc.version {
+		return fmt.Sprintf("Your game plays on %s instead of %s: your copy of Dawngate %s. Copy this server's version "+
+			"of the map package into the maps folder beside Start-Client.exe and start the game again to play %s.",
+			LevelDisplay(HostedLevel), shown, mc.tell, shown)
+	}
 	return fmt.Sprintf("Your game plays on %s instead of %s: your copy of Dawngate may not have %s's files (%s). "+
 		"Start the game with Start-Client.exe of %s to play %s.", LevelDisplay(HostedLevel), shown, shown, mc.tell,
 		s.releaseWords(), shown)
@@ -282,6 +396,7 @@ func (s *Server) mapQueueRefused(r *Request, t *matchmaker.Ticket) bool {
 	}
 	ms := t.Data.(*mmSession)
 	var out, others []string
+	othersVersion := false
 	for i, m := range ms.members {
 		mc := s.canLoad(m.conn, level)
 		if mc.ok {
@@ -293,6 +408,7 @@ func (s *Server) mapQueueRefused(r *Request, t *matchmaker.Ticket) bool {
 		conn, text := m.conn, s.mapQueueText(level, "", mc)
 		if i > 0 {
 			others = append(others, t.Players[i].Name)
+			othersVersion = othersVersion || mc.version
 			text = s.mapQueueText(level, t.Players[0].Name, mc)
 		}
 		r.After(func() { s.tellMap(conn, text) })
@@ -301,9 +417,14 @@ func (s *Server) mapQueueRefused(r *Request, t *matchmaker.Ticket) bool {
 		return false
 	}
 	if len(others) > 0 { // the owner hears who keeps the party out
-		owner, text := ms.members[0].conn, fmt.Sprintf("The PvP queue plays on the map %s, whose files the copies of %s "+
-			"may not have; they start the game again with Start-Client.exe of %s.", LevelDisplay(level),
-			strings.Join(others, ", "), s.releaseWords())
+		text := fmt.Sprintf("The PvP queue plays on the map %s, whose files the copies of %s may not have; they start "+
+			"the game again with Start-Client.exe of %s.", LevelDisplay(level), strings.Join(others, ", "), s.releaseWords())
+		if othersVersion {
+			text = fmt.Sprintf("The PvP queue plays on the map %s, which the copies of %s don't have in this server's "+
+				"version; they copy its map package into the maps folder beside Start-Client.exe and start the game "+
+				"again.", LevelDisplay(level), strings.Join(others, ", "))
+		}
+		owner := ms.members[0].conn
 		r.After(func() { s.tellMap(owner, text) })
 	}
 	s.Log.Logf("blaze", "   matchmaking for %d refused: the queue plays on %s, and %s may lack its files (map check); "+
@@ -319,9 +440,8 @@ func (s *Server) mapQueueText(level, leader string, mc mapCheck) string {
 	if leader != "" {
 		who = fmt.Sprintf("%s's party can't queue with you", leader)
 	}
-	return fmt.Sprintf("%s: the PvP queue plays on the map %s, and your copy of Dawngate may not have that map's files "+
-		"(%s). Close the game and start it again with Start-Client.exe of %s, which adds them.", who,
-		LevelDisplay(level), mc.tell, s.releaseWords())
+	return fmt.Sprintf("%s: the PvP queue plays on the map %s, and your copy of Dawngate %s", who,
+		LevelDisplay(level), s.mapFix(level, mc))
 }
 
 // refuseMapJoin answers a join into game gid on level with ErrMapFilesMissing, logs why and tells the player.
@@ -339,3 +459,6 @@ func (s *Server) refuseMapJoin(r *Request, gid int64, name, level string, mc map
 	r.Fail(ErrMapFilesMissing)
 	return nil
 }
+
+// mapServed says whether the server hands level's package out (MapServed; map delivery).
+func (s *Server) mapServed(level string) bool { return s.MapServed != nil && s.MapServed(level) }

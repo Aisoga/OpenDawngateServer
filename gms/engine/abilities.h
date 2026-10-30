@@ -55,6 +55,9 @@ void AbilityTickSetHostCause(const char* cause);
 // the resumed Tick thread's instance. Writes " [in <table>.<function> inst <id> agent <id>]" (outermost call after
 // "<-"), or an empty string outside any.
 void AbilityLuaContext(char* buf, std::size_t size);
+// FOGSTACKS: the ability instance whose script runs right now (the innermost frame of the same stack), 0 when the
+// innermost frame isn't an ability's or modifier's (a behavior, a condition) or no Lua runs on the server simulator.
+unsigned AbilityLuaInstance();
 // BUFFICON: what an instance id names now, for log lines: its static ability's Lua table name, and in *type its
 // instance type (0 ability, 1 modifier). "gone" and -1 when LabsAbilities_GetInstance finds nothing. Call it with the
 // server simulator bound (the instance pool is the current simulator's).

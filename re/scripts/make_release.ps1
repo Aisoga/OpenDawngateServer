@@ -22,13 +22,15 @@
      -SignedFiles <folder> (the CI's second run, with the files the signing service returned) those three are
      replaced by their signed copies after checking that each is this build's file plus a valid signature.
   3. The folder <Out>\<Name>\: the two programs, host\dgsim.dll, host\lua\*.lua, README.txt (re\scripts\release),
+     maps\README.txt (release\maps-README.txt: the maps folder, where players and operators copy map packages; none ship),
      LICENSE.txt (the AGPL text: the checkout's LICENSE, else branch public's), THIRD-PARTY-NOTICES.txt (RakNet 4.081's LICENSE and PATENTS
      from tools\raknet\RakNet and a note on this project's RakNet patches (gms\cmake\raknet_patches),
      Go's LICENSE and (ADR-4) the licence files of every outside Go module the two programs link, from the
      module cache: modernc.org/sqlite and its dependencies, golang.org/x/crypto, golang.org/x/sys),
-     BUILD.txt (commit, Go version, every file's SHA-256). The compiled classes of the server picker, the bot check box and
-     the chat rooms opened by default are checked to be in the SWF tags Start-Client.exe embeds (picker_tags.hex,
-     matchoptions_tags.hex, chatrooms_tags.hex), and those in
+     BUILD.txt (commit, Go version, every file's SHA-256). The compiled classes of the server picker, the bot check box,
+     the chat rooms opened by default and the After Action Review's tabs are checked to be in the SWF tags Start-Client.exe
+     embeds (picker_tags.hex, matchoptions_tags.hex, chatrooms_tags.hex, aftaction_tags.hex, itemshop_tags.hex,
+     collection_tags.hex), and those in
      the built Start-Client.exe; the notices name their AGPL sources and the development-only tools (the Flex SDK compiler, FFDec), which aren't shipped.
      The folder <Out>\<Name>-linux\ (unless -NoLinux): start-server, the same host\ files, dawngate.service (the
      systemd unit) and README.txt (re\scripts\release\README-Linux.txt), LICENSE.txt, THIRD-PARTY-NOTICES.txt (for
@@ -182,6 +184,9 @@ function Test-UiClass([string]$what, [string]$tagsName, [string]$folder, [string
 $picker = Test-UiClass 'the server picker' 'picker_tags.hex' 'serverpicker' 'ServerPicker'
 $botBox = Test-UiClass 'the bot check box' 'matchoptions_tags.hex' 'matchoptions' 'BotCheckbox'
 $chatRooms = Test-UiClass 'the chat rooms opened by default' 'chatrooms_tags.hex' 'chatrooms' 'AutoRooms'
+$aarTabs = Test-UiClass "the After Action Review's tabs" 'aftaction_tags.hex' 'aftaction' 'AfterActionTabs'
+$shopRefund = Test-UiClass "the shop's inline refund" 'itemshop_tags.hex' 'itemshop' 'ShopRefund'
+$collection = Test-UiClass "the Collection's items" 'collection_tags.hex' 'collection' 'CollectionItems'
 $tagsBytes = $picker.Bytes; $firstLine = $picker.First
 # start-server links the setup with the tags too (only Start-Client.exe uses them); its notice names them if it holds them
 $linuxPicker = $Linux -and ([IO.File]::ReadAllText((Join-Path $ldir 'start-server'), $latin1)).Contains($firstLine)
@@ -221,6 +226,13 @@ foreach ($d in @($dir) + @(if ($Linux) { $ldir })) {
 }
 $readme = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'release\README.txt')).Replace('@VERSION@', $Name)
 [IO.File]::WriteAllText((Join-Path $dir 'README.txt'), ($readme -replace "`r?`n", "`r`n"), $utf8)
+# the maps folder beside the programs, where a player or an operator copies map packages (none ship)
+$mapsReadme = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'release\maps-README.txt')).Replace('@VERSION@', $Name)
+foreach ($d in @($dir) + @(if ($Linux) { $ldir })) {
+    $null = New-Item -ItemType Directory -Force (Join-Path $d 'maps')
+    $text = if ($d -eq $dir) { $mapsReadme -replace "`r?`n", "`r`n" } else { $mapsReadme -replace "`r?`n", "`n" }
+    [IO.File]::WriteAllText((Join-Path $d 'maps\README.txt'), $text, $utf8)
+}
 if ($Linux) {
     $readme = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'release\README-Linux.txt')).Replace('@VERSION@', $Name)
     [IO.File]::WriteAllText((Join-Path $ldir 'README.txt'), ($readme -replace "`r?`n", "`n"), $utf8)
@@ -284,12 +296,13 @@ function New-Notices([string]$sep, [string]$programs, [string]$contain, [string[
     }
     $n += @('', 'The MSVC static runtime in dgsim.dll needs no notice.')
     if ($pickerFirst) {
-        $n += @('', '---- The server picker, the bot check box of CREATE GAME and the chat rooms opened by default ----', '',
+        $n += @('', '---- The server picker, the bot check box of CREATE GAME, the chat rooms opened by default, the After Action Review''s tabs and the shop''s inline refund ----', '',
             $pickerFirst,
-            "this project's own code under the GNU AGPL v3 (LICENSE.txt); their sources are client_ui/serverpicker/ServerPicker.as",
-            'client_ui/matchoptions/BotCheckbox.as and client_ui/chatrooms/AutoRooms.as in the source repository, published with',
-            'the rest of the code. On the player''s PC, Start-Client adds these tags to copies of the login screen''s, the CREATE',
-            'GAME dialog''s and the chat''s movies taken',
+            "this project's own code under the GNU AGPL v3 (LICENSE.txt); their sources are client_ui/serverpicker/ServerPicker.as,",
+            'client_ui/matchoptions/BotCheckbox.as, client_ui/chatrooms/AutoRooms.as, client_ui/aftaction/AfterActionTabs.as and',
+            'client_ui/itemshop/ShopRefund.as in the',
+            'source repository, published with the rest of the code. On the player''s PC, Start-Client adds these tags to copies of',
+            'the login screen''s, the CREATE GAME dialog''s, the chat''s, the After Action Review''s and the item shop''s movies taken',
             'from the player''s own game files; no file of the game is in this release.',
             'Two tools are used only during development, to compile and inspect those classes; nothing of them is in this release',
             'and none of their code is in the compiled classes: the Apache Flex SDK compiler (mxmlc, Apache License 2.0) and',
@@ -300,11 +313,13 @@ function New-Notices([string]$sep, [string]$programs, [string]$contain, [string[
 $tagsKB = [int][Math]::Ceiling($tagsBytes.Length / 1024)
 $botKB = [int][Math]::Ceiling($botBox.Bytes.Length / 1024)
 $roomsKB = [int][Math]::Ceiling($chatRooms.Bytes.Length / 1024)
+$aarKB = [int][Math]::Ceiling($aarTabs.Bytes.Length / 1024)
+$shopKB = [int][Math]::Ceiling($shopRefund.Bytes.Length / 1024)
 $notices = New-Notices '\' 'Start-Server.exe and Start-Client.exe' 'contain' $modules `
-    "Start-Client.exe embeds the compiled ActionScript 3 classes of the server picker, the bot check box and the chat rooms opened by default (four SWF tags each, $tagsKB KB, $botKB KB and $roomsKB KB). They are"
+    "Start-Client.exe embeds the compiled ActionScript 3 classes of the server picker, the bot check box, the chat rooms opened by default, the After Action Review's tabs and the shop's inline refund (four SWF tags each, $tagsKB KB, $botKB KB, $roomsKB KB, $aarKB KB and $shopKB KB). They are"
 [IO.File]::WriteAllText((Join-Path $dir 'THIRD-PARTY-NOTICES.txt'), (($notices -join "`r`n") + "`r`n"))
 if ($Linux) {
-    $pf = if ($linuxPicker) { "start-server holds the compiled ActionScript 3 classes of the server picker, the bot check box and the chat rooms opened by default (four SWF tags each, $tagsKB KB, $botKB KB and $roomsKB KB; only the Windows Start-Client.exe uses them). They are" } else { $null }
+    $pf = if ($linuxPicker) { "start-server holds the compiled ActionScript 3 classes of the server picker, the bot check box, the chat rooms opened by default, the After Action Review's tabs and the shop's inline refund (four SWF tags each, $tagsKB KB, $botKB KB, $roomsKB KB, $aarKB KB and $shopKB KB; only the Windows Start-Client.exe uses them). They are" } else { $null }
     $notices = New-Notices '/' 'start-server' 'contains' $linuxModules $pf
     [IO.File]::WriteAllText((Join-Path $ldir 'THIRD-PARTY-NOTICES.txt'), (($notices -join "`n") + "`n"))
 }
@@ -336,14 +351,14 @@ function Get-BuildLines([string]$d, [string]$allowed, [string]$sep, [string[]]$h
     , $lines
 }
 $dirtyNote = if ($dirty) { ' (with uncommitted changes in server\ or re\scripts\release)' } else { '' }
-$build = Get-BuildLines $dir '^(Start-Server\.exe|Start-Client\.exe|README\.txt|LICENSE\.txt|THIRD-PARTY-NOTICES\.txt|BUILD\.txt|host\\dgsim\.dll|host\\lua\\[A-Za-z0-9_]+\.lua)$' '\' @(
+$build = Get-BuildLines $dir '^(Start-Server\.exe|Start-Client\.exe|README\.txt|LICENSE\.txt|THIRD-PARTY-NOTICES\.txt|BUILD\.txt|maps\\README\.txt|host\\dgsim\.dll|host\\lua\\[A-Za-z0-9_]+\.lua)$' '\' @(
     "release  $Name", "version  $Name (Start-Server.exe and Start-Client.exe; a player's Start-Client and the server must have the same)",
     "commit   $commit$dirtyNote",
     "built    $built", "go       $goVersion", "dgsim    $dll (current: newer than its sources, its build stamp's bytes)",
     "signed   $(if ($signer) { "Start-Server.exe, Start-Client.exe, host\dgsim.dll: $signer" } else { 'no (unsigned)' })")
 [IO.File]::WriteAllText((Join-Path $dir 'BUILD.txt'), (($build -join "`r`n") + "`r`n"))
 if ($Linux) {
-    $build = Get-BuildLines $ldir '^(start-server|dawngate\.service|README\.txt|LICENSE\.txt|THIRD-PARTY-NOTICES\.txt|BUILD\.txt|host\\dgsim\.dll|host\\lua\\[A-Za-z0-9_]+\.lua)$' '/' @(
+    $build = Get-BuildLines $ldir '^(start-server|dawngate\.service|README\.txt|LICENSE\.txt|THIRD-PARTY-NOTICES\.txt|BUILD\.txt|maps\\README\.txt|host\\dgsim\.dll|host\\lua\\[A-Za-z0-9_]+\.lua)$' '/' @(
         "release  $Name (the Linux server: start-server for linux/amd64, its match hosts under Wine)",
         "version  $Name (start-server; a player's Start-Client.exe and the server must have the same)",
         "commit   $commit$($dirtyNote.Replace('\', '/'))",

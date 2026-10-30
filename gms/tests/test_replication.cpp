@@ -283,6 +283,11 @@ GMS_TEST(OutgoingRoutingByVision) {
   CHECK(!gms::SkippedInFoggedCreate(gms::kGmsObjectCreateBegin));
   CHECK(!gms::SkippedInFoggedCreate(gms::kGmsObjectCreateComplete));
   CHECK(!gms::SkippedInFoggedCreate(gms::kGmsAnimationDataUpdate));
+  // ABILVFX-WALLS: the attached effects before 8F for a draw box (mode 1, the default), for nobody (0), for all (2)
+  CHECK(gms::EffectsBeforeComplete(1, true));
+  CHECK(!gms::EffectsBeforeComplete(1, false));
+  CHECK(!gms::EffectsBeforeComplete(0, true));
+  CHECK(gms::EffectsBeforeComplete(2, false));
   CHECK(!gms::SkippedInFoggedCreate(gms::kGmsCombatantDataUpdate));
 }
 

@@ -11,8 +11,10 @@ package blaze
 // 0x946D41FE}), which GameEntryManager's map-name method (0x00684380, vtable 0x011F4DA0 + 0x28) searches for the
 // game's LevelId attribute: for any other id it returns null, so the game browser's Map column stays empty
 // (0x004E4485) and the custom lobby asserts "resultName" (CustomMatchLobbyUI.cpp 397, 0x00428509) and shows its
-// fallback key ^FE_CustomGameLobby!0x0f2b57c5, which the shipped table lacks [from the bytes; not seen live]. So a game
-// on another map carries the map in its name instead (PlayableLevel.Label).
+// fallback key ^FE_CustomGameLobby!0x0f2b57c5, which the shipped table lacks. So a game on another map carries the map
+// in its name too (PlayableLevel.Label). The setup's exe patch (exepatch's maptable) sends that null case to a cave that
+// looks up ^FE_CustomGameLobby!0x<LevelId> instead, and the setup writes that line for every map the copy has
+// (localepatch.MapLines), so a patched client names every installed map in the lobby and the browser.
 
 import (
 	"fmt"
@@ -37,13 +39,52 @@ type PlayableLevel struct {
 
 // PlayableLevels are the levels dgserver accepts. SM_Map_v5 ships whole; MM_Map_v3 (the cut one-lane map) needs
 // zz_MM_Map_v3.snap in every player's copy and the host copy, which the release's setup makes from the copy's own
-// files; a player whose copy may lack it is kept out of its games (the map check, mapguard.go). Every other Level asset
-// lacks its graphs, physics mesh and ground.
+// files; a player whose copy may lack it is kept out of its games (the map check, mapguard.go). Every other shipped
+// Level asset lacks its graphs, physics mesh and ground. The maps of a maps folder come after these (AddLevels).
 // MM_Map_v3 is shown to players as Anshavar Pass ("[Pass] " in front of a game's name); its name, tag and archive
 // stay the internal ones.
 var PlayableLevels = []PlayableLevel{
 	{Name: HostedLevel, Tag: "sm", Display: "The Dawngate"},
 	{Name: "MM_Map_v3", Tag: "mm", Label: "[Pass] ", Archive: "zz_MM_Map_v3.snap", Display: "Anshavar Pass"},
+}
+
+// AddLevels adds the maps of a maps folder (dgserver --maps: the packages' names, tags, prefixes, display names and
+// archives) to PlayableLevels, after the built-in ones. Like MM_Map_v3 each needs its archive in every player's copy
+// and the host copy (the setup compiles it there), and the map check keeps a player whose copy may lack it out of its
+// games. A level whose name or tag is taken, or isn't one ParseLevel would take, is refused (nothing is added then).
+func AddLevels(ls ...PlayableLevel) (err error) {
+	orig := PlayableLevels
+	defer func() {
+		if err != nil {
+			PlayableLevels = orig
+		}
+	}()
+	added := append([]PlayableLevel(nil), PlayableLevels...)
+	for _, l := range ls {
+		name, err := ParseLevel(l.Name)
+		if err == nil {
+			return fmt.Errorf("map %s: a map of this name is already offered (%s)", l.Name, name)
+		}
+		if l.Tag == "" || l.Archive == "" || l.Display == "" {
+			return fmt.Errorf("map %s: a tag, an archive and a display name are needed", l.Name)
+		}
+		for _, c := range l.Name {
+			if !(c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
+				return fmt.Errorf("map %q: only letters, digits and underscores (a Level asset's name)", l.Name)
+			}
+		}
+		if len(l.Name) > maxLevelName {
+			return fmt.Errorf("map %s: at most %d characters", l.Name, maxLevelName)
+		}
+		for _, o := range added {
+			if strings.EqualFold(o.Tag, l.Tag) || strings.EqualFold(o.Name, l.Tag) || strings.EqualFold(o.Tag, l.Name) {
+				return fmt.Errorf("map %s: its tag or name %q is %s's", l.Name, l.Tag, o.Name)
+			}
+		}
+		added = append(added, l)
+		PlayableLevels = added // ParseLevel sees the ones added so far
+	}
+	return nil
 }
 
 // LevelDisplay is the map's name for players' messages: its Display, else the level's own name.

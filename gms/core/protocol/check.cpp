@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <mutex>
 
 #include "core/postgame/postgame.h"
 #include "core/protocol/commands.h"
@@ -196,8 +197,62 @@ bool Bounds::Contains(float x, float y, float z) const {
   return x >= minX && x <= maxX && y >= minY && y <= maxY && z >= minZ && z <= maxZ;
 }
 
+namespace {
+// MAPED4: the level data the host read (SetLevelSize, SetLevelShopItems)
+struct LevelData {
+  std::mutex mu;
+  uint32_t sizeLevel = 0;
+  float sizeX = 0.f, sizeY = 0.f;
+  bool haveSize = false;
+  std::vector<uint32_t> items;  // sorted; empty: the table
+  unsigned generation = 0;
+};
+LevelData& Level() {
+  static LevelData d;
+  return d;
+}
+}  // namespace
+
+void SetLevelSize(uint32_t levelAssetId, float sizeX, float sizeY) {
+  LevelData& d = Level();
+  std::lock_guard<std::mutex> lock(d.mu);
+  d.sizeLevel = levelAssetId;
+  d.sizeX = sizeX;
+  d.sizeY = sizeY;
+  d.haveSize = sizeX > 0.f && sizeY > 0.f && std::isfinite(sizeX) && std::isfinite(sizeY);
+  ++d.generation;
+}
+
+void SetLevelShopItems(const std::vector<uint32_t>& assetIds) {
+  LevelData& d = Level();
+  std::lock_guard<std::mutex> lock(d.mu);
+  d.items = assetIds;
+  d.items.erase(std::remove(d.items.begin(), d.items.end(), 0u), d.items.end());
+  std::sort(d.items.begin(), d.items.end());
+  ++d.generation;
+}
+
+unsigned LevelDataGeneration() {
+  LevelData& d = Level();
+  std::lock_guard<std::mutex> lock(d.mu);
+  return d.generation;
+}
+
+bool IsDebugItemName(const std::string& name) { return name.rfind("Consumable_Debug_", 0) == 0; }
+
 Bounds BoundsForLevel(uint32_t levelAssetId) {
   Bounds b;
+  {
+    LevelData& d = Level();
+    std::lock_guard<std::mutex> lock(d.mu);
+    if (d.haveSize && d.sizeLevel == levelAssetId) {
+      b.maxX = d.sizeX / 2 + kBoundsMargin;
+      b.minX = -b.maxX;
+      b.maxY = d.sizeY / 2 + kBoundsMargin;
+      b.minY = -b.maxY;
+      return b;
+    }
+  }
   for (const LevelSize& l : kLevelSizes) {
     if (AssetIdOf(l.name) != levelAssetId) continue;
     b.maxX = l.x / 2 + kBoundsMargin;
@@ -220,6 +275,11 @@ const std::vector<uint32_t>& ShopItems() {
 }
 
 bool IsShopItem(uint32_t assetId) {
+  {
+    LevelData& d = Level();
+    std::lock_guard<std::mutex> lock(d.mu);
+    if (!d.items.empty()) return assetId != 0 && std::binary_search(d.items.begin(), d.items.end(), assetId);
+  }
   const std::vector<uint32_t>& v = ShopItems();
   return assetId != 0 && std::binary_search(v.begin(), v.end(), assetId);
 }

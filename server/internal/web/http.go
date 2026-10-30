@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"mime"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -52,6 +53,8 @@ var Builtins = []Builtin{
 		Path: webContentRoot + "/en-us/dynamic_lore/dynamic_lore.snap"},
 	{Suffix: "/common/home.html", ContentType: "text/html", Body: HomePage(),
 		Path: webContentRoot + "/common/home.html"},
+	{Suffix: "/common/history.html", ContentType: "text/html", Body: HistoryPage(),
+		Path: webContentRoot + "/common/history.html"},
 }
 
 // WriteBuiltins writes every built-in answer under dir at its Path (dgserver --write-www), so the files
@@ -90,8 +93,16 @@ type HTTP struct {
 	// with HomeJSONSuffix before --www and the built-ins (ServeHome). It must be cheap: every client on the home page
 	// polls it.
 	Home func() []byte
+	// History is the match history's JSON (MHIST2, dgserver's history.go; nil: none, 404), served at every path that
+	// ends with GamesJSONSuffix (kind HistoryGames) or GameJSONSuffix (HistoryGame) before --www and the built-ins
+	// (history.go): the HTTP status code and the JSON body (HistoryError's for an error) for the request's query.
+	History func(kind string, query url.Values) (int, []byte)
 
-	homeLog homeLog
+	// Maps are the map packages the server hands out (map delivery, mapdist.go; nil: none, 404 at its paths).
+	Maps    MapPackages
+	mapDist mapDist
+
+	homeLog, historyLog homeLog
 }
 
 // Download is the client package on the HTTP port.
@@ -118,6 +129,28 @@ const VersionPath = "dawngate/version.txt"
 // VersionPage is the answer at VersionPath.
 func VersionPage(v string) Builtin {
 	return Builtin{Path: VersionPath, ContentType: "text/plain", Body: []byte(v + "\n")}
+}
+
+// MapsPath is where dgserver answers the maps a custom game may pick there besides The Dawngate (--map,
+// --custom-maps): their tags joined by "+", the tunnel's FactMaps value, one line (empty: none). A checkout's
+// Start-Client.cmd, which plays without the tunnel, asks it for the create dialog's list (mapsetup --server-list).
+const MapsPath = "dawngate/maps.txt"
+
+// MapsPage is the answer at MapsPath for FactMaps's value.
+func MapsPage(fact string) Builtin {
+	return Builtin{Path: MapsPath, ContentType: "text/plain", Body: []byte(fact + "\n")}
+}
+
+// MapVersionsPath is where dgserver answers its versions of the maps of MapsPath (MAPED-GUARD-dialog): a line
+// "<tag> <SHA-256 of the host copy's archive>" per map that has one (tunnel.MapVersionsText; empty: none), so that
+// a checkout's Start-Client.cmd leaves out of the create dialog a map its copy has in another version. A server of a
+// release before it answers 404, and the dialog lists the map as before. Its own page and not more lines in MapsPath,
+// which a Start-Client of an earlier release reads whole as one value.
+const MapVersionsPath = "dawngate/mapversions.txt"
+
+// MapVersionsPage is the answer at MapVersionsPath for tunnel.MapVersionsText's body.
+func MapVersionsPage(text string) Builtin {
+	return Builtin{Path: MapVersionsPath, ContentType: "text/plain", Body: []byte(text)}
 }
 
 // Fingerprint is a CA modulus's fingerprint: the first 16 hex digits of its SHA-256 (patch_client.py --show's
@@ -175,6 +208,20 @@ func (h *HTTP) ServeConn(c net.Conn) {
 	if h.Home != nil {
 		if f := strings.Fields(req.line); len(f) >= 2 && strings.HasSuffix(urlPath(f[1]), HomeJSONSuffix) {
 			h.serveHome(c, peer, f[0], f[1])
+			return
+		}
+	}
+	if h.History != nil {
+		if f := strings.Fields(req.line); len(f) >= 2 {
+			if kind := historyKind(urlPath(f[1])); kind != "" {
+				h.serveHistory(c, peer, f[0], f[1], kind)
+				return
+			}
+		}
+	}
+	if h.Maps != nil {
+		if f := strings.Fields(req.line); len(f) >= 2 && isMapDist(urlPath(f[1])) {
+			h.serveMapDist(c, peer, f[0], f[1])
 			return
 		}
 	}

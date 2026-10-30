@@ -37,9 +37,11 @@
 #include "agents.h"
 #include "banter.h"
 #include "bots.h"
+#include "bots2.h"
 #include "components.h"
 #include "control/messages.h"
 #include "volumes.h"
+#include "effects.h"
 #include "crowd.h"
 #include "damage.h"
 #include "death.h"
@@ -52,10 +54,13 @@
 #include "host/host.h"
 #include "host/watchdog.h"
 #include "hunterroute.h"
+#include "itempassives.h"
 #include "log.h"
 #include "mapfix.h"
 #include "match.h"
+#include "matchstats_sources.h"
 #include "passives.h"
+#include "matchrec.h"
 #include "perf.h"
 #include "regen.h"
 #include "shop.h"
@@ -527,10 +532,12 @@ void StepCreate() {
   g_sim = s;
   AbilityTickSetSim(s);
   DamageSetSim(s);
+  matchstats::SetSim(s);  // MSTATS3: the heal-core detour counts on this simulator only
   death::SetSim(s);
   regen::SetSim(s);
   components::SetSim(s);  // D1j
   volumes::SetSim(s);     // D12c
+  effects::SetSim(s);     // FOGSTACKS
   Log("create: simulator %p constructed, object manager %p (vtable %08X); running Init with it bound", s, om, Field<unsigned>(om, 0));
   g_prevSim = GetCurrentSim();
   SetCurrentSim(s);
@@ -582,6 +589,7 @@ void TickAbilities() {
   if (g_abilityTick) AbilityTickAfterScheduler();
   death::AfterScheduler();
   if (g_damage) DamageTickShields();
+  effects::AfterAbilities();  // FOGSTACKS: the attached effects an ended modifier left
 }
 // D1i: health and resource regeneration (regen.h), after the frame's Lua and ability ends, while not paused.
 void TickRegen() { regen::Tick(); }
@@ -625,6 +633,7 @@ void TickNetworkRate() { GmsHostTickNetworkRate(); }
 // slot of AGENT_AI.md §5).
 void TickMatch() {
   match::Tick(g_sim);
+  matchrec::Tick(g_sim);  // MATCHREC: the match recorder's snapshots ([host] match_record)
   mapfix::Tick(g_sim);  // MAPLUA: dgsim_mapfix.Apply() again while a script's table is missing
   if (GmsHostActive()) banter::Tick(g_sim, match::MatchSeconds());  // D11b: the meeting banter (banter.h)
 }
@@ -730,6 +739,8 @@ void Stats(unsigned now, bool histo) {
     if (agents::FormatCampFinishStats(ag, sizeof ag)) Log("stats campfinish: %s", ag);  // CAMPFINISH
     if (agents::FormatDesecStats(ag, sizeof ag)) Log("stats desecrator: %s", ag);  // DESECBOT-3
     if (agents::FormatMikellaStats(ag, sizeof ag)) Log("stats mikella: %s", ag);    // MIKELLABOT
+    if (bots2::FormatStats(ag, sizeof ag)) Log("stats bots2: %s", ag);  // BOTS2
+    if (bots2::FormatExtraStats(ag, sizeof ag)) Log("stats bots2c: %s", ag);  // BOTS2c
     if (agents::FormatLostStats(ag, sizeof ag)) Log("stats lost: %s", ag);         // BACKTOACTION
     if (agents::FormatNullPosStats(ag, sizeof ag)) Log("stats nullpos: %s", ag);   // NULLPOS
     if (agents::FormatKillFinishStats(ag, sizeof ag)) Log("stats killfinish: %s", ag);  // KILLFINISH
@@ -748,6 +759,9 @@ void Stats(unsigned now, bool histo) {
     char pa[200];
     passives::FormatStats(pa, sizeof pa);  // D6c
     Log("stats passives: %s", pa);
+    char ip[240];
+    itempassives::FormatStats(ip, sizeof ip);  // ITEMDEATH
+    Log("stats %s", ip);
     char mf[200];
     mapfix::FormatStats(mf, sizeof mf);  // MAPLUA
     Log("stats %s", mf);
@@ -761,6 +775,11 @@ void Stats(unsigned now, bool histo) {
     char vs[300];
     volumes::FormatStats(vs, sizeof vs);
     Log("stats volumes: %s", vs);
+  }
+  if (effects::Installed() && histo) {  // FOGSTACKS
+    char es[400];
+    effects::FormatStats(es, sizeof es);
+    Log("stats effects: %s", es);
   }
   if (components::Installed() && histo) {  // D1j: the ability data containers and every server pool
     char cs[600];
@@ -806,7 +825,7 @@ void Stats(unsigned now, bool histo) {
     char gs[600];
     GmsHostFormatStats(gs, sizeof gs);
     Log("stats gms: %s", gs);
-    char cs[1000];  // D7c: the takeover counters made the line longer than 700
+    char cs[1400];  // D7c: the takeover counters made the line longer than 700; REFUND1 the undo counters
     if (GmsHostFormatCommandStats(cs, sizeof cs)) Log("stats commands: %s", cs);
     if (histo && banter::Enabled()) {  // D11b
       char bt[600];
@@ -1043,9 +1062,11 @@ void ReadConfig() {
       ho.vanquish = HostOptionInt("bot_hunter_vanquish", 1) != 0;
       ho.pull = HostOptionInt("bot_hunter_pull", ho.pull);
       ho.logLimit = HostOptionInt("hunter_route_log_limit", ho.logLimit);
+      ho.table = HostOptionInt("bot_hunter_route_table", 0) != 0;  // MAPED4: SM_Map_v5's coordinates
       hunterroute::Configure(ho);
     }
     agents::Install(ao);
+    bots2::Configure();  // BOTS2: [host] bot_ai (classic or v2), bot2_tune, bot2_census, bot2_log_limit
   } else {
     Log("agent step off (tick_agents / [host] agents = 0)");
   }
@@ -1428,6 +1449,7 @@ void ExperimentInstall(const char* gameDir, unsigned long mainThreadId) {
   } else {
     Log("damage hook off (damage = 0)");
   }
+  matchstats::InstallHealHook();  // MSTATS3: healing by source ([host] match_stats)
   {
     death::Options o;
     o.enabled = opt("death", 1) != 0;
@@ -1443,7 +1465,14 @@ void ExperimentInstall(const char* gameDir, unsigned long mainThreadId) {
     o.logLimit = opt("death_log_limit", o.logLimit);
     o.respawn = opt("respawn", 1) != 0;                          // D1g
     o.respawnSeconds = static_cast<float>(opt("respawn_s", 0));  // D1g: 0 = LevelGameplayTuning's formula
-    o.keepItemPassives = opt("death_keep_item_passives", 1) != 0;  // Q3
+    o.keepItemPassives = opt("death_keep_item_passives", 0) != 0;  // Q3's rule, off since ITEMDEATH
+    o.itemPassiveRespawn = opt("item_passive_respawn", 1) != 0;   // ITEMDEATH (itempassives.h)
+    Log("death: item passives (ITEMDEATH): %s",
+        o.keepItemPassives    ? "kept through the death (death_keep_item_passives=1, Q3's rule)"
+        : o.itemPassiveRespawn ? "those that end OnAgentDeath end with the death, the slots' dead ids are cleared, "
+                                 "activated again at the respawn"
+                               : "those that end OnAgentDeath end with the death and stay gone, the slots keep the dead "
+                                 "ids (item_passive_respawn=0)");
     o.respawnFeedback = opt("respawn_feedback", 1) != 0;         // D11: PlayerRespawned at the respawn
     o.rewardBuffs = opt("reward_buffs", 1) != 0;                 // D14: the jungle buffs, the parasite's team buffs
     o.roleGold = opt("role_passives", 1) != 0;                   // ROLEVIM: the roles' minion/creature gold modifiers
@@ -1464,6 +1493,12 @@ void ExperimentInstall(const char* gameDir, unsigned long mainThreadId) {
     o.follow = opt("volume_follow", 1) != 0;
     o.logLimit = opt("volume_log_limit", o.logLimit);
     volumes::Install(o);
+  }
+  {  // FOGSTACKS: an ended modifier's attached effects are destroyed (effects.h)
+    effects::Options o;
+    o.endWithModifier = opt("modifier_effects_end", 1) != 0;
+    o.logLimit = opt("modifier_effects_log_limit", o.logLimit);
+    effects::Install(o);
   }
   {  // D1i: health and resource regeneration (regen.h)
     regen::Options o;

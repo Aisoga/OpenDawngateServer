@@ -36,7 +36,8 @@
 // none), bots_allies (1: fill the humans' teams too), bot_classes ("" = Tuning.BotPlan's bots; "PC_Warden,PC_Guardian"
 // replaces the list), bots_lua (1), bot_lanes (1), bot_ftue (1: the humans of an IsFTUE game are first-time players for
 // nBot.IsEnemyOfFirstTimePlayer), bot_log_limit (300); D6b: bot_missions (1), bot_mission_ms (1000), bot_shopping (1),
-// bot_potions (2: carried at most), bot_fire_tracker (1), bot_fire_zones (0: FIREZONE's stub for the tracker's NavPower
+// bot_potions (2: carried at most), BOTSHOP-PASS: bot_shop_visit (1), bot_shop_visit_ms (1000),
+// bot_shop_visit_repeat_ms (1000); bot_fire_tracker (1), bot_fire_zones (0: FIREZONE's stub for the tracker's NavPower
 // penalty boxes; 1 = the game's code), bot_fixups (1: dgsim_bots_api.lua's two script fix-ups); the
 // brain's bot_think_ms is agents.h's.
 #pragma once
@@ -46,6 +47,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "core/bots/lanes.h"  // BOTS2: LanePath
 
 namespace bots {
 
@@ -62,6 +65,12 @@ struct Options {
   int missionMs = 1000;
   bool shopping = true;
   int potions = 2;
+  // BOTSHOP-PASS (core/bots/shopping.h ShopVisit): [host] bot_shop_visit, the host shops for a bot that stays in the
+  // shop's reach `bot_shop_visit_ms` without its plan's purchase, again every `bot_shop_visit_repeat_ms`; 0 = only the
+  // plans' ability_Bot_Buy
+  bool shopVisit = true;
+  int shopVisitMs = 1000;
+  int shopVisitRepeatMs = 1000;
   bool fireTracker = true;
   bool fireZones = false;  // FIREZONE: [host] bot_fire_zones, 1 = keep the game's NavPower fire zones (0x00877870)
   bool fixups = true;
@@ -72,6 +81,9 @@ struct Options {
   std::string hunters = "default";  // HUNTERBOT: [host] bot_hunters, the Hunter seat's classes (composition.h ParseHunterList)
   std::string tacticians;  // DESECBOT: [host] bot_tacticians, each team's first Tactician seat (ParseTacticianList); "" = drawn
   std::string gladiators;  // MIKELLABOT: [host] bot_gladiators, each team's first Gladiator seat (ParseGladiatorList); "" = drawn
+  // BOTS2c: [host] bot_mirror, every team the same GTGTH lineup seat by seat (composition.h MirrorLineup; "" = off, "1"
+  // the default lineup, or five classes); no draw, no pins, and no draft (the composed seats stand)
+  std::string mirror;
   bool guideBuilds = true;  // DESECBOT-2: [host] bot_guide_builds, a profile's own build (core/bots/guidebuild.h); 0 = its ItemBuild
   bool kits = true;             // HUNTERBOT: [host] bot_kits, the shapers' kit rules (the Lua's E spin rule; kits.h)
   bool hunterFix = true;        // HUNTERBOT: [host] bot_hunter_fix, the shared Hunter changes (hold, push, defend, waves, route)
@@ -152,9 +164,16 @@ struct Bot {
 const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& humans, const std::vector<Human>& waiting);
 const std::vector<Bot>& Players();
 bool IsBotIndex(int index);
+// BOTS2c: what the next step of the bot's build costs (its shop plan, as the shop visit would buy it): 0 when there is
+// nothing to buy (the build done or blocked), -1 unknown (no such bot, shopping off). Server simulator bound.
+int NextItemPrice(std::uint32_t creature);
 // BACKTOACTION: the front of the bot's lane (nBot.AssignLane's, else its first lane) for `team`, as
 // nBotHost.LaneCenterAndDirection returns it; false without lanes or fronts. `laneOut` (optional) gets the lane.
 bool LaneFrontOf(std::uint32_t creature, int team, float* out, int* laneOut = nullptr);
+// BOTS2: the lanes' polylines (team 1's base to team 2's; empty before the level) and the bot's lane now
+// (nBot.AssignLane's, else its first lane; 0 unknown).
+const std::vector<gms::bots::LanePath>& LanePaths();
+int CurrentLane(std::uint32_t creature);
 // Shaper select moved a bot to another role (its mRole is written by the host's pick write; this keeps our list, which
 // the Lua shims' BotRole answers from, in step).
 void SetRole(int index, int role);

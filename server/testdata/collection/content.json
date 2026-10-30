@@ -1,0 +1,33 @@
+{
+  "format": "dawngate-content-3",
+  "itemFilters": [
+    {"name": "Offense", "title": "Offense", "tags": [{"tag": "Power", "title": "Power"}, {"tag": "LifeDrain"}, {"tag": "Bad Tag", "title": "Spaced"}]},
+    {"name": "Defense", "tags": [{"tag": "MaxHealth", "title": "Health\tPoints"}]}
+  ],
+  "matchItems": [
+    {"name": "Item_Alpha", "title": "Alpha", "tier": "Basic", "cost": 400, "group": "Offense", "icon": "UI\\Icons\\ShopIcons\\textures\\alpha.dds",
+     "into": [{"item": "Item_Beta", "price": 800}, {"item": "Item_Zeta", "price": 500}],
+     "stats": [{"id": "Power", "value": 20, "parts": [{"t": "+20", "c": "#55FF55"}, {"t": " Power"}]}, {"id": "LifeDrain", "value": 0.05}],
+     "passives": [{"modifier": "m1", "rank": 1, "title": "Spark", "kind": "unique", "text": "Hits burn.\nTwice.",
+       "parts": [{"t": "Hits "}, {"t": "burn", "c": "#ffff99"}, {"t": ".\nTwice\tover.", "c": "red"}]}],
+     "tags": ["OffensiveEffect", "Power"]},
+    {"name": "Item_Beta", "title": "Beta", "tier": "Advanced", "cost": 1200, "group": "Defense", "icon": "UI/Icons/ShopIcons/textures/beta.dds",
+     "from": [{"item": "Item_Alpha", "price": 800}], "into": [{"item": "Item_Epsilon", "price": 1900}],
+     "passives": [{"modifier": "m2", "kind": "stackable", "text": "Plain\ttext only."}, {"modifier": "m3"}],
+     "tags": ["MaxHealth", "Power"]},
+    {"name": "Item_Delta", "title": "Delta", "tier": "Basic", "cost": 400, "group": "Utility", "icon": "UI/Icons/ShopIcons/textures/delta.dds",
+     "tags": ["Bad Tag", "Aura"]},
+    {"name": "Item_Epsilon", "tier": "Legendary", "cost": 3100, "icon": "UI/Icons/ShopIcons/textures/epsilon.dds", "from": [{"item": "Item_Beta", "price": 1900}]},
+    {"name": "Item_Eta", "title": "Éta", "tier": "Basic", "cost": 400, "group": "Offense"},
+    {"name": "Item_Gamma", "title": "Gamma", "tier": "Basic", "cost": 350, "group": "Defense", "icon": "UI/Icons/ShopIcons/textures/gamma.dds"},
+    {"name": "Item_Iota", "title": "Io\tta", "tier": "Basic", "cost": 100},
+    {"name": "Item_Kappa", "title": "Kappa", "tier": "Mythic", "cost": 10},
+    {"name": "Consumable_Potion", "title": "Potion", "category": "Consumable", "cost": 50, "group": "Utility", "icon": "UI/Icons/ShopIcons/textures/potion.dds",
+     "activeInfo": {"kind": "unique", "text": "Heals 150 Health.", "cooldown": 2.5}},
+    {"name": "Consumable_Debug_GrantGold", "title": "Grant Gold", "category": "Consumable", "cost": 0},
+    {"name": "Item_Zeta", "title": "Zeta", "tier": "Advanced", "cost": 900, "cheat": true},
+    {"name": "Spell_CheatBlink", "title": "Blink+", "category": "Ability", "cost": 0},
+    {"name": "Spell_Blink", "title": "Blink", "category": "Ability", "cost": 0, "group": "Utility", "tags": ["Power"], "icon": "UI/Icons/ShopIcons/textures/blink.dds",
+     "activeInfo": {"title": "Flash\tStep", "text": "Teleports.", "parts": [{"t": "Teleports", "c": "#FFFFFF"}, {"t": "."}], "cooldown": 0.4}}
+  ]
+}

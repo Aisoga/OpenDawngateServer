@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "serverTime": 1793124000,
+  "names": true,
+  "player": null,
+  "matches": [
+    {
+      "id": 1,
+      "mode": "practice",
+      "kind": "practice",
+      "kindName": "Practice match",
+      "map": "The Dawngate",
+      "level": "SM_Map_v5",
+      "winner": 1,
+      "reason": "guardian",
+      "started": 1793106000,
+      "ended": 1793107200,
+      "durationSec": 1200,
+      "seats": [
+        {
+          "seat": 0,
+          "team": 1,
+          "name": "Alpha",
+          "bot": false,
+          "you": false,
+          "shaper": "Ember",
+          "noun": 3289851332,
+          "role": 1,
+          "roleName": "Gladiator",
+          "won": true,
+          "left": false,
+          "kills": 4,
+          "deaths": 1,
+          "assists": 2,
+          "cs": 80,
+          "gold": 6100,
+          "level": 11
+        },
+        {
+          "seat": 5,
+          "team": 2,
+          "name": "Bot",
+          "bot": true,
+          "you": false,
+          "shaper": "Fenmore",
+          "noun": 1807893831,
+          "role": 3,
+          "roleName": "Hunter",
+          "won": false,
+          "left": false,
+          "kills": 1,
+          "deaths": 4,
+          "assists": 0,
+          "cs": 60,
+          "gold": 4200,
+          "level": 9
+        }
+      ]
+    }
+  ],
+  "more": false,
+  "nextBefore": 0
+}

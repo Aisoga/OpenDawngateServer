@@ -22,7 +22,12 @@ Steps, in order. Each one checks its result, is skipped when its result is curre
   client texts   re/scripts/patch_locale.py --host 127.0.0.1 [--web-domain D]: the added locale package
                  game/Data/Locale/en-us/AA_Server.package (the login screen's texts, its links at the server's pages),
                  made from the copy's own Locale.package; current means byte for byte (the Go setup's are the same).
-  RakNet         tools/raknet/RakNet (Source/ and the licence files) from the facebookarchive/RakNet archive of commit
+                 --maps (default this checkout's maps/, from a worktree without a package the main checkout's): with a map package there, the lobby's map line names none.
+  client maps    (and host maps) the release setup's map steps, `go run ./tools/mapsetup --maps <maps/> [--client]`:
+                 zz_MM_Map_v3.snap, zz_<name>.snap of every package in maps/ (compiled from its map.json and the
+                 copy's files), zz_BotProfiles.snap (the bot profiles and the maps' catalog entries) and, in the client
+                 copy, zz_MatchOptions.snap (the create dialog's bot check box and map dropdown); --check passes on.
+  RakNet       tools/raknet/RakNet (Source/ and the licence files) from the facebookarchive/RakNet archive of commit
                  1a169895 (--raknet-zip; SHA-256 checked). This script downloads nothing.
   gms build      gms/build (cmake -G "Visual Studio 17 2022" -A Win32 -DRAKNET_ROOT=..., Release): dgsim.dll and
                  gms_script.exe newer than their sources (run_session.ps1's rule). An output still older after the
@@ -35,6 +40,10 @@ Steps, in order. Each one checks its result, is skipped when its result is curre
   content        server/data/content.json in the server's current format: dgserver --make-content from an AssetData
                  dump (snap.py extract and assetdata.py dump into re/out/). --no-content leaves it out (new accounts
                  then own no items).
+  collection items  client/run_854's game/Data/zz_CollectionItems.snap (patch_login_movie.py --spec collection
+                 --content server/data/content.json: the Collection's Items category, made from the copy's own
+                 code.snap and the content file's items; after the content step). The other movie steps (bot check
+                 box, chat rooms, after action review, shop refund) run after client maps.
   RakNet probe   only with --probe: tools/raknet/build/Release/raknet_probe_p5.exe (run_session.ps1 -GmsProbe
                  silent|connected, a research tool).
   lane b, c, d   only with --lane <X>[,<Y>...] (repeatable; --lane-b = --lane b): re/scripts/setup_lane.py X for each
@@ -299,6 +308,25 @@ def main_root(code):
     except (OSError, subprocess.CalledProcessError):
         pass
     return code
+
+
+def has_map_packages(folder):
+    """True when folder holds a map package (a sub-folder with map.json)."""
+    try:
+        return any(os.path.isfile(os.path.join(folder, n, "map.json")) for n in os.listdir(folder))
+    except OSError:
+        return False
+
+
+def default_maps():
+    """--maps' default: this checkout's maps/; MAPCLEAN: no package is in git, so from a worktree whose maps/ holds
+    none, the main checkout's (setup_lane.py's maps_dir)."""
+    code = os.path.normpath(os.path.join(HERE, "..", ".."))
+    own = os.path.join(code, "maps")
+    if has_map_packages(own):
+        return own
+    main = os.path.join(main_root(code), "maps")
+    return main if has_map_packages(main) else own
 
 
 def find_go():
@@ -744,7 +772,8 @@ class Setup:
             return self.report(FAILED, step, f"{self.show(src)} is not the untouched build-854 file "
                                              "(docs/file_manifest.csv); delete the copy and run this again")
         try:
-            want = pl.build(src, host, web_domain=self.a.web_domain)
+            want = pl.build(src, host, web_domain=self.a.web_domain, lobby_map=pl.lobby_map_for(self.a.maps),
+                            maps=pl.folder_maps(self.a.maps))
         except (pl.LocaleError, ValueError) as e:
             return self.report(FAILED, step, str(e))
         links = pl.site_base(host, web_domain=self.a.web_domain)
@@ -757,39 +786,10 @@ class Setup:
             return self.report(MISSING if have is None else STALE, step, f"{self.show(added)}: {why}")
         self.never_pristine(added)
         cmd = [os.path.join(copy, "game", "Data"), "--host", host] + \
-            (["--web-domain", self.a.web_domain] if self.a.web_domain else [])
+            (["--web-domain", self.a.web_domain] if self.a.web_domain else []) + \
+            (["--maps", self.a.maps] if self.a.maps else [])
         if self.script("patch_locale.py", *cmd) or not os.path.isfile(added) or read(added) != want:
             return self.report(FAILED, step, f"patch_locale.py didn't write the expected {self.show(added)} "
-                                             "(is the game running from this copy?)")
-        return self.report(DONE, step, f"{line} (was: {why})")
-
-    def step_bot_profiles(self, step, copy):
-        """a copy's added archive game/Data/zz_BotProfiles.snap (bot_profiles.py: the project's own bot profiles, a
-        Warden with the Predator role), made from the copy's own AssetData.snap; current means byte for byte what
-        bot_profiles.py makes (the Go setup's botprofiles, the same bytes). Every client and host copy."""
-        import bot_profiles as bpr
-        src = os.path.join(copy, *bpr.SOURCE.split("/"))
-        added = os.path.join(copy, *bpr.REL.split("/"))
-        if not os.path.isfile(src):
-            return self.report(MISSING, step, f"{self.show(src)} (the copy is incomplete)")
-        if sha256(src) != self.orig_sha(bpr.SOURCE):
-            return self.report(FAILED, step, f"{self.show(src)} is not the untouched build-854 file "
-                                             "(docs/file_manifest.csv); delete the copy and run this again")
-        try:
-            want = bpr.build(src)
-        except (bpr.ProfileError, ValueError) as e:
-            return self.report(FAILED, step, str(e))
-        line = f"{self.show(added)}: {len(bpr.PROFILES)} bot profile(s) ({hashlib.sha256(want).hexdigest()[:16]})"
-        have = read(added) if os.path.isfile(added) else None
-        if have == want:
-            return self.report(OK, step, line)
-        why = "not there" if have is None else "older profiles"
-        if self.check:
-            return self.report(MISSING if have is None else STALE, step, f"{self.show(added)}: {why}")
-        self.never_pristine(added)
-        if self.script("bot_profiles.py", os.path.join(copy, "game", "Data")) or not os.path.isfile(added) or \
-                read(added) != want:
-            return self.report(FAILED, step, f"bot_profiles.py didn't write the expected {self.show(added)} "
                                              "(is the game running from this copy?)")
         return self.report(DONE, step, f"{line} (was: {why})")
 
@@ -825,37 +825,36 @@ class Setup:
                                              "(is the game running from this copy?)")
         return self.report(DONE, step, f"{line} (was: {why})")
 
-    def step_mapship(self, step, copy):
-        """a copy's added archive game/Data/zz_MM_Map_v3.snap (the second map MM_Map_v3's level files: the navigation
-        graphs, the PhysX mesh (shipped cooked in the setup's code), the fog outlines, the minimap and the ground),
-        made from the copy's own game files by the release setup's own code (`go run ./tools/mapmm`); current means build 854's archive (MM_ARCHIVE_SHA256, the Go setup's pin). Every
-        client copy and the host copy: a server may host either map."""
-        added = os.path.join(copy, "game", "Data", MM_ARCHIVE)
-        line = f"{self.show(added)}: the second map MM_Map_v3's level files ({MM_ARCHIVE_SHA256[:16]})"
-        if os.path.isfile(added) and sha256(added) == MM_ARCHIVE_SHA256:
-            return self.report(OK, step, line)
-        why = "an older one" if os.path.isfile(added) else "not there"
-        if self.check:
-            return self.report(STALE if os.path.isfile(added) else MISSING, step, f"{self.show(added)}: {why}")
+    def step_maps(self, step, copy, client):
+        """MAPED2b: a copy's map files by the release setup's own code (`go run ./tools/mapsetup --maps <maps/>
+        [--client] <copy>`, with --check when this run only checks): game/Data/zz_MM_Map_v3.snap (build 854's archive,
+        MM_ARCHIVE_SHA256), zz_<name>.snap of every package in this checkout's maps/ (compiled from its map.json and the
+        copy's files), zz_BotProfiles.snap (the bot profiles, a Warden with the Predator role, and the maps' catalog
+        entries) and, in a player copy, zz_MatchOptions.snap (the CREATE GAME dialog's bot check box and map dropdown,
+        after the archives it lists). Current means byte for byte what the Go setup makes now. Every client copy and
+        the host copy: a server may host any of these maps. Each line the Go setup prints is reported here."""
         if not self.needs(step, Go=self.tools.get("go")):
             return False
-        self.never_pristine(added)
-        env = dict(os.environ, GOTOOLCHAIN="local")
-        if self.run([self.tools["go_exe"], "run", "./tools/mapmm", copy], env=env,
-                    cwd=os.path.join(self.code, "server")) or \
-                not (os.path.isfile(added) and sha256(added) == MM_ARCHIVE_SHA256):
-            return self.report(FAILED, step, f"server/tools/mapmm didn't write build 854's {self.show(added)} "
-                                             "(is the game running from this copy?)")
-        return self.report(DONE, step, f"{line} (was: {why})")
-
-    def step_match_options(self, step, copy):
-        """a client copy's added archive game/Data/zz_MatchOptions.snap (patch_login_movie.py --spec matchoptions: the
-        CREATE GAME dialog's movie with our "Fill open seats with bots" check box and map dropdown, and the map list
-        of the maps besides The Dawngate whose archives the copy has), made from the copy's own Battlegrounds.snap;
-        current means byte for byte what patch_login_movie.py makes (the Go setup's moviepatch.MatchOptions, the same
-        bytes). Every client copy; a step that adds a map's archive runs before this one."""
-        return self.step_movie(step, copy, "matchoptions", "the create dialog's bot check box",
-                               "an older check box or map list")
+        if not self.check:
+            for name in ("zz_MM_Map_v3.snap", "zz_BotProfiles.snap", "zz_MatchOptions.snap"):
+                self.never_pristine(os.path.join(copy, "game", "Data", name))
+        cmd = [self.tools["go_exe"], "run", "./tools/mapsetup", "--maps", self.a.maps] + \
+            (["--client"] if client else []) + (["--check"] if self.check else []) + [copy]
+        print("    $ " + subprocess.list2cmdline(cmd), flush=True)
+        r = subprocess.run(cmd, capture_output=True, env=dict(os.environ, GOTOOLCHAIN="local"),
+                           cwd=os.path.join(self.code, "server"))
+        ok = True
+        lines = r.stdout.decode("utf-8", "replace").splitlines()
+        for line in lines:
+            m = re.match(r"\s*\[(\w+)\]\s+(.*)$", line)
+            if m:
+                state = {"ok": OK, "done": DONE, "note": NOTE, "skipped": SKIP}.get(m.group(1), m.group(1))
+                ok = self.report(state if state in (OK, DONE, NOTE, SKIP) + BAD else FAILED, step, m.group(2)) and ok
+        if r.returncode and ok:
+            err = r.stderr.decode("utf-8", "replace").strip().splitlines()
+            return self.report(FAILED, step, f"server/tools/mapsetup exit {r.returncode}: "
+                                             f"{err[-1] if err else '(no output)'}")
+        return ok and not r.returncode
 
     def step_chat_rooms(self, step, copy):
         """a client copy's added archive game/Data/zz_Chat.snap (patch_login_movie.py --spec chatrooms: the chat movie
@@ -864,9 +863,37 @@ class Setup:
         (the Go setup's moviepatch.ChatRooms, the same bytes). Every client copy."""
         return self.step_movie(step, copy, "chatrooms", "the chat rooms opened by default", "an older chat rooms class")
 
-    def step_movie(self, step, copy, name, what, older):
-        """one of patch_login_movie.py's added archives (spec `name`) in a client copy, made from the copy's own
-        source archive."""
+    def step_after_action(self, step, copy, host):
+        """a client copy's added archive game/Data/zz_AfterActionReview.snap (patch_login_movie.py --spec aftaction
+        --host <host>: the After Action Review movie from the copy's own Battlegrounds.snap with the tabs Scoreboard,
+        Match Stats and Recent Games, and the web root of the server `host` the copy is set up for; the Go setup's
+        moviepatch.AfterAction, the same bytes). Every client copy."""
+        return self.step_movie(step, copy, "aftaction", "the After Action Review's tabs",
+                               "an older tabs class or another server's web root", host)
+
+    def step_item_shop(self, step, copy):
+        """a client copy's added archive game/Data/zz_ItemShop.snap (patch_login_movie.py --spec itemshop: the item
+        shop movie from the copy's own HUD.snap with our class for the inline refund, badges on the slots whose
+        purchase of this visit can be undone and the shop's Sell turned into Refund there; the Go setup's
+        moviepatch.ItemShop, the same bytes). Every client copy."""
+        return self.step_movie(step, copy, "itemshop", "the shop's inline refund", "an older refund class")
+
+    def step_collection(self, step, copy):
+        """a client copy's added archive game/Data/zz_CollectionItems.snap (patch_login_movie.py --spec collection
+        --content <server/data/content.json>: the front end's movie UIRuntime.gfx from the copy's own code.snap with
+        our class for the Collection's Items category, and the item list from the content file, which the content step
+        writes before this one; the Go setup's moviepatch.Collection with the same game's content, the same bytes).
+        Every client copy; without the content file it waits for the content step."""
+        content = os.path.join(self.data, "content.json")
+        if not os.path.isfile(content):
+            return self.needs(step, content=False)
+        return self.step_movie(step, copy, "collection", "the Collection's items", "an older Collection class or item list",
+                               content=content)
+
+    def step_movie(self, step, copy, name, what, older, host=None, content=None):
+        """one of patch_login_movie.py's added archives (spec `name`; `host` the copy's server for a spec with the web
+        root, `content` the content.json of a spec with the item list) in a client copy, made from the copy's own source
+        archive."""
         import patch_login_movie as plm
         spec = plm.SPECS[name]
         src = os.path.join(copy, *spec.source.split("/"))
@@ -877,7 +904,7 @@ class Setup:
             return self.report(FAILED, step, f"{self.show(src)} is not the untouched build-854 file "
                                              "(docs/file_manifest.csv); delete the copy and run this again")
         try:
-            want = plm.build(src, spec=spec)
+            want = plm.build(src, spec=spec, host=host, content=content)
         except (plm.MovieError, ValueError) as e:
             return self.report(FAILED, step, str(e))
         line = f"{self.show(added)}: {what} ({hashlib.sha256(want).hexdigest()[:16]})"
@@ -894,7 +921,8 @@ class Setup:
         if self.check:
             return self.report(MISSING if have is None else STALE, step, f"{self.show(added)}: {why}")
         self.never_pristine(added)
-        if self.script("patch_login_movie.py", "--spec", name, src, added) or not os.path.isfile(added) or \
+        host_args = (("--host", host) if host and spec.web_root else ()) + (("--content", content) if content else ())
+        if self.script("patch_login_movie.py", "--spec", name, *host_args, src, added) or not os.path.isfile(added) or \
                 read(added) != want:
             return self.report(FAILED, step, f"patch_login_movie.py didn't write the expected {self.show(added)} "
                                              "(is the game running from this copy?)")
@@ -1066,27 +1094,38 @@ class Setup:
                 stats = any(p.get("attributes") or p.get("modifiers") for p in c.get("perks") or [])
             except ValueError:
                 got = "unreadable"
-        if got == want and stats:
-            return self.report(OK, step, f"{self.show(content)} ({want}, perk stats)")
+        # the newest fields the game-folder build writes (the format name stays dawngate-content-3, so an older file
+        # passes the format check): a file without one of them is STALE and built again
+        def lacks(c):
+            items = c.get("matchItems") or []
+            if not any(it.get("icon") for it in items):
+                return "the items' icon paths (the Collection's cards show them; built before ITEMWEB1)"
+            if not c.get("itemShop"):
+                return "the item shop's order (built before ITEMSHOP)"
+            if not any(s.get("parts") for it in items for s in it.get("stats") or []):
+                return "the stat lines (built before ITEMSHOP)"
+            if not any(it.get("activeInfo") for it in items):
+                return "the spells' and consumables' texts (built before ITEMSHOP round 2)"
+            return ""
+        shop, missing_fields = False, "unreadable"
+        if got == want:
+            try:
+                missing_fields = lacks(json.loads(read(content)))
+                shop = not missing_fields
+            except ValueError:
+                shop = False
+        if got == want and stats and shop:
+            return self.report(OK, step, f"{self.show(content)} ({want}, perk stats, the match items' details)")
         why = ("missing" if got is None else f"format {got}, want {want}" if got != want
-               else "no perk stats (built before D3-perks)")
+               else "no perk stats (built before D3-perks)" if not stats else f"no {missing_fields}")
         if self.check:
             return self.report(MISSING if got is None else STALE, step, f"{self.show(content)}: {why} "
                                                                         "(optional: --no-content)")
         if not self.needs(step, archive=archive_ok, dgserver=os.path.isfile(self.server_exe)):
             return False
-        dump = os.path.join(self.out, "assetdata")
-        if not os.path.isfile(os.path.join(dump, "_summary.json")):
-            snap_out = os.path.join(self.out, "snap")
-            bins = os.path.join(snap_out, "AssetData", "AssetData", "Binary")
-            data_dir = os.path.join(self.pristine_game, "game", "Data")
-            if not os.path.isdir(bins) and self.script("snap.py", "extract", os.path.join(data_dir, "AssetData.snap"),
-                                                       snap_out):
-                return self.report(FAILED, step, "snap.py extract AssetData.snap failed")
-            if self.script("assetdata.py", "dump", bins, dump, "--locale",
-                           os.path.join(data_dir, "Locale", "en-us", "Locale.package")):
-                return self.report(FAILED, step, "assetdata.py dump failed")
-        if self.run([self.server_exe, "--make-content", dump, "--data", self.data]):
+        # from the game folder itself (server/internal/setup/gamecontent: the same file as the old pipeline snap.py
+        # extract + assetdata.py dump + --make-content <dump>, plus the passives' names)
+        if self.run([self.server_exe, "--make-content", self.pristine_game, "--data", self.data]):
             return self.report(FAILED, step, "dgserver --make-content failed")
         try:
             c = json.loads(read(content))
@@ -1097,7 +1136,8 @@ class Setup:
         if got != want or not stats:
             return self.report(FAILED, step, f"{self.show(content)} has format {got}, want {want}"
                                              f"{'' if stats else ', and no perk stats'}")
-        return self.report(DONE, step, f"{self.show(content)} built from {self.show(dump)} ({want})")
+        return self.report(DONE, step, f"{self.show(content)} built from {self.show(self.pristine_game)} ({want}, "
+                                       "the match items' details)")
 
     def step_probe(self, raknet_ok):
         step = "RakNet probe"
@@ -1178,24 +1218,24 @@ class Setup:
                 self.step_exe("client exe", self.client, os.path.join(self.certs, "ca_modulus.bin"), "local", LOCAL)
             config = self.step_config("client config", self.client, LOCAL)
             self.step_locale("client texts", self.client, LOCAL)
-            self.step_bot_profiles("client bots", self.client)
             self.step_halloween("halloween", self.client)
             client = bool(exe and config)
             client_copy = True
         raknet = self.step_raknet()
         gms = self.step_gms(raknet)
         if client or (self.check and os.path.isdir(self.client)):
-            self.step_mapship("client MM_Map_v3", self.client)
+            # MAPED2b: the maps' archives, the bot profiles with their catalog entries, then the create
+            # dialog, whose map dropdown lists the maps the copy has (MAPDROP)
+            self.step_maps("client maps", self.client, True)
         if client_copy:
-            # after the map's archive: the create dialog's map dropdown lists the maps the copy has (MAPDROP)
-            self.step_match_options("bot check box", self.client)
             self.step_chat_rooms("chat rooms", self.client)
+            self.step_after_action("after action review", self.client, LOCAL)
+            self.step_item_shop("shop refund", self.client)
         self.step_server()
         host_copy = self.copy_there("host copy", self.host, archive, PATCHED + (LOADER,))
         host = False
         if host_copy:
-            self.step_bot_profiles("host bots", self.host)
-            self.step_mapship("host MM_Map_v3", self.host)
+            self.step_maps("host maps", self.host, False)
             exe = self.needs("host exe", certificates=certs) and \
                 self.step_exe("host exe", self.host, os.path.join(self.certs, "ca_modulus.bin"), "local", LOCAL,
                               exact=False)
@@ -1209,6 +1249,12 @@ class Setup:
             self.report(SKIP, "content", "--no-content: new accounts own no items")
         else:
             self.step_content(archive)
+        if client_copy:
+            # after the content step: the Collection's item list comes from its file
+            if self.a.no_content:
+                self.report(SKIP, "collection items", "--no-content: the Collection's Items need the content file")
+            else:
+                self.step_collection("collection items", self.client)
         if self.a.probe:
             self.step_probe(raknet)
         for name in self.a.lanes:
@@ -1232,11 +1278,17 @@ class Setup:
             self.step_exe("client exe", self.client, ca, "lan", host, bind)
             self.step_config("client config", self.client, host)
             self.step_locale("client texts", self.client, host)
-            self.step_bot_profiles("client bots", self.client)
             self.step_halloween("halloween", self.client)
-            self.step_mapship("client MM_Map_v3", self.client)
-            self.step_match_options("bot check box", self.client)
+            self.step_maps("client maps", self.client, True)
             self.step_chat_rooms("chat rooms", self.client)
+            self.step_after_action("after action review", self.client, host)
+            self.step_item_shop("shop refund", self.client)
+            if os.path.isfile(os.path.join(self.data, "content.json")):
+                self.step_collection("collection items", self.client)
+            else:
+                self.report(SKIP, "collection items", f"no {self.show(os.path.join(self.data, 'content.json'))} on "
+                                                      "this machine (Start-Client's setup makes the list from the "
+                                                      "game's own data)")
 
     def finish(self):
         bad = [r for r in self.results if r[0] in BAD]
@@ -1299,11 +1351,16 @@ def parse(argv):
                                      "--player: client/run_854_lan/Dawngate)")
     ap.add_argument("--web-domain", metavar="D", help="the server's website: the client copy's login links go to "
                                                        "https://<D>/<page> instead of dgserver's own pages")
+    ap.add_argument("--maps", metavar="DIR",
+                    help="the maps folder whose packages every copy gets (default this checkout's maps/, from a "
+                         "worktree without a package the main checkout's; '' none)")
     ap.add_argument("--afk-minutes", type=int, metavar="N", help="patch_config.py --afk-minutes for the client copy")
     ap.add_argument("--afk-disconnect-minutes", type=int, metavar="M", help="patch_config.py --afk-disconnect-minutes")
     ap.add_argument("--root", help="put the copies, certificates, data, RakNet and builds under this folder")
     ap.add_argument("--build-root", help="put gms/build and server/bin under this folder")
     a = ap.parse_args(argv[1:])
+    if a.maps is None:
+        a.maps = default_maps()
     if a.player and not a.server_host:
         ap.error("--player needs --server-host <the server's LAN address>")
     if not a.player:

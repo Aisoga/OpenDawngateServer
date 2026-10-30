@@ -15,6 +15,7 @@
 #include "game.h"
 #include "hook.h"
 #include "log.h"
+#include "matchstats_cc.h"
 #include "shop.h"
 
 using namespace game;
@@ -164,6 +165,7 @@ void OnTickThreadPrepared(void* instance, bool recreated) {
     Log("ability %s: inst %08X %s (type %d) agent %08X target %08X tid %08X status %d -> %s (t %.2f s)",
         recreated ? "tick thread recreated" : "tick thread", id, InstName(instance), type,
         Field<unsigned>(instance, inst::kAgent), Field<unsigned>(instance, inst::kTarget), tid, status, what, GameSeconds());
+  matchstats::cc::OnTickThread(instance, recreated);  // MSTATS4: wardsPlaced
 }
 
 bool GuardedPrepared(void* instance, bool recreated) {
@@ -704,6 +706,11 @@ void AbilityLuaContext(char* buf, std::size_t size) {
   } else {
     std::snprintf(buf, size, " [in %s]", inner);
   }
+}
+
+unsigned AbilityLuaInstance() {
+  if (!g_opt.luaContext || g_depth <= 0 || g_depth > kMaxFrames || !Ours()) return 0;
+  return g_frames[g_depth - 1].inst;
 }
 
 const char* AbilityInstanceName(unsigned id, int* type) {

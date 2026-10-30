@@ -60,8 +60,9 @@ class LanePatchTest(unittest.TestCase):
         cls.lane_b, cls.summary_b = pc.patch_bytes(cls.orig, MODULUS, host="127.0.0.2", data_suffix="B")
 
     def test_lane_a_is_still_the_a4_output(self):
-        # since Q3b plus the LARGE_ADDRESS_AWARE bit, since SNDBANK plus the preload call (test_a5 pins each)
-        self.assertEqual(test_a5.sha256(self.lane_a), test_a5.SNDBANK_OUTPUT_SHA256)
+        # since Q3b plus the LARGE_ADDRESS_AWARE bit, since SNDBANK plus the preload call, since MAPTABLE plus the map-name
+        # cave (test_a5 pins each)
+        self.assertEqual(test_a5.sha256(self.lane_a), test_a5.MAPTABLE_OUTPUT_SHA256)
 
     def test_lane_b_changes_only_host_bind_and_folders(self):
         allowed = [(self.off(pc.REDIRECTOR_HOST), 21),
@@ -96,7 +97,7 @@ class LanePatchTest(unittest.TestCase):
         self.assertEqual(pc.describe(self.lane_b), {
             "redirector": "127.0.0.2", "bind": "127.0.0.2", "appdata": "DawngateDataB", "documents": "DawngateB",
             "raknet_loopback": "127.0.0.2", "ca_sha256": pc.hashlib.sha256(MODULUS).hexdigest()[:16], "ca_flag": "0",
-            "laa": "on", "preload": "all"})
+            "laa": "on", "preload": "all", "maptable": "on"})
         a = pc.describe(self.lane_a)
         self.assertEqual((a["redirector"], a["bind"], a["appdata"], a["documents"], a["raknet_loopback"]),
                          ("127.0.0.1", "127.0.0.1", "DawngateData", "Dawngate", "127.0.0.1"))

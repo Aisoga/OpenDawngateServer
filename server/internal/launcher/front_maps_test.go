@@ -1,6 +1,8 @@
 package launcher
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net"
 	"os"
 	"path/filepath"
@@ -115,6 +117,9 @@ func TestFrontMapList(t *testing.T) {
 		t.Errorf("the archive's size changed: %v", st)
 	}
 	waitLog(t, logDir, "the create dialog's maps for b: The Dawngate (the server offers none besides The Dawngate; the copy has mm), written into", 0)
+	// the session hello names the copy's installed maps with their SHA-256 (MAPED-GUARD)
+	mmSum := sha256.Sum256([]byte("x"))
+	waitLog(t, logDir, "the copy's maps named: zz_MM_Map_v3.snap "+hex.EncodeToString(mmSum[:4]), 0)
 	logIn("a") // A offers MM: listed again
 	if got := readMapList(t, copyDir); got != withMM {
 		t.Errorf("the list after the login to A: %q", got)
@@ -130,4 +135,30 @@ func TestFrontMapList(t *testing.T) {
 		t.Errorf("A's list for a copy without MM's files: %q", got)
 	}
 	waitLog(t, logDir, "the create dialog's maps for a: The Dawngate (the server offers mm; the copy has none)", 0)
+	waitLog(t, logDir, "the copy's maps named: none", 0)
+}
+
+// InstalledMaps: MM_Map_v3's and the maps folder's archives the copy has, hashed; nil without a copy.
+func TestInstalledMaps(t *testing.T) {
+	copyDir := t.TempDir()
+	data := filepath.Join(copyDir, "game", "Data")
+	if err := os.MkdirAll(data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"zz_MM_Map_v3.snap": "mm", "zz_CM_Ring.snap": "ring", "zz_Chat.snap": "chat"} {
+		if err := os.WriteFile(filepath.Join(data, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := InstalledMaps(copyDir, []moviepatch.Map{{Tag: "ring", Archive: "zz_CM_Ring.snap"}, {Tag: "grove", Archive: "zz_CM_Grove.snap"}})
+	if len(got) != 2 || got[0].Archive != "zz_MM_Map_v3.snap" || got[1].Archive != "zz_CM_Ring.snap" ||
+		got[1].SHA256 != sha256.Sum256([]byte("ring")) {
+		t.Errorf("InstalledMaps = %+v", got)
+	}
+	if InstalledMaps("", nil) != nil {
+		t.Error("no copy names maps")
+	}
+	if got := InstalledMaps(t.TempDir(), nil); got == nil || len(got) != 0 {
+		t.Errorf("an empty copy: %#v", got)
+	}
 }

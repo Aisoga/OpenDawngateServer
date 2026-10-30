@@ -79,15 +79,30 @@ type config struct {
 	mmRefuse             bool               // B10b test aid: refuse every startMatchmaking
 	testLoginErrors      []uint16           // test aid: the n-th login's error reply (--test-login-errors)
 	testHomeJSON         string             // test aid: home.json from this file (--test-home-json)
+	testHistorySeed      string             // test aid: N[:<login name>] made-up matches in an empty history (--test-history-seed)
 	mmBots               bool               // B10d: bots in a matchmade game's open seats (--mm-bots, on by default)
 	leaderboardMinGames  int                // LBFIX: the fewest games for the Leaderboard (--leaderboard-min-games)
 	customBots           bool               // B15: bots in a custom game's open seats (--custom-bots)
+	customAutoStart      time.Duration      // BOTS2c: a custom game whose humans all spectate starts by itself
 	level                string             // MAPLEVEL1: the level hosted games load (--map, --level; "" = blaze.HostedLevel)
 	customLevels         []string           // MAPPICK: the levels a custom game's name tag may pick (--custom-maps)
+	mapsDir              string             // MAPED2b: the maps folder whose packages are playable levels (--maps)
+	mapsNotes            []string           // MAPED2b: the start-up lines about the maps folder (addFolderMaps)
 	mapTrust             blaze.MapTrust     // MAPGUARD: the clients without the tunnel that may play MM_Map_v3 (--trust-maps)
 	tunnelRelease        string             // MAPGUARD: --tunnel-client's release name in its session hello (--tunnel-release, a test aid)
 	halloween            bool               // HOLIDAY1: the map's Halloween decoration in every hosted match (--halloween)
 	shaperSelect         blaze.ShaperSelect // D3-live step 4: --shaper-select, --free-rotation, --shaper-timers
+
+	// MAPED-GUARD: the host copy's hashes of the maps folder's archives (mapVersions) and their start-up lines, the
+	// installed maps of clients without the tunnel (--client-maps, a test aid), and --tunnel-client's player copy
+	// whose installed maps its session hello names (--tunnel-maps)
+	mapVersions     map[string][32]byte
+	mapVersionNotes []string
+	clientMaps      map[netip.Addr][]tunnel.InstalledMap
+	tunnelMaps      string
+
+	// MAPED-DIST: map delivery (mapdist.go; --serve-maps, --serve-maps-max-mb)
+	mapServe mapServe
 	// B14: the kill switches every login gets (--kill-switches), a broadcast message from the command line
 	// (--broadcast), the operator's broadcast file ("" = none; main makes <data>\broadcast.txt the default) and the
 	// broadcasts' default display flags (--broadcast-flags)
@@ -101,6 +116,12 @@ type config struct {
 	// ROOMS2: the public chat rooms of the Social panel's Rooms tab (--chat-rooms; set: the flags were read)
 	chatRooms    []blaze.ChatRoom
 	chatRoomsSet bool
+	// MHIST2: the match history's games.json and game.json show the players' names (--match-history-names, on by
+	// default; off: only the asking player's own)
+	historyNames bool
+
+	// MATCHREC: every match host records its match (--match-record; [host] match_record=1)
+	matchRecord bool
 	// serve <certs>\ca_modulus.bin on the HTTP port (--serve-ca) for Start-Client.exe on other machines
 	serveCA bool
 	// the sign-up policy (--signup, --signups-per-address) and the log retention in days (--log-days; 0 = keep)
@@ -527,6 +548,9 @@ func start(cfg config) (*instance, error) {
 	}
 	extra = append(extra, web.SitePagesFor(cfg.accounts.Mode, pkg != nil)...) // the login screen's links (sitelinks)
 	extra = append(extra, web.VersionPage(version.String()))                  // Start-Client's check of a server without the tunnel
+	// the create dialog's maps for a player without the tunnel (a checkout's Start-Client.cmd), as the info hello's
+	extra = append(extra, web.MapsPage(tunnel.MapsFact(blaze.OfferedMapTags(cfg.level, cfg.customLevels))),
+		web.MapVersionsPage(tunnel.MapVersionsText(offeredVersions(cfg.level, cfg.customLevels, cfg.mapVersions))))
 	st, cont, contentInfo, err := openData(cfg)
 	if err != nil {
 		return nil, err
@@ -551,6 +575,7 @@ func start(cfg config) (*instance, error) {
 	pkgLog = log
 	in := &instance{log: log, caFingerprint: caNote, store: st, plain: cfg.plainOn(), clientPackage: pkg}
 	limitsNote := startLimits(&cfg, in, public)
+	recordNote := matchRecordOption(&cfg)
 	for i, p := range cfg.ports() {
 		if !in.plain { // only the gateway's listener (startGateway): nothing to bind, the port is a number
 			if p == 0 {
@@ -612,9 +637,12 @@ func start(cfg config) (*instance, error) {
 	bz.MMBots = cfg.mmBots
 	bz.LeaderboardMinGames = cfg.leaderboardMinGames
 	bz.CustomBots = cfg.customBots
+	bz.CustomAutoStart = cfg.customAutoStart
 	bz.Level = cfg.level
 	bz.CustomLevels = cfg.customLevels
 	bz.MapTrust, bz.Release = cfg.mapTrust, version.String()
+	bz.MapVersions, bz.ClientMaps = cfg.mapVersions, cfg.clientMaps
+	bz.MapServed = cfg.mapServe.served.Serves // MAPED-DIST: the refusals' text names the download
 	bz.Halloween = cfg.halloween
 	bz.ShaperSelect = cfg.shaperSelect
 	bz.KillSwitches = cfg.killSwitches
@@ -647,11 +675,27 @@ func start(cfg config) (*instance, error) {
 		go qos.ServeUDP()
 	}
 	httpSrv, tel := &web.HTTP{Log: log, WWW: www, Extra: extra}, &telemetry.Sink{Log: log}
+	if cfg.mapServe.served != nil { // MAPED-DIST: the maps it hands out (mapdist.go)
+		httpSrv.Maps = cfg.mapServe.served
+	}
 	httpSrv.Home = newHomeCache(homeStatus(homeSourceOf(bz)), bz.Now).JSON // HOME1: the home page's live data (home.go)
 	if cfg.testHomeJSON != "" {
 		httpSrv.Home = testHomeFile(cfg.testHomeJSON, httpSrv.Home)
 		log.Logf("stub", "TEST: home.json answered from %s, read at every request (--test-home-json, a test aid)", cfg.testHomeJSON)
 	}
+	// MHIST2: the match history's JSON (history.go)
+	if bz.Store != nil {
+		httpSrv.History = newHistory(bz.Store, bz.Content, cfg.historyNames, bz.Now, log.Logf).Serve
+		if cfg.testHistorySeed != "" { // MHIST3's test aid (historyseed.go)
+			if note, err := seedHistory(bz.Store, bz.Content, cfg.testHistorySeed, bz.Now()); err != nil {
+				log.Logf("stub", "TEST: --test-history-seed %s: %v", cfg.testHistorySeed, err)
+			} else {
+				log.Logf("stub", "TEST: match history: %s (--test-history-seed, a test aid)", note)
+			}
+		}
+	}
+	log.Logf("stub", "match history (MHIST2): games.json and game.json beside the home page, player names %s (--match-history-names)",
+		onOff(cfg.historyNames))
 	if pkg != nil {
 		httpSrv.Download, cfg.web.download = webDownload(pkg), siteDownload(pkg)
 	}
@@ -741,6 +785,13 @@ func start(cfg config) (*instance, error) {
 			len(cfg.testLoginErrors), describeLoginErrors(cfg.testLoginErrors))
 	}
 	log.Logf("stub", "PvP matchmaking: %s%s", bz.MM.Config(), mmNotes)
+	for _, note := range append(append(append([]string(nil), cfg.mapsNotes...), cfg.mapVersionNotes...), cfg.mapServe.notes...) {
+		log.Logf("stub", "%s", note)
+	}
+	if len(cfg.clientMaps) > 0 {
+		log.Logf("stub", "TEST: the installed maps of clients without the tunnel (--client-maps, a test aid): %s",
+			describeClientMaps(cfg.clientMaps))
+	}
 	if cfg.level != "" {
 		log.Logf("stub", "hosted level: %s (LevelId %d = %#08x; --map)", cfg.level, blaze.LevelAssetID(cfg.level),
 			blaze.LevelAssetID(cfg.level))
@@ -764,6 +815,7 @@ func start(cfg config) (*instance, error) {
 	log.Logf("stub", "logins (PH2): %s%s; %s; %s", describeSignup(cfg.accounts), modeNote, startPruning(cfg, in),
 		describeSessionEnd(cfg, in.stopStatus != nil))
 	log.Logf("stub", "limits (PH6): %s", limitsNote)
+	log.Logf("stub", "match recorder (MATCHREC): %s", recordNote)
 	if in.discord, err = discordhook.Open(cfg.discord, discordhook.Options{Logf: func(f string, a ...any) { log.Logf("stub", f, a...) },
 		UserAgent: "OpenDawngate-Server/" + version.String()}); err != nil {
 		in.close()
@@ -1097,17 +1149,23 @@ func Run(args []string, h Hooks) int {
 	fs.DurationVar(&cfg.mm.FillExtend, "mm-fill-extend", cfg.mm.FillExtend, "PvP matchmaking: the least time a smaller match still waits after a player (session) joins it; a join with less left sets the rest to this, it does not add up (0 = no extension)")
 	fs.DurationVar(&cfg.mm.MaxWait, "mm-max-wait", 0, "PvP matchmaking: the longest a player waits in the queue before it gives up (SESSION_TIMED_OUT; 0 = the client's 3 h)")
 	testLoginErrors := fs.String("test-login-errors", "", "test aid: comma-separated 16-bit error codes (hex 0x.. or decimal); the n-th login gets the n-th as its error reply (0 = answered as usual), later logins are answered as usual; e.g. 0x0C,0x4072,0")
+	fs.StringVar(&cfg.testHistorySeed, "test-history-seed", "", "test aid: N[:<login name>]: an empty match history gets N made-up matches at the start (the login's account, made without a password when missing, in every one), for looking at the history page")
 	fs.StringVar(&cfg.testHomeJSON, "test-home-json", "", "test aid: answer the home page's home.json with this file's bytes, read anew at every request (the live data while it can't be read)")
 	fs.BoolVar(&cfg.mmRefuse, "mm-refuse", false, "PvP matchmaking test aid: refuse every startMatchmaking (GAMEMANAGER_ERR_INVALID_MATCHMAKING_CRITERIA)")
 	fs.BoolVar(&cfg.mmBots, "mm-bots", true, "PvP matchmaking with match hosts: a game that starts with open seats (after --mm-fill-after) gets bots in them, up to --mm-team-size a team (B10d); --mm-bots=false leaves them empty")
 	discordOpts := addDiscordFlags(fs)
 	fs.IntVar(&cfg.leaderboardMinGames, "leaderboard-min-games", blaze.LeaderboardMinGames, "the main menu's Leaderboard lists the accounts with at least this many PvP and custom games (the screen says 10)")
-	level := fs.String("map", blaze.HostedLevel, "the map every hosted game loads: SM_Map_v5 (the game's map) or MM_Map_v3 (the cut one-lane map; every player's copy and the host copy need its zz_MM_Map_v3.snap); a custom game's name tag may pick another (--custom-maps)")
+	level := fs.String("map", blaze.HostedLevel, "the map every hosted game loads: SM_Map_v5 (the game's map) or MM_Map_v3 (the cut one-lane map; every player's copy and the host copy need its zz_MM_Map_v3.snap) or a map of --maps, by its name or tag; a custom game's name tag may pick another (--custom-maps)")
 	fs.StringVar(level, "level", blaze.HostedLevel, "the same as --map")
+	fs.StringVar(&cfg.mapsDir, "maps", "", "a folder of map packages (a sub-folder with map.json each) this server may host besides SM_Map_v5 and MM_Map_v3, by --map and --custom-maps with their names or tags; every player's copy and the host copy need each map's archive, which their setup compiles from the same folder")
+	cfg.mapServe.flags(fs) // MAPED-DIST: --serve-maps, --serve-maps-max-mb
 	trustMaps := fs.String("trust-maps", "none", "the players without the tunnel who may play a map beside SM_Map_v5 (MM_Map_v3): none (the server can't check their copies; they can't join or queue for its games, and their own games play on SM_Map_v5), all, or comma-separated addresses and networks (192.168.1.7,10.0.0.0/8); through the tunnel a player may when its Start-Client is this server's release")
+	clientMaps := fs.String("client-maps", "", "test aid: the maps installed in the copies of players without the tunnel, by address, as a Start-Client names them in its tunnel hello: <address>=<archive>:<sha256>+<archive>:<sha256>,... (an address with nothing after = has none); such a player plays a map of --maps only with the host copy's version of its archive, whatever --trust-maps says")
+	fs.StringVar(&cfg.tunnelMaps, "tunnel-maps", "", "--tunnel-client: the player copy (the folder with game\\Data) whose installed maps (MM_Map_v3's and --maps' archives, with their SHA-256) the session hello names, as Start-Client names its copy's; default none named (the server then goes by the release)")
 	fs.StringVar(&cfg.tunnelRelease, "tunnel-release", "", "--tunnel-client test aid: the release name its session hello gives instead of this build's (a server with --allow-any-client lets it in as another release)")
 	customMaps := fs.String("custom-maps", "", `the maps a custom game's creator may pick with a tag at the end of the game's name ("~#mm" MM_Map_v3, "~#sm" SM_Map_v5), comma-separated, besides SM_Map_v5 and --map; "" or "none" = only those`)
 	fs.BoolVar(&cfg.customBots, "custom-bots", false, "custom games with match hosts: bots fill the open seats when the game starts (B15; off: only the lobby's players)")
+	fs.DurationVar(&cfg.customAutoStart, "custom-autostart", 0, "a custom game whose humans all moved to the spectators starts by itself after this (e.g. 5s; 0 = off): a game of bots alone with --custom-bots, for tests")
 	fs.BoolVar(&cfg.shaperSelect.On, "shaper-select", false, "match hosts run shaper select with each player's shapers, skins, wards and announcers from its account (D3-live)")
 	freeRotation := fs.String("free-rotation", "", `shaper select: shapers in the free rotation, comma-separated ("gunman,PC_Otter,Fenmore")`)
 	shaperTimers := fs.String("shaper-timers", "", "shaper select: <pick ms>,<role/perk ms>,<skin ms>,<reveal ms> (default: the host's; practice 300000,300000,15500,16)")
@@ -1117,6 +1175,8 @@ func Run(args []string, h Hooks) int {
 	fs.Int64Var(&cfg.broadcastFlags, "broadcast-flags", blaze.DefaultBroadcastFlags, "display flags of the broadcast messages: 4 the main menu's marquee and shaper select, 2 a System chat line (also in a match), 1 the main menu chat's notifications; added up")
 	chatRooms := fs.String("chat-rooms", blaze.DefaultChatRooms, `the Social panel's public chat rooms, comma-separated in the Rooms tab's order: a name, optionally :<capacity> (2-1000, default 50), :queue (the room where the server posts the PvP queue's news) and :open (the client joins it by itself at every login, as a minimised tab; ROOMS3); "none" = no rooms`)
 	halloween := fs.String("halloween", "off", `the map's Halloween decoration (candles, pumpkins, jack-o'-lanterns) in every match with a match host: on or off; players see it with a player copy set up by this release (its zz_Halloween.snap)`)
+	matchRecord := fs.String("match-record", "off", `record every match on the match hosts: on or off (a file per match beside the host's dgsim.log: the seats, every command, every player's state five times a second, the events; at most 64 MB a match)`)
+	historyNames := fs.String("match-history-names", "on", `the match history (the home page's recent games) shows the players' names: on, or off (only each player's own name; a player sees only their own games' list and everyone's games without names)`)
 	onlineCount := fs.String("online-count", "on", `the main menu's marquee and shaper select show how many players are online ("2 players online, 1 in a match"): on or off`)
 	fs.DurationVar(&cfg.onlineCountEvery, "online-count-every", blaze.DefaultOnlineCountEvery, "the players-online count: the least time between two updates sent to the players (logins and logouts in a burst send one update)")
 	signup := fs.String("signup", "open", "sign-up mode: open (a new login name makes an account at its first login, with the password typed), invite (new accounts only with an invite code: --make-invite; the website), closed (only the operator: --create-account)")
@@ -1196,6 +1256,12 @@ func Run(args []string, h Hooks) int {
 		return 2
 	}
 	cfg.policy.PerkPages = uint32(*perkPages)
+	if notes, err := addFolderMaps(cfg.mapsDir); err != nil {
+		fmt.Fprintln(os.Stderr, "dgserver: --maps:", err)
+		return 2
+	} else {
+		cfg.mapsNotes = notes
+	}
 	if lv, err := blaze.ParseLevel(*level); err != nil {
 		fmt.Fprintln(os.Stderr, "dgserver:", err)
 		return 2
@@ -1213,6 +1279,17 @@ func Run(args []string, h Hooks) int {
 		return 2
 	} else {
 		cfg.mapTrust = mt
+	}
+	if cm, err := blaze.ParseClientMaps(*clientMaps); err != nil {
+		fmt.Fprintln(os.Stderr, "dgserver:", err)
+		return 2
+	} else if len(cm) > 0 {
+		cfg.clientMaps = cm
+	}
+	cfg.mapVersions, cfg.mapVersionNotes = mapVersions(cfg.mapsDir, cfg.gmsDir)
+	if err := cfg.mapServe.start(&cfg); err != nil {
+		fmt.Fprintln(os.Stderr, "dgserver:", err)
+		return 2
 	}
 	if *ftueRequired {
 		cfg.policy.FTUEDone = false
@@ -1244,6 +1321,18 @@ func Run(args []string, h Hooks) int {
 		return 2
 	}
 	cfg.halloween = halloweenOn
+	namesOn, namesErr := discordhook.ParseOnOff(*historyNames)
+	if namesErr != nil {
+		fmt.Fprintln(os.Stderr, "dgserver: --match-history-names:", namesErr)
+		return 2
+	}
+	cfg.historyNames = namesOn
+	recordOn, recordErr := discordhook.ParseOnOff(*matchRecord)
+	if recordErr != nil {
+		fmt.Fprintln(os.Stderr, "dgserver: --match-record:", recordErr)
+		return 2
+	}
+	cfg.matchRecord = recordOn
 	rooms, roomsErr := blaze.ParseChatRooms(*chatRooms)
 	if roomsErr != nil {
 		fmt.Fprintln(os.Stderr, "dgserver: --chat-rooms:", roomsErr)
@@ -1474,9 +1563,22 @@ func mapCheckNote(cfg config) string {
 	if len(maps) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("map check: %s only for Start-Client of this server's release %s through the tunnel, and without "+
+	var versioned []string
+	for _, name := range maps {
+		if l, _ := blaze.FindLevel(name); cfg.mapVersions[strings.ToLower(l.Archive)] != [32]byte{} {
+			versioned = append(versioned, name)
+		}
+	}
+	byVersion := ""
+	if len(versioned) > 0 {
+		// MAPED-GUARD: a map of the maps folder whose version the host copy gives
+		byVersion = fmt.Sprintf("%s only for a player whose copy has the host copy's version of its archive (named by "+
+			"Start-Client through the tunnel, by --client-maps without it); for a client that names no maps as follows. ",
+			strings.Join(versioned, ", "))
+	}
+	return fmt.Sprintf("map check: %s%s only for Start-Client of this server's release %s through the tunnel, and without "+
 		"the tunnel for %s (--trust-maps); any other player can't join a game on it or queue for it, and a game it "+
-		"creates plays on %s", strings.Join(maps, ", "), version.String(), describeMapTrust(cfg.mapTrust), blaze.HostedLevel)
+		"creates plays on %s", byVersion, strings.Join(maps, ", "), version.String(), describeMapTrust(cfg.mapTrust), blaze.HostedLevel)
 }
 
 func describeMapTrust(m blaze.MapTrust) string {

@@ -121,6 +121,10 @@ type Events struct {
 	Finish       func(mt *Match, f FinishGame)
 	PlayerKarma  func(mt *Match, k PlayerKarma) // D8c: a matchmade game's karma votes, after finishGame
 	End          func(mt *Match, o Outcome)     // the host is gone (always called last, once)
+
+	// M18: the match's statistics, sent before the playerFinish lines
+	SeatStats func(mt *Match, s SeatStats)
+	Timeline  func(mt *Match, t MatchTimeline)
 }
 
 // Outcome is how a match ended.
@@ -689,7 +693,7 @@ func (cc *ctlConn) readLoop(mt *Match) {
 			cc.err = err
 			return
 		}
-		mt.m.log.Logf(who, "match %d <- %s", mt.ID, line)
+		mt.m.log.Logf(who, "match %d <- %s", mt.ID, clipLogged(line))
 		msg, err := Decode(line)
 		if err != nil {
 			mt.m.log.Logf(who, "match %d: (line ignored: %v)", mt.ID, err)
@@ -701,6 +705,17 @@ func (cc *ctlConn) readLoop(mt *Match) {
 			return
 		}
 	}
+}
+
+// maxLogged is how much of a host's line the log shows (M18: a long match's matchTimeline is tens of KiB).
+const maxLogged = 4096
+
+// clipLogged is line as the log shows it: whole up to maxLogged bytes, else its start and its length.
+func clipLogged(line []byte) string {
+	if len(line) <= maxLogged {
+		return string(line)
+	}
+	return fmt.Sprintf("%s... (%d bytes)", line[:maxLogged], len(line))
 }
 
 // Match is one host process and its match. Port, Site, Bind and GMSHost change once if the game is
@@ -893,6 +908,14 @@ func (mt *Match) run() {
 		case GMSUpdate:
 			if mt.ev.Update != nil {
 				mt.ev.Update(mt, v)
+			}
+		case SeatStats:
+			if mt.ev.SeatStats != nil {
+				mt.ev.SeatStats(mt, v)
+			}
+		case MatchTimeline:
+			if mt.ev.Timeline != nil {
+				mt.ev.Timeline(mt, v)
 			}
 		case PlayerFinish:
 			if mt.ev.PlayerFinish != nil {

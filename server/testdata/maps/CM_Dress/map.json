@@ -1,0 +1,59 @@
+{
+  "format": 1,
+  "name": "CM_Dress",
+  "display": "Dress Test",
+  "tag": "dress",
+  "prefix": "[Dress] ",
+  "size": 440,
+  "symmetry": "point",
+  "environment": "SM_Map_v5",
+  "tuning": "SM_Map_v5",
+  "lanes": [
+    {"id": 1, "width": 24, "knots": [[-170, -145], [-170, -100], [-174, -30], [-174, 30], [-165, 115],
+      [-115, 165], [-30, 174], [30, 174], [100, 170], [145, 170]]},
+    {"id": 2, "width": 24, "knots": [[-145, -170], [-100, -170], [-30, -174], [30, -174], [115, -165],
+      [165, -115], [174, -30], [174, 30], [170, 100], [170, 145]]}
+  ],
+  "base": {
+    "locus": [-196, -196],
+    "guardian": [-142, -142],
+    "shop": [-204, -204],
+    "spawns": [[-188.9, -183.9], [-183.3, -189.8], [-178.7, -186.6], [-179.7, -180.2], [-186.3, -178.7]],
+    "cores": "auto",
+    "bindings": "auto"
+  },
+  "wells": [{"pos": [-60, -130]}],
+  "camps": [],
+  "terrain": {
+    "default": "wall",
+    "shapes": [
+      {"type": "open", "lane": 1},
+      {"type": "open", "lane": 2},
+      {"type": "open", "circle": [-150, -150], "r": 60},
+      {"type": "open", "circle": [-192, -192], "r": 20},
+      {"type": "open", "circle": [-60, -130], "r": 26},
+      {"type": "open", "path": [[-60, -130], [-60, -172]], "width": 14},
+      {"type": "chasm", "circle": [0, 0], "r": 40},
+      {"type": "bush", "polygon": [[-186, -24], [-178, -24], [-178, -4], [-186, -4]]},
+      {"type": "bush", "polygon": [[-24, -186], [-4, -186], [-4, -178], [-24, -178]]},
+      {"type": "bush", "polygon": [[-182, 60], [-174, 60], [-174, 80], [-182, 80]]},
+      {"type": "bush", "polygon": [[60, -182], [80, -182], [80, -174], [60, -174]]},
+      {"type": "open", "path": [[-172, -60], [-124, -60]], "width": 12},
+      {"type": "open", "circle": [-118, -60], "r": 16}
+    ]
+  },
+  "ground": {"style": "tiled"},
+  "props": [
+    {"noun": "Rock_Pastoral_Large_01", "pos": [-125, -125], "rot": 30, "scale": 0.7, "blocks": true, "shadow": true},
+    {"noun": "crag_camp_tree_02", "pos": [-200, -130], "rot": 0, "scale": 1, "blocks": true, "footprint": [2, 2],
+      "shadow": true},
+    {"noun": "forestbush_01", "pos": [-186, -62], "rot": 40, "scale": 1.2},
+    {"noun": "forestbush_01", "pos": [-186, -40], "rot": 160, "scale": 0.9},
+    {"noun": "lichenrock_02", "pos": [-158, -98], "rot": 75, "scale": 1.5},
+    {"group": {"level": "SM_Map_v5", "sets": ["D_Rocks", "D_Trees", "D_Foliage", "D_IvyNFlowers", "D_Objects"],
+      "at": [-87.5, -52.6], "r": 12}, "pos": [-118, -60], "rot": 0, "scale": 1}
+  ],
+  "scatter": [
+    {"nouns": ["lichenrock_01", "lichenrock_02", "crag_camp_rocks_05"], "seed": 7, "spacing": 7, "max": 150}
+  ]
+}

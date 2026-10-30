@@ -6,8 +6,9 @@
 // (the address its GMS port binds, from the port pool). The host dials the control address and talks
 // JSON Lines: one UTF-8 JSON object per line, its type in "t" (docs/HOST_CONTROL.md has the table).
 //
-//	host -> server   hello, gameReady, addPlayer, disconnectPlayer, reportGMSUpdate, playerFinish,
-//	                 finishGame, playerKarma (D8c), reportGMSError, logoutGMS
+//	host -> server   hello, gameReady, addPlayer, disconnectPlayer, reportGMSUpdate, seatStats and
+//	                 matchTimeline (M18), playerFinish, finishGame, playerKarma (D8c), reportGMSError,
+//	                 logoutGMS
 //	server -> host   createGame, removePlayer, abortGame, playerRewards (B7c), updateRoster and startGame
 //	                 (B15: a custom game's lobby)
 //
@@ -56,6 +57,10 @@ const (
 	TPlayerKarma      = "playerKarma"
 	TUpdateRoster     = "updateRoster" // B15
 	TStartGame        = "startGame"    // B15
+
+	// M18: the match's statistics, before the playerFinish lines
+	TSeatStats     = "seatStats"
+	TMatchTimeline = "matchTimeline"
 
 	// agents (H2)
 	TAgentHello     = "agentHello"
@@ -314,6 +319,71 @@ type FinishGame struct {
 	Reason     string `json:"reason"`
 }
 
+// SeatStats (host -> server, M18) is one seat's statistics at the match's end, for every seat, bots included, sent
+// before the playerFinish lines. Index is the gameplay index (0-9); User the Blaze user (persona) id as in
+// playerFinish.user, 0 for a bot; Team, Noun and Role carry what playerFinish's team, noun and role stats carry. Stats
+// is an object of integers (a bot's carries playerFinish's keys too, kills, deaths, assists, creeps, gold and level,
+// so its seat gets the list's columns); an unknown key is stored and shown as it is. Sources is damage and heal by source, at
+// most 24 entries, the largest first. Each map and list is left out when empty.
+type SeatStats struct {
+	Index   int              `json:"index"`
+	User    int64            `json:"user"`
+	Bot     bool             `json:"bot"`
+	Team    int              `json:"team"`
+	Noun    int64            `json:"noun"`
+	Role    int              `json:"role"`
+	Stats   map[string]int64 `json:"stats,omitempty"`
+	Sources []StatSource     `json:"sources,omitempty"`
+}
+
+// StatSource is one row of seatStats.sources. Kind: basic, ability (Slot 0-3 = Q/W/E/R, 4 = passive), item (ID = the
+// item's catalog id), perk (ID = the spirit stone's catalog id), role, other. Slot is written for an ability only
+// (nil = left out); ID always.
+type StatSource struct {
+	Kind   string `json:"kind"`
+	Slot   *int   `json:"slot,omitempty"`
+	ID     int64  `json:"id"`
+	Damage int64  `json:"damage"`
+	Heal   int64  `json:"heal"`
+}
+
+// MatchTimeline (host -> server, M18) is the match's course, sent once after the seatStats lines: one sample per match
+// minute (Sec, at most 180), each seat's and each team's arrays lined up with Sec, and the events (at most 300). Every
+// list is left out when empty (a match under a minute has no samples).
+type MatchTimeline struct {
+	StepSec int             `json:"stepSec"`
+	Sec     []int64         `json:"sec,omitempty"`
+	Seats   []TimelineSeat  `json:"seats,omitempty"`
+	Teams   []TimelineTeam  `json:"teams,omitempty"`
+	Events  []TimelineEvent `json:"events,omitempty"`
+}
+
+// TimelineSeat is one seat's samples: total gold, XP, level and CS at each of MatchTimeline.Sec.
+type TimelineSeat struct {
+	Index int     `json:"index"`
+	Gold  []int64 `json:"gold,omitempty"`
+	XP    []int64 `json:"xp,omitempty"`
+	Level []int64 `json:"level,omitempty"`
+	CS    []int64 `json:"cs,omitempty"`
+}
+
+// TimelineTeam is one team's samples: its gold and kills at each of MatchTimeline.Sec.
+type TimelineTeam struct {
+	Team  int     `json:"team"`
+	Gold  []int64 `json:"gold,omitempty"`
+	Kills []int64 `json:"kills,omitempty"`
+}
+
+// TimelineEvent is one event of the match at Ms: kill (A the killer's seat or -1, B the victim's seat), structure (A the
+// destroying team, B the structure's kind), well (A the team, B the well), guardian (A the winning team); MSTATS1 fixes
+// the set.
+type TimelineEvent struct {
+	Ms   int64  `json:"ms"`
+	Kind string `json:"kind"`
+	A    int    `json:"a"`
+	B    int    `json:"b"`
+}
+
 // GMSError is an error report; Fatal means the host gives up: since H5 the match ends as aborted
 // (Outcome.Error) unless finishGame came first, and a host that hasn't exited within the exit
 // timeout is killed.
@@ -448,6 +518,8 @@ func (PlayerRewards) Type() string    { return TPlayerRewards }
 func (PlayerKarma) Type() string      { return TPlayerKarma }
 func (UpdateRoster) Type() string     { return TUpdateRoster }
 func (StartGame) Type() string        { return TStartGame }
+func (SeatStats) Type() string        { return TSeatStats }
+func (MatchTimeline) Type() string    { return TMatchTimeline }
 func (AgentHello) Type() string       { return TAgentHello }
 func (AgentChallenge) Type() string   { return TAgentChallenge }
 func (AgentAuth) Type() string        { return TAgentAuth }
@@ -492,7 +564,7 @@ var messageTypes = func() map[string]Message {
 	out := map[string]Message{}
 	for _, m := range []Message{Hello{}, CreateGame{}, GameReady{}, AddPlayer{}, DisconnectPlayer{}, GMSUpdate{},
 		PlayerFinish{}, FinishGame{}, GMSError{}, LogoutGMS{}, RemovePlayer{}, AbortGame{}, PlayerRewards{},
-		PlayerKarma{}, UpdateRoster{}, StartGame{}, AgentHello{}, AgentChallenge{}, AgentAuth{}, AgentReady{}, AgentStatus{}, LaunchHost{}, HostStarted{},
+		PlayerKarma{}, UpdateRoster{}, StartGame{}, SeatStats{}, MatchTimeline{}, AgentHello{}, AgentChallenge{}, AgentAuth{}, AgentReady{}, AgentStatus{}, LaunchHost{}, HostStarted{},
 		HostFailed{}, KillHost{}, HostExited{}} {
 		out[m.Type()] = m
 	}

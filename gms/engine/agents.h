@@ -265,4 +265,46 @@ bool FormatLeashStats(char* buf, std::size_t size);
 // before a tower's first update under the rule.
 bool FormatTowerStats(char* buf, std::size_t size);
 
+// BOTS2 (engine/bots2.h): the engine glue the second bot brain drives its bots with, the classic brain's own: requests
+// through BotRequest (NULLPOS and DEADTARGET checked and logged there), the follow leaf (the Pursue leaf, tree flag 8,
+// with mTarget or the blackboard's point), what holds the agent. Engine thread, server simulator bound.
+namespace bot2io {
+// LabsAbilities_RequestAbility for the bot (slot or GUID), after BotRequest's checks; its result (1, 2 started; 5 out of
+// range: the follow leaf walks up; negative: refused).
+int Request(std::uint32_t self, std::uint32_t guid, int slot, std::uint32_t target, const float* pos, int rank,
+            const char* where);
+// The recall (ability_returntobase, the player's B), unchecked: it has no object and no point.
+int RequestRecall(std::uint32_t self);
+// The follow leaf: walk to `p` (mTarget cleared; restarted when it ran with another goal), follow `target` (the point
+// cleared), or stop (flag 8 off, both cleared, the leaf restarted when it was the follow).
+void FollowPoint(std::uint32_t self, const float* p, bool restart);
+void FollowTarget(std::uint32_t self, std::uint32_t target);
+void FollowStop(std::uint32_t self);
+// The ability instance that holds the bot's agent now: its static name, and whether it may be interrupted.
+bool Held(std::uint32_t self, const char** name, bool* uninterruptible);
+// Whether `viewer`'s team sees `target` (Agent_IsVisibleTo).
+bool Visible(std::uint32_t viewer, std::uint32_t target);
+// The bot's player: available and total gold, XP, level, the ranks of slots 0-6.
+bool PlayerData(std::uint32_t self, float* gold, float* totalGold, float* xp, int* level, int ranks[7]);
+// The bot's noun name ("?" unknown) and its team's start point (false: none).
+const char* Noun(std::uint32_t self);
+// Whether `target` lives now (read fresh: an earlier bot's request in the same think may have killed it).
+bool Alive(std::uint32_t target);
+bool StartPoint(std::uint32_t self, float* out);
+// BOTS2c: the bot's inventory (cLabsPlayer mItems[11]): per slot the item asset's name ("" empty), its id (asset +0x60)
+// and its count (a stack); false without a player.
+struct InvSlot {
+  const char* name = "";
+  std::uint32_t id = 0;
+  int count = 0;
+};
+bool Inventory(std::uint32_t self, InvSlot out[11]);
+// BOTS2c: a consumable in inventory slot `invSlot` (9-10: a potion) used as the classic brain's consume gambits do
+// (LabsPlayer_CanUseItem, then LabsPlayer_UseItem: no request); 1 used, 0 refused, -1 no item or an exception.
+// `item` gets the item's asset id.
+int UseItem(std::uint32_t self, int invSlot, std::uint32_t* item);
+// BOTS2c: the bot's player's creep score (cLabsPlayer mCreeps, its last hits on minions and creeps); -1 unknown.
+int Creeps(std::uint32_t self);
+}  // namespace bot2io
+
 }  // namespace agents

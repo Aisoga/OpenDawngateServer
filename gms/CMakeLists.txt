@@ -82,17 +82,33 @@ add_library(dgsim SHARED
   engine/damage.cpp            # D1f-live: the TakeDamage core (docs/DAMAGE.md)
   engine/death.cpp             # D1f-live: death processing, rewards, gold
   engine/passives.cpp          # D6c: the shapers' passives at the deploy and each respawn
+  engine/itempassives.cpp      # ITEMDEATH: item passives end at death, start again at the respawn (core/damage)
   engine/mapfix.cpp            # MAPLUA: MM_Map_v3's script fix-ups (dgsim_mapfix.lua), MM's own base regen (opt-in)
   engine/shop.cpp              # D15c: the shop's purchase effect (onItemPurchased, GetItemFx*)
+  engine/refund.cpp            # REFUND1: a sale in the base undoes the purchase (rules: core/commands/refund.h)
   engine/volumes.cpp           # D12c: attached trigger volumes follow their objects
+  engine/effects.cpp           # FOGSTACKS: an ended modifier's attached effects are destroyed
   engine/components.cpp        # D1j: the ability data containers' release, the server pools' census
   engine/regen.cpp             # D1i: health and resource regeneration
   engine/agents.cpp
   engine/hunterroute.cpp       # HUNTERROUTE: the Hunters' opening route, Vanquish, the first buff's pull (core/bots/route.h)
+  engine/wardspots.cpp         # MAPED4b: the level's own ward spots (core/bots/wardspots.h)
   engine/match.cpp            # D1c-live: the match lifecycle (clock, Guardians, UI data, the end)
   engine/director.cpp          # D1c-live: waves, lanes, camps, the parasite
   engine/crowd.cpp             # D1k: the server space's NavPower constraint solver (the minions push each other)
   engine/wells.cpp             # D9: the spirit wells, workers and well gold (rules: core/wells)
+  engine/matchstats.cpp        # MSTATS1: the match statistics (seatStats, matchTimeline; rules: core/stats)
+  core/stats/stats.cpp         # MSTATS1: the statistics' accumulator, engine-free (also in gms_tests)
+  engine/matchstats_cc.cpp     # MSTATS4: crowd control and wards (rules: core/stats/cc.h)
+  core/stats/cc.cpp            # MSTATS4: crowd control caused and endured, wards placed, engine-free (also in gms_tests)
+  engine/matchstats_sources.cpp  # MSTATS3: damage and heal by source, the heal-core detour (rules: core/stats/sources)
+  core/stats/sources.cpp       # MSTATS3: the source table and its fallbacks, engine-free (also in gms_tests)
+  engine/matchstats_gold.cpp   # MSTATS2: gold and XP by source (the telemetry block), the roles' bonuses
+  core/stats/gold.cpp          # MSTATS2: gold/XP by source and the role parts, engine-free (also in gms_tests)
+  engine/bots2.cpp             # BOTS2: the second bot brain on the host (snapshot, thinks, execution, census)
+  core/bots2/brain.cpp         # BOTS2: the second bot brain's decision layer, engine-free (also in gms_tests)
+  engine/matchrec.cpp          # MATCHREC: the match recorder ([host] match_record; the file: core/matchrec)
+  core/matchrec/matchrec.cpp   # MATCHREC: the recorder's records, buffered writer, size cap and rate (also in gms_tests)
   core/matchflow/flow.cpp      # D1c-live: the match flow's engine-free rules (also in gms_tests)
   engine/startup.cpp           # H1-live: the headless host's start-up changes (stage 2, [host] keys)
   engine/guards.cpp            # H5: every step of the host's frame under SEH (skip, count, report; step_fail_s)
@@ -192,6 +208,8 @@ if(RAKNET_FOUND)
     tests/test_campfinish.cpp   # CAMPFINISH: a Hunter finishes the camp he wins against (core/agents/campfinish.h)
     tests/test_campreach.cpp    # CAMPREACH, CAMPLEASH: big creeps pass small ones, a fight in the camp holds
     tests/test_hunterroute.cpp  # HUNTERROUTE: the opening route, Vanquish's pick, the pull (core/bots/route.h)
+    tests/test_maped4.cpp       # MAPED4: camp roles from data, the route from the camps, the parasite rally, level data
+    tests/test_maped4b.cpp      # MAPED4b: the level's own ward spots (core/bots/wardspots.h)
     tests/test_nullpos.cpp      # NULLPOS: (0, 0) as the bots' null position (core/agents/nullpos.h, lost.h's clear)
     tests/test_killfinish.cpp   # KILLFINISH: stay to finish a won trade, the damage ring, BOTCYCLE's plan chain
     tests/test_bottower.cpp     # BOTTOWER: tower dangers, the keep-out, REFLEXWALK, the time under tower fire
@@ -212,11 +230,25 @@ if(RAKNET_FOUND)
     tests/test_command_queue.cpp  # D7c: a move during an attack order (the queued-move step, the takeover)
     tests/test_d3d9.cpp         # H1d: the host without Direct3D 9 (the plan, the verdict, the stand-in IDirect3D9)
     tests/test_check.cpp        # the strict message check (every type's malformed inputs, the world, the guard)
+    tests/test_stats.cpp        # MSTATS1: the match statistics' accumulator (core/stats), the lines and the line budget
+    tests/test_stats_cc.cpp     # MSTATS4: crowd control (kinds, intervals, unions, teams), wards placed (core/stats/cc.h)
+    tests/test_stats_gold.cpp   # MSTATS2: gold and XP by source, the role parts (core/stats/gold)
+    tests/test_matchrec.cpp     # MATCHREC: the recorder's records, the writer's buffer and size cap, the rate
+    tests/test_refund.cpp       # REFUND1: the undo history per slot, its clearing, the undo plan (core/commands/refund.h)
+    tests/test_itempassives.cpp # ITEMDEATH: item passives while dead and at the respawn (core/damage/itempassives.h)
+    tests/test_fogstacks.cpp    # FOGSTACKS: the attached effects an ended modifier leaves (core/replication/effect_ledger.h)
     tests/test_fuzz.cpp         # fuzzing the parsers, the session and RakNet's receive path (GMS_FUZZ_SECONDS)
     tests/test_hardening.cpp    # RakNet's handshake cookies, no IP ban, short REQUEST_1, the ordered-ahead limit
+    tests/test_bots2.cpp        # BOTS2: the second bot brain (core/bots2: states, team plan, never idle, census)
     core/matchflow/flow.cpp
     core/watchdog/monitor.cpp
     core/timing/timing.cpp
+    core/stats/stats.cpp
+    core/stats/cc.cpp
+    core/stats/sources.cpp
+    core/stats/gold.cpp
+    core/bots2/brain.cpp
+    core/matchrec/matchrec.cpp
   )
   add_dependencies(gms_tests gms_script)  # D3-core: a test runs gms_script.exe --shaper-select on loopback
   target_compile_options(gms_tests PRIVATE /W4)

@@ -15,7 +15,8 @@
 //	BindingRange             31 units around each Binding
 //	SpiritWell, ...Center    33 and 13 units around each gold mine
 //
-// and none of the jungle, camp and parasite tags (the map has none). The .tags file is the first map's own, copied
+// and none of the jungle, camp and parasite tags (the map has none). A compiled map's spec adds its lanes' bands and
+// its camps (jungle.go): Lane, Top and Bottom only in the bands, Jungle and the camp tags off them. The .tags file is the first map's own, copied
 // from the player's game files; the image's bits follow its entry order. The bytes equal the developers' Python
 // reference's, pinned by hashes on made-up inputs in the tests.
 package tagmap
@@ -45,6 +46,29 @@ type Spec struct {
 	Bindings     []Point
 	Inner        [2]Point // the Mortal side's Inner Binding, the Spirit side's
 	Wells        []Point
+	// TwoLanes splits the ground outside the bases into the Top lane (y - x >= 0, the host's LaneByDiagonal) and the
+	// Bottom lane; without it a unit there is in both (a map with one lane).
+	TwoLanes bool
+
+	// A compiled map's lanes and camps (none: the rules above, MM_Map_v3's). With Lanes, Lane is only the ground within
+	// a lane's band, Top lane 1's band and Bottom lane 2's (with one lane both), and Jungle the rest outside the bases;
+	// each Disc's tag goes on the Jungle within its radius (the first map's camp tags never touch a lane or a base).
+	Lanes []LaneBand
+	Discs []Disc
+}
+
+// LaneBand is a lane's band: the ground within Half of its knots' polyline.
+type LaneBand struct {
+	ID    int // 1 Top, 2 Bottom
+	Half  float64
+	Knots []Point
+}
+
+// Disc is a camp's tag (GreenBuff, BlueBuff, OrangeBuff, MoneyPigs, Parasite) round its place.
+type Disc struct {
+	Tag    string
+	Centre Point
+	R      float64
 }
 
 // MM is MM_Map_v3: its levelSize and the markers of its towers and followers markersets.
@@ -128,8 +152,17 @@ func pixelTags(mx, my int, s Spec) []string {
 	u := x + y
 	if u <= s.Inner[0].X+s.Inner[0].Y || u >= s.Inner[1].X+s.Inner[1].Y {
 		out = append(out, "Base")
+	} else if len(s.Lanes) > 0 {
+		out = append(out, laneTags(x, y, s)...)
 	} else {
-		out = append(out, "Lane", "Top", "Bottom")
+		switch {
+		case !s.TwoLanes:
+			out = append(out, "Lane", "Top", "Bottom")
+		case y-x >= 0:
+			out = append(out, "Lane", "Top")
+		default:
+			out = append(out, "Lane", "Bottom")
+		}
 	}
 	if inDisc(x, y, s.Loci, locusRadius) {
 		out = append(out, "Locus")

@@ -18,7 +18,10 @@ const RecentResultsKept = 10
 // RecentResult is one finished match without names: matchResult's mode, map, winner and length, and per team the
 // humans' shapers and the bots.
 type RecentResult struct {
-	GameID     int64
+	GameID int64
+	// MatchID is the match's id in the match history (store.Match.ID, MHIST1); 0 when it wasn't stored (the store
+	// refused it, or it had no seat).
+	MatchID    int64
 	Mode       string // gmshost.ModePvP, ModeCustom, ModePractice
 	Kind       string // resultKind's: "PvP match", "Custom game", "Practice group", "Practice match"
 	Level      string

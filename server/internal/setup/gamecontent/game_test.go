@@ -17,8 +17,11 @@ import (
 // dawngate-content-2. A change of content.Build changes it on purpose: then make the file with the pipeline
 // again (or check TestBuildMatchesDump against a fresh dump) and update the hash. Since the withheld items
 // (content's withheldItems: 16 of the 276 items under "withheld") it is the pipeline's earlier file
-// (be325ff9…) loaded and written again by content.Load and Marshal, which gives the same bytes as Build.
-const contentSHA = "2e8de1d5c25a8d89f4003f136f8277fe6465cf2e663e7e9fd4f6538611222b24"
+// (be325ff9…) loaded and written again by content.Load and Marshal, which gives the same bytes as Build. Since
+// content format 3 (the item details) it is Build's own: the pipeline's dump gives the same file but for the
+// passives' titles, texts and labels, the stat lines and the shop filters' titles, which only the game folder's
+// scripts and Locale resolve (TestBuildMatchesDump).
+const contentSHA = "aac14ad4e78325a0e6b3ec8d98e3e1e230369bb9755556714db136d41a8f8e13"
 
 func TestBuildMatchesPipeline(t *testing.T) {
 	dir := testgame.Dir(t)
@@ -57,7 +60,27 @@ func TestBuildMatchesDump(t *testing.T) {
 	if dump == "" {
 		t.Skip("set DAWNGATE_ASSETDATA_DUMP to an assetdata.py dump of the same game files")
 	}
-	got, err := JSON(testgame.Dir(t))
+	g, err := Build(testgame.Dir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the titles only the game folder resolves (the passives' scripts, the shop's "^ItemShop" Locale keys)
+	for i := range g.MatchItems {
+		for j := range g.MatchItems[i].Passives {
+			g.MatchItems[i].Passives[j].Title, g.MatchItems[i].Passives[j].Text, g.MatchItems[i].Passives[j].Parts = "", "", nil
+			g.MatchItems[i].Passives[j].Kind = ""
+		}
+		for j := range g.MatchItems[i].Stats { // the stat lines from the Locale (ITEMSHOP)
+			g.MatchItems[i].Stats[j].Parts = nil
+		}
+	}
+	for i := range g.ItemFilters {
+		g.ItemFilters[i].Title = ""
+		for j := range g.ItemFilters[i].Tags {
+			g.ItemFilters[i].Tags[j].Title = ""
+		}
+	}
+	got, err := g.Marshal()
 	if err != nil {
 		t.Fatal(err)
 	}

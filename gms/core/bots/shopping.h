@@ -149,4 +149,42 @@ class ShopPlanner {
   std::vector<std::uint32_t> build_;
 };
 
+// BOTSHOP-PASS: the host's own shopping step for a bot that stays in the shop's reach while its plan buys nothing.
+// [data] Of a bot's phases only BackToAction (and RallyForSiege / Buy for some classes) runs ability_Bot_Buy, behind
+// condition_Bot_CanShop and condition_Bot_AtHomeBase, and the Lane plan picks BackToAction by its phase link
+// condition_Bot_AtHomeBase only after its plan links found nothing to do: a bot that comes home (a recall, the
+// Reposition phase's nBehavior_GoBack) while its base is attacked takes Lane's DefendCore link at once and never buys
+// (maped4b_grove1d: team 2's Creature recalled at 936 s and 1,028 s, DefendCore 1 s later, 2,000-5,600 gold unspent
+// for 950 s). [assumed rule] A bot alive in the reach for `delayMs` shops (its build's steps as far as its gold goes,
+// then potions); again every `repeatMs` while it stays. The stay that starts at the deploy is left to the plan (the
+// bots buy at match 65-71 s when they leave their Idle plan), so the step starts with the bot's first time out of the
+// reach.
+class ShopVisit {
+ public:
+  // One call per check: true when the host should shop for the bot now.
+  bool Due(bool aliveInReach, unsigned long long nowMs, unsigned long long delayMs, unsigned long long repeatMs) {
+    if (!aliveInReach) {
+      if (stay_) leftOnce_ = true;
+      stay_ = false;
+      return false;
+    }
+    if (!stay_) {
+      stay_ = true;
+      since_ = nowMs;
+      next_ = nowMs + delayMs;
+    }
+    if (!leftOnce_ || nowMs < next_) return false;
+    next_ = nowMs + repeatMs;
+    return true;
+  }
+  bool InReach() const { return stay_; }
+  unsigned long long Since() const { return since_; }  // the current stay's start (valid while InReach)
+
+ private:
+  bool stay_ = false;
+  bool leftOnce_ = false;
+  unsigned long long since_ = 0;
+  unsigned long long next_ = 0;
+};
+
 }  // namespace gms::bots

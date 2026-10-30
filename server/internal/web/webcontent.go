@@ -21,7 +21,7 @@ import (
 // The files in www/ are our own content (the originals came from EA's CDN). The builders below serve
 // them when --www has no file of the same path.
 
-//go:embed www/home.html www/dynamic_strings.xml www/dynamic_lore.xml
+//go:embed www/home.html www/history.html www/dynamic_strings.xml www/dynamic_lore.xml
 var wwwFiles embed.FS
 
 // DynamicLoreXMLPath is the archive path of the lore XML inside dynamic_lore.snap: Config.package's
@@ -67,3 +67,10 @@ func DynamicLoreSnap() []byte {
 // in Config_Pack.package's WebkitAllowedDomains (no session has requested it so far; patch_config.py
 // adds the host since B6, to be confirmed live in B6-live).
 func HomePage() []byte { return wwwFile("home.html") }
+
+// HistoryPage is our history.html beside home.html (<com>/history.html): the recent games and a match's stats from
+// games.json and game.json (history.go). The home page links to it (history.html, history.html#match=<id>) and
+// navigates its own view there; the After Action Review's panel loads history.html?embed=1&latest=1 (a compact
+// layout of about 1074 x 597 that opens the player's newest match). The player is Client.getLocalPlayerName(), sent
+// as me= with every request.
+func HistoryPage() []byte { return wwwFile("history.html") }

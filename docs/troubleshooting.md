@@ -130,6 +130,9 @@ The server couldn't start a match. Click the envelope, then the notification: it
 **"Dawngate is unable to continue. Please close the client and re-run the launcher. Error Code: 01310004" when you join a game or queue**
 The game is on the map Anshavar Pass, `MM_Map_v3` (the browser shows it as **[Pass] <name>**), and the server can't be sure your game has that map's files. The *System* line in the chat says why: your `Start-Client.exe` is another release than the server's, or you're connected without the tunnel. Close the game and start it with the `Start-Client.exe` release the server runs; it makes the files at its start. A game you create on such a server is played on The Dawngate instead, with a *System* line saying so. Operators: the server's log has a `map check` line for each refused player; `--trust-maps` names players connecting without the tunnel whose games have the files ([hosting.md](hosting.md#the-map)).
 
+**The same error on a map from a `maps` folder (the browser shows its prefix, for example **[Ring] <name>**)**
+Your game lacks that map, or has another version of it than the server's: the *System* line in the chat says which (with a short fingerprint of yours and of the server's). When the server hands out its maps, `Start-Client.exe` downloaded the map at your login (its window says so): close the game and start `Start-Client.exe` again to install it. If its window says the map was *not downloaded* or *not installed*, the line says why and what to do (for example, move your own package of that map out of the `maps` folder). Otherwise copy the server's version of the map's package (the folder with its `map.json`, from the server's operator) into the `maps` folder beside `Start-Client.exe`, replacing an older one, and start it again; it builds the map's files at its start. If its output says the map was *left out*, the package is broken or another map has the same name or tag: ask the operator for the package the server uses. A practice or custom game you create on that map is played on The Dawngate until then.
+
 **"Failed to connect to game server" about 20 seconds after the click**
 The match host ended before it was ready. Its log is in `Dawngate-Data\logs\hosts\<match>\dgsim.log`.
 
@@ -143,6 +146,9 @@ The game logs you out after five minutes without any input. Log in again.
 
 **The game crashed**
 A crash window may appear. Its report stays on your PC and is never sent. It's under `%LOCALAPPDATA%\CrashRpt\UnsentCrashReports\` and includes screenshots of your screens; delete it if you like. Start the game again, log in and click **Rejoin** to return to the match.
+
+**The game stutters when many effects are on screen**
+In big fights the frame rate drops while the server and your connection are fine. Set the window mode to **Fullscreen** in the game's video settings: a player on a fast PC (i9-13900K, RTX 4090, two monitors) had this stutter in windowed mode, and Fullscreen fixed it.
 
 **The window's close button does nothing**
 In a match the game ignores it. Leave the match from the gear menu above the minimap, then close the game.

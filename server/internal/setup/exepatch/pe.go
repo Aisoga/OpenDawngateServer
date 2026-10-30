@@ -20,16 +20,17 @@ type peImage struct {
 }
 
 type peSection struct {
-	name       string
-	va, vsize  uint32
-	rawPtr     uint32
-	rawSize    uint32
-	headerAt   int    // file offset of the IMAGE_SECTION_HEADER
-	nextVA     uint32 // the next section's VirtualAddress by address order (0: none)
-	hasNextVA  bool
-	adjVA      uint32
-	adjRawPtr  uint32
-	sizeForRVA uint32
+	name            string
+	va, vsize       uint32
+	rawPtr          uint32
+	rawSize         uint32
+	headerAt        int    // file offset of the IMAGE_SECTION_HEADER
+	nextVA          uint32 // the next section's VirtualAddress by address order (0: none)
+	hasNextVA       bool
+	adjVA           uint32
+	adjRawPtr       uint32
+	sizeForRVA      uint32
+	characteristics uint32 // IMAGE_SECTION_HEADER.Characteristics
 }
 
 func parsePE(data []byte) (*peImage, error) {
@@ -66,7 +67,7 @@ func parsePE(data []byte) (*peImage, error) {
 		}
 		img.sections = append(img.sections, peSection{
 			name: string(name), vsize: u32(h + 8), va: u32(h + 12), rawSize: u32(h + 16), rawPtr: u32(h + 20),
-			headerAt: h,
+			headerAt: h, characteristics: u32(h + 36),
 		})
 	}
 	// pefile: each section's next_section_virtual_address by VirtualAddress order, the alignment adjustments, and

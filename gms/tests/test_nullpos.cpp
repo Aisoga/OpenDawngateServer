@@ -111,6 +111,32 @@ GMS_TEST(NullposAZeroGoalIsNeverHandedOut) {
   CHECK_EQ(handedNull, 0);
 }
 
+// DEADTARGET-WORKER: a well capture marks its workers for delete with their hit points left, in the bot's think. The
+// gambit whose conditions named none falls back to mTarget; a dead mTarget is none, so the request goes at the bot's
+// own position (or the condition's point) and the send guard has nothing to catch.
+GMS_TEST(NullposADeadMTargetIsNone) {
+  constexpr std::uint32_t kWorker = 0x7C6B00C2;
+  const RequestObject removed = Obj(true, true, 88.35f, true, "Titan_Node_Follower.Noun");  // the capture's worker
+  const RequestObject working = Obj(true, true, 88.35f, false, "Titan_Node_Follower.Noun");
+  CHECK_EQ(LiveTarget(kWorker, removed), 0u);
+  CHECK_EQ(LiveTarget(kWorker, working), kWorker);
+  CHECK_EQ(LiveTarget(kWorker, Obj(false, false, 0.f, false, nullptr)), 0u);         // gone
+  CHECK_EQ(LiveTarget(kParasite, Obj(true, true, 0.f, false, kParasiteNoun)), 0u);  // hp 0
+  CHECK_EQ(LiveTarget(0x7C7B0102, Obj(true, false, 0.f, false, "Well.Noun")), 0x7C7B0102u);  // no hit points
+  CHECK_EQ(LiveTarget(0, removed), 0u);
+  // the gambit's aim, then the request: before, the worker went to the guard (a DEADTARGET line); now no object
+  const float self[3] = {-176.4f, 22.6f, 0.f};
+  const GambitAim before = AimGambit(0, kWorker, false, false, true);
+  CHECK_EQ(before.target, kWorker);
+  CHECK(CheckRequest(before.target, self, NullPosUse::kGoal, removed) == RequestVerdict::kDeadTarget);
+  const GambitAim now = AimGambit(0, LiveTarget(kWorker, removed), false, false, true);
+  CHECK_EQ(now.target, 0u);
+  CHECK(!now.atPoint);
+  CHECK(CheckRequest(now.target, self, NullPosUse::kSelf) == RequestVerdict::kOk);
+  // a condition's own living target still wins over mTarget, dead or not
+  CHECK_EQ(AimGambit(0x7C6400CB, LiveTarget(kWorker, removed), false, false, true).target, 0x7C6400CBu);
+}
+
 GMS_TEST(NullposTheLineAndTheStats) {
   char line[512];
   FormatNullPos(line, sizeof line, "bot 7C7F0124 warden.Noun", NullPosWhere::kRequest, "back step",
@@ -132,17 +158,19 @@ GMS_TEST(NullposTheLineAndTheStats) {
   NullPosCounts c;
   FormatNullPosStats(line, sizeof line, c, true);
   CHECK(std::string(line) ==
-        "NULLPOS (strict on): 0; DEADTARGET 0; dead condition targets left out 0; Follow guard: point reads 0");
+        "NULLPOS (strict on): 0; DEADTARGET 0; dead condition targets left out 0; dead mTargets left out 0; Follow "
+        "guard: point reads 0");
   c.Note(NullPosWhere::kFollow);
   c.Note(NullPosWhere::kFollow);
   c.Note(NullPosWhere::kRequest);
   ++c.deadTargets;
   c.deadConditions = 3;
+  c.deadMTargets = 2;
   c.followReads = 9;
   FormatNullPosStats(line, sizeof line, c, false);
   CHECK(std::string(line) ==
         "NULLPOS (strict off): 3 (FAIL in a test session), request 1, Follow 2; DEADTARGET 1 (FAIL in a test session); "
-        "dead condition targets left out 3; Follow guard: point reads 9");
+        "dead condition targets left out 3; dead mTargets left out 2; Follow guard: point reads 9");
   // the budget: strict logs every line, a player's match 200 and then every 50th
   CHECK(NullPosLogBudget(5000, true));
   CHECK(NullPosLogBudget(200, false) && !NullPosLogBudget(201, false) && NullPosLogBudget(250, false));

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -91,11 +92,17 @@ func startGateway(cfg config, log *logging.Log, in *instance, sv services, gmsPo
 		}}
 	// the facts an info hello answers with besides the version: the sign-up mode as it is now (the admin page may
 	// change it), which Start-Client's server list shows; and the maps a custom game may pick besides The Dawngate
-	// (--map, --custom-maps), which Start-Client lists in the CREATE GAME dialog
+	// (--map, --custom-maps), which Start-Client lists in the CREATE GAME dialog, with the host copy's version of each
+	// that has one (tunnel.FactMapVersion), so the dialog leaves out a map the copy has in another version
 	policy := cfg.accounts
 	maps := tunnel.MapsFact(blaze.OfferedMapTags(cfg.level, cfg.customLevels))
+	versions := tunnel.MapVersionFacts(offeredVersions(cfg.level, cfg.customLevels, cfg.mapVersions))
 	g.Facts = func() map[string]string {
-		return map[string]string{tunnel.FactSignup: policy.SignupFact(), tunnel.FactMaps: maps}
+		facts := map[string]string{tunnel.FactSignup: policy.SignupFact(), tunnel.FactMaps: maps}
+		for k, v := range versions {
+			facts[k] = v
+		}
+		return facts
 	}
 	if in.limits != nil { // connections, datagrams and sessions per real address (a nil *Limiter isn't nil here)
 		g.Limits, g.MaxSessionsPerPeer = in.limits, in.limits.Config().TunnelSessions
@@ -145,7 +152,8 @@ func runTunnelClient(cfg config, seconds int, h Hooks) int {
 			return 2
 		}
 		stop, ports, err := RunFront(FrontConfig{Folder: cfg.tunnelFront, Gateway: cfg.tunnelClient, Pin: pin,
-			TunnelAddress: cfg.tunnelAddress, RedirectorTLS: tlsCfg, Log: log, Copy: cfg.frontCopy})
+			TunnelAddress: cfg.tunnelAddress, RedirectorTLS: tlsCfg, Log: log, Copy: cfg.frontCopy, MapsDir: cfg.mapsDir,
+			MapDownload: cfg.mapServe.download})
 		if err != nil {
 			log.Logf("front", "the front didn't start: %v", err)
 			fmt.Fprintln(os.Stderr, "dgserver:", err)
@@ -160,6 +168,10 @@ func runTunnelClient(cfg config, seconds int, h Hooks) int {
 	}
 	c := &tunnel.Client{Log: log, Gateway: cfg.tunnelClient, Pin: pin, TunnelIP: net.ParseIP(cfg.tunnelAddress), RedirectorTLS: tlsCfg,
 		Release: cfg.tunnelRelease} // "" = this build's; --tunnel-release names another (MAPGUARD's test of --allow-any-client)
+	if cfg.tunnelMaps != "" { // MAPED-GUARD: the copy's maps, as Start-Client names its copy's
+		c.Maps = tunnel.ReadInstalledMaps(filepath.Join(cfg.tunnelMaps, "game", "Data"),
+			append([]string{mmArchive()}, folderArchives(cfg.mapsDir)...)...)
+	}
 	if err := c.Start(); err != nil {
 		log.Logf("tunnel", "the tunnel didn't start: %v", err)
 		fmt.Fprintln(os.Stderr, "dgserver:", err)
@@ -188,6 +200,9 @@ type FrontConfig struct {
 	RedirectorTLS *tls.Config
 	Log           *logging.Log
 	Copy          string // the player copy the login screen's list goes into ("" = none)
+	MapsDir       string // the maps folder whose packages the create dialog may list and the session hello names (--maps)
+	// MapDownload is the folder map delivery writes the server's maps into (--map-download, a test aid; "": off)
+	MapDownload string
 }
 
 // RunFront starts Start-Client's front for dgserver --tunnel-front (the launcher sets it: dgserver can't import the

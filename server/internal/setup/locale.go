@@ -29,7 +29,7 @@ func (s *Setup) stepLocale(step, copy, host string) bool {
 		return s.report(Failed, step, fmt.Sprintf("%s is not the untouched build-854 file (docs/file_manifest.csv); "+
 			"delete %s and start again (it is extracted anew)", s.show(src), copy))
 	}
-	o := localepatch.Options{Host: host, WebDomain: s.WebDomain}
+	o := localepatch.Options{Host: host, WebDomain: s.WebDomain, LobbyMap: s.lobbyMap(), Maps: s.lobbyMaps()}
 	want, err := localepatch.Build(locale, o)
 	if err != nil {
 		return s.report(Failed, step, err.Error())

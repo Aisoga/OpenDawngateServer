@@ -1,0 +1,1316 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Dawngate - Recent games</title>
+<!--
+  Dawngate restoration server: the match history page (recent games and a match's statistics), beside home.html.
+  Two places show it: the main menu's home view (1440 x 633, the home page's links), and the After Action Review's
+  panel (history.html?embed=1&latest=1: a compact layout of about 1074 x 597 that opens the player's newest match).
+
+  It reads games.json (a page of matches, newest first) and game.json (one match with every seat's stats, the damage
+  and healing sources and the timeline) beside it. The player is Client.getLocalPlayerName() (in a browser ?me=),
+  sent as me= with every request. The view: #match=<id> a match, anything else the list.
+
+  The stats are shown from whatever keys a seat carries: a group of keys none of the seats has says "not recorded
+  for this match", a key in HIDDEN (playerFinish's bookkeeping, shown elsewhere; the dropped ward keys) is never a row, and a key the page
+  has no label for is listed under Other stats with its own name. Same rules
+  as home.html: self-contained (the client's own game:// pictures and font families), ES5 (no bind, no flexbox),
+  server text always as text nodes.
+-->
+<style type="text/css">
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body { color: #bcbcbc; font-family: FrizQuaReg, Arial, sans-serif; font-size: 15px; overflow-x: hidden; }
+  ::-webkit-scrollbar { width: 15px; height: 15px; }
+  ::-webkit-scrollbar-track { background-color: #262626; }
+  ::-webkit-scrollbar-thumb { background: -webkit-linear-gradient(left, #3d3d3d 0%, #333333 100%); border: 1px solid #262626; }
+  a { color: #b3814e; text-decoration: none; cursor: pointer; }
+  a:hover { color: #d9a46a; }
+  .wrap { width: 1120px; margin: 0 auto; padding: 12px 0 18px 0; }
+  .head { font-family: MasonSansAlternate, Cinzel, Arial, sans-serif; color: #cfd4b3; letter-spacing: 2px; font-weight: normal; }
+  .label { font-family: MasonSansAlternate, Cinzel, Arial, sans-serif; color: #b3814e; font-size: 13px; letter-spacing: 2px; }
+  .muted { color: #8c8f80; }
+  .small { font-size: 12px; }
+  .panel { background: rgba(50, 50, 50, .85); border: 1px solid rgba(179, 129, 78, .28);
+           -webkit-box-shadow: 0 2px 10px rgba(0, 0, 0, .6); box-shadow: 0 2px 10px rgba(0, 0, 0, .6); }
+  .t1 { color: #7fb2e5; }
+  .t2 { color: #e58a7f; }
+  .win { color: #8fd8cc; }
+  .loss { color: #e58a7f; }
+  .clear { clear: both; }
+  .tag { display: inline-block; margin-left: 6px; padding: 0 4px; font-size: 10px; line-height: 14px; color: #9a9d8d;
+         border: 1px solid rgba(154, 157, 141, .45); -webkit-border-radius: 2px; border-radius: 2px; vertical-align: 1px; }
+  .tag.you { color: #8fd8cc; border-color: rgba(143, 216, 204, .6); }
+
+  /* The bar at the top: the links back, the title, the choices. */
+  #top { height: 40px; position: relative; }
+  #top h1 { position: absolute; left: 0; top: 4px; margin: 0; font-size: 24px; }
+  #nav { position: absolute; right: 0; top: 9px; font-size: 14px; }
+  #nav a { display: inline-block; margin-left: 18px; text-align: right; }
+  #backLink { width: 160px; }
+  #homeLink { width: 70px; }
+  .chips { display: inline-block; }
+  .chip { display: inline-block; height: 26px; line-height: 26px; padding: 0 12px; margin: 0 4px 0 0; font-size: 13px;
+          color: #bcbcbc; border: 1px solid rgba(179, 129, 78, .35); cursor: pointer;
+          background: -webkit-linear-gradient(top, rgba(70, 64, 56, .85) 0%, rgba(38, 36, 33, .85) 100%); }
+  .chip.on { color: #fbeedd; border-color: #b3814e;
+             background: -webkit-linear-gradient(top, rgba(150, 100, 55, .9) 0%, rgba(96, 62, 33, .9) 100%); }
+  .chip.off { color: #66685e; cursor: default; }
+
+  /* Recent games. */
+  #bar { height: 34px; margin: 4px 0 8px 0; position: relative; }
+  #bar .group { float: left; margin-right: 22px; }
+  #bar .what { font-size: 12px; color: #8c8f80; margin-right: 6px; letter-spacing: 1px; }
+  #shaperMenu { position: absolute; z-index: 50; top: 30px; width: 220px; max-height: 300px; overflow-y: auto; display: none; }
+  #shaperMenu a { display: block; padding: 4px 12px; color: #bcbcbc; font-size: 13px; }
+  #shaperMenu a:hover { background: rgba(179, 129, 78, .25); }
+  table.list { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  table.list th { height: 22px; padding: 0 10px; text-align: left; font-weight: normal; font-size: 12px; color: #8c8f80;
+                  letter-spacing: 1px; background: rgba(0, 0, 0, .25); white-space: nowrap; overflow: hidden; }
+  table.list td { height: 44px; padding: 0 10px; border-top: 1px solid rgba(255, 255, 255, .06); white-space: nowrap;
+                  overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
+  table.list td.edge { padding: 0; }
+  table.list td .l2 { font-size: 12px; color: #8c8f80; overflow: hidden; text-overflow: ellipsis; }
+  table.list td .l1 { overflow: hidden; text-overflow: ellipsis; }
+  table.list td .l2.t2 { color: #e58a7f; }
+  table.list tr.row { cursor: pointer; }
+  table.list tr.row:hover td { background: rgba(179, 129, 78, .12); }
+  table.list td.empty { color: #8c8f80; font-style: italic; height: 60px; text-align: center; white-space: normal; }
+  .edgeWin { background: #4fa89a; }
+  .edgeLoss { background: #b0574c; }
+  .edgeNone { background: #55574f; }
+  #listFoot { text-align: center; margin-top: 10px; min-height: 20px; }
+  #moreBtn { display: inline-block; width: 220px; height: 32px; line-height: 32px; font-family: MasonSansAlternate, Cinzel, Arial, sans-serif;
+             font-size: 15px; letter-spacing: 3px; color: #cfd4b3; border: 1px solid rgba(179, 129, 78, .6); cursor: pointer;
+             background: -webkit-linear-gradient(top, rgba(70, 64, 56, .9) 0%, rgba(38, 36, 33, .9) 100%); }
+  #moreBtn:hover { border-color: #b3814e; color: #ffffff; }
+  #listNote { font-size: 13px; color: #8c8f80; margin-top: 6px; }
+  #bottomNav { text-align: right; margin-top: 14px; font-size: 14px; }
+  #bottomNav a { display: inline-block; margin-left: 18px; }
+
+  /* A match. */
+  #matchHead { padding: 10px 16px 10px 16px; position: relative; height: 54px; overflow: hidden;
+               background: rgba(22, 24, 24, .88) url(game://UI/XHTML/labs/images/picture1.png) no-repeat 700px -60px;
+               background-size: 420px 137px; }
+  #matchHead .shade { position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+                      background: -webkit-linear-gradient(left, rgba(22, 24, 24, .96) 0%, rgba(22, 24, 24, .9) 55%, rgba(22, 24, 24, .2) 85%, rgba(22, 24, 24, .5) 100%); }
+  #matchTitle { position: relative; font-size: 28px; white-space: nowrap; }
+  #matchLine { position: relative; margin-top: 4px; font-size: 14px; color: #cfd4b3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #tabs { margin: 10px 0 0 0; height: 32px; border-bottom: 1px solid rgba(179, 129, 78, .45); }
+  #tabs a { float: left; height: 31px; line-height: 31px; width: 150px; padding: 0; text-align: center; margin-right: 2px; overflow: hidden; white-space: nowrap; font-family: MasonSansAlternate, Cinzel, Arial, sans-serif;
+            font-size: 13px; letter-spacing: 1px; color: #9a9d8d; background: rgba(40, 40, 40, .8); border: 1px solid rgba(179, 129, 78, .2);
+            border-bottom: 0; }
+  #tabs a:hover { color: #cfd4b3; }
+  #tabs a.on { color: #fbeedd; background: rgba(110, 76, 44, .9); border-color: rgba(179, 129, 78, .7); }
+  #tabBody { padding-top: 10px; }
+  .sect { margin: 0 0 12px 0; }
+  .sect h2 { margin: 0 0 5px 0; font-size: 16px; }
+  .sect h2 .more { float: right; font-family: FrizQuaReg, Arial, sans-serif; font-size: 12px; letter-spacing: 0; margin-top: 3px; color: #8c8f80; }
+  .none { padding: 10px 14px; color: #8c8f80; font-style: italic; font-size: 14px; }
+  table.grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  table.grid th { height: 34px; padding: 0 4px; font-weight: normal; font-size: 12px; text-align: right; vertical-align: bottom;
+                  background: rgba(0, 0, 0, .25); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  table.grid th .sub { display: block; font-size: 11px; color: #8c8f80; overflow: hidden; text-overflow: ellipsis; }
+  table.grid th.lab, table.grid td.lab { text-align: left; padding-left: 10px; }
+  table.grid td { height: 22px; padding: 0 4px; font-size: 13px; text-align: right; border-top: 1px solid rgba(255, 255, 255, .05);
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  table.grid td.lab { color: #cfd4b3; }
+  table.grid td.sub { color: #9a9d8d; padding-left: 22px; }
+  table.grid td.best { color: #fbeedd; font-weight: bold; }
+  table.grid td.dash { color: #55574f; }
+  table.grid .mine { background: rgba(143, 216, 204, .07); }
+  table.score td { height: 30px; }
+  table.score td.name { text-align: left; }
+  .split { height: 6px; margin-top: 2px; background: rgba(255, 255, 255, .06); overflow: hidden; }
+  .split div { float: left; height: 6px; }
+  .phys { background: #c98a4e; }
+  .mag { background: #6f8fd6; }
+  .tru { background: #d8d8d0; }
+  table.src { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  table.src td { height: 24px; padding: 0 10px; text-align: left; font-size: 14px; border-top: 1px solid rgba(255, 255, 255, .05);
+                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  table.src td.lab { color: #cfd4b3; }
+  body.embed table.src td { height: 20px; font-size: 12px; }
+  table.src td.num { text-align: right; }
+  .barbox { height: 12px; background: rgba(255, 255, 255, .05); }
+  .barbox div { height: 12px; background: -webkit-linear-gradient(left, #8f5a2e 0%, #c98a4e 100%); }
+  .barbox div.heal { background: -webkit-linear-gradient(left, #2f7f73 0%, #5fc0b0 100%); }
+  #seatPick { margin: 0 0 8px 0; }
+  #seatPick .chip { padding: 0 8px; font-size: 12px; height: 22px; line-height: 22px; }
+
+  /* The timeline: graphs from divs. */
+  .graph { position: relative; height: 160px; margin: 4px 0 18px 0; background: rgba(0, 0, 0, .25); }
+  .graph .mid { position: absolute; left: 0; right: 0; top: 80px; height: 1px; background: rgba(255, 255, 255, .18); }
+  .graph .b { position: absolute; }
+  .graph .b1 { background: rgba(127, 178, 229, .8); }
+  .graph .b2 { background: rgba(229, 138, 127, .8); }
+  .graph .ax { position: absolute; bottom: -16px; font-size: 11px; color: #8c8f80; }
+  .graph .yl { position: absolute; left: 4px; font-size: 11px; color: #8c8f80; }
+  table.spark td { height: 26px; }
+  .sparkbox { position: relative; height: 22px; }
+  .sparkbox div { position: absolute; bottom: 0; }
+  .s1 { background: rgba(127, 178, 229, .75); }
+  .s2 { background: rgba(229, 138, 127, .75); }
+  #events { max-height: 240px; overflow-y: auto; }
+  #events p { margin: 0; padding: 3px 12px; font-size: 13px; border-top: 1px solid rgba(255, 255, 255, .05); }
+  #events .when { display: inline-block; width: 52px; color: #8c8f80; }
+
+  .msg { padding: 24px; text-align: center; font-size: 15px; }
+  .foot { margin-top: 14px; font-size: 12px; color: #77796d; text-align: center; }
+
+  /* The After Action Review's panel (?embed=1): the same page, smaller. */
+  body.embed { font-size: 13px; }
+  body.embed .wrap { width: auto; margin: 0; padding: 6px 12px 8px 10px; }
+  body.embed #top { height: 30px; }
+  body.embed #top h1 { font-size: 18px; top: 2px; }
+  body.embed #nav { top: 5px; font-size: 13px; }
+  body.embed #bar { height: 30px; margin: 0 0 4px 0; }
+  body.embed table.list td { height: 36px; font-size: 13px; }
+  body.embed #matchHead { height: 44px; padding: 6px 12px; }
+  body.embed #matchTitle { font-size: 22px; }
+  body.embed #matchLine { font-size: 13px; margin-top: 2px; }
+  body.embed #tabs { margin-top: 6px; height: 28px; }
+  body.embed #tabs a { height: 27px; line-height: 27px; width: 142px; font-size: 12px; letter-spacing: 0; }
+  body.embed #tabBody { padding-top: 6px; }
+  body.embed table.grid td { height: 19px; font-size: 12px; }
+  body.embed table.score td { height: 24px; }
+  body.embed .sect h2 { font-size: 14px; }
+  body.embed .foot { display: none; }
+</style>
+<script type="text/javascript">
+  // Calls a function of the client's native Client object; null if there is none (e.g. in a browser).
+  function clientCall(name) {
+    try {
+      if (typeof Client != "undefined" && Client && typeof Client[name] == "function") {
+        return Client[name].apply(Client, Array.prototype.slice.call(arguments, 1));
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  var SEP = " " + String.fromCharCode(183) + " ";   // a middle dot, kept out of the ASCII source
+  var LARR = String.fromCharCode(8592);              // the back arrow
+  var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  // ---- The stats catalogue's labels (the match host's seat lines, gms/core/stats) ------------------------
+  // A key not listed here is shown under Other stats with its own name; a later key needs only its label here.
+  var LABELS = {
+    kills: "Kills", deaths: "Deaths", assists: "Assists", creeps: "Creeps killed", gold: "Vim", level: "Level",
+    damageDealt: "Damage dealt", damageDealtPhysical: "Physical", damageDealtMagical: "Magical", damageDealtTrue: "True damage",
+    damageOverload: "From spell overload", largestHit: "Largest hit", overkill: "Overkill",
+    damageToShapers: "To shapers", damageToMinions: "To minions", damageToJungle: "To jungle creatures",
+    damageToObjectives: "To buff creatures and the parasite", damageToStructures: "To structures", damageToGuardian: "To the Guardian",
+    damageToWells: "To wells", damageToWorkers: "To workers", damageToPets: "To pets",
+    damageTaken: "Damage taken", damageTakenPhysical: "Physical", damageTakenMagical: "Magical", damageTakenTrue: "True damage",
+    damageTakenFromShapers: "From shapers", damageTakenFromNpcs: "From creatures and structures",
+    damageAbsorbed: "Absorbed by shields", shieldingDone: "Shields given (absorbed)",
+    killsShapers: "Shapers killed", killsMinions: "Minions killed", killsJungle: "Jungle creatures killed",
+    killsObjectives: "Buff creatures and parasites killed", killsStructures: "Structures destroyed", killsGuardian: "Guardian kills",
+    killsWells: "Wells destroyed", killsWorkers: "Workers killed", killsPets: "Pets killed",
+    timeDeadMs: "Time dead", wellsCaptured: "Wells captured",
+    goldTotal: "Vim earned", goldStart: "Starting vim", goldPassive: "Passive income", goldFromMinion: "From minions",
+    goldFromJungle: "From the jungle", goldFromObjective: "From objectives", goldFromTower: "From towers",
+    goldFromPlayerKill: "From kills", goldFromAssist: "From assists", goldFromWorkers: "From workers",
+    goldFromWellPassive: "From wells (over time)", goldFromWellBounty: "From well bounties", goldRole: "From the role",
+    goldCheat: "From cheats", goldUnknown: "From other sources",
+    xpTotal: "Experience earned", xpPassive: "Passive", xpFromMinion: "From minions", xpFromJungle: "From the jungle",
+    xpFromObjective: "From objectives", xpFromTower: "From towers", xpFromPlayerKill: "From kills", xpFromAssist: "From assists",
+    xpFromWorkers: "From workers", xpRole: "From the role", xpCheat: "From cheats", xpUnknown: "From other sources",
+    goldRoleGladiatorLastHit: "Gladiator: last-hit vim", goldRoleGladiatorStored: "Gladiator: stored minions paid",
+    goldRoleTacticianProximity: "Tactician: proximity vim", goldRoleTacticianHarass: "Tactician: harass vim",
+    goldRolePredatorKill: "Predator: kill vim", goldRolePredatorAssist: "Predator: assist vim",
+    goldRolePredatorWorkers: "Predator: worker vim", xpRolePredator: "Predator: extra experience",
+    goldRoleHunterProc: "Hunter: vim procs", damageRoleHunterBonus: "Hunter: extra damage to creeps",
+    healRoleHunter: "Hunter: heal on creep kills", goldRoleOther: "Other role vim",
+    healingDone: "Healing done", healingSelf: "On self", healingAllies: "On allied shapers", healingOther: "On other allies",
+    healingReceived: "Healing received", lifeDrain: "From life drain", overheal: "Overhealing",
+    ccCausedMs: "Crowd control caused", ccEnduredMs: "Crowd control endured",
+    wardsPlaced: "Wards placed",
+    bestStreak: "Best kill streak", doubleKills: "Double kills", tripleKills: "Triple kills", tetraKills: "Tetra kills",
+    omniKills: "Omni kills"
+  };
+  // Keys that are no row anywhere: playerFinish's that the page shows otherwise or that mean nothing to a player, and
+  // the dropped ward keys (a ward can't be hit or killed in this build, so they were always 0; the host no longer
+  // sends them, an older stored match may still hold them). A key the host sends is either labelled above or listed
+  // here (TestHistoryPage checks it).
+  var HIDDEN = {
+    won: 1,             // the head's VICTORY/DEFEAT, the list's result
+    team: 1,            // the scoreboard per team, the column colours
+    durationMs: 1,      // the match's length in the head (durationSec)
+    noun: 1,            // the shaper's asset id: its name is the seat's shaper
+    role: 1,            // 1 + the role enum: the seat's roleName
+    damageToWards: 1,   // dropped: always 0
+    killsWards: 1,      // dropped: always 0
+    wardsDestroyed: 1   // dropped: always 0
+  };
+  // Crowd-control kinds (ccCaused<Kind>Ms, ccEndured<Kind>Ms).
+  var CC_KINDS = { Stun: "Stuns and knock-ups", Root: "Roots", Slow: "Slows", Fear: "Fears", Silence: "Silences",
+                   Knockback: "Knockbacks", Pin: "Pins", Suppression: "Suppressions" };
+  var CC_ORDER = ["Stun", "Root", "Slow", "Fear", "Silence", "Knockback", "Pin", "Suppression"];
+  // The list's own keys (a bot's playerFinish keys): shown in the scoreboard, never under Other stats.
+  var BASIC = { kills: 1, deaths: 1, assists: 1, creeps: 1, gold: 1, level: 1 };
+  // The scoreboard's own columns beyond the list's (renderOverview).
+  var OVERVIEW_KEYS = ["damageDealt", "damageTaken", "healingDone", "timeDeadMs"];
+  var OVERVIEW = { damageDealt: 1, damageTaken: 1, healingDone: 1, timeDeadMs: 1 };
+
+  // The tabs and their groups. A group lists its keys in order (sub: shown indented as a part of the row above),
+  // and takes any further key that starts with one of its prefixes (a target kind added later, say).
+  var TABS = [
+    { id: "overview", name: "Overview", groups: [   // below the scoreboards, only when some seat has a key
+      { title: "Kill streaks", keys: ["bestStreak", "doubleKills", "tripleKills", "tetraKills", "omniKills"] } ] },
+    { id: "damage", name: "Damage", groups: [
+      { title: "Damage dealt", keys: ["damageDealt", "+damageDealtPhysical", "+damageDealtMagical", "+damageDealtTrue",
+        "+damageOverload", "largestHit", "overkill"], prefixes: ["damageDealt"] },
+      { title: "Damage dealt by target", keys: ["damageToShapers", "damageToMinions", "damageToJungle", "damageToObjectives",
+        "damageToStructures", "damageToGuardian", "damageToWells", "damageToWorkers", "damageToPets"],
+        prefixes: ["damageTo"] },
+      { title: "Damage taken", keys: ["damageTaken", "+damageTakenPhysical", "+damageTakenMagical", "+damageTakenTrue",
+        "damageTakenFromShapers", "damageTakenFromNpcs", "damageAbsorbed"], prefixes: ["damageTaken"] },
+      { title: "Damage by source", sources: "damage" } ] },
+    { id: "healing", name: "Healing", groups: [
+      { title: "Healing", keys: ["healingDone", "+healingSelf", "+healingAllies", "+healingOther", "+lifeDrain", "overheal",
+        "healingReceived", "shieldingDone"], prefixes: ["healing"] },
+      { title: "Healing by source", sources: "heal" } ] },
+    { id: "gold", name: "Vim & XP", groups: [
+      { title: "Vim", keys: ["goldTotal", "+goldStart", "+goldPassive", "+goldFromMinion", "+goldFromJungle", "+goldFromObjective",
+        "+goldFromTower", "+goldFromPlayerKill", "+goldFromAssist", "+goldFromWorkers", "+goldFromWellPassive",
+        "+goldFromWellBounty", "+goldRole", "+goldCheat", "+goldUnknown"], prefixes: ["goldFrom"] },
+      { title: "Role bonuses", keys: ["goldRoleGladiatorLastHit", "goldRoleGladiatorStored", "goldRoleTacticianProximity",
+        "goldRoleTacticianHarass", "goldRolePredatorKill", "goldRolePredatorAssist", "goldRolePredatorWorkers",
+        "xpRolePredator", "goldRoleHunterProc", "damageRoleHunterBonus", "healRoleHunter", "goldRoleOther"],
+        prefixes: ["goldRole", "xpRole", "damageRole", "healRole"] },
+      { title: "Experience", keys: ["xpTotal", "+xpPassive", "+xpFromMinion", "+xpFromJungle", "+xpFromObjective", "+xpFromTower",
+        "+xpFromPlayerKill", "+xpFromAssist", "+xpFromWorkers", "+xpRole", "+xpCheat", "+xpUnknown"], prefixes: ["xpFrom"] } ] },
+    { id: "cc", name: "Crowd control", groups: [
+      { title: "Crowd control caused", cc: "ccCaused" },
+      { title: "Crowd control endured", cc: "ccEndured" } ] },
+    { id: "vision", name: "Vision & objectives", groups: [
+      { title: "Vision", keys: ["wardsPlaced"] },
+      { title: "Objectives", keys: ["wellsCaptured", "killsStructures", "killsGuardian", "killsObjectives", "killsWells"] },
+      { title: "Creeps", keys: ["killsMinions", "killsJungle", "killsWorkers", "killsPets", "killsShapers"], prefixes: ["kills"] },
+      { title: "Team objectives", teamEvents: true } ] },
+    { id: "timeline", name: "Timeline" }
+  ];
+  var ROLE_WORDS = ["", "Gladiator", "Tactician", "Hunter", "Predator"];
+  var SOURCE_KINDS = { basic: "basic attack", ability: "ability", item: "item", spell: "battle spell", perk: "spirit stone",
+                       role: "role", other: "other" };
+
+  // ---- Small helpers ------------------------------------------------------------------------------------
+  function el(id) { return document.getElementById(id); }
+  function now() { return (new Date()).getTime(); }
+  function list(v) { return v && v.length ? v : []; }
+
+  function make(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) { n.className = cls; }
+    if (text != null) { n.appendChild(document.createTextNode(String(text))); }
+    return n;
+  }
+
+  function clearNode(n) { while (n.firstChild) { n.removeChild(n.firstChild); } return n; }
+
+  function setText(node, text) {
+    if (typeof node == "string") { node = el(node); }
+    if (!node) { return; }
+    clearNode(node).appendChild(document.createTextNode(text == null ? "" : String(text)));
+  }
+
+  function link(text, cls, fn) {
+    var a = make("a", cls, text);
+    a.onclick = function () { fn(); return false; };
+    return a;
+  }
+
+  function pad2(n) { return n < 10 ? "0" + n : "" + n; }
+
+  // 0:42, 12:34, 1:02:03
+  function clock(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    var h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s = sec % 60;
+    return h > 0 ? h + ":" + pad2(m) + ":" + pad2(s) : m + ":" + pad2(s);
+  }
+
+  function ago(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    if (sec < 60) { return "just now"; }
+    if (sec < 3600) { return Math.floor(sec / 60) + " min ago"; }
+    if (sec < 86400) { return Math.floor(sec / 3600) + " h ago"; }
+    return Math.floor(sec / 86400) + " d ago";
+  }
+
+  function dateText(unix) {
+    var d = new Date(unix * 1000);
+    return MONTHS[d.getMonth()] + " " + d.getDate() + ", " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+  }
+
+  // 18234 -> "18,234"
+  function num(n) {
+    var s = String(Math.round(Math.abs(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return n < 0 ? "-" + s : s;
+  }
+
+  // A stat's value as text: a time (a key ending in Ms) in seconds or minutes, everything else a whole number.
+  function statText(key, v) {
+    if (/Ms$/.test(key)) {
+      var s = v / 1000;
+      return s >= 60 ? clock(s) : (Math.round(s * 10) / 10) + " s";
+    }
+    return num(v);
+  }
+
+  // "damageToSomething" -> "damage To Something" for a key without a label.
+  function keyWords(key) {
+    return key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/^./, function (c) { return c.toUpperCase(); });
+  }
+
+  function labelOf(key) {
+    if (LABELS[key]) { return LABELS[key]; }
+    var m = /^cc(Caused|Endured)([A-Za-z]+)Ms$/.exec(key);
+    if (m) { return CC_KINDS[m[2]] || keyWords(m[2]); }
+    return keyWords(key);
+  }
+
+  function param(name) {
+    var m = new RegExp("[?&]" + name + "=([^&#]*)").exec(location.search);
+    if (!m) { return ""; }
+    try { return decodeURIComponent(m[1].replace(/\+/g, " ")); } catch (e) { return m[1]; }
+  }
+
+  // ---- The server ---------------------------------------------------------------------------------------
+  var ME = "";            // the player (Client.getLocalPlayerName)
+  var EMBED = false;      // the After Action Review's panel
+  var PAGE_N = 10;        // matches per page (?n=1..50): ten rows and Load more fit the home view
+  var seq = 0;
+
+  // GET a JSON file beside the page: done(data) with a version 1 answer, else done(null, {code, message}).
+  function getJSON(url, done) {
+    var x;
+    try {
+      x = new XMLHttpRequest();
+      x.open("GET", url + "&r=" + (++seq), true);
+      x.onreadystatechange = function () {
+        if (x.readyState != 4) { return; }
+        var d = null;
+        try { d = JSON.parse(x.responseText); } catch (e) { d = null; }
+        if (x.status == 200 && d && d.version == 1) {
+          done(d, null);
+        } else if (d && d.error) {
+          done(null, { code: d.error, message: d.message || "" });
+        } else if (x.status == 200 && d) {
+          done(null, { code: "version", message: "" });
+        } else {
+          done(null, { code: "network", message: "" });
+        }
+      };
+      x.send(null);
+    } catch (e) {
+      done(null, { code: "network", message: "" });
+    }
+  }
+
+  function errorText(err) {
+    switch (err.code) {
+    case "namesOff": return "This server keeps player names private: you can see your own games and everyone's games without names.";
+    case "unknownPlayer": return "The server doesn't know this player.";
+    case "notFound": return "This match isn't in the history (it may have been removed).";
+    case "version": return "This server's match history is newer than this page.";
+    case "network": return "The server didn't answer.";
+    }
+    return "The match history can't be read right now" + (err.message ? " (" + err.message + ")." : ".");
+  }
+
+  // ---- Seats --------------------------------------------------------------------------------------------
+  var namesShown = true;
+
+  function seatName(s) {
+    if (s.bot) { return "Bot"; }
+    if (s.name) { return s.name; }
+    return namesShown ? "Unknown player" : "Player";
+  }
+
+  function shaperOf(s) { return s.shaper || (s.bot ? "Bot" : "?"); }
+
+  function mySeat(m) {
+    var ss = list(m.seats);
+    for (var i = 0; i < ss.length; i++) { if (ss[i].you) { return ss[i]; } }
+    return null;
+  }
+
+  // The seats in table order: team 1, then team 2, each by seat.
+  function ordered(m) {
+    var ss = list(m.seats).slice(0);
+    ss.sort(function (a, b) { return a.team != b.team ? a.team - b.team : a.seat - b.seat; });
+    return ss;
+  }
+
+  // Victory/Defeat for the player's seat; else which team won.
+  function outcome(m) {
+    var me = mySeat(m);
+    if (me && (m.winner == 1 || m.winner == 2)) {
+      return me.won ? { text: "Victory", cls: "win", edge: "edgeWin" } : { text: "Defeat", cls: "loss", edge: "edgeLoss" };
+    }
+    if (m.winner == 1 || m.winner == 2) {
+      return { text: "Team " + m.winner + " won", cls: "t" + m.winner, edge: "edgeNone" };
+    }
+    return { text: "No winner", cls: "muted", edge: "edgeNone" };
+  }
+
+  function reasonText(r) {
+    if (r == "guardian") { return "the Guardian fell"; }
+    if (r == "surrender") { return "surrender"; }
+    return r || "";
+  }
+
+  // ---- Recent games -------------------------------------------------------------------------------------
+  var L = { who: "me", matches: [], more: false, nextBefore: 0, loading: false, error: null, loaded: false,
+            serverTime: 0, gotAt: 0, mode: "all", result: "all", shaper: "" };
+
+  function loadList(reset) {
+    if (L.loading) { return; }
+    if (reset) {
+      L.matches = []; L.more = false; L.nextBefore = 0; L.error = null; L.loaded = false;
+    }
+    L.loading = true;
+    renderList();
+    var url = "games.json?player=" + encodeURIComponent(L.who == "me" ? ME : "all") + "&me=" + encodeURIComponent(ME) +
+              "&n=" + PAGE_N + (L.nextBefore ? "&before=" + L.nextBefore : "");
+    var who = L.who, shownBefore = reset ? 0 : el("listRows").getElementsByTagName("tr").length;
+    getJSON(url, function (d, err) {
+      if (who != L.who) { return; }   // the choice changed meanwhile: its own request is under way
+      L.loading = false;
+      L.loaded = true;
+      if (d) {
+        L.matches = L.matches.concat(list(d.matches));
+        L.more = !!d.more;
+        L.nextBefore = d.nextBefore || 0;
+        L.serverTime = d.serverTime;
+        L.gotAt = now();
+        namesShown = d.names !== false;
+        L.error = null;
+      } else {
+        L.error = err;
+      }
+      renderList();
+      // After Load more, scroll the first new row up to the top of the view.
+      var rs = el("listRows").getElementsByTagName("tr");
+      if (shownBefore > 0 && rs.length > shownBefore && rs[shownBefore].className == "row") {
+        window.scrollTo(0, Math.max(0, pageY(rs[shownBefore]) - 60));
+      }
+    });
+  }
+
+  // An element's distance from the top of the page.
+  function pageY(n) {
+    var y = 0;
+    while (n) { y += n.offsetTop; n = n.offsetParent; }
+    return y;
+  }
+
+  function setWho(who) {
+    if (who == L.who || (who == "me" && !ME)) { return; }
+    L.who = who;
+    L.loading = false;
+    L.shaper = "";
+    if (who == "all") { L.result = "all"; }
+    loadList(true);
+  }
+
+  function setFilter(kind, value) {
+    L[kind] = value;
+    el("shaperMenu").style.display = "none";
+    renderList();
+  }
+
+  function shown(m) {
+    if (L.mode != "all") {
+      var k = m.kind == "practiceGroup" ? "practice" : m.kind;
+      if (k != L.mode) { return false; }
+    }
+    var me = mySeat(m);
+    if (L.result != "all") {
+      if (!me || !(m.winner == 1 || m.winner == 2)) { return false; }
+      if ((L.result == "wins") != !!me.won) { return false; }
+    }
+    if (L.shaper) {
+      if (L.who == "me") { return !!me && me.shaper == L.shaper; }
+      var ss = list(m.seats);
+      for (var i = 0; i < ss.length; i++) { if (ss[i].shaper == L.shaper) { return true; } }
+      return false;
+    }
+    return true;
+  }
+
+  function chip(text, on, fn) {
+    var a = link(text, "chip" + (on ? " on" : ""), fn);
+    return a;
+  }
+
+  function renderBar() {
+    var bar = clearNode(el("bar"));
+    var g = make("div", "group");
+    if (ME) { g.appendChild(chip("My games", L.who == "me", function () { setWho("me"); })); }
+    g.appendChild(chip("All games", L.who == "all", function () { setWho("all"); }));
+    bar.appendChild(g);
+
+    g = make("div", "group");
+    g.appendChild(make("span", "what", "MODE"));
+    var modes = [["all", "All"], ["pvp", "PvP"], ["custom", "Custom"], ["practice", "Practice"]];
+    for (var i = 0; i < modes.length; i++) {
+      g.appendChild(chip(modes[i][1], L.mode == modes[i][0], (function (v) { return function () { setFilter("mode", v); }; })(modes[i][0])));
+    }
+    bar.appendChild(g);
+
+    if (L.who == "me") {
+      g = make("div", "group");
+      g.appendChild(make("span", "what", "RESULT"));
+      var res = [["all", "All"], ["wins", "Wins"], ["losses", "Losses"]];
+      for (var j = 0; j < res.length; j++) {
+        g.appendChild(chip(res[j][1], L.result == res[j][0], (function (v) { return function () { setFilter("result", v); }; })(res[j][0])));
+      }
+      bar.appendChild(g);
+    }
+
+    g = make("div", "group");
+    g.appendChild(make("span", "what", "SHAPER"));
+    var pick = chip(L.shaper || "All shapers", !!L.shaper, function () {
+      var menu = el("shaperMenu");
+      menu.style.left = (pick.offsetLeft) + "px";
+      menu.style.display = menu.style.display == "block" ? "none" : "block";
+    });
+    pick.id = "shaperBtn";
+    g.appendChild(pick);
+    bar.appendChild(g);
+    bar.appendChild(make("div", "clear"));
+
+    // The shapers of the loaded games (the player's own in My games).
+    var menu = make("div", "panel");
+    menu.id = "shaperMenu";
+    var seen = {}, names = [];
+    for (var k = 0; k < L.matches.length; k++) {
+      var m = L.matches[k], ss = L.who == "me" ? [mySeat(m)] : list(m.seats);
+      for (var q = 0; q < ss.length; q++) {
+        if (ss[q] && ss[q].shaper && !seen[ss[q].shaper]) { seen[ss[q].shaper] = 1; names.push(ss[q].shaper); }
+      }
+    }
+    names.sort();
+    menu.appendChild(link("All shapers", "", function () { setFilter("shaper", ""); }));
+    for (var n = 0; n < names.length; n++) {
+      menu.appendChild(link(names[n], "", (function (v) { return function () { setFilter("shaper", v); }; })(names[n])));
+    }
+    bar.appendChild(menu);
+  }
+
+  function teamLine(m, team) {
+    var parts = [], bots = 0, ss = ordered(m);
+    for (var i = 0; i < ss.length; i++) {
+      var s = ss[i];
+      if (s.team != team) { continue; }
+      if (s.bot && !s.shaper) { bots++; continue; }
+      parts.push(shaperOf(s) + (s.bot ? " (bot)" : ""));
+    }
+    if (bots) { parts.push(bots + (bots == 1 ? " bot" : " bots")); }
+    return parts.length ? parts.join(", ") : "-";
+  }
+
+  function cell(tr, cls, l1, l1cls, l2) {
+    var td = make("td", cls);
+    td.appendChild(make("div", "l1" + (l1cls ? " " + l1cls : ""), l1));
+    if (l2 != null) { td.appendChild(make("div", "l2", l2)); }
+    tr.appendChild(td);
+    return td;
+  }
+
+  function renderList() {
+    if (!el("bar")) { return; }
+    renderBar();
+    var tb = clearNode(el("listRows")), count = 0;
+    var age = L.gotAt ? (now() - L.gotAt) / 1000 : 0;
+    for (var i = 0; i < L.matches.length; i++) {
+      var m = L.matches[i];
+      if (!shown(m)) { continue; }
+      count++;
+      var o = outcome(m), me = mySeat(m), tr = make("tr", "row");
+      tr.onclick = (function (id) { return function () { openMatch(id); return false; }; })(m.id);
+      var edge = make("td", "edge " + o.edge);
+      tr.appendChild(edge);
+      cell(tr, "", o.text, o.cls, m.kindName || m.kind);
+      cell(tr, "", m.map, "", clock(m.durationSec) + SEP + ago(L.serverTime - m.ended + age));
+      if (me) {
+        cell(tr, "", shaperOf(me) + (me.roleName ? SEP + me.roleName : ""), "",
+             me.kills + " / " + me.deaths + " / " + me.assists + (me.left ? SEP + "left the match" : ""));
+        cell(tr, "", num(me.cs) + " CS" + SEP + "level " + me.level, "", num(me.gold) + " vim");
+      } else {
+        cell(tr, "", "-", "muted", L.who == "all" ? "you weren't in it" : "");
+        cell(tr, "", "", "", "");
+      }
+      cell(tr, "", teamLine(m, 1), "t1", null).appendChild(make("div", "l2 t2", teamLine(m, 2)));
+      var go = make("td", "muted", ">");
+      go.style.textAlign = "right";
+      tr.appendChild(go);
+      tb.appendChild(tr);
+    }
+    if (!count) {
+      var tr2 = make("tr", ""), td = make("td", "empty");
+      td.colSpan = 7;
+      if (L.error) {
+        td.appendChild(document.createTextNode(errorText(L.error) + " "));
+        td.appendChild(link("Try again", "", function () { loadList(true); }));
+      } else if (L.loading || !L.loaded) {
+        td.appendChild(document.createTextNode("Loading..."));
+      } else if (L.matches.length) {
+        td.appendChild(document.createTextNode("None of the loaded games match these filters" + (L.more ? ": load more, or " : ": ")));
+        td.appendChild(link("show all", "", function () { L.mode = "all"; L.result = "all"; L.shaper = ""; renderList(); }));
+      } else if (L.who == "me") {
+        td.appendChild(document.createTextNode("No games yet: a match you play shows here when it ends. "));
+        td.appendChild(link("See everyone's games", "", function () { setWho("all"); }));
+      } else {
+        td.appendChild(document.createTextNode("No match has been played on this server yet."));
+      }
+      tr2.appendChild(td);
+      tb.appendChild(tr2);
+    }
+    var btn = el("moreBtn");
+    btn.style.display = L.more || (L.loading && L.matches.length) ? "inline-block" : "none";
+    setText(btn, L.loading ? "LOADING..." : "LOAD MORE");
+    var note = L.matches.length ? (count < L.matches.length ? count + " of " : "") + L.matches.length + " loaded games shown" : "";
+    if (!namesShown) { note += (note ? SEP : "") + "player names are hidden on this server"; }
+    if (L.error && L.matches.length) { note += (note ? SEP : "") + errorText(L.error); }
+    setText("listNote", note);
+    bottomNav(false);
+  }
+
+  // The links at the bottom: on a match, and on the list once Load more made it longer than a page (not in the embed).
+  function bottomNav(inMatch) {
+    var show = !EMBED && (inMatch || L.matches.length > PAGE_N);
+    el("bottomNav").style.display = show ? "block" : "none";
+    el("bottomBack").style.display = inMatch ? "inline-block" : "none";
+  }
+
+  function loadMore() {
+    if (L.more && !L.loading) { loadList(false); }
+    return false;
+  }
+
+  // ---- A match ------------------------------------------------------------------------------------------
+  var M = { id: 0, data: null, error: null, tab: "overview", seat: -1, metric: "gold", gotAt: 0 };
+
+  function openMatch(id) { location.hash = "match=" + id; }
+
+  function loadMatch(id) {
+    M.id = id; M.data = null; M.error = null; M.seat = -1;
+    renderMatch();
+    getJSON("game.json?id=" + id + "&me=" + encodeURIComponent(ME), function (d, err) {
+      if (M.id != id) { return; }
+      if (d && d.match) {
+        M.data = d;
+        M.gotAt = now();
+        namesShown = d.names !== false;
+      } else {
+        M.error = err || { code: "notFound" };
+      }
+      renderMatch();
+    });
+  }
+
+  function setTab(id) { M.tab = id; renderMatch(); }
+
+  function renderMatch() {
+    var title = el("matchTitle"), line = el("matchLine"), body = clearNode(el("tabBody"));
+    renderTabs();
+    if (!M.data) {
+      setText(title, M.error ? "Match " + M.id : "Loading...");
+      setText(line, M.error ? errorText(M.error) : "");
+      title.className = "head";
+      return;
+    }
+    var m = M.data.match, o = outcome(m);
+    setText(title, o.text.toUpperCase());
+    title.className = "head " + o.cls;
+    var why = reasonText(m.reason), age = (M.data.serverTime - m.ended) + (now() - M.gotAt) / 1000;
+    setText(line, (m.kindName || m.kind) + SEP + m.map + SEP + clock(m.durationSec) +
+            (m.winner ? SEP + "Team " + m.winner + " won" + (why ? " (" + why + ")" : "") : why ? SEP + why : "") +
+            SEP + dateText(m.ended) + " (" + ago(age) + ")");
+    var tab = null;
+    for (var i = 0; i < TABS.length; i++) { if (TABS[i].id == M.tab) { tab = TABS[i]; } }
+    if (!tab) { tab = TABS[0]; M.tab = tab.id; }
+    if (tab.id == "overview") {
+      renderOverview(body, m);
+    } else if (tab.id == "timeline") {
+      renderTimeline(body, m);
+    } else {
+      for (var g = 0; g < tab.groups.length; g++) { renderGroup(body, m, tab.groups[g]); }
+    }
+  }
+
+  function renderTabs() {
+    var bar = clearNode(el("tabs"));
+    for (var i = 0; i < TABS.length; i++) {
+      bar.appendChild(link(TABS[i].name, TABS[i].id == M.tab ? "on" : "", (function (id) { return function () { setTab(id); }; })(TABS[i].id)));
+    }
+  }
+
+  function section(parent, title, more) {
+    var s = make("div", "sect"), h = make("h2", "head", title);
+    if (more) { h.appendChild(make("span", "more", more)); }
+    s.appendChild(h);
+    parent.appendChild(s);
+    return s;
+  }
+
+  function noneBox(parent, text) {
+    parent.appendChild(make("div", "panel none", text || "Not recorded for this match."));
+  }
+
+  function has(s, key) { return s.stats && typeof s.stats[key] == "number"; }
+
+  function anyHas(m, key) {
+    var ss = list(m.seats);
+    for (var i = 0; i < ss.length; i++) { if (has(ss[i], key)) { return true; } }
+    return false;
+  }
+
+  // Every key some seat of the match carries.
+  function allKeys(m) {
+    var seen = {}, keys = [], ss = list(m.seats);
+    for (var i = 0; i < ss.length; i++) {
+      for (var k in ss[i].stats) {
+        if (ss[i].stats.hasOwnProperty(k) && !seen[k]) { seen[k] = 1; keys.push(k); }
+      }
+    }
+    keys.sort();
+    return keys;
+  }
+
+  // Is the key shown by some tab's group? (Else it goes under Other stats.)
+  function knownKey(key) {
+    if (BASIC[key] || OVERVIEW[key] || HIDDEN[key] || /^cc(Caused|Endured)/.test(key)) { return true; }
+    for (var t = 0; t < TABS.length; t++) {
+      var gs = list(TABS[t].groups);
+      for (var g = 0; g < gs.length; g++) {
+        var ks = list(gs[g].keys), ps = list(gs[g].prefixes);
+        for (var i = 0; i < ks.length; i++) { if (ks[i].replace("+", "") == key) { return true; } }
+        for (var p = 0; p < ps.length; p++) { if (key.indexOf(ps[p]) == 0) { return true; } }
+      }
+    }
+    return false;
+  }
+
+  // The rows of a group: its keys that some seat carries, then any other key with one of its prefixes.
+  function groupRows(m, group) {
+    var rows = [], used = {}, ks = list(group.keys), keys = allKeys(m), i;
+    for (i = 0; i < ks.length; i++) {
+      var sub = ks[i].charAt(0) == "+", key = sub ? ks[i].substring(1) : ks[i];
+      used[key] = 1;
+      if (anyHas(m, key)) { rows.push({ key: key, sub: sub }); }
+    }
+    var ps = list(group.prefixes);
+    for (i = 0; i < keys.length; i++) {
+      if (used[keys[i]] || BASIC[keys[i]] || HIDDEN[keys[i]]) { continue; }
+      for (var p = 0; p < ps.length; p++) {
+        if (keys[i].indexOf(ps[p]) == 0 && keys[i] != ps[p] && !claimedElsewhere(keys[i], group)) {
+          rows.push({ key: keys[i], sub: false });
+          break;
+        }
+      }
+    }
+    return rows;
+  }
+
+  // A key listed by name in another group belongs there, not to this group's prefixes.
+  function claimedElsewhere(key, group) {
+    for (var t = 0; t < TABS.length; t++) {
+      var gs = list(TABS[t].groups);
+      for (var g = 0; g < gs.length; g++) {
+        if (gs[g] == group) { continue; }
+        var ks = list(gs[g].keys);
+        for (var i = 0; i < ks.length; i++) { if (ks[i].replace("+", "") == key) { return true; } }
+      }
+    }
+    return false;
+  }
+
+  function renderGroup(parent, m, group) {
+    if (group.sources) { renderSources(parent, m, group); return; }
+    if (group.teamEvents) { renderTeamEvents(parent, m, group.title); return; }
+    var rows;
+    if (group.cc) {
+      rows = [];
+      if (anyHas(m, group.cc + "Ms")) { rows.push({ key: group.cc + "Ms", sub: false }); }
+      for (var i = 0; i < CC_ORDER.length; i++) {
+        var k = group.cc + CC_ORDER[i] + "Ms";
+        if (anyHas(m, k)) { rows.push({ key: k, sub: true }); }
+      }
+      var keys = allKeys(m);
+      for (var j = 0; j < keys.length; j++) {
+        var mm = new RegExp("^" + group.cc + "([A-Za-z]+)Ms$").exec(keys[j]);
+        if (mm && !CC_KINDS[mm[1]]) { rows.push({ key: keys[j], sub: true }); }
+      }
+    } else {
+      rows = groupRows(m, group);
+    }
+    var s = section(parent, group.title, group.cc ? "after tenacity, in seconds" : "");
+    if (!rows.length) { noneBox(s); return; }
+    s.appendChild(grid(m, rows));
+  }
+
+  // A table with a row per stat and a column per seat (team 1, then team 2); the row's best value stands out.
+  function grid(m, rows) {
+    var ss = ordered(m), t = make("table", "grid panel"), cg = make("colgroup", "");
+    var labW = EMBED ? 190 : 230;
+    var c0 = make("col", "");
+    c0.style.width = labW + "px";
+    cg.appendChild(c0);
+    for (var i = 0; i < ss.length; i++) { cg.appendChild(make("col", "")); }
+    t.appendChild(cg);
+    var hr = make("tr", "");
+    hr.appendChild(make("th", "lab", ""));
+    for (i = 0; i < ss.length; i++) {
+      var th = make("th", "t" + ss[i].team + (ss[i].you ? " mine" : ""), shaperOf(ss[i]));
+      th.appendChild(make("span", "sub", seatName(ss[i])));
+      hr.appendChild(th);
+    }
+    var thead = make("thead", "");
+    thead.appendChild(hr);
+    t.appendChild(thead);
+    var tb = make("tbody", "");
+    for (var r = 0; r < rows.length; r++) {
+      var key = rows[r].key, tr = make("tr", ""), best = null;
+      tr.appendChild(make("td", rows[r].sub ? "lab sub" : "lab", labelOf(key)));
+      for (i = 0; i < ss.length; i++) {
+        if (has(ss[i], key) && (best == null || ss[i].stats[key] > best)) { best = ss[i].stats[key]; }
+      }
+      for (i = 0; i < ss.length; i++) {
+        var td;
+        if (has(ss[i], key)) {
+          var v = ss[i].stats[key];
+          td = make("td", (v == best && v > 0 ? "best" : "") + (ss[i].you ? " mine" : ""), statText(key, v));
+        } else {
+          td = make("td", "dash" + (ss[i].you ? " mine" : ""), "-");
+        }
+        tr.appendChild(td);
+      }
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb);
+    return t;
+  }
+
+  // ---- Overview: the scoreboard and the stats no tab shows -----------------------------------------------
+  function renderOverview(parent, m) {
+    var extra = OVERVIEW_KEYS;
+    var extraHead = ["DAMAGE", "TAKEN", "HEALING", "TIME DEAD"];
+    var shown = [];
+    for (var e = 0; e < extra.length; e++) { if (anyHas(m, extra[e])) { shown.push(e); } }
+    for (var team = 1; team <= 2; team++) {
+      var ss = [], all = ordered(m);
+      for (var i = 0; i < all.length; i++) { if (all[i].team == team) { ss.push(all[i]); } }
+      if (!ss.length) { continue; }
+      var won = m.winner == team, k = 0, d = 0, a = 0;
+      for (i = 0; i < ss.length; i++) { k += ss[i].kills; d += ss[i].deaths; a += ss[i].assists; }
+      var s = section(parent, "TEAM " + team + (won ? SEP + "VICTORY" : m.winner ? SEP + "DEFEAT" : ""),
+                      k + " / " + d + " / " + a);
+      s.firstChild.className = "head t" + team;
+      var t = make("table", "grid score panel"), cg = make("colgroup", "");
+      var widths = EMBED ? [190, 150, 50, 100, 60, 80] : [230, 170, 60, 110, 70, 90];
+      for (i = 0; i < widths.length; i++) {
+        var c = make("col", "");
+        if (i > 0 || shown.length) { c.style.width = widths[i] + "px"; }   // without extra columns the name takes the rest
+        cg.appendChild(c);
+      }
+      for (i = 0; i < shown.length; i++) { cg.appendChild(make("col", "")); }
+      t.appendChild(cg);
+      var hr = make("tr", ""), heads = ["PLAYER", "SHAPER", "LEVEL", "K / D / A", "CS", "VIM"];
+      for (i = 0; i < heads.length; i++) { hr.appendChild(make("th", i < 2 ? "lab" : "", heads[i])); }
+      for (i = 0; i < shown.length; i++) { hr.appendChild(make("th", "", extraHead[shown[i]])); }
+      var thead = make("thead", "");
+      thead.appendChild(hr);
+      t.appendChild(thead);
+      var tb = make("tbody", "");
+      for (i = 0; i < ss.length; i++) {
+        var p = ss[i], tr = make("tr", p.you ? "mine" : "");
+        var nm = make("td", "lab name", seatName(p));
+        if (p.you) { nm.appendChild(make("span", "tag you", "you")); }
+        if (p.bot) { nm.appendChild(make("span", "tag", "bot")); }
+        if (p.left) { nm.appendChild(make("span", "tag", "left")); }
+        tr.appendChild(nm);
+        tr.appendChild(make("td", "lab name t" + team, shaperOf(p) + (p.roleName ? SEP + p.roleName : "")));
+        tr.appendChild(make("td", "", p.level));
+        tr.appendChild(make("td", "", p.kills + " / " + p.deaths + " / " + p.assists));
+        tr.appendChild(make("td", "", num(p.cs)));
+        tr.appendChild(make("td", "", num(p.gold)));
+        for (var x = 0; x < shown.length; x++) {
+          var key = extra[shown[x]];
+          tr.appendChild(has(p, key) ? make("td", "", statText(key, p.stats[key])) : make("td", "dash", "-"));
+        }
+        tb.appendChild(tr);
+      }
+      t.appendChild(tb);
+      s.appendChild(t);
+    }
+    if (!shown.length) {
+      parent.appendChild(make("div", "muted small", "Damage, healing and the other detailed stats were not recorded for this match."));
+    }
+    var gs = TABS[0].groups;   // the overview's own groups: a section only when some seat has one of its keys
+    for (var g = 0; g < gs.length; g++) {
+      var rows = groupRows(m, gs[g]);
+      if (rows.length) { section(parent, gs[g].title).appendChild(grid(m, rows)); }
+    }
+    var other = [], keys = allKeys(m);
+    for (var j = 0; j < keys.length; j++) { if (!knownKey(keys[j])) { other.push({ key: keys[j], sub: false }); } }
+    if (other.length) {
+      section(parent, "Other stats").appendChild(grid(m, other));
+    }
+  }
+
+  // ---- Damage and healing by source ------------------------------------------------------------------------
+  function sourcesOf(s, what) {
+    var out = [], xs = list(s.sources);
+    for (var i = 0; i < xs.length; i++) { if (xs[i][what] > 0) { out.push(xs[i]); } }
+    out.sort(function (a, b) { return b[what] - a[what]; });
+    return out;
+  }
+
+  function renderSources(parent, m, group) {
+    var what = group.sources, ss = ordered(m), withSrc = [];
+    for (var i = 0; i < ss.length; i++) { if (sourcesOf(ss[i], what).length) { withSrc.push(ss[i]); } }
+    var s = section(parent, group.title);
+    if (!withSrc.length) { noneBox(s); return; }
+    var pick = null;
+    for (i = 0; i < withSrc.length; i++) { if (withSrc[i].seat == M.seat) { pick = withSrc[i]; } }
+    if (!pick) { for (i = 0; i < withSrc.length; i++) { if (withSrc[i].you) { pick = withSrc[i]; } } }
+    if (!pick) { pick = withSrc[0]; }
+    var chips = make("div", "");
+    chips.id = "seatPick";
+    for (i = 0; i < withSrc.length; i++) {
+      chips.appendChild(link(shaperOf(withSrc[i]) + " (" + seatName(withSrc[i]) + ")", "chip" + (withSrc[i] == pick ? " on" : ""),
+        (function (seat) { return function () { M.seat = seat; renderMatch(); }; })(withSrc[i].seat)));
+    }
+    s.appendChild(chips);
+    var xs = sourcesOf(pick, what), total = 0, top = xs[0][what];
+    for (i = 0; i < xs.length; i++) { total += xs[i][what]; }
+    var t = make("table", "src panel"), cg = make("colgroup", ""), widths = [230, 120, 0, 90, 60];
+    for (i = 0; i < widths.length; i++) { var c = make("col", ""); if (widths[i]) { c.style.width = widths[i] + "px"; } cg.appendChild(c); }
+    t.appendChild(cg);
+    var tb = make("tbody", "");
+    for (i = 0; i < xs.length; i++) {
+      var x = xs[i], tr = make("tr", "");
+      tr.appendChild(make("td", "lab", x.name || SOURCE_KINDS[x.kind] || "Other"));
+      tr.appendChild(make("td", "muted small", SOURCE_KINDS[x.kind] || x.kind));
+      var bt = make("td", ""), box = make("div", "barbox"), bar = make("div", what == "heal" ? "heal" : "");
+      bar.style.width = Math.max(1, Math.round(100 * x[what] / top)) + "%";
+      box.appendChild(bar);
+      bt.appendChild(box);
+      tr.appendChild(bt);
+      tr.appendChild(make("td", "num", num(x[what])));
+      tr.appendChild(make("td", "num muted", Math.round(100 * x[what] / total) + "%"));
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb);
+    s.appendChild(t);
+  }
+
+  // ---- The timeline ---------------------------------------------------------------------------------------
+  function seatByIndex(m, idx) {
+    var ss = list(m.seats);
+    for (var i = 0; i < ss.length; i++) { if (ss[i].seat == idx) { return ss[i]; } }
+    return null;
+  }
+
+  function who(m, idx) {
+    var s = seatByIndex(m, idx);
+    return s ? shaperOf(s) + " (" + seatName(s) + ")" : "seat " + idx;
+  }
+
+  // Each team's gold per sample: the host's team lines, else the sum of its seats' lines.
+  function teamGold(m, tl) {
+    var n = list(tl.sec).length, g = { 1: null, 2: null }, i, j;
+    var ts = list(tl.teams);
+    for (i = 0; i < ts.length; i++) { if (list(ts[i].gold).length) { g[ts[i].team] = ts[i].gold; } }
+    if (g[1] && g[2]) { return g; }
+    var sum = { 1: [], 2: [] }, got = { 1: false, 2: false };
+    for (j = 0; j < n; j++) { sum[1].push(0); sum[2].push(0); }
+    var sl = list(tl.seats);
+    for (i = 0; i < sl.length; i++) {
+      var s = seatByIndex(m, sl[i].index);
+      if (!s || !list(sl[i].gold).length) { continue; }
+      got[s.team] = true;
+      for (j = 0; j < n && j < sl[i].gold.length; j++) { sum[s.team][j] += sl[i].gold[j]; }
+    }
+    return { 1: g[1] || (got[1] ? sum[1] : null), 2: g[2] || (got[2] ? sum[2] : null) };
+  }
+
+  function renderTimeline(parent, m) {
+    var tl = m.timeline;
+    if (!tl) {
+      noneBox(section(parent, "Timeline"), "No timeline was recorded for this match.");
+      return;
+    }
+    var sec = list(tl.sec), n = sec.length;
+    if (!n) {
+      noneBox(section(parent, "Timeline"), "The match ended before its first minute: no samples.");
+    } else {
+      renderLead(parent, m, tl, sec);
+      renderSpark(parent, m, tl, sec);
+    }
+    renderEvents(parent, m, tl);
+  }
+
+  function renderLead(parent, m, tl, sec) {
+    var g = teamGold(m, tl), s = section(parent, "Vim lead", "team 1 above the line, team 2 below");
+    if (!g[1] || !g[2]) { noneBox(s, "Not recorded for this match (the vim of one team is missing)."); return; }
+    var n = sec.length, diff = [], top = 1, i;
+    for (i = 0; i < n; i++) { diff.push((g[1][i] || 0) - (g[2][i] || 0)); top = Math.max(top, Math.abs(diff[i])); }
+    var box = make("div", "graph panel"), W = EMBED ? 1040 : 1110, w = Math.max(2, Math.floor((W - 60) / n));
+    box.appendChild(make("div", "mid", ""));
+    for (i = 0; i < n; i++) {
+      var h = Math.round(74 * Math.abs(diff[i]) / top), b = make("div", "b " + (diff[i] >= 0 ? "b1" : "b2"));
+      b.style.left = (50 + i * w) + "px";
+      b.style.width = Math.max(1, w - 2) + "px";
+      b.style.height = Math.max(h, diff[i] ? 1 : 0) + "px";
+      b.style.top = (diff[i] >= 0 ? 80 - h : 81) + "px";
+      b.title = clock(sec[i]) + ": " + (diff[i] >= 0 ? "team 1 +" : "team 2 +") + num(Math.abs(diff[i]));
+      box.appendChild(b);
+      var every = n > 40 ? 10 : 5;
+      if ((i + 1) % every == 0 || i == 0) {
+        var ax = make("div", "ax", Math.round(sec[i] / 60) + "'");
+        ax.style.left = (50 + i * w) + "px";
+        box.appendChild(ax);
+      }
+    }
+    var y1 = make("div", "yl t1", "+" + num(top)), y2 = make("div", "yl t2", "+" + num(top));
+    y1.style.top = "4px";
+    y2.style.bottom = "4px";
+    box.appendChild(y1);
+    box.appendChild(y2);
+    s.appendChild(box);
+  }
+
+  function renderSpark(parent, m, tl, sec) {
+    var metrics = [["gold", "Vim"], ["xp", "Experience"], ["cs", "Creeps"], ["level", "Level"]], have = [], sl = list(tl.seats), i, j;
+    for (i = 0; i < metrics.length; i++) {
+      for (j = 0; j < sl.length; j++) { if (list(sl[j][metrics[i][0]]).length) { have.push(metrics[i]); break; } }
+    }
+    var s = section(parent, "Per player", "over the match, by minute");
+    if (!have.length) { noneBox(s); return; }
+    var metric = have[0][0];
+    for (i = 0; i < have.length; i++) { if (have[i][0] == M.metric) { metric = M.metric; } }
+    var chips = make("div", "");
+    chips.id = "seatPick";
+    for (i = 0; i < have.length; i++) {
+      chips.appendChild(link(have[i][1], "chip" + (have[i][0] == metric ? " on" : ""),
+        (function (v) { return function () { M.metric = v; renderMatch(); }; })(have[i][0])));
+    }
+    s.appendChild(chips);
+    var rows = [], top = 1;
+    for (j = 0; j < sl.length; j++) {
+      var vs = list(sl[j][metric]), seat = seatByIndex(m, sl[j].index);
+      if (!vs.length) { continue; }
+      rows.push({ seat: seat, idx: sl[j].index, v: vs });
+      for (i = 0; i < vs.length; i++) { top = Math.max(top, vs[i]); }
+    }
+    rows.sort(function (a, b) {
+      var ta = a.seat ? a.seat.team : 3, tb = b.seat ? b.seat.team : 3;
+      return ta != tb ? ta - tb : a.idx - b.idx;
+    });
+    var t = make("table", "grid spark panel"), cg = make("colgroup", ""), widths = [EMBED ? 190 : 230, 0, 90];
+    for (i = 0; i < widths.length; i++) { var c = make("col", ""); if (widths[i]) { c.style.width = widths[i] + "px"; } cg.appendChild(c); }
+    t.appendChild(cg);
+    var tb = make("tbody", ""), W = (EMBED ? 1040 : 1110) - widths[0] - widths[2] - 20, n = sec.length;
+    var w = Math.max(1, Math.floor(W / n));
+    for (j = 0; j < rows.length; j++) {
+      var r = rows[j], team = r.seat ? r.seat.team : 1, tr = make("tr", r.seat && r.seat.you ? "mine" : "");
+      tr.appendChild(make("td", "lab t" + team, r.seat ? shaperOf(r.seat) + SEP + seatName(r.seat) : "seat " + r.idx));
+      var cellBox = make("td", ""), box = make("div", "sparkbox");
+      for (i = 0; i < r.v.length && i < n; i++) {
+        var b = make("div", "s" + team);
+        b.style.left = (i * w) + "px";
+        b.style.width = Math.max(1, w - 1) + "px";
+        b.style.height = Math.max(1, Math.round(22 * r.v[i] / top)) + "px";
+        box.appendChild(b);
+      }
+      cellBox.appendChild(box);
+      tr.appendChild(cellBox);
+      tr.appendChild(make("td", "", num(r.v[r.v.length - 1])));
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb);
+    s.appendChild(t);
+  }
+
+  function eventText(m, e) {
+    switch (e.kind) {
+    case "kill": return e.a >= 0 ? who(m, e.a) + " killed " + who(m, e.b) : who(m, e.b) + " died";
+    case "structure": return "Team " + e.a + " destroyed a structure";
+    case "well": return "Team " + e.a + " took a well";
+    case "guardian": return "Team " + e.a + " brought down the Guardian";
+    }
+    return e.kind;
+  }
+
+  function eventClass(m, e) {
+    if (e.kind == "kill") {
+      var s = seatByIndex(m, e.a >= 0 ? e.a : e.b);
+      return s ? "t" + (e.a >= 0 ? s.team : 3 - s.team) : "";
+    }
+    return e.a == 1 || e.a == 2 ? "t" + e.a : "";
+  }
+
+  function renderEvents(parent, m, tl) {
+    var es = list(tl.events), s = section(parent, "Events", es.length ? es.length + " events" : "");
+    if (!es.length) { noneBox(s); return; }
+    var box = make("div", "panel");
+    box.id = "events";
+    for (var i = 0; i < es.length; i++) {
+      var p = make("p", eventClass(m, es[i]));
+      p.appendChild(make("span", "when", clock(es[i].ms / 1000)));
+      p.appendChild(document.createTextNode(eventText(m, es[i])));
+      box.appendChild(p);
+    }
+    s.appendChild(box);
+  }
+
+  // Vision & objectives: what each team took, from the timeline's events.
+  function renderTeamEvents(parent, m, title) {
+    var es = m.timeline ? list(m.timeline.events) : [], c = { 1: {}, 2: {} }, any = false;
+    for (var i = 0; i < es.length; i++) {
+      var e = es[i];
+      if (e.kind == "kill" || !(e.a == 1 || e.a == 2)) { continue; }
+      c[e.a][e.kind] = (c[e.a][e.kind] || 0) + 1;
+      any = true;
+    }
+    var s = section(parent, title);
+    if (!any) { noneBox(s); return; }
+    var t = make("table", "grid panel"), rows = [["structure", "Structures destroyed"], ["well", "Wells taken"], ["guardian", "Guardian brought down"]];
+    t.style.width = EMBED ? "460px" : "520px";
+    var hr = make("tr", "");
+    hr.appendChild(make("th", "lab", ""));
+    hr.appendChild(make("th", "t1", "TEAM 1"));
+    hr.appendChild(make("th", "t2", "TEAM 2"));
+    var thead = make("thead", "");
+    thead.appendChild(hr);
+    t.appendChild(thead);
+    var tb = make("tbody", "");
+    for (var r = 0; r < rows.length; r++) {
+      var tr = make("tr", "");
+      tr.appendChild(make("td", "lab", rows[r][1]));
+      tr.appendChild(make("td", "", c[1][rows[r][0]] || 0));
+      tr.appendChild(make("td", "", c[2][rows[r][0]] || 0));
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb);
+    s.appendChild(t);
+  }
+
+  // ---- The views ------------------------------------------------------------------------------------------
+  function matchFromHash() {
+    var m = /match=(\d+)/.exec(location.hash || "");
+    return m ? parseInt(m[1], 10) : 0;
+  }
+
+  var lastHash = null;
+
+  function route() {
+    var h = location.hash || "";
+    if (h == lastHash) { return; }
+    lastHash = h;
+    var id = matchFromHash();
+    el("listView").style.display = id ? "none" : "block";
+    el("matchView").style.display = id ? "block" : "none";
+    setText("pageTitle", id ? "MATCH" : "RECENT GAMES");
+    el("backLink").style.display = id ? "inline-block" : "none";
+    bottomNav(!!id);
+    window.scrollTo(0, 0);
+    if (id) {
+      var tab = /tab=([a-z]+)/.exec(h);   // #match=<id>&tab=damage opens that tab
+      if (id != M.id || !M.data) {
+        M.tab = tab ? tab[1] : "overview";
+        loadMatch(id);
+      } else {
+        if (tab) { M.tab = tab[1]; }
+        renderMatch();
+      }
+    } else if (!L.loaded && !L.loading) {
+      loadList(true);
+    } else {
+      renderList();
+    }
+  }
+
+  function showList() { location.hash = "list"; return false; }
+  function goHome() { location.href = "home.html"; return false; }
+
+  // ?latest=1: the player's newest match (everyone's newest without a player name).
+  function openLatest() {
+    getJSON("games.json?player=" + encodeURIComponent(ME || "all") + "&me=" + encodeURIComponent(ME) + "&n=1", function (d) {
+      var ms = d ? list(d.matches) : [];
+      if (ms.length) { location.hash = "match=" + ms[0].id; } else { location.hash = "list"; }
+      route();
+    });
+  }
+
+  // Hooks the client may run in its web views (the home view runs these in its page).
+  function onLivingLoreVoteUpdate() {}
+  function onRegionKillswitchEuUpdate() {}
+  function onWebVersionUpdate() {}
+
+  window.onload = function () {
+    EMBED = param("embed") == "1";
+    if (EMBED) { document.body.className = "embed"; el("homeLink").style.display = "none"; }
+    ME = clientCall("getLocalPlayerName") || param("me") || "";
+    var n = parseInt(param("n"), 10);
+    if (n >= 1 && n <= 50) { PAGE_N = n; }
+    L.who = ME ? "me" : "all";
+    el("moreBtn").onclick = loadMore;
+    setText("build", clientCall("getBuildVersion") || "?");
+    if ("onhashchange" in window) { window.onhashchange = route; } else { setInterval(route, 300); }
+    if (param("latest") == "1" && !matchFromHash()) {
+      setText("pageTitle", "MATCH");
+      el("listView").style.display = "none";
+      el("matchView").style.display = "none";
+      openLatest();
+      return;
+    }
+    route();
+  };
+</script>
+</head>
+<body>
+<div class="wrap">
+  <div id="top">
+    <h1 id="pageTitle" class="head">RECENT GAMES</h1>
+    <div id="nav">
+      <a id="backLink" onclick="return showList();" style="display: none">&larr; Recent games</a>
+      <a id="homeLink" onclick="return goHome();">Home</a>
+    </div>
+  </div>
+
+  <div id="listView" style="display: none">
+    <div id="bar"></div>
+    <table class="list panel">
+      <colgroup><col style="width: 5px"><col style="width: 14%"><col style="width: 19%"><col style="width: 20%"><col style="width: 15%"><col><col style="width: 30px"></colgroup>
+      <thead><tr><th></th><th>RESULT</th><th>MATCH</th><th>YOU</th><th>CS, LEVEL, VIM</th><th>TEAM 1 / TEAM 2</th><th></th></tr></thead>
+      <tbody id="listRows"></tbody>
+    </table>
+    <div id="listFoot"><a id="moreBtn" style="display: none">LOAD MORE</a><div id="listNote"></div></div>
+  </div>
+
+  <div id="matchView" style="display: none">
+    <div id="matchHead" class="panel">
+      <div class="shade"></div>
+      <div id="matchTitle" class="head">Loading...</div>
+      <div id="matchLine"></div>
+    </div>
+    <div id="tabs"></div>
+    <div id="tabBody"></div>
+  </div>
+  <!-- The links again at the bottom: after Load more (or on a long tab) the top ones are scrolled away, and the
+       client's Dawngate logo doesn't leave this page (seen in the live check). Not in the embed. -->
+  <div id="bottomNav" style="display: none">
+    <a id="bottomBack" onclick="return showList();" style="display: none">&larr; Recent games</a>
+    <a id="bottomHome" onclick="return goHome();">Home</a>
+  </div>
+
+  <p class="foot">A restored community server: not run by Waystone Games or Electronic Arts. &middot; client <span id="build">?</span></p>
+</div>
+</body>
+</html>

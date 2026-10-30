@@ -9,6 +9,7 @@ two setups make the same package byte for byte:
   - the text rule's cases and the option checks; setup_all.py's locale step on a scratch copy (made, current, stale).
   - MAPPICK-label: the custom lobby's map line (FE_CustomGameLobby 0x0f2b57c5) appended to the shipped table, and
     its text the create dialog's label for MM (patch_login_movie.EXTRA_MAPS).
+  - MAPTABLE: a line per map by its LevelId (MM_Map_v3 always, the maps folder's packages), never over a shipped line.
 
 Usage:
     .venv/Scripts/python -I re/scripts/test_ph2b.py [-v]
@@ -26,14 +27,17 @@ import dbpf  # noqa: E402
 import patch_locale as pl  # noqa: E402
 
 MADE_UP_SHA = "97766712cea3cf54c20204922cc472d86ac9d592c40e955f7c1a635e0567f25e"
-MADE_UP_LANE_B = "22bac3760a4fd4936147491875e75f044f20b1ba076a468918e7d1c98b148856"  # --host 127.0.0.2
-MADE_UP_WEB = "e87a2d5611bb2d08db838ae5795a0bc97fc1f0245281cb8959d0e8749bc24c81"  # 192.168.1.20, Play.Example.org:8443
+MADE_UP_LANE_B = "346751fbfa659f69a74c91a6eebe15e97cc0206a35a276bf358e37b487233a3e"  # --host 127.0.0.2
+MADE_UP_WEB = "e2ca3fa68bb3c50190a98fa8cc33f704793d64350452326e15f6c39bb5f302cf"  # 192.168.1.20, Play.Example.org:8443
+MADE_UP_LOBBY_ANY = "b5313cd2bf11cafcf66eca7029b62d4dfa10971121ae5170d688d28d560be98e"  # 127.0.0.2, LOBBY_MAP_ANY, MAPS
+# a maps folder's packages (localepatch_test.go's maps): CM_Ring, and one named like MM_Map_v3 (its line is the first's)
+MAPS = [("CM_Ring", "Test Ring"), ("mm_map_V3", "Not this")]
 SYNTH_LOCALE_SHA = "528ce9623b3b1542fa600b1036136a3c39e8e68bb586019fb3a6d3c2f6374832"
-SYNTH_LOCAL = "cb454f8ce19f26dd777cca56bbb0aebb0bf38207f3bcd4cbacaaa7741bc760ae"  # the synthetic game, 127.0.0.1
+SYNTH_LOCAL = "476b2381284742ffbb866771e082af47beb87900b1567f35fc15c2cf3d420a7f"  # the synthetic game, 127.0.0.1
 GAME_854 = {  # build 854's Locale.package
-    ("127.0.0.1", None): "a3db940fc902ec578930ab4f98d1d63ea28023333b68c51b015c4b1aae321bb4",
-    ("127.0.0.2", None): "d80e798c989d969aa45a7ab6b83ffa05be0c16feb5601c2b280bae2786cde897",
-    ("203.0.113.7", "dawngate.example.org"): "ff5d0169de6e8351a536cf5cbee4f20a4d2b3c2242a05b2e8344f26a1f344550",
+    ("127.0.0.1", None): "44bb48de9bd21aefa1886d8ea70e672e27d57c0ad1b3abfa53b6f3e35f690024",
+    ("127.0.0.2", None): "0c36b450e08e6c92431236b9312431d3e093dce51c1f7cc6b700903edcb3cbb3",
+    ("203.0.113.7", "dawngate.example.org"): "ce31788c2878cd41273039ac60765a9561bb51f6bdf70745b30c5dd783f64b97",
 }
 # synthgame.Locale() (server/internal/setup/testgame/synthgame): one RefPack-compressed table, no login table
 SYNTH_LOCALE = bytes.fromhex(
@@ -93,6 +97,7 @@ class SameAsGo(Temp):
         p = self.locale(made_up())
         self.assertEqual(sha(pl.build(p, "127.0.0.2")), MADE_UP_LANE_B)
         self.assertEqual(sha(pl.build(p, "192.168.1.20", web_domain="Play.Example.org:8443")), MADE_UP_WEB)
+        self.assertEqual(sha(pl.build(p, "127.0.0.2", lobby_map=pl.LOBBY_MAP_ANY, maps=MAPS)), MADE_UP_LOBBY_ANY)
 
     def test_synthetic_game(self):
         self.assertEqual(sha(pl.build(self.locale(SYNTH_LOCALE), "127.0.0.1")), SYNTH_LOCAL)
@@ -121,8 +126,17 @@ class SameAsGo(Temp):
             lobby = [pkg.read(e) for e in pkg.entries if e.instance == pl.FE_CUSTOM_GAME_LOBBY]
             self.assertTrue(shipped.endswith(b"0x0f2b5801 Please Wait"), shipped[-40:])
             self.assertNotIn(b"0x0f2b57c5", shipped)
-            self.assertEqual(lobby, [shipped + b"\r\n" + pl.ADDED_COMMENT.encode() + b"\r\n0x0f2b57c5 Anshavar Pass\r\n"])
-            self.assertEqual(len(pkg.entries), 6)
+            self.assertEqual(lobby, [shipped + b"\r\n" + pl.ADDED_COMMENT.encode() +
+                                     b"\r\n0x0f2b57c5 Anshavar Pass\r\n0x420de52e Anshavar Pass\r\n"])  # + MAPTABLE's
+            # REFUND2: the HUD table is the shipped one plus the item shop's refund lines
+            shipped = pl.find_table(dbpf.Package(path), pl.HUD)
+            hud = [pkg.read(e) for e in pkg.entries if e.instance == pl.HUD]
+            self.assertTrue(shipped.endswith(b"0x0e546204 Attention\r\n"), shipped[-40:])
+            self.assertEqual(hud, [shipped + pl.ADDED_COMMENT.encode() + b"\r\n0x5e70c001 Refund\r\n"
+                                   b"0x5e70c002 Refund for ~price~ vim?\r\n0x5e70c003 Refunds for: ~price~\r\n"
+                                   b"0x5e70c004 Refund for ~item~ and ~price~ vim?\r\n"
+                                   b"0x5e70c005 Refunds for: ~item~ and ~price~\r\n"])
+            self.assertEqual(len(pkg.entries), 7)
 
 
 class Rule(unittest.TestCase):
@@ -152,8 +166,30 @@ class Rule(unittest.TestCase):
     def test_lobby_map_label(self):
         # the lobby's line for the map the client can't name is the create dialog's label for it: one such map
         import patch_login_movie as plm
-        self.assertEqual(pl.tables("127.0.0.1")[0x7BE32E1A], {0x0F2B57C5: "Anshavar Pass"})  # fe_customgamelobby
+        self.assertEqual(pl.tables("127.0.0.1")[0x7BE32E1A], {0x0F2B57C5: "Anshavar Pass",  # fe_customgamelobby
+                                                             0x420DE52E: "Anshavar Pass"})  # MAPTABLE: MM's LevelId
         self.assertEqual([m[2] for m in plm.EXTRA_MAPS], [pl.LOBBY_LINES[pl.LOBBY_MAP_LINE]])
+
+    def test_map_lines(self):
+        # MAPTABLE: a map's line id is its LevelId (dgserver's: MM_Map_v3 1108206894, CM_Ring 4050252090 in its logs)
+        self.assertEqual((pl.level_id("MM_Map_v3"), pl.level_id("CM_Ring"), pl.level_id("SM_Map_v5")),
+                         (0x420DE52E, 0xF169F13A, 0x946D41FE))
+        self.assertEqual(pl.map_lines(pl.BUILT_IN_MAPS + MAPS), {0x420DE52E: "Anshavar Pass", 0xF169F13A: "Test Ring"})
+        lobby = pl.tables("127.0.0.1", lobby_map="Custom map", maps=MAPS)[pl.FE_CUSTOM_GAME_LOBBY]
+        self.assertEqual(lobby, {0x0F2B57C5: "Custom map", 0x420DE52E: "Anshavar Pass", 0xF169F13A: "Test Ring"})
+        # never over a line the shipped table has
+        self.assertEqual(pl.without_lines_of(b"\xef\xbb\xbf0x420de52e Kick\r\n0x0000000a x", lobby),
+                         {0x0F2B57C5: "Custom map", 0xF169F13A: "Test Ring"})
+
+    def test_folder_maps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for sub, text in (("B_Two", '{"name": "CM_Two", "display": "Two"}'), ("A_One", '{"name": "CM_One", "display": "One"}'),
+                              ("C_Bad", "{"), ("D_NoDisplay", '{"name": "CM_Four"}')):
+                os.makedirs(os.path.join(tmp, sub))
+                with open(os.path.join(tmp, sub, "map.json"), "w", encoding="utf-8") as f:
+                    f.write(text)
+            self.assertEqual(pl.folder_maps(tmp), [("CM_One", "One"), ("CM_Two", "Two")])
+        self.assertEqual((pl.folder_maps(None), pl.folder_maps(os.path.join(HERE, "no_such_dir"))), ([], []))
 
     def test_pages(self):
         # the links name only pages dgserver serves (server/internal/sitelinks.Pages)
@@ -172,7 +208,7 @@ class SetupAllStep(Temp):
         os.makedirs(loc)
         with open(os.path.join(loc, "Locale.package"), "wb") as f:
             f.write(SYNTH_LOCALE)
-        a = sa.parse(["setup_all.py", "--root", self.tmp])
+        a = sa.parse(["setup_all.py", "--root", self.tmp, "--maps", ""])
         s = sa.Setup(a)
         s.manifest = {"Dawngate/" + pl.SOURCE: (len(SYNTH_LOCALE), SYNTH_LOCALE_SHA)}
         added = os.path.join(loc, pl.PACKAGE)

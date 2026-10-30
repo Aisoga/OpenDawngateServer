@@ -21,6 +21,8 @@
 #include "game.h"
 #include "host/host.h"
 #include "log.h"
+#include "matchrec.h"
+#include "matchstats.h"
 
 using namespace game;
 namespace core = gms::wells;
@@ -574,6 +576,8 @@ void Apply(const std::vector<RawPlayer>& players) {
     if (ev) ++g_st.combatEvents;
     std::string who;
     for (int p : c.capturers) who += " " + std::to_string(p);
+    matchstats::OnWellCaptured(c.at, c.well, c.to, c.capturers);  // MSTATS1: wellsCaptured, the well event
+    matchrec::OnWellCaptured(c.at, c.well, c.to, c.capturers);    // MATCHREC: the recorder's well event
     Log("wells: CAPTURE of well %d (%08X) at match %.2f s: team %d -> %d by player(s)%s (source %08X); mTeam %s, "
         "MineCaptured combat event %s; award %.0f and bounty %.0f per player of team %d; locked %.0f s",
         c.well, c.object, c.at, c.from, c.to, who.c_str(), c.source, team ? "written" : "NOT written",
@@ -1125,6 +1129,30 @@ int Threats(int team, Threat* out, int max) {
     t.workerHit = attacked;
     t.workerPlayerHit = playerHit != g_workerPlayerHitAt.end() && g_now - playerHit->second <= 5.0;
     ++n;
+  }
+  return n;
+}
+
+int Views(View* out, int max) {
+  if (!g_ready || !out || max <= 0) return 0;
+  int n = 0;
+  const float radius = g_core.GetTuning().captureRadius;
+  for (int i = 0; i < g_core.Count() && n < max && static_cast<size_t>(i) < g_info.size(); ++i) {
+    View& v = out[n++];
+    v = View();
+    const WellInfo& w = g_info[static_cast<size_t>(i)];
+    v.object = w.object;
+    for (int k = 0; k < 3; ++k) v.pos[k] = w.pos[k];
+    v.owner = g_core.Owner(i);
+    v.locked = g_core.IsLocked(i);
+    v.workers = g_core.Workers(i);
+    v.capturers = g_core.Capturers(i);
+    v.secondsToCapture = g_core.SecondsToCapture(i);
+    v.moving = v.secondsToCapture >= 0.0;
+    const auto playerHit = g_workerPlayerHitAt.find(i);
+    v.workerPlayerHit = playerHit != g_workerPlayerHitAt.end() && g_now - playerHit->second <= 5.0;
+    v.reachable = g_opt.botsUnreachable || g_core.PlayersReach(i);
+    v.radius = radius;
   }
   return n;
 }

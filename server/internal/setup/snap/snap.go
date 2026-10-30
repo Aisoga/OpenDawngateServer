@@ -224,6 +224,18 @@ var ErrSnappy = errors.New("bad Snappy block")
 // snap.py's snappy_decompress does. expected is the size the index gives (-1: don't check it); the
 // block's own size varint must equal it.
 func Decode(src []byte, expected int64) ([]byte, error) {
+	return decode(src, expected, -1)
+}
+
+// DecodePrefix decompresses the start of a raw Snappy block: at least its first want bytes (fewer only when the
+// block is shorter), without reading on once they are out; for a file's header without its body. src may be
+// the block's first bytes only.
+func DecodePrefix(src []byte, want int) ([]byte, error) {
+	return decode(src, -1, int64(want))
+}
+
+// decode is Decode, stopping once limit bytes are out (limit < 0: the whole block).
+func decode(src []byte, expected, limit int64) ([]byte, error) {
 	n := len(src)
 	pos := 0
 	var usize uint64
@@ -244,8 +256,15 @@ func Decode(src []byte, expected int64) ([]byte, error) {
 	if usize > 1<<32 {
 		return nil, fmt.Errorf("%w: length %d too large", ErrSnappy, usize)
 	}
-	out := make([]byte, 0, usize)
+	capacity := usize
+	if limit >= 0 && uint64(limit)+64 < capacity {
+		capacity = uint64(limit) + 64
+	}
+	out := make([]byte, 0, capacity)
 	for pos < n {
+		if limit >= 0 && int64(len(out)) >= limit {
+			return out, nil
+		}
 		tag := src[pos]
 		pos++
 		var ln, off uint64 // 64-bit, so a 32-bit build can't overflow on hostile input
@@ -264,6 +283,9 @@ func Decode(src []byte, expected int64) ([]byte, error) {
 				pos += nb
 			}
 			ln++
+			if limit >= 0 && ln > uint64(n-pos) { // a prefix of the block: the literal's bytes that are there
+				return append(out, src[pos:]...), nil
+			}
 			if ln > uint64(n-pos) {
 				return nil, fmt.Errorf("%w: literal runs past the end", ErrSnappy)
 			}

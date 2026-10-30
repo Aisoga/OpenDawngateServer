@@ -40,6 +40,22 @@ $base = if ($session) { $session.FullName } else { Join-Path $Repo ("re\logs\man
 $out = Join-Path $base ("client_" + (Get-Date -Format 'HHmmss'))
 New-Item -ItemType Directory -Force $out | Out-Null
 
+# the create dialog's maps for this server: this path has no tunnel, so the copy's list would name every map the copy
+# has; mapsetup --server-list keeps those the server offers (its /dawngate/maps.txt; --map, --custom-maps), as the
+# release's Start-Client.exe does at a login. Without Go, or when it fails, the list stays as it is.
+if (Get-Command go -ErrorAction SilentlyContinue) {
+    Push-Location (Join-Path $Repo 'server')
+    $eap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue' # Windows PowerShell turns a native program's stderr into errors under 'Stop'
+    try {
+        $listOut = & go run ./tools/mapsetup --server-list 127.0.0.1 --maps (Join-Path $Repo 'maps') $gameDir 2>&1 | ForEach-Object { "$_" }
+        if ($LASTEXITCODE -eq 0) { Write-Host ($listOut -join ' ') -ForegroundColor Gray }
+        else { Write-Host "The create dialog's map list was not updated: $($listOut -join ' ')" -ForegroundColor Yellow }
+    } catch {
+        Write-Host "The create dialog's map list was not updated: $_" -ForegroundColor Yellow
+    } finally { $ErrorActionPreference = $eap; Pop-Location }
+}
+
 Write-Host 'Starting the game (the window opens in a few seconds). Close the game to end; this window then closes too.' -ForegroundColor Green
 & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'launch_monitor.ps1') `
     -GameDir $gameDir -OutDir $out -Seconds 0 -NoCapture -ShotTimes none

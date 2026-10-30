@@ -12,7 +12,7 @@ import (
 
 // Classes are the AssetData classes Build reads; CollectionItem and PlayerClass must exist.
 var Classes = []string{"CollectionItem", "PlayerClass", "Noun", "PerkShape", "Shape", "Socket", "Gem", "Item",
-	"LootBag", "LootBagRarity", "LootBagTuning"}
+	"LootBag", "LootBagRarity", "LootBagTuning", "ItemBuild", "ItemFilterSet", "ItemSet"}
 
 // A Source gives Build a class's instances: it decodes them into into (a *map[string]T) from JSON as
 // re/scripts/assetdata.py dump writes it ({name: object}; with --locale, Locale keys are {"ref", "text"}
@@ -67,6 +67,9 @@ func BuildFrom(src Source) (*Content, error) {
 		lootBags   map[string]dumpLootBag
 		rarities   map[string]dumpLootBagRarity
 		tuning     map[string]dumpLootBagTuning
+		builds     map[string]dumpItemBuild
+		filters    map[string]dumpItemFilterSet
+		itemSets   map[string]dumpItemSet
 	)
 	for _, f := range []struct {
 		class    string
@@ -77,6 +80,7 @@ func BuildFrom(src Source) (*Content, error) {
 		{"PerkShape", &perkShapes, false}, {"Shape", &shapes, false}, {"Socket", &sockets, false},
 		{"Gem", &gems, false}, {"Item", &matchItems, false}, {"LootBag", &lootBags, false},
 		{"LootBagRarity", &rarities, false}, {"LootBagTuning", &tuning, false},
+		{"ItemBuild", &builds, false}, {"ItemFilterSet", &filters, false}, {"ItemSet", &itemSets, false},
 	} {
 		if err := src(f.class, f.into); err != nil && (f.required || !errors.Is(err, fs.ErrNotExist)) {
 			return nil, err
@@ -172,6 +176,8 @@ func BuildFrom(src Source) (*Content, error) {
 		c.MatchItems = append(c.MatchItems, MatchItem{Name: name, Title: mi.Name.Text, Category: mi.Category, Tier: mi.Tier,
 			Cost: mi.ItemCost})
 	}
+	matchItemDetails(c.MatchItems, matchItems) // format 3 (matchitems.go)
+	c.ItemFilters, c.ItemBuilds, c.ItemShop = itemFilters(filters), itemBuilds(builds, classes), itemShop(itemSets)
 	for _, name := range sortedNames(lootBags) {
 		lb := lootBags[name]
 		c.LootBags = append(c.LootBags, LootBag{Name: name, Title: lb.TierName.Text, RequiredBagScore: lb.RequiredBagScore,
@@ -303,6 +309,29 @@ type dumpMatchItem struct {
 	Tier     string `json:"Tier"`
 	ItemCost int    `json:"ItemCost"`
 	Name     locKey `json:"Name"`
+
+	// format 3 (matchitems.go)
+	AbilityItemCategory    string            `json:"AbilityItemCategory"`
+	SellPercent            float64           `json:"SellPercent"`
+	IconSmall              string            `json:"IconSmall"`
+	IconLarge              string            `json:"IconLarge"`
+	AttributeTag           []json.RawMessage `json:"attributeTag"`
+	CustomTag              []json.RawMessage `json:"customTag"`
+	Attribute              []ItemStat        `json:"Attribute"`
+	Passive                []dumpItemPassive `json:"Passive"`
+	ActiveAbility          string            `json:"ActiveAbility"`
+	ActiveModifier         string            `json:"ActiveModifier"`
+	Consumable             bool              `json:"Consumable"`
+	ConsumeOnFullInventory bool              `json:"ConsumeOnFullInventory"`
+	StackCount             int               `json:"StackCount"`
+	UpgradesFrom           []dumpItemRef     `json:"UpgradesFrom"`
+	UpgradesInto           []dumpItemRef     `json:"UpgradesInto"`
+	CheatItem              bool              `json:"CheatItem"`
+}
+
+type dumpItemPassive struct {
+	PassiveModifier     string `json:"PassiveModifier"`
+	PassiveModifierRank int    `json:"PassiveModifierRank"`
 }
 
 type dumpLootBag struct {

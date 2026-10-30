@@ -276,7 +276,7 @@ jobs:
               rel = substr(path, length(top) + 1)
               if (mode ~ /^d/) want = "drwxr-xr-x"; else if (rel == "start-server") want = "-rwxr-xr-x"; else want = "-rw-r--r--"
               if (mode != want) { print "::error::mode " mode " (not " want "): " path; bad = 1 }
-              if (mode !~ /^d/ && rel !~ /^(start-server|dawngate\.service|README\.txt|LICENSE\.txt|THIRD-PARTY-NOTICES\.txt|BUILD\.txt|host\/dgsim\.dll|host\/lua\/[A-Za-z0-9_]+\.lua)$/) { print "::error::not a file of the layout: " path; bad = 1 }
+              if (mode !~ /^d/ && rel !~ /^(start-server|dawngate\.service|README\.txt|LICENSE\.txt|THIRD-PARTY-NOTICES\.txt|BUILD\.txt|maps\/README\.txt|host\/dgsim\.dll|host\/lua\/[A-Za-z0-9_]+\.lua)$/) { print "::error::not a file of the layout: " path; bad = 1 }
             }
             END { exit bad }' listing.txt
           mkdir unpacked
@@ -285,7 +285,7 @@ jobs:
           version=$(./start-server --version)
           if [ "$version" != "$name" ]; then echo "::error::start-server --version says $version, not $name"; exit 1; fi
           sed -n '/^SHA-256 of the files:$/,$p' BUILD.txt | tail -n +2 | sha256sum -c --quiet
-          for f in README.txt dawngate.service LICENSE.txt THIRD-PARTY-NOTICES.txt BUILD.txt; do
+          for f in README.txt dawngate.service LICENSE.txt THIRD-PARTY-NOTICES.txt BUILD.txt maps/README.txt; do
             if grep -q $'\r' "$f"; then echo "::error::$f has CR line ends"; exit 1; fi
           done
           echo "the Linux archive of $name: layout, modes and owner as specified, start-server $version"

@@ -23,7 +23,7 @@ func TestRecentResultOf(t *testing.T) {
 	})
 	x := recentResultOf(hg.resultLocked(gmshost.FinishGame{WinnerTeam: 2, DurationMs: 61500, Reason: "surrender"}, resultAt), c)
 	got := fmt.Sprintf("%+v", x)
-	want := "{GameID:7 Mode:custom Kind:Custom game Level:SM_Map_v5 WinnerTeam:2 Reason:surrender Duration:1m1.5s " +
+	want := "{GameID:7 MatchID:0 Mode:custom Kind:Custom game Level:SM_Map_v5 WinnerTeam:2 Reason:surrender Duration:1m1.5s " +
 		"At:" + resultAt.String() + " Teams:[{Shapers:[Ember ] Bots:3} {Shapers:[] Bots:4}]}"
 	if got != want || fmt.Sprintf("%q %q", x.Teams[0].Shapers, x.Teams[1].Shapers) != `["Ember" ""] [""]` {
 		t.Errorf("RecentResult\n got %s\nwant %s", got, want)

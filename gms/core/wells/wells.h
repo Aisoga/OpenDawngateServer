@@ -133,29 +133,31 @@ struct Tuning {
 
 // The capture-speed table exactly as LevelGameplayTuning_BuildCaptureSpeedTable (0x008DB920) builds it after the load:
 // +0xB0 base = durations[0], +0xB4 step[0] = 1.0, step[i] = base / durations[i] - (sum of the steps before), +0xC8
-// count = min(n, 5); n == 0 leaves base 0. Durations after the first must be > 0.1 (the client asserts and stops).
+// count = min(n, 5); n == 0 leaves base 0. More than 5 entries assert ("Can only support 5 ... Ignoring excess.") and
+// the first 5 are used; a later duration not above 0.1 asserts ("entry #%d is %f. Must be greater than 0.1") and its
+// step is computed anyway (an assert never ends the function; the client's code falls through after it).
 // So step[k] is what the (k+1)-th capturer adds, and n capturers move at base / durations[n - 1] times one.
 struct SpeedTable {
   float base = 0.f;
   float step[kMaxCaptureEntries] = {0.f, 0.f, 0.f, 0.f, 0.f};
   unsigned count = 0;
-  bool ok = false;
+  bool ok = false;  // built without one of the client's asserts, with a positive base
 };
 inline SpeedTable BuildSpeedTable(const float* durations, unsigned n) {
   SpeedTable t;
-  if (n > kMaxCaptureEntries) return t;  // the client asserts "Can only support 5 ... Ignoring excess." and stops
-  t.count = n;
-  if (n == 0 || !durations) return t;
+  bool asserted = n > kMaxCaptureEntries;
+  t.count = asserted ? kMaxCaptureEntries : n;
+  if (t.count == 0 || !durations) return t;
   t.base = durations[0];
   t.step[0] = 1.f;
   float sum = 1.f;
-  for (unsigned i = 1; i < n; ++i) {
-    if (!(durations[i] > 0.1f)) return t;  // "entry #%d is %f. Must be greater than 0.1": the rest stays 0
+  for (unsigned i = 1; i < t.count; ++i) {
+    if (!(durations[i] > 0.1f)) asserted = true;
     const float s = t.base / durations[i] - sum;
     t.step[i] = s;
     sum += s;
   }
-  t.ok = t.base > 0.f;
+  t.ok = !asserted && t.base > 0.f;
   return t;
 }
 // The speed factor of the capturers: the sum of the first n steps, each weighted (1 for an undamaged capturer, the hit

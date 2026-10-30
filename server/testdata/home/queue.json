@@ -9,8 +9,8 @@
   {"title":"Friends only","map":"The Dawngate","players":2,"seats":10,"spectators":0,"bots":false,"private":true}
  ],
  "results":[
-  {"mode":"pvp","kind":"PvP match","map":"The Dawngate","winner":1,"reason":"guardian","durationSec":1453,"endedAgoSec":190,"teams":[{"shapers":["Ember","Kel"],"bots":3},{"shapers":["Nissa"],"bots":4}]},
-  {"mode":"custom","kind":"Custom game","map":"Anshavar Pass","winner":2,"reason":"surrender","durationSec":1102,"endedAgoSec":1300,"teams":[{"shapers":["Fenmore","Zalgus","Varion"],"bots":0},{"shapers":["Aeon","Mikella","Renzo"],"bots":0}]},
-  {"mode":"practice","kind":"Practice match","map":"The Dawngate","winner":0,"reason":"","durationSec":312,"endedAgoSec":4100,"teams":[{"shapers":[""],"bots":4},{"shapers":[],"bots":5}]}
+  {"matchId":42,"mode":"pvp","kind":"PvP match","map":"The Dawngate","winner":1,"reason":"guardian","durationSec":1453,"endedAgoSec":190,"teams":[{"shapers":["Ember","Kel"],"bots":3},{"shapers":["Nissa"],"bots":4}]},
+  {"matchId":41,"mode":"custom","kind":"Custom game","map":"Anshavar Pass","winner":2,"reason":"surrender","durationSec":1102,"endedAgoSec":1300,"teams":[{"shapers":["Fenmore","Zalgus","Varion"],"bots":0},{"shapers":["Aeon","Mikella","Renzo"],"bots":0}]},
+  {"matchId":0,"mode":"practice","kind":"Practice match","map":"The Dawngate","winner":0,"reason":"","durationSec":312,"endedAgoSec":4100,"teams":[{"shapers":[""],"bots":4},{"shapers":[],"bots":5}]}
  ],
  "server":{"release":"v0.99","map":"SM_Map_v5","halloween":true,"customMaps":["Anshavar Pass"]}}

@@ -1,6 +1,6 @@
 """Builds the compiled bytes of our UI classes from their ActionScript source, or checks the committed ones.
 
-Three classes run inside the game's own UI movies, each placed there by four added SWF tags (the game's bytecode stays
+Six classes run inside the game's own UI movies, each placed there by four added SWF tags (the game's bytecode stays
 as it is; re/scripts/patch_login_movie.py and its Go port, server/internal/setup/moviepatch, insert them):
     picker        client_ui/serverpicker/ServerPicker.as, the server picker on the login screen (Start-Client's
                   picker mode), in UI/Scaleform/LoginScreen/LoginScreen_BG.gfx
@@ -8,12 +8,20 @@ as it is; re/scripts/patch_login_movie.py and its Go port, server/internal/setup
                   dialog, in UI/Scaleform/Battlegrounds/MatchOptionsUI.gfx
     chatrooms     client_ui/chatrooms/AutoRooms.as, which opens the chat rooms the server marks as open by default
                   once per login (minimised, without the focus), in UI/Scaleform/Global/Chat.gfx
+    aftaction     client_ui/aftaction/AfterActionTabs.as, the After Action Review's tabs (Scoreboard, Match Stats,
+                  Recent Games: the server's match history pages in a web view), in
+                  UI/Scaleform/Battlegrounds/AfterActionReviewUI.gfx
+    itemshop      client_ui/itemshop/ShopRefund.as, the item shop's inline refund (badges on the slots whose purchase
+                  of this visit can be undone, the Refund texts and tooltip line), in UI/Scaleform/HUD/ItemShopUI.gfx
+    collection    client_ui/collection/CollectionItems.as, the Collection's Items category (the match items as the
+                  Collection's own cards), in the front end's UI/Scaleform/CDN/swf/code/UIRuntime.gfx
 Their compiled form is committed (as hex text, 32 bytes a line), so the release and the setup need no compiler:
     client_ui/<folder>/<Class>.abc.hex                 the class as an ABC (ActionScript bytecode) file
     server/internal/setup/moviepatch/<name>_tags.hex   the four SWF tags the setup adds to the movie:
         DefineSprite  character 2000, one empty frame
         DoABC         the ABC above (lazy initialization, named after the class in lower case)
-        SymbolClass   2000 -> the class
+        SymbolClass   2000 -> the class (itemshop also binds the movie's own character 250, the vim symbol it
+                      places as mcCoins, to ShopVim, so the class can make the game's flame)
         PlaceObject3  character 2000 at depth 2000 on the root timeline, no instance name (the movies' document
                       classes are sealed: an instance name would make the player set a property they don't have)
 
@@ -23,10 +31,10 @@ of a folder above it), else the environment variables FLEX_SDK, PLAYERGLOBAL and
 the same source, so `check` can compare byte for byte.
 
 Usage:
-    python -I re/scripts/build_picker.py build [picker|matchoptions|chatrooms]   # compile and write both files (default: all)
-    python -I re/scripts/build_picker.py check [picker|matchoptions|chatrooms]   # compile into a temporary folder; exit 1 if a
+    python -I re/scripts/build_picker.py build [picker|matchoptions|chatrooms|aftaction|itemshop|collection]   # compile and write both files (default: all)
+    python -I re/scripts/build_picker.py check [picker|matchoptions|chatrooms|aftaction|itemshop|collection]   # compile into a temporary folder; exit 1 if a
                                                                          file differs
-    python -I re/scripts/build_picker.py tags <file.abc> <out.hex> [--spec picker|matchoptions|chatrooms]   # only the tags
+    python -I re/scripts/build_picker.py tags <file.abc> <out.hex> [--spec picker|matchoptions|chatrooms|aftaction|itemshop|collection]   # only the tags
     python -I re/scripts/build_picker.py compile <Source.as> <out_tags.hex>   # a throwaway class (a spike): its tags,
                                                      character 2000 at depth 2000, class = the file's name
 """
@@ -48,7 +56,7 @@ DEPTH = 2000
 class Spec:
     """One class: its source, its committed files, its character id and depth in its movie."""
 
-    def __init__(self, folder, class_name, tags_name):
+    def __init__(self, folder, class_name, tags_name, symbols=()):
         self.source_dir = os.path.join(REPO, "client_ui", folder)
         self.class_name = class_name
         self.source = os.path.join(self.source_dir, class_name + ".as")
@@ -57,12 +65,16 @@ class Spec:
         self.abc_name = class_name.lower()
         self.char_id = CHAR_ID
         self.depth = DEPTH
+        self.symbols = tuple(symbols)  # more SymbolClass pairs: (a character of the movie, a class of ours)
 
 
 SPECS = {
     "picker": Spec("serverpicker", "ServerPicker", "picker_tags.hex"),
     "matchoptions": Spec("matchoptions", "BotCheckbox", "matchoptions_tags.hex"),
     "chatrooms": Spec("chatrooms", "AutoRooms", "chatrooms_tags.hex"),
+    "aftaction": Spec("aftaction", "AfterActionTabs", "aftaction_tags.hex"),
+    "itemshop": Spec("itemshop", "ShopRefund", "itemshop_tags.hex", symbols=((250, "ShopVim"),)),
+    "collection": Spec("collection", "CollectionItems", "collection_tags.hex"),
 }
 # The picker's names, as before the specs (the tests and older tools read them).
 SOURCE_DIR = SPECS["picker"].source_dir
@@ -144,18 +156,20 @@ def tag(code, data):
     return struct.pack("<HI", (code << 6) | 0x3F, len(data)) + data
 
 
-def class_tags(abc, class_name, abc_name, char_id=CHAR_ID, depth=DEPTH):
-    """DefineSprite, DoABC, SymbolClass and PlaceObject3 (no name) for one class."""
+def class_tags(abc, class_name, abc_name, char_id=CHAR_ID, depth=DEPTH, more=()):
+    """DefineSprite, DoABC, SymbolClass (the class, then `more` pairs) and PlaceObject3 (no name) for one class."""
     sprite = tag(39, struct.pack("<HH", char_id, 1) + tag(1, b"") + tag(0, b""))
     doabc = tag(82, struct.pack("<I", 1) + abc_name.encode() + b"\0" + abc)
-    symbols = tag(76, struct.pack("<HH", 1, char_id) + class_name.encode() + b"\0")
+    pairs = [(char_id, class_name)] + list(more)
+    symbols = tag(76, struct.pack("<H", len(pairs)) + b"".join(struct.pack("<H", c) + n.encode() + b"\0"
+                                                                 for c, n in pairs))
     place = tag(70, bytes([0x06, 0x00]) + struct.pack("<HH", depth, char_id) + b"\0")  # HasCharacter|HasMatrix
     return sprite + doabc + symbols + place
 
 
 def picker_tags(abc, spec=None):
     spec = spec or SPECS["picker"]
-    return class_tags(abc, spec.class_name, spec.abc_name, spec.char_id, spec.depth)
+    return class_tags(abc, spec.class_name, spec.abc_name, spec.char_id, spec.depth, spec.symbols)
 
 
 def compile_all(out_dir, spec=None):

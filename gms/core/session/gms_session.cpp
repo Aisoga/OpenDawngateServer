@@ -1050,7 +1050,8 @@ void GmsSession::Tick() {
 // the strict check (core/protocol/check.h) of one client message. True = the message is not to be handled (dropped,
 // or the connection was kicked and `c` no longer exists).
 bool GmsSession::Screen(Conn& c, uint8_t b, const uint8_t* body, size_t nb) {
-  if (!boundsSet_) {
+  if (!boundsSet_ || boundsGeneration_ != check::LevelDataGeneration()) {  // MAPED4: again once the level was read
+    boundsGeneration_ = check::LevelDataGeneration();
     bounds_ = check::BoundsForLevel(match_.Setup().level);
     boundsSet_ = true;
   }

@@ -1,0 +1,74 @@
+{
+  "format": 1,
+  "name": "CM_Ring",
+  "display": "Test Ring",
+  "tag": "ring",
+  "prefix": "[Ring] ",
+  "size": 440,
+  "symmetry": "point",
+  "environment": "SM_Map_v5",
+  "tuning": "SM_Map_v5",
+  "lanes": [
+    {"id": 1, "width": 24, "knots": [[-170, -145], [-170, -100], [-174, -30], [-174, 30], [-165, 115],
+      [-115, 165], [-30, 174], [30, 174], [100, 170], [145, 170]]},
+    {"id": 2, "width": 24, "knots": [[-145, -170], [-100, -170], [-30, -174], [30, -174], [115, -165],
+      [165, -115], [174, -30], [174, 30], [170, 100], [170, 145]]}
+  ],
+  "base": {
+    "locus": [-196, -196],
+    "guardian": [-142, -142],
+    "shop": [-204, -204],
+    "spawns": [[-188.9, -183.9], [-183.3, -189.8], [-178.7, -186.6], [-179.7, -180.2], [-186.3, -178.7]],
+    "cores": "auto",
+    "bindings": "auto"
+  },
+  "wells": [{"pos": [-60, -130]}],
+  "camps": [],
+  "terrain": {
+    "default": "wall",
+    "shapes": [
+      {"type": "open", "lane": 1},
+      {"type": "open", "lane": 2},
+      {"type": "open", "circle": [-150, -150], "r": 60},
+      {"type": "open", "circle": [-192, -192], "r": 20},
+      {"type": "open", "circle": [-60, -130], "r": 26},
+      {"type": "open", "path": [[-60, -130], [-60, -172]], "width": 14},
+      {"type": "chasm", "circle": [0, 0], "r": 40},
+      {"type": "bush", "polygon": [[-186, -24], [-178, -24], [-178, -4], [-186, -4]]},
+      {"type": "bush", "polygon": [[-24, -186], [-4, -186], [-4, -178], [-24, -178]]},
+      {"type": "bush", "polygon": [[-182, 60], [-174, 60], [-174, 80], [-182, 80]]},
+      {"type": "bush", "polygon": [[60, -182], [80, -182], [80, -174], [60, -174]]}
+    ]
+  },
+  "ground": {
+    "style": "baked",
+    "texels": 2048,
+    "tiles": 2,
+    "layers": [
+      {"name": "earth", "texture": {"procedural": "dirt"}, "scale": 40, "vary": 0.1, "break": 0.8},
+      {"name": "grass", "texture": {"game": "environments/anshavar/textures/OutsouceGroundMap02_D.dds", "archive": "anshavar3.snap"},
+        "scale": 32, "break": 0.8, "auto": "high", "soft": 4, "noise": 2.5},
+      {"name": "scree", "texture": {"procedural": "dirt"}, "scale": 12, "tint": [0.82, 0.76, 0.7], "auto": "slope", "slope": 28},
+      {"name": "chasm", "texture": {"procedural": "dirt"}, "scale": 14, "tint": [0.5, 0.46, 0.48], "auto": "chasm", "soft": 4, "noise": 2},
+      {"name": "plaza", "texture": {"procedural": "dirt"}, "scale": 26, "break": 0.7, "tint": [1.22, 1.18, 1.12], "opacity": 0.85,
+        "shapes": [{"circle": [-150, -150], "r": 46}], "soft": 8, "noise": 3},
+      {"name": "moss", "texture": {"game": "environments/anshavar/textures/OutsouceGroundMap02_D.dds", "archive": "anshavar3.snap"},
+        "scale": 28, "tint": [0.9, 0.95, 0.75], "opacity": 0.7,
+        "shapes": [{"circle": [-176, -10], "r": 14}, {"circle": [-60, -150], "r": 10}, {"circle": [-150, -150], "r": 18, "erase": true}],
+        "soft": 6, "noise": 3},
+      {"name": "path", "texture": {"procedural": "dirt"}, "scale": 16, "break": 0.6, "tint": [1.45, 1.36, 1.18], "vary": 0.1,
+        "shapes": [{"lane": 1, "width": 10}, {"path": [[-60, -130], [-60, -172]], "width": 6}], "soft": 3, "noise": 1.2}
+    ],
+    "stamps": [
+      {"image": {"game": "environments/anshavar/textures/Mine_Disc_01_D.dds", "archive": "anshavar3.snap"},
+        "pos": [-60, -130], "size": [18, 18], "rot": 15, "opacity": 0.9}
+    ],
+    "cliff": {"texture": {"game": "environments/anshavar/textures/Darius_cliffface_rocks_01_D.dds", "archive": "anshavar2.snap"},
+      "scale": 10, "slope": 50, "tint": [1.5, 1.45, 1.3]},
+    "decals": [
+      {"diffuse": "environments/anshavar/textures/TombstoneLetters.dds", "pos": [-172, -60], "size": [6, 6, 6], "rot": 30},
+      {"diffuse": "environments/anshavar/textures/Mine_Disc_01_D.dds", "pos": [-186, -40], "z": 2, "size": [10, 10, 10]}
+    ]
+  },
+  "props": []
+}

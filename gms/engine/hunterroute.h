@@ -13,6 +13,8 @@ struct Options {
   bool vanquish = true;  // [host] bot_hunter_vanquish: the host's Vanquish rule besides the data's gambit
   int pull = 1;          // [host] bot_hunter_pull: 1 for the kits that want it (Faris), 2 every Hunter, 0 none
   int logLimit = 400;    // [host] hunter_route_log_limit: route, Vanquish and pull lines, then every 10th
+  bool table = false;    // [host] bot_hunter_route_table: SM_Map_v5's coordinates (HUNTERROUTE) instead of the route
+                         // from the level's camps (MAPED4, gms::bots::DeriveRoute)
 };
 
 void Configure(const Options& o);

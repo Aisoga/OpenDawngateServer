@@ -216,6 +216,14 @@ constexpr std::uintptr_t kCost = 0x10;
 constexpr std::uintptr_t kConsumable = 0x90;
 constexpr std::uintptr_t kUpgradesFrom = 0x9C;
 constexpr int kCategoryConsumable = 2;
+// MSTATS3 (assetdata_types.txt Item, StringHash delta -4: the hash 4 bytes before the member): ActiveAbility's GUID
+// +0x80 (LabsPlayer_GetAbilityInSlot reads it for slots 7-11), ActiveModifier's +0x88, Passive[] {ItemPassive* ptr,
+// count} +0x78/+0x7C with 0xC-byte entries {+0 PassiveModifier GUID, +8 rank}; Category 1 = Ability (a Spell_* item).
+constexpr std::uintptr_t kActiveAbility = 0x80;
+constexpr std::uintptr_t kActiveModifier = 0x88;
+constexpr std::uintptr_t kPassives = 0x78;
+constexpr std::uint32_t kPassiveSize = 0x0C;
+constexpr int kCategorySpell = 1;
 }  // namespace itemdata
 constexpr std::uintptr_t kNounRecommendedItems = 0x320;
 constexpr std::uint32_t kBuildCategorySize = 0x18;
@@ -454,6 +462,26 @@ constexpr std::uintptr_t kAttachedEffects = 0x90;
 constexpr std::uint32_t kAttachedEffectSize = 0x38;
 constexpr int kNumAttachedEffects = 16;
 constexpr std::uintptr_t kAttachedEffectAsset = 0x10;
+// FOGSTACKS (effects.cpp): the slot's attach handle (+0x34; FUN_00924050: a counter << 8 | the slot index) and the two
+// functions. GameObject_CreateAttachedEffect (cdecl (object*, ServerEvent info*) -> the handle or 0; the info's +0x28 is
+// the ServerEventDef asset, whose +0 is its name) is called only by nEffect.CreateEffect (EffectLua_CreateEffect
+// 0x00949C00) with an object; GameObject_DestroyAttachedEffect (cdecl (object*, handle, bool)) only by nEffect.DestroyEffect
+// (0x0094A8A0): it queues the destroy ServerEvent (A4, kind 1) while kNetFlag_SentCreationMessage is set and clears
+// the slot (0x0055E8E0).
+constexpr std::uintptr_t kAttachedEffectHandle = 0x34;
+constexpr std::uintptr_t kServerEventInfoAsset = 0x28;
+constexpr std::uintptr_t kCreateAttachedEffect = 0x00881D30;
+constexpr unsigned char kCreateAttachedEffectBytes[] = {0x51, 0x53, 0x57, 0x8B, 0x7C, 0x24, 0x10};  // push ecx/ebx/edi; mov edi,[esp+10h]
+using CreateAttachedEffectFn = std::uint32_t(__cdecl*)(void* object, void* info);
+constexpr std::uintptr_t kDestroyAttachedEffect = 0x00880A40;
+constexpr unsigned char kDestroyAttachedEffectBytes[] = {0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF8};  // push ebp; mov ebp,esp; and esp,-8
+using DestroyAttachedEffectFn = void(__cdecl*)(void* object, std::uint32_t handle, bool flag);
+// ABILVFX-WALLS: a ServerEventDef's graphics part (+0x68; +0x0C effects count, +0x10 draw box defs, +0x14 draw box
+// count). The client makes a draw box (Kensu's R path) only in GameGraphics_AttachSlotEffects (0x00575560), which the
+// model's creation at ObjectCreateComplete (8F) calls for the slots the object already holds; a 92 after 8F starts only
+// effects (GameGraphics_CreateSlotEffect 0x00573B90), never a draw box.
+constexpr std::uintptr_t kServerEventDefGraphics = 0x68;
+constexpr std::uintptr_t kEventGraphicsDrawBoxCount = 0x14;
 // cAnimationData (object +0x894, no field state): members 0-6 mOverrideAnimations[7] (+0x2C, u32 each, every update),
 // 7-11 the last animation (+0x08 state, +0x10 u64 play time in server ms, +0x18 f32 time scale, +0x1C overlay state,
 // +0x20 u64 overlay time; full state only), which InitAnimationInfo (B1, 32 bytes, GameClient_OnGmsInitAnimationInfo
@@ -672,7 +700,19 @@ constexpr std::uintptr_t kItemPassives = 0x08;
 constexpr int kItemPassiveCount = 4;
 constexpr unsigned kItemSlots = 11;
 constexpr std::uintptr_t kSpellPoints = 0x20;
+// REFUND1: a slot's build path, two asset pointers (+0x1C, +0x20): InventoryItem_Add (0x009139B0) writes the new
+// item's cheapest chain below it (Item_GetBuildPath 0x008FCEA0), InventoryItem_Upgrade (0x00914470) the chain from the
+// old item, and the slot's clear (0x00910DA0, when the count reaches 0) zeroes it.
+constexpr std::uintptr_t kItemPath = 0x1C;
 }  // namespace player
+// REFUND1: LabsPlayer_SetAvailableGold (0x009111C0, thiscall ECX = player, float on the stack): mAvailableGold (+0xA8)
+// and the telemetry record's stat 4; asserts gold >= 0. Item_IsCheatItem (0x008FCCE0) reads item data +0xB4.
+using SetAvailableGoldFn = void(__thiscall*)(void* player, float gold);
+inline SetAvailableGoldFn SetAvailableGold = At<SetAvailableGoldFn>(0x009111C0);
+constexpr unsigned char kSetAvailableGoldBytes[] = {0xF3, 0x0F, 0x10, 0x44, 0x24, 0x04, 0x0F, 0x2F};
+namespace itemdata {
+constexpr std::uintptr_t kCheatItem = 0xB4;
+}  // namespace itemdata
 // An asset: +0 name (char*), +0x60 id, +0x68 data. Item data (AssetData "Item"): +0x0 Category, +0x10 ItemCost.
 namespace asset {
 constexpr std::uintptr_t kName = 0x00;
@@ -938,6 +978,18 @@ constexpr std::uintptr_t kSplineAnchor = 0x19E64;
 constexpr std::uintptr_t kSplineRoot = 0x19E6C;
 constexpr std::uintptr_t kSplineSize = 0x19E74;
 }  // namespace matchsim
+// MSTATS2: the match-telemetry block (GameSimulator_GetTelemetryStats 0x008EF4C0 returns sim +0xCCB0; sized by
+// MatchTelemetry_Construct 0x00894E70 from GameSimulator_Construct: 12 player records, 3 team records). Player record
+// {u32 index (cLabsPlayer +0x2C), float stat[107]}: stat s at +4 + 4s; written only by LabsPlayer_AddGold,
+// LabsPlayer_SetAvailableGold and LabsPlayer_GrantXP (TelemetryStats_UpdatePlayerStat 0x00894830).
+namespace telemetry {
+constexpr std::uintptr_t kOfSim = 0xCCB0;
+constexpr std::uintptr_t kPlayersBegin = 0x10;   // m_playerTelemetry {begin, end, capacity}
+constexpr std::uintptr_t kPlayersEnd = 0x14;
+constexpr std::uintptr_t kPlayerCount = 0x88;    // u32, 12
+constexpr std::uintptr_t kPlayerRecordSize = 0x1B0;
+constexpr std::uintptr_t kStat0 = 0x4;           // float stat[107]
+}  // namespace telemetry
 // GameSimulator_FindSplinePath (0x008F05C0, cdecl (sim, id)) -> the point vector {begin, end, ...} or null.
 using FindSplinePathFn = void*(__cdecl*)(void* sim, std::uint32_t id);
 inline FindSplinePathFn FindSplinePath = At<FindSplinePathFn>(0x008F05C0);
@@ -1180,6 +1232,9 @@ constexpr int kAttrVimPer5 = 69;
 namespace level {
 constexpr std::uintptr_t kMarkersets = 0x000;      // Level: LevelMarkerset[] (each an asset pointer)
 constexpr std::uintptr_t kGameplayTuning = 0x614;  // Level: LevelGameplayTuning asset
+constexpr std::uintptr_t kLevelSize = 0x5C8;       // Level: levelSize cSPVector2 (MAPED4)
+constexpr std::uintptr_t kActiveItems = 0x604;     // Level: activeItems ItemSet asset (data +0: Item asset pointers {pointer, count})
+constexpr std::uintptr_t kAssetId = 0x60;          // an asset's id (FNV-1 of its lower-case "<name>.<Type>"; gms/core/protocol/check.h)
 }  // namespace level
 namespace marker {  // cLabsMarker, 0xC8 bytes (Markerset data +0: markers {pointer, count})
 constexpr std::uint32_t kSize = 0xC8;
@@ -1460,6 +1515,10 @@ using HealDamageFn = void(__cdecl*)(void* object, void* snapshot, float amount, 
                                     unsigned descHi, bool noScaling, float* healed, bool* isCrit, unsigned unknown,
                                     bool isLifesteal, bool canCrit, bool allowOverload);
 inline HealDamageFn HealDamage = At<HealDamageFn>(0x008E0720);
+// MSTATS3: its detour (engine/matchstats_sources.cpp): sub esp,0x10; push edi; mov edi,[esp+0x18] (the heal
+// core's prologue, kHealDamageBytes); the host's own lifedrain call (damage.cpp step 13) passes through it as well.
+constexpr std::uintptr_t kHealDamage = 0x008E0720;
+constexpr unsigned char kHealDamageBytes[] = {0x83, 0xEC, 0x10, 0x57, 0x8B, 0x7C, 0x24, 0x18};
 // AttributeData_GetAttribute (0x008D9C00, thiscall on object +0x8E0, (index, 1), ret 8, ST0): +8 + 4 x index, the
 // derived attributes (> 72) through AttributeData_GetDerivedAttribute (0x008D7800).
 using GetAttributeFn = float(__thiscall*)(void* attributeData, int index, int flag);
@@ -1879,6 +1938,14 @@ constexpr std::uintptr_t kEndPending = 0x234;    // byte, EndAbility deferred
 // cStaticAbility (instance +8): +0x428 deactivationType (dword; written by the constructor 0x00901219
 // and the copy 0x0090EA7C, read by no client instruction).
 constexpr std::uintptr_t kStaticDeactivationType = 0x428;
+// ITEMDEATH: +0x424 activationType (nActivationType: 0 Default, 1 Unique, 4 Stacks, 5 StacksAndCasterUnique, ...),
+// the switch of LabsAbilities_ActivateFromDefinition (0x00908AC0) and LabsPlayer_OnItemAdded (0x00912950).
+constexpr std::uintptr_t kStaticActivationType = 0x424;
+// MSTATS4: cStaticAbility +0x10 its GUID (SPID of the name; ActivateAbility 0x0090A5AC sends it as the record's ability
+// id) and +0x400 debuffDescriptors (nDebuffDescriptors; ActivateAbility passes it to GameSimulator_SendModifierCreated
+// 0x008F57A0, which maps only its low byte's Stun/Fear/Silence/Suppression/Root/Slow onto the record's feedback flags).
+constexpr std::uintptr_t kStaticGuid = 0x10;
+constexpr std::uintptr_t kStaticDebuffDescriptors = 0x400;
 // DISCIPLINE: cStaticAbility +0x300 resourcePointCost (float x 8; LabsAbilities_GetResourceCost 0x008FEDD0 reads
 // +0x2FC + rank x 4, rank clamped below 10), +0x320 reactivationResourcePointCost (x 8), +0x340
 // upkeepResourcePointCost (x 8) and +0x360 upkeepResourcePointTickRate (float, s). The upkeep pair is read by no client

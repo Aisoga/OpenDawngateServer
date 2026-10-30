@@ -270,7 +270,7 @@ func TestHostedGameResultPosted(t *testing.T) {
 		// HOME1: the home page keeps every finished match, posted or not, without the player's name
 		rr := ts.s.RecentResults()
 		if c.finish {
-			if len(rr) != 1 || fmt.Sprintf("%+v", rr[0]) != "{GameID:1 Mode:pvp Kind:PvP match Level:SM_Map_v5 WinnerTeam:1 "+
+			if len(rr) != 1 || fmt.Sprintf("%+v", rr[0]) != "{GameID:1 MatchID:1 Mode:pvp Kind:PvP match Level:SM_Map_v5 WinnerTeam:1 "+
 				"Reason:guardian Duration:12m34s At:"+rr[0].At.String()+" Teams:[{Shapers:[Ember] Bots:4} {Shapers:[] Bots:5}]}" ||
 				rr[0].At.IsZero() {
 				t.Errorf("%s: RecentResults %+v", c.name, rr)

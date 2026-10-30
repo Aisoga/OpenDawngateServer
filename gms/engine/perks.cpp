@@ -211,6 +211,11 @@ void AtRespawn(void* sim, unsigned index) {
   }
 }
 
+std::vector<std::uint32_t> PageModifiers(unsigned index) {
+  auto it = g_pageModifiers.find(index);
+  return it == g_pageModifiers.end() ? std::vector<std::uint32_t>() : it->second;
+}
+
 void ApplyBotLoadout(void* sim, unsigned index, std::uint32_t creature) {
   if (!g_opt.enabled || !g_opt.botLoadout || !creature) return;
   BoundTo b(sim);

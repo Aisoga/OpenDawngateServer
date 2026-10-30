@@ -1,6 +1,6 @@
 // Package localepatch makes a player copy's added locale package game\Data\Locale\en-us\AA_Server.package:
-// changed copies of six of the copy's own string tables with the server's login texts and links, the
-// Leaderboard's rule and the custom lobby's map line, byte for byte
+// changed copies of seven of the copy's own string tables with the server's login texts and links, the
+// Leaderboard's rule, the custom lobby's map line and the item shop's refund lines, byte for byte
 // what re/scripts/patch_locale.py makes (that script's docstring has the rule). The client mounts every *.package of Locale\en-us and the one whose name
 // sorts first wins, so AA_Server.package overrides the shipped Locale.package, which stays untouched. The game's
 // text can't ship, so the package is made at setup time from the copy's own Locale.package.
@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"dawngate/server/internal/content"
 	"dawngate/server/internal/setup/dbpf"
 	"dawngate/server/internal/sitelinks"
 )
@@ -27,8 +28,8 @@ const (
 	Comment = "# PH2b: lines the build lacks, added by the server's setup" // before appended lines
 )
 
-// The string tables' key parts and the six tables (FNV-1 of BlazeErrors, the URL table's id, LoginScreen,
-// FNV-1 of fe_leaderboard, fe_matchtype and fe_customgamelobby).
+// The string tables' key parts and the seven tables (FNV-1 of BlazeErrors, the URL table's id, LoginScreen,
+// FNV-1 of fe_leaderboard, fe_matchtype, fe_customgamelobby and hud).
 const (
 	StringType    = 0x02FAC0B6
 	StringGroup   = 0x02FABF01
@@ -39,7 +40,20 @@ const (
 	FEMatchType   = 0xFF007FE0
 	// FECustomGameLobby is the custom lobby's table (FNV-1 of fe_customgamelobby).
 	FECustomGameLobby = 0x7BE32E1A
+	// HUD is the in-match HUD's table (FNV-1 of hud), which the item shop uses.
+	HUD = 0x268AB804
 )
+
+// HUDLines are the item shop's inline refund's lines (client_ui/itemshop/ShopRefund.as's LINE_*): the Sell button's
+// label for a purchase that can be undone, the line above it and the tooltip's line; the class puts the price in for
+// ~price~, as the shop's own "Sell for ~price~ vim?" (0x0B5A6F63).
+var HUDLines = map[uint32]string{
+	0x5E70C001: "Refund",
+	0x5E70C002: "Refund for ~price~ vim?",
+	0x5E70C003: "Refunds for: ~price~",
+	0x5E70C004: "Refund for ~item~ and ~price~ vim?",
+	0x5E70C005: "Refunds for: ~item~ and ~price~",
+}
 
 // LobbyMapLine is the line CustomMatchLobbyUI falls back to (^FE_CustomGameLobby!0x0f2b57c5, after its resultName
 // assert) for a LevelId the client's one-entry map table can't name; build 854's table lacks it, so the lobby showed
@@ -194,6 +208,51 @@ type Options struct {
 	Host      string
 	HTTPPort  int
 	WebDomain string
+	// LobbyMap is the custom lobby's map line ("" = LobbyLines' own, Anshavar Pass): the one line for every map the
+	// client can't name, so a copy with more maps than MM_Map_v3 gets LobbyMapAny (LobbyMapFor).
+	LobbyMap string
+
+	// Maps are the maps folder's installed maps: each gets its line in FE_CustomGameLobby (MapLines), after BuiltInMaps.
+	Maps []Map
+}
+
+// Map is a map the client names by its LevelId: its Level's name and the name players read.
+type Map struct{ Name, Display string }
+
+// BuiltInMaps are the maps a player copy may have besides The Dawngate (which the client's own table names).
+var BuiltInMaps = []Map{{Name: "MM_Map_v3", Display: "Anshavar Pass"}}
+
+// LevelID is a map's LevelId, the game attribute the client names a map by: the AssetCatalog id of "<name>.Level"
+// (blaze.LevelAssetID).
+func LevelID(name string) uint32 { return content.AssetID(name + ".Level") }
+
+// MapLines are FE_CustomGameLobby's lines that name maps, by LevelId: the client's map-name method, patched by the
+// setup (exepatch's maptable), looks up ^FE_CustomGameLobby!0x<LevelId> for every map its own one-entry table lacks,
+// for the custom lobby's map line and the game browser's Map column. Of two maps with one id the first is kept.
+func MapLines(maps []Map) map[uint32]string {
+	out := map[uint32]string{}
+	for _, m := range maps {
+		if id := LevelID(m.Name); out[id] == "" {
+			out[id] = m.Display
+		}
+	}
+	return out
+}
+
+// LobbyMapAny is the lobby's map line in a copy with several maps the client can't name: the line can name only
+// one, so it says none (the game's name in the lobby's title starts with the map's prefix).
+const LobbyMapAny = "Custom map"
+
+// LobbyMapFor is the lobby's map line for a copy that has these maps besides The Dawngate (their display names):
+// the one map's name, else LobbyMapAny ("" for none or for MM_Map_v3 alone: LobbyLines' own).
+func LobbyMapFor(displays []string) string {
+	switch {
+	case len(displays) == 0 || len(displays) == 1 && displays[0] == LobbyLines[LobbyMapLine]:
+		return ""
+	case len(displays) == 1:
+		return displays[0]
+	}
+	return LobbyMapAny
 }
 
 // Base is where the links point (sitelinks.Base).
@@ -225,8 +284,17 @@ func Tables(o Options) (map[uint32]map[uint32]string, error) {
 		urls[SlotSignup+uint32(slot)] = fmt.Sprintf("http://%s:%d/%s", o.Host, port, SlotPath(slot, sitelinks.Signup))
 		urls[SlotPassword+uint32(slot)] = fmt.Sprintf("http://%s:%d/%s", o.Host, port, SlotPath(slot, sitelinks.Password))
 	}
+	lobby := map[uint32]string{LobbyMapLine: LobbyLines[LobbyMapLine]}
+	if o.LobbyMap != "" {
+		lobby[LobbyMapLine] = o.LobbyMap
+	}
+	for id, text := range MapLines(append(append([]Map(nil), BuiltInMaps...), o.Maps...)) {
+		if _, ok := lobby[id]; !ok {
+			lobby[id] = text
+		}
+	}
 	return map[uint32]map[uint32]string{BlazeErrors: ErrorLines, URLs: urls, LoginScreen: LoginLines,
-		FELeaderboard: LeaderboardLines, FEMatchType: MatchTypeLines, FECustomGameLobby: LobbyLines}, nil
+		FELeaderboard: LeaderboardLines, FEMatchType: MatchTypeLines, FECustomGameLobby: lobby, HUD: HUDLines}, nil
 }
 
 var bom = []byte{0xEF, 0xBB, 0xBF}
@@ -296,6 +364,24 @@ func PatchTable(text []byte, lines map[uint32]string) []byte {
 	return out
 }
 
+// withoutLinesOf is lines without the ids the table's text already has (patch_locale.py's without_lines_of).
+func withoutLinesOf(text []byte, lines map[uint32]string) map[uint32]string {
+	have := map[uint32]bool{}
+	for _, part := range bytes.Split(text, []byte("\n")) {
+		part = bytes.TrimPrefix(part, bom)
+		if id, _, ok := lineID(part); ok {
+			have[id] = true
+		}
+	}
+	out := map[uint32]string{}
+	for id, t := range lines {
+		if !have[id] {
+			out[id] = t
+		}
+	}
+	return out
+}
+
 // table is the first entry of the string table inst in the package, decompressed; nil when it has none.
 func table(p *dbpf.Package, inst uint32) ([]byte, error) {
 	for _, e := range p.Entries {
@@ -306,7 +392,7 @@ func table(p *dbpf.Package, inst uint32) ([]byte, error) {
 	return nil, nil
 }
 
-// Build makes AA_Server.package from the copy's Locale.package (its bytes): the six tables changed, in instance
+// Build makes AA_Server.package from the copy's Locale.package (its bytes): the seven tables changed, in instance
 // order, stored uncompressed (dbpf.WritePackage). A table missing from it (a synthetic test build) is made of the
 // appended lines alone.
 func Build(locale []byte, o Options) ([]byte, error) {
@@ -329,8 +415,12 @@ func Build(locale []byte, o Options) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: table %08X: %w", Shipped, inst, err)
 		}
+		lines := want[inst]
+		if inst == FECustomGameLobby { // only appended there: a map whose LevelId is a shipped line's id is left out
+			lines = withoutLinesOf(text, lines)
+		}
 		entries = append(entries, dbpf.NewEntry{Type: StringType, Group: StringGroup, Instance: uint64(inst),
-			Data: PatchTable(text, want[inst])})
+			Data: PatchTable(text, lines)})
 	}
 	return dbpf.WritePackage(entries), nil
 }

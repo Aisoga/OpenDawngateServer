@@ -17,6 +17,9 @@
 #include "game.h"
 #include "hook.h"
 #include "log.h"
+#include "matchstats.h"
+#include "matchstats_sources.h"
+#include "matchstats_gold.h"
 #include "wells.h"
 
 using namespace game;
@@ -375,7 +378,9 @@ class EngineHooks final : public dmg::HitHooks {
   float Absorb(const dmg::ShieldRef& s, int index, float left) override {
     HandlerField v[2] = {{"absorbDamage", 0, left, nullptr, 0}, {"absorbDirection", 1, 0.f, dir_, 0}};
     if (!SehSetPrivate(s.handle, v, 2)) return left;
-    return SehCallHandler(s.id, index, left, dir_, attackerId_, lo_, hi_, guid_);
+    const float r = SehCallHandler(s.id, index, left, dir_, attackerId_, lo_, hi_, guid_);
+    matchstats::OnShieldAbsorb(s.handle, target_, left - dmg::ClampAbsorbResult(r, left));  // MSTATS3: shieldingDone
+    return r;
   }
 
  private:
@@ -517,6 +522,17 @@ bool Core(void* target, void* snapshot, float damage, float coef, unsigned lo, u
   if (critOut) *critOut = t.crit;
   ++g_st.applied;
   g_st.total += dealt;
+  // MSTATS1: the match statistics (effective damage = hpBefore - hpAfter; health costs, self-inflicted and same-team
+  // hits are left out by core/stats)
+  matchstats::OnHit(target, snapshot != nullptr, static_cast<int>(playerIdx),
+                    team == Field<unsigned char>(target, gobj::kTeam), lo, t.hpBefore, t.hpAfter, dealt, t.absorbed,
+                    t.lethal, creditGuid);
+  // MSTATS3-live2: the pet rule's check (whom a pet's or summon's hit is credited to)
+  matchstats::OnHitAttacker(attacker, playerIdx < 10 ? static_cast<int>(playerIdx) : -1,
+                            team == Field<unsigned char>(target, gobj::kTeam), t.hpBefore - t.hpAfter);
+  // MSTATS2: the Hunter's bonus on creeps
+  matchstats::gold::OnHit(attacker, target, static_cast<int>(playerIdx),
+                          team == Field<unsigned char>(target, gobj::kTeam), t.hpBefore, t.hpAfter);
   // 11. attacker bookkeeping (not for self-inflicted or same-team hits: DamageTracker.cpp asserts on friendly fire).
   // D1h: before the report (DAMAGE.md had it after), so a player's killing blow finds its hitter as the victim's last
   // player to hit; and every enemy hit on a player's creature goes into its death recap's log.

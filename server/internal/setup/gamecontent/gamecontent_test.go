@@ -15,8 +15,9 @@ import (
 )
 
 // synthContentSHA is the SHA-256 of the content.json the Python pipeline (snap.py extract, assetdata.py
-// dump --locale, dgserver --make-content) makes from synthgame's folder.
-const synthContentSHA = "e69e6ac0a5425dd63c9bd58842f3a8f1def79d2b76275cbe22f48fc97027820f"
+// dump --locale, dgserver --make-content) makes from synthgame's folder; since content format 3 (the item
+// details: synthgame has no Item, so only the format name changed) the file Build makes.
+const synthContentSHA = "45417119e9cb4dd10f6f4657c6a0c4666f703a3d0cf4dcd559c0923adff912ea"
 
 func TestSyntheticGame(t *testing.T) {
 	dir := t.TempDir()

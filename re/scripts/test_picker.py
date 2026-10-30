@@ -1,4 +1,4 @@
-"""Tests of the movie patcher of the server picker, the bot check box and the chat rooms class
+"""Tests of the movie patcher of the server picker, the bot check box, the chat rooms class and the review's tabs
 (re/scripts/patch_login_movie.py) and their
 committed bytes.
 
@@ -8,7 +8,12 @@ the game's files (client/ia_Dawngate/Dawngate, or DAWNGATE_GAME) the player's ow
 read back, and its Battlegrounds.snap with the bot check box (with DAWNGATE_MATCHOPTIONS_GO naming the file that Go's
 TestBuildMatchOptions854 wrote with DAWNGATE_MATCHOPTIONS_OUT, compared byte for byte), and its Global.snap with the
 class that opens the chat rooms the server marks as open by default (DAWNGATE_CHATROOMS_GO naming the file that
-TestBuildChatRooms854 wrote with DAWNGATE_CHATROOMS_OUT). --compile also checks that the committed ABC and tags are what the source compiles to (build_picker.py
+TestBuildChatRooms854 wrote with DAWNGATE_CHATROOMS_OUT), and its Battlegrounds.snap with the After Action Review's tabs
+and the web root file (DAWNGATE_AFTERACTION_GO naming the file TestBuildAfterAction854 wrote with
+DAWNGATE_AFTERACTION_OUT), and its HUD.snap with the item shop's inline refund (DAWNGATE_ITEMSHOP_GO naming the file
+TestBuildItemShop854 wrote with DAWNGATE_ITEMSHOP_OUT), and its code.snap with the Collection's Items
+(DAWNGATE_COLLECTION_GO naming the file TestBuildCollection854 wrote with DAWNGATE_COLLECTION_OUT, and the content
+beside it). --compile also checks that the committed ABC and tags are what the source compiles to (build_picker.py
 check; needs the Flex SDK and Java).
 
 Usage:
@@ -28,6 +33,12 @@ import patch_login_movie as plm  # noqa: E402
 import snap  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(HERE))
+# a made-up HUD.snap (the synth movie) with the tags b"OURTAGS" through the itemshop spec, as itemshop_test.go pins it
+ITEMSHOP_SYNTH_SHA = "5094c226d16433e5616eaede8b29ea86fb503aa34bb508d9b2a017b9ccb80009"
+# the item list of the made-up content (server/testdata/collection/content.json), and a made-up code.snap (the synth
+# movie) with the tags b"OURTAGS" and that list through the collection spec, as collection_test.go pins them
+COLLECTION_LIST_SHA = "60ed944ce678df5c0caea1bf3ff28d8f8f6ebce6f392082d3158fd1c78a5f9ea"
+COLLECTION_SYNTH_SHA = "7cd32e2fbe63535ccd17a171b07a8b48227f2bbf3eab90e9cd8762fc5969dc5d"
 
 
 def sha(b):
@@ -231,6 +242,147 @@ def main(argv):
         if os.environ.get("DAWNGATE_CHATROOMS_GO"):  # moviepatch's TestBuildChatRooms854 output
             with open(os.environ["DAWNGATE_CHATROOMS_GO"], "rb") as f:
                 check(f.read() == gbuilt, "the Go setup's zz_Chat.snap is the same")
+
+    # the After Action Review's tabs: the same patcher with its spec, and the web root of the copy's server
+    aa = plm.SPECS["aftaction"]
+    atags = plm.read_tags(aa.tags)
+    at = plm.tags_of(atags, 0, len(atags))
+    check([c for c, *_ in at] == [39, 82, 76, 70] and at[-1][3] == len(atags),
+          "aftaction_tags.hex: DefineSprite, DoABC, SymbolClass, PlaceObject3")
+    check(plm._pairs(atags, at[2][2], at[2][3]) == [(2000, "AfterActionTabs")], "its SymbolClass: 2000 -> AfterActionTabs")
+    check(atags[at[3][2]:at[3][3]] == bytes([0x06, 0]) + struct.pack("<HH", 2000, 2000) + b"\0",
+          "its PlaceObject3: character 2000 at depth 2000, no name")
+    check(b"Battlegrounds/dgweb.json" in atags and b"dawngate-web\t1" in atags,
+          "the class reads Battlegrounds/dgweb.json with its first line")
+    check(plm.web_root_file("127.0.0.2") ==
+          b"dawngate-web\t1\ncommon\thttp://127.0.0.2:18080/battlegrounds_test/live/www/client/1/common\nend\n",
+          "web_root_file as moviepatch.WebRootFile")
+    for bad_host in ("", "a b", 'a"b', "a<b", "hé", "a\tb"):
+        try:
+            plm.web_root_file(bad_host)
+            check(False, f"web_root_file refuses {bad_host!r}")
+        except ValueError:
+            pass
+    with tempfile.TemporaryDirectory() as d:
+        bsnap = os.path.join(d, "Battlegrounds.snap")
+        with open(bsnap, "wb") as f:
+            f.write(plm.pack_bytes([(aa.movie_path, m)]))
+        for host, want in ((None, "b397d4db173ebbcc86393a26fd73134d90f02d6bee39c08b4a028f6bda27d45c"),
+                           ("192.168.1.20", "8a94e55eb9d5f6950880e9d2d06e3eb9c388ffb2994496fb38a40b1e1e6ffd7b")):
+            arc = plm.build(bsnap, b"OURTAGS", aa, host=host)
+            check(sha(arc) == want, f"a made-up review archive for {host or 'the default host'} as aftaction_test.go "
+                                    f"pins it ({len(arc)} bytes)")
+    with open(os.path.join(REPO, "client_ui", "aftaction", "AfterActionTabs.as"), encoding="utf-8") as f:
+        src_as = f.read()
+    check('PAGE:String = "/history.html?embed=1";' in src_as and '"&latest=1"' in src_as,
+          "the class's pages: history.html?embed=1 (&latest=1 for Match Stats)")
+    if game:
+        asrc = os.path.join(game, "game", "Data", "Battlegrounds.snap")
+        abuilt = plm.build(asrc, spec=aa)
+        tmp = tempfile.NamedTemporaryFile(suffix=".snap", delete=False)
+        tmp.write(abuilt)
+        tmp.close()
+        back = snap.Snap(tmp.name)
+        araw = back.read(back.entries[0])
+        aroot = back.read(back.entries[1])
+        os.remove(tmp.name)
+        ids, names, depths, _ = plm.scan(zlib.decompress(araw[8:]))
+        check(back.entries[0].name == aa.movie_path and "AfterActionTabs" in names and
+              "maxis.AfterActionReview" in names and "AARTabBtn" in names and 2000 in ids and 2000 in depths and
+              back.entries[1].name == plm.WEB_ROOT_PATH and aroot == plm.web_root_file(),
+              f"the player's own review movie patched ({len(abuilt)} bytes, SHA-256 {sha(abuilt)[:16]})")
+        if os.environ.get("DAWNGATE_AFTERACTION_GO"):  # moviepatch's TestBuildAfterAction854 output
+            with open(os.environ["DAWNGATE_AFTERACTION_GO"], "rb") as f:
+                check(f.read() == abuilt, "the Go setup's zz_AfterActionReview.snap is the same")
+
+    # the item shop's inline refund: the same patcher with its spec
+    rs = plm.SPECS["itemshop"]
+    rtags = plm.read_tags(rs.tags)
+    rt = plm.tags_of(rtags, 0, len(rtags))
+    check([c for c, *_ in rt] == [39, 82, 76, 70] and rt[-1][3] == len(rtags),
+          "itemshop_tags.hex: DefineSprite, DoABC, SymbolClass, PlaceObject3")
+    check(plm._pairs(rtags, rt[2][2], rt[2][3]) == [(2000, "ShopRefund"), (250, "ShopVim")],
+          "its SymbolClass: 2000 -> ShopRefund, the shop's own vim symbol 250 -> ShopVim")
+    check(rtags[rt[3][2]:rt[3][3]] == bytes([0x06, 0]) + struct.pack("<HH", 2000, 2000) + b"\0",
+          "its PlaceObject3: character 2000 at depth 2000, no name")
+    check(b"HUD/dgrefund.json" in rtags and b"dawngate-refund\t1" in rtags,
+          "the class reads its optional settings, HUD/dgrefund.json")
+    with tempfile.TemporaryDirectory() as d:
+        hsnap = os.path.join(d, "HUD.snap")
+        with open(hsnap, "wb") as f:
+            f.write(plm.pack_bytes([(rs.movie_path, m)]))
+        arc = plm.build(hsnap, b"OURTAGS", rs)
+        check(sha(arc) == ITEMSHOP_SYNTH_SHA, f"a made-up shop archive as itemshop_test.go pins it ({len(arc)} bytes)")
+    with open(os.path.join(REPO, "client_ui", "itemshop", "ShopRefund.as"), encoding="utf-8") as f:
+        src_as = f.read()
+    check('new ShopVim()' in src_as and 'setText(shop.mcCostTxt, price);' in src_as,
+          "the badge is the shop's vim symbol (ShopVim), the price under the coin without a plus")
+    import patch_locale  # noqa: E402  (the class's texts: the HUD lines the locale patch adds)
+    for key, line_id in (("LINE_LABEL", 0x5E70C001), ("LINE_WARN", 0x5E70C002), ("LINE_TIP", 0x5E70C003),
+                         ("LINE_WARN_BACK", 0x5E70C004), ("LINE_TIP_BACK", 0x5E70C005)):
+        check(f'{key}:String = "^HUD!0x{line_id:08x}";' in src_as and line_id in patch_locale.HUD_LINES,
+              f"the class's {key} is the locale patch's HUD line 0x{line_id:08x}")
+    if game:
+        hsrc = os.path.join(game, "game", "Data", "HUD.snap")
+        hbuilt = plm.build(hsrc, spec=rs)
+        tmp = tempfile.NamedTemporaryFile(suffix=".snap", delete=False)
+        tmp.write(hbuilt)
+        tmp.close()
+        back = snap.Snap(tmp.name)
+        hraw = back.read(back.entries[0])
+        os.remove(tmp.name)
+        ids, names, depths, _ = plm.scan(zlib.decompress(hraw[8:]))
+        check(len(back.entries) == 2 and back.entries[0].name == rs.movie_path and "ShopRefund" in names and
+              back.entries[1].name == plm.REFUND_SETTINGS_PATH and back.read(back.entries[1]) == plm.REFUND_SETTINGS and
+              "maxis.Hud.ItemShopUI" in names and "ShopVim" in names and 250 in ids and 2000 in ids and
+              2000 in depths,
+              f"the player's own shop movie patched ({len(hbuilt)} bytes, SHA-256 {sha(hbuilt)[:16]})")
+        if os.environ.get("DAWNGATE_ITEMSHOP_GO"):  # moviepatch's TestBuildItemShop854 output
+            with open(os.environ["DAWNGATE_ITEMSHOP_GO"], "rb") as f:
+                check(f.read() == hbuilt, "the Go setup's zz_ItemShop.snap is the same")
+    # the Collection's Items: the same patcher with its spec and the item list from a content.json
+    cs = plm.SPECS["collection"]
+    ctags = plm.read_tags(cs.tags)
+    ct = plm.tags_of(ctags, 0, len(ctags))
+    check([c for c, *_ in ct] == [39, 82, 76, 70] and ct[-1][3] == len(ctags),
+          "collection_tags.hex: DefineSprite, DoABC, SymbolClass, PlaceObject3")
+    check(plm._pairs(ctags, ct[2][2], ct[2][3]) == [(2000, "CollectionItems")],
+          "its SymbolClass: 2000 -> CollectionItems")
+    check(ctags[ct[3][2]:ct[3][3]] == bytes([0x06, 0]) + struct.pack("<HH", 2000, 2000) + b"\0",
+          "its PlaceObject3: character 2000 at depth 2000, no name")
+    check(b"Collection/dgitems.json" in ctags and b"dawngate-collitems\t2" in ctags,
+          "the class reads its item list, Collection/dgitems.json")
+    made_up = os.path.join(REPO, "server", "testdata", "collection", "content.json")
+    clist = plm.item_list(made_up)
+    check(sha(clist) == COLLECTION_LIST_SHA and clist.count(b"\nitem\t") == 9 and b"Debug" not in clist and
+          b"Cheat" not in clist and b"Zeta" not in clist and b"Io\tta" not in clist and
+          clist.count(b"\nfilter\t") == 3 and b"\npassive\tunique\tSpark\t" in clist,
+          f"the made-up content's item list as collection_test.go pins it ({len(clist)} bytes)")
+    check(b"\tadvanced\t1200\tOffense / Defense\t" in clist and b"\tspell\t0\tUtility\t" in clist and
+          b"\tGamma\tbasic\t350\t\t" in clist and b"\tconsumable\t50\t\t" in clist,
+          "an item's group: the filter groups of its tags in their order, a spell's own (COLLITEMS10)")
+    check(plm.item_list(made_up, debug=True) == clist.replace(b"\n", b"\ndebug\t1\n", 1),
+          "--debug adds the class's log line switch")
+    with tempfile.TemporaryDirectory() as d:
+        csnap = os.path.join(d, "code.snap")
+        with open(csnap, "wb") as f:
+            f.write(plm.pack_bytes([(cs.movie_path, m)]))
+        try:
+            plm.build(csnap, b"OURTAGS", cs)
+            check(False, "no archive without an item list")
+        except ValueError:
+            check(True, "no archive without an item list")
+        arc = plm.build(csnap, b"OURTAGS", cs, content=made_up)
+        check(sha(arc) == COLLECTION_SYNTH_SHA,
+              f"a made-up Collection archive as collection_test.go pins it ({len(arc)} bytes)")
+    if game and os.environ.get("DAWNGATE_COLLECTION_GO"):
+        # moviepatch's TestBuildCollection854 output and the content it was made from (<file>.content.json)
+        go_out = os.environ["DAWNGATE_COLLECTION_GO"]
+        cbuilt = plm.build(os.path.join(game, "game", "Data", "code.snap"), spec=cs,
+                           content=go_out + ".content.json")
+        with open(go_out, "rb") as f:
+            check(f.read() == cbuilt,
+                  f"the Go setup's zz_CollectionItems.snap is the same ({len(cbuilt)} bytes, SHA-256 {sha(cbuilt)[:16]})")
     if game:
         bsrc = os.path.join(game, "game", "Data", "Battlegrounds.snap")
         bbuilt = plm.build(bsrc, spec=mo)

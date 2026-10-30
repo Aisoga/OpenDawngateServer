@@ -3,6 +3,7 @@
 
 #include <windows.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -19,12 +20,15 @@
 #include "core/bots/draft.h"
 #include "core/bots/guidebuild.h"
 #include "core/bots/lanesplit.h"
+#include "core/bots/rally.h"
+#include "core/vision/vision.h"
 #include "core/protocol/commands.h"
 #include "core/protocol/messages.h"
 #include "agents.h"
 #include "commands.h"
 #include "death.h"
 #include "director.h"
+#include "fow.h"
 #include "game.h"
 #include "hook.h"
 #include "host/host.h"
@@ -32,6 +36,7 @@
 #include "log.h"
 #include "match.h"
 #include "replicate.h"
+#include "wardspots.h"
 
 using namespace game;
 
@@ -596,6 +601,141 @@ int __cdecl LuaHunterRoute(void* L) {
   return 3;
 }
 
+// MAPED4: the parasite's rally point of each team from the level's parasite camp (gms/core/bots/rally.h), made once:
+// state 0 = keep BOTPARA's points (SM_Map_v5, a level without a parasite camp, [host] bot_parasite_rally 0), 1 = not
+// ready yet (the level or its line-of-sight map not read; ask again), 2 = derived (the point in pos).
+// MAPED4: whether (x, y) is open ground on the level's line-of-sight map (no wall, inside the level); true without the
+// map (nothing to tell).
+bool OpenGround(const gms::vision::LosMap* los, float x, float y) {
+  if (!los || !los->Valid()) return true;
+  const float hx = los->scaleX > 0.f ? static_cast<float>(los->width) / los->scaleX / 2.f : 0.f;
+  const float hy = los->scaleY > 0.f ? static_cast<float>(los->height) / los->scaleY / 2.f : 0.f;
+  if (x < -hx || x > hx || y < -hy || y > hy) return false;
+  int cx = 0, cy = 0;
+  los->CellOf(x, y, &cx, &cy);
+  return !los->BlocksCell(los->At(cx, cy));
+}
+
+struct RallyMade {
+  bool made = false;
+  int state = 1;
+  float pos[2] = {};
+};
+RallyMade g_rally[3];
+
+int ParasiteRallyFor(int team, float* pos) {
+  if (team != 1 && team != 2) return 0;
+  RallyMade& r = g_rally[team];
+  if (!r.made) {
+    const std::string& level = director::LevelName();
+    if (level.empty()) return 1;
+    static const int option = HostOptionInt("bot_parasite_rally", 1);
+    float pp[3] = {};
+    if (!gms::bots::RallyDerivedOn(option, level) || !director::ParasiteCampPos(pp)) {
+      r.made = true;
+      r.state = 0;
+      Log("bots: parasite rally team %d: BOTPARA's points kept (%s; [host] bot_parasite_rally %d) (MAPED4)", team,
+          !gms::bots::RallyDerivedOn(option, level) ? level.c_str() : "the level has no parasite camp", option);
+    } else {
+      const gms::vision::LosMap* los = fow::Terrain();
+      if (!los && director::MatchNow() < 30.0) return 1;  // the fog reads the map with its first update
+      float g[2] = {pp[0], pp[1]};
+      bool haveG = false;
+      for (const director::TitanSpawn& t : director::Guardians())
+        if (t.team == team) {
+          g[0] = t.pos[0];
+          g[1] = t.pos[1];
+          haveG = true;
+        }
+      auto open = [los](float x, float y) { return OpenGround(los, x, y); };
+      const gms::bots::RallyConfig cfg;
+      const gms::bots::RallyQuality q = gms::bots::ParasiteRallyPoint(pp[0], pp[1], g[0], g[1], cfg, open, r.pos);
+      r.made = true;
+      r.state = 2;
+      const float dx = r.pos[0] - pp[0], dy = r.pos[1] - pp[1];
+      Log("bots: parasite rally team %d: (%.1f, %.1f), %.1f from the parasite camp at (%.1f, %.1f) toward %s: %s%s "
+          "(BOTPARA's on SM_Map_v5: (%d, %d)) (MAPED4)",
+          team, r.pos[0], r.pos[1], std::sqrt(dx * dx + dy * dy), pp[0], pp[1],
+          haveG ? "the team's Guardian" : "the map's low corner (no Guardian)", gms::bots::RallyQualityName(q),
+          los ? "" : "; no line-of-sight map, unchecked", team == 1 ? -66 : 66, team == 1 ? -10 : 10);
+    }
+  }
+  if (r.state == 2) {
+    pos[0] = r.pos[0];
+    pos[1] = r.pos[1];
+  }
+  return r.state;
+}
+
+// MAPED4: nBotHost.ParasiteRally(team) -> state[, x, y, z]: 0 keep BOTPARA's points, 1 not ready (ask again), 2 the
+// derived point (the Rally mission's, GatherForParasite's and the Contest's points)
+int __cdecl LuaParasiteRally(void* L) {
+  if (!Ours()) {
+    ++g_st.calls[5];
+    return 0;
+  }
+  float p[2] = {};
+  const int state = ParasiteRallyFor(static_cast<int>(SehArgNumber(L, 1)), p);
+  SehPushNumber(L, static_cast<float>(state));
+  if (state != 2 || gms::agents::IsNullPos(p)) return 1;
+  SehPushNumber(L, p[0]);
+  SehPushNumber(L, p[1]);
+  SehPushNumber(L, 0.f);
+  return 4;
+}
+
+// MAPED4: nBotHost.WardSpotOpen(x, y) -> false when the ward spot lies on a wall of the level's line-of-sight map
+// ([host] bot_ward_spot_check, gms/core/bots/rally.h WardSpotCheckedOn; SM_Map_v5 keeps the data's spots), else true
+unsigned g_wardChecks = 0, g_wardWalls = 0;
+int __cdecl LuaWardSpotOpen(void* L) {
+  if (!Ours()) {
+    ++g_st.calls[5];
+    return 0;
+  }
+  static const int option = HostOptionInt("bot_ward_spot_check", 1);
+  const float x = SehArgNumber(L, 1), y = SehArgNumber(L, 2);
+  bool ok = true;
+  if (gms::bots::WardSpotCheckedOn(option, director::LevelName())) {
+    ++g_wardChecks;
+    ok = OpenGround(fow::Terrain(), x, y);
+    // logged once per spot (the condition asks at every think); the refusals counted in g_wardWalls
+    static std::set<std::pair<int, int>> logged;
+    if (!ok && ++g_wardWalls && logged.insert({static_cast<int>(std::lround(x)), static_cast<int>(std::lround(y))}).second)
+      Log("bots: ward spot (%.1f, %.1f) refused: a wall on %s (MAPED4, [host] bot_ward_spot_check %d; logged once a "
+          "spot) (t %.2f s)",
+          x, y, director::LevelName().c_str(), option, director::MatchNow());
+  }
+  SehPushBoolean(L, ok);
+  return 1;
+}
+
+// MAPED4b: nBotHost.WardSpot(side, k) -> state[, x, y]: the level's own ward spots for condition_Bot_Ward's tables
+// (side 1 Mortal, 2 Spirit; k from 1): 0 keep the data's tables, 1 not ready (ask again), 2 the spot, 3 no spot k
+// (gms/core/bots/wardspots.h, engine/wardspots.cpp)
+int __cdecl LuaWardSpot(void* L) {
+  if (!Ours()) {
+    ++g_st.calls[5];
+    return 0;
+  }
+  float xy[2] = {};
+  const int side = static_cast<int>(SehArgNumber(L, 1)), k = static_cast<int>(SehArgNumber(L, 2));
+  const int state = wardspots::Answer(side, k, xy);
+  static bool logged[3];
+  if ((state == 0 || state == 3) && side >= 1 && side <= 2 && !logged[side]) {
+    logged[side] = true;
+    if (state == 0)
+      Log("bots: ward spots: side %d keeps the data's table (MAPED4b) (t %.2f s)", side, director::MatchNow());
+    else
+      Log("bots: ward spots: side %d's table handed to condition_Bot_Ward: %d spot(s) of the level (MAPED4b) (t %.2f s)",
+          side, k - 1, director::MatchNow());
+  }
+  SehPushNumber(L, static_cast<float>(state));
+  if (state != 2) return 1;
+  SehPushNumber(L, xy[0]);
+  SehPushNumber(L, xy[1]);
+  return 3;
+}
+
 // nBotHost.LaneCenterAndDirection(lane, team) -> cx, cy, cz, dx, dy, dz, or nothing (the shim's static centre)
 int __cdecl LuaLaneCenterAndDirection(void* L) {
   if (!Ours()) {
@@ -660,6 +800,8 @@ struct ShopStats {
   float spent = 0;
   unsigned guideBots = 0, guideBought = 0, guideChoices = 0, guideDeferred = 0;  // DESECBOT-2
   unsigned guideLogged = 0;  // DESECBOT-2: the guide bots' purchase lines (their own budget)
+  unsigned buyLogged = 0;    // BOTSHOP-PASS: the other purchase lines (their own budget too)
+  unsigned visits = 0, visitItems = 0, visitPotions = 0;  // BOTSHOP-PASS: the host's shop visits that bought, and what
 };
 ShopStats g_ss;
 
@@ -1288,17 +1430,22 @@ bool SehPurse(void* sim, int index, Purse* p) {
   }
 }
 
+// A bot's shop, inventory and gold; false without them.
+bool ShopViewOf(const Bot& b, BotShop** shop, gb::Inventory* inv, float* gold) {
+  *shop = &ShopOf(b);
+  Purse p;
+  if (!SehPurse(g_sim, b.index, &p)) return false;
+  *inv = gb::InventoryFromSlots(p.items, p.counts, static_cast<int>(player::kItemSlots), (*shop)->potion);
+  *gold = p.gold;
+  return true;
+}
+
 // The bot of a creature argument, its shop, inventory and gold; false without them.
 bool ShopView(void* L, const Bot** bot, BotShop** shop, gb::Inventory* inv, float* gold) {
   if (!Ours() || !g_opt.shopping) return false;
   *bot = BotByCreature(SehArgId(L, 1));
   if (!*bot) return false;
-  *shop = &ShopOf(**bot);
-  Purse p;
-  if (!SehPurse(g_sim, (*bot)->index, &p)) return false;
-  *inv = gb::InventoryFromSlots(p.items, p.counts, static_cast<int>(player::kItemSlots), (*shop)->potion);
-  *gold = p.gold;
-  return true;
+  return ShopViewOf(**bot, shop, inv, gold);
 }
 
 // LabsPlayer_CanUseItemShop: dead, or alive within the shop's reach (D7b). ability_Bot_Buy's gambit checks it at its
@@ -1332,8 +1479,10 @@ bool Buy(const Bot& b, std::uint32_t item, const char* why, bool guide = false) 
   const bool ok = SehPurse(g_sim, b.index, &after) && after.gold < before.gold;
   if (ok) g_ss.spent += before.gold - after.gold;
   else ++g_ss.refused;
-  // DESECBOT-2: a guide build's purchases have their own budget (the first 400, then every 10th)
-  const bool logIt = guide ? (++g_ss.guideLogged <= 400 || g_ss.guideLogged % 10 == 0) : LogBudget();
+  // DESECBOT-2: a guide build's purchases have their own budget (the first 400, then every 10th); BOTSHOP-PASS: so do
+  // the others (the bot-session log scan's shop check reads these lines; the shared bot budget may be spent by then)
+  const bool logIt = guide ? (++g_ss.guideLogged <= 400 || g_ss.guideLogged % 10 == 0)
+                           : (++g_ss.buyLogged <= 400 || g_ss.buyLogged % 10 == 0);
   if (logIt)
     Log("bots: player %d (%s) buys %08X (%s) for its %s: %s; gold %.0f -> %.0f at %.1f s", b.index, b.botClass.c_str(),
         item, SehAssetName(SehAsset(item)), why, ok ? "done" : "REFUSED", before.gold, after.gold, MissionNow());
@@ -1357,6 +1506,59 @@ int __cdecl LuaCanAffordNextItem(void* L) {
   return 1;
 }
 
+// The next step of the bot's build when its gold pays for it: true if bought. `via` ends the purchase line's reason
+// ("" for ability_Bot_Buy's own call; BOTSHOP-PASS: " (the host's shop visit)").
+bool PurchaseNext(const Bot& b, BotShop& s, const gb::Inventory& inv, float gold, const char* via) {
+  gb::Purchase p;
+  int entry = -1;
+  gb::ResolvedBuild plan;
+  gb::ShopContext ctx;
+  if (!NextStep(b, s, inv, &p, &entry, &plan, &ctx) || static_cast<float>(p.price) > gold) return false;
+  char why[224];
+  const gb::BuildEntry* e = s.guide && entry >= 0 ? &s.guide->Entries()[static_cast<std::size_t>(entry)] : nullptr;
+  const std::size_t option = e ? static_cast<std::size_t>(plan.optionOf[static_cast<std::size_t>(entry)]) : 0;
+  if (e)
+    std::snprintf(why, sizeof why, "guide build, step %d %s: %s, price %d%s%s", entry, e->label.c_str(),
+                  e->optionLabels[option].c_str(), p.price, p.replaces ? " (an upgrade)" : "", via);
+  else
+    std::snprintf(why, sizeof why, "build, price %d%s%s", p.price, p.replaces ? " (an upgrade)" : "", via);
+  const bool r = Buy(b, p.item, why, e != nullptr);
+  if (r) {
+    ++s.bought;
+    ++g_ss.bought;
+  }
+  if (r && e) {  // DESECBOT-2: the choice is kept from its first purchase on (and a deferral once its turn came)
+    ++g_ss.guideBought;
+    const std::set<int> deferredBefore = s.memory.deferred;
+    if (s.guide->Commit(plan, entry, &s.memory)) {
+      ++g_ss.guideChoices;
+      Log("bots: player %d (%s) guide choice %s: %s (%s) at %.1f s", b.index, b.botClass.c_str(), e->label.c_str(),
+          e->optionLabels[option].c_str(), plan.whyOf[static_cast<std::size_t>(entry)].c_str(), ctx.now);
+    }
+    for (int d : s.memory.deferred)
+      if (!deferredBefore.count(d)) {
+        ++g_ss.guideDeferred;
+        const gb::BuildEntry& de = s.guide->Entries()[static_cast<std::size_t>(d)];
+        Log("bots: player %d (%s) guide: %s deferred (its turn came before %.0f s), %s first, at %.1f s", b.index,
+            b.botClass.c_str(), de.label.c_str(), de.notBeforeS, e->label.c_str(), ctx.now);
+      }
+  }
+  return r;
+}
+
+// Potions up to `bot_potions` carried, as many as the gold pays for: how many were bought.
+int PurchasePotionsFor(const Bot& b, BotShop& s, const gb::Inventory& inv, float gold, const char* why) {
+  const int want = s.potion ? gb::ShopPlanner(&g_catalog, s.build).PotionsToBuy(inv, gold, s.potionCost, g_opt.potions) : 0;
+  int n = 0;
+  for (int i = 0; i < want; ++i) {
+    if (!Buy(b, s.potion, why)) break;
+    ++n;
+    ++s.potions;
+    ++g_ss.potions;
+  }
+  return n;
+}
+
 // nBotHost.PurchaseNextItem(bot) -> bool
 int __cdecl LuaPurchaseNextItem(void* L) {
   bool r = false;
@@ -1366,41 +1568,7 @@ int __cdecl LuaPurchaseNextItem(void* L) {
   float gold = 0;
   if (ShopView(L, &b, &s, &inv, &gold)) {
     ++g_ss.calls[1];
-    gb::Purchase p;
-    int entry = -1;
-    gb::ResolvedBuild plan;
-    gb::ShopContext ctx;
-    if (NextStep(*b, *s, inv, &p, &entry, &plan, &ctx) && static_cast<float>(p.price) <= gold) {
-      char why[192];
-      const gb::BuildEntry* e = s->guide && entry >= 0 ? &s->guide->Entries()[static_cast<std::size_t>(entry)] : nullptr;
-      const std::size_t option = e ? static_cast<std::size_t>(plan.optionOf[static_cast<std::size_t>(entry)]) : 0;
-      if (e)
-        std::snprintf(why, sizeof why, "guide build, step %d %s: %s, price %d%s", entry, e->label.c_str(),
-                      e->optionLabels[option].c_str(), p.price, p.replaces ? " (an upgrade)" : "");
-      else
-        std::snprintf(why, sizeof why, "build, price %d%s", p.price, p.replaces ? " (an upgrade)" : "");
-      r = Buy(*b, p.item, why, e != nullptr);
-      if (r) {
-        ++s->bought;
-        ++g_ss.bought;
-      }
-      if (r && e) {  // DESECBOT-2: the choice is kept from its first purchase on (and a deferral once its turn came)
-        ++g_ss.guideBought;
-        const std::set<int> deferredBefore = s->memory.deferred;
-        if (s->guide->Commit(plan, entry, &s->memory)) {
-          ++g_ss.guideChoices;
-          Log("bots: player %d (%s) guide choice %s: %s (%s) at %.1f s", b->index, b->botClass.c_str(), e->label.c_str(),
-              e->optionLabels[option].c_str(), plan.whyOf[static_cast<std::size_t>(entry)].c_str(), ctx.now);
-        }
-        for (int d : s->memory.deferred)
-          if (!deferredBefore.count(d)) {
-            ++g_ss.guideDeferred;
-            const gb::BuildEntry& de = s->guide->Entries()[static_cast<std::size_t>(d)];
-            Log("bots: player %d (%s) guide: %s deferred (its turn came before %.0f s), %s first, at %.1f s", b->index,
-                b->botClass.c_str(), de.label.c_str(), de.notBeforeS, e->label.c_str(), ctx.now);
-          }
-      }
-    }
+    r = PurchaseNext(*b, *s, inv, gold, "");
   }
   SehPushBoolean(L, r);
   return 1;
@@ -1430,17 +1598,64 @@ int __cdecl LuaPurchasePotions(void* L) {
   float gold = 0;
   if (ShopView(L, &b, &s, &inv, &gold)) {
     ++g_ss.calls[3];
-    const int want = s->potion ? gb::ShopPlanner(&g_catalog, s->build).PotionsToBuy(inv, gold, s->potionCost, g_opt.potions)
-                               : 0;
-    for (int i = 0; i < want; ++i) {
-      if (!Buy(*b, s->potion, "potions")) break;
-      ++n;
-      ++s->potions;
-      ++g_ss.potions;
-    }
+    n = PurchasePotionsFor(*b, *s, inv, gold, "potions");
   }
   SehPushNumber(L, static_cast<float>(n));
   return 1;
+}
+
+// BOTSHOP-PASS (gms/core/bots/shopping.h ShopVisit): whether the bot's creature is alive within the shop's reach
+// (LabsPlayer_InProximityToItemShop; LabsPlayer_CanUseItemShop also says yes for a dead one, who shops at its respawn).
+bool SehAliveInShopReach(void* sim, const Bot& b) {
+  __try {
+    void* o = b.creature ? GetObjectById(b.creature) : nullptr;
+    if (!o) return false;
+    void* c = Field<void*>(o, combatant::kOfObject);
+    if (!c || Field<float>(c, combatant::kHitPoints) <= 0.f) return false;
+    void* pl = GetPlayerByIndex(sim, static_cast<unsigned>(b.index));
+    return pl && InProximityToItemShop(pl) && CanUseItemShop(pl);
+  } __except (SehNote(GetExceptionInformation(), "bot shop reach")) {
+    return false;
+  }
+}
+
+std::map<int, gb::ShopVisit> g_visits;  // BOTSHOP-PASS: by gameplay index
+unsigned long long g_nextVisitMs = 0;
+
+// BOTSHOP-PASS: the host's shop visit for every bot that stays in the shop's reach while its plan buys nothing (a
+// plan link taken on arrival skips the BackToAction phase's ability_Bot_Buy): its build's steps as far as its gold
+// goes, then its potions, through the same purchase path; checked every 250 ms.
+void ShopVisits(unsigned long long now) {
+  if (!g_opt.shopping || !g_opt.shopVisit || now < g_nextVisitMs) return;
+  g_nextVisitMs = now + 250;
+  for (const Bot& b : g_bots) {
+    if (!b.creature) continue;
+    gb::ShopVisit& v = g_visits[b.index];
+    if (!v.Due(SehAliveInShopReach(g_sim, b), now, static_cast<unsigned long long>(g_opt.shopVisitMs),
+               static_cast<unsigned long long>(g_opt.shopVisitRepeatMs)))
+      continue;
+    BotShop* s = nullptr;
+    gb::Inventory inv;
+    float gold = 0;
+    int items = 0, potions = 0;
+    Purse before, after;
+    if (!SehPurse(g_sim, b.index, &before)) continue;
+    for (int i = 0; i < 8 && ShopViewOf(b, &s, &inv, &gold); ++i) {  // a step at a time: the slots change
+      if (!PurchaseNext(b, *s, inv, gold, " (the host's shop visit)")) break;
+      ++items;
+    }
+    if (ShopViewOf(b, &s, &inv, &gold)) potions = PurchasePotionsFor(b, *s, inv, gold, "potions (the host's shop visit)");
+    if (!items && !potions) continue;
+    ++g_ss.visits;
+    g_ss.visitItems += static_cast<unsigned>(items);
+    g_ss.visitPotions += static_cast<unsigned>(potions);
+    const float first = before.gold;
+    const float left = SehPurse(g_sim, b.index, &after) ? after.gold : 0.f;
+    Log("bots: player %d (%s) shop visit (BOTSHOP-PASS): %.1f s in the shop's reach without its plan's purchase: "
+        "bought %d item(s) and %d potion(s), gold %.0f -> %.0f at %.1f s",
+        b.index, b.botClass.c_str(), static_cast<double>(now - v.Since()) / 1000.0, items, potions, first, left,
+        MissionNow());
+  }
 }
 
 // ---- the fire tracker ----
@@ -1666,6 +1881,9 @@ const LuaReg kBotHostRegs[] = {
     {"ClosestCamp", &LuaClosestCamp},
     {"CampFight", &LuaCampFight},  // CAMPFINISH
     {"HunterRoute", &LuaHunterRoute},  // HUNTERROUTE
+    {"ParasiteRally", &LuaParasiteRally},  // MAPED4
+    {"WardSpotOpen", &LuaWardSpotOpen},    // MAPED4
+    {"WardSpot", &LuaWardSpot},            // MAPED4b
     {"IsFirstTimePlayer", &LuaIsFirstTimePlayer},
     {"BotRole", &LuaBotRole},  // BOTCOMP
     {"NullPos", &LuaNullPos},  // NULLPOS
@@ -1831,6 +2049,19 @@ void MissionTick(void* sim) {
 
 }  // namespace
 
+int NextItemPrice(std::uint32_t creature) {
+  if (!Ours() || !g_opt.shopping) return -1;
+  const Bot* b = BotByCreature(creature);
+  if (!b) return -1;
+  BotShop* s = nullptr;
+  gb::Inventory inv;
+  float gold = 0.f;
+  if (!ShopViewOf(*b, &s, &inv, &gold)) return -1;
+  gb::Purchase p;
+  gb::ShopContext ctx;
+  return NextStep(*b, *s, inv, &p, nullptr, nullptr, &ctx) ? std::max(1, p.price) : 0;
+}
+
 void Configure(const Options& o) {
   g_opt = o;
   // D6b's keys are read here (experiment.cpp fills the D6a ones)
@@ -1838,6 +2069,11 @@ void Configure(const Options& o) {
   g_opt.missionMs = HostOptionInt("bot_mission_ms", o.missionMs);
   g_opt.shopping = HostOptionInt("bot_shopping", o.shopping ? 1 : 0) != 0;
   g_opt.potions = HostOptionInt("bot_potions", o.potions);
+  g_opt.shopVisit = HostOptionInt("bot_shop_visit", o.shopVisit ? 1 : 0) != 0;  // BOTSHOP-PASS
+  g_opt.shopVisitMs = HostOptionInt("bot_shop_visit_ms", o.shopVisitMs);
+  g_opt.shopVisitRepeatMs = HostOptionInt("bot_shop_visit_repeat_ms", o.shopVisitRepeatMs);
+  if (g_opt.shopVisitMs < 0) g_opt.shopVisitMs = 0;
+  if (g_opt.shopVisitRepeatMs < 250) g_opt.shopVisitRepeatMs = 250;
   g_opt.fireTracker = HostOptionInt("bot_fire_tracker", o.fireTracker ? 1 : 0) != 0;
   g_opt.fireZones = HostOptionInt("bot_fire_zones", o.fireZones ? 1 : 0) != 0;  // FIREZONE
   g_opt.fixups = HostOptionInt("bot_fixups", o.fixups ? 1 : 0) != 0;
@@ -1866,6 +2102,10 @@ void Configure(const Options& o) {
     char gladiators[128];
     HostOptionString("bot_gladiators", o.gladiators.c_str(), gladiators, sizeof gladiators);
     g_opt.gladiators = gladiators;
+    // BOTS2c: the same lineup on both teams for head-to-head brain tests ("1" = MirrorDefault, or five classes)
+    char mirror[160];
+    HostOptionString("bot_mirror", o.mirror.c_str(), mirror, sizeof mirror);
+    g_opt.mirror = mirror;
   }
   g_opt.guideBuilds = HostOptionInt("bot_guide_builds", o.guideBuilds ? 1 : 0) != 0;  // DESECBOT-2
   g_opt.draft = HostOptionInt("bot_draft", o.draft);  // BOTDRAFT: -1 auto (custom, practice, pvp), 0 off, 1 always
@@ -1891,7 +2131,8 @@ void Configure(const Options& o) {
   if (g_opt.teamStatusS < 0) g_opt.teamStatusS = 0;
   if (g_opt.missionMs < 100) g_opt.missionMs = 100;
   Log("bots (D6a, D6b): bots %d%s, allies %d, classes '%s', lua %d, lanes %d, ftue %d, log limit %d; missions %d (every "
-      "%d ms), shopping %d (potions %d), fire tracker %d, script fix-ups %d; BOTCOMP composition %d (drop '%s'), harass "
+      "%d ms), shopping %d (potions %d; BOTSHOP-PASS shop visits %d after %d ms, every %d ms), fire tracker %d, "
+      "script fix-ups %d; BOTCOMP composition %d (drop '%s'), harass "
       "workers %d..%d, Hunter gank %d; BOTTEAM team layer %d, pings %d; BOTTEMPO %d, team status every %d s; "
       "BOTJUNGLE jungler %d, ping following %d; PRETUSBOT Hunter stand at the parasite %d; BOTPROFILE profiles %d; "
       "HUNTERBOT Hunters '%s', kits %d, Hunter fixes %d; DESECBOT Tacticians '%s', guide builds %d; BOTBUSH sight "
@@ -1901,7 +2142,8 @@ void Configure(const Options& o) {
           ? " (auto: createGame's fillTeams a team, else 5 a team when the game's descriptors have BotsFillTeams 0x400)"
           : "",
       g_opt.allies, g_opt.classes.c_str(), g_opt.lua, g_opt.lanes, g_opt.ftue, g_opt.logLimit, g_opt.missions,
-      g_opt.missionMs, g_opt.shopping, g_opt.potions, g_opt.fireTracker, g_opt.fixups, g_opt.composition,
+      g_opt.missionMs, g_opt.shopping, g_opt.potions, g_opt.shopVisit, g_opt.shopVisitMs, g_opt.shopVisitRepeatMs,
+      g_opt.fireTracker, g_opt.fixups, g_opt.composition,
       g_opt.compositionDrop.c_str(), g_opt.harassStartWorkers, g_opt.harassEndWorkers, g_opt.hunterGank,
       g_opt.team && g_opt.laneFixes, g_opt.teamPings, g_opt.tempo, g_opt.teamStatusS, g_opt.jungle, g_opt.pingFollow,
       g_opt.hunterParasiteStand, g_opt.profiles, g_opt.hunters.c_str(), g_opt.kits, g_opt.hunterFix,
@@ -2215,15 +2457,26 @@ const std::vector<Bot>& EnsurePlayers(void* sim, const std::vector<Human>& human
     // BOTDRAFT: [host] bot_draft -1 (auto) = the bots of a custom, practice or PvP game draw in shaper select after
     // the humans (gb::DraftOn; the plan below only fixes how many bots each team has and their indexes; Draft gives
     // them their classes)
+    // BOTS2c: [host] bot_mirror, every team the same GTGTH lineup (no draw, no pins, no draft)
+    std::string mirrorWhy;
+    const std::vector<gb::ComposedSeat> mirror = gb::MirrorLineup(g_opt.mirror, available, &mirrorWhy);
+    if (!mirror.empty()) {
+      std::string lineup;
+      for (const gb::ComposedSeat& m : mirror)
+        lineup += (lineup.empty() ? "" : ", ") + (m.botClass.empty() ? std::string("(empty)") : m.botClass) + " " +
+                  gb::RoleName(m.role) + (m.lane == gb::kLaneTop ? " top" : " bottom");
+      Log("bots: BOTS2c mirror: every team %s ([host] bot_mirror '%s'%s%s); no draw, no pins, no draft", lineup.c_str(),
+          g_opt.mirror.c_str(), mirrorWhy.empty() ? "" : ": ", mirrorWhy.c_str());
+    }
     g_available = available;
     g_draftSeed = seed;
-    g_draft = gb::DraftOn(g_opt.draft, g_gameMode);
+    g_draft = gb::DraftOn(g_opt.draft, g_gameMode) && mirror.empty();
     Log("bots: BOTDRAFT: %s ([host] bot_draft %d, createGame mode '%s')",
         g_draft ? "the bots draw their shapers and roles in shaper select, after the humans (if it runs)"
-                : "off: the bots are composed now",
+                : mirror.empty() ? "off: the bots are composed now" : "off: [host] bot_mirror",
         g_opt.draft, g_gameMode.c_str());
     plan = gb::PlanBotPlayersComposed(counted, g_teamSize, teams, available, anyClass, gb::ParseDropOrder(g_opt.compositionDrop),
-                                      0, seed, hunters, tacticians, gladiators, HunterSeat(), g_opt.laneSplit);
+                                      0, seed, hunters, tacticians, gladiators, HunterSeat(), g_opt.laneSplit, mirror);
     for (const gb::HumanPlayer& h : counted)
       Log("bots: BOTCOMP: human index %d team %d: role %s", h.index, h.team, gb::RoleName(h.role));
   } else {
@@ -2285,6 +2538,16 @@ bool LaneFrontOf(std::uint32_t creature, int team, float* out, int* laneOut) {
   return true;
 }
 
+const std::vector<gb::LanePath>& LanePaths() { return g_state.fronts.Lanes(); }
+
+int CurrentLane(std::uint32_t creature) {
+  const int lane = g_state.lanes.LaneOf(creature);
+  if (lane > 0) return lane;
+  for (const Bot& b : g_bots)
+    if (b.creature == creature) return b.lane;
+  return 0;
+}
+
 void SetRole(int index, int role) {
   for (Bot& b : g_bots)
     if (b.index == index) b.role = role;
@@ -2341,6 +2604,7 @@ void Tick(void* sim) {
     g_nextMissionMs = now + static_cast<unsigned long long>(g_opt.missionMs);
     MissionTick(sim);
   }
+  ShopVisits(now);  // BOTSHOP-PASS
   static unsigned long long nextStatsMs = 0;
   if (now >= nextStatsMs) {
     nextStatsMs = now + 10000;
@@ -2491,8 +2755,8 @@ void FormatMissionStats(char* buf, std::size_t size) {
         "ticks %u (failed %u), checks %.0f, CheckEnds %.0f, Lua errors %.0f, open %zu:%s requested/"
         "taken by type:%s; ended: CheckEnd %u, expired %u, target gone %u; plan layer: accepted %u, refused %u, opened %u, "
         "again %u, kept %u, left %u; nBotHost mission calls %u/%u/%u/%u/%u/%u/%u/%u/%u; shopping: calls %u/%u/%u/%u, bought %u "
-        "items and %u potions for %.0f gold, refused %u, away from the shop %u, bots without a build %u, guide builds %u (bought %u, choices %u, deferred %u); fire tracker "
-        "%s (IsPositionSafe %u, unsafe %u, off the grid %u, fire zone stub %s, skipped %u)",
+        "items and %u potions for %.0f gold, refused %u, away from the shop %u, bots without a build %u, guide builds %u (bought %u, choices %u, deferred %u), "
+        "host shop visits %u (%u items, %u potions); fire tracker %s (IsPositionSafe %u, unsafe %u, off the grid %u, fire zone stub %s, skipped %u)",
         g_ms.ticks, g_ms.tickFailed, g_ms.checks, g_ms.checkEnds, g_ms.luaErrors, g_state.missions.Count(),
         open.empty() ? " none;" : open.c_str(), types.empty() ? " none" : types.c_str(), g_ms.endedByCheck, g_ms.expired,
         g_ms.gone, g_ms.planAccepted, g_ms.planRefused, g_ms.planOpened, g_ms.planAgain, g_ms.planKept, g_ms.planLeft,
@@ -2500,7 +2764,7 @@ void FormatMissionStats(char* buf, std::size_t size) {
         g_ms.calls[1], g_ms.calls[2], g_ms.calls[3], g_ms.calls[4], g_ms.calls[5], g_ms.calls[6], g_ms.calls[7],
         g_ms.calls[8], g_ss.calls[0], g_ss.calls[1], g_ss.calls[2], g_ss.calls[3], g_ss.bought, g_ss.potions,
         static_cast<double>(g_ss.spent), g_ss.refused, g_ss.awayFromShop, g_ss.noBuild, g_ss.guideBots, g_ss.guideBought,
-        g_ss.guideChoices, g_ss.guideDeferred, g_fs.on ? "on" : "off",
+        g_ss.guideChoices, g_ss.guideDeferred, g_ss.visits, g_ss.visitItems, g_ss.visitPotions, g_fs.on ? "on" : "off",
         g_fs.calls, g_fs.unsafe,
         g_fs.offGrid, g_fs.zonesStubbed ? "on" : "off", g_fs.zonesSkipped);
     if (n < 0 || len + static_cast<std::size_t>(n) >= size) return;

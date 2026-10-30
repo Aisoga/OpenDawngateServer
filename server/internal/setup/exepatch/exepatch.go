@@ -21,6 +21,10 @@
 //   - preload: the client preloads the shaper (and with it the sound banks) of every player index 0-14, not only of
 //     the first GameSimulator_CountPlayers() indexes, which left out a second team seated at 5-9 in small games; on
 //     unless NoPreload.
+//   - maptable: the map-name method (the custom lobby's map line, the game browser's Map column) knows one map; its
+//     not-found exit jumps to a 45-byte cave after the bind cave, which names any other LevelId by the line of that id
+//     in the lobby's table FE_CustomGameLobby (the key in .tls's slack; .text's and .tls's VirtualSize raised to map
+//     the slack); the setup writes a line for every installed map (localepatch). On unless NoMapTable.
 //
 // Profiles: "local" (the default; the server on a loopback address, every wildcard bind narrowed to it) and "lan" (a
 // server elsewhere on our own network: ServerHost required, the binds as shipped unless ClientBind names this
@@ -68,6 +72,21 @@ const (
 	charBuild         = 0x0103     // IMAGE_FILE_HEADER.Characteristics of build 854
 	charLAA           = 0x0020     // IMAGE_FILE_LARGE_ADDRESS_AWARE
 	preloadCount      = 0x0066BD1F // GameClient_PreloadPlayerCharacters' call to GameSimulator_CountPlayers (its loop bound)
+
+	// The map-name method (0x00684380): its loop over the one-entry map table, the not-found exit, the found path
+	// and where the found path checks and looks up its key.
+	mapLoop   = 0x006843C1
+	mapMiss   = 0x006843D2
+	mapFound  = 0x006843E7
+	mapResume = 0x006843EF
+	mapCave   = 0x011AB140 // in .text's slack after the bind cave and the LAN string
+	tlsVA     = 0x01C00000 // .tls: the TLS template is 0x01C00000-0x01C00038
+	tlsVSize  = 0x39
+	tlsRaw    = 0x200
+	mapKey    = 0x01C00040 // the key the cave writes, in .tls's slack (writable)
+	mapKeyLen = 0x40
+	// mapKeyPrefix is the key before the LevelId's 8 hex digits: the custom lobby's own table.
+	mapKeyPrefix = "^FE_CustomGameLobby!0x"
 )
 
 var (
@@ -82,8 +101,13 @@ var (
 	callBind           = append([]byte{0xFF, 0x15}, le32(bindIAT)...)
 	jmpBind            = append([]byte{0xFF, 0x25}, le32(bindIAT)...)
 	raknetLoopbackOrig = []byte("127.0.0.1\x00\x00\x00::1\x00")
-	preloadCountOrig   = mustHex("e8ec532800") // call 0x008F1110
-	preloadCountNew    = mustHex("b80f000000") // mov eax,15: every player index 0-14 (the caller's add esp,0x10 stays)
+	preloadCountOrig   = mustHex("e8ec532800")                                                  // call 0x008F1110
+	preloadCountNew    = mustHex("b80f000000")                                                  // mov eax,15: every player index 0-14 (the caller's add esp,0x10 stays)
+	mapLoopOrig        = mustHex("33c9" + "3904cd7c3a3f01" + "741b" + "41" + "83f901" + "72f1") // the loop, kNumPlayableMaps 1
+	mapMissOrig        = mustHex("5f" + "8bc3" + "5b" + "8b4c2420")                             // pop edi; mov eax,ebx; pop ebx; ...
+	mapFoundOrig       = mustHex("56" + "8b34cd783a3f01")                                       // push esi; mov esi,[ecx*8+0x013F3A78]
+	mapResumeOrig      = mustHex("3bf7" + "740d")                                               // cmp esi,edi; jz ...
+	mapMissNew         = append([]byte{0xE9}, le32(mapCave-(mapMiss+5))...)                     // jmp mapCave
 	dataFolders        = []struct {
 		va   uint32
 		room int
@@ -110,6 +134,32 @@ func bindCaveCode(address ipv4) []byte {
 	return append(code, jmpBind...) // go: jmp [bind]  (eax and flags are free)
 }
 
+// mapCaveCode is the map-name cave, reached from the not-found exit with eax = the game's LevelId: it writes the id as
+// 8 hex digits into the key L"^FE_CustomGameLobby!0x????????" (mapKey) and goes on as the found path does with that
+// key (patch_client.py's map_cave_code).
+func mapCaveCode() []byte {
+	hexAt := uint32(mapKey + 2*len(mapKeyPrefix))
+	code := mustHex("b908000000" + // mov ecx,8
+		"8bd0" + //     l: mov edx,eax
+		"83e20f" + //   and edx,0xf
+		"80c230" + //   add dl,'0'
+		"80fa39" + //   cmp dl,'9'
+		"7603" + //     jbe s
+		"80c207" + //   add dl,7            ; 'A'..'F'
+		"6689144d") //  s: mov [ecx*2+hex-2],dx
+	code = append(code, le32(hexAt-2)...)
+	code = append(code, mustHex("c1e804"+ // shr eax,4
+		"e2e3"+ //                          loop l
+		"56"+ //                            push esi            ; as the found path does
+		"be")...) //                        mov esi,mapKey
+	code = append(code, le32(mapKey)...)
+	code = append(code, 0xE9)
+	return append(code, le32(mapResume-(mapCave+uint32(len(code))+4))...) // jmp mapResume
+}
+
+// mapKeyText is the key as the patch writes it (the cave fills in the digits).
+const mapKeyText = mapKeyPrefix + "00000000"
+
 // Profiles.
 const (
 	ProfileLocal = "local"
@@ -124,6 +174,7 @@ type Options struct {
 	DataSuffix string // one letter or digit for the per-user folders (test lanes only); "" leaves them
 	NoLAA      bool   // leave out LARGE_ADDRESS_AWARE (patch_client.py --laa off)
 	NoPreload  bool   // leave out the preload of every player index's shaper (patch_client.py --preload off)
+	NoMapTable bool   // leave out the map-name cave (patch_client.py --maptable off)
 }
 
 // Error is a refusal: the exe isn't the expected build, or the options don't fit the profile (patch_client.py's
@@ -425,15 +476,63 @@ func Patch(orig, modulus []byte, o Options) ([]byte, string, error) {
 		write(preloadCount, preloadCountNew)
 		summary += "; every player's shaper preloaded (player indexes 0-14)"
 	}
+
+	// --- a LevelId the map table lacks is named by the lobby table's line of that id
+	for _, c := range []struct {
+		va   uint32
+		want []byte
+		what string
+	}{{mapLoop, mapLoopOrig, "the map-name method's one-entry loop"},
+		{mapMiss, mapMissOrig, "the map-name method's not-found exit"},
+		{mapFound, mapFoundOrig, "the map-name method's found path"},
+		{mapResume, mapResumeOrig, "the map-name method's key check"}} {
+		if err := expect(c.va, c.want, c.what); err != nil {
+			return nil, "", err
+		}
+	}
+	var tls *peSection
+	for i := range img.sections {
+		if img.sections[i].name == ".tls" {
+			tls = &img.sections[i]
+			break
+		}
+	}
+	if tls == nil || tls.va != tlsVA-ImageBase || tls.vsize != tlsVSize || tls.rawSize != tlsRaw ||
+		tls.characteristics&0x80000000 == 0 {
+		return nil, "", errorf("unexpected .tls section (wrong build?)")
+	}
+	if !o.NoMapTable {
+		if img.dllChars&0x40 != 0 || img.characteristics&0x1 == 0 {
+			return nil, "", errorf("exe is relocatable (ASLR or relocations); absolute addresses in the cave would break")
+		}
+		cave := mapCaveCode()
+		if !(lanLoopbackString+lanLoopbackRoom <= mapCave &&
+			uint64(mapCave)+uint64(len(cave)) <= uint64(ImageBase)+uint64(text.va)+uint64(text.rawSize)) {
+			return nil, "", errorf("the map-name cave doesn't fit into .text's slack (wrong build?)")
+		}
+		if err := expect(mapCave, make([]byte, len(cave)), "unused slack after the bind cave"); err != nil {
+			return nil, "", err
+		}
+		if err := expect(mapKey, make([]byte, mapKeyLen), "unused slack after the TLS template"); err != nil {
+			return nil, "", err
+		}
+		// map the slack: VirtualSize = SizeOfRawData
+		binary.LittleEndian.PutUint32(data[text.headerAt+8:], text.rawSize)
+		binary.LittleEndian.PutUint32(data[tls.headerAt+8:], tlsRaw)
+		write(mapCave, cave)
+		write(mapKey, padded(wide(mapKeyText), mapKeyLen))
+		write(mapMiss, mapMissNew)
+		summary += fmt.Sprintf("; every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x%08x)", mapCave)
+	}
 	return data, summary, nil
 }
 
 // Description is what an exe carries (patch_client.py's describe, --show), by key: redirector, bind, appdata,
-// documents, raknet_loopback, ca_sha256, ca_flag, laa, preload (DescriptionKeys, in --show's order).
+// documents, raknet_loopback, ca_sha256, ca_flag, laa, preload, maptable (DescriptionKeys, in --show's order).
 type Description map[string]string
 
 // DescriptionKeys are Description's keys in patch_client.py --show's order.
-var DescriptionKeys = []string{"redirector", "bind", "appdata", "documents", "raknet_loopback", "ca_sha256", "ca_flag", "laa", "preload"}
+var DescriptionKeys = []string{"redirector", "bind", "appdata", "documents", "raknet_loopback", "ca_sha256", "ca_flag", "laa", "preload", "maptable"}
 
 // HostKeys are what a match host's copy must carry (setup_all.py's HOST_KEYS): its sockets are the harness's.
 var HostKeys = []string{"redirector", "appdata", "documents"}
@@ -460,6 +559,9 @@ func Describe(data []byte) (Description, error) {
 	mod := at(otg3Modulus, 128)
 	flags := at(otg3Flags, 4)
 	count := at(preloadCount, len(preloadCountOrig))
+	miss := at(mapMiss, len(mapMissOrig))
+	mcave := at(mapCave, len(mapCaveCode()))
+	keyHead := at(mapKey, 2*len(mapKeyPrefix))
 	if err != nil {
 		return nil, err
 	}
@@ -511,6 +613,15 @@ func Describe(data []byte) (Description, error) {
 		out["preload"] = "as-shipped"
 	default:
 		out["preload"] = "unknown"
+	}
+	switch {
+	case bytes.Equal(miss, mapMissOrig):
+		out["maptable"] = "as-shipped"
+	case bytes.Equal(miss[:len(mapMissNew)], mapMissNew) && bytes.Equal(mcave, mapCaveCode()) &&
+		bytes.Equal(keyHead, wide(mapKeyPrefix)[:2*len(mapKeyPrefix)]):
+		out["maptable"] = "on"
+	default:
+		out["maptable"] = "unknown"
 	}
 	return out, nil
 }

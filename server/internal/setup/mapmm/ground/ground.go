@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 
+	"dawngate/server/internal/setup/bmdl"
 	"dawngate/server/internal/setup/dds"
 	"dawngate/server/internal/setup/mapmm/los"
 )
@@ -50,12 +51,74 @@ const (
 
 var dirtRGB = [3]float64{124, 96, 64}
 
-type base struct {
-	x, y float64
-	tint [3]float64
+// The two bases' tints: the Mortal base blue, the Spirit base red.
+var baseTints = [2][3]float64{{0.84, 0.91, 1.0}, {1.0, 0.86, 0.82}}
+
+// Spec is what differs between maps: the level's size (metres), the two base ends (their tint fades from 70 to
+// 100 m), whether the floor dips at MM_Map_v3's water plane, and Down, the ground that drops instead of rising past
+// the edge of the open cells (a chasm; nil: none). Dips are another map's fords: the floor dips under each of them as
+// MM_Map_v3's dips under its water plane (Ford stays MM's own, so its ground keeps its bytes). Cut > 0 leaves out
+// every triangle whose three corners all lie more than Cut metres past the walkable edge (the ground only where units
+// walk, the void around it; 0: the whole square, as shipped). The client clears no colour buffer, so a cut ground
+// needs a Backdrop under it, or the void shows the earlier frames.
+type Spec struct {
+	Size     float64
+	Bases    [2][2]float64
+	Ford     bool
+	Down     func(x, y float64) bool
+	Dips     []Dip
+	Cut      float64
+	Backdrop *Backdrop
+	Mist     *Backdrop // a second plane, drawn after the Backdrop (a see-through layer above it)
 }
 
-var bases = [2]base{{-206.0, -206.0, [3]float64{0.84, 0.91, 1.0}}, {206.0, 206.0, [3]float64{1.0, 0.86, 0.82}}}
+// Backdrop goes with Cut (void.go): a flat plane at height Z (negative: below the floor) from
+// -Half to Half on both axes, one more mesh on a third material (a copy of the dirt's with Texture), its UVs
+// mirrored with a texture repeat of RepeatX x RepeatY metres, its vertex colour white. Flags, when set, replaces the
+// material's flags (the dirt's are 0x106; a test of which bit makes it receive the sun's shadow). A Material
+// without textures (labsFogFace) is copied as it is and Texture is not used.
+type Backdrop struct {
+	Z, Half, RepeatX, RepeatY float64
+	Texture                   string
+	Flags                     *uint32
+	Material                  *bmdl.Node // copied instead of the dirt's material when set (its first texture set to Texture)
+}
+
+const backdropCells = 64 // the backdrop's grid (65 x 65 vertices)
+
+// Dip is a ford: a rectangle (its centre, the cosine and sine of its turn, its half sides along the turned x and y)
+// where the walkable floor dips by Depth (negative, metres), fading in over DipEdge metres inside its edges and over
+// 2 m from the walkable ground's edge, as MM_Map_v3's floor under its water plane. Where dips overlap, the deepest
+// counts.
+type Dip struct {
+	X, Y, Cos, Sin, HalfW, HalfL, Depth float64
+}
+
+// DipEdge is a dip's fade inside its rectangle (MM_Map_v3's ford's).
+const DipEdge = fordEdge
+
+func (p Dip) at(x, y float64) float64 {
+	dx, dy := x-p.X, y-p.Y
+	lx := float64(dx*p.Cos) + float64(dy*p.Sin)
+	ly := float64(-dx*p.Sin) + float64(dy*p.Cos)
+	e := pmin(p.HalfW-math.Abs(lx), p.HalfL-math.Abs(ly))
+	if e <= 0 {
+		return 0
+	}
+	return float64(p.Depth * smooth(e/DipEdge))
+}
+
+// dipAt is the deepest dip at (x, y) (0 outside them all).
+func dipAt(dips []Dip, x, y float64) float64 {
+	z := 0.0
+	for _, p := range dips {
+		z = pmin(z, p.at(x, y))
+	}
+	return z
+}
+
+// MM is MM_Map_v3's spec.
+var MM = Spec{Size: los.Size, Bases: [2][2]float64{{-206.0, -206.0}, {206.0, 206.0}}, Ford: true}
 
 const baseIn, baseOut = 70.0, 100.0 // full tint inside, none past
 
@@ -237,19 +300,25 @@ func fordMask(x, y float64) float64 {
 	return smooth(pmin(ex, ey) / fordEdge)
 }
 
-func height(d, x, y float64) float64 {
+func height(d, x, y float64, s *Spec) float64 {
 	z := float64(Plateau * smooth((d-cliffLo)/(cliffHi-cliffLo)))
+	if d > 0 && s.Down != nil && s.Down(x, y) {
+		return -z
+	}
 	if d > 6.0 {
 		z += float64(float64(roll*(float64(2*valueNoise(x, y, 23.0, 7, 0))-1)) * smooth((d-6.0)/8.0))
 	}
-	if d < 0 {
+	if d < 0 && s.Ford {
 		z += float64(float64(fordDepth*fordMask(x, y)) * smooth(-d/2.0))
+	}
+	if d < 0 && len(s.Dips) > 0 {
+		z += float64(dipAt(s.Dips, x, y) * smooth(-d/2.0))
 	}
 	return z
 }
 
 // colour is the vertex colour (RGB 0..1): the shade by zone, times the base tint.
-func colour(d, z, x, y float64) [3]float64 {
+func colour(d, z, x, y float64, s *Spec) [3]float64 {
 	var c float64
 	switch {
 	case d <= cliffLo: // the floor, shaded towards the cliff's foot
@@ -260,11 +329,11 @@ func colour(d, z, x, y float64) [3]float64 {
 		c = 0.60 * (0.88 + float64(0.12*valueNoise(x, y, 9.0, 3, 0)))
 	}
 	rgb := [3]float64{c, c, c}
-	for _, b := range bases {
-		f := 1.0 - smooth((hypot(x-b.x, y-b.y)-baseIn)/(baseOut-baseIn))
+	for t, b := range s.Bases {
+		f := 1.0 - smooth((hypot(x-b[0], y-b[1])-baseIn)/(baseOut-baseIn))
 		if f > 0 {
 			for k := range rgb {
-				rgb[k] = rgb[k] * ((1 - f) + float64(f*b.tint[k]))
+				rgb[k] = rgb[k] * ((1 - f) + float64(f*baseTints[t][k]))
 			}
 		}
 	}
@@ -284,7 +353,9 @@ func triWave(t float64) float64 {
 type Ground struct {
 	Grid, N int
 	Cell    float64
-	X       []float64 // the vertex coordinates along both axes
+	Cut     float64     // Spec.Cut
+	Backs   []*Backdrop // Spec.Backdrop and Spec.Mist, the ones set, each on its own material after the ground's two
+	X       []float64   // the vertex coordinates along both axes
 	D, Z    []float64
 	Normal  [][3]float64
 	RGB     [][3]float64
@@ -293,12 +364,22 @@ type Ground struct {
 // NewGround samples the field on grid x grid cells of cell metres (cell <= 0: two line-of-sight cells), centred
 // on the origin.
 func NewGround(f *Field, grid int, cell float64) *Ground {
+	return NewGroundSpec(f, grid, cell, MM)
+}
+
+// NewGroundSpec is NewGround for another map's spec.
+func NewGroundSpec(f *Field, grid int, cell float64, spec Spec) *Ground {
 	if cell <= 0 {
 		cell = 2 * f.CellM
 	}
 	half, n := grid/2, grid+1
-	g := &Ground{Grid: grid, N: n, Cell: cell, X: make([]float64, n), D: make([]float64, n*n),
+	g := &Ground{Grid: grid, N: n, Cell: cell, Cut: spec.Cut, X: make([]float64, n), D: make([]float64, n*n),
 		Z: make([]float64, n*n), Normal: make([][3]float64, n*n), RGB: make([][3]float64, n*n)}
+	for _, b := range []*Backdrop{spec.Backdrop, spec.Mist} {
+		if b != nil {
+			g.Backs = append(g.Backs, b)
+		}
+	}
 	for i := range g.X {
 		g.X[i] = float64(i-half) * cell
 	}
@@ -308,7 +389,7 @@ func NewGround(f *Field, grid int, cell float64) *Ground {
 			x := g.X[i]
 			d := f.At(x, y)
 			g.D[j*n+i] = d
-			g.Z[j*n+i] = height(d, x, y)
+			g.Z[j*n+i] = height(d, x, y, &spec)
 		}
 	}
 	for j := 0; j < n; j++ {
@@ -318,7 +399,7 @@ func NewGround(f *Field, grid int, cell float64) *Ground {
 			zy := (g.Z[min(j+1, n-1)*n+i] - g.Z[max(j-1, 0)*n+i]) / float64(float64(min(j+1, n-1)-max(j-1, 0))*cell)
 			ln := math.Sqrt(float64(zx*zx) + float64(zy*zy) + 1.0)
 			g.Normal[k] = [3]float64{-zx / ln, -zy / ln, 1.0 / ln}
-			g.RGB[k] = colour(g.D[k], g.Z[k], g.X[i], g.X[j])
+			g.RGB[k] = colour(g.D[k], g.Z[k], g.X[i], g.X[j], &spec)
 		}
 	}
 	return g
@@ -395,10 +476,16 @@ func tileMesh(g *Ground, ti, tj int) ([]byte, [][3]float64, []sub, []int) {
 			a, b, c, d := j*n+i, j*n+i+1, (j+1)*n+i+1, (j+1)*n+i
 			// split along the (+1, +1) diagonal, parallel to the lane; counter-clockwise seen from +z
 			for _, t := range [2][3]int{{a, b, c}, {a, c, d}} {
+				if g.Cuts(t) {
+					continue
+				}
 				m := g.material(t)
 				byMat[m] = append(byMat[m], [3]int{local(t[0]), local(t[1]), local(t[2])})
 			}
 		}
+	}
+	if len(byMat[0])+len(byMat[1]) == 0 {
+		byMat[0] = [][3]int{{0, 0, 0}} // a tile Cut emptied: one degenerate triangle keeps its mesh (draws nothing)
 	}
 	var idx []int
 	var subs []sub
@@ -411,6 +498,31 @@ func tileMesh(g *Ground, ti, tj int) ([]byte, [][3]float64, []sub, []int) {
 		}
 	}
 	return vb, pts, subs, idx
+}
+
+// backdropMesh is the Backdrop's vertex buffer, positions and indices.
+func backdropMesh(b *Backdrop) ([]byte, [][3]float64, []int) {
+	n := backdropCells + 1
+	step := 2 * b.Half / backdropCells
+	var vb []byte
+	var pts [][3]float64
+	for j := 0; j < n; j++ {
+		for i := 0; i < n; i++ {
+			x, y := -b.Half+float64(i)*step, -b.Half+float64(j)*step
+			p := [3]float64{x, y, b.Z}
+			pts = append(pts, p)
+			uv := [2]float64{triWave((x + b.Half) / b.RepeatX), triWave((y + b.Half) / b.RepeatY)}
+			vb = encodeVertex(vb, p, [3]float64{0, 0, 1}, uv, [3]float64{1, 1, 1})
+		}
+	}
+	var idx []int
+	for j := 0; j < backdropCells; j++ {
+		for i := 0; i < backdropCells; i++ {
+			a, b2, c, d := j*n+i, j*n+i+1, (j+1)*n+i+1, (j+1)*n+i
+			idx = append(idx, a, b2, c, a, c, d)
+		}
+	}
+	return vb, pts, idx
 }
 
 func f32(x float64) float64 { return float64(float32(x)) }
@@ -444,16 +556,16 @@ func boundsOf(pts [][3]float64, withOrigin bool) []float32 {
 		float32(h[0]), float32(h[1]), float32(h[2]), float32(r2)}
 }
 
-func child(n *node, name string) (*node, error) {
-	c, ok := n.f[name].(*node)
+func child(n *bmdl.Node, name string) (*bmdl.Node, error) {
+	c, ok := n.F[name].(*bmdl.Node)
 	if !ok {
 		return nil, fmt.Errorf("ground: the template has no %s", name)
 	}
 	return c, nil
 }
 
-func children(n *node, name string, want int) ([]*node, error) {
-	c, ok := n.f[name].([]*node)
+func children(n *bmdl.Node, name string, want int) ([]*bmdl.Node, error) {
+	c, ok := n.F[name].([]*bmdl.Node)
 	if !ok || len(c) < want {
 		return nil, fmt.Errorf("ground: the template has fewer than %d %s", want, name)
 	}
@@ -463,11 +575,11 @@ func children(n *node, name string, want int) ([]*node, error) {
 // BuildModel is the .bmdl: the template's tree with two of its vertex-lit materials (their texture paths set to
 // textures) and one mesh and part per tile of the ground.
 func BuildModel(template []byte, g *Ground, textures [2]string) ([]byte, error) {
-	tr, err := parseTree(template)
+	tr, err := bmdl.Parse(template)
 	if err != nil {
 		return nil, err
 	}
-	tm, err := child(tr.root, "model")
+	tm, err := child(tr.Root, "model")
 	if err != nil {
 		return nil, err
 	}
@@ -484,24 +596,27 @@ func BuildModel(template []byte, g *Ground, textures [2]string) ([]byte, error) 
 		return nil, err
 	}
 	tmesh, tpart := tmeshes[1], tparts[1]
-	if decl, ok := tmesh.f["decl"].([]byte); !ok || declStride(decl) != 32 {
+	if decl, ok := tmesh.F["decl"].([]byte); !ok || bmdl.DeclStride(decl) != 32 {
 		return nil, fmt.Errorf("ground: template mesh 1 is not the 32-byte layout")
 	}
 	tsubs, err := children(tpart, "submeshes", 1)
 	if err != nil {
 		return nil, err
 	}
-	var mats []*node
+	var mats []*bmdl.Node
 	for k, path := range textures {
-		mt := tmats[k].clone()
-		texs, ok := mt.f["textures"].([]*node)
-		if sh, _ := mt.f["shader"].(string); sh != "labsVertLit" || !ok || len(texs) != 1 {
+		mt := tmats[k].Clone()
+		texs, ok := mt.F["textures"].([]*bmdl.Node)
+		if sh, _ := mt.F["shader"].(string); sh != "labsVertLit" || !ok || len(texs) != 1 {
 			return nil, fmt.Errorf("ground: template material is not a one-texture labsVertLit")
 		}
-		texs[0].f["path"], texs[0].f["path_hash"] = path, fnv1(path)
+		texs[0].F["path"], texs[0].F["path_hash"] = path, bmdl.FNV1(path)
 		mats = append(mats, mt)
 	}
-	var meshes, parts []*node
+	for _, b := range g.Backs {
+		mats = append(mats, BackdropMaterial(b, mats[0])) // void.go
+	}
+	var meshes, parts []*bmdl.Node
 	var every [][3]float64
 	tiles := (g.Grid + Tile - 1) / Tile
 	for tj := 0; tj < tiles; tj++ {
@@ -513,48 +628,58 @@ func BuildModel(template []byte, g *Ground, textures [2]string) ([]byte, error) 
 			if len(subs) == 0 {
 				return nil, fmt.Errorf("ground: an empty tile")
 			}
-			me := tmesh.clone()
+			me := tmesh.Clone()
 			name := fmt.Sprintf("mm_v3_ground_%d_%d", ti, tj)
 			ib := make([]byte, 2*len(idx))
 			for q, v := range idx {
 				binary.LittleEndian.PutUint16(ib[2*q:], uint16(v))
 			}
-			me.f["name"], me.f["name_hash"] = name, fnv1(name)
-			me.f["material"] = uint32(subs[0].mat)
-			me.f["vertices"], me.f["indices"] = vb, ib
-			me.f["vertex_count"], me.f["index_count"] = uint32(len(pts)), uint32(len(idx))
-			me.f["bounds"] = boundsOf(pts, false)
-			me.f["target_count"], me.f["targets"] = uint32(0), []*node{}
-			part := tpart.clone()
-			part.f["mesh"] = uint32(len(meshes))
-			part.f["bounds"] = boundsOf(pts, true)
-			var sl []*node
+			me.F["name"], me.F["name_hash"] = name, bmdl.FNV1(name)
+			me.F["material"] = uint32(subs[0].mat)
+			me.F["vertices"], me.F["indices"] = vb, ib
+			me.F["vertex_count"], me.F["index_count"] = uint32(len(pts)), uint32(len(idx))
+			me.F["bounds"] = boundsOf(pts, false)
+			me.F["target_count"], me.F["targets"] = uint32(0), []*bmdl.Node{}
+			part := tpart.Clone()
+			part.F["mesh"] = uint32(len(meshes))
+			part.F["bounds"] = boundsOf(pts, true)
+			var sl []*bmdl.Node
 			for _, s := range subs {
-				sm := tsubs[0].clone()
-				sm.f["index_start"], sm.f["index_count"], sm.f["material"] = uint32(s.start), uint32(s.count), uint32(s.mat)
+				sm := tsubs[0].Clone()
+				sm.F["index_start"], sm.F["index_count"], sm.F["material"] = uint32(s.start), uint32(s.count), uint32(s.mat)
 				sp := make([][3]float64, s.count)
 				for q := range sp {
 					sp[q] = pts[idx[s.start+q]]
 				}
-				sm.f["bounds"] = boundsOf(sp, false)
+				sm.F["bounds"] = boundsOf(sp, false)
 				sl = append(sl, sm)
 			}
-			part.f["submeshes"] = sl
+			part.F["submeshes"] = sl
 			meshes = append(meshes, me)
 			parts = append(parts, part)
 			every = append(every, pts...)
 		}
 	}
-	model := tm.clone()
-	model.f["name"], model.f["name_hash"] = "mm_v3_terrain", fnv1("mm_v3_terrain")
-	model.f["materials"], model.f["meshes"], model.f["parts"] = mats, meshes, parts
-	model.f["bounds"] = boundsOf(every, false)
-	root := &node{typ: "Root", f: map[string]any{}}
-	for k, v := range tr.root.f {
-		root.f[k] = v
+	for k, b := range g.Backs {
+		name := "mm_v3_backdrop"
+		if k > 0 {
+			name = fmt.Sprintf("mm_v3_backdrop_%d", k)
+		}
+		me, part, pts := BackdropPart(b, name, uint32(2+k), uint32(len(meshes)), tmesh, tpart, tsubs[0]) // void.go
+		meshes = append(meshes, me)
+		parts = append(parts, part)
+		every = append(every, pts...)
 	}
-	root.f["model"], root.f["skeleton"], root.f["anims"], root.f["anim_count"] = model, nil, []*node{}, uint32(0)
-	return writeTree(&tree{tag: tr.tag, version: tr.version, align: tr.align, root: root})
+	model := tm.Clone()
+	model.F["name"], model.F["name_hash"] = "mm_v3_terrain", bmdl.FNV1("mm_v3_terrain")
+	model.F["materials"], model.F["meshes"], model.F["parts"] = mats, meshes, parts
+	model.F["bounds"] = boundsOf(every, false)
+	root := &bmdl.Node{Type: "Root", F: map[string]any{}}
+	for k, v := range tr.Root.F {
+		root.F[k] = v
+	}
+	root.F["model"], root.F["skeleton"], root.F["anims"], root.F["anim_count"] = model, nil, []*bmdl.Node{}, uint32(0)
+	return bmdl.Write(&bmdl.Tree{Tag: tr.Tag, Version: tr.Version, Align: tr.Align, Root: root})
 }
 
 // ModelInfo is what CheckModel counts.
@@ -566,32 +691,32 @@ type ModelInfo struct {
 // CheckModel parses a model back: the round trip byte for byte, every index in range, two materials, the
 // submeshes covering the indices.
 func CheckModel(raw []byte) (ModelInfo, error) {
-	tr, err := parseTree(raw)
+	tr, err := bmdl.Parse(raw)
 	if err != nil {
 		return ModelInfo{}, err
 	}
-	again, err := writeTree(tr)
+	again, err := bmdl.Write(tr)
 	if err != nil {
 		return ModelInfo{}, err
 	}
 	if string(again) != string(raw) {
 		return ModelInfo{}, fmt.Errorf("ground: the model does not round-trip")
 	}
-	m, err := child(tr.root, "model")
+	m, err := child(tr.Root, "model")
 	if err != nil {
 		return ModelInfo{}, err
 	}
-	mats, _ := m.f["materials"].([]*node)
-	meshes, _ := m.f["meshes"].([]*node)
-	parts, _ := m.f["parts"].([]*node)
-	if len(mats) != 2 || len(meshes) != len(parts) {
+	mats, _ := m.F["materials"].([]*bmdl.Node)
+	meshes, _ := m.F["meshes"].([]*bmdl.Node)
+	parts, _ := m.F["parts"].([]*bmdl.Node)
+	if len(mats) < 2 || len(mats) > 4 || len(meshes) != len(parts) {
 		return ModelInfo{}, fmt.Errorf("ground: materials or parts wrong")
 	}
 	tris := 0
 	for pi, me := range meshes {
 		part := parts[pi]
-		nIdx, nVert := int(u32of(me.f["index_count"])), int(u32of(me.f["vertex_count"]))
-		ib, _ := me.f["indices"].([]byte)
+		nIdx, nVert := int(bmdl.U32(me.F["index_count"])), int(bmdl.U32(me.F["vertex_count"]))
+		ib, _ := me.F["indices"].([]byte)
 		if nIdx == 0 || len(ib) < 2*nIdx {
 			return ModelInfo{}, fmt.Errorf("ground: mesh %d has no indices", pi)
 		}
@@ -599,20 +724,20 @@ func CheckModel(raw []byte) (ModelInfo, error) {
 		for q := 0; q < nIdx; q++ {
 			top = max(top, int(binary.LittleEndian.Uint16(ib[2*q:])))
 		}
-		if top >= nVert || int(u32of(part.f["mesh"])) != pi {
+		if top >= nVert || int(bmdl.U32(part.F["mesh"])) != pi {
 			return ModelInfo{}, fmt.Errorf("ground: mesh %d: index out of range", pi)
 		}
-		subs, _ := part.f["submeshes"].([]*node)
+		subs, _ := part.F["submeshes"].([]*bmdl.Node)
 		cover := 0
 		for _, s := range subs {
-			cover += int(u32of(s.f["index_count"]))
+			cover += int(bmdl.U32(s.F["index_count"]))
 		}
 		if cover != nIdx {
 			return ModelInfo{}, fmt.Errorf("ground: mesh %d: submeshes do not cover the indices", pi)
 		}
 		tris += nIdx / 3
 	}
-	b, _ := m.f["bounds"].([]float32)
+	b, _ := m.F["bounds"].([]float32)
 	return ModelInfo{Meshes: len(meshes), Triangles: tris, Bounds: b}, nil
 }
 
@@ -673,21 +798,27 @@ func GrassDDS(src []byte) ([]byte, error) {
 // Build makes the three entries (ModelEntry, DirtEntry, GrassEntry) from the line-of-sight map, the template model
 // (TemplateEntry) and the shipped grass texture (GrassSource).
 func Build(img los.Image, template, grassDDS []byte) (model, dirtDDS, grassOut []byte, err error) {
+	return BuildSpec(img, MM, template, grassDDS, [2]string{DirtEntry, GrassEntry})
+}
+
+// BuildSpec is Build for another map: its spec and the two textures' paths, which the model names.
+func BuildSpec(img los.Image, spec Spec, template, grassDDS []byte, textures [2]string) (model, dirtDDS,
+	grassOut []byte, err error) {
 	if img.Bpp != 8 {
 		return nil, nil, nil, fmt.Errorf("ground: an 8-bit line-of-sight map is expected, this one has %d bits", img.Bpp)
 	}
-	field, err := NewField(img.W, img.H, img.Pix, los.Size)
+	field, err := NewField(img.W, img.H, img.Pix, spec.Size)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	g := NewGround(field, Grid, 0)
+	g := NewGroundSpec(field, Grid, 0, spec)
 	if dirtDDS, err = DirtDDS(DirtSize); err != nil {
 		return nil, nil, nil, err
 	}
 	if grassOut, err = GrassDDS(grassDDS); err != nil {
 		return nil, nil, nil, err
 	}
-	if model, err = BuildModel(template, g, [2]string{DirtEntry, GrassEntry}); err != nil {
+	if model, err = BuildModel(template, g, textures); err != nil {
 		return nil, nil, nil, err
 	}
 	if _, err = CheckModel(model); err != nil {

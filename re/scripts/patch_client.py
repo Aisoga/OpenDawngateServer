@@ -70,6 +70,18 @@ Patches (each checks the original bytes first):
            four arguments), so every index 0-14 is looked up: GameSimulator_GetPlayerByIndex (0x008F0D90, a hash map
            lookup, the spectator map for 10-14) returns 0 for an empty index and LabsPlayer_GetNounDef (0x00912160,
            +0x04) 0 for a spectator, and the loop skips both, as the shipped loop already did for spectators at 10+.
+  maptable  Since MAPTABLE, in every profile (--maptable off leaves it out): GameEntryManager's map-name method
+           (0x00684380; the custom lobby's map line and the game browser's Map column) names a game's map only from a
+           one-entry table (0x013F3A78: {L"^labs_global!0x30000001", SM_Map_v5's LevelId 0x946D41FE}, kNumPlayableMaps
+           1) and returns null for any other LevelId (the lobby then asserts resultName). Its not-found exit (0x006843D2)
+           becomes a jmp to a 45-byte cave in .text's slack (MAP_CAVE, after the bind cave and the LAN string), which
+           writes the LevelId as 8 hex digits into the key L"^FE_CustomGameLobby!0x????????" (MAP_KEY, in .tls's slack
+           after the TLS template; .tls's VirtualSize raised to its SizeOfRawData so it is mapped, as .text's) and goes
+           on as the found path does with that key (0x006843EF: the key check, the locale lookup through the resource
+           key parser 0x007D9500, SPStringManager's line lookup 0x00A94540). So every map is named by the line of its
+           LevelId in the lobby's own table, which the setup writes into AA_Server.package (patch_locale.py) for every
+           installed map; a LevelId without a line gives an empty name (SPStringManager's empty string), no assert.
+           SM_Map_v5 keeps its own entry.
 
 Profiles (roadmap A5, docs/RUNNING_THE_CLIENT.md "Playing across machines (A5)"):
   local    (default) everything above; redirector host 127.0.0.1 (or a loopback address given as [host]
@@ -187,6 +199,49 @@ CHAR_LAA = 0x0020
 PRELOAD_COUNT = 0x0066BD1F
 PRELOAD_COUNT_ORIG = bytes.fromhex("e8ec532800")
 PRELOAD_COUNT_NEW = bytes.fromhex("b80f000000")
+# MAPTABLE: GameEntryManager's map-name method (0x00684380) searches its one-entry table (0x013F3A78: {display key,
+# LevelId}, kNumPlayableMaps 1) for the game's LevelId; the loop and its not-found exit (return null)
+MAP_LOOP = 0x006843C1
+MAP_LOOP_ORIG = bytes.fromhex("33c9" "3904cd7c3a3f01" "741b" "41" "83f901" "72f1")  # xor ecx,ecx; cmp; jz; inc; cmp 1; jc
+MAP_MISS = 0x006843D2                     # not found: pop edi; mov eax,ebx (0); pop ebx; mov ecx,[esp+0x20] ...
+MAP_MISS_ORIG = bytes.fromhex("5f" "8bc3" "5b" "8b4c2420")
+MAP_FOUND = 0x006843E7                    # found: push esi; mov esi,[ecx*8+0x013F3A78] (the display key)
+MAP_FOUND_ORIG = bytes.fromhex("56" "8b34cd783a3f01")
+MAP_RESUME = 0x006843EF                   # cmp esi,edi; jz ...: the key's check, its locale lookup, the return
+MAP_RESUME_ORIG = bytes.fromhex("3bf7" "740d")
+MAP_CAVE = 0x011AB140                     # in .text's slack after the bind cave (0x011AB100) and the LAN string
+TLS_VA, TLS_VSIZE, TLS_RAW = 0x01C00000, 0x39, 0x200   # .tls: the TLS template is 0x01C00000-0x01C00038
+MAP_KEY = 0x01C00040                      # the key the cave writes, in .tls's slack (writable)
+MAP_KEY_PREFIX = "^FE_CustomGameLobby!0x"  # the lobby's own table; the line id is the LevelId
+MAP_KEY_TEXT = MAP_KEY_PREFIX + "00000000"
+MAP_KEY_ROOM = 0x40
+
+
+def map_cave_code():
+    """The map-name cave, reached from the not-found exit with eax = the game's LevelId: write the id as 8 hex digits
+    into the key L"^FE_CustomGameLobby!0x????????" (MAP_KEY) and go on as the found path does with that key."""
+    hex_at = MAP_KEY + 2 * len(MAP_KEY_PREFIX)
+    code = bytes.fromhex(
+        "b908000000"        # mov ecx,8
+        "8bd0"              # l: mov edx,eax
+        "83e20f"            # and edx,0xf
+        "80c230"            # add dl,'0'
+        "80fa39"            # cmp dl,'9'
+        "7603"              # jbe s
+        "80c207"            # add dl,7            ; 'A'..'F'
+        "6689144d"          # s: mov [ecx*2+hex-2],dx
+    ) + (hex_at - 2).to_bytes(4, "little") + bytes.fromhex(
+        "c1e804"            # shr eax,4
+        "e2e3"              # loop l
+        "56"                # push esi            ; as the found path does
+        "be"                # mov esi,MAP_KEY
+    ) + MAP_KEY.to_bytes(4, "little") + b"\xe9"
+    rel = (MAP_RESUME - (MAP_CAVE + len(code) + 4)) & 0xFFFFFFFF
+    return code + rel.to_bytes(4, "little")  # jmp MAP_RESUME
+
+
+MAP_CAVE_CODE = map_cave_code()
+MAP_MISS_NEW = b"\xe9" + ((MAP_CAVE - (MAP_MISS + 5)) & 0xFFFFFFFF).to_bytes(4, "little")  # jmp MAP_CAVE
 
 
 def wide(text):
@@ -255,7 +310,7 @@ def check_data_suffix(suffix):
 
 
 def patch_bytes(orig, modulus, profile="local", host=None, server_host=None, client_bind=None, data_suffix=None,
-                laa=True, preload=True):
+                laa=True, preload=True, maptable=True):
     """Patch a copy of the untouched exe's bytes; returns (patched bytes, summary text)."""
     server, cave_address = resolve_profile(profile, host, server_host, client_bind)
     check_data_suffix(data_suffix)
@@ -367,6 +422,32 @@ def patch_bytes(orig, modulus, profile="local", host=None, server_host=None, cli
     if preload:
         data[off(PRELOAD_COUNT):off(PRELOAD_COUNT) + len(PRELOAD_COUNT_NEW)] = PRELOAD_COUNT_NEW
         summary += "; every player's shaper preloaded (player indexes 0-14)"
+
+    # --- MAPTABLE: a LevelId the map table lacks is named by the lobby table's line of that id
+    for va, want, what in ((MAP_LOOP, MAP_LOOP_ORIG, "the map-name method's one-entry loop"),
+                           (MAP_MISS, MAP_MISS_ORIG, "the map-name method's not-found exit"),
+                           (MAP_FOUND, MAP_FOUND_ORIG, "the map-name method's found path"),
+                           (MAP_RESUME, MAP_RESUME_ORIG, "the map-name method's key check")):
+        expect(va, want, what)
+    tls = next((s for s in pe.sections if s.Name.rstrip(b"\0") == b".tls"), None)
+    if (tls is None or tls.VirtualAddress != TLS_VA - IMAGE_BASE or tls.Misc_VirtualSize != TLS_VSIZE
+            or tls.SizeOfRawData != TLS_RAW or not tls.Characteristics & 0x80000000):
+        raise PatchError("unexpected .tls section (wrong build?)")
+    if maptable:
+        if pe.OPTIONAL_HEADER.DllCharacteristics & 0x40 or not pe.FILE_HEADER.Characteristics & 0x1:
+            raise PatchError("exe is relocatable (ASLR or relocations); absolute addresses in the cave would break")
+        if not (LAN_LOOPBACK_STRING + LAN_LOOPBACK_ROOM <= MAP_CAVE
+                and MAP_CAVE + len(MAP_CAVE_CODE) <= IMAGE_BASE + text.VirtualAddress + text.SizeOfRawData):
+            raise PatchError("the map-name cave doesn't fit into .text's slack (wrong build?)")
+        expect(MAP_CAVE, bytes(len(MAP_CAVE_CODE)), "unused slack after the bind cave")
+        expect(MAP_KEY, bytes(MAP_KEY_ROOM), "unused slack after the TLS template")
+        for sec, size in ((text, text.SizeOfRawData), (tls, TLS_RAW)):  # map the slack (VirtualSize = SizeOfRawData)
+            vsize_at = sec.get_file_offset() + 8
+            data[vsize_at:vsize_at + 4] = size.to_bytes(4, "little")
+        data[off(MAP_CAVE):off(MAP_CAVE) + len(MAP_CAVE_CODE)] = MAP_CAVE_CODE
+        data[off(MAP_KEY):off(MAP_KEY) + MAP_KEY_ROOM] = wide(MAP_KEY_TEXT).ljust(MAP_KEY_ROOM, b"\0")
+        data[off(MAP_MISS):off(MAP_MISS) + len(MAP_MISS_NEW)] = MAP_MISS_NEW
+        summary += f"; every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at {MAP_CAVE:#010x})"
     return bytes(data), summary
 
 
@@ -402,6 +483,14 @@ def describe(data):
     out["laa"] = "on" if pe.FILE_HEADER.Characteristics & CHAR_LAA else "off"
     count = at(PRELOAD_COUNT, len(PRELOAD_COUNT_ORIG))
     out["preload"] = {PRELOAD_COUNT_NEW: "all", PRELOAD_COUNT_ORIG: "as-shipped"}.get(count, "unknown")
+    miss = at(MAP_MISS, len(MAP_MISS_ORIG))
+    if miss == MAP_MISS_ORIG:
+        out["maptable"] = "as-shipped"
+    elif (miss[:5] == MAP_MISS_NEW and at(MAP_CAVE, len(MAP_CAVE_CODE)) == MAP_CAVE_CODE
+          and at(MAP_KEY, len(wide(MAP_KEY_PREFIX)) - 2) == wide(MAP_KEY_PREFIX)[:-2]):
+        out["maptable"] = "on"
+    else:
+        out["maptable"] = "unknown"
     return out
 
 
@@ -426,6 +515,8 @@ def main(argv):
                     help="Q3b: LARGE_ADDRESS_AWARE (4 GB of address space instead of 2 GB); on by default")
     ap.add_argument("--preload", choices=("on", "off"), default="on",
                     help="SNDBANK: preload every player index's shaper (and its sound banks); on by default")
+    ap.add_argument("--maptable", choices=("on", "off"), default="on",
+                    help="MAPTABLE: name every map by its LevelId's line in FE_CustomGameLobby; on by default")
     args = ap.parse_args(argv[1:])
     exe = os.path.abspath(args.exe)
     if os.sep + "ia_" in exe or "/ia_" in exe:
@@ -447,7 +538,8 @@ def main(argv):
         untouched = f.read()
     try:
         data, summary = patch_bytes(untouched, modulus, args.profile, args.host, args.server_host, args.client_bind,
-                                    args.data_suffix, laa=args.laa == "on", preload=args.preload == "on")
+                                    args.data_suffix, laa=args.laa == "on", preload=args.preload == "on",
+                                    maptable=args.maptable == "on")
     except PatchError as e:
         sys.exit(str(e))
     with open(exe, "wb") as f:

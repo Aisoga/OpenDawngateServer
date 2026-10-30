@@ -292,6 +292,7 @@ func (bc *blazeConn) login(fr fire.Frame, raw []byte) {
 	blazePort, qosPort := s.ports()
 	f.logf("Blaze %s: switched to %s in %s (its Blaze %d, QoS %d); the connection is the server's from now on", bc.peer, b.Tag,
 		time.Since(start).Round(time.Millisecond), blazePort, qosPort)
+	f.deliverMaps(s) // the server's maps the copy lacks, in the background (front_mapdist.go)
 	if err := f.Bookmarks.Used(b.Tag, f.Now()); err != nil && !errors.Is(err, ErrNoBookmark) {
 		f.logf("the server list: %v", err)
 	}

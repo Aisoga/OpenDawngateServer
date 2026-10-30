@@ -11,7 +11,9 @@
   Client (bound by the client) opens the menu's screens.
 
   The page polls home.json beside it every 10 s (the server's live data: the queue, the running matches,
-  the open custom games, the last results) and updates itself in place. Self-contained on purpose: no
+  the open custom games, the last results) and updates itself in place. Its links to the match history
+  (history.html: the recent games, and a stored result's match by #match=<id>) load that page into this
+  view; its Home links load this page again. Self-contained on purpose: no
   scripts, styles or images from other hosts; the pictures and fonts are the client's own (game:// and
   the font families the client registers), so in a normal browser they fall back to Arial and no art.
   ES5 only: the view has no Function.prototype.bind and no flexbox. Text from the server (a custom
@@ -104,6 +106,12 @@
   // 10 Profile, 11 Leaderboard, 0 Lore, 2 Help.
   function show(content) {
     clientCall("requestMainMenuContent", content);
+    return false;
+  }
+
+  // The match history (history.html beside this page) in this same view: "" the recent games, "#match=<id>" a match.
+  function openHistory(where) {
+    location.href = "history.html" + where;
     return false;
   }
 
@@ -330,7 +338,15 @@
     if (!rs.length) { emptyRow(tb, 6, d ? "No match has finished since the server started." : "-"); }
     for (var i = 0; i < rs.length && i < 5; i++) {
       var r = rs[i], tr = make("tr", i == 0 ? "top" : "");
-      tr.appendChild(make("td", "", r.kind + SEP + r.map));
+      if (r.matchId > 0) {
+        // A stored match: its stats on the history page (0 = not stored, no link).
+        var mc = make("td", ""), ml = make("a", "", r.kind + SEP + r.map);
+        ml.onclick = (function (id) { return function () { return openHistory("#match=" + id); }; })(r.matchId);
+        mc.appendChild(ml);
+        tr.appendChild(mc);
+      } else {
+        tr.appendChild(make("td", "", r.kind + SEP + r.map));
+      }
       tr.appendChild(make("td", r.winner == 1 ? "t1" : r.winner == 2 ? "t2" : "muted", resultText(r)));
       tr.appendChild(make("td", "", clock(r.durationSec)));
       tr.appendChild(make("td", "t1", shapersText(r.teams[0])));
@@ -469,7 +485,7 @@
   </div>
 
   <div class="section" style="margin-top: 14px">
-    <h2 class="head">JUST FINISHED</h2>
+    <h2 class="head">JUST FINISHED <a class="more" onclick="return openHistory('');">Recent games</a></h2>
     <table class="list panel">
       <colgroup><col style="width: 250px"><col style="width: 232px"><col style="width: 70px"><col><col><col style="width: 100px"></colgroup>
       <thead><tr><th>MATCH</th><th>RESULT</th><th>LENGTH</th><th>TEAM 1</th><th>TEAM 2</th><th></th></tr></thead>
@@ -490,6 +506,7 @@
       <a onclick="return show(11);">Leaderboard</a>
       <a onclick="return show(0);">Lore</a>
       <a onclick="return show(2);">Help</a>
+      <a onclick="return openHistory('');">Recent games</a>
     </div>
   </div>
 

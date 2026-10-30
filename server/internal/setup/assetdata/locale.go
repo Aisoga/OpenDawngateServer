@@ -71,6 +71,18 @@ func (l *Locale) Text(table, id uint32) (string, bool) {
 	return s, ok
 }
 
+// TextAny returns a string by id from any table (the one with the lowest table id when several have it): for a
+// script's GUID whose table isn't known.
+func (l *Locale) TextAny(id uint32) (string, bool) {
+	best, found, text := uint32(0), false, ""
+	for t, tab := range l.tables {
+		if s, ok := tab[id]; ok && (!found || t < best) {
+			best, found, text = t, true, s
+		}
+	}
+	return text, found
+}
+
 // Tables is the number of tables.
 func (l *Locale) Tables() int { return len(l.tables) }
 

@@ -9,7 +9,8 @@ patcher tests are skipped. Nothing here touches client/ia_* or a working copy.
 What is pinned:
   - the local profile with --laa off --preload off writes exactly what the A4 version of patch_client.py wrote
     (SHA-256 of its output for a fixed CA modulus, taken from that version before A5 changed it); Q3b added only the
-    LARGE_ADDRESS_AWARE bit, SNDBANK only the preload call (5 bytes); each output is pinned;
+    LARGE_ADDRESS_AWARE bit, SNDBANK only the preload call (5 bytes), MAPTABLE only the map-name cave (its jmp, the
+    cave, the key, two VirtualSizes); each output is pinned;
   - the lan profile changes only the CA, the redirector host and UPnP, and leaves every bind site, the
     cave slack and .text's VirtualSize as shipped; with --client-bind it narrows to that address;
   - the refusals (non-loopback host in the local profile, loopback/public/wildcard hosts in lan, a
@@ -45,6 +46,11 @@ Q3B_SUMMARY = A4_SUMMARY + "; LARGE_ADDRESS_AWARE (4 GB of address space)"
 # SNDBANK: the default since then, the Q3b output plus the preload call (0x0066BD1F: call CountPlayers -> mov eax,15)
 SNDBANK_OUTPUT_SHA256 = "a6ca0ae63b8815bf38aeb4575f61a951e4c92f5a159f0c1465f4a47cfe57267e"
 SNDBANK_SUMMARY = Q3B_SUMMARY + "; every player's shaper preloaded (player indexes 0-14)"
+# MAPTABLE: the default since then, the SNDBANK output plus the map-name cave (0x006843D2 -> jmp 0x011AB140, the cave,
+# the key in .tls's slack, .text's and .tls's VirtualSize raised to their SizeOfRawData)
+MAPTABLE_OUTPUT_SHA256 = "d81339e8e44cc4a6781c92db73488f20897e24ead406c7622a683dd9768a4543"
+MAPTABLE_SUMMARY = (SNDBANK_SUMMARY + "; every map named by its LevelId's line in FE_CustomGameLobby "
+                    "(map-name cave at 0x011ab140)")
 EXE = None  # set in __main__
 
 
@@ -92,8 +98,9 @@ class PatchClientTest(unittest.TestCase):
         cls.off = staticmethod(lambda va: pe.get_offset_from_rva(va - pc.IMAGE_BASE))
         cls.vsize_at = pe.sections[0].get_file_offset() + 8
         cls.local, cls.local_summary = pc.patch_bytes(cls.orig, MODULUS)
-        cls.a4, cls.a4_summary = pc.patch_bytes(cls.orig, MODULUS, laa=False, preload=False)
-        cls.q3b, cls.q3b_summary = pc.patch_bytes(cls.orig, MODULUS, preload=False)
+        cls.a4, cls.a4_summary = pc.patch_bytes(cls.orig, MODULUS, laa=False, preload=False, maptable=False)
+        cls.q3b, cls.q3b_summary = pc.patch_bytes(cls.orig, MODULUS, preload=False, maptable=False)
+        cls.sndbank, cls.sndbank_summary = pc.patch_bytes(cls.orig, MODULUS, maptable=False)
 
     def at(self, data, va, n):
         return data[self.off(va):self.off(va) + n]
@@ -106,14 +113,34 @@ class PatchClientTest(unittest.TestCase):
         self.assertEqual(sha256(self.q3b), Q3B_OUTPUT_SHA256)
         self.assertEqual(self.q3b_summary, Q3B_SUMMARY)
 
-    def test_local_default_is_q3b_output_plus_preload(self):
-        self.assertEqual(sha256(self.local), SNDBANK_OUTPUT_SHA256)
-        self.assertEqual(self.local_summary, SNDBANK_SUMMARY)
+    def test_sndbank_is_q3b_output_plus_preload(self):
+        self.assertEqual(sha256(self.sndbank), SNDBANK_OUTPUT_SHA256)
+        self.assertEqual(self.sndbank_summary, SNDBANK_SUMMARY)
         at = self.off(pc.PRELOAD_COUNT)
-        self.assertEqual(diff_ranges(self.q3b, self.local), [(at, at + 4)])  # the fifth byte is 00 in both
-        self.assertEqual(self.local[at:at + 5], bytes.fromhex("b80f000000"))
-        self.assertEqual((pc.describe(self.q3b)["preload"], pc.describe(self.local)["preload"]), ("as-shipped", "all"))
+        self.assertEqual(diff_ranges(self.q3b, self.sndbank), [(at, at + 4)])  # the fifth byte is 00 in both
+        self.assertEqual(self.sndbank[at:at + 5], bytes.fromhex("b80f000000"))
+        self.assertEqual((pc.describe(self.q3b)["preload"], pc.describe(self.sndbank)["preload"]), ("as-shipped", "all"))
         self.assertEqual(pc.describe(self.orig)["preload"], "as-shipped")
+
+    def test_local_default_is_sndbank_output_plus_map_cave(self):
+        self.assertEqual(sha256(self.local), MAPTABLE_OUTPUT_SHA256)
+        self.assertEqual(self.local_summary, MAPTABLE_SUMMARY)
+        pe = pc.pefile.PE(data=self.orig, fast_load=True)
+        tls_vsize_at = next(s for s in pe.sections if s.Name.startswith(b".tls")).get_file_offset() + 8
+        allowed = [(self.off(pc.MAP_MISS), 5), (self.off(pc.MAP_CAVE), len(pc.MAP_CAVE_CODE)),
+                   (self.off(pc.MAP_KEY), pc.MAP_KEY_ROOM), (self.vsize_at, 4), (tls_vsize_at, 4)]
+        for start, end in diff_ranges(self.sndbank, self.local):
+            self.assertTrue(any(s <= start and end <= s + n for s, n in allowed), hex(start))
+        self.assertEqual(self.at(self.local, pc.MAP_MISS, 5), bytes.fromhex("e9696db200"))  # jmp 0x011AB140
+        self.assertEqual(self.at(self.local, pc.MAP_KEY, 62), pc.wide("^FE_CustomGameLobby!0x00000000"))
+        self.assertEqual(self.local[tls_vsize_at:tls_vsize_at + 4], (0x200).to_bytes(4, "little"))
+        self.assertEqual(self.local[self.vsize_at:self.vsize_at + 4], (0xDAA200).to_bytes(4, "little"))
+        # the cave ends in jmp 0x006843EF (the found path after its push esi; mov esi,<key>)
+        cave = pc.MAP_CAVE_CODE
+        self.assertEqual(pc.MAP_CAVE + len(cave) + int.from_bytes(cave[-4:], "little", signed=True), pc.MAP_RESUME)
+        self.assertEqual(cave[-10:-5], bytes([0xBE]) + pc.MAP_KEY.to_bytes(4, "little"))  # mov esi,<key>
+        self.assertEqual([pc.describe(d)["maptable"] for d in (self.orig, self.sndbank, self.local)],
+                         ["as-shipped", "as-shipped", "on"])
 
     def test_laa_sets_only_the_header_bit(self):
         # Q3b: LARGE_ADDRESS_AWARE changes IMAGE_FILE_HEADER.Characteristics 0x0103 -> 0x0123 and nothing else
@@ -132,7 +159,8 @@ class PatchClientTest(unittest.TestCase):
             self.assertEqual(pc.patch_bytes(self.orig, MODULUS, **kw)[0], self.local, kw)
 
     def test_lan_leaves_the_sockets_as_shipped(self):
-        lan, summary = pc.patch_bytes(self.orig, MODULUS, "lan", server_host="192.168.1.20")
+        # (the map-name cave left out: it uses .text's slack after the bind cave in every profile)
+        lan, summary = pc.patch_bytes(self.orig, MODULUS, "lan", server_host="192.168.1.20", maptable=False)
         self.assertEqual(self.at(lan, pc.REDIRECTOR_HOST, 21), b"192.168.1.20".ljust(21, b"\0"))
         for va in pc.BIND_CALLS:
             self.assertEqual(self.at(lan, va, 6), pc.CALL_BIND)
@@ -205,7 +233,8 @@ class PatchClientTest(unittest.TestCase):
             pc.patch_bytes(self.orig, MODULUS[:64])
 
     def test_wrong_build_is_refused_in_every_profile(self):
-        for va in (pc.BIND_CALLS[0], pc.BIND_THUNK, pc.REDIRECTOR_HOST, pc.NOUPNP_JNZ, pc.PRELOAD_COUNT):
+        for va in (pc.BIND_CALLS[0], pc.BIND_THUNK, pc.REDIRECTOR_HOST, pc.NOUPNP_JNZ, pc.PRELOAD_COUNT, pc.MAP_MISS,
+                   pc.MAP_RESUME):
             bad = bytearray(self.orig)
             bad[self.off(va)] ^= 0xFF
             for profile, kw in [("local", {}), ("lan", {"server_host": "192.168.1.20"})]:
@@ -220,10 +249,12 @@ class PatchClientTest(unittest.TestCase):
             with open(mod, "wb") as f:
                 f.write(MODULUS)
             pc.main(["patch_client.py", exe, mod])
+            self.assertEqual(sha256(read(exe)), MAPTABLE_OUTPUT_SHA256)
+            pc.main(["patch_client.py", exe, mod, "--maptable", "off"])
             self.assertEqual(sha256(read(exe)), SNDBANK_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--preload", "off"])
+            pc.main(["patch_client.py", exe, mod, "--preload", "off", "--maptable", "off"])
             self.assertEqual(sha256(read(exe)), Q3B_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--laa", "off", "--preload", "off"])
+            pc.main(["patch_client.py", exe, mod, "--laa", "off", "--preload", "off", "--maptable", "off"])
             self.assertEqual(sha256(read(exe)), A4_OUTPUT_SHA256)
             pc.main(["patch_client.py", exe, mod, "--profile", "lan", "--server-host", "192.168.1.20"])
             lan = read(exe)
@@ -231,10 +262,10 @@ class PatchClientTest(unittest.TestCase):
             self.assertEqual(self.at(lan, pc.BIND_THUNK, 6), pc.JMP_BIND)
             self.assertEqual(sha256(read(exe + ".orig")), BUILD_854_SHA256)
             pc.main(["patch_client.py", exe, mod, "127.0.0.1"])  # the A4 command line, back to local
-            self.assertEqual(sha256(read(exe)), SNDBANK_OUTPUT_SHA256)
+            self.assertEqual(sha256(read(exe)), MAPTABLE_OUTPUT_SHA256)
             with self.assertRaises(SystemExit):  # refused before anything is written
                 pc.main(["patch_client.py", exe, mod, "--profile", "lan"])
-            self.assertEqual(sha256(read(exe)), SNDBANK_OUTPUT_SHA256)
+            self.assertEqual(sha256(read(exe)), MAPTABLE_OUTPUT_SHA256)
 
 
 class RefusalWithoutExeTest(unittest.TestCase):

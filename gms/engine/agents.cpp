@@ -33,10 +33,12 @@
 #include "core/bots/lanes.h"
 #include "core/bots/route.h"
 #include "bots.h"
+#include "bots2.h"
 #include "director.h"
 #include "game.h"
 #include "hunterroute.h"
 #include "log.h"
+#include "matchrec.h"
 #include "wells.h"
 
 using namespace game;
@@ -2523,13 +2525,24 @@ void ReportNullPosImpl(std::uint32_t object, int kind, const char* who, const ch
   NoteBotNullPos(object, st ? st->noun : (who ? who : "?"), w, where, detail);
 }
 
-int SehBotRequest(std::uint32_t guid, int slot, std::uint32_t self, std::uint32_t target, const float* pos, int rank) {
+int SehBotRequestRaw(std::uint32_t guid, int slot, std::uint32_t self, std::uint32_t target, const float* pos,
+                     int rank) {
   __try {
     int instance = 0;
     return RequestAbilityCall(guid, slot, self, target, pos[0], pos[1], pos[2], rank, 0, 0, 0, 1, nullptr, &instance);
   } __except (SehNote(GetExceptionInformation(), "LabsAbilities_RequestAbility (bot)")) {
     return -0x7FFF;
   }
+}
+
+// MATCHREC: BotRequest's `where` while it requests (the recorder's "bot:<where>"), else nullptr ("bot:direct").
+const char* g_requestWhere = nullptr;
+
+// Every request the host makes for a bot, recorded by the match recorder ([host] match_record).
+int SehBotRequest(std::uint32_t guid, int slot, std::uint32_t self, std::uint32_t target, const float* pos, int rank) {
+  const int res = SehBotRequestRaw(guid, slot, self, target, pos, rank);
+  matchrec::OnBotRequest(self, g_requestWhere, guid, slot, target, pos, res);
+  return res;
 }
 
 bool SehPendingDelete(void* o) {
@@ -2573,6 +2586,23 @@ bool ConditionTargetDead(std::uint32_t self, std::uint32_t conditionGuid, std::u
   return true;
 }
 
+unsigned g_deadMTargetLines = 0;
+
+// DEADTARGET at the source, the agent's mTarget (DEADTARGET-WORKER): 0 when the bot's mTarget is dead, pending delete
+// or gone (counted, the first 100 logged, lower case: not a DEADTARGET line), so this think's gambits and kits aim as
+// with none. A well capture marks its workers for delete in the capturer's think (`mapedsm_bots1d`: the Warden's
+// mTarget, a worker at 88 hp, reached the send guard). The blackboard keeps it: the engine drops it with the object.
+std::uint32_t LiveMTarget(const AgentState& st, std::uint32_t self, std::uint32_t mtarget) {
+  if (!mtarget) return 0;
+  const gms::agents::RequestObject ob = ReadRequestObject(mtarget);
+  if (gms::agents::LiveTarget(mtarget, ob)) return mtarget;
+  ++g_nullpos.deadMTargets;
+  if (++g_deadMTargetLines <= 100)
+    Log("agents: bot %08X %s: deadtarget source: mTarget %08X %s (%s); left out (phase %d)", self, st.noun, mtarget,
+        ob.noun ? ob.noun : "?", !ob.found ? "gone" : ob.pendingDelete ? "pending delete" : "hp 0", st.botPhase);
+  return 0;
+}
+
 // NULLPOS and DEADTARGET: every request the host makes for a bot goes through here. A request at an object that is
 // dead, pending delete or gone is refused (kResultNullPos, a refusal: the list goes on) with a "DEADTARGET:" line; a
 // position at (0, 0) in any form is refused with a "NULLPOS:" line. No offset, no exception: nothing living stands on
@@ -2611,7 +2641,10 @@ int BotRequest(const char* noun, const char* where, gms::agents::NullPosUse use,
       return gms::agents::kResultNullPos;
     default: break;
   }
-  return SehBotRequest(guid, slot, self, target, p, rank);
+  g_requestWhere = where;
+  const int res = SehBotRequest(guid, slot, self, target, p, rank);
+  g_requestWhere = nullptr;
+  return res;
 }
 
 // A consumable (potion): LabsPlayer_CanUseItem, then LabsPlayer_UseItem (it requests the item's ability and takes one
@@ -5345,7 +5378,7 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
   if (!SehBotPlayer(sim, o, &pv)) return;
   AgentInfo a;
   if (!SehAgentInfo(o, &a)) return;
-  const std::uint32_t mtarget = SehBestTarget(a.agent);
+  const std::uint32_t mtarget = LiveMTarget(st, self.id, SehBestTarget(a.agent));  // DEADTARGET-WORKER
   const float maxHpNow = SehMaxHp(o);  // BOTTOWER: the keep-out's own HP fraction
   const float selfHpFrac = maxHpNow > 0.f ? self.hp / maxHpNow : 1.f;
   // HUNTERBOT: a Hunter's R at a low enemy shaper first
@@ -5934,6 +5967,39 @@ void MinionWatch(void* o, AgentState& st, unsigned long long nowMs) {
   }
 }
 
+bool SehAttackable(void* o);
+
+// BOTS2: the frame's objects as the second brain's snapshot reads them (shapers, lane minions, jungle creatures,
+// Bindings, Guardians, Cores and Loci with their reach and target; since BOTS2c also the parasite with whether it can be
+// hit, the wells' workers and the wards); the wells (the wells module's own view), pets and projectiles are left out.
+void ReadBots2Views(const std::vector<void*>& objs, std::vector<bots2::ObjView>* out) {
+  out->reserve(objs.size() / 2);
+  for (void* o : objs) {
+    ObjInfo i;
+    if (!SehObjInfo(o, &i) || !i.hasHp) continue;
+    bots2::ObjView v;
+    v.npcType = i.player ? -1 : SehNpcType(o);
+    const int t = v.npcType;
+    const bool structure = t == kNpcTower || t == kNpcTypeGuardian || t == 14 || t == 15;  // Binding, Guardian, Core, Locus
+    const bool bots2c = t == 8 || t == 12 || t == 16;  // the parasite, a well worker, a ward
+    if (!i.player && !(t >= 0 && t <= 3) && t != 6 && t != 7 && !structure && !bots2c) continue;
+    if (t == 8) v.attackable = i.hp > 0.f && SehAttackable(o);
+    v.id = i.id;
+    v.team = i.team;
+    std::memcpy(v.pos, i.pos, sizeof v.pos);
+    v.hp = i.hp;
+    v.player = i.player;
+    v.maxHp = SehMaxHp(o);
+    if (!(v.maxHp > 0.f)) v.maxHp = i.hp;
+    if (structure) {  // its reach and what it shoots
+      v.target = SehRawTarget(o);
+      AgentInfo ta;
+      if (SehAgentInfo(o, &ta) && ta.aggro > 0.f) v.reach = ta.aggro;
+    }
+    out->push_back(v);
+  }
+}
+
 }  // namespace
 
 bool Install(const Options& options) {
@@ -6067,6 +6133,13 @@ void Tick(void* sim, float dt) {
     }
     BotTowerFrame(nowMs);  // BOTTOWER: the measurement
   }
+  // BOTS2 (bots2.h): the frame's objects for the census and, with [host] bot_ai=v2, the second brain's thinks (its
+  // requests and follow-leaf writes come before the trees' tick below, as BotBrainStep's do)
+  if (bots2::Due(nowMs) && !GameOver(sim)) {
+    std::vector<bots2::ObjView> views;
+    ReadBots2Views(objs, &views);
+    bots2::Frame(sim, views, nowMs);
+  }
   for (void* o : objs) {
     std::uint32_t id = 0;
     if (!SehLiveId(o, &id)) continue;  // marked for delete during this loop
@@ -6085,7 +6158,7 @@ void Tick(void* sim, float dt) {
     if (brain) {
       if (st.isBot < 0) st.isBot = SehIsBot(o) ? 1 : 0;
       if (st.isBot) {
-        if (g_opt.botBrain) BotBrainStep(sim, o, st, nowMs);
+        if (g_opt.botBrain && !bots2::DrivesBot(id)) BotBrainStep(sim, o, st, nowMs);  // BOTS2: v2 drives its teams
       } else {
         BrainStep(sim, o, st, nowMs);
       }
@@ -6127,6 +6200,7 @@ void OnDamaged(void* victim, void* attacker, unsigned descLo, unsigned descHi, b
   if (!g_installed || !g_opt.blackboard || !g_blackboardOk || !victim || !attacker || victim == attacker) return;
   ObjInfo v, at;
   if (!SehObjInfo(victim, &v) || !SehObjInfo(attacker, &at) || v.team == at.team) return;
+  bots2::OnDamage(v.id, at.id, at.player, dealt);  // BOTS2: the census (both brains), the second brain's "hit by"
   if (g_opt.botReflex && at.player && g_sim) {  // KILLFINISH: a shaper's damage rate, and who killed a shaper
     const unsigned long long now = NowMs(g_sim);
     g_tracks[at.id].dealt.Note(dealt, v.player, static_cast<long long>(now));
@@ -6593,7 +6667,7 @@ bool FormatLostStats(char* buf, std::size_t size) {
 }
 
 bool FormatNullPosStats(char* buf, std::size_t size) {
-  if (!g_bot.thinks && !g_nullpos.total) return false;
+  if (!g_bot.thinks && !g_nullpos.total && !bots2::Drives()) return false;  // BOTS2: also while v2 drives the bots
   gms::agents::FormatNullPosStats(buf, size, g_nullpos, g_opt.botNullPosStrict);
   return true;
 }
@@ -6691,5 +6765,172 @@ bool FormatTowerStats(char* buf, std::size_t size) {
                 byRule.empty() ? "" : " (", byRule.c_str(), byRule.empty() ? "" : ")");
   return true;
 }
+
+// ---- BOTS2: the second brain's engine glue (agents.h bot2io) ------------------------------------------------------------
+namespace bot2io {
+
+namespace {
+bool InPursueLeaf(std::uint32_t self) {
+  const auto it = g_agents.find(self);
+  return it != g_agents.end() && it->second.leaf == kLeafPursue;
+}
+const char* NounOf(std::uint32_t self, void* o) {
+  const auto it = g_agents.find(self);
+  if (it != g_agents.end() && it->second.noun && it->second.noun[0] != '?') return it->second.noun;
+  return o ? SehNounName(o) : "?";
+}
+}  // namespace
+
+int Request(std::uint32_t self, std::uint32_t guid, int slot, std::uint32_t target, const float* pos, int rank,
+            const char* where) {
+  void* o = SehFind(self);
+  if (!o) return -0x7FFF;
+  return BotRequest(NounOf(self, o), where, gms::agents::NullPosUse::kGoal, guid, slot, self, target, pos, rank);
+}
+
+int RequestRecall(std::uint32_t self) {
+  static const float kNone[3] = {};
+  return SehBotRequest(kAbilityReturnToBase, -1, self, 0, kNone, 1);
+}
+
+void FollowPoint(std::uint32_t self, const float* p, bool restart) {
+  void* o = SehFind(self);
+  if (!o) return;
+  if (gms::agents::IsNullPos(p)) {  // NULLPOS: never a walk to (0, 0)
+    NoteBotNullPos(self, NounOf(self, o), gms::agents::NullPosWhere::kPointPursuit, "BOTS2 move", "a move to (0, 0)");
+    return;
+  }
+  if (SehRawTarget(o)) SehSetTarget(o, 0);
+  SehSetTargetPosition(o, p);
+  SehSetTreeFlag(o, 8, true);
+  if (restart && InPursueLeaf(self)) SehResetDefaultBehavior(o);
+  // MATCHREC: the walk is no request, so it is recorded here as the bot's "move" command (its attacks, casts and
+  // recalls go through SehBotRequest)
+  matchrec::OnBotRequest(self, "BOTS2 follow point", kAbilityBotMoveToTarget, -1, 0, p, 1);
+}
+
+void FollowTarget(std::uint32_t self, std::uint32_t target) {
+  void* o = SehFind(self);
+  void* t = target ? SehFind(target) : nullptr;
+  if (!o || !t) return;
+  ObjInfo ti;
+  // the point: the target's spot, so a follow that outlives its object walks there, never to (0, 0)
+  if (SehObjInfo(t, &ti) && !gms::agents::IsNullPos(ti.pos)) SehSetTargetPosition(o, ti.pos);
+  const bool changed = SehRawTarget(o) != target;
+  if (changed) SehSetTarget(o, target);
+  SehSetTreeFlag(o, 8, true);
+  if (changed && InPursueLeaf(self)) SehResetDefaultBehavior(o);
+}
+
+void FollowStop(std::uint32_t self) {
+  void* o = SehFind(self);
+  if (!o) return;
+  SehSetTreeFlag(o, 8, false);
+  if (SehRawTarget(o)) SehSetTarget(o, 0);
+  // the point stays (the leaf needs flag 8, so it is never read); a running follow is ended
+  if (InPursueLeaf(self)) SehResetDefaultBehavior(o);
+}
+
+bool Held(std::uint32_t self, const char** name, bool* uninterruptible) {
+  void* o = SehFind(self);
+  if (!o) return false;
+  unsigned id = 0;
+  const char* n = nullptr;
+  if (!SehHeldAbility(o, &id, &n)) return false;
+  if (name) *name = n ? n : "?";
+  const char* u = nullptr;
+  if (uninterruptible) *uninterruptible = SehHeldByUninterruptible(o, &u);
+  return true;
+}
+
+bool Visible(std::uint32_t viewer, std::uint32_t target) {
+  void* v = SehFind(viewer);
+  void* t = SehFind(target);
+  return v && t && SehVisible(v, t);
+}
+
+bool PlayerData(std::uint32_t self, float* gold, float* totalGold, float* xp, int* level, int ranks[7]) {
+  void* o = SehFind(self);
+  BotPlayerView pv;
+  if (!o || !g_sim || !SehBotPlayer(g_sim, o, &pv)) return false;
+  for (int s = 0; s < 7; ++s) ranks[s] = pv.ranks[s];
+  *level = SehPlayerLevel(pv.player);
+  __try {
+    *gold = Field<float>(pv.player, player::kAvailableGold);
+    *totalGold = Field<float>(pv.player, player::kTotalGold);
+    *xp = Field<float>(pv.player, player::kXp);
+  } __except (SehNote(GetExceptionInformation(), "BOTS2 player data")) {
+    return false;
+  }
+  return true;
+}
+
+const char* Noun(std::uint32_t self) { return NounOf(self, SehFind(self)); }
+
+bool Alive(std::uint32_t target) { return target && gms::agents::LiveTarget(target, ReadRequestObject(target)); }
+
+bool StartPoint(std::uint32_t self, float* out) {
+  void* o = SehFind(self);
+  ObjInfo i;
+  return o && SehObjInfo(o, &i) && BotStartPoint(i, out);
+}
+
+namespace {
+bool SehInventory(void* player, InvSlot out[11]) {
+  __try {
+    for (unsigned s = 0; s < player::kItemSlots && s < 11; ++s) {
+      const char* slot = static_cast<const char*>(player) + player::kItems + s * player::kItemSize;
+      void* item = *reinterpret_cast<void* const*>(slot);
+      out[s] = InvSlot();
+      if (!item) continue;
+      const char* n = Field<const char*>(item, asset::kName);
+      out[s].name = n ? n : "";
+      out[s].id = Field<std::uint32_t>(item, asset::kId);
+      out[s].count = static_cast<int>(*reinterpret_cast<const std::uint32_t*>(slot + player::kItemCount));
+    }
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "BOTS2 inventory")) {
+    return false;
+  }
+}
+std::uint32_t SehItemId(void* item) {
+  __try {
+    return item ? Field<std::uint32_t>(item, asset::kId) : 0;
+  } __except (SehNote(GetExceptionInformation(), "BOTS2 item id")) {
+    return 0;
+  }
+}
+}  // namespace
+
+bool Inventory(std::uint32_t self, InvSlot out[11]) {
+  void* o = SehFind(self);
+  BotPlayerView pv;
+  if (!o || !g_sim || !SehBotPlayer(g_sim, o, &pv)) return false;
+  return SehInventory(pv.player, out);
+}
+
+int Creeps(std::uint32_t self) {
+  void* o = SehFind(self);
+  BotPlayerView pv;
+  if (!o || !g_sim || !SehBotPlayer(g_sim, o, &pv)) return -1;
+  __try {
+    return static_cast<int>(Field<unsigned>(pv.player, player::kCreeps));
+  } __except (SehNote(GetExceptionInformation(), "BOTS2 creeps")) {
+    return -1;
+  }
+}
+
+int UseItem(std::uint32_t self, int invSlot, std::uint32_t* item) {
+  if (item) *item = 0;
+  void* o = SehFind(self);
+  BotPlayerView pv;
+  if (invSlot < 0 || invSlot >= static_cast<int>(player::kItemSlots) || !o || !g_sim || !SehBotPlayer(g_sim, o, &pv) ||
+      !pv.items[invSlot])
+    return -1;
+  if (item) *item = SehItemId(pv.items[invSlot]);
+  return SehBotUseItem(pv.player, pv.items[invSlot], static_cast<unsigned>(invSlot));
+}
+
+}  // namespace bot2io
 
 }  // namespace agents

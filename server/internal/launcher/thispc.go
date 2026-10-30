@@ -106,6 +106,14 @@ type thisPC struct {
 
 // newThisPC prepares This PC for a setup folder and puts it into the list (bm); check changes no file (Start-Client
 // --check). Its findZip is set by the caller (nil: the archive isn't found).
+// mapsDir is the release's maps folder, beside its host\ folder (MapsDir); "" without a host folder.
+func (p *thisPC) mapsDir() string {
+	if p.hostDir == "" {
+		return ""
+	}
+	return MapsDir(filepath.Dir(p.hostDir))
+}
+
 func newThisPC(o IO, l setup.Layout, tunnelIP, hostDir string, serverIni Config, bm *Bookmarks, check, localTrust bool) *thisPC {
 	p := &thisPC{out: o.Out, live: o.Live, l: l, address: ThisPCAddress(tunnelIP), gwPort: tunnel.DefaultPort, hostDir: hostDir,
 		serverIni: serverIni, bm: bm, run: dgserver.Run, pct: -1, check: check, localTrust: localTrust}
@@ -369,7 +377,7 @@ func (p *thisPC) start(done chan struct{}) {
 		return
 	}
 	s := &setup.Setup{Layout: p.l, Out: p.out, Live: p.live, FindZip: p.findZip, Manifest: manifest, Progress: p.progress,
-		HostFiles: hostcopy.Files{FS: os.DirFS(p.hostDir), DLL: "dgsim.dll", Lua: "lua"}}
+		HostFiles: hostcopy.Files{FS: os.DirFS(p.hostDir), DLL: "dgsim.dll", Lua: "lua"}, Maps: p.mapsDir()}
 	err = s.Server(setup.ServerOptions{Address: p.certsAddr, NoClient: true})
 	release()
 	if err != nil {
@@ -457,10 +465,15 @@ func (p *thisPC) flags() []string {
 	if err != nil {
 		own, _ = LoginFlags(Config{})
 	}
-	own = append(own, OnlineCountFlags(ini)...) // the folder's players-online count settings, as Start-Server's
-	own = append(own, ChatRoomsFlags(ini)...)   // and its chat rooms
-	own = append(own, HalloweenFlags(ini)...)   // and its Halloween decoration
-	own = append(own, MapFlags(ini)...)         // and its maps
+	own = append(own, OnlineCountFlags(ini)...)  // the folder's players-online count settings, as Start-Server's
+	own = append(own, ChatRoomsFlags(ini)...)    // and its chat rooms
+	own = append(own, MatchHistoryFlags(ini)...) // and its match history names
+	own = append(own, HalloweenFlags(ini)...)    // and its Halloween decoration
+	own = append(own, MatchRecordFlags(ini)...)  // and its match recorder
+	own = append(own, MapFlags(ini)...)          // and its maps
+	if dir := p.mapsDir(); dir != "" {
+		own = append(own, MapsFlags(filepath.Dir(dir))...) // the maps folder beside the programs
+	}
 	f := ServerFlags(p.l, p.certsAddr, shaperSelect, append(own, SplitFlags(ini["server_flags"])...))
 	if p.localTrust { // no passwords: the server binds only ThisPCAddress, a loopback address (dgserver checks it)
 		f = append(f, "--local-trust")

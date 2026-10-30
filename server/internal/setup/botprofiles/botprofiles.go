@@ -12,11 +12,11 @@
 // the package depot, where every game\Data\*.snap is mounted alphabetically and the last archive with a path wins. So
 // the archive holds the copy's own catalog with one entry appended per profile (a copy of the base asset's entry with
 // the new name) and each profile's .bin (the base file with its role changed). The game's data can't ship, so the
-// archive is made at setup time from the copy's own AssetData.snap. Every client and match-host copy gets it.
+// archive is made at setup time from the copy's own AssetData.snap. Every client and match-host copy gets it. Its
+// catalog is the copy's only added one: it also lists every installed map's assets (catalog.go).
 package botprofiles
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"strings"
@@ -88,126 +88,6 @@ var Profiles = []Profile{
 	{Name: "PC_Otter_Hunter", Base: "PC_Otter", Role: RoleHunter, AI: "PC_Artificer",
 		Skills: []uint32{3, 5, 4, 3, 3, 6, 3, 5, 3, 6, 4, 4, 4, 4, 6, 5, 5, 5},
 		Spells: []string{"Spell_Vanquish.Item", "Spell_Blitz.Item", "Spell_Wither.Item"}},
-}
-
-type entry struct {
-	fixed        []byte
-	name, source string
-	tags         []string
-}
-
-func cstr(d []byte, pos int) (string, int, error) {
-	end := bytes.IndexByte(d[pos:], 0)
-	if end < 0 {
-		return "", 0, fmt.Errorf("botprofiles: catalog: unterminated string at %#x", pos)
-	}
-	return string(d[pos : pos+end]), pos + end + 1, nil
-}
-
-// parseCatalog walks the catalog as the client does (the entry block, then each entry's name, source and tags in
-// member order) and requires the walk to end on the last byte.
-func parseCatalog(d []byte) ([]entry, error) {
-	le := binary.LittleEndian
-	if len(d) < 8 {
-		return nil, fmt.Errorf("botprofiles: catalog: too short")
-	}
-	ptr, count := le.Uint32(d), int(le.Uint32(d[4:]))
-	if ptr == 0 || count == 0 {
-		return nil, fmt.Errorf("botprofiles: catalog: no entries")
-	}
-	pos := 8 + count*entrySize
-	if count > len(d)/entrySize || pos > len(d) {
-		return nil, fmt.Errorf("botprofiles: catalog: the entry block exceeds the file")
-	}
-	out := make([]entry, count)
-	var err error
-	for i := range out {
-		e := &out[i]
-		e.fixed = d[8+i*entrySize : 8+(i+1)*entrySize]
-		if le.Uint32(e.fixed) != 0 {
-			if e.name, pos, err = cstr(d, pos); err != nil {
-				return nil, err
-			}
-		}
-		if le.Uint32(e.fixed[0x1C:]) != 0 {
-			if e.source, pos, err = cstr(d, pos); err != nil {
-				return nil, err
-			}
-		}
-		if n := int(le.Uint32(e.fixed[0x28:])); n > 0 {
-			if n > (len(d)-pos)/4 {
-				return nil, fmt.Errorf("botprofiles: catalog: entry %d's tags exceed the file", i)
-			}
-			ptrs := d[pos : pos+4*n]
-			pos += 4 * n
-			for k := 0; k < n; k++ {
-				if le.Uint32(ptrs[4*k:]) != 0 {
-					var t string
-					if t, pos, err = cstr(d, pos); err != nil {
-						return nil, err
-					}
-					e.tags = append(e.tags, t)
-				}
-			}
-		}
-	}
-	if pos != len(d) {
-		return nil, fmt.Errorf("botprofiles: catalog: the walk ends at %#x, the file at %#x", pos, len(d))
-	}
-	return out, nil
-}
-
-// BuildCatalog is the catalog with one entry appended per addition {new name, base name} (full asset names, e.g.
-// "PC_Warden_Predator.BotClass"): the base entry's fixed bytes and source, the new name.
-func BuildCatalog(d []byte, additions [][2]string) ([]byte, error) {
-	entries, err := parseCatalog(d)
-	if err != nil {
-		return nil, err
-	}
-	le := binary.LittleEndian
-	count := len(entries)
-	byName := map[string]entry{}
-	for _, e := range entries {
-		if e.name != "" {
-			byName[strings.ToLower(e.name)] = e
-		}
-	}
-	head := append([]byte(nil), d[:8+count*entrySize]...)
-	var tail []byte
-	for _, a := range additions {
-		name, base := a[0], a[1]
-		if _, ok := byName[strings.ToLower(name)]; ok {
-			return nil, fmt.Errorf("botprofiles: catalog: %s is already listed", name)
-		}
-		e, ok := byName[strings.ToLower(base)]
-		if !ok {
-			return nil, fmt.Errorf("botprofiles: catalog: %s is not listed", base)
-		}
-		if crc := le.Uint32(e.fixed[0x14:]); crc != BotClassTypeCRC {
-			return nil, fmt.Errorf("botprofiles: catalog: %s has typeCrc %#08x, not BotClass's %#08x", base, crc, BotClassTypeCRC)
-		}
-		if e.source == "" {
-			return nil, fmt.Errorf("botprofiles: catalog: %s has no source file", base)
-		}
-		if len(e.tags) > 0 || le.Uint32(e.fixed[0x28:]) != 0 {
-			return nil, fmt.Errorf("botprofiles: catalog: %s has tags, which this writer does not copy", base)
-		}
-		head = append(head, e.fixed...)
-		tail = append(append(append(append(tail, name...), 0), e.source...), 0)
-		byName[strings.ToLower(name)] = entry{fixed: e.fixed, name: name, source: e.source}
-	}
-	le.PutUint32(head[4:], uint32(count+len(additions)))
-	out := append(append(head, d[8+count*entrySize:]...), tail...)
-	check, err := parseCatalog(out)
-	if err != nil {
-		return nil, err
-	}
-	for i, a := range additions {
-		if check[count+i].name != a[0] {
-			return nil, fmt.Errorf("botprofiles: catalog: the new entries do not read back")
-		}
-	}
-	return out, nil
 }
 
 // BuildBotClass is the base BotClass file with its role field set to role.
@@ -376,8 +256,10 @@ func BuildBorrowed(base, donor []byte, role uint32, skills []uint32, spells []st
 	return res, nil
 }
 
-// Build is the archive's bytes, made from a copy's AssetData.snap (the whole file).
-func Build(assetData []byte) ([]byte, error) {
+// Build is the archive's bytes, made from a copy's AssetData.snap (the whole file). Its catalog lists the bot profiles
+// and then the entries of every source in maps (the installed maps' assets, whose files their own archives hold),
+// sorted by SortSources; without maps it is the bot profiles' archive alone.
+func Build(assetData []byte, maps ...CatalogSource) ([]byte, error) {
 	a, err := snap.Parse(assetData)
 	if err != nil {
 		return nil, err
@@ -397,11 +279,12 @@ func Build(assetData []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	var adds [][2]string
-	for _, p := range Profiles {
-		adds = append(adds, [2]string{p.Name + ".BotClass", p.Base + ".BotClass"})
+	for _, m := range maps {
+		if m.Name == ProfilesSource {
+			return nil, fmt.Errorf("botprofiles: a map source can't be named %q", ProfilesSource)
+		}
 	}
-	cat, err = BuildCatalog(cat, adds)
+	cat, err = MergeCatalog(cat, SortSources(append([]CatalogSource{ProfileEntries()}, maps...)))
 	if err != nil {
 		return nil, err
 	}

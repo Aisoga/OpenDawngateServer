@@ -35,7 +35,9 @@
                       a kick: each field clicked, emptied (End, then 40 backspaces) and typed, then LOGIN clicked; the
                       name may hold a server tag (alex#b, the server picker; since SP3 also + for an add, alex#+host)
     '<t>:wheel=<delta>[x<n>]' n posted WM_MOUSEWHEELs (default 1) of <delta> (120 = one notch away from the user,
-                      -120 towards) at the window's centre, 250 ms apart: the in-game camera's zoom
+                      -120 towards) at the window's centre, 250 ms apart: the in-game camera's zoom; with
+                      '@<fx>,<fy>' (COLLITEMS4) at that point of the client area, after a posted mouse move there
+                      (a list under the point scrolls, e.g. the Collection's menu)
     '<t>:dbl<fx>,<fy>' (ROOMS2) a left double-click: down, up, WM_LBUTTONDBLCLK, up, posted within 200 ms (the
                       Social panel's Rooms tab joins a room on a double-click)
     '<t>:shot'        screenshot only
@@ -46,12 +48,16 @@
                       foreground stays the user's (a focused shot gives the game the right to take the foreground
                       later). A picture that comes back only as a screen copy is deleted (it would show
                       the user's windows)
+    '<t>:pburst=<n>[x<ms>]' (ABILVFX-WALLS) <n> placed screenshots p<t>_0.png ... <ms> apart (default 500) in one
+                      placement, for effects shorter than the monitor's 2 s step; the step waits for the burst
     '<t>:lockfg=<s>'  (SP4, with -Background) hold the foreground lock (LockSetForegroundWindow) for <s> wall seconds,
                       e.g. from PRACTICE DAWNGATE's click over the match load, when the game takes the foreground even
                       while the user types; the user's own click or Alt still switches windows
     '<t>:front' / '<t>:back' (G3) bring the game window in front (on-screen and the foreground, as a focused
                       screenshot does) and keep it there until 'back' gives the foreground back, e.g. around an in-game
                       chat line (key=13, text=..., key=13); the user allowed test sessions to take the focus (2026-10-08)
+    '<t>:close'       (COLLITEMS8) post WM_CLOSE, the window's close button: the game's own exit path (its quit
+                      dialog first), which the session's end (WM_CLOSE, then a kill after 15 s) never completes
   separated by ';', e.g. '24:key=27;28:0.4984,0.0833'. t must be even (the watch loop steps by 2 s);
   several actions at the same t run in order. A screenshot a<t>.png is taken before the first action
   of each t. Fractions are measured on the screenshots (they show the whole client area).
@@ -266,12 +272,23 @@ function HoverAt($h, $fx, $fy) {
     Start-Sleep -Milliseconds 1000
     return "($x,$y)"
 }
-function WheelAt($h, [int]$delta, [int]$n) {
+function WheelAt($h, [int]$delta, [int]$n, $fx = -1, $fy = -1) {
     # posted WM_MOUSEWHEELs (no real mouse): wParam's high word the delta, lParam the point in screen coordinates
-    # (the window's centre where it is now)
+    # (the window's centre where it is now, or the client point fx, fy after a posted mouse move there; the client
+    # area's screen origin taken as the window's less its borders, equal at the sides and the bottom)
     $r = New-Object W+RECT
     [void][W]::GetWindowRect($h, [ref]$r)
     $x = [int](($r.L + $r.R) / 2); $y = [int](($r.T + $r.B) / 2)
+    if ($fx -ge 0) {
+        $c = New-Object W+RECT
+        [void][W]::GetClientRect($h, [ref]$c)
+        $cw = $c.R - $c.L; $ch = $c.B - $c.T
+        $bx = [int](($r.R - $r.L - $cw) / 2); $by = [int]($r.B - $r.T - $ch - $bx)
+        $px = [int]($cw * $fx); $py = [int]($ch * $fy)
+        [void][W]::PostMessage($h, 0x0200, [IntPtr]0, [IntPtr](($py -shl 16) -bor ($px -band 0xFFFF)))   # WM_MOUSEMOVE
+        Start-Sleep -Milliseconds 150
+        $x = $r.L + $bx + $px; $y = $r.T + $by + $py
+    }
     $wp = [IntPtr]([int](($delta -band 0xFFFF) -shl 16))
     for ($i = 0; $i -lt $n; $i++) {
         [void][W]::PostMessage($h, 0x020A, $wp, [IntPtr](($y -shl 16) -bor ($x -band 0xFFFF)))   # WM_MOUSEWHEEL
@@ -305,7 +322,7 @@ if ($Actions) {
         if ($a -notmatch '^(\d+):(.+)$') { throw "bad -Actions item '$a'" }
         $at = [int]$Matches[1]; $what = $Matches[2].Trim()
         if ($at % 2) { throw "-Actions time $at must be even" }
-        if ($what -notmatch '^(([rh]|dbl)?\d*\.?\d+,\d*\.?\d+|d\d*\.?\d+,\d*\.?\d+,\d*\.?\d+,\d*\.?\d+|key=\d+(\+\d+)?|keydown=\d+|keyup=\d+|wheel=-?\d+(x\d+)?|text=[A-Za-z0-9_@./#+~-]+|login=[A-Za-z0-9_@.#+-]+\|[^|]+|shot|fshot|pshot|lockfg=\d+|front|back)$') { throw "bad -Actions item '$($a -replace '\|.*$', '|...')'" }
+        if ($what -notmatch '^(([rh]|dbl)?\d*\.?\d+,\d*\.?\d+|d\d*\.?\d+,\d*\.?\d+,\d*\.?\d+,\d*\.?\d+|key=\d+(\+\d+)?|keydown=\d+|keyup=\d+|wheel=-?\d+(x\d+)?(@\d*\.?\d+,\d*\.?\d+)?|text=[A-Za-z0-9_@./#+~-]+|login=[A-Za-z0-9_@.#+-]+\|[^|]+|shot|fshot|pshot|pburst=\d+(x\d+)?|lockfg=\d+|front|back|close)$') { throw "bad -Actions item '$($a -replace '\|.*$', '|...')'" }
         if (-not $ActionsAt.ContainsKey($at)) { $ActionsAt[$at] = @() }
         $ActionsAt[$at] += $what
     }
@@ -322,6 +339,14 @@ function DoActions($p, $at) {
             $saved = $script:FocusShots; $script:FocusShots = $true; Shot $p "f$at"; $script:FocusShots = $saved; continue
         }
         if ($what -eq 'pshot') { PlacedShot $p "p$at"; continue }
+        if ($what -eq 'close') {
+            # COLLITEMS8: the window's close button as the player clicks it (WM_CLOSE posted, nothing else); the game
+            # asks first (its quit dialog), so a click on the dialog's button follows in a later action
+            [void][W]::PostMessage($h, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
+            Log "action t=${at}: WM_CLOSE posted"
+            continue
+        }
+        if ($what -match '^pburst=(\d+)(?:x(\d+))?$') { PlacedBurst $p "p$at" ([int]$Matches[1]) $(if ($Matches[2]) { [int]$Matches[2] } else { 500 }); continue }
         if ($what -match '^lockfg=(\d+)$') { $script:LockUntil = (Get-Date).AddSeconds([int]$Matches[1]); GuardForeground $p; continue }
         if ($what -eq 'front') {
             # G3: the window in front (on-screen, the foreground) until 'back', e.g. while a chat line is typed: a
@@ -341,9 +366,12 @@ function DoActions($p, $at) {
         # G3b: a key held across screenshots (the in-game scoreboard shows while Tab is down): keydown=<vk> ... keyup=<vk>
         if ($what -match '^keydown=(\d+)$') { [void][W]::PostMessage($h, 0x0100, [IntPtr][int]$Matches[1], [IntPtr]1); Log "action t=${at}: key $($Matches[1]) down"; continue }
         if ($what -match '^keyup=(\d+)$') { [void][W]::PostMessage($h, 0x0101, [IntPtr][int]$Matches[1], [IntPtr]0xC0000001); Log "action t=${at}: key $($Matches[1]) up"; continue }
-        if ($what -match '^wheel=(-?\d+)(x(\d+))?$') {
+        if ($what -match '^wheel=(-?\d+)(x(\d+))?(@(\d*\.?\d+),(\d*\.?\d+))?$') {
             $n = if ($Matches[3]) { [int]$Matches[3] } else { 1 }
-            Log "action t=${at}: wheel $($Matches[1]) x$n at $(WheelAt $h ([int]$Matches[1]) $n)"; continue
+            $ic = [Globalization.CultureInfo]::InvariantCulture
+            $wfx = if ($Matches[4]) { [double]::Parse($Matches[5], $ic) } else { -1 }
+            $wfy = if ($Matches[4]) { [double]::Parse($Matches[6], $ic) } else { -1 }
+            Log "action t=${at}: wheel $($Matches[1]) x$n at $(WheelAt $h ([int]$Matches[1]) $n $wfx $wfy)"; continue
         }
         if ($what -match '^login=([^|]+)\|(.+)$') { RefillLogin $h $Matches[1] $Matches[2] $at; continue }
         if ($what -match '^text=(.+)$') { PostActivate $h; TypeText $h $Matches[1]; Log "action t=${at}: typed $($Matches[1].Length) chars$(if (-not $NoTypeActivate) { ' (after a posted activation)' })"; continue }
@@ -522,6 +550,28 @@ function PlacedShot($p, $name) {
     $back = [WindowShot]::Restore($h, $moved, [IntPtr]::Zero)
     if ($how -eq 'screen' -and -not $fg) { Remove-Item $file -Force -ErrorAction SilentlyContinue; $how = 'screen copy deleted (it would show other windows)' }
     Log "screenshot ${name}: ${w}x${hgt} ($how) $placed$(if ($moved) { ",on-screen$([WindowShot]::LastPlaced)" }) foreground=$(if ($fg) { 'GAME' } else { 'not the game' }) back=$back -> $file"
+}
+function PlacedBurst($p, $name, $n, $gapMs) {
+    # ABILVFX-WALLS: the action pburst=<n>[x<ms>]: like pshot, but <n> pictures <ms> apart (default 500) in one
+    # placement, <name>_<k>.png; the monitor's step waits for the burst, so later actions come that much later
+    $p.Refresh()
+    $h = $p.MainWindowHandle
+    if ($h -eq [IntPtr]::Zero) { Log "screenshot ${name}: no main window"; return }
+    $moved = $false
+    $placed = [WindowShot]::Place($h, $script:HomeX, $script:HomeY, [ref]$moved)
+    Start-Sleep -Milliseconds $ShotFocusMs
+    $t0 = Get-Date
+    for ($k = 0; $k -lt $n; $k++) {
+        if ($k) { $wait = $k * $gapMs - ((Get-Date) - $t0).TotalMilliseconds; if ($wait -gt 0) { Start-Sleep -Milliseconds ([int]$wait) } }
+        $fg = [WindowShot]::IsForeground($h)
+        $file = Join-Path $OutDir "${name}_$k.png"
+        $w = 0; $hgt = 0
+        try { $how = [WindowShot]::Save($h, $file, 1280, [ref]$w, [ref]$hgt) } catch { $how = "failed: $($_.Exception.Message)" }
+        if ($how -eq 'screen' -and -not $fg) { Remove-Item $file -Force -ErrorAction SilentlyContinue; $how = 'screen copy deleted (it would show other windows)' }
+        Log "screenshot ${name}_${k}: ${w}x${hgt} ($how) burst +$([int]((Get-Date) - $t0).TotalMilliseconds) ms foreground=$(if ($fg) { 'GAME' } else { 'not the game' }) -> $file"
+    }
+    $back = [WindowShot]::Restore($h, $moved, [IntPtr]::Zero)
+    Log "screenshot ${name}: burst of $n, $placed$(if ($moved) { ",on-screen$([WindowShot]::LastPlaced)" }) back=$back"
 }
 function Shot($p, $name) {
     $p.Refresh()

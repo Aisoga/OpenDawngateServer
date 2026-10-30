@@ -49,7 +49,7 @@ func TestExamplesRoundTrip(t *testing.T) {
 	}
 	for _, typ := range []string{THello, TCreateGame, TGameReady, TAddPlayer, TDisconnectPlayer, TReportGMSUpdate,
 		TPlayerFinish, TFinishGame, TReportGMSError, TLogoutGMS, TRemovePlayer, TAbortGame, TPlayerRewards,
-		TPlayerKarma, TUpdateRoster, TStartGame} {
+		TPlayerKarma, TUpdateRoster, TStartGame, TSeatStats, TMatchTimeline} {
 		if !seen[typ] {
 			t.Errorf("no example for %s", typ)
 		}
@@ -133,6 +133,21 @@ func TestEncodeValues(t *testing.T) {
 			WinAltPoints: 9, Karma: &Karma{Points: 30, Team: 1, Enemy: 2}}},
 			`{"t":"playerRewards","user":2000000002,"rewards":{"lootBag":1325899411,"destiny":24,"cc":0,"items":[],"ftue":false,` +
 				`"baseRoll":218,"winPoints":0,"winAltPoints":9,"firstWinPoints":0,"karma":{"points":30,"party":0,"team":1,"enemy":2}}}`},
+		// M18: a seat's statistics (a human with sources: "slot" only for an ability; a bot without stats or sources)
+		// and the match's timeline (a match under a minute has no samples: every list left out)
+		{SeatStats{Index: 3, User: 2000000046, Team: 1, Noun: 274088913, Role: 2,
+			Stats:   map[string]int64{"timeDeadMs": 41000, "damageDealt": 18234},
+			Sources: []StatSource{{Kind: "ability", Slot: slot(0), Damage: 5210}, {Kind: "item", ID: 279208847, Damage: 812, Heal: 3}}},
+			`{"t":"seatStats","index":3,"user":2000000046,"bot":false,"team":1,"noun":274088913,"role":2,` +
+				`"stats":{"damageDealt":18234,"timeDeadMs":41000},"sources":[{"kind":"ability","slot":0,"id":0,"damage":5210,"heal":0},` +
+				`{"kind":"item","id":279208847,"damage":812,"heal":3}]}`},
+		{SeatStats{Index: 9, Bot: true, Team: 2}, `{"t":"seatStats","index":9,"user":0,"bot":true,"team":2,"noun":0,"role":0}`},
+		{MatchTimeline{StepSec: 60, Sec: []int64{60}, Seats: []TimelineSeat{{Index: 0, Gold: []int64{740}, XP: []int64{310},
+			Level: []int64{2}, CS: []int64{6}}}, Teams: []TimelineTeam{{Team: 1, Gold: []int64{3700}, Kills: []int64{0}}},
+			Events: []TimelineEvent{{Ms: 5000, Kind: "kill", A: -1, B: 7}}},
+			`{"t":"matchTimeline","stepSec":60,"sec":[60],"seats":[{"index":0,"gold":[740],"xp":[310],"level":[2],"cs":[6]}],` +
+				`"teams":[{"team":1,"gold":[3700],"kills":[0]}],"events":[{"ms":5000,"kind":"kill","a":-1,"b":7}]}`},
+		{MatchTimeline{StepSec: 60}, `{"t":"matchTimeline","stepSec":60}`},
 		// H2: agent messages (Go only; docs/HOST_CONTROL.md *Remote host machines (H2)* has the same lines)
 		{AgentHello{Name: "hostA", Nonce: "00112233445566778899aabbccddeeff", Build: "dgserver"},
 			`{"t":"agentHello","name":"hostA","nonce":"00112233445566778899aabbccddeeff","build":"dgserver"}`},
@@ -327,4 +342,41 @@ func TestResolveExe(t *testing.T) {
 			t.Errorf("%s: %s %v", in, got, err)
 		}
 	}
+}
+
+// slot is a StatSource.Slot.
+func slot(n int) *int { return &n }
+
+// M18: the largest matchTimeline the contract allows fits a control line: 180 samples (three hours) of ten seats and two
+// teams with the largest values a match reaches (gold and XP six digits, level two, CS four; a team's gold six digits,
+// its kills three) and 300 events of the longest kind.
+func TestTimelineFitsALine(t *testing.T) {
+	tl := MatchTimeline{StepSec: 60}
+	n := func(v int64) []int64 {
+		out := make([]int64, 180)
+		for i := range out {
+			out[i] = v
+		}
+		return out
+	}
+	for i := range 180 {
+		tl.Sec = append(tl.Sec, int64(60*(i+1)))
+	}
+	for i := range 10 {
+		tl.Seats = append(tl.Seats, TimelineSeat{Index: i, Gold: n(999999), XP: n(999999), Level: n(18), CS: n(9999)})
+	}
+	for team := 1; team <= 2; team++ {
+		tl.Teams = append(tl.Teams, TimelineTeam{Team: team, Gold: n(999999), Kills: n(999)})
+	}
+	for range 300 {
+		tl.Events = append(tl.Events, TimelineEvent{Ms: 10799999, Kind: "structure", A: 2, B: 16})
+	}
+	line, err := Encode(tl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(line) > MaxLine {
+		t.Errorf("the largest matchTimeline is %d bytes, over MaxLine %d", len(line), MaxLine)
+	}
+	t.Logf("the largest matchTimeline: %d bytes", len(line))
 }

@@ -1210,6 +1210,15 @@ test('lane fix-up: Gladiators stay, the siege lane is the opened lane, the base 
   wardAt = { -4, 85 }
   check(condition_Bot_Ward[1](tact) == true, 'a ward spot at the lane is kept')
   check(condition_Bot_Ward[1](glad) == false, 'a Gladiator places no ward: he stays in his lane')
+  -- MAPED4: a spot on a wall of the level's line-of-sight map (nBotHost.WardSpotOpen) is refused
+  local hostBefore = nBotHost
+  nBotHost = setmetatable({ WardSpotOpen = function(x, y) return not (x == 4 and y == -143) end },
+                          { __index = hostBefore or {} })
+  wardAt = { 4, -143 }
+  check(condition_Bot_Ward[1](tact) == false, 'a ward spot in a wall is refused')
+  wardAt = { -4, 85 }
+  check(condition_Bot_Ward[1](tact) == true, 'an open ward spot is kept')
+  nBotHost = hostBefore
   condition_Bot_Ward = nil
   check(condition_Bot_EngageForKill[1](glad) == false, 'a kill next to the parasite is not chased')
   check(condition_Bot_EngageForKill[1](hunter) == false, 'not by the Hunter either')
@@ -1315,6 +1324,123 @@ test('parasite fix-up: the rally points leave the parasite reach', function()
   check(condition_Mission_RallyForParasite.mortalRally.x == condition_Bot_GatherForParasite.mortalRally.x, 'the mission and the gather agree')
   condition_Mission_RallyForParasite, condition_Bot_GatherForParasite, condition_Mission_KillParasite = nil, nil, nil
   condition_Mission_RallyForParasiteContest, condition_Bot_GatherForParasiteContest = nil, nil
+end)
+
+-- ---- MAPED4: the rally points from the level's parasite camp (nBotHost.ParasiteRally) ----------------------------------
+test('parasite rally: the host derives, waits or keeps', function()
+  local B = dgsim_bots
+  local function stub()
+    return { mortalRally = nVector.create(-66, -10, 0), spiritRally = nVector.create(66, 10, 0) }
+  end
+  local names = { 'condition_Mission_RallyForParasite', 'condition_Bot_GatherForParasite',
+                  'condition_Mission_RallyForParasiteContest', 'condition_Bot_GatherForParasiteContest' }
+  local function reset() for _, n in ipairs(names) do _G[n] = stub() end B.fixups.parasiteRally = false end
+  local saved, savedPoint = nBotHost, B.rallyPoint
+  B.rallyPoint = nil
+  -- not ready: nothing written, asked again
+  local ready = false
+  nBotHost = { ParasiteRally = function(team)
+    if not ready then return 1 end
+    if team == 1 then return 2, -46.2, -41.7, 0 end
+    return 2, 39.4, 44.9, 0
+  end }
+  reset()
+  B.ApplyParasiteRally()
+  check(B.fixups.parasiteRally == false and condition_Bot_GatherForParasite.mortalRally.x == -66, 'not ready: kept, asked again')
+  ready = true
+  B.ApplyParasiteRally()
+  check(B.fixups.parasiteRally == true, 'derived: done')
+  for _, n in ipairs(names) do
+    check(_G[n].mortalRally.x == -46.2 and _G[n].mortalRally.y == -41.7, n .. ': team 1 the host point')
+    check(_G[n].spiritRally.x == 39.4 and _G[n].spiritRally.y == 44.9, n .. ': team 2 the host point')
+  end
+  -- keep (SM_Map_v5, no parasite camp): BOTPARA's points stay
+  nBotHost = { ParasiteRally = function() return 0 end }
+  reset()
+  B.ApplyParasiteRally()
+  check(B.fixups.parasiteRally == true and condition_Mission_RallyForParasite.mortalRally.x == -66 and
+        condition_Mission_RallyForParasiteContest.spiritRally.x == 66, 'kept: BOTPARA points')
+  -- a test's own points win, and no host keeps them too
+  nBotHost = { ParasiteRally = function() return 2, 1, 1, 0 end }
+  B.rallyPoint = false
+  reset()
+  B.ApplyParasiteRally()
+  check(B.fixups.parasiteRally == true and condition_Bot_GatherForParasite.mortalRally.x == -66, 'B.rallyPoint wins')
+  B.rallyPoint = nil
+  nBotHost = nil
+  reset()
+  B.ApplyParasiteRally()
+  check(B.fixups.parasiteRally == true and condition_Bot_GatherForParasite.mortalRally.x == -66, 'no host: kept')
+  nBotHost, B.rallyPoint = saved, savedPoint
+  for _, n in ipairs(names) do _G[n] = nil end
+end)
+
+-- ---- MAPED4b: the level's own ward spots (nBotHost.WardSpot) -------------------------------------------------------------
+test('ward spots: the level\'s tables, waited for or kept', function()
+  local B = dgsim_bots
+  local sm = { nVector.create(-88, -85, 0) }
+  local function reset()
+    condition_Bot_Ward = { MortalWards = sm, SpiritWards = sm }
+    B.fixups.wardSpots = false
+  end
+  local saved, savedSpots = nBotHost, B.wardSpots
+  B.wardSpots = nil
+  local spots = { { { -65, -65 }, { -120, 120 } }, { { 65, 65 } } }
+  local ready = false
+  nBotHost = { WardSpot = function(side, k)
+    if not ready then return 1 end
+    local p = spots[side][k]
+    if not p then return 3 end
+    return 2, p[1], p[2]
+  end }
+  -- the condition not loaded yet: waits
+  condition_Bot_Ward = nil
+  B.fixups.wardSpots = false
+  B.ApplyWardSpots()
+  check(B.fixups.wardSpots == false, 'no condition yet: asked again')
+  -- not ready: the data's tables stay, asked again
+  reset()
+  B.ApplyWardSpots()
+  check(B.fixups.wardSpots == false and condition_Bot_Ward.MortalWards == sm, 'not ready: kept, asked again')
+  ready = true
+  B.ApplyWardSpots()
+  check(B.fixups.wardSpots == true, 'the level\'s: done')
+  local m, s = condition_Bot_Ward.MortalWards, condition_Bot_Ward.SpiritWards
+  check(#m == 2 and m[1].x == -65 and m[1].y == -65 and m[2].x == -120 and m[2].y == 120, 'Mortal: the level\'s spots in order')
+  check(#s == 1 and s[1].x == 65 and s[1].y == 65, 'Spirit: the level\'s spot')
+  check(B.stats.wardSpots == 'level 2/1', 'the stat')
+  -- keep (SM_Map_v5, a map without spots): the data's tables stay
+  nBotHost = { WardSpot = function() return 0 end }
+  reset()
+  B.ApplyWardSpots()
+  check(B.fixups.wardSpots == true and condition_Bot_Ward.MortalWards == sm and condition_Bot_Ward.SpiritWards == sm,
+        'kept: the data\'s tables')
+  -- one side without spots keeps its table
+  spots = { { { -65, -65 } }, {} }
+  nBotHost = { WardSpot = function(side, k)
+    local p = spots[side][k]
+    if not p then return 3 end
+    return 2, p[1], p[2]
+  end }
+  reset()
+  B.ApplyWardSpots()
+  check(#condition_Bot_Ward.MortalWards == 1 and condition_Bot_Ward.SpiritWards == sm, 'an empty side keeps its table')
+  -- a test's own tables win; false keeps the data's; no host keeps them too
+  B.wardSpots = { mortal = { nVector.create(-1, -2, 0) }, spirit = { nVector.create(1, 2, 0) } }
+  reset()
+  B.ApplyWardSpots()
+  check(condition_Bot_Ward.MortalWards[1].x == -1 and condition_Bot_Ward.SpiritWards[1].y == 2, 'B.wardSpots wins')
+  B.wardSpots = false
+  reset()
+  B.ApplyWardSpots()
+  check(B.fixups.wardSpots == true and condition_Bot_Ward.MortalWards == sm, 'B.wardSpots false: the data\'s')
+  B.wardSpots = nil
+  nBotHost = nil
+  reset()
+  B.ApplyWardSpots()
+  check(B.fixups.wardSpots == true and condition_Bot_Ward.MortalWards == sm, 'no host: kept')
+  nBotHost, B.wardSpots = saved, savedSpots
+  condition_Bot_Ward = nil
 end)
 
 -- ---- BOTTEAM: the team's call ------------------------------------------------------------------------------------------

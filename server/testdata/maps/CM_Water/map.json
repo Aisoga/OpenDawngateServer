@@ -1,0 +1,47 @@
+{
+  "format": 1,
+  "name": "CM_Water",
+  "display": "Water Test",
+  "tag": "water",
+  "prefix": "[Water] ",
+  "size": 440,
+  "symmetry": "point",
+  "environment": "SM_Map_v5",
+  "tuning": "SM_Map_v5",
+  "lanes": [
+    {"id": 1, "width": 24, "knots": [[-170, -145], [-170, -100], [-174, -30], [-174, 30], [-165, 115],
+      [-115, 165], [-30, 174], [30, 174], [100, 170], [145, 170]]},
+    {"id": 2, "width": 24, "knots": [[-145, -170], [-100, -170], [-30, -174], [30, -174], [115, -165],
+      [165, -115], [174, -30], [174, 30], [170, 100], [170, 145]]}
+  ],
+  "base": {
+    "locus": [-196, -196],
+    "guardian": [-142, -142],
+    "shop": [-204, -204],
+    "spawns": [[-188.9, -183.9], [-183.3, -189.8], [-178.7, -186.6], [-179.7, -180.2], [-186.3, -178.7]],
+    "cores": "auto",
+    "bindings": "auto"
+  },
+  "wells": [{"pos": [-60, -130]}],
+  "camps": [],
+  "terrain": {
+    "default": "wall",
+    "shapes": [
+      {"type": "open", "lane": 1},
+      {"type": "open", "lane": 2},
+      {"type": "open", "circle": [-150, -150], "r": 60},
+      {"type": "open", "circle": [-192, -192], "r": 20},
+      {"type": "open", "circle": [-60, -130], "r": 26},
+      {"type": "open", "path": [[-60, -130], [-60, -172]], "width": 14},
+      {"type": "open", "path": [[-172, -60], [-124, -60]], "width": 12},
+      {"type": "open", "circle": [-118, -60], "r": 16},
+      {"type": "open", "path": [[-60, -110], [-36, -36]], "width": 12},
+      {"type": "open", "circle": [-36, -36], "r": 12},
+      {"type": "open", "path": [[-107.88, -57.98], [-77.88, -6.02]], "width": 10},
+      {"type": "chasm", "circle": [0, 0], "r": 40, "water": {"z": -1.5, "mask": "circle", "look": "chasm"}},
+      {"type": "chasm", "polygon": [[-97.79, 5.48], [-127.79, -46.48], [-112.21, -55.48], [-82.21, -3.52]],
+        "water": true}
+    ]
+  },
+  "ground": {"style": "tiled"}
+}

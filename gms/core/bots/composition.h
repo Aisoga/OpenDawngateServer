@@ -486,6 +486,81 @@ inline std::vector<std::string> CatalogCandidates() {
   return out;
 }
 
+// BOTS2c (the head-to-head rule, 2026-10-29): [host] bot_mirror gives every team the same five seats, Gladiator,
+// Tactician, Gladiator, Tactician, Hunter (GTGTH; no Predator), with the same BotClass per seat on both sides, so a
+// brain against brain match has no lineup difference (the composed draw gave the teams different Hunters, Tacticians and
+// sometimes a Predator). Seat order and lanes as the default setup: top Gladiator, top Tactician, bottom Gladiator,
+// bottom Tactician, Hunter (bottom until the camps). The default lineup: the classic brain's shipped AIs of each role,
+// the High Huntress and the Creature as the Gladiators (top, bottom), the Guardian and the Artist as the Tacticians, the
+// Artificer (Petrus) as the Hunter [assumed: the lineup classic plays best with is untested].
+inline std::vector<std::string> MirrorDefault() {
+  return {"PC_HighHuntress", "PC_Guardian", "PC_Creature", "PC_Artist", "PC_Artificer"};
+}
+inline const int* MirrorRoles() {
+  static const int k[5] = {kRoleGladiator, kRoleTactician, kRoleGladiator, kRoleTactician, kRoleHunter};
+  return k;
+}
+
+// [host] bot_mirror: "", "0" or "off" = no mirror (empty result); "1", "on" or "default" = MirrorDefault(); else a comma
+// list of up to five classes in seat order (GTGTH), each a class or profile name or a shaper's noun (any case:
+// "highhuntress", "PC_Guardian"); an entry that is empty, unknown, missing from `available` or a shaper already in the
+// lineup takes the default's class for its seat, and a seat whose default is missing too stays empty on every team.
+// `why` (optional) collects what was replaced, for the log.
+inline std::vector<ComposedSeat> MirrorLineup(const std::string& text, const std::set<std::string>& available,
+                                              std::string* why = nullptr) {
+  auto lower = [](std::string s) {
+    for (char& c : s) c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+    return s;
+  };
+  std::string all = lower(text);
+  while (!all.empty() && all.front() == ' ') all.erase(all.begin());
+  while (!all.empty() && all.back() == ' ') all.pop_back();
+  if (all.empty() || all == "0" || all == "off" || all == "none") return {};
+  std::vector<std::string> words(5);
+  if (all != "1" && all != "on" && all != "default") {
+    size_t pos = 0;
+    for (size_t i = 0; i < 5 && pos <= all.size(); ++i) {
+      size_t comma = all.find(',', pos);
+      if (comma == std::string::npos) comma = all.size();
+      std::string w = all.substr(pos, comma - pos);
+      while (!w.empty() && w.front() == ' ') w.erase(w.begin());
+      while (!w.empty() && w.back() == ' ') w.pop_back();
+      words[i] = w;
+      pos = comma + 1;
+    }
+  }
+  const std::vector<std::string> def = MirrorDefault();
+  const int* roles = MirrorRoles();
+  const int lanes[5] = {kLaneTop, kLaneTop, kLaneBottom, kLaneBottom, kLaneBottom};
+  std::vector<ComposedSeat> out(5);
+  std::set<std::string> used;
+  auto note = [why](const std::string& s) {
+    if (why) *why += (why->empty() ? "" : "; ") + s;
+  };
+  for (size_t i = 0; i < 5; ++i) {
+    std::string cls;
+    if (!words[i].empty()) {
+      for (const std::string& c : available)
+        if (lower(c) == words[i] || lower(c) == "pc_" + words[i]) cls = c;
+      if (cls.empty()) note("seat " + std::to_string(i + 1) + " '" + words[i] + "' not available: " + def[i]);
+    }
+    if (!cls.empty() && used.count(BaseClass(cls))) {
+      note("seat " + std::to_string(i + 1) + " " + cls + " twice: " + def[i]);
+      cls.clear();
+    }
+    if (cls.empty()) cls = def[i];
+    if (!available.count(cls) || used.count(BaseClass(cls))) {
+      note("seat " + std::to_string(i + 1) + " " + cls + " missing: empty");
+      cls.clear();
+    }
+    out[i].role = roles[i];
+    out[i].lane = lanes[i];
+    out[i].botClass = cls;
+    if (!cls.empty()) used.insert(BaseClass(cls));
+  }
+  return out;
+}
+
 // MIKELLABOT: a team's first Gladiator seat takes `gladiatorClass` (a [host] bot_gladiators pin; "" or a class the copy
 // lacks: unchanged). A team seat that already holds the same shaper gets the replaced class instead (one shaper per
 // team). True when the pin changed a seat.

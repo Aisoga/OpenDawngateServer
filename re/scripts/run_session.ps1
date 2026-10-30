@@ -113,6 +113,11 @@
   signal; without a console (redirected input) only the finally block's cleanup covers an interrupted run. The capture
   is stopped once the server is down (its autostop is an 8-hour safety net, like dgserver's --seconds). -NoCapture
   (only with -Play) starts no capture and runs no egress check; every test session is captured.
+  -StopFile <file> (only with -Play): when the file appears, the session ends as on Ctrl+C (for a program that started
+  the session; the summary's 'play' line says 'ended by the stop file').
+  -MapsDir <dir>: the maps folder dgserver gets as --maps (default: this checkout's maps\ when it holds a package,
+  else the main checkout's maps\ when this is a worktree, since no package is in git: MAPCLEAN),
+  e.g. a scratch folder of edited packages.
   One session at a time per lane: every session writes its lane's lock (re\logs\session.lock for lane a) with pid,
   process start, name, mode and lane, and removes it at the end; a session refuses to start (exit 2) while the lock names
   a live process, so a test session never stops a running play session's processes as leftovers, and vice versa.
@@ -243,7 +248,9 @@ param(
     [string]$Actions3,
     [string]$ShotTimes3,
     [switch]$Tunnel,
-    [string]$TunnelClientArgs = ''
+    [string]$TunnelClientArgs = '',
+    [string]$StopFile,
+    [string]$MapsDir
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'gms_stale.ps1')  # G5: Get-GmsBuildStale, the gms\ build check
@@ -333,6 +340,8 @@ if ($Play) {
     if (-not $GmsHost) { Write-Host '-Play needs -GmsHost (play.ps1 passes client\run_854_server)' -ForegroundColor Red; exit 2 }
     if (-not $PSBoundParameters.ContainsKey('Seconds')) { $Seconds = 0 }
 } elseif ($NoCapture) { Write-Host '-NoCapture is for -Play only: every test session is captured and egress-checked' -ForegroundColor Red; exit 2 }
+if ($StopFile -and -not $Play) { Write-Host '-StopFile is for -Play only' -ForegroundColor Red; exit 2 }
+if ($MapsDir -and -not (Test-Path (Join-Path $MapsDir '*\map.json'))) { Write-Host "-MapsDir $MapsDir holds no map package (a folder with map.json)" -ForegroundColor Red; exit 2 }
 if ($Seconds -lt 0 -or ($Seconds -eq 0 -and -not $Play)) { Write-Host '-Seconds must be > 0 (0 = no time limit is for -Play only)' -ForegroundColor Red; exit 2 }
 # B12: the keep-alive key against the client's AFK kick. Automatic (-1): on in test sessions long enough for the kick
 # (5 minutes in a game, so -Seconds > 300), off otherwise and in play mode, where the player gives input.
@@ -402,6 +411,32 @@ function In-Session([string]$file) { Join-Path $SessionDir $file }
 
 $Ports = @(42127, 10041, 17502, 18080, 9988)  # the A1 set, until the freshly built server names its ports
 $GmsHostPath = $null; $GmsHostKind = $null  # -GmsHost (C1b): the resolved host and 'dawngate', 'script' or 'file'
+function Get-MapsFlags {
+    # MAPED2b: dgserver's --maps for this checkout's maps folder (setup_lane.py compiles its packages into the lane's
+    # copies), when it holds a package; every dgserver call that takes -ServerArgs gets it. -MapsDir names
+    # another folder. MAPCLEAN: no package is in git, so from a worktree whose maps\ holds none the main
+    # checkout's maps\ (setup_lane.py's maps_dir, the same rule)
+    $dir = if ($MapsDir) { $MapsDir } else { Join-Path $RepoRoot 'maps' }
+    if (-not $MapsDir -and -not (Test-Path (Join-Path $dir '*\map.json'))) { $dir = Join-Path $MainRoot 'maps' }
+    if (Test-Path (Join-Path $dir '*\map.json')) { @('--maps', $dir) } else { @() }
+}
+function Get-FolderArchives {
+    # MAPED-GUARD: the archives (zz_<name>.snap) of the maps folder's packages (Get-MapsFlags' folder), from each
+    # package's map.json name
+    $mf = @(Get-MapsFlags)
+    if (-not $mf.Count) { return @() }
+    foreach ($j in @(Get-ChildItem -Path (Join-Path $mf[1] '*\map.json') -ErrorAction SilentlyContinue)) {
+        try { $n = (Get-Content -Raw -LiteralPath $j.FullName | ConvertFrom-Json).name } catch { $n = $null }
+        if ($n) { "zz_$n.snap" }
+    }
+}
+function Get-CopyMaps([string]$copyDir, [string[]]$archives) {
+    # MAPED-GUARD: <archive>:<sha256> of each of the archives the copy's game\Data holds (the tunnel hello's maps)
+    foreach ($a in $archives) {
+        $p = Join-Path $copyDir "game\Data\$a"
+        if (Test-Path -LiteralPath $p -PathType Leaf) { "${a}:$((Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLower())" }
+    }
+}
 function Get-ServerPorts {
     # with -GmsHost --print-ports also lists the control port (10040)
     # (A6: --bind marks the call as this lane's for the other lane's leftover rule)
@@ -409,6 +444,8 @@ function Get-ServerPorts {
     # (with -ServerArgs too, after the script's own flags as at the start, so e.g. --web-port's website port is
     # checked free before, waited for at the start and in the cleanup line; flags --print-ports can't take: without them)
     $printArgs = @('--print-ports') + $(if ($GmsHostPath) { @('--gms-dir', $GmsHostPath) } else { @() }) + $(if ($Lane -ne 'a' -or $LanAddr -or $Tunnel) { @('--bind', $ServerAddr) } else { @() }) + $(if ($Tunnel) { @('--tunnel', 'on') } else { @() })
+    # MAPED2b: the maps folder as at the start, so -ServerArgs' --map/--custom-maps may name its maps here too
+    $printArgs += @(Get-MapsFlags)
     $ports = @()
     if ($ServerArgs) {
         $withExtra = $printArgs + @($ServerArgs -split '\s+' | Where-Object { $_ })
@@ -1190,6 +1227,28 @@ try {
     $trustFlag = "--trust-maps=$(if ($mapTrust.Count) { $mapTrust -join ',' } else { 'none' })"
     $stubArgs += $trustFlag
     Say "map check: $trustFlag (the session's copies with zz_MM_Map_v3.snap)"
+    # MAPED-GUARD: the maps folder's maps by version. Each session copy's archives of the folder's packages with their
+    # SHA-256 go to dgserver as --client-maps (what Start-Client names in its tunnel hello), so a copy whose archive
+    # isn't the host copy's version (another version built into it, or none) is kept out of those maps' games.
+    # -ServerArgs '--client-maps=' overrides it (none named: --trust-maps decides then).
+    $folderArchives = @(Get-FolderArchives)
+    if ($folderArchives.Count) {
+        $clientMapParts = @()
+        foreach ($mc in $mapCopies) {
+            $clientMapParts += "$($mc.Addr)=$((Get-CopyMaps $mc.Dir $folderArchives) -join '+')"
+        }
+        $clientMapsFlag = "--client-maps=$($clientMapParts -join ',')"
+        $stubArgs += $clientMapsFlag
+        Say "map check by version: $clientMapsFlag (the session's copies' archives of the maps folder)"
+    }
+    # MAPED2b: the checkout's maps folder (setup_lane.py compiles its packages into the lane's copies), so --map and
+    # --custom-maps (-ServerArgs) may name its maps (CM_Ring, ~#ring); -MapsDir names another folder. (Not a local
+    # $mapsDir: PowerShell's names ignore case, so it would overwrite the -MapsDir parameter.)
+    $mapsFlags = @(Get-MapsFlags)
+    if ($mapsFlags.Count) {
+        $stubArgs += @('--maps', "`"$($mapsFlags[1])`"")
+        Say "maps folder: --maps $($mapsFlags[1])"
+    }
     if ($ServerArgs) {
         # D8-live test aid: extra dgserver flags (e.g. --owned starter)
         $stubArgs += @($ServerArgs -split '\s+' | Where-Object { $_ })
@@ -1211,6 +1270,11 @@ try {
         $tunCerts = Join-Path $MainRoot $LaneCfg.Certs
         $tunArgs = @('--tunnel-client', "${TunnelServerAddr}:$GatewayPort", '--tunnel-address', $LaneAddr, '--certs', "`"$tunCerts`"",
             '--tunnel-pin-cert', "`"$(Join-Path $tunCerts 'gateway_cert.pem')`"", '--log', "`"$(In-Session 'tunnel')`"", '--seconds', $stubSeconds)
+        # MAPED-GUARD: the hello names the first copy's installed maps (MM_Map_v3's and the maps folder's), as
+        # Start-Client names its copy's; both clients share this one tunnel, so they count as that copy.
+        # -TunnelClientArgs '--tunnel-maps <another copy>' names another copy's (the last flag wins)
+        $tunArgs += @('--tunnel-maps', "`"$GameDir`"")
+        if ($mapsFlags.Count) { $tunArgs += @('--maps', "`"$($mapsFlags[1])`"") }
         if ($TunnelClientArgs) {
             $tunArgs += @($TunnelClientArgs -split '\s+' | Where-Object { $_ })
             Say "tunnel client extra flags (-TunnelClientArgs): $TunnelClientArgs"
@@ -1331,6 +1395,11 @@ try {
                     Stop-Process -Id $mon.Id -Force -ErrorAction SilentlyContinue
                     break
                 }
+            } elseif ($StopFile -and -not $playEnd -and (Test-Path $StopFile)) {
+                # the program that started the session asks it to end
+                $playEnd = 'ended by the stop file'
+                Say "stop file $StopFile`: ending the session" 'Yellow'
+                Stop-PlayGame 'stop file'
             } elseif ($Seconds -gt 0 -and -not $playEnd -and ((Get-Date) - $launchTime).TotalSeconds -ge $Seconds) {
                 $playEnd = "ended by the time limit (-Seconds $Seconds)"
                 Stop-PlayGame "time limit ($Seconds s)"
@@ -1576,6 +1645,14 @@ if (Test-Path $simLogFile) {
     $dtLines = @($d | Where-Object { $_ -cmatch 'DEADTARGET: ' })
     if ($dtLines.Count -or $npStats) {
         $sum += "deadtarg : $(if ($dtLines.Count) { "FAIL: $($dtLines.Count) DEADTARGET line(s); first: $("$($dtLines[0])" -replace '^.*DEADTARGET: ', '')" } else { 'pass: 0 DEADTARGET lines' })"
+    }
+    # BOTS2: the second bot brain's never-idle rule (a living bot outside its base without a move, attack or recall);
+    # any line fails a test session; the stats line also carries the census of either brain
+    $b2Idle = @($d | Where-Object { $_ -cmatch 'BOTS2 IDLE: ' })
+    $b2Stats = "$($d | Where-Object { $_ -match '\] stats bots2: ' } | Select-Object -Last 1)" -replace '^.*\] stats bots2: ', ''
+    if ($b2Idle.Count -or $b2Stats) {
+        $b2Short = if ($b2Stats.Length -gt 300) { $b2Stats.Substring(0, 300) + ' ...' } else { $b2Stats }
+        $sum += "bots2    : $(if ($b2Idle.Count) { "FAIL: $($b2Idle.Count) BOTS2 IDLE line(s); first: $("$($b2Idle[0])" -replace '^.*BOTS2 IDLE: ', '')" } else { 'pass: 0 BOTS2 IDLE lines' })$(if ($b2Short) { "; last stats $b2Short" })"
     }
     $sa = "$($d | Where-Object { $_ -match '\] stats abilities: ' } | Select-Object -Last 1)" -replace '^.*\] stats abilities: ', ''
     $sd = "$($d | Where-Object { $_ -match '\] stats damage: ' } | Select-Object -Last 1)" -replace '^.*\] stats damage: ', ''

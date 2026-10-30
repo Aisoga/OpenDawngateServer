@@ -57,4 +57,8 @@ void AtRespawn(void* sim, unsigned index);
 // At the deploy of a bot's creature: modifier_Bot_DefaultLoadout (with bot_loadout).
 void ApplyBotLoadout(void* sim, unsigned index, std::uint32_t creature);
 
+// MSTATS3: the page's modifier GUIDs (SPIDs) ApplyAtDeploy got for player `index` (empty without a page or with
+// [host] perk_modifiers off): the spirit stones' rows of seatStats.sources.
+std::vector<std::uint32_t> PageModifiers(unsigned index);
+
 }  // namespace perks

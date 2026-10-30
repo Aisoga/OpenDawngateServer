@@ -26,57 +26,61 @@ var (
 
 // What patch_client.py's patch_bytes makes from the untouched build-854 exe (SHA-256 of the output, summary, describe),
 // recorded with re/scripts/patch_client.py (patch_bytes on the untouched exe with the same inputs). "local", "q3b"
-// and "a4" are also test_a5.py's SNDBANK_OUTPUT_SHA256, Q3B_OUTPUT_SHA256 and A4_OUTPUT_SHA256.
+// and "a4" are also test_a5.py's MAPTABLE_OUTPUT_SHA256, Q3B_OUTPUT_SHA256 and A4_OUTPUT_SHA256 ("sndbank" its
+// SNDBANK_OUTPUT_SHA256).
 var reference = []struct {
 	name    string
 	mod     []byte
 	o       Options
 	sha256  string
 	summary string
-	desc    string // redirector bind appdata documents raknet_loopback ca_sha256 ca_flag laa preload
+	desc    string // redirector bind appdata documents raknet_loopback ca_sha256 ca_flag laa preload maptable
 }{
-	{"local", modA, Options{}, "a6ca0ae63b8815bf38aeb4575f61a951e4c92f5a159f0c1465f4a47cfe57267e",
-		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14)",
-		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all"},
-	{"local_laa_off", modA, Options{NoLAA: true}, "3952c970b7c0f5406c78bf709cd61ddccea25024dfb28fcb8405ea91f275500f",
-		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); every player's shaper preloaded (player indexes 0-14)",
-		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 off all"},
-	{"local_modb", modB, Options{Profile: ProfileLocal, ServerHost: "127.0.0.1"}, "3379939d8a729b4c454195e2a154ad1c89560a0cf597b68e920cb9b24af7336a",
-		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14)",
-		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 471fb943aa23c511 0 on all"},
-	{"local_localhost", modA, Options{ServerHost: "localhost"}, "7431b6bc72edb5af24d8fb99b8b07cf074036817cd37a4455c49625015727c9e",
-		"redirector host -> localhost; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14)",
-		"localhost 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all"},
-	{"lan", modA, Options{Profile: ProfileLAN, ServerHost: "192.168.1.20"}, "fbcc60f8a404c429325272eec2bf702d81ff12b7919068590db5589c3e58f9d0",
-		"redirector host -> 192.168.1.20; UPnP off (-noupnp forced, discovery refused); sockets as shipped (wildcard binds; loopback patch left out); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14)",
-		"192.168.1.20 as-shipped DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all"},
-	{"lan_bind", modA, Options{Profile: ProfileLAN, ServerHost: "192.168.1.20", ClientBind: "192.168.1.30"}, "ebd289caee5abb86e42e92fd55461541bb587230e5bc01e72424d0c524042bc7",
-		"redirector host -> 192.168.1.20; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 192.168.1.30 (bind cave at 0x011ab100, 6 sites), RakNet's own-socket test to 192.168.1.30; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14)",
-		"192.168.1.20 192.168.1.30 DawngateData Dawngate 192.168.1.30 349d65e9ba1de7b0 0 on all"},
-	{"lan_bind_same", modB, Options{Profile: ProfileLAN, ServerHost: "192.168.20.40", ClientBind: "192.168.20.40"}, "d125107672631d66d6365e2fee3d6b0c1dc082ca0f92fa99b2c5796e2be24c47",
-		"redirector host -> 192.168.20.40; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 192.168.20.40 (bind cave at 0x011ab100, 6 sites), RakNet's own-socket test to 192.168.20.40; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14)",
-		"192.168.20.40 192.168.20.40 DawngateData Dawngate 192.168.20.40 471fb943aa23c511 0 on all"},
-	{"lan_cgnat", modA, Options{Profile: ProfileLAN, ServerHost: "100.64.1.2"}, "cc5cd0ba047b20ace7a47471abac2339459901c5868662409d5776d39edbbea9",
-		"redirector host -> 100.64.1.2; UPnP off (-noupnp forced, discovery refused); sockets as shipped (wildcard binds; loopback patch left out); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14)",
-		"100.64.1.2 as-shipped DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all"},
-	{"lane_b", modA, Options{ServerHost: "127.0.0.2", DataSuffix: "B"}, "a86a9d48730521c5f466a103708c6fddaa8c59a7b8415aaa6efdf56f4ca26f36",
-		`redirector host -> 127.0.0.2; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 127.0.0.2 (bind cave at 0x011ab100, 6 sites), RakNet loopback 127.0.0.2; data folders %APPDATA%\DawngateDataB, Documents\DawngateB; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14)`,
-		"127.0.0.2 127.0.0.2 DawngateDataB DawngateB 127.0.0.2 349d65e9ba1de7b0 0 on all"},
-	{"lane_e", modA, Options{ServerHost: "127.0.0.4", ClientBind: "127.0.4.2", DataSuffix: "E"}, "6e7905c18b970c88208801f977a45a8934a1f59d0136c4c7b46aaad9ec414c8a",
-		`redirector host -> 127.0.0.4; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 127.0.4.2 (bind cave at 0x011ab100, 6 sites), RakNet loopback 127.0.4.2; data folders %APPDATA%\DawngateDataE, Documents\DawngateE; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14)`,
-		"127.0.0.4 127.0.4.2 DawngateDataE DawngateE 127.0.4.2 349d65e9ba1de7b0 0 on all"},
-	{"lan_test_l", modA, Options{Profile: ProfileLAN, ServerHost: "10.0.0.5", ClientBind: "10.0.0.5", DataSuffix: "L"}, "fbde36d91a304e2908281b3c3d66fdf8b06af4136223323f1909ade076b5c7ed",
-		`redirector host -> 10.0.0.5; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 10.0.0.5 (bind cave at 0x011ab100, 6 sites), RakNet's own-socket test to 10.0.0.5; data folders %APPDATA%\DawngateDataL, Documents\DawngateL; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14)`,
-		"10.0.0.5 10.0.0.5 DawngateDataL DawngateL 10.0.0.5 349d65e9ba1de7b0 0 on all"},
-	{"q3b", modA, Options{NoPreload: true}, "237512dc68b4135e220b410d92a6579cd602188079bd093b365871e38d214613",
+	{"local", modA, Options{}, "d81339e8e44cc4a6781c92db73488f20897e24ead406c7622a683dd9768a4543",
+		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140)",
+		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all on"},
+	{"local_laa_off", modA, Options{NoLAA: true}, "e6e15c3bc3040ba7c720c4683f18127b66719ec60c47aa66cf1134b9cdecb223",
+		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140)",
+		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 off all on"},
+	{"local_modb", modB, Options{Profile: ProfileLocal, ServerHost: "127.0.0.1"}, "a74262f233cd6d56abc95850d28e6316e31cc4b9ad75c5e6c0d2da232236fa7f",
+		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140)",
+		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 471fb943aa23c511 0 on all on"},
+	{"local_localhost", modA, Options{ServerHost: "localhost"}, "ed51badc73aa861fb7984c532919fe6cc47d6c66e7ce7a136fd1872b92d1e402",
+		"redirector host -> localhost; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140)",
+		"localhost 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all on"},
+	{"lan", modA, Options{Profile: ProfileLAN, ServerHost: "192.168.1.20"}, "3c66c2e481e2e618fbca99b6de6103dfa2920e43ec26979226d4d4e457df4c0a",
+		"redirector host -> 192.168.1.20; UPnP off (-noupnp forced, discovery refused); sockets as shipped (wildcard binds; loopback patch left out); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140)",
+		"192.168.1.20 as-shipped DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all on"},
+	{"lan_bind", modA, Options{Profile: ProfileLAN, ServerHost: "192.168.1.20", ClientBind: "192.168.1.30"}, "2ad045bf081e5dfc99ea71203a1f543d323a209b849187e27c5eb016a2326b06",
+		"redirector host -> 192.168.1.20; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 192.168.1.30 (bind cave at 0x011ab100, 6 sites), RakNet's own-socket test to 192.168.1.30; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140)",
+		"192.168.1.20 192.168.1.30 DawngateData Dawngate 192.168.1.30 349d65e9ba1de7b0 0 on all on"},
+	{"lan_bind_same", modB, Options{Profile: ProfileLAN, ServerHost: "192.168.20.40", ClientBind: "192.168.20.40"}, "98d526dd740fcabe2eac8fdf275a602cc70eac8cc93b8539e17291d595866ce3",
+		"redirector host -> 192.168.20.40; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 192.168.20.40 (bind cave at 0x011ab100, 6 sites), RakNet's own-socket test to 192.168.20.40; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140)",
+		"192.168.20.40 192.168.20.40 DawngateData Dawngate 192.168.20.40 471fb943aa23c511 0 on all on"},
+	{"lan_cgnat", modA, Options{Profile: ProfileLAN, ServerHost: "100.64.1.2"}, "48477afcf672880e43ad18bec167345f0397897fd582ec8bc4638efda7a36478",
+		"redirector host -> 100.64.1.2; UPnP off (-noupnp forced, discovery refused); sockets as shipped (wildcard binds; loopback patch left out); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140)",
+		"100.64.1.2 as-shipped DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all on"},
+	{"lane_b", modA, Options{ServerHost: "127.0.0.2", DataSuffix: "B"}, "7c70bcadf10645b642967fb0cefe32810502225505c641e9b5e7f6b5d28cda25",
+		`redirector host -> 127.0.0.2; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 127.0.0.2 (bind cave at 0x011ab100, 6 sites), RakNet loopback 127.0.0.2; data folders %APPDATA%\DawngateDataB, Documents\DawngateB; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140)`,
+		"127.0.0.2 127.0.0.2 DawngateDataB DawngateB 127.0.0.2 349d65e9ba1de7b0 0 on all on"},
+	{"lane_e", modA, Options{ServerHost: "127.0.0.4", ClientBind: "127.0.4.2", DataSuffix: "E"}, "9d542d16f5a3e6b21520900511667ca101fea1bbe33a559c10d543d65b53966f",
+		`redirector host -> 127.0.0.4; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 127.0.4.2 (bind cave at 0x011ab100, 6 sites), RakNet loopback 127.0.4.2; data folders %APPDATA%\DawngateDataE, Documents\DawngateE; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140)`,
+		"127.0.0.4 127.0.4.2 DawngateDataE DawngateE 127.0.4.2 349d65e9ba1de7b0 0 on all on"},
+	{"lan_test_l", modA, Options{Profile: ProfileLAN, ServerHost: "10.0.0.5", ClientBind: "10.0.0.5", DataSuffix: "L"}, "48396d68c3b3b399d04ef07314f31e4f7cec955b2be60db7b73bcdb55eefce84",
+		`redirector host -> 10.0.0.5; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 10.0.0.5 (bind cave at 0x011ab100, 6 sites), RakNet's own-socket test to 10.0.0.5; data folders %APPDATA%\DawngateDataL, Documents\DawngateL; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140)`,
+		"10.0.0.5 10.0.0.5 DawngateDataL DawngateL 10.0.0.5 349d65e9ba1de7b0 0 on all on"},
+	{"q3b", modA, Options{NoPreload: true, NoMapTable: true}, "237512dc68b4135e220b410d92a6579cd602188079bd093b365871e38d214613",
 		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space)",
-		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on as-shipped"},
-	{"a4", modA, Options{NoLAA: true, NoPreload: true}, "a15dd7ad91326f3114a054fd72ef20248a833a253e0c86a7d63fc13a0ecef027",
+		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on as-shipped as-shipped"},
+	{"a4", modA, Options{NoLAA: true, NoPreload: true, NoMapTable: true}, "a15dd7ad91326f3114a054fd72ef20248a833a253e0c86a7d63fc13a0ecef027",
 		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites)",
-		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 off as-shipped"},
+		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 off as-shipped as-shipped"},
+	{"sndbank", modA, Options{NoMapTable: true}, "a6ca0ae63b8815bf38aeb4575f61a951e4c92f5a159f0c1465f4a47cfe57267e",
+		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14)",
+		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all as-shipped"},
 }
 
-const origDescription = "gosredirector.ea.com as-shipped DawngateData Dawngate 127.0.0.1 e96f07ca645d1661 1 off as-shipped"
+const origDescription = "gosredirector.ea.com as-shipped DawngateData Dawngate 127.0.0.1 e96f07ca645d1661 1 off as-shipped as-shipped"
 
 func descLine(d Description) string {
 	var parts []string
@@ -188,7 +192,7 @@ func diffRanges(a, b []byte) [][2]int {
 func TestSyntheticLocal(t *testing.T) {
 	orig := syntheticExe()
 	d, err := Describe(orig)
-	if err != nil || descLine(d) != "gosredirector.ea.com as-shipped DawngateData Dawngate 127.0.0.1 "+sha256Hex(orig[synthOffset(otg3Modulus) : synthOffset(otg3Modulus)+128])[:16]+" 1 off as-shipped" {
+	if err != nil || descLine(d) != "gosredirector.ea.com as-shipped DawngateData Dawngate 127.0.0.1 "+sha256Hex(orig[synthOffset(otg3Modulus) : synthOffset(otg3Modulus)+128])[:16]+" 1 off as-shipped as-shipped" {
 		t.Fatalf("untouched synthetic: %q %v", descLine(d), err)
 	}
 	got, summary, err := Patch(orig, modB, Options{})
@@ -199,16 +203,19 @@ func TestSyntheticLocal(t *testing.T) {
 		t.Errorf("summary %q", summary)
 	}
 	d, _ = Describe(got)
-	if want := "127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 471fb943aa23c511 0 on all"; descLine(d) != want {
+	if want := "127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 471fb943aa23c511 0 on all on"; descLine(d) != want {
 		t.Errorf("describe %q, want %q", descLine(d), want)
 	}
 	// the changes, all where patch_client.py makes them
 	vsizeAt := 0x80 + 4 + 20 + 0xE0 + 8
+	tlsVSizeAt := vsizeAt + 3*40 // the fourth section, .tls
 	allowed := [][2]int{
 		{synthOffset(otg3Modulus), 128}, {synthOffset(otg3Flags), 4}, {synthOffset(redirectorHost), 21},
 		{synthOffset(noupnpJnz), 1}, {synthOffset(upnpDisc), len(upnpDiscNew)}, {0x80 + 4 + 18, 2}, {vsizeAt, 4},
 		{synthOffset(loopbackCave), loopbackCaveLen}, {synthOffset(bindThunk), 6},
 		{synthOffset(preloadCount), len(preloadCountNew)},
+		{synthOffset(mapMiss), len(mapMissNew)}, {synthOffset(mapCave), len(mapCaveCode())}, {synthOffset(mapKey), mapKeyLen},
+		{tlsVSizeAt, 4},
 	}
 	for _, va := range bindCalls {
 		allowed = append(allowed, [2]int{synthOffset(va), 6})
@@ -224,6 +231,21 @@ func TestSyntheticLocal(t *testing.T) {
 	}
 	if v := binary.LittleEndian.Uint32(got[vsizeAt:]); v != 0xDAA200 {
 		t.Errorf(".text VirtualSize %#x", v)
+	}
+	if v := binary.LittleEndian.Uint32(got[tlsVSizeAt:]); v != 0x200 {
+		t.Errorf(".tls VirtualSize %#x", v)
+	}
+	// the not-found exit jumps to the map-name cave, which ends in a jmp back to the found path's key check, and the
+	// key's text is the lobby table's
+	if o := synthOffset(mapMiss); got[o] != 0xE9 || mapMiss+5+binary.LittleEndian.Uint32(got[o+1:]) != mapCave {
+		t.Errorf("map-name exit: % x", got[o:o+5])
+	}
+	c := got[synthOffset(mapCave) : synthOffset(mapCave)+len(mapCaveCode())]
+	if mapCave+uint32(len(c))+binary.LittleEndian.Uint32(c[len(c)-4:]) != mapResume {
+		t.Errorf("map-name cave: % x", c)
+	}
+	if k := got[synthOffset(mapKey) : synthOffset(mapKey)+62]; utf16le(k[:60]) != "^FE_CustomGameLobby!0x00000000" {
+		t.Errorf("map key %q", utf16le(k))
 	}
 	// every bind site calls (the thunk jumps) to the cave, after a nop
 	for _, va := range append(bindCalls, bindThunk) {
@@ -244,8 +266,11 @@ func TestSyntheticLANAndLanes(t *testing.T) {
 	if !strings.Contains(summary, "sockets as shipped") {
 		t.Errorf("summary %q", summary)
 	}
-	if !bytes.Equal(lan[synthOffset(loopbackCave):synthOffset(loopbackCave)+0x100], make([]byte, 0x100)) {
+	if !bytes.Equal(lan[synthOffset(loopbackCave):synthOffset(mapCave)], make([]byte, mapCave-loopbackCave)) {
 		t.Error("lan without a client bind wrote the cave")
+	}
+	if d, _ := Describe(lan); d["bind"] != "as-shipped" || d["maptable"] != "on" {
+		t.Errorf("lan: %v", d)
 	}
 	bind, _, err := Patch(orig, modA, Options{Profile: ProfileLAN, ServerHost: "192.168.1.20", ClientBind: "192.168.1.30"})
 	if err != nil {

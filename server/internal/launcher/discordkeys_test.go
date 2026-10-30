@@ -10,6 +10,32 @@ import (
 	"dawngate/server/internal/dgserver"
 )
 
+// Start-Server.ini's match_history_names key: in the template, on, and known, passed as --match-history-names, which
+// dgserver accepts (and refuses a bad value); none from a file without it (dgserver's default, on).
+func TestMatchHistoryNamesKey(t *testing.T) {
+	cfg, _, err := LoadOrCreate(filepath.Join(t.TempDir(), ServerConfigName), ServerConfigText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(serverKeys, "match_history_names") {
+		t.Error("match_history_names isn't a known key")
+	}
+	if got := strings.Join(MatchHistoryFlags(cfg), " "); got != "--match-history-names=on" {
+		t.Errorf("the template's flag: %s", got)
+	}
+	for _, v := range []string{"off", "on"} {
+		if code := dgserver.Run(append(MatchHistoryFlags(Config{"match_history_names": v}), "--print-ports"), dgserver.Hooks{}); code != 0 {
+			t.Errorf("match_history_names = %s: exit %d", v, code)
+		}
+	}
+	if code := dgserver.Run(append(MatchHistoryFlags(Config{"match_history_names": "maybe"}), "--print-ports"), dgserver.Hooks{}); code != 2 {
+		t.Errorf("match_history_names = maybe: exit %d", code)
+	}
+	if f := MatchHistoryFlags(Config{"address": "127.0.0.1"}); len(f) != 0 {
+		t.Errorf("an older file: %v", f)
+	}
+}
+
 // Start-Server.ini's Discord keys: each one in the template and known, each set one dgserver's flag of the same
 // name, the template's defaults accepted by dgserver, an empty key not passed.
 func TestDiscordFlags(t *testing.T) {

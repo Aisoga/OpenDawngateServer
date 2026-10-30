@@ -74,7 +74,14 @@ func Build(gameDir string) (*content.Content, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gamecontent: %w", err)
 	}
-	return content.BuildFrom(Source(set, ts, loc))
+	c, err := content.BuildFrom(Source(set, ts, loc))
+	if err != nil {
+		return nil, err
+	}
+	if err := resolveItems(c, data, loc); err != nil { // the passives' names, the filters' titles (items.go)
+		return nil, err
+	}
+	return c, nil
 }
 
 // JSON is the content file's bytes for a game folder: what dgserver --make-content writes.

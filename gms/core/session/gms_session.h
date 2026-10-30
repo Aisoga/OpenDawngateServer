@@ -277,6 +277,7 @@ class GmsSession final : public ISender {
   check::Guard guard_;
   check::Bounds bounds_;
   bool boundsSet_ = false;
+  unsigned boundsGeneration_ = 0;  // MAPED4: check::LevelDataGeneration() when bounds_ was taken
 
  public:
   // G3b: the game was aborted at the match-found prompt (no connection gets EnterPreGameFlow any more).

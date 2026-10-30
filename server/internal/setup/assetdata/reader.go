@@ -33,6 +33,7 @@ type reader struct {
 	loc    *Locale // nil: Keys stay text
 	pos    int
 	refBad []BadRef
+	exact  bool // floats as float32, unrounded (ParseExact)
 }
 
 // Parse parses one .bin file of type t (assetdata.py's parse_file): the object and the references whose
@@ -51,6 +52,24 @@ func (ts *Types) Parse(t *Type, data []byte, loc *Locale) (*Object, []BadRef, er
 		return nil, nil, parseErr("%d unread byte(s) after the out-of-line data (at %#x)", len(data)-r.pos, r.pos)
 	}
 	return obj, r.refBad, nil
+}
+
+// ParseExact parses a file as Parse does without a Locale, except that floats keep their exact value as
+// float32 rather than being rounded to 7 significant digits for the dump. Write turns its value back into
+// the same bytes, except for the pointer words' values (Write's doc).
+func (ts *Types) ParseExact(t *Type, data []byte) (*Object, error) {
+	r := &reader{d: data, ts: ts, exact: true}
+	if _, err := r.take(t.Size); err != nil {
+		return nil, err
+	}
+	obj, err := r.structAt(t, 0, "")
+	if err != nil {
+		return nil, err
+	}
+	if r.pos != len(data) {
+		return nil, parseErr("%d unread byte(s) after the out-of-line data (at %#x)", len(data)-r.pos, r.pos)
+	}
+	return obj, nil
 }
 
 func (r *reader) need(off, n int) error {
@@ -110,8 +129,12 @@ func round7(v float64) float64 {
 
 func hex8(v uint32) string { return fmt.Sprintf("0x%08x", v) }
 
-func (r *reader) float32At(off int) float64 {
-	return round7(float64(math.Float32frombits(binary.LittleEndian.Uint32(r.d[off:]))))
+func (r *reader) float32At(off int) any {
+	f := math.Float32frombits(binary.LittleEndian.Uint32(r.d[off:]))
+	if r.exact {
+		return f
+	}
+	return round7(float64(f))
 }
 
 // prim reads a built-in value (assetdata.py's prim).
@@ -535,9 +558,8 @@ func partID(s string, ext bool) uint32 {
 	return fnv1(s)
 }
 
-// keyMismatch is "" if a Key's instance/type/group are the ones its text names, else the reason. Text
-// forms: "Table!0x<id>" (Locale string), "Group!Name.ext", "Group!0x<inst>.0x<type>", "path\\name.ext".
-func keyMismatch(text string, inst, typ, grp uint32) string {
+// keyHashes are the instance, type and group a Key's text names (the forms keyMismatch lists).
+func keyHashes(text string) [3]uint32 {
 	g, rest, bang := strings.Cut(text, "!")
 	if !bang {
 		g, rest = "", text
@@ -550,13 +572,20 @@ func keyMismatch(text string, inst, typ, grp uint32) string {
 	} else {
 		name = rest
 	}
-	want := [3]uint32{partID(name, false), 0, 0}
+	h := [3]uint32{partID(name, false), 0, 0}
 	if ext != "" {
-		want[1] = partID(ext, true)
+		h[1] = partID(ext, true)
 	}
 	if g != "" {
-		want[2] = fnv1(g)
+		h[2] = fnv1(g)
 	}
+	return h
+}
+
+// keyMismatch is "" if a Key's instance/type/group are the ones its text names, else the reason. Text
+// forms: "Table!0x<id>" (Locale string), "Group!Name.ext", "Group!0x<inst>.0x<type>", "path\\name.ext".
+func keyMismatch(text string, inst, typ, grp uint32) string {
+	want := keyHashes(text)
 	if want == [3]uint32{inst, typ, grp} {
 		return ""
 	}

@@ -3,6 +3,7 @@ package localepatch
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,14 +36,19 @@ func MadeUp() []byte {
 // The SHA-256s re/scripts/patch_locale.py gives for the same inputs (test_ph2b.py pins the same values).
 const (
 	madeUpSHA        = "97766712cea3cf54c20204922cc472d86ac9d592c40e955f7c1a635e0567f25e"
-	madeUpLaneB      = "22bac3760a4fd4936147491875e75f044f20b1ba076a468918e7d1c98b148856" // --host 127.0.0.2
-	madeUpWebDomain  = "e87a2d5611bb2d08db838ae5795a0bc97fc1f0245281cb8959d0e8749bc24c81" // 192.168.1.20, Play.Example.org:8443
+	madeUpLaneB      = "346751fbfa659f69a74c91a6eebe15e97cc0206a35a276bf358e37b487233a3e" // --host 127.0.0.2
+	madeUpWebDomain  = "e2ca3fa68bb3c50190a98fa8cc33f704793d64350452326e15f6c39bb5f302cf" // 192.168.1.20, Play.Example.org:8443
+	madeUpLobbyAny   = "b5313cd2bf11cafcf66eca7029b62d4dfa10971121ae5170d688d28d560be98e" // 127.0.0.2, LobbyMapAny, testMaps
 	synthLocaleSHA   = "528ce9623b3b1542fa600b1036136a3c39e8e68bb586019fb3a6d3c2f6374832" // synthgame.Locale()
-	synthLocal       = "cb454f8ce19f26dd777cca56bbb0aebb0bf38207f3bcd4cbacaaa7741bc760ae" // the synthetic game, 127.0.0.1
-	game854Local     = "a3db940fc902ec578930ab4f98d1d63ea28023333b68c51b015c4b1aae321bb4" // build 854, --host 127.0.0.1
-	game854LaneB     = "d80e798c989d969aa45a7ab6b83ffa05be0c16feb5601c2b280bae2786cde897" // --host 127.0.0.2
-	game854WebDomain = "ff5d0169de6e8351a536cf5cbee4f20a4d2b3c2242a05b2e8344f26a1f344550" // 203.0.113.7, dawngate.example.org
+	synthLocal       = "476b2381284742ffbb866771e082af47beb87900b1567f35fc15c2cf3d420a7f" // the synthetic game, 127.0.0.1
+	game854Local     = "44bb48de9bd21aefa1886d8ea70e672e27d57c0ad1b3abfa53b6f3e35f690024" // build 854, --host 127.0.0.1
+	game854LaneB     = "0c36b450e08e6c92431236b9312431d3e093dce51c1f7cc6b700903edcb3cbb3" // --host 127.0.0.2
+	game854WebDomain = "ce31788c2878cd41273039ac60765a9561bb51f6bdf70745b30c5dd783f64b97" // 203.0.113.7, dawngate.example.org
 )
+
+// testMaps are a maps folder's packages (test_ph2b.py's MAPS): CM_Ring, and one named like MM_Map_v3 (its line is the
+// first's).
+var testMaps = []Map{{"CM_Ring", "Test Ring"}, {"mm_map_V3", "Not this"}}
 
 func TestBuildMatchesPython(t *testing.T) {
 	in := MadeUp()
@@ -57,6 +63,7 @@ func TestBuildMatchesPython(t *testing.T) {
 	}{
 		{"made-up, lane b", in, Options{Host: "127.0.0.2"}, madeUpLaneB},
 		{"made-up, web domain", in, Options{Host: "192.168.1.20", WebDomain: "Play.Example.org:8443"}, madeUpWebDomain},
+		{"made-up, lane b, a maps folder", in, Options{Host: "127.0.0.2", LobbyMap: LobbyMapAny, Maps: testMaps}, madeUpLobbyAny},
 		{"synthetic game", synthgame.Locale(), Options{Host: "127.0.0.1"}, synthLocal},
 	} {
 		got, err := Build(c.in, c.o)
@@ -113,21 +120,22 @@ func TestBuildGame(t *testing.T) {
 					t.Errorf("entry %d: line %08x %q found %d times", i, id, line, n)
 				}
 			}
-			// the custom lobby's table: the shipped one (no final line end) and the appended map line
+			// the custom lobby's table: the shipped one (no final line end) and the appended map lines (the fallback,
+			// MM_Map_v3's LevelId)
 			if e.Instance == FECustomGameLobby {
 				sp, err := dbpf.Parse(in)
 				if err != nil {
 					t.Fatal(err)
 				}
 				shipped, err := table(sp, FECustomGameLobby)
-				if want := string(shipped) + "\r\n" + Comment + "\r\n0x0f2b57c5 Anshavar Pass\r\n"; err != nil ||
+				if want := string(shipped) + "\r\n" + Comment + "\r\n0x0f2b57c5 Anshavar Pass\r\n0x420de52e Anshavar Pass\r\n"; err != nil ||
 					!strings.HasSuffix(string(shipped), "0x0f2b5801 Please Wait") || string(text) != want {
 					t.Errorf("FE_CustomGameLobby: %q (%v), want the shipped table and the map line", text, err)
 				}
 			}
 		}
-		if len(p.Entries) != 6 {
-			t.Errorf("%d tables, want 6", len(p.Entries))
+		if len(p.Entries) != 7 {
+			t.Errorf("%d tables, want 7", len(p.Entries))
 		}
 	}
 }
@@ -167,5 +175,44 @@ func TestOptions(t *testing.T) {
 		if _, err := Build(MadeUp(), o); err == nil {
 			t.Errorf("%+v accepted", o)
 		}
+	}
+}
+
+// TestLobbyMapFor: the lobby's one map line names the copy's one map besides The Dawngate, none (LobbyMapAny) for
+// several, and stays LobbyLines' own for MM_Map_v3 alone or none.
+func TestLobbyMapFor(t *testing.T) {
+	for _, c := range []struct {
+		in   []string
+		want string
+	}{
+		{nil, ""}, {[]string{"Anshavar Pass"}, ""}, {[]string{"Test Ring"}, "Test Ring"},
+		{[]string{"Anshavar Pass", "Test Ring"}, LobbyMapAny},
+	} {
+		if got := LobbyMapFor(c.in); got != c.want {
+			t.Errorf("LobbyMapFor(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	tabs, err := Tables(Options{Host: "127.0.0.1", LobbyMap: "Test Ring"})
+	if err != nil || len(tabs[FECustomGameLobby]) != 2 || tabs[FECustomGameLobby][LobbyMapLine] != "Test Ring" ||
+		LobbyLines[LobbyMapLine] != "Anshavar Pass" {
+		t.Errorf("%v %v", err, tabs[FECustomGameLobby])
+	}
+}
+
+// TestMapLines: a map's line in FE_CustomGameLobby is its LevelId's (dgserver's ids: MM_Map_v3 1108206894, CM_Ring
+// 4050252090), MM_Map_v3's always, the first of an id kept, never over a line the shipped table has.
+func TestMapLines(t *testing.T) {
+	if a, b, c := LevelID("MM_Map_v3"), LevelID("CM_Ring"), LevelID("SM_Map_v5"); a != 0x420DE52E || b != 0xF169F13A ||
+		c != 0x946D41FE {
+		t.Errorf("LevelIDs %#x %#x %#x", a, b, c)
+	}
+	tabs, err := Tables(Options{Host: "127.0.0.1", LobbyMap: LobbyMapAny, Maps: testMaps})
+	want := map[uint32]string{LobbyMapLine: LobbyMapAny, 0x420DE52E: "Anshavar Pass", 0xF169F13A: "Test Ring"}
+	if err != nil || fmt.Sprint(tabs[FECustomGameLobby]) != fmt.Sprint(want) {
+		t.Errorf("%v %v", err, tabs[FECustomGameLobby])
+	}
+	got := withoutLinesOf([]byte("\xef\xbb\xbf0x420de52e Kick\r\n0x0000000a x"), want)
+	if fmt.Sprint(got) != fmt.Sprint(map[uint32]string{LobbyMapLine: LobbyMapAny, 0xF169F13A: "Test Ring"}) {
+		t.Errorf("withoutLinesOf: %v", got)
 	}
 }

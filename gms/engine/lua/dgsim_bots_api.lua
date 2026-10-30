@@ -1257,6 +1257,8 @@ function B.ApplyFixups()
   if not f.parasite then
     if B.parasiteWanted == false then f.parasite = true else B.ApplyParasiteFixup() end
   end
+  if f.parasite and not f.parasiteRally then B.ApplyParasiteRally() end
+  if not f.wardSpots then B.ApplyWardSpots() end  -- MAPED4b
   -- BOTIDLE fix-up 5: the Hunter's Farm plan leaves MoveToNextCamp only when the bot is within `radius` (5) of the camp's
   -- marker, but ability_Bot_MoveToTarget's MoveToPointExact ends where the camp's creatures (repulsors since D1k) let it,
   -- about 5.4 units out: the bot stood there for the match (in a test run: "gambit 0 at the point ... 5.4 units away" every
@@ -1496,6 +1498,81 @@ local function wrapGather(original)
   end
 end
 
+-- MAPED4: the rally points from the level's parasite camp. BOTPARA's (-66, -10) / (66, 10) are SM_Map_v5's; on a compiled
+-- map they lie anywhere (in a wall on CM_Grove). nBotHost.ParasiteRally(team) answers 0 (keep them: SM_Map_v5, a level
+-- without a parasite camp, [host] bot_parasite_rally 0), 1 (not ready: ask again at the next pass) or 2 and the point,
+-- 62 from the parasite camp toward the team's Guardian on open ground (gms/core/bots/rally.h). The point goes into the
+-- Rally mission's, the gather's and the Contest's fields (the readers are BOTPARA's). B.rallyPoint (a test's own points,
+-- or false: the original's) wins over the host.
+function B.ApplyParasiteRally()
+  local f = B.fixups
+  if f.parasiteRally then return end
+  local fn = hostfn('ParasiteRally')
+  if B.rallyPoint ~= nil or not fn then
+    f.parasiteRally = true
+    return
+  end
+  local pts, states = {}, {}
+  for _, team in ipairs({ 1, 2 }) do
+    local state, x, y = fn(team)
+    if type(state) ~= 'number' or state == 1 then return end
+    states[team] = state
+    if state == 2 and type(x) == 'number' and type(y) == 'number' then pts[team] = vec(x, y, 0) end
+  end
+  for _, n in ipairs({ 'condition_Mission_RallyForParasite', 'condition_Bot_GatherForParasite',
+                       'condition_Mission_RallyForParasiteContest', 'condition_Bot_GatherForParasiteContest' }) do
+    local c = global(n)
+    if type(c) == 'table' then
+      if pts[1] then c.mortalRally = pts[1] end
+      if pts[2] then c.spiritRally = pts[2] end
+    end
+  end
+  B.stats.parasiteRally = (pts[1] or pts[2]) and 'derived' or 'kept'
+  f.parasiteRally = true
+end
+
+-- MAPED4b: the level's own ward spots. condition_Bot_Ward reads its side's table (MortalWards or SpiritWards, SM_Map_v5's
+-- 11 spots each) at every call; a compiled map's spots (map.json "wards", the level's BotWard_ markers) replace them.
+-- nBotHost.WardSpot(side, k) answers 0 (keep the data's: SM_Map_v5, a map without spots, [host] bot_ward_spots 0),
+-- 1 (not ready: ask again at the next pass), 2 and the spot, or 3 (no spot k: the table's end). B.wardSpots (a test's
+-- own tables {mortal = {...}, spirit = {...}}, or false: the data's) wins over the host.
+function B.ApplyWardSpots()
+  local f = B.fixups
+  if f.wardSpots then return end
+  local c = global('condition_Bot_Ward')
+  if type(c) ~= 'table' then return end  -- not loaded yet
+  local fn = hostfn('WardSpot')
+  if B.wardSpots == false or (B.wardSpots == nil and not fn) then
+    B.stats.wardSpots = 'kept'
+    f.wardSpots = true
+    return
+  end
+  local tables = {}
+  if type(B.wardSpots) == 'table' then
+    tables[1], tables[2] = B.wardSpots.mortal or {}, B.wardSpots.spirit or {}
+  else
+    for side = 1, 2 do
+      local t = {}
+      for k = 1, 64 do
+        local state, x, y = fn(side, k)
+        if type(state) ~= 'number' or state == 1 then return end  -- the level isn't read yet
+        if state == 0 then
+          B.stats.wardSpots = 'kept'
+          f.wardSpots = true
+          return
+        end
+        if state ~= 2 or type(x) ~= 'number' or type(y) ~= 'number' then break end
+        t[#t + 1] = vec(x, y, 0)
+      end
+      tables[side] = t
+    end
+  end
+  if #tables[1] > 0 then c.MortalWards = tables[1] end
+  if #tables[2] > 0 then c.SpiritWards = tables[2] end
+  B.stats.wardSpots = string.format('level %d/%d', #tables[1], #tables[2])
+  f.wardSpots = true
+end
+
 function B.ApplyParasiteFixup()
   local f = B.fixups
   if f.parasite then return end
@@ -1534,7 +1611,7 @@ local mainMissionTick = B.MissionTick
 function B.MissionTick(names)
   if not (B.fixups.veryOutnumbered and B.fixups.groupInLane and B.fixups.bailOnKill and B.fixups.parasite and
           B.fixups.campRadius and B.fixups.composition and B.fixups.lane and B.fixups.team and B.fixups.engageFix and
-          B.fixups.joinFix) then
+          B.fixups.joinFix and B.fixups.parasiteRally and B.fixups.wardSpots) then
     B.ApplyFixups()
   end
   local checks, ends, errors = mainMissionTick(names)
@@ -1956,6 +2033,12 @@ function B.ApplyLaneFixup()
       end
       if a and roleOf(bot) ~= ROLE_HUNTER and math.sqrt((x or 0) * (x or 0) + (y or 0) * (y or 0)) < B.wardCenterRadius then
         B.stats.wardCenterRefused = (B.stats.wardCenterRefused or 0) + 1
+        return false
+      end
+      -- MAPED4: the data's spots are SM_Map_v5's; on a compiled map one may lie in a wall (the bot pursued it for good)
+      local open = hostfn('WardSpotOpen')
+      if a and open and type(x) == 'number' and type(y) == 'number' and open(x, y) == false then
+        B.stats.wardWallRefused = (B.stats.wardWallRefused or 0) + 1
         return false
       end
       return a, x, y, z, t, u

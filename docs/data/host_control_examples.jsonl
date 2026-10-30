@@ -64,3 +64,12 @@
 # level flags the host loads its level with and sends in GamePrepareForStart; omitted when 0). Exactly what blaze's
 # TestHalloweenLevelFlags sends for a custom game.
 {"t":"createGame","gameId":1,"level":"SM_Map_v5","mode":"custom","seed":7919,"roster":[{"user":2000000001,"name":"alpha","index":0,"team":1,"noun":"","bot":false}],"descriptors":2,"levelFlags":1}
+# M18 (MHIST1 pinned the Go side; MSTATS1 writes them in C++): at the match's end
+# a seatStats per seat, bots included (user 0), then one matchTimeline, then the playerFinish lines and finishGame.
+# stats' keys are sorted; a bot's carries playerFinish's kills, deaths, assists, creeps, gold and level. sources'
+# "slot" is written for an ability only. Every map and list is left out when empty (a match under a minute: no samples).
+{"t":"seatStats","index":3,"user":2000000046,"bot":false,"team":1,"noun":274088913,"role":2,"stats":{"damageDealt":18234,"damageTaken":9120,"timeDeadMs":41000},"sources":[{"kind":"ability","slot":1,"id":0,"damage":5210,"heal":0},{"kind":"item","id":279208847,"damage":812,"heal":0}]}
+{"t":"seatStats","index":7,"user":0,"bot":true,"team":2,"noun":284823512,"role":1,"stats":{"assists":4,"creeps":88,"damageDealt":10422,"deaths":3,"gold":7420,"kills":2,"level":11},"sources":[{"kind":"ability","slot":0,"id":0,"damage":4100,"heal":0},{"kind":"basic","id":0,"damage":3900,"heal":0}]}
+{"t":"seatStats","index":9,"user":0,"bot":true,"team":2,"noun":284823512,"role":0}
+{"t":"matchTimeline","stepSec":60,"sec":[60,120,180],"seats":[{"index":0,"gold":[740,1310,1920],"xp":[310,780,1290],"level":[2,4,5],"cs":[6,14,22]}],"teams":[{"team":1,"gold":[3700,6550,9600],"kills":[0,1,3]},{"team":2,"gold":[3650,6400,9100],"kills":[1,1,2]}],"events":[{"ms":95210,"kind":"kill","a":3,"b":7},{"ms":412000,"kind":"structure","a":1,"b":0}]}
+{"t":"matchTimeline","stepSec":60}

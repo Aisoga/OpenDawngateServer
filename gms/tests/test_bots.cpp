@@ -383,6 +383,46 @@ GMS_TEST(BotsShoppingPotions) {
   CHECK_EQ(plan.PotionsToBuy(inv, 500.f, 0), 0);
 }
 
+// BOTSHOP-PASS: maped4b_grove1d's team 2 Creature (player 5): in the reach from its deploy (6.4 s) to 75.7 s (its
+// plan's own purchase at 71.8 s), out until a recall brought it home at 936.0 s, DefendCore at 937.0 s, out at 940.5 s;
+// home again 1,028.2-1,029.9 s. The host's visit comes 1 s into each later stay, then every second while it stays.
+GMS_TEST(BotsShopVisitAfterTheFirstStay) {
+  ShopVisit v;
+  auto due = [&v](bool in, unsigned long long ms) { return v.Due(in, ms, 1000, 1000); };
+  CHECK(!due(true, 6400));    // the deploy's stay: the plan's (Idle, then BackToAction at 71.8 s)
+  CHECK(!due(true, 8000));
+  CHECK(!due(true, 72000));
+  CHECK(v.InReach() && v.Since() == 6400);
+  CHECK(!due(false, 75700));  // out
+  CHECK(!v.InReach());
+  CHECK(!due(true, 936000));  // the recall: in again
+  CHECK(!due(true, 936750));
+  CHECK(due(true, 937000));   // 1 s in: the host shops
+  CHECK(!due(true, 937250));
+  CHECK(!due(true, 937750));
+  CHECK(due(true, 938000));   // again a second later
+  CHECK(!due(false, 940500));
+  CHECK(!due(true, 1028200));
+  CHECK(!due(true, 1029000));
+  CHECK(due(true, 1029250));  // 1.05 s in, before it leaves at 1,029.9 s
+  CHECK(!due(false, 1029900));
+  // a short pass through the reach buys nothing
+  CHECK(!due(true, 1100000));
+  CHECK(!due(true, 1100750));
+  CHECK(!due(false, 1100900));
+  // death counts as leaving: a bot that dies before it ever left shops at its next stay
+  ShopVisit w;
+  CHECK(!w.Due(true, 6400, 1000, 1000));
+  CHECK(!w.Due(false, 50000, 1000, 1000));  // dead (or gone)
+  CHECK(!w.Due(true, 60000, 1000, 1000));
+  CHECK(w.Due(true, 61000, 1000, 1000));
+  // a delay of 0 shops at the first check of a later stay
+  ShopVisit z;
+  CHECK(!z.Due(true, 0, 0, 1000));
+  CHECK(!z.Due(false, 10, 0, 1000));
+  CHECK(z.Due(true, 20, 0, 1000));
+}
+
 GMS_TEST(BotsStateForget) {
   BotsState st;
   st.bots.insert(kBot1);
@@ -1139,6 +1179,43 @@ GMS_TEST(BotsCompositionFreeDrawAnyClassAnySeat) {
   bool differ = false;
   for (size_t i = 0; i < a.size() && i < b.size(); ++i) differ = differ || a[i].botClass != b[i].botClass;
   CHECK(differ);
+}
+
+// BOTS2c: [host] bot_mirror, the same GTGTH lineup seat by seat on both teams, whatever the seed (head-to-head tests)
+GMS_TEST(BotsMirrorLineup) {
+  std::set<std::string> avail = AllBotClasses();
+  avail.insert("PC_Survivor_Hunter");
+  CHECK(MirrorLineup("", avail).empty() && MirrorLineup("0", avail).empty() && MirrorLineup(" off ", avail).empty());
+  const std::vector<ComposedSeat> def = MirrorLineup("1", avail);
+  CHECK_EQ(static_cast<int>(def.size()), 5);
+  const char* classes[5] = {"PC_HighHuntress", "PC_Guardian", "PC_Creature", "PC_Artist", "PC_Artificer"};
+  const int roles[5] = {kRoleGladiator, kRoleTactician, kRoleGladiator, kRoleTactician, kRoleHunter};
+  const int lanes[5] = {kLaneTop, kLaneTop, kLaneBottom, kLaneBottom, kLaneBottom};
+  for (int i = 0; i < 5; ++i)
+    CHECK(def[static_cast<size_t>(i)].botClass == classes[i] && def[static_cast<size_t>(i)].role == roles[i] &&
+          def[static_cast<size_t>(i)].lane == lanes[i] && !def[static_cast<size_t>(i)].roleOverride);
+  // a list: names in any case, with or without PC_; a missing or repeated class takes the default's seat
+  std::string why;
+  const std::vector<ComposedSeat> mine = MirrorLineup("creature, TidalQueen,highhuntress,nobody,survivor_hunter", avail, &why);
+  CHECK(mine[0].botClass == "PC_Creature" && mine[1].botClass == "PC_TidalQueen" && mine[2].botClass == "PC_HighHuntress");
+  CHECK(mine[3].botClass == "PC_Artist" && mine[4].botClass == "PC_Survivor_Hunter" && mine[4].role == kRoleHunter);
+  CHECK(why.find("nobody") != std::string::npos);
+  why.clear();
+  const std::vector<ComposedSeat> twice = MirrorLineup("creature,guardian,creature", avail, &why);
+  CHECK(twice[2].botClass.empty() && why.find("twice") != std::string::npos);  // the default Creature is used too
+  // the plan: both teams the same classes, roles and lanes seat by seat, for any seed; nothing drawn
+  for (unsigned seed : {0u, 77u, 3924133995u}) {
+    const std::vector<BotPlayer> plan = PlanBotPlayersComposed({}, 5, {1, 2}, avail, PlanClassNames(), ParseDropOrder(""), 0,
+                                                               seed, DefaultHunters(), {}, {}, true, true, def);
+    CHECK_EQ(static_cast<int>(plan.size()), 10);
+    for (size_t i = 0; i < 5 && i + 5 < plan.size(); ++i) {
+      const BotPlayer& a = plan[i];
+      const BotPlayer& b = plan[i + 5];
+      CHECK(a.team == 1 && b.team == 2 && a.slot == b.slot);
+      CHECK(a.botClass == b.botClass && a.role == b.role && a.lane == b.lane);
+      CHECK(a.botClass == classes[i]);
+    }
+  }
 }
 
 GMS_TEST(BotsCompositionFreeDrawLeavesTheHumansRoles) {

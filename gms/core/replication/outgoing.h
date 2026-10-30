@@ -57,6 +57,11 @@ inline bool RoutedByVision(uint8_t wire) { return wire != 0xB3; }
 // nouns, before the 93 that follows in the same flush); the fog exit sends both after 95 anyway.
 inline bool SkippedInFoggedCreate(uint8_t wire) { return wire == 0x92 || wire == 0xB1; }
 
+// ABILVFX-WALLS ([host] effects_before_complete): whether a create sends its attached effects (92) before 8F. The client
+// makes a draw box (Kensu's R path) only from the slots it holds when 8F creates the model; a 92 after 8F starts
+// effects only. Mode 0: never (D2g-live step 3's order), 1: for an object with a draw box in a slot, 2: always.
+inline bool EffectsBeforeComplete(int mode, bool hasDrawBox) { return mode >= 2 || (mode == 1 && hasDrawBox); }
+
 // Messages and bytes per wire byte, for the host's per-second log line.
 class WireCounts {
  public:

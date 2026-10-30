@@ -347,7 +347,7 @@ func pinOwnServer(o IO, l setup.Layout, bm *Bookmarks, addrs []string, pin tunne
 // startFront runs the front for the game (its log in Dawngate-Data\logs\front-<time>.log) and writes the login
 // screen's server list into the player copy.
 func startFront(o IO, l setup.Layout, bm *Bookmarks, tunnelIP string, tlsCfg *tls.Config, preselect string, pc *thisPC,
-	tracker *presenceTracker, dc discordConfig) (func(), *logging.Log, *Front, error) {
+	tracker *presenceTracker, dc discordConfig, md *MapDownload) (func(), *logging.Log, *Front, error) {
 	var log *logging.Log
 	var f *os.File
 	path := ""
@@ -358,7 +358,8 @@ func startFront(o IO, l setup.Layout, bm *Bookmarks, tunnelIP string, tlsCfg *tl
 		}
 	}
 	front := &Front{Log: log, Layout: l, Bookmarks: bm, TunnelIP: net.ParseIP(tunnelIP), RedirectorTLS: tlsCfg, Default: preselect,
-		ThisPC: pc, Presence: tracker, DiscordJoin: dc.join && tracker != nil, JoinLoopback: dc.hook != ""}
+		ThisPC: pc, Presence: tracker, DiscordJoin: dc.join && tracker != nil, JoinLoopback: dc.hook != "",
+		Maps: folderDialogMaps(o.ExeDir), MapDownload: md}
 	if err := front.Start(); err != nil {
 		if f != nil {
 			f.Close()

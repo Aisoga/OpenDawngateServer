@@ -24,11 +24,14 @@
 //          OnTitanTowerDestroyed) its modifiers with OnAgentDeath (deactivationType bit 4) are ended
 //          (LabsAbilities_EndAbility) and its abilities without finishOnDeath interrupted (LabsAbilities_InterruptAbility
 //          0x00905FA0). The AI definition's deathAbility and Behavior_Death come from the behavior tree (D1b-live).
-//          Q3: a player's item passives are left alone (the instances its cLabsPlayer's item slots hold, mItems[s] +8):
-//          modifier_Item_Basic_FlatHealing (Basic_Hunger) has OnAgentDeath, nothing in the client build activates an
-//          item's passive again except LabsPlayer_OnItemAdded (0x00912B20) at a purchase, and the slot kept the dead
-//          id, so the item lost its passive for the rest of the match and its upgrade asserted (LabsPlayer.cpp 278
-//          "Item slot is holding onto stale passive instance id", q3_run1); death_keep_item_passives=0 ends them.
+//          A player's item passives (the instances its cLabsPlayer's item slots hold, mItems[s] +8) end there too when
+//          their scripts say OnAgentDeath (20 of the 77: Purity's heal, the Legendary auras, ...); nothing in the client
+//          build activates an item's passive again except LabsPlayer_OnItemAdded (0x00912950) at a purchase, and a
+//          slot that kept the dead id lost the passive for the match and asserted at the item's upgrade
+//          (LabsPlayer.cpp 278 "Item slot is holding onto stale passive instance id"). So since ITEMDEATH the
+//          slots' dead ids are cleared while the player is dead and the passives are activated again at the respawn
+//          (itempassives.h; [host] item_passive_respawn, 1). Q3's rule, which kept them running through the death
+//          (an aura and Purity's heal from a dead holder), stays selectable: death_keep_item_passives=1.
 //   - the OnGrantGold stub (0x008FE500, "server only function ... from the client build", 0 gold) is replaced: every
 //     grant runs the creature's modifiers' OnGrantGold (48) {grantGoldAmount, grantGoldTarget, grantGoldKiller} and
 //     returns the threaded amount (the roles' gold hooks);
@@ -78,7 +81,8 @@ struct Options {
   int logLimit = 300;
   bool respawn = true;          // D1g: the death timer and the respawn
   float respawnSeconds = 0.f;   // D1g: 0 = LevelGameplayTuning's formula, > 0 a fixed wait
-  bool keepItemPassives = true;  // Q3: step 5 leaves the passives of a player's items alone (death.cpp)
+  bool keepItemPassives = false;   // Q3's rule (death_keep_item_passives=1): step 5 leaves a player's item passives alone
+  bool itemPassiveRespawn = true;  // ITEMDEATH: the slots' dead ids cleared while dead, the passives renewed at the respawn
   bool respawnFeedback = true;  // D11: PlayerRespawned (the shaper's "respawn" voice line) at the respawn, to the respawned human alone (VOICELINE-fix)
   bool rewardBuffs = true;      // D14: CharacterRewardData.buffs (the jungle buffs, the parasite's team buffs) in step 4
   bool roleGold = true;         // ROLEVIM: RolesTuning's NPC-kill gold modifiers in step 4 ([host] role_passives)

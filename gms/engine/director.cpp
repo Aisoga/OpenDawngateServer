@@ -14,14 +14,18 @@
 
 #include "core/agents/nullpos.h"
 #include "core/bots/jungle.h"
+#include "core/matchflow/camprole.h"
 #include "core/matchflow/camps.h"
 #include "core/matchflow/flow.h"
 #include "core/matchflow/laneagents.h"
+#include "core/protocol/check.h"
+#include "core/protocol/messages.h"
 #include "agents.h"
 #include "crowd.h"
 #include "game.h"
 #include "host/host.h"
 #include "log.h"
+#include "wardspots.h"
 
 using namespace game;
 namespace flow = gms::flow;
@@ -198,6 +202,41 @@ const char* SehAssetName(void* asset) {
   }
 }
 
+// MAPED4: the level's levelSize (Level +0x5C8), its activeItems set (+0x604) and that ItemSet's Item assets (data +0:
+// asset pointers {pointer, count}) with their ids (+0x60); false when unreadable. PODs only (SEH).
+constexpr int kMaxLevelItems = 512;
+struct RawLevelData {
+  float size[2];
+  void* itemSet;
+  int items;
+  void* item[kMaxLevelItems];
+  std::uint32_t itemId[kMaxLevelItems];
+};
+bool SehReadLevelData(void* level, RawLevelData* out) {
+  __try {
+    out->itemSet = nullptr;
+    out->items = 0;
+    char* ld = Field<char*>(level, noun::kData);
+    if (!ld) return false;
+    out->size[0] = Field<float>(ld, level::kLevelSize);
+    out->size[1] = Field<float>(ld, level::kLevelSize + 4);
+    out->itemSet = Field<void*>(ld, level::kActiveItems);
+    char* sd = out->itemSet ? Field<char*>(out->itemSet, noun::kData) : nullptr;
+    if (!sd) return true;
+    void** arr = Field<void**>(sd, 0);
+    const int n = Field<int>(sd, 4);
+    for (int k = 0; arr && k < n && out->items < kMaxLevelItems; ++k) {
+      if (!arr[k]) continue;
+      out->item[out->items] = arr[k];
+      out->itemId[out->items] = Field<std::uint32_t>(arr[k], level::kAssetId);
+      ++out->items;
+    }
+    return true;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return false;
+  }
+}
+
 bool SehReadTuning(void* level, Tuning* t) {
   __try {
     char* ld = Field<char*>(level, noun::kData);
@@ -314,6 +353,7 @@ struct Camp {
   // CAMPICONS ([host] camp_icons=3): each team's knowledge of the camp (gms/core/matchflow/camps.h) and the truth the
   // spectators get (gms::flow::CampTruthBits; -1 = nothing yet)
   bool buffClass = false;  // a buff camp or the Boar camp: the 60-s reveal window (else the small camps' 10 s)
+  flow::CampRole role = flow::CampRole::kSmall;  // MAPED4: from the creature markers' scales and the respawn time
   flow::CampKnowledge know;
   int truthBits = -1;
   float fullHp = 0.f;  // CAMPFINISH: the most max HP its living members had together (CampFightNear)
@@ -329,6 +369,7 @@ std::map<void*, void*> g_overrides;  // spawner noun asset -> override noun asse
 flow::WaveSchedule g_waves;
 Tuning g_tuning;
 int g_camp_parasite = -1;
+std::string g_levelName;  // MAPED4: the level asset's name ("SM_Map_v5.Level")
 std::uint32_t g_parasite = 0;
 bool g_parasiteBorn = false;  // PARAMAP: the parasite was seen born (HideHealthBar 0) once
 double g_lastSecond = -1.0;
@@ -1260,9 +1301,16 @@ bool SehRegister(void* L, const char* ns, const LuaReg* regs, int n) {
 }  // namespace
 
 double g_revealBuffS = flow::kCampRevealBuffS, g_revealSmallS = flow::kCampRevealSmallS;  // CAMPICONS
+flow::CampTimerSource g_campTimers = flow::CampTimerSource::kNoun;                         // CAMPTIMER
 
 void Configure(const Options& o) {
   g_opt = o;
+  // CAMPTIMER: [host] camp_timers, "noun" (default: the creatures' timers) or "marker" (the markers' overrides)
+  {
+    char v[32] = {};
+    HostOptionString("camp_timers", "noun", v, sizeof v);
+    g_campTimers = flow::CampTimerSourceOf(v);
+  }
   // CAMPICONS: camp_icons is 3 by default (each team's knowledge), read here so the default holds whoever filled `o`
   // (the option block in experiment.cpp still passes PARAMAP's 1 as its default)
   g_opt.campIcons = HostOptionInt("camp_icons", 3);
@@ -1302,6 +1350,33 @@ bool OnLevelStarted(void* sim) {
     Log("director: the server simulator has no level");
     return false;
   }
+  // MAPED4: the level's own levelSize and activeItems for the strict check's area and shop (gms/core/protocol/check.h),
+  // so a compiled map isn't held to the tables' SM_Map_v5 values
+  g_levelName = SehAssetName(level);
+  {
+    static RawLevelData raw;  // about 4 KB: not on the stack
+    if (SehReadLevelData(level, &raw)) {
+      const std::uint32_t levelId = gms::AssetIdOf(g_levelName);
+      gms::check::SetLevelSize(levelId, raw.size[0], raw.size[1]);
+      std::vector<std::uint32_t> ids;
+      int debug = 0;
+      for (int k = 0; k < raw.items; ++k) {
+        if (gms::check::IsDebugItemName(SehAssetName(raw.item[k]))) {
+          ++debug;
+          continue;
+        }
+        ids.push_back(raw.itemId[k]);
+      }
+      gms::check::SetLevelShopItems(ids);
+      Log("director: MAPED4: level %s (asset %08X): levelSize %.3f x %.3f, activeItems %s: %d items, %zu in the shop "
+          "(%d debug left out); the strict check's area and shop from them",
+          g_levelName.c_str(), levelId, raw.size[0], raw.size[1], raw.itemSet ? SehAssetName(raw.itemSet) : "none",
+          raw.items, ids.size(), debug);
+    } else {
+      Log("director: MAPED4: level %s: levelSize and activeItems not readable; the strict check keeps its tables",
+          g_levelName.c_str());
+    }
+  }
   // every object that came from a marker (spline heads, titan nodes, wells, towers)
   {
     std::vector<std::uint32_t> mk(4096), ids(4096);
@@ -1319,6 +1394,7 @@ bool OnLevelStarted(void* sim) {
   }
   pos.resize(nPos);
   rel.resize(nRel);
+  wardspots::ReadLevel(level);  // MAPED4b: the level's own ward spots
   if (SehReadTuning(level, &g_tuning))
     Log("director: LevelGameplayTuning: minionSpawnDelay1 %.1f, minionSpawnInterval1 %.1f, nubRespawnTime %.1f, "
         "goldMineLockedDurationFirstInSeconds %.1f",
@@ -1383,10 +1459,20 @@ bool OnLevelStarted(void* sim) {
         "(%.1f, %.1f)",
         l.name.c_str(), l.knots.size(), l.headMarker, l.splineId, l.knots.front().x, l.knots.front().y, l.laneId, l.team,
         l.knots.back().x, l.knots.back().y);
+    {  // MAPED4: every knot, for the log scans (is a bot in its lane)
+      std::string k;
+      for (const flow::Point& p : l.knots) {
+        char b[40];
+        std::snprintf(b, sizeof b, "%s(%.1f, %.1f)", k.empty() ? "" : " ", p.x, p.y);
+        k += b;
+      }
+      Log("director: lane knots %s (nLaneID %d, team %d): %s", l.name.c_str(), l.laneId, l.team, k.c_str());
+    }
     g_lanes.push_back(l);
   }
 
   // spawners, camps, titan nodes
+  int campTimersDiffer = 0;  // CAMPTIMER: camps whose marker overrides its noun's timers
   for (const RawMarker& r : rel) {
     if (r.titanNodeDef) {
       void* spawned = nullptr;
@@ -1430,7 +1516,8 @@ bool OnLevelStarted(void* sim) {
     SpawnDef nd, md;
     SehReadSpawnDef(r.nounSpawnDef, &nd);
     SehReadSpawnDef(r.markerSpawnDef, &md);
-    // composition: the noun's; timing: the marker's where it has one (MATCH_FLOW §2.2 [assumed])
+    // composition: the noun's; timing: the marker's where it has one for the spawners (MATCH_FLOW §2.2 [assumed]);
+    // the camps choose below by [host] camp_timers (CAMPTIMER)
     SpawnDef def = nd.ok ? nd : md;
     const bool markerTiming = md.ok;
     if (md.ok) {
@@ -1456,11 +1543,24 @@ bool OnLevelStarted(void* sim) {
           sp.lane >= 0 ? g_lanes[sp.lane].name.c_str() : "NONE");
       g_spawners.push_back(sp);
     } else if (def.type == 2 || def.type == 3) {
+      // CAMPTIMER: a camp's timers by [host] camp_timers (gms/core/matchflow/flow.h PickCampTimes): the noun's by
+      // default, the marker's override with camp_timers=marker (the spawners above keep the marker's)
+      const flow::CampTimes ct =
+          flow::PickCampTimes(g_campTimers, nd.ok, nd.delay, nd.respawn, md.ok, md.delay, md.respawn);
+      def.delay = static_cast<float>(ct.first);
+      def.respawn = static_cast<float>(ct.respawn);
+      char other[96] = "";
+      if (nd.ok && md.ok && (nd.delay != md.delay || nd.respawn != md.respawn)) {
+        ++campTimersDiffer;
+        std::snprintf(other, sizeof other, "; the %s's %.0f/%.0f s not used ([host] camp_timers=%s)",
+                      ct.fromMarker ? "noun" : "marker", ct.fromMarker ? nd.delay : md.delay,
+                      ct.fromMarker ? nd.respawn : md.respawn, flow::CampTimerSourceName(g_campTimers));
+      }
       Camp c;
       c.marker = r.id;
       c.name = r.nounName;
       c.def = def;
-      c.markerTiming = markerTiming;
+      c.markerTiming = ct.fromMarker;
       c.parasite = def.type == 3;
       std::memcpy(c.pos, r.pos, sizeof c.pos);
       std::memcpy(c.rot, r.rot, sizeof c.rot);
@@ -1470,16 +1570,25 @@ bool OnLevelStarted(void* sim) {
       }
       c.record = SehFindCamp(c.marker, &c.recordId);
       c.timer.Init(def.delay, def.respawn);
-      // CAMPICONS: the buff camps and the Boar camp (the user, 2026-10-17: "Boar as buff") have the 60-s reveal window
-      c.buffClass = c.name.find("Buff") != std::string::npos || c.name.find("Boar") != std::string::npos;
+      // CAMPICONS: the buff camps and the Boar camp (the user, 2026-10-17: "Boar as buff") have the 60-s reveal window.
+      // MAPED4: by the camp's role from its data (gms/core/matchflow/camprole.h), not by "Buff"/"Boar" in its name
+      {
+        float scales[kMaxChildren];
+        int ns = 0;
+        for (const MarkerPos& m : c.spots)
+          if (ns < kMaxChildren) scales[ns++] = m.scale;
+        c.role = c.parasite ? flow::CampRole::kSmall : flow::CampRoleOf(scales, ns, def.respawn);
+      }
+      c.buffClass = c.role != flow::CampRole::kSmall;
       c.know.Init(c.buffClass ? g_revealBuffS : g_revealSmallS);
       if (c.parasite) g_camp_parasite = static_cast<int>(g_camps.size());
       if (LogBudget())
-        Log("director: %s %s (marker %u) at (%.1f, %.1f): %s, %zu creature markers, first %.0f s, respawn %.0f s%s, camp "
-            "record %p",
+        Log("director: %s %s (marker %u) at (%.1f, %.1f): %s, %zu creature markers, first %.0f s, respawn %.0f s%s%s, "
+            "camp record %p, role %s (MAPED4)",
             c.parasite ? "parasite camp" : "camp", c.name.c_str(), c.marker, c.pos[0], c.pos[1],
             CompositionText(def).c_str(), c.spots.size(), def.delay, def.respawn,
-            markerTiming ? " (marker)" : " (noun)", c.record);
+            ct.fromMarker ? " (marker)" : " (noun)", other, c.record,
+            c.parasite ? "parasite" : flow::CampRoleName(c.role));
       g_camps.push_back(c);
     } else if (def.type == 4) {
       // MAPSTRIDER: a lane-agent spawner, used when the level's striderSpawnEnabled (or [host] lane_agents=1) says so
@@ -1517,6 +1626,11 @@ bool OnLevelStarted(void* sim) {
   }
   if (g_opt.laneTable) FillLaneTable(sim);
   g_levelOk = true;
+  Log("director: camp timers: the %s ([host] camp_timers=%s, CAMPTIMER); %d camp(s) whose marker overrides its "
+      "noun's timers",
+      g_campTimers == flow::CampTimerSource::kMarker ? "markers' overrides where a marker has one"
+                                                     : "creatures' (each camp noun's spawnDelay and respawnTime)",
+      flow::CampTimerSourceName(g_campTimers), campTimersDiffer);
   std::size_t agentSpawners = 0;  // MAPSTRIDER: counted apart, so "minion spawners" stays the lane spawners
   for (const Spawner& sp : g_spawners) agentSpawners += sp.laneAgent ? 1 : 0;
   Log("director: level read: %zu lanes, %zu minion spawners, %zu camps (parasite %s), %zu Guardians, %zu wells, %zu "
@@ -1658,6 +1772,7 @@ std::vector<CampView> CampViews() {
     v.knownRespawnAt[0] = c.know.KnownRespawnAt(1);
     v.knownRespawnAt[1] = c.know.KnownRespawnAt(2);
     v.spawns = c.timer.Spawns();
+    v.role = static_cast<int>(c.role);
     out.push_back(v);
   }
   return out;
@@ -1680,6 +1795,14 @@ double FirstWaveTime() {
 int WavesFired() { return g_waves.next; }
 
 const std::vector<TitanSpawn>& Guardians() { return g_guardians; }
+
+const std::string& LevelName() { return g_levelName; }
+
+bool ParasiteCampPos(float* out) {
+  if (g_camp_parasite < 0 || g_camp_parasite >= static_cast<int>(g_camps.size())) return false;
+  std::memcpy(out, g_camps[static_cast<std::size_t>(g_camp_parasite)].pos, 3 * sizeof(float));
+  return true;
+}
 const Tuning& LevelTuning() { return g_tuning; }
 const std::vector<Well>& Wells() { return g_wells; }
 

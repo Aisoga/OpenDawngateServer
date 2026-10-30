@@ -227,6 +227,8 @@ Start-Client.exe          starts the game, with the server list on the login scr
                           This PC (Go; it embeds the list's compiled ActionScript class, this project's code)
 host\dgsim.dll            the match host, loaded by the game's copy in Dawngate-Data\host (C++, links RakNet)
 host\lua\                 the match host's Lua scripts
+maps\                     map packages you add (a folder with map.json each; maps\README.txt says how); the
+                          setup builds their files into the game copies at each start
 LICENSE.txt               GNU Affero General Public License v3: this project's code
 THIRD-PARTY-NOTICES.txt   RakNet 4.081 (BSD and its patent grant; with this project's patches), Go (BSD), the
                           Go modules the programs link (SQLite in Go, golang.org/x/crypto, ...: BSD and MIT)

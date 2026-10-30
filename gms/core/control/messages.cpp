@@ -14,6 +14,12 @@ Json IntMap(const std::map<std::string, int64_t>& m) {  // std::map: keys sorted
   return o;
 }
 
+Json IntList(const std::vector<int64_t>& v) {
+  Json a = Json::Array();
+  for (int64_t x : v) a.Push(Json::Int(x));
+  return a;
+}
+
 Json StrList(const std::vector<std::string>& v) {
   Json a = Json::Array();
   for (const std::string& s : v) a.Push(Json::Str(s));
@@ -153,6 +159,62 @@ struct Encoder {
   void operator()(const AbortGame& m) { o.Set("reason", Json::Str(m.reason)); }
   void operator()(const UpdateRoster& m) { o.Set("roster", RosterJson(m.roster)); }  // B15
   void operator()(const StartGame& m) { o.Set("roster", RosterJson(m.roster)); }     // B15
+  // M18: gmshost.SeatStats' fields in order; stats and sources only when not empty, slot only when set (omitempty)
+  void operator()(const SeatStats& m) {
+    o.Set("index", Json::Int(m.index)).Set("user", Json::Int(m.user)).Set("bot", Json::Bool(m.bot));
+    o.Set("team", Json::Int(m.team)).Set("noun", Json::Int(m.noun)).Set("role", Json::Int(m.role));
+    if (!m.stats.empty()) o.Set("stats", IntMap(m.stats));
+    if (!m.sources.empty()) {
+      Json list = Json::Array();
+      for (const StatSource& s : m.sources) {
+        Json e = Json::Object();
+        e.Set("kind", Json::Str(s.kind));
+        if (s.slot) e.Set("slot", Json::Int(*s.slot));
+        e.Set("id", Json::Int(s.id)).Set("damage", Json::Int(s.damage)).Set("heal", Json::Int(s.heal));
+        list.Push(std::move(e));
+      }
+      o.Set("sources", std::move(list));
+    }
+  }
+  // M18: gmshost.MatchTimeline; every list only when not empty
+  void operator()(const MatchTimeline& m) {
+    o.Set("stepSec", Json::Int(m.stepSec));
+    if (!m.sec.empty()) o.Set("sec", IntList(m.sec));
+    if (!m.seats.empty()) {
+      Json list = Json::Array();
+      for (const TimelineSeat& s : m.seats) {
+        Json e = Json::Object();
+        e.Set("index", Json::Int(s.index));
+        if (!s.gold.empty()) e.Set("gold", IntList(s.gold));
+        if (!s.xp.empty()) e.Set("xp", IntList(s.xp));
+        if (!s.level.empty()) e.Set("level", IntList(s.level));
+        if (!s.cs.empty()) e.Set("cs", IntList(s.cs));
+        list.Push(std::move(e));
+      }
+      o.Set("seats", std::move(list));
+    }
+    if (!m.teams.empty()) {
+      Json list = Json::Array();
+      for (const TimelineTeam& t : m.teams) {
+        Json e = Json::Object();
+        e.Set("team", Json::Int(t.team));
+        if (!t.gold.empty()) e.Set("gold", IntList(t.gold));
+        if (!t.kills.empty()) e.Set("kills", IntList(t.kills));
+        list.Push(std::move(e));
+      }
+      o.Set("teams", std::move(list));
+    }
+    if (!m.events.empty()) {
+      Json list = Json::Array();
+      for (const TimelineEvent& ev : m.events) {
+        Json e = Json::Object();
+        e.Set("ms", Json::Int(ev.ms)).Set("kind", Json::Str(ev.kind)).Set("a", Json::Int(ev.a));
+        e.Set("b", Json::Int(ev.b));
+        list.Push(std::move(e));
+      }
+      o.Set("events", std::move(list));
+    }
+  }
 };
 
 struct Namer {
@@ -172,6 +234,8 @@ struct Namer {
   const char* operator()(const PlayerKarma&) { return "playerKarma"; }
   const char* operator()(const UpdateRoster&) { return "updateRoster"; }
   const char* operator()(const StartGame&) { return "startGame"; }
+  const char* operator()(const SeatStats&) { return "seatStats"; }
+  const char* operator()(const MatchTimeline&) { return "matchTimeline"; }
 };
 
 // ------------------------------------------------------------------------------------- decoding
@@ -429,6 +493,61 @@ bool DecodeRoster(Fields& f, std::vector<RosterEntry>& out) {
   return true;
 }
 
+// M18: a list of objects under `key`, each read by `one` (which returns its own error text, "" = fine). A missing list
+// or null leaves `out` empty.
+template <class T, class Fn>
+bool DecodeObjects(Fields& f, std::string_view key, std::vector<T>& out, Fn one) {
+  const Json* v = f.o.Find(key);
+  if (!v || v->IsNull()) return true;
+  if (!v->IsArray()) return f.Bad(key, "an array");
+  for (const Json& item : v->Items()) {
+    if (!item.IsObject()) return f.Bad(key, "an array of objects");
+    Fields e{item, {}};
+    T x;
+    one(e, x);
+    if (!e.err.empty()) {
+      f.err = std::string(key) + ": " + e.err;
+      return false;
+    }
+    out.push_back(std::move(x));
+  }
+  return true;
+}
+
+void DecodeSeatStats(Fields& f, SeatStats& m) {
+  f.Int("index", m.index); f.Int("user", m.user); f.Bool("bot", m.bot); f.Int("team", m.team);
+  f.Int("noun", m.noun); f.Int("role", m.role);
+  if (f.err.empty()) f.IntMap("stats", m.stats);
+  if (f.err.empty())
+    DecodeObjects(f, "sources", m.sources, [](Fields& e, StatSource& s) {
+      e.Str("kind", s.kind);
+      const Json* slot = e.o.Find("slot");
+      if (slot && !slot->IsNull()) {
+        int64_t v = 0;
+        if (e.Int("slot", v)) s.slot = v;
+      }
+      e.Int("id", s.id); e.Int("damage", s.damage); e.Int("heal", s.heal);
+    });
+}
+
+void DecodeTimeline(Fields& f, MatchTimeline& m) {
+  f.Int("stepSec", m.stepSec);
+  if (f.err.empty()) f.IntList("sec", m.sec);
+  if (f.err.empty())
+    DecodeObjects(f, "seats", m.seats, [](Fields& e, TimelineSeat& s) {
+      e.Int("index", s.index); e.IntList("gold", s.gold); e.IntList("xp", s.xp); e.IntList("level", s.level);
+      e.IntList("cs", s.cs);
+    });
+  if (f.err.empty())
+    DecodeObjects(f, "teams", m.teams, [](Fields& e, TimelineTeam& t) {
+      e.Int("team", t.team); e.IntList("gold", t.gold); e.IntList("kills", t.kills);
+    });
+  if (f.err.empty())
+    DecodeObjects(f, "events", m.events, [](Fields& e, TimelineEvent& ev) {
+      e.Int("ms", ev.ms); e.Str("kind", ev.kind); e.Int("a", ev.a); e.Int("b", ev.b);
+    });
+}
+
 }  // namespace
 
 const char* TypeName(const Message& m) { return std::visit(Namer{}, m); }
@@ -541,6 +660,15 @@ bool Decode(std::string_view line, Message& out, std::string* err) {
     PlayerKarma m;
     f.Int("user", m.user); f.Int("party", m.party); f.Int("team", m.team); f.Int("enemy", m.enemy);
     out = m;
+  } else if (type == "seatStats") {  // M18
+    SeatStats m;
+    DecodeSeatStats(f, m);
+    out = std::move(m);
+  } else if (type == "matchTimeline") {  // M18
+    MatchTimeline m;
+    m.stepSec = 0;  // as Go: a missing stepSec reads 0
+    DecodeTimeline(f, m);
+    out = std::move(m);
   } else {
     return fail("unknown message type \"" + type + "\"");
   }

@@ -94,13 +94,16 @@ func botSeats(fillTeams int, descriptors uint32, humans [2]int) [2]int {
 	return bots
 }
 
-// postResult keeps a finished game's result for the home page (Finish, after persist; HOME1, recent.go) and posts it
-// when a result webhook is set and the game's mode posts. Never waits: Hook.Post only queues.
-func (hg *hostedGame) postResult(f gmshost.FinishGame) {
+// postResult keeps a finished game's result for the home page (Finish, after persist and storeMatch; HOME1, recent.go)
+// with its match history id (0: not stored) and posts it when a result webhook is set and the game's mode posts. Never
+// waits: Hook.Post only queues.
+func (hg *hostedGame) postResult(f gmshost.FinishGame, matchID int64) {
 	hg.mu.Lock()
 	r := hg.resultLocked(f, hg.s.Now())
 	hg.mu.Unlock()
-	hg.s.recent.add(recentResultOf(r, hg.s.Content))
+	x := recentResultOf(r, hg.s.Content)
+	x.MatchID = matchID
+	hg.s.recent.add(x)
 	rp := hg.s.results.Load()
 	if rp == nil || rp.Hook == nil {
 		return
@@ -221,6 +224,10 @@ func shaperName(noun uint32, c *content.Content) string {
 	}
 	return discordhook.Escape(name)
 }
+
+// ShaperTitle is the shaper a noun names by its content title ("Ember"; the match history's, MHIST2), "" when the
+// content doesn't know it.
+func ShaperTitle(noun uint32, c *content.Content) string { return shaperTitle(noun, c) }
 
 // shaperTitle is shaperName's name unescaped, "" when the host reported none or the content doesn't know it.
 func shaperTitle(noun uint32, c *content.Content) string {

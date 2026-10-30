@@ -657,6 +657,48 @@ func TestCustomGameBots(t *testing.T) {
 	}
 }
 
+// dgserver --custom-autostart: a custom game whose only human moved to the spectators starts by itself (the lobby offers
+// no Start Game then): the host's startGame with the spectator, NotifyGameStateChange IN_GAME to the client, and a later
+// advanceGameState is refused as a second start. Moving back to a team before then keeps the game in its lobby.
+func TestCustomGameAutoStart(t *testing.T) {
+	ts, host := newCustomHostServer(t, func(s *Server) {
+		s.CustomBots = true
+		s.CustomAutoStart = 50 * time.Millisecond
+	})
+	g := golden.Load(t)
+	a := ts.client("alpha@example.com")
+	wantReply(t, "create", a.gm(CmdGameManagerResetDedicatedServer, golden.Bytes(t, decodeCase(t, g, "resetdedicatedserver_custom_request"))))
+	<-host.created
+	a.note(ComponentGameManager, NotifyGameSetupID)
+	toTeam := func(team int64) []byte {
+		return tdf.NewWriter().Int("GID", 1).List("LGAM", tdf.TypeStruct, []*tdf.Writer{
+			tdf.NewWriter().Int("PID", a.id).Int("TIDX", team)}).Bytes()
+	}
+	// to the spectators and back to team 1 at once: no start
+	wantReply(t, "to the spectators", a.gm(CmdGameManagerSwapPlayersTeam, toTeam(SpectatorTeam)))
+	wantReply(t, "back to team 1", a.gm(CmdGameManagerSwapPlayersTeam, toTeam(0)))
+	time.Sleep(150 * time.Millisecond)
+	if log := ts.log.String(); !strings.Contains(log, "game 1: no start by itself (a human is on a team, or it started)") {
+		t.Errorf("log lacks the cancelled start")
+	}
+	// to the spectators again: it starts by itself
+	wantReply(t, "to the spectators again", a.gm(CmdGameManagerSwapPlayersTeam, toTeam(SpectatorTeam)))
+	sg := hostNext[gmshost.StartGame](t, host)
+	if len(sg.Roster) != 1 || !sg.Roster[0].Spectator {
+		t.Fatalf("startGame roster %s", describeRoster(sg.Roster))
+	}
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if strings.Contains(ts.log.String(), "game 1 starts (--custom-autostart: every human spectates)") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("log lacks the start by itself")
+		}
+	}
+	wantError(t, "a second start", a.gm(CmdGameManagerAdvanceGameState, golden.Bytes(t, decodeCase(t, g, "advancegamestate_request"))),
+		ErrInvalidGameStateAction)
+}
+
 // dgserver --halloween: every hosted game's createGame carries levelFlags 1 (the Halloween decoration's bit), which the
 // host loads its level with and sends in GamePrepareForStart; without it the field is left out (TestCustomGameHosted).
 func TestHalloweenLevelFlags(t *testing.T) {

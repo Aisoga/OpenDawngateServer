@@ -47,7 +47,10 @@ FILES = [
     os.path.join(TESTS, "test_guardcore_scripts.lua"),
     os.path.join(LUA_DIR, "dgsim_mapbase.lua"),  # MAPBASE's probes (compiled only)
     os.path.join(LUA_DIR, "dgsim_mapbase_open.lua"),
+    os.path.join(LUA_DIR, "dgsim_maped5_push.lua"),  # MAPED5's probe (compiled only)
+    os.path.join(LUA_DIR, "dgsim_mapedimport.lua"),  # MAPED-IMPORT's picture probe (compiled only)
     os.path.join(LUA_DIR, "dgsim_maptags.lua"),  # MAPTAGS' probe (compiled only)
+    os.path.join(LUA_DIR, "dgsim_camptimer.lua"),  # CAMPTIMER's probe (compiled only)
     os.path.join(LUA_DIR, "dgsim_mapfix.lua"),  # MAPLUA's fix-ups of MM_Map_v3's scripts and their test
     os.path.join(TESTS, "test_dgsim_mapfix.lua"),
 ]

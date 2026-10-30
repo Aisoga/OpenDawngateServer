@@ -42,6 +42,25 @@ func TestDecodeForms(t *testing.T) {
 	}
 }
 
+// DecodePrefix stops once the bytes asked for are out, and takes a block cut anywhere after them.
+func TestDecodePrefix(t *testing.T) {
+	big := bytes.Repeat([]byte("0123456789"), 7000)
+	block := Encode(big)
+	for _, cut := range []int{len(block), 300, 160} {
+		got, err := DecodePrefix(block[:cut], 128)
+		if err != nil || len(got) < 128 || !bytes.Equal(got, big[:len(got)]) {
+			t.Errorf("cut at %d: %d bytes, %v", cut, len(got), err)
+		}
+	}
+	lit := testgame.SnappyLiterals(big) // one long literal, cut inside it
+	if got, err := DecodePrefix(lit[:200], 128); err != nil || len(got) < 128 || !bytes.Equal(got, big[:len(got)]) {
+		t.Errorf("literal cut: %d bytes, %v", len(got), err)
+	}
+	if got, err := DecodePrefix(unhex("05 1068656c6c6f"), 128); err != nil || string(got) != "hello" {
+		t.Errorf("a short block: %q %v", got, err)
+	}
+}
+
 func TestDecodeErrors(t *testing.T) {
 	for name, block := range map[string]string{
 		"no varint":                "",

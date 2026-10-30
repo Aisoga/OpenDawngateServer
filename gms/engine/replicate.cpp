@@ -11,6 +11,7 @@
 #include "core/damage/regen.h"
 #include "core/protocol/wire.h"
 #include "core/replication/create_order.h"
+#include "core/replication/outgoing.h"
 #include "core/replication/resource_wire.h"
 #include "game.h"
 #include "log.h"
@@ -323,6 +324,7 @@ void* SehFieldState(const NetObject& o, int p) {
 // (core/replication/resource_wire.h). The writers get a copy of the combatant data with that value; the field state
 // they fill is still the object's own, so the next delta compares the server's value with what the clients have.
 bool g_resourceFloor = true;
+int g_effectsBeforeComplete = 1;  // ABILVFX-WALLS: SetEffectsBeforeComplete
 std::uint32_t g_floorLogged[64];  // the objects whose first floored body was logged
 int g_floorLoggedCount;
 unsigned g_floorBodies;
@@ -553,6 +555,53 @@ int SehEffectSlots(void* object) {
   }
 }
 
+}  // namespace
+
+int EffectSlotNames(void* object, char* buf, std::size_t size) {
+  if (!size) return 0;
+  buf[0] = 0;
+  int n = 0;
+  std::size_t at = 0;
+  __try {
+    for (int i = 0; i < kNumAttachedEffects; ++i) {
+      char* slot = static_cast<char*>(object) + kAttachedEffects + i * kAttachedEffectSize;
+      void* asset = Field<void*>(slot, kAttachedEffectAsset);
+      if (!asset) continue;
+      const char* name = Field<const char*>(asset, 0);
+      char nm[80];
+      std::size_t k = 0;
+      for (; name && k + 1 < sizeof nm && name[k]; ++k) nm[k] = name[k];
+      nm[k] = 0;
+      const int w = std::snprintf(buf + at, size - at, "%s%d:%s %08X", n ? ", " : "", i, nm,
+                                  Field<std::uint32_t>(slot, kAttachedEffectHandle));
+      ++n;
+      if (w < 0 || static_cast<std::size_t>(w) >= size - at) break;
+      at += static_cast<std::size_t>(w);
+    }
+  } __except (SehNote(GetExceptionInformation(), "attached effect names")) {
+  }
+  return n;
+}
+
+namespace {
+
+// ABILVFX-WALLS: whether a used slot's event has a draw box (its def's graphics part, draw box count > 0); false on an
+// exception (logged).
+bool SehHasDrawBoxSlot(void* object) {
+  __try {
+    for (int i = 0; i < kNumAttachedEffects; ++i) {
+      char* slot = static_cast<char*>(object) + kAttachedEffects + i * kAttachedEffectSize;
+      char* def = Field<char*>(slot, kAttachedEffectAsset);
+      if (!def) continue;
+      char* gfx = Field<char*>(def, kServerEventDefGraphics);
+      if (gfx && Field<std::int32_t>(gfx, kEventGraphicsDrawBoxCount) > 0) return true;
+    }
+    return false;
+  } __except (SehNote(GetExceptionInformation(), "attached effects' draw boxes")) {
+    return false;
+  }
+}
+
 struct AnimState {
   bool present;
   std::uint32_t overrides[anim::kNumOverrides];
@@ -663,6 +712,7 @@ std::vector<std::uint32_t> g_iconSpawnPoints;  // PARAMAP: the camp markers whos
 void SetIconSpawnPoints(const std::vector<std::uint32_t>& markerIds) { g_iconSpawnPoints = markerIds; }
 
 void SetResourceWireFloor(bool on) { g_resourceFloor = on; }
+void SetEffectsBeforeComplete(int mode) { g_effectsBeforeComplete = mode; }
 
 bool Replicated(const NetObject& o, bool all) {
   if (o.nounType == noun::kTypeSpawnPoint && o.markerId)
@@ -739,9 +789,18 @@ bool BuildCreate(const NetObject& o, bool withFieldState, const Bytes& modifierR
   }
   WorldMessage complete{IdMessage(gms::kGmsObjectCreateComplete, o.id), std::string("complete ") + o.name};
   complete.msg.insert(complete.msg.end(), modifierRecords.begin(), modifierRecords.end());
+  // ABILVFX-WALLS: the attached effects before 8F where the model's creation must see them (a draw box: the client
+  // makes it only from the slots it holds at 8F; a 92 after 8F starts effects only), [host] effects_before_complete
+  const bool haveEffects = AttachedEffectsUpdate(o, &e2, &effects) && effects > 0;
+  const bool effectsFirst =
+      haveEffects && gms::EffectsBeforeComplete(g_effectsBeforeComplete,
+                                                g_effectsBeforeComplete == 1 && SehHasDrawBoxSlot(o.object));
+  if (effectsFirst) {
+    msgs.push_back(WorldMessage{e2, std::string("attached effects of ") + o.name + " (before 8F)"});
+    std::strncat(parts, " effects-first", sizeof parts - std::strlen(parts) - 1);
+  }
   msgs.push_back(complete);
-  if (AttachedEffectsUpdate(o, &e2, &effects) && effects > 0)
-    msgs.push_back(WorldMessage{e2, std::string("attached effects of ") + o.name});
+  if (haveEffects && !effectsFirst) msgs.push_back(WorldMessage{e2, std::string("attached effects of ") + o.name});
   if (!b1.empty()) msgs.push_back(WorldMessage{b1, std::string("last animation of ") + o.name});
   int n = 0;
   for (const auto& m : msgs) n += static_cast<int>(m.msg.size());

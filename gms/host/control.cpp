@@ -167,6 +167,18 @@ void PlayerFinish(const dggms::control::PlayerFinish& m) {
   g_ctl->SendPlayerFinish(m);
 }
 
+void SeatStats(const dggms::control::SeatStats& m) {
+  if (!g_ctl) return;
+  Locked lock;
+  g_ctl->SendSeatStats(m);
+}
+
+void MatchTimeline(const dggms::control::MatchTimeline& m) {
+  if (!g_ctl) return;
+  Locked lock;
+  g_ctl->SendTimeline(m);
+}
+
 std::vector<dggms::control::PlayerRewards> TakeRewards() {
   if (!g_ctl) return std::vector<dggms::control::PlayerRewards>();
   Locked lock;

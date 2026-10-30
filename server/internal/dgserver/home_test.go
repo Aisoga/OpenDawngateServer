@@ -81,7 +81,7 @@ func TestHomeStatus(t *testing.T) {
 	}
 	src.results = func() []blaze.RecentResult {
 		return []blaze.RecentResult{
-			{GameID: 8, Mode: gmshost.ModePvP, Kind: "PvP match", Level: "SM_Map_v5", WinnerTeam: 2, Reason: "surrender",
+			{GameID: 8, MatchID: 17, Mode: gmshost.ModePvP, Kind: "PvP match", Level: "SM_Map_v5", WinnerTeam: 2, Reason: "surrender",
 				Duration: 1501 * time.Second, At: homeNow.Add(-90 * time.Second),
 				Teams: [2]blaze.RecentTeam{{Shapers: []string{"Ember", ""}, Bots: 3}, {Shapers: []string{"Fenmore"}, Bots: 4}}},
 			{GameID: 7, Mode: gmshost.ModePractice, Kind: "Practice match", Level: "MM_Map_v3", WinnerTeam: 0,
@@ -98,9 +98,9 @@ func TestHomeStatus(t *testing.T) {
 		`"customGames":[{"title":"Friday \u003cfun\u003e \u0026 \"games\"","map":"Anshavar Pass","players":3,"seats":10,` +
 		`"spectators":1,"bots":true,"private":false},` +
 		`{"title":"Locked","map":"The Dawngate","players":1,"seats":2,"spectators":0,"bots":false,"private":true}],` +
-		`"results":[{"mode":"pvp","kind":"PvP match","map":"The Dawngate","winner":2,"reason":"surrender","durationSec":1501,` +
+		`"results":[{"matchId":17,"mode":"pvp","kind":"PvP match","map":"The Dawngate","winner":2,"reason":"surrender","durationSec":1501,` +
 		`"endedAgoSec":90,"teams":[{"shapers":["Ember",""],"bots":3},{"shapers":["Fenmore"],"bots":4}]},` +
-		`{"mode":"practice","kind":"Practice match","map":"Anshavar Pass","winner":0,"reason":"","durationSec":60,` +
+		`{"matchId":0,"mode":"practice","kind":"Practice match","map":"Anshavar Pass","winner":0,"reason":"","durationSec":60,` +
 		`"endedAgoSec":3600,"teams":[{"shapers":[],"bots":4},{"shapers":[],"bots":5}]}],` +
 		`"server":{"release":"v0.9.0","map":"The Dawngate","halloween":true,"customMaps":["Anshavar Pass"]}}`
 	got := homeJSON(t, src)

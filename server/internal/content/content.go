@@ -61,14 +61,18 @@ const (
 	StatusHideIfUnowned = "hideIfUnowned"
 )
 
-// Format names the content file's layout. Load accepts Format and FormatB7a; Build writes Format.
+// Format names the content file's layout. Load accepts Format, FormatB7c and FormatB7a; Build writes Format.
 //
 //   - FormatB7a (B7a): items, shapers, perks, match items, loot bags, the FTUE loot.
-//   - Format (B7c): adds the perk shapes' sockets, the loot bags' asset ids and drop tables, the loot
+//   - FormatB7c (B7c): adds the perk shapes' sockets, the loot bags' asset ids and drop tables, the loot
 //     rarities and the loot tuning. A B7a file still works: without sockets the server can't check
 //     a gem's socket index, and without drop tables bags drop nothing (Old reports it).
+//   - Format (ITEMWEB1): adds the match items' details (steps and prices, stats, passives, tags, icon,
+//     sell value, stack, consumable), the shop's filters and the recommended builds (matchitems.go). An
+//     older file still works; the item browser then lists the items without their trees (HasItemDetails).
 const (
-	Format    = "dawngate-content-2"
+	Format    = "dawngate-content-3"
+	FormatB7c = "dawngate-content-2"
 	FormatB7a = "dawngate-content-1"
 )
 
@@ -95,6 +99,13 @@ type Content struct {
 	// Withheld holds the items the server never hands out (withheldItems, WIPSTONES), ordered by catalogID: moved
 	// here from Items when content is built or loaded, so nothing that lists Items or looks an item up sees them.
 	Withheld []Item `json:"withheld,omitempty"`
+
+	// ItemFilters are the shop's filter groups and ItemBuilds the recommended builds (format 3, matchitems.go).
+	ItemFilters []ItemFilter `json:"itemFilters,omitempty"`
+	ItemBuilds  []ItemBuild  `json:"itemBuilds,omitempty"`
+	// ItemShop is the shop's item set in its order (ItemSet ActiveItems_SM_Map_V5), by item name: the order the
+	// in-match shop lists the items of a column in (Life, Resilience, Will, Power, Time, Hunger).
+	ItemShop []string `json:"itemShop,omitempty"`
 
 	byID     map[uint32]int
 	withheld map[uint32]bool // the catalogIDs in Withheld
@@ -238,6 +249,37 @@ type MatchItem struct {
 	Category string `json:"category,omitempty"`
 	Tier     string `json:"tier,omitempty"`
 	Cost     int    `json:"cost"`
+
+	// The details (format 3, matchitems.go). Group is AbilityItemCategory (Offense, Utility, Defense); SellValue
+	// what selling it pays; Active its ActiveAbility or ActiveModifier; Tags its attribute and custom tags by name;
+	// Icon its IconLarge path in UI_Icons.snap; Cheat the two debug items (CheatItem), which no player can buy.
+	Group         string        `json:"group,omitempty"`
+	SellValue     int           `json:"sellValue,omitempty"`
+	StackCount    int           `json:"stackCount,omitempty"`
+	Consumable    bool          `json:"consumable,omitempty"`
+	ConsumeOnFull bool          `json:"consumeOnFull,omitempty"`
+	Cheat         bool          `json:"cheat,omitempty"`
+	From          []ItemStep    `json:"from,omitempty"`
+	Into          []ItemStep    `json:"into,omitempty"`
+	Stats         []ItemStat    `json:"stats,omitempty"`
+	Passives      []ItemPassive `json:"passives,omitempty"`
+	Active        string        `json:"active,omitempty"`
+	// ActiveInfo is what the active (a spell's ability, a consumable's modifier) does, as the game describes it:
+	// filled by the game-folder build from the script and the Locale (gamecontent), nil from a dump.
+	ActiveInfo *ItemActive `json:"activeInfo,omitempty"`
+	Tags       []string    `json:"tags,omitempty"`
+	Icon       string      `json:"icon,omitempty"`
+}
+
+// ItemActive describes an item's active: its name as its text starts with it, the label kind as for passives
+// ("unique": UNIQUE ACTIVE, else ACTIVE), its text (plain and in coloured runs, the numbers filled in as for the
+// passives) and its cooldown in seconds at rank 1 (0: none or unknown).
+type ItemActive struct {
+	Title    string     `json:"title,omitempty"`
+	Kind     string     `json:"kind,omitempty"`
+	Text     string     `json:"text,omitempty"`
+	Parts    []TextPart `json:"parts,omitempty"`
+	Cooldown float64    `json:"cooldown,omitempty"`
 }
 
 // LootBag is one loot bag tier.
@@ -424,7 +466,7 @@ func Load(path string) (*Content, error) {
 	if err := json.Unmarshal(raw, &c); err != nil {
 		return nil, fmt.Errorf("content: %s: %v", path, err)
 	}
-	if c.Format != Format && c.Format != FormatB7a {
+	if c.Format != Format && c.Format != FormatB7c && c.Format != FormatB7a {
 		return nil, fmt.Errorf("content: %s: format %q, want %q (regenerate it with dgserver --make-content)", path, c.Format, Format)
 	}
 	if err := c.index(); err != nil {

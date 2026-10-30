@@ -232,9 +232,59 @@ struct StartGame {
 // first, so the host holds their HelloReq until startGame.
 inline constexpr const char* kModeCustom = "custom";
 
+// M18 (MSTATS1; the control message seatStats, its sources array): one row of seatStats.sources, damage and
+// heal by source. kind: basic, ability (slot 0-3 = Q/W/E/R, 4 = passive), item, perk, role, other. slot is written for
+// an ability only; id, damage and heal always. Go: gmshost.StatSource.
+struct StatSource {
+  std::string kind;
+  std::optional<int64_t> slot;
+  int64_t id = 0;
+  int64_t damage = 0;
+  int64_t heal = 0;
+};
+
+// host -> server (M18): one seat's statistics at the match's end, every seat, bots included (user 0), before the
+// playerFinish lines. stats and sources are written only when not empty. Go: gmshost.SeatStats.
+struct SeatStats {
+  int64_t index = 0;  // the gameplay index 0-9
+  int64_t user = 0;   // the Blaze user (persona) id, 0 for a bot
+  bool bot = false;
+  int64_t team = 0;
+  int64_t noun = 0;
+  int64_t role = 0;  // as playerFinish's role stat: 1 + mRole
+  std::map<std::string, int64_t> stats;
+  std::vector<StatSource> sources;
+};
+
+// matchTimeline's per-seat and per-team samples (each array written only when not empty) and its events.
+struct TimelineSeat {
+  int64_t index = 0;
+  std::vector<int64_t> gold, xp, level, cs;
+};
+struct TimelineTeam {
+  int64_t team = 0;
+  std::vector<int64_t> gold, kills;
+};
+struct TimelineEvent {
+  int64_t ms = 0;
+  std::string kind;  // kill, structure, well, guardian, surrender (gms/core/stats/stats.h)
+  int64_t a = 0;
+  int64_t b = 0;
+};
+
+// host -> server (M18): the match's course, once, after the seatStats lines. stepSec always; sec, seats, teams and
+// events only when not empty (a match under a minute has stepSec alone). Go: gmshost.MatchTimeline.
+struct MatchTimeline {
+  int64_t stepSec = 60;
+  std::vector<int64_t> sec;
+  std::vector<TimelineSeat> seats;
+  std::vector<TimelineTeam> teams;
+  std::vector<TimelineEvent> events;
+};
+
 using Message = std::variant<Hello, CreateGame, GameReady, AddPlayer, DisconnectPlayer, GMSUpdate, PlayerFinish,
                              FinishGame, GMSError, LogoutGMS, RemovePlayer, AbortGame, PlayerRewards, PlayerKarma,
-                             UpdateRoster, StartGame>;
+                             UpdateRoster, StartGame, SeatStats, MatchTimeline>;
 
 // TypeName returns a message's "t".
 const char* TypeName(const Message& m);

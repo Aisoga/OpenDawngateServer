@@ -51,6 +51,14 @@ struct RequestObject {
 // interactable, is not dead).
 inline bool ObjectDead(const RequestObject& o) { return !o.found || o.pendingDelete || (o.hasHp && o.hp <= 0.f); }
 
+// DEADTARGET at the source, the agent's mTarget: the object a bot's gambit falls back to when its conditions named none
+// (and that the kits aim at). A dead one counts as none, so no request is aimed at it: a well's worker that a capture
+// removed this frame is pending delete with its hit points left (it is never at 0), and the client's
+// ValidateHostileTarget still accepts it [inferred: the BOTTEMPO stale check let one through in the capture's think].
+inline std::uint32_t LiveTarget(std::uint32_t target, const RequestObject& o) {
+  return target != 0 && ObjectDead(o) ? 0u : target;
+}
+
 enum class RequestVerdict {
   kOk,
   kDeadTarget,      // the request names an object that is dead, pending delete or gone: a DEADTARGET, not sent
@@ -137,6 +145,7 @@ struct NullPosCounts {
   unsigned total = 0;
   unsigned deadTargets = 0;     // DEADTARGET lines: host requests at a dead object (a test FAIL too)
   unsigned deadConditions = 0;  // a gambit condition named a dead object: left out at the source (not an error)
+  unsigned deadMTargets = 0;    // a bot's mTarget was dead in its think: left out at the source (not an error)
   unsigned followReads = 0;     // the Lua's Follow guard: passes of a running Follow on a point (its evidence)
   void Note(NullPosWhere w) {
     ++by[static_cast<int>(w)];
@@ -155,7 +164,7 @@ inline int FormatNullPos(char* buf, std::size_t size, const char* who, NullPosWh
 
 
 // The "stats nullpos:" line's body: the NULLPOS lines by kind, then the DEADTARGET lines and the dead condition
-// targets left out at the source.
+// targets and mTargets left out at the source.
 inline int FormatNullPosStats(char* buf, std::size_t size, const NullPosCounts& c, bool strict) {
   int len = std::snprintf(buf, size, "NULLPOS (strict %s): %u%s", strict ? "on" : "off", c.total,
                           c.total ? " (FAIL in a test session)" : "");
@@ -166,9 +175,10 @@ inline int FormatNullPosStats(char* buf, std::size_t size, const NullPosCounts& 
   }
   if (len > 0 && static_cast<std::size_t>(len) < size)
     len += std::snprintf(buf + len, size - static_cast<std::size_t>(len),
-                         "; DEADTARGET %u%s; dead condition targets left out %u; Follow guard: point reads %u",
+                         "; DEADTARGET %u%s; dead condition targets left out %u; dead mTargets left out %u; Follow "
+                         "guard: point reads %u",
                          c.deadTargets, c.deadTargets ? " (FAIL in a test session)" : "", c.deadConditions,
-                         c.followReads);
+                         c.deadMTargets, c.followReads);
   return len;
 }
 

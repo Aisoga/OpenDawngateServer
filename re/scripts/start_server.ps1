@@ -77,6 +77,22 @@ New-Item -ItemType Directory -Force $dir | Out-Null
 $hostCopy = Join-Path $Repo 'client\run_854_server\Dawngate'
 $argList = @('--log', $dir, '--gms-dir', $hostCopy, '--gms-args=-multipleInstances', '--gms-data', (Join-Path $dir 'host'))
 if (-not $NoShaperSelect) { $argList += '--shaper-select' }
+# the repository's maps folder (play.ps1 installs its packages into the copies), so -ServerArgs may name its maps
+$mapsDir = Join-Path $Repo 'maps'
+if (Test-Path (Join-Path $mapsDir '*\map.json')) { $argList += @('--maps', $mapsDir) }
+# the map check (MAPGUARD, MAPED-GUARD) for Start-Client.cmd, which plays without the tunnel and so names no maps:
+# as run_session.ps1 does for its copies, 127.0.0.1 is trusted with MM_Map_v3 when client\run_854 has its archive,
+# and named with the SHA-256 of its archives of the maps folder (--client-maps), so a game on a folder map plays it
+# when the copy has the host copy's version; -ServerArgs' own --trust-maps or --client-maps come after and win
+$clientData = Join-Path $Repo 'client\run_854\Dawngate\game\Data'
+if (Test-Path (Join-Path $clientData 'zz_MM_Map_v3.snap')) { $argList += '--trust-maps=127.0.0.1' }
+$clientMaps = @()
+foreach ($j in @(Get-ChildItem -Path (Join-Path $mapsDir '*\map.json') -ErrorAction SilentlyContinue)) {
+    try { $n = (Get-Content -Raw -LiteralPath $j.FullName | ConvertFrom-Json).name } catch { $n = $null }
+    $p = Join-Path $clientData "zz_$n.snap"
+    if ($n -and (Test-Path -LiteralPath $p -PathType Leaf)) { $clientMaps += "zz_$n.snap:$((Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLower())" }
+}
+if ($clientMaps.Count) { $argList += "--client-maps=127.0.0.1=$($clientMaps -join '+')" }
 if ($ServerArgs) { $argList += @($ServerArgs -split '\s+' | Where-Object { $_ }) }
 
 Set-Content -Path $LockFile -Encoding ASCII -Value "pid=$PID start=$(Get-StartStamp $PID) name=$(Split-Path $dir -Leaf) mode=play lane=a since=$(Get-Date -Format s)"

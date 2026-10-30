@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"dawngate/server/internal/setup/bmdl"
 	"dawngate/server/internal/setup/dds"
 	"dawngate/server/internal/setup/mapmm/los"
 	"dawngate/server/internal/setup/testgame"
@@ -103,17 +104,17 @@ func abs(x int) int {
 	return x
 }
 
-func nd(typ string, kv ...any) *node {
-	n := &node{typ: typ, f: map[string]any{}}
+func nd(typ string, kv ...any) *bmdl.Node {
+	n := &bmdl.Node{Type: typ, F: map[string]any{}}
 	for i := 0; i < len(kv); i += 2 {
-		n.f[kv[i].(string)] = kv[i+1]
+		n.F[kv[i].(string)] = kv[i+1]
 	}
 	return n
 }
 
 // madeUpTemplate: a version-5 model with three materials (two one-texture vertex-lit ones), a 24-byte and a
 // 32-byte mesh, two parts and a one-bone skeleton.
-func madeUpTemplate() *tree {
+func madeUpTemplate() *bmdl.Tree {
 	el := func(stream, off uint16, typ, usage byte) []byte {
 		b := binary.LittleEndian.AppendUint16(nil, stream)
 		b = binary.LittleEndian.AppendUint16(b, off)
@@ -123,46 +124,46 @@ func madeUpTemplate() *tree {
 	decl32 := cat(el(0, 0, 2, 0), el(0, 12, 8, 1), el(0, 16, 8, 2), el(0, 20, 1, 4), el(0, 28, 8, 5), el(0xFF, 0, 17, 0))
 	decl24 := cat(el(0, 0, 2, 0), el(0, 12, 2, 1), el(0xFF, 0, 17, 0))
 	u := func(v int) uint32 { return uint32(v) }
-	tex := func(slot, path string) *node {
-		return nd("Texture", "slot", slot, "slot_hash", fnv1(slot), "path", path, "path_hash", fnv1(path))
+	tex := func(slot, path string) *bmdl.Node {
+		return nd("Texture", "slot", slot, "slot_hash", bmdl.FNV1(slot), "path", path, "path_hash", bmdl.FNV1(path))
 	}
-	mat := func(i int, shader string, texs ...*node) *node {
-		return nd("Material", "shader", shader, "shader_hash", fnv1(shader), "technique", "opaque",
-			"technique_hash", fnv1("opaque"), "flags", u(1+i), "param_count", u(0),
-			"params", []*node{nd("Param", "name", "tint", "name_hash", fnv1("tint"), "offset", u(0), "size", u(4))},
+	mat := func(i int, shader string, texs ...*bmdl.Node) *bmdl.Node {
+		return nd("Material", "shader", shader, "shader_hash", bmdl.FNV1(shader), "technique", "opaque",
+			"technique_hash", bmdl.FNV1("opaque"), "flags", u(1+i), "param_count", u(0),
+			"params", []*bmdl.Node{nd("Param", "name", "tint", "name_hash", bmdl.FNV1("tint"), "offset", u(0), "size", u(4))},
 			"value_count", u(0), "values", []float32{1.0, 0.5, 0.25, float32(1 + i)}, "texture_count", u(0),
-			"textures", texs, "stream_count", u(0), "streams", []*node{})
+			"textures", texs, "stream_count", u(0), "streams", []*bmdl.Node{})
 	}
 	bounds := func(k int) []float32 { return []float32{0.5 * float32(k), 0.25, -1.0, 2.0, 1.0, 1.5, 0.75, 4.0} }
-	mesh := func(i int, decl []byte, stride int) *node {
+	mesh := func(i int, decl []byte, stride int) *bmdl.Node {
 		name := fmt.Sprintf("madeup_mesh_%d", i)
-		return nd("Mesh", "bounds", bounds(i), "name", name, "name_hash", fnv1(name), "material", u(i),
+		return nd("Mesh", "bounds", bounds(i), "name", name, "name_hash", bmdl.FNV1(name), "material", u(i),
 			"decl_count", u(len(decl)/8), "decl", decl, "vertices", lcg(3*stride, uint32(7+i)),
 			"indices", []byte{0, 0, 1, 0, 2, 0}, "vertex_count", u(3), "index_count", u(3), "target_count", u(0),
-			"targets", []*node{})
+			"targets", []*bmdl.Node{})
 	}
-	part := func(i int) *node {
+	part := func(i int) *bmdl.Node {
 		pal := make([]uint32, 16)
 		for k := range pal {
 			pal[k] = uint32(i + k)
 		}
 		return nd("Part", "bounds", bounds(10+i), "mesh", u(i), "submesh_count", u(0),
-			"submeshes", []*node{nd("Submesh", "bounds", bounds(20+i), "index_start", u(0), "index_count", u(3),
+			"submeshes", []*bmdl.Node{nd("Submesh", "bounds", bounds(20+i), "index_start", u(0), "index_count", u(3),
 				"material", u(i), "palette", pal)})
 	}
-	model := nd("Model", "bounds", bounds(30), "name", "madeup_model", "name_hash", fnv1("madeup_model"),
-		"material_count", u(0), "materials", []*node{
+	model := nd("Model", "bounds", bounds(30), "name", "madeup_model", "name_hash", bmdl.FNV1("madeup_model"),
+		"material_count", u(0), "materials", []*bmdl.Node{
 			mat(0, "labsVertLit", tex("diffuseMap", "madeup/a_D.dds")),
 			mat(1, "labsVertLit", tex("diffuseMap", "madeup/b_D.dds")),
 			mat(2, "labsLit", tex("diffuseMap", "madeup/c_D.dds"), tex("normalMap", "madeup/c_N.dds"))},
-		"mesh_count", u(0), "meshes", []*node{mesh(0, decl24, 24), mesh(1, decl32, 32)},
-		"part_count", u(0), "parts", []*node{part(0), part(1)}, "unk_40", u(7))
-	bone := nd("Bone", "name", "root", "name_hash", fnv1("root"), "parent", int32(-1), "flags", u(0),
+		"mesh_count", u(0), "meshes", []*bmdl.Node{mesh(0, decl24, 24), mesh(1, decl32, 32)},
+		"part_count", u(0), "parts", []*bmdl.Node{part(0), part(1)}, "unk_40", u(7))
+	bone := nd("Bone", "name", "root", "name_hash", bmdl.FNV1("root"), "parent", int32(-1), "flags", u(0),
 		"inverse_bind", []float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
 		"rotation", []float32{0, 0, 0, 1}, "translation", []float32{0, 0, 0, 1}, "scale", []float32{1, 1, 1, 1})
-	skel := nd("Skeleton", "bone_count", u(0), "count2", u(1), "bones", []*node{bone})
-	return &tree{tag: "bmdl", version: 5, align: 16,
-		root: nd("Root", "model", model, "skeleton", skel, "anim_count", u(0), "anims", []*node{})}
+	skel := nd("Skeleton", "bone_count", u(0), "count2", u(1), "bones", []*bmdl.Node{bone})
+	return &bmdl.Tree{Tag: "bmdl", Version: 5, Align: 16,
+		Root: nd("Root", "model", model, "skeleton", skel, "anim_count", u(0), "anims", []*bmdl.Node{})}
 }
 
 // pins: the Python reference's values for the made-up inputs.
@@ -195,16 +196,16 @@ func check(t *testing.T, name string, b []byte) {
 }
 
 func TestMadeUp(t *testing.T) {
-	tmpl, err := writeTree(madeUpTemplate())
+	tmpl, err := bmdl.Write(madeUpTemplate())
 	if err != nil {
 		t.Fatal(err)
 	}
 	check(t, "template", tmpl)
-	tr, err := parseTree(tmpl)
+	tr, err := bmdl.Parse(tmpl)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again, err := writeTree(tr); err != nil || !bytes.Equal(again, tmpl) {
+	if again, err := bmdl.Write(tr); err != nil || !bytes.Equal(again, tmpl) {
 		t.Fatalf("the made-up template does not round-trip (%v)", err)
 	}
 	field, err := NewField(64, 64, losCells(64, 64), 300.0)
@@ -255,8 +256,8 @@ func TestMadeUp(t *testing.T) {
 
 func TestTemplateChecks(t *testing.T) {
 	tr := madeUpTemplate()
-	tr.root.f["model"].(*node).f["materials"].([]*node)[1].f["shader"] = "labsLit"
-	tmpl, err := writeTree(tr)
+	tr.Root.F["model"].(*bmdl.Node).F["materials"].([]*bmdl.Node)[1].F["shader"] = "labsLit"
+	tmpl, err := bmdl.Write(tr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +271,7 @@ func TestTemplateChecks(t *testing.T) {
 	if _, err := NewField(4, 4, make([]byte, 16), 10); err == nil {
 		t.Error("an all-open map was taken")
 	}
-	if _, err := parseTree(tmpl[:len(tmpl)-1]); err == nil {
+	if _, err := bmdl.Parse(tmpl[:len(tmpl)-1]); err == nil {
 		t.Error("a cut model was parsed")
 	}
 }
@@ -279,7 +280,7 @@ func TestHelpers(t *testing.T) {
 	if fmod(-0.5, 2.0) != 1.5 || imod(-3, 4) != 1 || roundInt(2.5) != 2 || roundInt(3.5) != 4 {
 		t.Error("the Python arithmetic helpers")
 	}
-	if fnv1("ABC") != fnv1("abc") {
+	if bmdl.FNV1("ABC") != bmdl.FNV1("abc") {
 		t.Error("fnv1 ignores case")
 	}
 	if got := hypot(3, 4); got != 5 {

@@ -22,7 +22,7 @@ What stays on your PC:
 
 ## Start-Server.exe
 
-A server keeps what it needs to run: the accounts (login name, display name and a hash of the password), what each account owns, the match histories, and logs with players' login names and internet addresses. All of it stays on the server's PC, in `Dawngate-Data`; logs are deleted after `log_days` days. The server's operator is responsible for that data, not this project ([hosting.md](hosting.md#security-what-is-protected-and-what-isnt) *Personal data*).
+A server keeps what it needs to run: the accounts (login name, display name and a hash of the password), what each account owns, the match histories, and logs with players' login names and internet addresses. All of it stays on the server's PC, in `Dawngate-Data`; logs are deleted after `log_days` days. A server whose operator turned on the match recorder (`match_record`) also keeps, per match, every player's commands and position during the match, with the account number but not the name, deleted with the logs. The server's operator is responsible for that data, not this project ([hosting.md](hosting.md#security-what-is-protected-and-what-isnt) *Personal data*).
 
 `Start-Server.exe` makes no update check and contacts no one on its own, with one exception: a public server with a domain name (`web_domain`) gets the website's certificate from Let's Encrypt, which then knows that domain and, if you set `web_email`, that address for its expiry mails.
 

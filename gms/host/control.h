@@ -53,6 +53,9 @@ void PlayerGone(std::int64_t user, const char* reason);
 // "preGame", "inGame", "postGame" (dggms::control::kPhase*); only forward moves count.
 void Phase(const char* phase);
 void PlayerFinish(const dggms::control::PlayerFinish& m);
+// M18 (MSTATS1): the match's statistics before the playerFinish lines (engine/matchstats.cpp, [host] match_stats).
+void SeatStats(const dggms::control::SeatStats& m);
+void MatchTimeline(const dggms::control::MatchTimeline& m);
 // D8-live: dgserver's playerRewards lines since the last call (the post-game's C1 04, gms_host.cpp).
 std::vector<dggms::control::PlayerRewards> TakeRewards();
 // D8b (D8c's protocol): a matchmade game's karma votes for one player, once its post-game vote has closed; dgserver

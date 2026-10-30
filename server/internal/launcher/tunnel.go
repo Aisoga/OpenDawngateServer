@@ -289,7 +289,8 @@ func startTunnel(o IO, l setup.Layout, gw string, pin tunnel.Pin, tunnelIP strin
 			log = logging.New(f)
 		}
 	}
-	c := &tunnel.Client{Log: log, Gateway: gw, Pin: pin, TunnelIP: net.ParseIP(tunnelIP), RedirectorTLS: tlsCfg}
+	c := &tunnel.Client{Log: log, Gateway: gw, Pin: pin, TunnelIP: net.ParseIP(tunnelIP), RedirectorTLS: tlsCfg,
+		Maps: InstalledMaps(l.ClientCopy(), folderDialogMaps(o.ExeDir))}
 	closeAll := func() {
 		c.Close()
 		if f != nil {

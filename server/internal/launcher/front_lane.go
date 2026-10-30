@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"dawngate/server/internal/dgserver"
+	"dawngate/server/internal/mapdist"
 	"dawngate/server/internal/setup"
+	"dawngate/server/internal/setup/mapc"
 )
 
 // dgserver --tunnel-client <gateway> --tunnel-front <folder> (a test aid for the lanes, which run the game from their
@@ -52,6 +54,14 @@ func runLaneFront(c dgserver.FrontConfig) (func(), []int, error) {
 		}
 	}
 	f := &Front{Log: c.Log, Layout: l, Bookmarks: bm, TunnelIP: net.ParseIP(c.TunnelAddress), RedirectorTLS: c.RedirectorTLS, Default: first.Tag}
+	if c.MapsDir != "" { // --maps: the folder's maps, as Start-Client's maps folder (the dialog's list, the hello's maps)
+		pkgs, _ := mapc.ReadFolder(c.MapsDir)
+		f.Maps = setup.DialogMaps(pkgs)
+	}
+	if c.MapDownload != "" { // map delivery into a scratch folder (the lanes' --map-download)
+		f.MapDownload = &MapDownload{Dir: c.MapDownload, Limits: mapdist.DefaultLimits()}
+		f.logf("map delivery: on, into %s", c.MapDownload)
+	}
 	if err := f.Start(); err != nil {
 		return nil, nil, err
 	}

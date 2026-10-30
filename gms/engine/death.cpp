@@ -27,8 +27,12 @@
 #include "game.h"
 #include "hook.h"
 #include "host/control.h"
+#include "itempassives.h"
 #include "log.h"
 #include "match.h"
+#include "matchrec.h"
+#include "matchstats.h"
+#include "matchstats_gold.h"
 #include "passives.h"
 #include "perks.h"
 #include "wells.h"
@@ -745,9 +749,14 @@ dmg::KillOutcome CountPlayerDeath(void* victim, int victimIndex) {
 
 // ---- the deferred ends -----------------------------------------------------------------------------------------
 
+// ITEMDEATH: the death-ended item passives' slot ids cleared while dead and the passives renewed at the respawn
+// (itempassives.h); not with Q3's rule (death_keep_item_passives=1) or item_passive_respawn=0.
+bool ItemPassivesRenewed() { return !g_opt.keepItemPassives && g_opt.itemPassiveRespawn; }
+
 struct Pending {
   std::uint32_t victim = 0;
-  unsigned runs = 0;  // g_runs at the death
+  int playerIndex = -1;  // ITEMDEATH: a player's creature: its index (its item slots after the ends)
+  unsigned runs = 0;     // g_runs at the death
   std::vector<std::uint32_t> modifiers, abilities;
   std::string noun;
 };
@@ -798,8 +807,8 @@ int SehEndIfOnAgentDeath(std::uint32_t id, char* name, std::size_t cap) {
     char* st = Field<char*>(in, inst::kStatic);
     const char* nm = st ? *reinterpret_cast<const char**>(st) : nullptr;
     std::snprintf(name, cap, "%s", nm ? nm : "?");
-    // D13: the rule is gms::damage::ModifierAtDeath (core/damage/pipeline.h); the item passives were dropped from the
-    // list before (death_keep_item_passives)
+    // D13: the rule is gms::damage::ModifierAtDeath (core/damage/pipeline.h); with death_keep_item_passives=1 the item
+    // passives were dropped from the list before
     if (!st || dmg::ModifierAtDeath(Field<unsigned>(st, kStaticDeactivationType), false) != dmg::AtDeath::kEnd) return 0;
     EndAbility(id);
     return 1;
@@ -873,6 +882,8 @@ void RunPending(Pending& p) {
         "interrupted %d:%s; modifiers kept:%s",
         p.victim, p.noun.c_str(), g_runs - p.runs, GameSeconds(), nEnded, ended.empty() ? " -" : ended.c_str(), nInt,
         interrupted.empty() ? " -" : interrupted.c_str(), kept.empty() ? " -" : kept.c_str());
+  // ITEMDEATH: the item slots' ids of the passives just ended cleared (itempassives.h)
+  if (p.playerIndex >= 0 && ItemPassivesRenewed()) itempassives::WhileDead(g_sim, p.playerIndex, p.victim, "the death path");
 }
 
 // ---- D1g: the player's death timer and respawn -----------------------------------------------------------------
@@ -963,6 +974,7 @@ void StartDeathTimer(const ObjInfo& v, std::string* line) {
   r.noun = NounName(SehFind(v.id));
   if (!SehWriteDeathTimer(player, r.deathMs, r.respawnMs)) return;
   ++g_st.deathTimers;
+  matchstats::OnDeathTimer(r.index, r.deathMs, r.respawnMs);  // MSTATS1: time dead
   for (auto it = g_respawns.begin(); it != g_respawns.end();)
     it = it->index == r.index ? g_respawns.erase(it) : it + 1;
   g_respawns.push_back(r);
@@ -1042,6 +1054,11 @@ void RespawnDue() {
     }
     const Respawn r = *it;
     if (now < r.respawnMs) {
+      // ITEMDEATH: once the death path's ends ran, a death-type item passive that a purchase started on the dead
+      // holder ends, and no slot keeps a dead id (a sale or an upgrade while dead)
+      if (ItemPassivesRenewed() &&
+          std::none_of(g_pending.begin(), g_pending.end(), [&](const Pending& p) { return p.victim == r.creature; }))
+        itempassives::WhileDead(g_sim, r.index, r.creature, "while dead");
       ++it;
       continue;
     }
@@ -1087,6 +1104,8 @@ void RespawnDue() {
     passives::Activate(g_sim, static_cast<unsigned>(r.index), "respawn");
     // D3c: the perk page's modifiers that ended with the death (perks.h; [host] perk_respawn)
     perks::AtRespawn(g_sim, static_cast<unsigned>(r.index));
+    // ITEMDEATH: the item passives that ended with the death (itempassives.h; [host] item_passive_respawn)
+    if (ItemPassivesRenewed()) itempassives::AtRespawn(g_sim, r.index);
     if (g_opt.respawnFeedback) {
       // D11: the shaper's respawn voice line (PlayerRespawned, character channel, attached to the creature). Since
       // VOICELINE-fix only to the respawned human: its _VO_respawn is 2-D (no position), so a teammate heard an ally's
@@ -1238,6 +1257,7 @@ float __cdecl OnGrantGoldHook(std::uint32_t creature, float amount, std::uint32_
           Log("death: OnGrantGold creature %08X modifier %08X: %.2f -> %.2f (target %08X, killer %08X)", creature, ids[i],
               amount, r, target, killer);
         }
+        matchstats::gold::OnHandlerChange(creature, ids[i], amount, r);  // MSTATS2: the role handlers' parts
       }
       if (r >= 0.f) amount = r;
     }
@@ -1304,15 +1324,19 @@ bool GrantGoldPart(void* player, const dmg::Grant& g, unsigned source, std::uint
 // client shows it as its own combattext_gold_bonus popup (gms::damage::GoldEvents). The OnGrantGold handlers run once,
 // on the total (they all add: the Gladiator's storage, the Hunter's proc; the Predator's x 2 is for workers, which get
 // no role part). `each` is called per granted event with its total. 0: ROLEVIM-2's separate role grants (GrantGoldPart).
+// `ctx` (MSTATS2) names the reward for the match stats' role keys (matchstats::gold::OnRoleGold).
 template <class Each>
 void GrantGoldAll(const std::vector<dmg::Grant>& grants, const std::vector<PlayerView>& players, Each each,
-                  unsigned sourceFor0, unsigned sourceFor1, std::uint32_t target, std::uint32_t killer) {
+                  unsigned sourceFor0, unsigned sourceFor1, std::uint32_t target, std::uint32_t killer,
+                  gms::stats::GrantContext ctx) {
   // sourceFor1 is used for a last-hit grant, sourceFor0 for the others
   if (!g_opt.roleGoldBonus) {
     for (const dmg::Grant& g : grants)
       for (const PlayerView& p : players)
-        if (p.index == g.player && GrantGoldPart(p.player, g, g.lastHit ? sourceFor1 : sourceFor0, target, killer))
+        if (p.index == g.player && GrantGoldPart(p.player, g, g.lastHit ? sourceFor1 : sourceFor0, target, killer)) {
+          if (g.role) matchstats::gold::OnRoleGold(g.player, ctx, g.lastHit, g.amount, false);
           each(g.lastHit, g.amount);
+        }
     return;
   }
   for (const dmg::GoldEvent& e : dmg::GoldEvents(grants))
@@ -1322,6 +1346,7 @@ void GrantGoldAll(const std::vector<dmg::Grant>& grants, const std::vector<Playe
         if (e.bonus > 0.f) {
           ++g_st.roleGoldGrants;
           g_st.roleGold += e.bonus;
+          matchstats::gold::OnRoleGold(e.player, ctx, e.lastHit, e.bonus, true);
         }
         each(e.lastHit, e.amount + e.bonus);
       }
@@ -1398,7 +1423,10 @@ void Rewards(void* victim, const ObjInfo& v, const ObjInfo* killer, int creditIn
         ++g_st.goldGrants;
         g_st.gold += amount;
       },
-      goldSource, goldSource, v.id, killer ? killer->id : 0);
+      goldSource, goldSource, v.id, killer ? killer->id : 0,
+      kind == dmg::kNpcMinion     ? gms::stats::GrantContext::Minion
+      : kind == dmg::kNpcCreature ? gms::stats::GrantContext::Creature
+                                  : gms::stats::GrantContext::Other);
   if (!xg.empty() || !gg.empty()) ++g_st.rewardDeaths;
   char b[200];
   std::snprintf(b, sizeof b, " rewards: xp %.2f (type %d), gold %.2f (type %d), radius %.2f, team %d, area %zu, last hitter %d;",
@@ -1483,7 +1511,7 @@ void PlayerKillRewards(const ObjInfo& v, int victimIndex, const dmg::KillOutcome
         ++(lastHit ? g_st.playerKillGrants : g_st.assisterGrants);
         g_st.playerKillGold += amount;
       },
-      3u + kGoldSourceOffset, 2u + kGoldSourceOffset, v.id, killerCreature);
+      3u + kGoldSourceOffset, 2u + kGoldSourceOffset, v.id, killerCreature, gms::stats::GrantContext::PlayerKill);
   if (r.firstBloodGold > 0.f)
     for (const PlayerView& p : players)
       if (p.index == o.killer && SehGrantGold(p.player, r.firstBloodGold, 2u + kGoldSourceOffset, false, v.id, killerCreature))
@@ -1491,8 +1519,12 @@ void PlayerKillRewards(const ObjInfo& v, int victimIndex, const dmg::KillOutcome
   for (const dmg::Grant& g : r.xp)
     for (const PlayerView& p : players)
       if (p.index == g.player &&
-          SehGrantXp(p.player, g.amount, (g.player == o.killer ? 2u : 3u) + kXpSourceOffset, v.id, killerCreature))
+          SehGrantXp(p.player, g.amount, (g.player == o.killer ? 2u : 3u) + kXpSourceOffset, v.id, killerCreature)) {
         g_st.playerKillXp += g.amount;
+        for (const dmg::KillReceiver& k : rc)  // MSTATS2: the role's XP modifier's part (the Predator's x 1.3)
+          if (k.player == g.player && k.xpModifier > 1.f)
+            matchstats::gold::OnPredatorXp(g.player, g.amount - g.amount / k.xpModifier);
+      }
   char b[200];
   std::snprintf(b, sizeof b,
                 "; player-kill rewards: bounty %.0f (victim streak %u, death streak %u), first blood %.0f, xp %.2f (%.0f%% "
@@ -1654,6 +1686,7 @@ void OnDeath(void* victim, void* killer, std::uint32_t killerId, void* snapshot,
   // remember the instances that exist now (step 5)
   Pending p;
   p.victim = v.id;
+  p.playerIndex = v.player && v.playerIndex >= 0 && v.playerIndex < dmg::kMaxPlayers ? v.playerIndex : -1;
   p.runs = g_runs;
   p.noun = NounName(victim);
   {
@@ -1663,7 +1696,8 @@ void OnDeath(void* victim, void* killer, std::uint32_t killerId, void* snapshot,
       p.modifiers.assign(mods, mods + nm);
       p.abilities.assign(abs, abs + na);
     }
-    // Q3: a player's item passives stay (death.h): drop them from the instances to end
+    // Q3's rule (death_keep_item_passives=1; off since ITEMDEATH): a player's item passives stay: drop them from the
+    // instances to end
     std::uint32_t keep[11 * 4];
     const int nk = g_opt.keepItemPassives && v.player ? SehItemPassives(v.playerIndex, v.id, keep, 11 * 4) : 0;
     for (int ik = 0; ik < nk; ++ik)
@@ -1805,6 +1839,12 @@ void OnDeath(void* victim, void* killer, std::uint32_t killerId, void* snapshot,
       kills = "; creep score: player " + std::to_string(credit) + " " + CountersText(credit);
     }
   }
+  // MSTATS1: kills by target kind (the credited seat), a player kill's or a structure's timeline event
+  matchstats::OnDeath(v.player, v.npcType, v.team, CreditIndex(snapshot, hasKiller ? &k : nullptr), victimIndex,
+                      victimIndex >= 0 ? ko.killer : -1);
+  // MATCHREC: the recorder's kill (with the assisters) or credited death
+  matchrec::OnDeath(v.player, v.npcType, v.team, CreditIndex(snapshot, hasKiller ? &k : nullptr), victimIndex,
+                    victimIndex >= 0 ? ko.killer : -1, victimIndex >= 0 ? &ko.assisters : nullptr);
   // 4. rewards
   std::string rewards;
   if (g_opt.rewards) Rewards(victim, v, hasKiller ? &k : nullptr, CreditIndex(snapshot, hasKiller ? &k : nullptr), &rewards);

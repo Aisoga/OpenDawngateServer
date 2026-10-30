@@ -136,7 +136,13 @@ type Setup struct {
 	// (archive.PhaseHashZip, PhaseExtract, PhaseVerify) and its percentage. Start-Client shows the setup of "This PC"
 	// in the login screen's server list with it.
 	Progress func(step, phase string, pct int)
+	// Maps is the maps folder (mapc.FolderName beside the release's programs, the repository's maps\ for developers, which holds no package in git):
+	// every package in it is compiled into each copy (stepFolderMaps), its catalog entries go into the bot profiles'
+	// catalog, a player copy's create dialog lists it and its lobby line names none ("" = no folder: only the built-in
+	// maps).
+	Maps string
 
+	maps    folderMaps
 	lines   []Line
 	mapMM   []byte // the MM_Map_v3 archive this setup built (the second copy reuses it)
 	zip     string
@@ -303,12 +309,14 @@ func (s *Setup) Server(o ServerOptions) error {
 		s.stepBotProfiles("client bots", s.ClientCopy())
 		s.stepHalloween("halloween", s.ClientCopy())
 		s.stepMapMM("client MM_Map_v3", s.ClientCopy())
+		s.stepFolderMaps("client", s.ClientCopy())
 	}
 	host := s.ensureCopy("host copy", s.HostCopy(), hostExempt) || (s.Check && isDir(s.HostCopy()))
 	patched := false
 	if host {
 		s.stepBotProfiles("host bots", s.HostCopy())
 		s.stepMapMM("host MM_Map_v3", s.HostCopy())
+		s.stepFolderMaps("host", s.HostCopy())
 		exe := false
 		if modulus != nil {
 			exe = s.stepExe("host exe", s.HostCopy(), modulus, hostOptions, exepatch.HostKeys)
@@ -359,8 +367,12 @@ func (s *Setup) Client(server string, ca []byte) error {
 		s.stepBotProfiles("client bots", s.ClientCopy())
 		s.stepHalloween("halloween", s.ClientCopy())
 		s.stepMapMM("client MM_Map_v3", s.ClientCopy())
+		s.stepFolderMaps("client", s.ClientCopy())
 		s.stepMatchOptions("bot check box", s.ClientCopy())
 		s.stepChatRooms("chat rooms", s.ClientCopy())
+		s.stepAfterAction("after action review", s.ClientCopy(), server)
+		s.stepItemShop("shop refund", s.ClientCopy())
+		s.stepCollection("collection items", s.ClientCopy())
 		if s.Picker {
 			s.stepPicker("server picker", s.ClientCopy())
 		} else {

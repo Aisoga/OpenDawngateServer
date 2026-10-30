@@ -19,6 +19,8 @@
 #include "game.h"
 #include "host/control.h"
 #include "log.h"
+#include "matchrec.h"
+#include "matchstats.h"
 #include "replicate.h"
 #include "shop.h"
 #include "wells.h"
@@ -651,6 +653,9 @@ void EndMatch(const Guardian& g, std::uint32_t killer, const char* how, std::uin
       Log("match: [host] end_stats '%s' is not K,D,A,creeps,gold,level[,role 0-3]; ignored", g_opt.endStats.c_str());
     }
   }
+  // MSTATS1: every seat's seatStats, then the matchTimeline, before the playerFinish lines ([host] match_stats)
+  matchstats::AtMatchEnd(g_sim, winner, duration, surrender ? g.team : 0);
+  matchrec::AtMatchEnd(g_sim, winner, duration, surrender ? g.team : 0);  // MATCHREC: the end, the final counts
   death::LogPlayerFinish(winner, duration, g_opt.descriptors);  // D1h: the counts kept, as playerFinish lines (C1b: sent)
   hostctl::Finish(winner, duration, finishReason);  // C1b: finishGame, phase postGame, the post-game timer
 }
@@ -820,6 +825,7 @@ void EverySecond(double t) {
   if (!g_ended) SehSetGameTime(g_sim, static_cast<int>(t));
   // D1f-live: passive gold (RewardsTuning passiveGold per minute from passiveStartDelayInSeconds, R10 §5)
   if (!g_ended) death::PassiveGoldTick(t);
+  if (!g_ended) matchstats::Sample(g_sim, t);  // MSTATS1: the timeline's sample once per match minute
   if (g_opt.levels) {
     char first[600];
     first[0] = 0;

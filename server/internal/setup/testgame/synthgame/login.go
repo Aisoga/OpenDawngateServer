@@ -11,17 +11,35 @@ import (
 // its symbol, a placed object), so the server picker's setup step has something to patch.
 func LoginScreen() []byte { return movieSnap(moviepatch.Picker.MoviePath, "maxis.LoginScreen") }
 
-// Battlegrounds is the synthetic Battlegrounds.snap: the CREATE GAME dialog's movie path with the same kind of
-// made-up movie, for the bot check box's setup step.
+// Battlegrounds is the synthetic Battlegrounds.snap: the CREATE GAME dialog's and the After Action Review's movie
+// paths with the same kind of made-up movie each, for the setup steps of the bot check box and the review's tabs.
 func Battlegrounds() []byte {
-	return movieSnap(moviepatch.MatchOptions.MoviePath, "maxis.MatchOptionsUI")
+	return snap.Pack([]snap.File{
+		{Name: moviepatch.MatchOptions.MoviePath, Data: movie("maxis.MatchOptionsUI")},
+		{Name: moviepatch.AfterAction.MoviePath, Data: movie("maxis.AfterActionReview")},
+	})
 }
 
 // Global is the synthetic Global.snap: the chat movie's path with the same kind of made-up movie, for the setup step
 // of the chat rooms opened by default.
 func Global() []byte { return movieSnap(moviepatch.ChatRooms.MoviePath, "maxis.chat.Chat") }
 
+// HUD is the synthetic HUD.snap: the item shop's movie path with the same kind of made-up movie, for the setup step
+// of the shop's inline refund.
+func HUD() []byte { return movieSnap(moviepatch.ItemShop.MoviePath, "maxis.Hud.ItemShopUI") }
+
+// Code is the synthetic code.snap: the front end's movie path with the same kind of made-up movie, for the setup step
+// of the Collection's items.
+func Code() []byte {
+	return movieSnap(moviepatch.Collection.MoviePath, "com.gravity.framework.Gravity")
+}
+
 func movieSnap(path, docClass string) []byte {
+	return snap.Pack([]snap.File{{Name: path, Data: movie(docClass)}})
+}
+
+// movie is a made-up movie of one frame (a sprite, its symbol docClass, a placed object).
+func movie(docClass string) []byte {
 	tag := func(code int, data []byte) []byte {
 		return append(binary.LittleEndian.AppendUint16(nil, uint16(code<<6|len(data))), data...)
 	}
@@ -33,7 +51,6 @@ func movieSnap(path, docClass string) []byte {
 	body = append(body, tag(26, []byte{2, 3, 0, 5, 0})...)
 	body = append(body, tag(1, nil)...)
 	body = append(body, tag(0, nil)...)
-	movie := binary.LittleEndian.AppendUint32([]byte("CFX\x0c"), uint32(len(body)+8))
-	movie = append(movie, moviepatch.ZlibStored(body)...)
-	return snap.Pack([]snap.File{{Name: path, Data: movie}})
+	m := binary.LittleEndian.AppendUint32([]byte("CFX\x0c"), uint32(len(body)+8))
+	return append(m, moviepatch.ZlibStored(body)...)
 }

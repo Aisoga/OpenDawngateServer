@@ -52,6 +52,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"dawngate/server/internal/gmshost"
 	"dawngate/server/internal/tdf"
@@ -937,6 +938,7 @@ func registerCustomGames(s *Server) {
 			if len(moved) > 0 {
 				hg.syncHostRoster()
 				r.Server.browserChanged(hg)
+				r.Server.armAutoStart(hg)
 			}
 		})
 		return nil
@@ -978,6 +980,63 @@ func registerCustomGames(s *Server) {
 		r.After(func() { hg.setState(state) })
 		return nil
 	})
+}
+
+// onlySpectators reports whether every human still in the custom game spectates and it hasn't started (hg.mu held).
+func (hg *hostedGame) onlySpectators() bool {
+	if hg.custom == nil || hg.custom.started {
+		return false
+	}
+	n := 0
+	for _, hp := range hg.players {
+		if hp.removed {
+			continue
+		}
+		if hp.p.Team != SpectatorTeam {
+			return false
+		}
+		n++
+	}
+	return n > 0
+}
+
+// armAutoStart (dgserver --custom-autostart) starts a custom game CustomAutoStart after a team change that left only
+// spectators in it: its lobby offers the admin no Start Game without players on the teams, so a game of bots alone (with
+// CustomBots) needs it. A human joining a team before then keeps the game in its lobby.
+func (s *Server) armAutoStart(hg *hostedGame) {
+	if s.CustomAutoStart <= 0 || hg.custom == nil || !hg.custom.browsable {
+		return
+	}
+	hg.mu.Lock()
+	ok := hg.onlySpectators()
+	hg.mu.Unlock()
+	if !ok {
+		return
+	}
+	s.Log.Logf("blaze", "   game %d: every human spectates: it starts by itself in %v (--custom-autostart)", hg.game.ID, s.CustomAutoStart)
+	time.AfterFunc(s.CustomAutoStart, func() { s.autoStartCustom(hg) })
+}
+
+// autoStartCustom is armAutoStart's start: the admin's advanceGameState IN_GAME's (the host's startGame with the final
+// roster, NotifyGameStateChange IN_GAME to every player), unless a human joined a team or the game started meanwhile.
+func (s *Server) autoStartCustom(hg *hostedGame) {
+	hg.mu.Lock()
+	if !hg.onlySpectators() {
+		hg.mu.Unlock()
+		s.Log.Logf("blaze", "   game %d: no start by itself (a human is on a team, or it started)", hg.game.ID)
+		return
+	}
+	hg.custom.started = true
+	roster := lobbyRoster(hg.players, hg.game.Attrs)
+	players := append([]*hostedPlayer(nil), hg.players...)
+	mt := hg.match
+	hg.mu.Unlock()
+	s.Log.Logf("blaze", "   game %d starts (--custom-autostart: every human spectates): roster %s", hg.game.ID, describeRoster(roster))
+	if mt != nil {
+		s.lobbyContent(roster, players)
+		mt.StartGame(roster)
+	}
+	hg.setState(GameStateInGame)
 }
 
 // describeRoster is a roster for the log: "user@index/team" each, "spectator" for an observer.

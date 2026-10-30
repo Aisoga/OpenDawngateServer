@@ -14,8 +14,8 @@
 //     first), one constant delay apart (D1k: the user's footage of the original: six minions in 01:00-01:03, so
 //     0.5 s), each walking its lane from its first tick; with the delay 0, D1c-live's rows of three toward the lane at
 //     once [assumed]; the minions push each other since D1k (crowd.h: the server space's constraint solver);
-//   - the creep camps on their marker timers (first spawn spawnDelay, respawn respawnTime s after the camp was cleared
-//     [assumed]), each creature at its child marker, in the camp (object +0x50 and AIDirectorImpl_AddCampMember
+//   - the creep camps on their nouns' timers (CAMPTIMER, [host] camp_timers=noun, the default; =marker the markers'
+//     overrides: first spawn spawnDelay, respawn respawnTime s after the camp was cleared [assumed]), each creature at its child marker, in the camp (object +0x50 and AIDirectorImpl_AddCampMember
 //     0x008AF780) so a hit creep pulls its camp (Agent_CallForHelp);
 //   - the parasite at match start (its camp, director +0x18 for nDirector.GetParasiteID, followed through its stages);
 //   - nDirector.OverrideMinionSpawnerAsset / ResetMinionSpawnerAsset over the client's no-op stubs;
@@ -31,7 +31,9 @@
 // (40): the "wave shape" lines (length, width, closest pair of the first waves' minions per spawner); PARAMAP:
 // camp_icons (1: the parasite's minimap icon while it is alive and born, 8D mCampVisibleToTeam; 2 every camp; 0 off;
 // CAMPICONS: 3, the default, the parasite as 1 and the jungle camps by each team's knowledge, gms/core/matchflow/
-// camps.h, with camp_reveal_buff_s (60) and camp_reveal_small_s (10); Configure reads camp_icons itself).
+// camps.h, with camp_reveal_buff_s (60) and camp_reveal_small_s (10); Configure reads camp_icons itself); CAMPTIMER:
+// camp_timers (noun: each camp noun's spawnDelay and respawnTime; marker: its marker's override where it has one;
+// Configure reads it).
 #pragma once
 
 #include <cstddef>
@@ -116,6 +118,7 @@ struct CampView {
   double respawnAt = -1.0;       // the next spawn while cleared (< 0: none)
   double knownRespawnAt[2] = {-1.0, -1.0};  // team 1, team 2 (< 0: unknown)
   int spawns = 0;                // HUNTERROUTE: spawns so far (0: not up yet)
+  int role = 0;                  // MAPED4: gms::flow::CampRole (0 small, 1 buff, 2 big) from the camp's data
 };
 std::vector<CampView> CampViews();
 
@@ -136,6 +139,11 @@ struct TitanSpawn {
   float rot[3] = {};     // degrees
 };
 const std::vector<TitanSpawn>& Guardians();
+
+// MAPED4: the level asset's name ("SM_Map_v5.Level"; empty before OnLevelStarted) and the parasite camp's marker
+// position (false: the level has none).
+const std::string& LevelName();
+bool ParasiteCampPos(float* out);
 
 // D9: a worker spot of a well (the well marker's children, "Follower Spawn Point"), in marker order.
 struct WellSpot {

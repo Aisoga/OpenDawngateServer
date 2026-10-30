@@ -118,14 +118,19 @@ GMS_TEST(WellsSpeedTable) {
   CHECK(Near(CaptureSeconds(t, 2.f, 1), 8.0, 1e-4));  // goldMineCaptureRatePerSecond scales it
   const float w[2] = {1.f, 0.f};                      // one undamaged, one damaged at the multiplier 0
   CHECK_EQ(SpeedFactor(t, w, 2), 1.f);
-  // the client's refusals: more than 5 entries, an entry not above 0.1
+  // the client's asserts don't stop it (GHIDRAFLOW): more than 5 entries use the first 5, an entry not above 0.1
+  // still gets its step
   const float six[6] = {16.f, 14.f, 12.f, 10.f, 8.f, 6.f};
-  CHECK(!BuildSpeedTable(six, 6).ok);
-  CHECK_EQ(BuildSpeedTable(six, 6).count, 0u);
+  const SpeedTable s6 = BuildSpeedTable(six, 6);
+  CHECK(!s6.ok);
+  CHECK_EQ(s6.count, 5u);
+  CHECK(Near(s6.step[4], 16.0 / 8 - 16.0 / 10, 1e-6));
+  CHECK(Near(CaptureSeconds(s6, 1.f, 5), 8.0, 1e-4));
   const float bad[3] = {16.f, 14.f, 0.05f};
   const SpeedTable b = BuildSpeedTable(bad, 3);
   CHECK(!b.ok);
-  CHECK_EQ(b.step[2], 0.f);
+  CHECK_EQ(b.count, 3u);
+  CHECK(Near(b.step[2], 16.0 / 0.05 - 16.0 / 14, 1e-2));
   CHECK(!BuildSpeedTable(d, 0).ok);
 }
 

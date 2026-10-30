@@ -64,6 +64,67 @@ GMS_TEST(FlowCampTimer) {
   CHECK(!p.Due(100000.0));
 }
 
+// CAMPTIMER: SM_Map_v5's camps under both [host] camp_timers values (MATCH_FLOW §2.2's table).
+GMS_TEST(FlowCampTimesNounOrMarker) {
+  const CampTimerSource noun = CampTimerSource::kNoun, marker = CampTimerSource::kMarker;
+  struct Case {
+    bool nounOk;
+    double nf, nr;
+    bool markerOk;
+    double mf, mr;
+    double nounFirst, nounRespawn, markerFirst, markerRespawn;
+  };
+  const Case cases[] = {
+      {true, 90, 300, false, 0, 0, 90, 300, 90, 300},    // a buff camp: no marker override, both rules the noun's
+      {true, 90, 180, true, 90, 60, 90, 180, 90, 60},    // a small camp (Fish, Ugger, four Fungus)
+      {true, 90, 180, true, 110, 180, 90, 180, 110, 180},  // the two 110-s Fungus camps
+      {true, 210, 300, true, 120, 300, 210, 300, 120, 300},  // the Boar (Gold Pigs)
+      {false, 0, 0, true, 75, 45, 75, 45, 75, 45},       // a marker without a noun definition: the marker's either way
+  };
+  for (const Case& c : cases) {
+    const CampTimes a = PickCampTimes(noun, c.nounOk, c.nf, c.nr, c.markerOk, c.mf, c.mr);
+    CHECK(a.ok);
+    CHECK_EQ(a.first, c.nounFirst);
+    CHECK_EQ(a.respawn, c.nounRespawn);
+    CHECK(a.fromMarker == !c.nounOk);
+    const CampTimes b = PickCampTimes(marker, c.nounOk, c.nf, c.nr, c.markerOk, c.mf, c.mr);
+    CHECK(b.ok);
+    CHECK_EQ(b.first, c.markerFirst);
+    CHECK_EQ(b.respawn, c.markerRespawn);
+    CHECK(b.fromMarker == c.markerOk);
+  }
+  CHECK(!PickCampTimes(noun, false, 0, 0, false, 0, 0).ok);
+  CHECK(!PickCampTimes(marker, false, 0, 0, false, 0, 0).ok);
+  // the key's values
+  CHECK(CampTimerSourceOf(nullptr) == noun);
+  CHECK(CampTimerSourceOf("noun") == noun);
+  CHECK(CampTimerSourceOf("") == noun);
+  CHECK(CampTimerSourceOf("0") == noun);
+  CHECK(CampTimerSourceOf("marker") == marker);
+  CHECK(CampTimerSourceOf("Marker") == marker);
+  CHECK(CampTimerSourceOf("1") == marker);
+  CHECK(CampTimerSourceOf("markers") == noun);
+  CHECK(CampTimerSourceOf("mark") == noun);
+  CHECK(std::string(CampTimerSourceName(noun)) == "noun");
+  CHECK(std::string(CampTimerSourceName(marker)) == "marker");
+  // the default rule's small camp: first at 90 s, back 180 s after a clear at 131.5 s
+  const CampTimes s = PickCampTimes(noun, true, 90, 180, true, 90, 60);
+  CampTimer t;
+  t.Init(s.first, s.respawn);
+  CHECK(t.Due(90.0));
+  t.OnSpawned();
+  t.OnCleared(131.5);
+  CHECK(!t.Due(311.0));
+  CHECK(t.Due(311.5));
+  // the Boar: first at 210 s, not at the marker's 120 s
+  const CampTimes boar = PickCampTimes(noun, true, 210, 300, true, 120, 300);
+  CampTimer b;
+  b.Init(boar.first, boar.respawn);
+  CHECK(!b.Due(120.0));
+  CHECK(!b.Due(209.9));
+  CHECK(b.Due(210.0));
+}
+
 GMS_TEST(FlowEndReason) {
   CHECK_EQ(EndReasonForDeadGuardian(2), 1u);  // Spirit Guardian died: Mortal wins
   CHECK_EQ(EndReasonForDeadGuardian(1), 3u);  // Mortal Guardian died: Spirit wins

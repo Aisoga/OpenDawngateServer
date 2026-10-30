@@ -3,6 +3,7 @@ package tunnel
 import (
 	"bytes"
 	"net"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +27,7 @@ func gatewayAddr(g *Gateway, id uint64) *Addr {
 // TestSessionHelloWire pins the session hello's bytes: version 2, the 28 bytes of version 1, the release's length and
 // name; a name over version.MaxLen bytes is cut, and the gateway's reader cleans it.
 func TestSessionHelloWire(t *testing.T) {
-	h := sessionHello{tunnelIP: [4]byte{127, 0, 0, 1}, resumeID: 0x0102030405060708, release: "v1.2"}
+	h := sessionHello{ver: releaseVersion, tunnelIP: [4]byte{127, 0, 0, 1}, resumeID: 0x0102030405060708, release: "v1.2"}
 	h.resumeToken[0], h.resumeToken[15] = 0xAA, 0xBB
 	want := "DGTN\x02\x01\x7f\x00\x00\x01\x01\x02\x03\x04\x05\x06\x07\x08\xaa" + strings.Repeat("\x00", 14) + "\xbb\x04v1.2"
 	if got := h.encode(); string(got) != want {
@@ -37,11 +38,11 @@ func TestSessionHelloWire(t *testing.T) {
 	}
 	r := bytes.NewReader(h.encode())
 	ver, kind, err := readHello(r)
-	if err != nil || ver != sessionVersion || kind != kindSession {
+	if err != nil || ver != releaseVersion || kind != kindSession {
 		t.Fatalf("readHello = %d, %d, %v", ver, kind, err)
 	}
 	back, err := readSessionHello(r, ver)
-	if err != nil || back != h {
+	if err != nil || !reflect.DeepEqual(back, h) {
 		t.Errorf("readSessionHello = %+v, %v; want %+v", back, err, h)
 	}
 	// version 1: the 28 bytes only, no release
@@ -51,7 +52,7 @@ func TestSessionHelloWire(t *testing.T) {
 	if err != nil || ver != 1 || back.release != "" || back.resumeID != h.resumeID || r.Len() != 0 {
 		t.Errorf("version 1: %d, %+v, %v (%d bytes left)", ver, back, err, r.Len())
 	}
-	long := sessionHello{release: strings.Repeat("x", 300)}.encode()
+	long := sessionHello{ver: releaseVersion, release: strings.Repeat("x", 300)}.encode()
 	if n := int(long[6+28]); n != 64 || len(long) != 6+28+1+64 {
 		t.Errorf("a long name: length byte %d, %d bytes", n, len(long))
 	}
@@ -60,8 +61,8 @@ func TestSessionHelloWire(t *testing.T) {
 	if back, _ := readSessionHello(r, ver); back.release != "a-b-c" {
 		t.Errorf("an odd name read as %q", back.release)
 	}
-	if _, _, err := readHello(bytes.NewReader([]byte("DGTN\x03\x01"))); err != errVersion {
-		t.Errorf("version 3: %v", err)
+	if _, _, err := readHello(bytes.NewReader([]byte("DGTN\x04\x01"))); err != errVersion {
+		t.Errorf("version 4: %v", err)
 	}
 }
 

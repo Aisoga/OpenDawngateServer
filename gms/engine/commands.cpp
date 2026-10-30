@@ -23,7 +23,9 @@
 #include "game.h"
 #include "hook.h"
 #include "log.h"
+#include "matchrec.h"
 #include "perf.h"
+#include "refund.h"
 #include "replicate.h"
 #include "shop.h"
 
@@ -54,6 +56,7 @@ struct Stats {
   unsigned itemsDone[6] = {};     // D7b: carried out, by transaction type 1-5
   unsigned itemsRefused[6] = {};  // refused (the answer says success 0)
   unsigned itemsMismatched = 0;   // D15: reported done by the binary, but nothing changed (answered as refused)
+  unsigned itemsUndone = 0;       // REFUND1: sales taken as an undo of a purchase in the base (answered success 0)
   unsigned goldGrants = 0, reports = 0;  // D15: the commands file's "gold" and "report" lines
   unsigned dances = 0, feedbacks = 0, feedbackFailed = 0, interacts = 0;
   // D7c: plain moves that met an engaged attack-move (taken over / deferred by the binary's rule with move_takeover 0),
@@ -705,8 +708,60 @@ void SehItemSwitch(void* player, const gms::ItemTransactionRequest& r, ItemOutco
   }
 }
 
+// REFUND1: the sale case's checks (LabsPlayer_CanUseItemShop, LabsPlayer_CanSellItem) before the undo is tried; the
+// item's asset in *asset. False if the binary would refuse the sale (the plain path then refuses and logs it).
+bool SehSaleAllowed(void* player, const gms::ItemTransactionRequest& r, void** asset) {
+  __try {
+    *asset = FindAssetById(r.item);
+    return *asset && CanUseItemShop(player) && CanSellItem(player, *asset, r.slot);
+  } __except (SehNote(GetExceptionInformation(), "sale check")) {
+    return false;
+  }
+}
+
+// REFUND1: a sale of a slot with history (refund.h) is an undo: carried out, logged, answered success 0 to the player
+// (no client repeats a sale on its copy; the AA delta brings the slot and the gold to the team). False: a plain sale.
+bool UndoSale(void* sim, unsigned index, const PlayerInfo& pi, const gms::ItemTransactionRequest& r,
+              const char* source) {
+  void* asset = nullptr;
+  if (!SehSaleAllowed(pi.player, r, &asset)) return false;
+  const ShopReach reach = SehShopReach(sim, pi);
+  const Attrs attrsBefore = SehAttrs(pi.object);
+  char text[1024];
+  if (!refund::TryUndo(sim, pi.player, pi.object, index, asset, r.item, r.slot, text, sizeof text)) return false;
+  const Attrs attrsAfter = SehAttrs(pi.object);
+  ++g_st.itemsUndone;
+  Log("commands: %s player %u: ItemTransaction %s (%s) -> %s; answered success 0; %.2f from the base object, reach "
+      "%.2f%s",
+      source, index, gms::DescribeItemTransaction(r).c_str(), AssetName(asset), text, reach.distance, reach.reach,
+      reach.dead ? ", dead" : "");
+  Log("commands: player %u: creature %08X attributes after the undo: Power %.1f -> %.1f, MaxHealth %.1f -> %.1f, "
+      "HealthRegen %.1f -> %.1f, Haste %.1f -> %.1f",
+      index, pi.creature, attrsBefore.v[0], attrsAfter.v[0], attrsBefore.v[1], attrsAfter.v[1], attrsBefore.v[2],
+      attrsAfter.v[2], attrsBefore.v[3], attrsAfter.v[3]);
+  gms::Bytes m = gms::BuildItemTransactionResult(static_cast<std::uint8_t>(index), r.type, r.item, r.slot, false);
+  Answer a;
+  a.players = static_cast<std::uint16_t>((1u << index) & 0x3FF);
+  a.what = gms::DescribeCommandAnswer(m);
+  a.msg = std::move(m);
+  a.early = true;
+  g_answers.push_back(std::move(a));
+  return true;
+}
+
 bool OnItemTransaction(void* sim, unsigned index, const PlayerInfo& pi, const gms::ItemTransactionRequest& r,
                        const char* source) {
+  // REFUND1: a human player's inventory with the build paths around the transaction (the bots never undo)
+  const bool human = std::strcmp(source, "bot") != 0;
+  if (human && r.type == gms::kItemSell && refund::Any(index)) {
+    const float goldBefore = SehWallet(pi.player).gold;
+    if (UndoSale(sim, index, pi, r, source)) {
+      matchrec::OnItemResult(index, source, r, r.slot, true, true, goldBefore, SehWallet(pi.player).gold);  // MATCHREC
+      return true;
+    }
+  }
+  gms::refund::Inventory invBefore, invAfter;
+  const bool track = human && refund::Enabled() && refund::ReadInventory(pi.player, &invBefore);
   const std::string what = gms::DescribeItemTransaction(r);
   const Wallet before = SehWallet(pi.player);
   const Attrs attrsBefore = SehAttrs(pi.object);
@@ -723,6 +778,9 @@ bool OnItemTransaction(void* sim, unsigned index, const PlayerInfo& pi, const gm
     o.why = "MISMATCH: the binary's step changed nothing (an assert inside it?), answered as refused";
     ++g_st.itemsMismatched;
   }
+  // REFUND1: a purchase pushes its undo on the slot's history; anything else that changed a slot clears that slot's
+  if (track && o.success && refund::ReadInventory(pi.player, &invAfter))
+    refund::AfterTransaction(pi.player, index, r.type, o.asset, o.slot, o.cost, invBefore, invAfter);
   const unsigned t = r.type <= 5 ? r.type : 0;
   if (o.success) ++g_st.itemsDone[t];
   else ++g_st.itemsRefused[t];
@@ -759,6 +817,7 @@ bool OnItemTransaction(void* sim, unsigned index, const PlayerInfo& pi, const gm
   // purchase and a consume-on-purchase [the consume assumed: it is a purchase the shop UI sends as type 4]
   if (o.success && (r.type == gms::kItemPurchase || r.type == gms::kItemConsume))
     shop::OnItemPurchased(sim, index, pi.creature, pi.team, r.item, source);
+  matchrec::OnItemResult(index, source, r, o.slot, o.success, false, before.gold, after.gold);  // MATCHREC
   return o.success;
 }
 
@@ -1000,12 +1059,14 @@ bool Install(const Options& options) {
       {0x00914080, kSellItemBytes, sizeof kSellItemBytes, "LabsPlayer_SellItem"},
       {0x00914160, kUseItemBytes, sizeof kUseItemBytes, "LabsPlayer_UseItem"},
       {0x00913360, kSwapItemsBytes, sizeof kSwapItemsBytes, "LabsPlayer_SwapItems"},
+      {0x009111C0, kSetAvailableGoldBytes, sizeof kSetAvailableGoldBytes, "LabsPlayer_SetAvailableGold"},  // REFUND1
   };
   for (const Check& c : itemChecks)
     if (g_opt.itemTransactions && !CodeMatches(c.va, c.bytes, c.n)) {
       Log("commands: %s at %08X has other bytes; item transactions off", c.name, static_cast<unsigned>(c.va));
       g_opt.itemTransactions = false;
     }
+  if (!g_opt.itemTransactions && refund::Enabled()) refund::Configure(false, 0);  // REFUND1: the undo needs them
   const Check feedbackChecks[] = {
       {0x008F71D0, kSendClientFeedbackEventBytes, sizeof kSendClientFeedbackEventBytes,
        "GameSimulator_SendClientFeedbackEvent"},
@@ -1054,6 +1115,7 @@ bool OnClientMessage(void* sim, unsigned index, std::uint8_t wire, const std::ui
       return true;
     }
     if (c.type < 12) ++g_st.byType[c.type];
+    matchrec::OnAction(index, source, c);  // MATCHREC: every command as received
     const std::string what = gms::DescribeActionCommand(c);
     if (!g_installed || !havePlayer) {
       ++g_st.notConverted;
@@ -1187,6 +1249,7 @@ bool OnClientMessage(void* sim, unsigned index, std::uint8_t wire, const std::ui
     const bool ranked = ok && s < 4 && after.ranks[s] == pi.ranks[s] + 1;
     if (ranked) ++g_st.rankUps;
     else ++g_st.rankUpsRefused;
+    matchrec::OnRankUp(index, source, slot, ranked);  // MATCHREC
     if (ranked) NoteIntake(index, gms::timing::kCmdKindRankUp, 0);  // Q3c: answered and done by the next AA delta
     Log("commands: %s player %u: AbilityRankUp slot %u -> LabsPlayer_RankUpAbility: %s; rank %u -> %u, ability points "
         "%u -> %u, level %u",
@@ -1198,7 +1261,9 @@ bool OnClientMessage(void* sim, unsigned index, std::uint8_t wire, const std::ui
   if (wire == gms::kGmsItemTransaction) {
     ++g_st.items;
     gms::ItemTransactionRequest r;
-    if (!gms::ParseItemTransaction(body, n, &r)) {
+    const bool parsed = gms::ParseItemTransaction(body, n, &r);
+    if (parsed) matchrec::OnItem(index, source, r);  // MATCHREC: the request as received
+    if (!parsed) {
       ++g_st.parseErrors;
       Log("commands: %s player %u: ItemTransaction of %zu B not parsed", source, index, n);
     } else if (!g_installed || !havePlayer || !g_opt.itemTransactions) {
@@ -1531,9 +1596,9 @@ bool ItemReportNow(void* sim, unsigned index, const char* label, float nearRadiu
   const Wallet w = SehWallet(pi.player);
   ObjView me;
   SehObjView(pi.object, nullptr, &me);
-  Log("items: report %s player %u: creature %08X (%s) at (%.1f, %.1f) level %u, hp %.1f/%.1f, gold %.1f (total %.1f), "
-      "spell points %u",
-      label, index, pi.creature, me.noun, me.pos[0], me.pos[1], pi.level, me.hp, me.maxHp, w.gold, w.total,
+  Log("items: report %s player %u: creature %08X (%s) team %u at (%.1f, %.1f) level %u, hp %.1f/%.1f, gold %.1f "
+      "(total %.1f), spell points %u",
+      label, index, pi.creature, me.noun, me.team, me.pos[0], me.pos[1], pi.level, me.hp, me.maxHp, w.gold, w.total,
       w.spellPoints);
   for (unsigned s = 0; s < player::kItemSlots; ++s) {
     if (!w.item[s]) continue;
@@ -1608,6 +1673,11 @@ void AfterTick(void* sim) {
             i, in ? "entered" : "left", in, r.distance, r.basePos[0], r.basePos[1], r.reach);
         g_inShopReach[i] = in;
       }
+      // REFUND1: alive and out of the shop's reach ends the player's undo history
+      if (in >= 0 && refund::Any(i)) {
+        const ShopReach r = SehShopReach(sim, pi);
+        refund::OnPosition(i, !r.dead, in == 1, r.distance);
+      }
     }
     MoveInfo mv;
     if (!SehReadMove(pi.object, &mv)) continue;
@@ -1678,6 +1748,12 @@ void FormatStats(char* buf, std::size_t size) {
                 g_st.itemsMismatched, g_st.goldGrants, g_st.reports, g_st.dances, g_st.feedbacks, g_st.feedbackFailed,
                 g_st.interacts, g_st.takeovers, g_st.moveDeferrals, g_st.attackMoveDeferrals, g_st.decideErrors,
                 g_st.queueLines, g_st.queueLinesDropped);
+  // REFUND1: the sales taken as an undo, and the undo history's own counters
+  char undo[384];
+  refund::FormatStats(undo, sizeof undo);
+  const std::size_t used = std::strlen(buf);
+  if (used + 1 < size)
+    std::snprintf(buf + used, size - used, "; sales taken as an undo %u; %s", g_st.itemsUndone, undo);
 }
 
 }  // namespace cmds

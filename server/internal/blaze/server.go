@@ -88,6 +88,20 @@ type Server struct {
 	// --trust-maps; mapguard.go). A client through the tunnel may when its Start-Client is this server's release. The
 	// zero value trusts none.
 	MapTrust MapTrust
+	// MapVersions are the server's own versions of the maps of its maps folder: each archive (lower case,
+	// "zz_cm_ring.snap") and its SHA-256 in the host copy (MAPED-GUARD, dgserver --maps with --gms-dir; mapguard.go).
+	// A player may join a game on such a map only when its copy's archive has the same hash: the tunnel's session
+	// hello names the copy's (tunnel.Addr.Maps), ClientMaps a direct client's. A map without a version here keeps
+	// MAPGUARD's rule (MM_Map_v3: the release, MapTrust).
+	MapVersions map[string][32]byte
+	// ClientMaps are the installed maps of clients without the tunnel, by address, as a tunnel hello names them
+	// (dgserver --client-maps, a test aid: the test lanes name each copy's): such a client is checked by version like
+	// one through the tunnel; one not named here plays a versioned map when MapTrust trusts it.
+	ClientMaps map[netip.Addr][]tunnel.InstalledMap
+
+	// MapServed says whether the server hands a map's package to the players' Start-Clients (map delivery, MAPED-DIST:
+	// dgserver's --serve-maps; nil: none): a version refusal's message then says that Start-Client downloads it.
+	MapServed func(level string) bool
 	// Release is the server's release name, which the map check's message to a player names ("" = not named).
 	Release string
 	// LeaderboardMinGames is the fewest games an account needs for the main menu's Leaderboard (LBFIX, dgserver
@@ -107,6 +121,11 @@ type Server struct {
 	// [assumed: their create dialog has no bot option]. A practice group's game (GameFlags 0x412: BotsFillTeams) gets
 	// its bots from the host's auto rule either way.
 	CustomBots bool
+	// CustomAutoStart starts a custom game by itself this long after its last human moved to the spectators, while
+	// every human in it spectates (dgserver --custom-autostart; 0 = off): the client's lobby offers no Start Game to an
+	// admin without players on the teams, so a bots-only match (5 bots a team, with CustomBots) for tests and head-to-head
+	// bot comparisons couldn't start. The start is the admin's advanceGameState IN_GAME's.
+	CustomAutoStart time.Duration
 	// Halloween shows the map's Halloween decoration in every hosted match (dgserver --halloween, Start-Server.ini
 	// halloween): createGame's levelFlags gets gmshost.LevelFlagHalloween, which the host loads its level with and sends
 	// in GamePrepareForStart; a client whose copy has zz_Halloween.snap then loads the holiday markerset. Off = level

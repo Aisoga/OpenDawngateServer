@@ -96,6 +96,10 @@ void SetIconSpawnPoints(const std::vector<std::uint32_t>& markerIds);
 // exit) as gms::kResourceWireFloor, so the client's bar shows "0" and the maximum instead of its placeholder "9999"
 // (core/replication/resource_wire.h). The server's value is not changed. Off: the exact value.
 void SetResourceWireFloor(bool on);
+// ABILVFX-WALLS ([host] effects_before_complete, 1): where a create puts the attached effects (92): 0 after 8F (D2g-live
+// step 3), 1 before 8F for an object with a draw box in a slot (Kensu's R path: the client makes draw boxes only when
+// 8F creates the model from the slots it already holds), 2 before 8F for every object.
+void SetEffectsBeforeComplete(int mode);
 const char* NounTypeName(std::int32_t nounType);
 
 // The create messages of one object (8E, 9D, 9C, 9F, A0, A2, A1, 8F + `modifierRecords`), full state. With
@@ -115,6 +119,8 @@ bool BuildFullState(const NetObject& o, std::vector<WorldMessage>* out, std::vec
 // AttachedEffectUpdate (92): u32 id, u8 n, n x {u8 slot, reflected cAttachedEffectData (full)} of the object's used
 // slots (asset != 0; n may be 0, which clears the client's). `slots` gets n. False (logged) on an error.
 bool AttachedEffectsUpdate(const NetObject& o, Bytes* out, int* slots);
+// FOGSTACKS: the used slots for a log line ("<slot>:<asset name> <handle>, ..."; empty when none). Returns how many.
+int EffectSlotNames(void* object, char* buf, std::size_t size);
 // The animation state of an object with cAnimationData (+0x894): `overrides` = AnimationDataUpdate (9E) with members
 // 0-6 (mOverrideAnimations) when any is set or `allOverrides`; `init` = InitAnimationInfo (B1, 33 bytes with the wire
 // byte) when a last animation is recorded. Both empty without animation data.

@@ -2,8 +2,8 @@
 // lines and spirit wells (R10)*). The host's director and match module (gms/engine/director.cpp, match.cpp) keep their
 // timers and decisions here, so gms_tests can check them without the game:
 //   - the wave schedule (LevelGameplayTuning minionSpawnDelay1 / minionSpawnInterval1: waves at 60 + 30 k s on v5);
-//   - a creep camp's timer (first spawn at its marker's spawnDelay, respawn respawnTime s after the camp was cleared
-//     [assumed rule, MATCH_FLOW §2.6]);
+//   - a creep camp's timer (first spawn at spawnDelay, respawn respawnTime s after the camp was cleared [assumed rule,
+//     MATCH_FLOW §2.6]) and which definition gives them (CAMPTIMER: the noun's by default, PickCampTimes);
 //   - the end of the match (which Guardian died -> GameSimulator_EndGame's reason and the winner, §1.1, §3.4);
 //   - the energy-line value -> mNubRespawnTime rule of nBattlegrounds.SetEnergyLineState (R10 §2);
 //   - the tower table's slots (team index, tier from the Binding's noun name, §2.9);
@@ -66,6 +66,55 @@ class CampTimer {
   bool alive_ = false;
   int spawns_ = 0;
 };
+
+// CAMPTIMER: which of a camp's two timer sets the director uses ([host] camp_timers, MATCH_FLOW §2.2 *Which definition
+// counts*). A camp marker may carry its own SpawnPointDef (componentData.spawnPointDef) beside its noun's, and the
+// stripped spawner's choice between them is lost. On SM_Map_v5 the nouns say buffs 90/300 s, small camps 90/180 s,
+// the Boar (Gold Pigs) 210/300 s; the markers override the small camps with 90/60 s (two Fungus camps 110/180 s) and
+// the Boar with 120/300 s. kNoun (the default; the user's decision of 2026-10-28, its source a fan site's map of May
+// 2014: the pigs "Spawn: 3:30, Respawn 5:00" = the noun): the noun's spawnDelay and respawnTime, the marker's only for
+// a camp whose noun has none. kMarker: the marker's where it has one (the host's rule until CAMPTIMER).
+enum class CampTimerSource : int { kNoun = 0, kMarker = 1 };
+
+// The [host] camp_timers value: "marker" (any case) or "1" -> kMarker; anything else (default "noun") -> kNoun.
+inline CampTimerSource CampTimerSourceOf(const char* s) {
+  if (!s) return CampTimerSource::kNoun;
+  if (s[0] == '1' && s[1] == 0) return CampTimerSource::kMarker;
+  const char* m = "marker";
+  int i = 0;
+  for (; s[i] && m[i]; ++i) {
+    const char c = (s[i] >= 'A' && s[i] <= 'Z') ? static_cast<char>(s[i] - 'A' + 'a') : s[i];
+    if (c != m[i]) return CampTimerSource::kNoun;
+  }
+  return (s[i] == 0 && m[i] == 0) ? CampTimerSource::kMarker : CampTimerSource::kNoun;
+}
+
+inline const char* CampTimerSourceName(CampTimerSource s) { return s == CampTimerSource::kMarker ? "marker" : "noun"; }
+
+struct CampTimes {
+  double first = 0.0;       // the first spawn, s of match time
+  double respawn = 0.0;     // s after the camp was cleared
+  bool fromMarker = false;  // the marker's set (else the noun's)
+  bool ok = false;          // false: neither definition was readable
+};
+
+// A camp's timers from its noun's definition (`nounOk`, first, respawn) and its marker's (`markerOk`, ...) by `src`.
+inline CampTimes PickCampTimes(CampTimerSource src, bool nounOk, double nounFirst, double nounRespawn, bool markerOk,
+                               double markerFirst, double markerRespawn) {
+  CampTimes t;
+  const bool useMarker = markerOk && (src == CampTimerSource::kMarker || !nounOk);
+  if (useMarker) {
+    t.first = markerFirst;
+    t.respawn = markerRespawn;
+    t.fromMarker = true;
+    t.ok = true;
+  } else if (nounOk) {
+    t.first = nounFirst;
+    t.respawn = nounRespawn;
+    t.ok = true;
+  }
+  return t;
+}
 
 // GameSimulator_EndGame's reason when the Guardian of `deadTeam` died (MATCH_FLOW §1.1): the Spirit Guardian (team 2)
 // -> 1 (Mortal wins), the Mortal Guardian (team 1) -> 3 (Spirit wins); 0 for any other team.

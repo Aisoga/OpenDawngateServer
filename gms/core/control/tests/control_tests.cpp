@@ -384,6 +384,73 @@ static void TestMessages() {
   }
 }
 
+// M18 (MSTATS1): seatStats and matchTimeline as gmshost's TestEncodeValues pins them (proto_test.go), decoded back
+static void TestStatsMessages() {
+  SeatStats s;
+  s.index = 3;
+  s.user = 2000000046;
+  s.team = 1;
+  s.noun = 274088913;
+  s.role = 2;
+  s.stats = {{"timeDeadMs", 41000}, {"damageDealt", 18234}};
+  StatSource ab;
+  ab.kind = "ability";
+  ab.slot = 0;
+  ab.damage = 5210;
+  StatSource it;
+  it.kind = "item";
+  it.id = 279208847;
+  it.damage = 812;
+  it.heal = 3;
+  s.sources = {ab, it};
+  const std::string sline =
+      "{\"t\":\"seatStats\",\"index\":3,\"user\":2000000046,\"bot\":false,\"team\":1,\"noun\":274088913,\"role\":2,"
+      "\"stats\":{\"damageDealt\":18234,\"timeDeadMs\":41000},\"sources\":[{\"kind\":\"ability\",\"slot\":0,\"id\":0,"
+      "\"damage\":5210,\"heal\":0},{\"kind\":\"item\",\"id\":279208847,\"damage\":812,\"heal\":3}]}\n";
+  CHECK_STR(Encode(s), sline);
+  Message back;
+  std::string err;
+  CHECK(Decode(sline, back, &err));
+  const SeatStats* d = std::get_if<SeatStats>(&back);
+  CHECK(d && d->sources.size() == 2 && d->sources[0].slot && *d->sources[0].slot == 0 && !d->sources[1].slot &&
+        d->sources[1].heal == 3 && d->stats.at("timeDeadMs") == 41000);
+  SeatStats bot;
+  bot.index = 9;
+  bot.bot = true;
+  bot.team = 2;
+  CHECK_STR(Encode(bot), "{\"t\":\"seatStats\",\"index\":9,\"user\":0,\"bot\":true,\"team\":2,\"noun\":0,\"role\":0}\n");
+
+  MatchTimeline tl;
+  tl.sec = {60};
+  TimelineSeat seat;
+  seat.gold = {740};
+  seat.xp = {310};
+  seat.level = {2};
+  seat.cs = {6};
+  tl.seats.push_back(seat);
+  TimelineTeam team;
+  team.team = 1;
+  team.gold = {3700};
+  team.kills = {0};
+  tl.teams.push_back(team);
+  tl.events.push_back(TimelineEvent{5000, "kill", -1, 7});
+  const std::string tline =
+      "{\"t\":\"matchTimeline\",\"stepSec\":60,\"sec\":[60],\"seats\":[{\"index\":0,\"gold\":[740],\"xp\":[310],"
+      "\"level\":[2],\"cs\":[6]}],\"teams\":[{\"team\":1,\"gold\":[3700],\"kills\":[0]}],\"events\":[{\"ms\":5000,"
+      "\"kind\":\"kill\",\"a\":-1,\"b\":7}]}\n";
+  CHECK_STR(Encode(tl), tline);
+  CHECK(Decode(tline, back, &err));
+  const MatchTimeline* t = std::get_if<MatchTimeline>(&back);
+  CHECK(t && t->stepSec == 60 && t->seats.size() == 1 && t->seats[0].cs.size() == 1 && t->events.size() == 1 &&
+        t->events[0].a == -1 && t->teams[0].kills.size() == 1);
+  CHECK_STR(Encode(MatchTimeline{}), "{\"t\":\"matchTimeline\",\"stepSec\":60}\n");
+  // a field of the wrong type is an error
+  CHECK(!Decode("{\"t\":\"seatStats\",\"sources\":[{\"kind\":\"basic\",\"slot\":\"q\"}]}", back, &err));
+  CHECK(!Decode("{\"t\":\"seatStats\",\"stats\":{\"damageDealt\":1.5}}", back, &err));
+  CHECK(!Decode("{\"t\":\"matchTimeline\",\"seats\":[{\"index\":0,\"gold\":[\"x\"]}]}", back, &err));
+  CHECK(!Decode("{\"t\":\"matchTimeline\",\"events\":[1]}", back, &err));
+}
+
 // ---------------------------------------------------------------------------------------- environment
 
 static void TestEnv() {
@@ -978,6 +1045,7 @@ int main(int argc, char** argv) {
   TestJsonWrite();
   TestExamples(examples);
   TestMessages();
+  TestStatsMessages();  // M18
   TestEnv();
   TestClient();
   TestHostControl();

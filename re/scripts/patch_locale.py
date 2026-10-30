@@ -2,7 +2,7 @@
 
 The client looks every string table up by {instance = FNV-1 of the table's name, type 0x02FAC0B6, group 0x02FABF01} in
 every *.package of game/Data/Locale/en-us/, and the package whose name sorts first wins (an added
-AA_*.package was seen winning over Locale.package live). So this script writes changed copies of six of the copy's own tables into an added package
+AA_*.package was seen winning over Locale.package live). So this script writes changed copies of seven of the copy's own tables into an added package
 beside the shipped Locale.package, which stays untouched (the game's text can't ship: the package is made from the
 copy's own file at setup time):
 
@@ -34,6 +34,9 @@ copy's own file at setup time):
                             that key), so the line 0x0f2b57c5 "Anshavar Pass", the create dialog's label (MM_Map_v3
                             is the only such map a server hosts; test_ph2b.py checks the label against
                             patch_login_movie.EXTRA_MAPS)
+  HUD          0x268AB804   the item shop's inline refund (client_ui/itemshop/ShopRefund.as): the button's "Refund"
+                            (0x5e70c001), the line above it (0x5e70c002) and the tooltip's line (0x5e70c003), with
+                            ~price~ for the price as the shop's own "Sell for ~price~ vim?" (0x0b5a6f63)
 
 The links (SITE_PAGES): without a website, http://<host>:<http port>/dawngate/<page>, which dgserver's HTTP port
 answers with a short page of its own (server/internal/web/sitepages.go: how sign-up works in its mode, ask the operator
@@ -45,18 +48,30 @@ package's tests pin the same SHA-256s): a table is cut at "\\n"; a line whose te
 line, before a final "\\r") starts with "0x", 8 hex digits and a blank gets the new text after that prefix, the line's
 ends kept; ids the table lacks are appended after the comment line ADDED_COMMENT, each as "0x<id, 8 lower-case hex
 digits> <text>\\r\\n" in id order (a table not ending in "\\n" gets "\\r\\n" first); a table missing from Locale.package
-(only in a synthetic test build) is made of those appended lines alone. The package holds the six tables in instance
+(only in a synthetic test build) is made of those appended lines alone. The package holds the seven tables in instance
 order, stored uncompressed (dbpf.py write_package).
+
+The lobby's map line names one map; a copy set up with a maps folder that holds map packages (the repository's maps/,
+set up by setup_lane.py, setup_all.py and play.ps1) has more maps than MM_Map_v3, so it gets LOBBY_MAP_ANY instead
+(--maps <dir>; lobby_map_for, the Go setup's localepatch.LobbyMapFor).
+
+Since MAPTABLE the client names every map by its own line: patch_client.py's maptable makes the client's map-name
+method look up ^FE_CustomGameLobby!0x<LevelId> for every LevelId its one-entry table lacks (the lobby's map line, the
+game browser's Map column), so FE_CustomGameLobby also gets the line 0x<LevelId> <display> for MM_Map_v3 (BUILT_IN_MAPS)
+and for each package of the maps folder (folder_maps; LevelId = FNV-1 of the lower-cased "<name>.Level", level_id),
+never over a line the shipped table has (without_lines_of). The fallback line 0x0f2b57c5 stays for an exe without
+the patch.
 
 Usage:
     .venv/Scripts/python -I re/scripts/patch_locale.py <working copy game/Data dir> [--host 127.0.0.1]
-        [--http-port 18080] [--web-domain <D>] [--check | --remove | --print]
+        [--http-port 18080] [--web-domain <D>] [--maps <dir>] [--check | --remove | --print]
 --check exits 1 when the package isn't what this script makes now; --remove deletes it; --print shows the lines.
 Refuses to touch the pristine extractions under client/ia_*.
 """
 import argparse
 import hashlib
 import ipaddress
+import json
 import os
 import re
 import sys
@@ -73,6 +88,7 @@ STRING_TYPE, STRING_GROUP = 0x02FAC0B6, 0x02FABF01
 BLAZE_ERRORS, URLS, LOGIN_SCREEN = 0x1E5BC096, 0x30B0670B, 0x69E51800
 FE_LEADERBOARD, FE_MATCH_TYPE = 0xE3B520DE, 0xFF007FE0  # FNV-1 of fe_leaderboard, fe_matchtype
 FE_CUSTOM_GAME_LOBBY = 0x7BE32E1A  # FNV-1 of fe_customgamelobby
+HUD = 0x268AB804  # FNV-1 of hud
 LEADERBOARD_MIN_GAMES = 10  # dgserver's --leaderboard-min-games default (blaze.LeaderboardMinGames)
 HTTP_PORT = 18080
 FALLBACK_PREFIX = "dawngate/"  # dgserver's own pages on its HTTP port (web.SitePrefix)
@@ -192,6 +208,70 @@ MATCH_TYPE_LINES = {
 # (blaze.PlayableLevels) only MM_Map_v3 gets there, so the create dialog's label for it (EXTRA_MAPS).
 LOBBY_MAP_LINE = 0x0F2B57C5
 LOBBY_LINES = {LOBBY_MAP_LINE: "Anshavar Pass"}
+# the line in a copy with more such maps (a maps folder's packages besides MM_Map_v3): it can name only one, so none
+LOBBY_MAP_ANY = "Custom map"
+# the item shop's inline refund (client_ui/itemshop/ShopRefund.as's LINE_*): the Sell button's label for a purchase
+# that can be undone, the line above it and the tooltip's line; the class puts the price in for ~price~
+HUD_LINES = {
+    0x5E70C001: "Refund",
+    0x5E70C002: "Refund for ~price~ vim?",
+    0x5E70C003: "Refunds for: ~price~",
+    0x5E70C004: "Refund for ~item~ and ~price~ vim?",
+    0x5E70C005: "Refunds for: ~item~ and ~price~",
+}
+
+
+def lobby_map_for(maps_dir):
+    """The lobby's map line for a copy set up with the maps folder `maps_dir` (None: no folder): LOBBY_MAP_ANY when
+    it holds a map package (a sub-folder with map.json), else None (LOBBY_LINES' own)."""
+    if not maps_dir or not os.path.isdir(maps_dir):
+        return None
+    for name in os.listdir(maps_dir):
+        if os.path.isfile(os.path.join(maps_dir, name, "map.json")):
+            return LOBBY_MAP_ANY
+    return None
+
+
+# MAPTABLE: the maps a player copy may have besides The Dawngate (the client's own table names that one), and the
+# client's map-name method (patched by patch_client.py's maptable) names every other LevelId by its line here
+BUILT_IN_MAPS = [("MM_Map_v3", "Anshavar Pass")]
+
+
+def level_id(name):
+    """A map's LevelId: the AssetCatalog id of "<name>.Level" (FNV-1, 32 bit, of the lower-cased text)."""
+    h = 0x811C9DC5
+    for c in (name + ".Level").lower().encode("utf-8"):
+        h = (h * 0x01000193) & 0xFFFFFFFF
+        h ^= c
+    return h
+
+
+def map_lines(maps):
+    """FE_CustomGameLobby's lines that name maps: {LevelId: display} for [(name, display)], the first of an id kept."""
+    out = {}
+    for name, display in maps:
+        out.setdefault(level_id(name), display)
+    return out
+
+
+def folder_maps(maps_dir):
+    """[(name, display)] of the maps folder's packages, in folder-name order: each sub-folder whose map.json reads and
+    has both. The Go setup takes the packages it installs (those that pass mapc's rule check), so a broken package
+    gets a line here only (a line nobody asks for)."""
+    if not maps_dir or not os.path.isdir(maps_dir):
+        return []
+    out = []
+    for sub in sorted(os.listdir(maps_dir)):
+        path = os.path.join(maps_dir, sub, "map.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                m = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if isinstance(m, dict) and isinstance(m.get("name"), str) and isinstance(m.get("display"), str) \
+                and m["name"] and m["display"]:
+            out.append((m["name"], m["display"]))
+    return out
 URL_PAGES = {  # line id -> page
     0x00000001: "terms", 0x00000002: "privacy", 0x00000003: "password", 0x00000004: "signup",
     0x00000005: "signup", 0x00000006: "signup", 0x00000007: "terms", 0x00000100: "", 0x00000101: "",
@@ -240,16 +320,30 @@ def site_base(host, http_port=HTTP_PORT, web_domain=None):
     return f"http://{host}:{http_port}/{FALLBACK_PREFIX}"
 
 
-def tables(host, http_port=HTTP_PORT, web_domain=None):
-    """{table instance: {line id: new text}}."""
+def tables(host, http_port=HTTP_PORT, web_domain=None, lobby_map=None, maps=()):
+    """{table instance: {line id: new text}}; lobby_map replaces the lobby's map line (lobby_map_for), maps are the
+    maps folder's ((name, display), folder_maps), whose lines follow BUILT_IN_MAPS' (map_lines)."""
     base = site_base(host, http_port, web_domain)
     urls = {i: base + p for i, p in URL_PAGES.items()}
     for slot in range(LINK_SLOTS):
         for first, page in ((SLOT_SIGNUP, "signup"), (SLOT_PASSWORD, "password")):
             urls[first + slot] = f"http://{host}:{http_port}/{FALLBACK_PREFIX}pick/{slot}/{page}"
+    lobby = {LOBBY_MAP_LINE: lobby_map} if lobby_map else dict(LOBBY_LINES)
+    for lid, text in map_lines(BUILT_IN_MAPS + list(maps)).items():
+        lobby.setdefault(lid, text)
     return {BLAZE_ERRORS: dict(ERROR_LINES), URLS: urls, LOGIN_SCREEN: dict(LOGIN_LINES),
             FE_LEADERBOARD: dict(LEADERBOARD_LINES), FE_MATCH_TYPE: dict(MATCH_TYPE_LINES),
-            FE_CUSTOM_GAME_LOBBY: dict(LOBBY_LINES)}
+            FE_CUSTOM_GAME_LOBBY: lobby, HUD: dict(HUD_LINES)}
+
+
+def without_lines_of(text, lines):
+    """`lines` without the ids the table `text` already has (FE_CustomGameLobby's lines are only appended)."""
+    have = set()
+    for part in text.split(b"\n"):
+        m = _LINE.match(part[3:] if part.startswith(b"\xef\xbb\xbf") else part)
+        if m:
+            have.add(int(m.group(1), 16))
+    return {lid: t for lid, t in lines.items() if lid not in have}
 
 
 def patch_table(text, lines):
@@ -286,12 +380,17 @@ def find_table(pkg, instance):
     return b""
 
 
-def build(locale_path, host, http_port=HTTP_PORT, web_domain=None):
+def build(locale_path, host, http_port=HTTP_PORT, web_domain=None, lobby_map=None, maps=()):
     """The bytes of AA_Server.package made from the copy's Locale.package at `locale_path`."""
     pkg = dbpf.Package(locale_path)
-    want = tables(host, http_port, web_domain)
-    return dbpf.write_package([(STRING_TYPE, STRING_GROUP, inst, patch_table(find_table(pkg, inst), want[inst]))
-                               for inst in sorted(want)])
+    want = tables(host, http_port, web_domain, lobby_map, maps)
+    out = []
+    for inst in sorted(want):
+        text, lines = find_table(pkg, inst), want[inst]
+        if inst == FE_CUSTOM_GAME_LOBBY:  # a map whose LevelId is a shipped line's id is left out
+            lines = without_lines_of(text, lines)
+        out.append((STRING_TYPE, STRING_GROUP, inst, patch_table(text, lines)))
+    return dbpf.write_package(out)
 
 
 def paths(data_dir):
@@ -305,6 +404,8 @@ def main(argv):
     ap.add_argument("--host", default="127.0.0.1", help="the server address the copy is patched for")
     ap.add_argument("--http-port", type=int, default=HTTP_PORT, help="dgserver's HTTP port (its fallback pages)")
     ap.add_argument("--web-domain", help="the server's website: the links go to https://<D>/<page>")
+    ap.add_argument("--maps", help="the maps folder the copy is set up with (the lobby's map lines: lobby_map_for, "
+                                     "folder_maps)")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true", help="exit 1 when the package isn't current")
     mode.add_argument("--remove", action="store_true", help="delete the package")
@@ -318,7 +419,8 @@ def main(argv):
     shipped, added = paths(data_dir)
     try:
         if a.print:
-            for inst, lines in tables(a.host, a.http_port, a.web_domain).items():
+            for inst, lines in tables(a.host, a.http_port, a.web_domain, lobby_map_for(a.maps),
+                                      folder_maps(a.maps)).items():
                 for lid, text in sorted(lines.items()):
                     print(f"{inst:08X} 0x{lid:08x} {text}")
             return 0
@@ -327,7 +429,7 @@ def main(argv):
                 os.remove(added)
                 print(f"removed {added}")
             return 0
-        want = build(shipped, a.host, a.http_port, a.web_domain)
+        want = build(shipped, a.host, a.http_port, a.web_domain, lobby_map_for(a.maps), folder_maps(a.maps))
     except (LocaleError, OSError, ValueError) as e:
         sys.exit(f"patch_locale: {e}")
     digest = hashlib.sha256(want).hexdigest()[:16]

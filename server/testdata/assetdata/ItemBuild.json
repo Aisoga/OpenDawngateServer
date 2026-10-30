@@ -1,0 +1,9 @@
+{
+ "class": "ItemBuild",
+ "count": 2,
+ "errors": {},
+ "instances": {
+  "RecommendedItemBuild_Ember": {"category": [{"item": [{"asset": "Basic_Blade.Item"}, {"asset": "Consumable_Tonic.Item"}], "name": {"ref": "Test!0x00000020", "text": "Starting Items"}}, {"item": [{"asset": "Legendary_Storm.Item"}], "name": {"ref": "Test!0x00000021", "text": "Core Items"}}, {"item": [{"asset": "Advanced_Guard.Item"}, {"asset": "Missing_Item.Item"}], "name": {"ref": "Test!0x00000022", "text": null}}], "name": {"ref": "Test!0x00000023", "text": "Recommended Items"}},
+  "RecommendedItemBuild_stone": {"category": [{"item": [{"asset": "Advanced_Guard.Item"}], "name": {"ref": "Test!0x00000021", "text": "Core Items"}}], "name": null}
+ }
+}

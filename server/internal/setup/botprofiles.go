@@ -30,12 +30,17 @@ func (s *Setup) stepBotProfiles(step, copy string) bool {
 		return s.report(Failed, step, fmt.Sprintf("%s is not the untouched build-854 file (docs/file_manifest.csv); "+
 			"delete %s and start again (it is extracted anew)", s.show(src), copy))
 	}
-	want, err := botprofiles.Build(data)
+	maps := s.mapCatalogs()
+	want, err := botprofiles.Build(data, maps...)
 	if err != nil {
 		return s.report(Failed, step, err.Error())
 	}
 	h := sha256.Sum256(want)
 	line := fmt.Sprintf("%s: %d bot profile(s) (%s)", s.show(added), len(botprofiles.Profiles), hex.EncodeToString(h[:])[:16])
+	if len(maps) > 0 {
+		line = fmt.Sprintf("%s: %d bot profile(s) and the catalog entries of %d map(s) (%s)", s.show(added),
+			len(botprofiles.Profiles), len(maps), hex.EncodeToString(h[:])[:16])
+	}
 	have, err := os.ReadFile(added)
 	if err == nil && bytes.Equal(have, want) {
 		return s.report(OK, step, line)

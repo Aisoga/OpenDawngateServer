@@ -43,6 +43,28 @@ func (a *Addr) Release() (name string, same bool) {
 	return a.sess.release, a.sess.sameRelease
 }
 
+// Maps are the map archives the session's Start-Client named in its hello with their SHA-256 (the player copy's
+// installed maps), and named whether it named any list at all: false for a Start-Client from before the map check
+// per version (a session hello before sessionVersion) or an address without a session. The Blaze map check lets the
+// player into a game on a map of the server's maps folder only with the server's version (blaze.Server.MapVersions).
+func (a *Addr) Maps() (maps []InstalledMap, named bool) {
+	if a == nil || a.sess == nil {
+		return nil, false
+	}
+	a.sess.mu.Lock()
+	defer a.sess.mu.Unlock()
+	return a.sess.maps, a.sess.maps != nil
+}
+
+// FakeSessionMapsAddr is FakeSessionAddr whose Start-Client also named maps (nil: none named, an older hello).
+func FakeSessionMapsAddr(ip net.IP, port int, release string, same bool, maps []InstalledMap) *Addr {
+	a := FakeSessionAddr(ip, port, release, same)
+	if maps != nil {
+		a.sess.maps = append([]InstalledMap{}, maps...)
+	}
+	return a
+}
+
 // FakeSessionAddr is an address of a session that exists only for a service's tests: its Start-Client named release,
 // same as the gateway's own or not (Release); it routes nothing.
 func FakeSessionAddr(ip net.IP, port int, release string, same bool) *Addr {

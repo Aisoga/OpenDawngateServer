@@ -1,4 +1,4 @@
-package ground
+package bmdl
 
 // The .bmdl model file as a tree: parse it and lay it out again byte for byte.
 //
@@ -138,22 +138,22 @@ func typeSize(name string, v uint32) int {
 	return n
 }
 
-// node is one structure. Its fields: uint32, int32, float32, []float32, []uint32 (scalars and fixed lists); a
-// pointer field holds nil (no target) or a string, []byte (a blob), []*node (an array), *node (a single
+// Node is one structure. Its fields: uint32, int32, float32, []float32, []uint32 (scalars and fixed lists); a
+// pointer field holds nil (no target) or a string, []byte (a blob), []*Node (an array), *Node (a single
 // structure), []float32 or []uint32 (a pointed-to list).
-type node struct {
-	typ string
-	f   map[string]any
+type Node struct {
+	Type string
+	F    map[string]any
 }
 
-type tree struct {
-	tag     string
-	version uint32
-	align   uint32
-	root    *node
+type Tree struct {
+	Tag     string
+	Version uint32
+	Align   uint32
+	Root    *Node
 }
 
-func fnv1(text string) uint32 {
+func FNV1(text string) uint32 {
 	h := uint32(0x811C9DC5)
 	for i := 0; i < len(text); i++ {
 		c := text[i]
@@ -166,8 +166,8 @@ func fnv1(text string) uint32 {
 	return h
 }
 
-// declStride is a vertex declaration's vertex size: 8-byte elements up to the stream 0xFF end.
-func declStride(decl []byte) int {
+// DeclStride is a vertex declaration's vertex size: 8-byte elements up to the stream 0xFF end.
+func DeclStride(decl []byte) int {
 	stride := 0
 	for p := 0; p+8 <= len(decl); p += 8 {
 		stream, off, typ := binary.LittleEndian.Uint16(decl[p:]), int(binary.LittleEndian.Uint16(decl[p+2:])), decl[p+4]
@@ -179,7 +179,7 @@ func declStride(decl []byte) int {
 	return stride
 }
 
-func u32of(v any) uint32 {
+func U32(v any) uint32 {
 	switch x := v.(type) {
 	case uint32:
 		return x
@@ -195,7 +195,7 @@ func isNone(v any) bool { return v == nil }
 
 func isEmptyList(v any) bool {
 	switch x := v.(type) {
-	case []*node:
+	case []*Node:
 		return len(x) == 0
 	case []float32:
 		return len(x) == 0
@@ -209,7 +209,7 @@ func listLen(v any) int {
 	switch x := v.(type) {
 	case nil:
 		return 0
-	case []*node:
+	case []*Node:
 		return len(x)
 	case []float32:
 		return len(x)
@@ -219,7 +219,7 @@ func listLen(v any) int {
 	panic(fmt.Sprintf("bmdl: %T is no list", v))
 }
 
-func blobSize(b string, obj *node, at func(o, k int) ([]byte, error)) (int, error) {
+func blobSize(b string, obj *Node, at func(o, k int) ([]byte, error)) (int, error) {
 	switch b {
 	case "decl":
 		for n := 8; ; n += 8 {
@@ -232,17 +232,17 @@ func blobSize(b string, obj *node, at func(o, k int) ([]byte, error)) (int, erro
 			}
 		}
 	case "vertices":
-		return int(u32of(obj.f["vertex_count"])) * declStride(obj.f["decl"].([]byte)), nil
+		return int(U32(obj.F["vertex_count"])) * DeclStride(obj.F["decl"].([]byte)), nil
 	case "indices":
-		return int(u32of(obj.f["index_count"])) * 2, nil
+		return int(U32(obj.F["index_count"])) * 2, nil
 	case "times":
-		return int(u32of(obj.f["key_count"])) * 2, nil
+		return int(U32(obj.F["key_count"])) * 2, nil
 	case "values":
-		return int(u32of(obj.f["key_count"])) * int(u32of(obj.f["components"])) * 2, nil
+		return int(U32(obj.F["key_count"])) * int(U32(obj.F["components"])) * 2, nil
 	case "target_indices":
-		return int(u32of(obj.f["count"])) * 2, nil
+		return int(U32(obj.F["count"])) * 2, nil
 	case "target_deltas":
-		return int(u32of(obj.f["count"])) * 24, nil
+		return int(U32(obj.F["count"])) * 24, nil
 	}
 	return 0, fmt.Errorf("bmdl: blob kind %s", b)
 }
@@ -252,8 +252,8 @@ type ptrTarget struct {
 	off int
 }
 
-// parseTree reads the whole file; every relocation must be consumed.
-func parseTree(raw []byte) (*tree, error) {
+// Parse reads the whole file; every relocation must be consumed.
+func Parse(raw []byte) (*Tree, error) {
 	le := binary.LittleEndian
 	if len(raw) < 0x20 || (string(raw[4:8]) != "bmdl" && string(raw[4:8]) != "banm") || le.Uint32(raw) != 1 {
 		return nil, fmt.Errorf("bmdl: not a bmdl/banim file")
@@ -278,9 +278,9 @@ func parseTree(raw []byte) (*tree, error) {
 		}
 		return D[off : off+k], nil
 	}
-	var readStruct func(t string, off int) (*node, error)
-	readStruct = func(t string, off int) (*node, error) {
-		obj := &node{typ: t, f: map[string]any{}}
+	var readStruct func(t string, off int) (*Node, error)
+	readStruct = func(t string, off int) (*Node, error) {
+		obj := &Node{Type: t, F: map[string]any{}}
 		fields := types[t].fields(version)
 		ptrs := map[string]ptrTarget{}
 		p := off
@@ -291,23 +291,23 @@ func parseTree(raw []byte) (*tree, error) {
 			}
 			switch fd.kind.k {
 			case "u32":
-				obj.f[fd.name] = le.Uint32(b)
+				obj.F[fd.name] = le.Uint32(b)
 			case "i32":
-				obj.f[fd.name] = int32(le.Uint32(b))
+				obj.F[fd.name] = int32(le.Uint32(b))
 			case "f32":
-				obj.f[fd.name] = math.Float32frombits(le.Uint32(b))
+				obj.F[fd.name] = math.Float32frombits(le.Uint32(b))
 			case "f32n":
 				v := make([]float32, fd.kind.n)
 				for i := range v {
 					v[i] = math.Float32frombits(le.Uint32(b[4*i:]))
 				}
-				obj.f[fd.name] = v
+				obj.F[fd.name] = v
 			case "u32n":
 				v := make([]uint32, fd.kind.n)
 				for i := range v {
 					v[i] = le.Uint32(b[4*i:])
 				}
-				obj.f[fd.name] = v
+				obj.F[fd.name] = v
 			default:
 				if relset[p] {
 					used[p] = true
@@ -327,7 +327,7 @@ func parseTree(raw []byte) (*tree, error) {
 			}
 			pt := ptrs[fd.name]
 			if !pt.ok {
-				obj.f[fd.name] = nil
+				obj.F[fd.name] = nil
 				continue
 			}
 			target := pt.off
@@ -341,14 +341,14 @@ func parseTree(raw []byte) (*tree, error) {
 				if end < 0 {
 					return nil, fmt.Errorf("bmdl: string at +0x%x has no end", target)
 				}
-				obj.f[fd.name] = string(win[:end])
+				obj.F[fd.name] = string(win[:end])
 			case "arr":
-				cnt := int(u32of(obj.f[fd.kind.count]))
+				cnt := int(U32(obj.F[fd.kind.count]))
 				size := typeSize(fd.kind.typ, version)
 				if target < 0 || target+cnt*size > len(D) {
 					return nil, fmt.Errorf("bmdl: %d %s at +0x%x past the data", cnt, fd.kind.typ, target)
 				}
-				list := make([]*node, cnt)
+				list := make([]*Node, cnt)
 				for i := range list {
 					o, err := readStruct(fd.kind.typ, target+i*size)
 					if err != nil {
@@ -356,15 +356,15 @@ func parseTree(raw []byte) (*tree, error) {
 					}
 					list[i] = o
 				}
-				obj.f[fd.name] = list
+				obj.F[fd.name] = list
 			case "arr1":
 				o, err := readStruct(fd.kind.typ, target)
 				if err != nil {
 					return nil, err
 				}
-				obj.f[fd.name] = o
+				obj.F[fd.name] = o
 			case "farr", "uarr":
-				cnt := int(u32of(obj.f[fd.kind.count]))
+				cnt := int(U32(obj.F[fd.kind.count]))
 				b, err := get(target, 4*cnt)
 				if err != nil {
 					return nil, err
@@ -374,13 +374,13 @@ func parseTree(raw []byte) (*tree, error) {
 					for i := range v {
 						v[i] = math.Float32frombits(le.Uint32(b[4*i:]))
 					}
-					obj.f[fd.name] = v
+					obj.F[fd.name] = v
 				} else {
 					v := make([]uint32, cnt)
 					for i := range v {
 						v[i] = le.Uint32(b[4*i:])
 					}
-					obj.f[fd.name] = v
+					obj.F[fd.name] = v
 				}
 			case "blob":
 				size, err := blobSize(fd.kind.typ, obj, func(o, k int) ([]byte, error) { return get(target+o, k) })
@@ -391,7 +391,7 @@ func parseTree(raw []byte) (*tree, error) {
 				if err != nil {
 					return nil, err
 				}
-				obj.f[fd.name] = bytes.Clone(b)[:size:size]
+				obj.F[fd.name] = bytes.Clone(b)[:size:size]
 			}
 		}
 		return obj, nil
@@ -409,12 +409,12 @@ func parseTree(raw []byte) (*tree, error) {
 		}
 		return nil, fmt.Errorf("bmdl: %d relocations not consumed, first at +0x%x", len(relset)-len(used), first)
 	}
-	return &tree{tag: string(raw[4:8]), version: version, align: align, root: root}, nil
+	return &Tree{Tag: string(raw[4:8]), Version: version, Align: align, Root: root}, nil
 }
 
-// writeTree lays the tree out the way the build tool did and returns the file bytes.
-func writeTree(t *tree) ([]byte, error) {
-	version := t.version
+// Write lays the Tree out the way the build tool did and returns the file bytes.
+func Write(t *Tree) ([]byte, error) {
+	version := t.Version
 	var buf []byte
 	var relocs []int
 	le := binary.LittleEndian
@@ -426,13 +426,13 @@ func writeTree(t *tree) ([]byte, error) {
 		buf = append(buf, make([]byte, size)...)
 		return off
 	}
-	writeScalars := func(tn string, obj *node, off int) error {
+	writeScalars := func(tn string, obj *Node, off int) error {
 		p := off
 		for _, fd := range types[tn].fields(version) {
-			v := obj.f[fd.name]
+			v := obj.F[fd.name]
 			switch fd.kind.k {
 			case "u32":
-				le.PutUint32(buf[p:], u32of(v))
+				le.PutUint32(buf[p:], U32(v))
 			case "i32":
 				le.PutUint32(buf[p:], uint32(v.(int32)))
 			case "f32":
@@ -458,11 +458,11 @@ func writeTree(t *tree) ([]byte, error) {
 		}
 		return nil
 	}
-	counts := func(tn string, obj *node) {
+	counts := func(tn string, obj *Node) {
 		for _, fd := range types[tn].fields(version) {
 			switch fd.kind.k {
 			case "arr", "farr", "uarr":
-				obj.f[fd.kind.count] = uint32(listLen(obj.f[fd.name]))
+				obj.F[fd.kind.count] = uint32(listLen(obj.F[fd.name]))
 			}
 		}
 	}
@@ -519,7 +519,7 @@ func writeTree(t *tree) ([]byte, error) {
 			var done []placed
 			p := off + i*size
 			for _, fd := range types[k.typ].fields(version) {
-				v := it.f[fd.name]
+				v := it.F[fd.name]
 				if fd.kind.scalar() {
 					p += fd.kind.width()
 					continue
@@ -551,7 +551,7 @@ func writeTree(t *tree) ([]byte, error) {
 		}
 		return nil
 	}
-	root := t.root
+	root := t.Root
 	counts("Root", root)
 	alloc(typeSize("Root", version), 4)
 	if err := writeScalars("Root", root, 0); err != nil {
@@ -559,7 +559,7 @@ func writeTree(t *tree) ([]byte, error) {
 	}
 	p := 0
 	for _, fd := range types["Root"].fields(version) {
-		v := root.f[fd.name]
+		v := root.F[fd.name]
 		if (fd.kind.k == "arr" || fd.kind.k == "arr1") && !isNone(v) && !isEmptyList(v) {
 			tg, err := place(fd.kind, v)
 			if err != nil {
@@ -574,13 +574,13 @@ func writeTree(t *tree) ([]byte, error) {
 		p += 4
 	}
 	sort.Ints(relocs)
-	align := int(t.align)
+	align := int(t.Align)
 	if align <= 0 {
 		return nil, fmt.Errorf("bmdl: alignment %d", align)
 	}
 	head := make([]byte, 32, 32+4*len(relocs)+align)
 	le.PutUint32(head[0:], 1)
-	copy(head[4:8], t.tag)
+	copy(head[4:8], t.Tag)
 	le.PutUint32(head[8:], version)
 	le.PutUint32(head[16:], uint32(len(buf)))
 	le.PutUint32(head[20:], uint32(align))
@@ -595,22 +595,22 @@ func writeTree(t *tree) ([]byte, error) {
 	return append(head, buf...), nil
 }
 
-func structItems(k kind, value any) []*node {
+func structItems(k kind, value any) []*Node {
 	if k.k == "arr1" {
-		return []*node{value.(*node)}
+		return []*Node{value.(*Node)}
 	}
-	return value.([]*node)
+	return value.([]*Node)
 }
 
-// deepCopy copies a tree value (a node, its lists and blobs).
+// deepCopy copies a Tree value (a Node, its lists and blobs).
 func deepCopy(v any) any {
 	switch x := v.(type) {
-	case *node:
-		return x.clone()
-	case []*node:
-		out := make([]*node, len(x))
+	case *Node:
+		return x.Clone()
+	case []*Node:
+		out := make([]*Node, len(x))
 		for i, n := range x {
-			out[i] = n.clone()
+			out[i] = n.Clone()
 		}
 		return out
 	case []byte:
@@ -623,10 +623,10 @@ func deepCopy(v any) any {
 	return v
 }
 
-func (n *node) clone() *node {
-	out := &node{typ: n.typ, f: make(map[string]any, len(n.f))}
-	for k, v := range n.f {
-		out.f[k] = deepCopy(v)
+func (n *Node) Clone() *Node {
+	out := &Node{Type: n.Type, F: make(map[string]any, len(n.F))}
+	for k, v := range n.F {
+		out.F[k] = deepCopy(v)
 	}
 	return out
 }

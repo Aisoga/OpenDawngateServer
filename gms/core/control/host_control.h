@@ -12,6 +12,7 @@
 //              reportGMSUpdate's players)
 //   SetPhase   reportGMSUpdate at once on a change ("loading" until EnterPreGameFlow, "preGame", "inGame" at
 //              EnterGame, "postGame" after the match's end)
+//   SendSeatStats, SendTimeline   (M18) the match's statistics: seatStats per seat, bots included, then matchTimeline
 //   SendPlayerFinish, SendFinish   the results: playerFinish per player, then finishGame
 //   SendPlayerKarma  (D8c) a matchmade game's karma votes per player once the post-game's vote has closed
 //              (postgame::PostGame::TakeKarmaReports); dgserver answers with the karma-aware playerRewards
@@ -90,6 +91,9 @@ class HostControl {
   void SendPlayerFinish(const PlayerFinish& m);
   void SendFinish(const FinishGame& m);
   void SendPlayerKarma(const PlayerKarma& m);  // D8c
+  // M18 (MSTATS1): every seat's seatStats, then the matchTimeline, before the playerFinish lines
+  void SendSeatStats(const SeatStats& m);
+  void SendTimeline(const MatchTimeline& m);
   // reportGMSError (codes: messages.h kErr*); false if it could not be sent. H5: the watchdog's and the step guards'
   // reports (a fatal one is followed by Logout and the host's exit).
   bool SendError(int64_t code, const std::string& text, bool fatal);

@@ -3,6 +3,7 @@ package assetdata
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -97,6 +98,134 @@ func TestGameFilesParse(t *testing.T) {
 	}
 	if n != 6969 {
 		t.Errorf("%d catalog entries, want 6969", n)
+	}
+}
+
+// Build 854: every file written back from its ParseExact value is the shipped file. Without Like, every byte
+// but the present pointer words is (those carry the build machine's heap addresses, which no value holds,
+// and must be non-zero in the shipped file too); with the shipped file as Like, every byte. The bytes the
+// post-load hooks write (Shape's area, Item's bitset pointer, NonPlayerClass's drop mask,
+// LevelGameplayTuning's capture table, TriggerVolumeDef's handlers, cNewGfxState's serial,
+// cAudioEventData's flag) and the catalog's padding come back through "_unk". From Parse's dump value
+// (floats rounded to 7 digits) the Markersets' positions don't come back: ParseExact exists for them.
+func TestGameFilesWriteBack(t *testing.T) {
+	set, ts, _ := gameSet(t)
+	files, words := 0, 0
+	for _, c := range set.Classes() {
+		typ := ts.Type(c)
+		if typ == nil {
+			t.Fatalf("class %s: no type table", c)
+		}
+		for _, f := range set.Files(c) {
+			data, err := set.arch.Read(f.Entry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			obj, err := ts.ParseExact(typ, data)
+			if err != nil {
+				t.Fatalf("%s: %v", f.FileName, err)
+			}
+			got, err := ts.Write(typ, obj, WriteOptions{})
+			if err != nil {
+				t.Fatalf("%s: %v", f.FileName, err)
+			}
+			ptrs, err := ts.PointerWords(typ, obj)
+			if err != nil {
+				t.Fatal(err)
+			}
+			files++
+			words += len(ptrs)
+			if len(got) != len(data) {
+				t.Errorf("%s: %d bytes, the shipped file %d", f.FileName, len(got), len(data))
+				continue
+			}
+			mask := append([]byte(nil), got...)
+			for _, p := range ptrs {
+				if binary.LittleEndian.Uint32(data[p:]) == 0 {
+					t.Errorf("%s: a zero pointer word at %#x for present data", f.FileName, p)
+				}
+				copy(mask[p:p+4], data[p:p+4])
+			}
+			if i := firstDiff(mask, data); i >= 0 {
+				t.Errorf("%s: byte %#x is %02x, the shipped file's %02x", f.FileName, i, mask[i], data[i])
+			}
+			same, err := ts.Write(typ, obj, WriteOptions{Like: data})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(same, data) {
+				t.Errorf("%s: written with Like, not the shipped file (byte %#x)", f.FileName, firstDiff(same, data))
+			}
+		}
+	}
+	if files != 6970 {
+		t.Errorf("%d files written back, want 6970", files)
+	}
+	t.Logf("%d files, %d pointer words", files, words)
+}
+
+func firstDiff(a, b []byte) int {
+	for i := range min(len(a), len(b)) {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	if len(a) != len(b) {
+		return min(len(a), len(b))
+	}
+	return -1
+}
+
+// A shipped Level, Markerset and LevelGameplayTuning changed the way a map compiler would (new names, a
+// marker more, other numbers) read back as the changed value.
+func TestGameChangedAssetsReadBack(t *testing.T) {
+	set, ts, _ := gameSet(t)
+	for _, c := range []string{"Level", "Markerset", "LevelGameplayTuning"} {
+		typ := ts.Type(c)
+		for _, f := range set.Files(c) {
+			data, err := set.arch.Read(f.Entry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			obj, err := ts.ParseExact(typ, data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch c {
+			case "Level":
+				obj.Set("navMeshPathPlayer", "Levels/CM_Test/CM_Test_player.bfx")
+				obj.Set("music", "Music!CM_Test.ogg")
+				obj.Set("levelSize", []any{float32(400), float32(400)})
+			case "Markerset":
+				ms, _ := obj.Get("markers")
+				list := ms.([]any)
+				if len(list) > 0 {
+					m, err := ts.ParseExact(typ, data) // a second copy of the first marker
+					if err != nil {
+						t.Fatal(err)
+					}
+					ms2, _ := m.Get("markers")
+					extra := ms2.([]any)[0].(*Object)
+					extra.Set("markerName", "CM_Test_extra")
+					extra.Set("pos", []any{float32(1.5), float32(0), float32(-2.25)})
+					obj.Set("markers", append(list, extra))
+				}
+			case "LevelGameplayTuning":
+				obj.Set("deathTimeBase", float32(7.25))
+				obj.Set("goldMineCaptureDurationInSeconds", []any{float32(10), float32(20)})
+			}
+			b, err := ts.Write(typ, obj, WriteOptions{})
+			if err != nil {
+				t.Fatalf("%s: %v", f.FileName, err)
+			}
+			back, err := ts.ParseExact(typ, b)
+			if err != nil {
+				t.Fatalf("%s: the changed file doesn't parse: %v", f.FileName, err)
+			}
+			if a, g := AppendJSON(nil, obj), AppendJSON(nil, back); !bytes.Equal(a, g) {
+				t.Errorf("%s: the changed value doesn't read back:\n  %s", f.FileName, strings.Join(compareJSON(a, g, 5), "\n  "))
+			}
+		}
 	}
 }
 

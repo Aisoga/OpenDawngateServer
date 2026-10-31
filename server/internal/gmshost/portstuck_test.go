@@ -331,7 +331,14 @@ func TestStuckPortNoRetry(t *testing.T) {
 	t.Run("window", func(t *testing.T) {
 		base := freeRange(t, 2)
 		holdPort(t, base)
-		f := newPortFixture(t, base, 2, time.Minute, bindingHost(tellReport), func(c *Config) { c.RetryWindow = time.Nanosecond })
+		// The host reports its failed bind a few clock ticks after the start. Windows' monotonic clock
+		// advances once per timer tick (up to about 15.6 ms), so a report within the first tick reads
+		// 0 s since the start: inside even a 1 ns window, and the game would be started again.
+		late := func(env Env, p *FakeProcess) {
+			time.Sleep(50 * time.Millisecond)
+			bindingHost(tellReport)(env, p)
+		}
+		f := newPortFixture(t, base, 2, time.Minute, late, func(c *Config) { c.RetryWindow = time.Nanosecond })
 		rec := newRecorder()
 		if _, err := f.m.Start(practice, rec.Events()); err != nil {
 			t.Fatal(err)

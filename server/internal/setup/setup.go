@@ -141,6 +141,9 @@ type Setup struct {
 	// catalog, a player copy's create dialog lists it and its lobby line names none ("" = no folder: only the built-in
 	// maps).
 	Maps string
+	// SkipFailedMaps (Start-Client's map editor) reports a maps-folder package whose build fails as SKIPPED instead of
+	// FAILED, so one broken package doesn't stop the copy; the editor's Test then reads its own map's line (MapLine).
+	SkipFailedMaps bool
 
 	maps    folderMaps
 	lines   []Line

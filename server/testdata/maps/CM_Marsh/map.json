@@ -161,6 +161,10 @@
       "scale": 1
     }
   ],
+  "wards": [
+    {"pos": [-57, -57]}, {"pos": [-120, 120]}, {"pos": [-82, -40]}, {"pos": [-40, -82]}, {"pos": [-182, -14]},
+    {"pos": [-164, 70]}, {"pos": [-95, 95]}, {"pos": [-60, -150]}, {"pos": [-150, -60]}
+  ],
   "scatter": [
     {
       "nouns": ["tree_mangrove_trunk_02", "tree_mangrove_roots_01", "plants_waterleaves_groupt_01",

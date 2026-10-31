@@ -140,3 +140,60 @@ func TestFolderMapsStep(t *testing.T) {
 		t.Errorf("lobby %q", s.lobbyMap())
 	}
 }
+
+// TestFolderMapsSkipFailed: a package whose build fails is FAILED (the setup incomplete), but SKIPPED with
+// SkipFailedMaps (the map editor), and MapLine finds its line in either case; a package a rule check left out is found
+// by MapLine too.
+func TestFolderMapsSkipFailed(t *testing.T) {
+	copyDir := t.TempDir()
+	var files []archive.File
+	for _, rel := range mapc.Sources { // the copy's inputs aren't the build's: every build fails
+		p := filepath.Join(copyDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("not the game's "+rel), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, archive.File{Path: archive.Top + "/" + rel, Size: 1, SHA256: digest([]byte(rel))})
+	}
+	m := archive.NewManifest(files)
+	maps := t.TempDir()
+	ring, err := os.ReadFile(filepath.Join(repoMaps, "CM_Ring", mapc.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := strings.NewReplacer(`"size": 440`, `"size": 200`, `"CM_Ring"`, `"CM_Bad"`, `"tag": "ring"`, `"tag": "bad"`).Replace(string(ring))
+	for name, text := range map[string]string{"CM_Ring": string(ring), "CM_Bad": bad} {
+		if err := os.MkdirAll(filepath.Join(maps, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(maps, name, mapc.FileName), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, skip := range []bool{false, true} {
+		s := &Setup{Out: &bytes.Buffer{}, Manifest: m, Maps: maps, SkipFailedMaps: skip}
+		s.stepFolderMaps("client", copyDir)
+		l, ok := s.MapLine("client", "CM_Ring")
+		want := Failed
+		if skip {
+			want = Skipped
+		}
+		if !ok || l.Status != want || !strings.Contains(l.Detail, "not the untouched file") || s.Failed() == skip {
+			t.Errorf("skip %v: CM_Ring %v %v; failed %v; %v", skip, l, ok, s.Failed(), s.Lines())
+		}
+		if skip && (!strings.HasPrefix(l.Detail, "left out: its build fails: ") || s.result() != nil) {
+			t.Errorf("skipped: %v, result %v", l, s.result())
+		}
+		if l, ok := s.MapLine("client", "cm_bad"); !ok || l.Status != Skipped || !strings.Contains(l.Detail, "rule(s) fail") {
+			t.Errorf("CM_Bad: %v %v; %v", l, ok, s.Lines())
+		}
+		if _, ok := s.MapLine("host", "CM_Ring"); ok {
+			t.Error("a line for the host copy, which wasn't set up")
+		}
+		if _, ok := s.MapLine("client", "CM_None"); ok {
+			t.Error("a line for a map that isn't there")
+		}
+	}
+}

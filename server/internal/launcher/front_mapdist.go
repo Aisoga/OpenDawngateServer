@@ -90,7 +90,7 @@ func (f *Front) mapWants(copy string, facts map[string]string) []mapdist.Want {
 			continue // no version named (MM_Map_v3, a server without a host copy): nothing to check a package against
 		}
 		have := false
-		for _, m := range f.Maps {
+		for _, m := range f.folderMaps() {
 			if strings.EqualFold(m.Tag, tag) {
 				if got := tunnel.ReadInstalledMaps(data, m.Archive); len(got) == 1 && got[0].SHA256 == v {
 					have = true

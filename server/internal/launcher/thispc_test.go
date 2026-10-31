@@ -357,6 +357,16 @@ func TestThisPCFront(t *testing.T) {
 	if strings.Contains(console.String(), "[blaze]") {
 		t.Errorf("the server's log on the console:\n%s", console.String())
 	}
+	// the map editor's Test ends the session to This PC before its server stops (another tag's isn't touched)
+	if f.EndSession("other") {
+		t.Error("EndSession of another server closed the session")
+	}
+	if !f.EndSession(ThisPCTag) {
+		t.Error("EndSession(pc) found no session")
+	}
+	if _, ok := f.Current(); ok || f.EndSession(ThisPCTag) {
+		t.Errorf("a session after EndSession: %v", ok)
+	}
 	f.Close()
 	pc.Close()
 	if _, err := os.Stat(filepath.Join(l.Root, setup.RunLockFile)); !os.IsNotExist(err) {

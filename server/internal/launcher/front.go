@@ -167,7 +167,8 @@ type Front struct {
 	lastSts   []serverStatus // the statuses of the list written last (the pages' server list)
 
 	// Maps are the create dialog's entries of the maps folder beside the programs (folderDialogMaps): the dialog's list
-	// per server (writeMapList) offers them too when the copy has their archives.
+	// per server (writeMapList) offers them too when the copy has their archives. Set before Start; SetMaps later
+	// (the map editor's Test, after it set the copy up again).
 	Maps []moviepatch.Map
 	// MapDownload is map delivery (front_mapdist.go; nil: off): at a login, the server's maps the copy lacks.
 	MapDownload *MapDownload

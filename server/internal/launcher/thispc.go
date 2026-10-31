@@ -89,8 +89,12 @@ type thisPC struct {
 	logf       func(format string, a ...any)      // the front's log (may be nil)
 	changed    func()                             // the list should be written again (the front's wantList)
 	check      bool                               // write nothing (Start-Client --check)
+	// skipFailedMaps (the map editor) leaves a maps-folder package whose build fails out of the host copy instead of
+	// failing This PC (setup.Setup.SkipFailedMaps)
+	skipFailedMaps bool
 
 	mu        sync.Mutex
+	testMap   string // the map editor's Test: the map every game of the next start hosts (SetMap)
 	state     string // "", thisPCSetup, thisPCStarting, thisPCRunning, thisPCFailed
 	pct       int    // the setup's progress (-1: none yet)
 	failure   string
@@ -377,7 +381,8 @@ func (p *thisPC) start(done chan struct{}) {
 		return
 	}
 	s := &setup.Setup{Layout: p.l, Out: p.out, Live: p.live, FindZip: p.findZip, Manifest: manifest, Progress: p.progress,
-		HostFiles: hostcopy.Files{FS: os.DirFS(p.hostDir), DLL: "dgsim.dll", Lua: "lua"}, Maps: p.mapsDir()}
+		HostFiles: hostcopy.Files{FS: os.DirFS(p.hostDir), DLL: "dgsim.dll", Lua: "lua"}, Maps: p.mapsDir(),
+		SkipFailedMaps: p.skipFailedMaps}
 	err = s.Server(setup.ServerOptions{Address: p.certsAddr, NoClient: true})
 	release()
 	if err != nil {
@@ -480,7 +485,67 @@ func (p *thisPC) flags() []string {
 	}
 	f = append(f, "--bind", p.address, "--public-host", p.address, "--gms-control-bind", p.address, "--web-port", "0",
 		"--tunnel", "on", "--gateway-port", strconv.Itoa(p.gwPort), "--plain", "off", "--gms-bind", HostsAddress(p.address))
+	p.mu.Lock()
+	m := p.testMap
+	p.mu.Unlock()
+	if m != "" {
+		// the map editor's Test: every game hosts the map (practice too); a custom game may still pick the folder's
+		// own custom maps by their tags. After server_flags, so these win.
+		custom := m
+		if c := strings.TrimSpace(ini["custom_maps"]); c != "" && !strings.EqualFold(c, "none") {
+			custom += "," + c
+		}
+		f = append(f, "--map="+m, "--custom-maps="+custom)
+	}
 	return append(f, noDiscordFlags()...) // This PC never posts to Discord, whatever server_flags say
+}
+
+// SetMap names the map every game of This PC's own server hosts from its next start on (the map editor's Test,
+// with Restart); "" the folder's own.
+func (p *thisPC) SetMap(name string) {
+	p.mu.Lock()
+	p.testMap = name
+	p.mu.Unlock()
+}
+
+// folderServer reads the folder's run lock again: the Start-Server of this folder, while one runs (then This PC is
+// that one, which Restart can't change).
+func (p *thisPC) folderServer() (setup.RunLock, bool) {
+	p.refresh()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.other, p.otherHeld
+}
+
+// Restart stops Start-Client's own server for This PC, as Close does but for good only until the next login: a
+// start that goes on is waited for first, then the server (and its match hosts) end and the folder's run lock is
+// freed. The next Ensure (the next login to This PC) sets the host copy up again and starts it with fresh flags (a
+// map of SetMap). A failed start is forgotten, so the next login tries again.
+func (p *thisPC) Restart() {
+	p.mu.Lock()
+	done := p.done
+	busy := p.state == thisPCSetup || p.state == thisPCStarting
+	p.mu.Unlock()
+	if busy && done != nil {
+		<-done
+	}
+	p.mu.Lock()
+	stop, exited := p.stop, p.exited
+	p.stop = nil
+	if p.state == thisPCFailed {
+		p.state, p.failure = "", ""
+	}
+	p.mu.Unlock()
+	if stop != nil {
+		p.say("stopping the server for the map editor's Test (it starts again at the next login)")
+		close(stop)
+		select {
+		case <-exited:
+		case <-time.After(20 * time.Second):
+			p.say("note: the server didn't stop within 20 s")
+		}
+	}
+	p.notify()
 }
 
 // Close stops Start-Client's own server (and its match hosts) and frees the folder's run lock.

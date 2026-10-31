@@ -131,7 +131,9 @@ func addFolderMaps(dir string) ([]string, error) {
 		}
 		add = append(add, l)
 	}
-	if err := blaze.AddLevels(add...); err != nil {
+	// a second server in this process (This PC started again by the map editor's Test) reads the folder again: a map
+	// it added before with other labels is replaced
+	if err := blaze.ReplaceLevels(add...); err != nil {
 		return nil, err
 	}
 	if len(names) == 0 {

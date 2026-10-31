@@ -133,6 +133,9 @@ func startProcess(exe string, o StartOptions) (*Game, error) {
 }
 
 // Wait waits until the game has exited and returns its exit code.
+// ID is the game's process id.
+func (g *Game) ID() int { return g.Pid }
+
 func (g *Game) Wait() (uint32, error) {
 	if _, err := syscall.WaitForSingleObject(g.process, syscall.INFINITE); err != nil {
 		return 0, err
@@ -188,7 +191,7 @@ func (g *Game) Park(stop <-chan struct{}, prev uintptr, ev ParkEvents) {
 	}
 	tb := newTaskbar()
 	defer tb.release()
-	backs, tried, locked := 0, false, false
+	backs, tried, locked, triedAt := 0, false, false, 0
 	defer func() {
 		if locked {
 			procLockSetForegroundWindow.Call(2) // LSFW_UNLOCK
@@ -212,10 +215,19 @@ func (g *Game) Park(stop <-chan struct{}, prev uintptr, ev ParkEvents) {
 		if fg := ForegroundWindow(); fg != 0 {
 			if windowPid(fg) != uint32(g.Pid) {
 				prev, tried = fg, false
-			} else if ok, _, _ := procIsWindow.Call(prev); prev != 0 && ok != 0 && !tried {
-				// once per time the game takes it: a refused SetForegroundWindow would flash prev's taskbar button
+			} else if ok, _, _ := procIsWindow.Call(prev); prev != 0 && ok != 0 && (!tried || (locked && round-triedAt >= 20)) {
+				// once per time the game takes it while the user is here (a refused SetForegroundWindow would flash
+				// prev's taskbar button); every second while the user is away and the game keeps it (in a test run one
+				// refused call at a match load left the game in the foreground for 90 s). Our own lock refuses our own
+				// SetForegroundWindow too: lifted for the call.
+				if locked {
+					procLockSetForegroundWindow.Call(2) // LSFW_UNLOCK
+				}
 				r, _, _ := procSetForegroundWindow.Call(prev)
-				backs, tried = backs+1, true
+				if locked {
+					procLockSetForegroundWindow.Call(1) // LSFW_LOCK
+				}
+				backs, tried, triedAt = backs+1, true, round
 				if ev.ForegroundBack != nil {
 					ev.ForegroundBack(backs, r != 0)
 				}

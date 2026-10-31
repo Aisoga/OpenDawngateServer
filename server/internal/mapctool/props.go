@@ -1,4 +1,4 @@
-package main
+package mapctool
 
 // The props commands: what a map's props place, and which shipped nouns a prop may name. Both read the player's
 // copy (the nouns' boxes, a group's markers); their output names shipped assets only.
@@ -39,14 +39,16 @@ const propsUsage = `  mapc props [--json] [--maps <dir>] <package> <copy>
   mapc nouns [--json] <copy>
   mapc icon  [--json] [--size N] <copy> <Name.Noun>... <out>`
 
-// propCommands are the commands this file adds; run hands them their arguments before its own parsing.
+// propCommands are the commands this file adds; Run hands them their arguments before its own parsing.
 var propCommands = map[string]func(t *tool, args []string) int{
 	"props": (*tool).props,
 	"nouns": (*tool).nouns,
 	"icon":  (*tool).icon,
 }
 
-// iconSize is icon's --size (pixels, default 128).
+// iconSize is icon's --size (pixels, default 128). It is package state, written by every props command (runProps):
+// it can't race only because each Run has a process of its own (Start-Client --mapc and tools/mapc are both started
+// as child processes, one command each). Make it a field of tool before Run runs concurrently in one process.
 var iconSize = 128
 
 func runProps(cmd string, argv []string, stdout, stderr io.Writer) int {

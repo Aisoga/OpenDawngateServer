@@ -1,4 +1,4 @@
-package main
+package mapctool
 
 import (
 	"bytes"
@@ -16,7 +16,7 @@ var ring = testmaps.Pkg("CM_Ring")
 
 func call(args ...string) (int, string, string) {
 	var out, errw bytes.Buffer
-	code := run(args, &out, &errw)
+	code := Run(args, &out, &errw)
 	return code, out.String(), errw.String()
 }
 

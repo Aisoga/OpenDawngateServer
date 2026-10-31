@@ -120,6 +120,12 @@ func TestDeliver(t *testing.T) {
 		if err != nil || !strings.Contains(string(mk), "from the server test (127.0.0.1:42128)") {
 			t.Errorf("%s: the marker %q %v", n, mk, err)
 		}
+		if from, ok := DeliveredFrom(filepath.Join(maps, n)); !ok || from != "test (127.0.0.1:42128)" {
+			t.Errorf("%s: DeliveredFrom %q %v", n, from, ok)
+		}
+	}
+	if from, ok := DeliveredFrom(srv); ok || from != "" {
+		t.Errorf("no marker: DeliveredFrom %q %v", from, ok)
 	}
 	if _, err := os.Stat(filepath.Join(maps, IncomingDir)); err == nil {
 		t.Error(".incoming left")

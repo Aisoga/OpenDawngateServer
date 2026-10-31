@@ -307,3 +307,41 @@ func TestAddLevels(t *testing.T) {
 		}
 	}
 }
+
+// TestReplaceLevels: a maps folder read again in the same process replaces its map of the same name (a new display,
+// tag and prefix), keeps the others, and still refuses a built-in name or a taken tag (changing nothing then).
+func TestReplaceLevels(t *testing.T) {
+	two := PlayableLevel{Name: "CM_Two", Tag: "two", Archive: "zz_CM_Two.snap", Display: "Two"}
+	withLevels(t, ringLevel, two)
+	if err := AddLevels(PlayableLevel{Name: "CM_Ring", Tag: "ring2", Archive: "zz_CM_Ring.snap", Display: "v2"}); err == nil {
+		t.Fatal("AddLevels took a second CM_Ring")
+	}
+	n := len(PlayableLevels)
+	v2 := PlayableLevel{Name: "CM_Ring", Tag: "ringtwo", Label: "[R2] ", Archive: "zz_CM_Ring.snap", Display: "Test Ring v2"}
+	if err := ReplaceLevels(v2); err != nil {
+		t.Fatal(err)
+	}
+	if l, ok := FindLevel("cm_ring"); !ok || l != v2 || len(PlayableLevels) != n || LevelDisplay("CM_Ring") != "Test Ring v2" {
+		t.Errorf("after ReplaceLevels: %+v %v, %d levels (%d before)", l, ok, len(PlayableLevels), n)
+	}
+	if got, err := ParseLevel("ringtwo"); err != nil || got != "CM_Ring" {
+		t.Errorf("the new tag: %q %v", got, err)
+	}
+	if _, err := ParseLevel("ring"); err == nil {
+		t.Error("the old tag still parses")
+	}
+	if l, ok := FindLevel("CM_Two"); !ok || l != two {
+		t.Errorf("CM_Two: %+v %v", l, ok)
+	}
+	for _, bad := range []PlayableLevel{
+		{Name: "MM_Map_v3", Tag: "mmx", Archive: "a", Display: "d"},
+		{Name: "CM_Ring", Tag: "two", Archive: "a", Display: "d"},
+	} {
+		if err := ReplaceLevels(bad); err == nil {
+			t.Errorf("ReplaceLevels(%+v) took it", bad)
+		}
+		if l, _ := FindLevel("CM_Ring"); l != v2 || len(PlayableLevels) != n {
+			t.Errorf("a refused ReplaceLevels changed the levels: %+v, %d", l, len(PlayableLevels))
+		}
+	}
+}

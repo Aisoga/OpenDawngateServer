@@ -9,6 +9,7 @@ This guide covers installing the game, playing your first match, and playing wit
 - [What's in a match](#whats-in-a-match)
 - [The main menu](#the-main-menu)
 - [Playing with other people](#playing-with-other-people)
+- [Making maps](#making-maps)
 - [Known limitations](#known-limitations)
 - [Stopping and logs](#stopping-and-logs)
 
@@ -323,6 +324,50 @@ While you are in a party, a practice group or a custom game's lobby with a free 
 - You can also post Discord's own *Invite to join* (the + button beside a channel's or a direct message's text field): anyone who sees it can join the same way while your party or lobby is open.
 - The *Join* goes away when the party or lobby is full, while your party is in the queue and when the match starts (friends can still watch a custom game through its list).
 - To switch Join off, put `discord_join = off` into `Start-Client.ini` (or start `Start-Client.exe --discord-join off`). Details: [reference.md](reference.md#start-clientexe-and-start-clientini).
+
+## Making maps
+
+The map editor makes new maps for the game. It is a page in your web browser that `Start-Client.exe` serves on your own PC: you draw the map from above, see it in 3-D, and play it against bots on **This PC**, without a server of your own. A map is a **map package**, a folder with a `map.json` (the map as text) and, if you paint the ground with your own pictures, a `ground` folder of PNGs; it holds nothing of the game, since every player's game builds the map's files from its own copy.
+
+### Installing the editor
+
+1. Install the release and start `Start-Client.exe` once, so that it makes your copy of the game ([Installing](#installing)). Then close the game.
+2. Download the editor's zip, `Dawngate-Map-Editor-<version>.zip`, from the *Releases* page of [the map editor's repository](https://github.com/Aisoga/OpenDawngateMapEditor).
+3. Unpack it **into the release folder**, the folder with `Start-Client.exe`. It adds the folder `editor` (the editor's page, its templates and its guide) and `Map Editor.cmd`.
+
+To update the editor, unpack its new zip the same way and let it replace the old files. Your maps aren't in `editor`, so they stay. The editor's page must fit your release: when it doesn't, the page says so and names both versions ([troubleshooting.md](troubleshooting.md#making-maps)).
+
+### Making a map
+
+1. Double-click **`Map Editor.cmd`**. A console window opens and says `Map editor: http://127.0.0.1:17890/`, and your browser opens the editor; if it doesn't, type that address into the browser. Only your own PC can reach the page. **Closing the console window quits the editor** (and the game, if a test runs); closing the browser tab doesn't, so open the address again to come back.
+2. **New from template...** starts from a map that already plays. Pick a template:
+   - **CM_Ring** (*Test Ring*): two lanes round a ring, one well a side, a few bushes: the smallest complete map;
+   - **CM_Grove** (*Test Grove*): two lanes with jungle camps, the buff camps and the parasite, bushes and the bots' ward spots;
+   - **CM_Marsh** (*Marsh*): reshaped lanes, a pond with water, props and a painted ground;
+   - or one of your own packages in the `maps` folder.
+
+   Then give the map a **name** (letters, digits and `_`, for example `CM_Lagoon`: the package folder's name), a **display name** of at most 13 characters (what the game's dialogs and the lobby show), a **tag** (lower-case letters and digits) and a **prefix** for the game browser (for example `[Lagoon] `).
+3. Edit it. The editor checks the map after every change and marks what the game wouldn't take.
+4. **Save** (Ctrl+S) writes the package into `maps\<name>\` beside `Start-Client.exe`. Back that folder up.
+
+The editor's own guide, `editor\README.md`, walks through every tool; `editor\docs\making-maps.md` explains what a map needs and every rule the check applies.
+
+### Testing a map
+
+Press **Test**. The editor checks the saved map, closes the game if it runs, builds the map into your game and starts the game with **This PC** selected and your map set. The log under the map shows each step, and the badge beside the button the current one.
+
+1. Log in with any name: This PC checks no password. The login starts the server on your PC with your map; the first time it also sets up the server's copy of the game, which takes about half a minute.
+2. PLAY, then PRACTICE, then PRACTICE DAWNGATE: the practice match is played on your map, five against five with bots.
+
+While the game runs, the button says **Test again**: after an edit, *Save* and press it, and it closes the game and starts it again with the new version (the game loads its maps only when it starts). **Stop** closes the game. A map that fails the check doesn't start: the log shows its first error, and *Check* lists them all. Another package in the `maps` folder that can't be built is left out of the game, with a line in the log saying why; only the map you test must build.
+
+*Test* doesn't run while `Start-Server.exe` runs in the same folder, because This PC is then that server, and the editor doesn't start while it runs: stop it, or name your map in its `Start-Server.ini` (`map = CM_<name>`) and play there.
+
+### Sharing a map
+
+Give your package folder (`maps\<name>\`, with its `ground` folder if it has one) to the operator of a server, for example as a zip. They copy it into their server's `maps` folder and name it in their `Start-Server.ini` ([Maps from the maps folder](hosting.md#maps-from-the-maps-folder)). Their server then hands the map to every player who logs in (*New maps* under [Playing with other people](#playing-with-other-people)), so you don't need to send it to the players.
+
+A map you got from a server this way has a `delivered.txt` in its folder and opens **read-only** in the editor: the server would replace your changes at your next login there. **Save as my own copy** makes a package of your own from it, under a new name, which you can edit and share like any other.
 
 ## Known limitations
 

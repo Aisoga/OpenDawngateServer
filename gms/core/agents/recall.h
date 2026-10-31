@@ -18,6 +18,8 @@
 //     teleport home) once the bot is out of immediate danger: far from home, nothing hit it for quietMs, no enemy shaper
 //     within enemyShaperRange, no enemy tower within towerRange, not on the parasite's ground. That is looser than the
 //     data's own Bot_SafeRecall (any enemy NPC within 60), which made a fleeing bot walk the whole lane past the minions.
+//   - BOTDEFEND (defend.h): nor while the enemy shaper that hit the bot in the last 8 s is still within 60 and seen
+//     (`chased`; the host also holds the Flee phase's own recall gambit then).
 //   - A request of the recall that answers -0x270B ("the same ability still holds the agent") means the recall runs
 //     already (ours, or the data's own recall gambit): it counts as started. It must not fall through to the walk: the
 //     walk would abort the channel and the next think start it again (a test match: recall, walk, recall ... every 0.46 s).
@@ -45,6 +47,7 @@ struct RecallInputs {
   float nearestEnemyTower = 1e9f;
   float nearestObjective = 1e9f;  // the parasite (NPC type 8), alive
   float baseDistance = -1.f;      // to the player's start point; < 0 unknown
+  bool chased = false;            // BOTDEFEND: a recent attacker is still near (defend.h RecallChased)
 };
 
 inline bool RecallAllowed(const RecallInputs& in, const RecallConfig& c) {
@@ -54,6 +57,7 @@ inline bool RecallAllowed(const RecallInputs& in, const RecallConfig& c) {
   if (in.nearestEnemyShaper <= c.enemyShaperRange) return false;
   if (in.nearestEnemyTower <= c.towerRange) return false;
   if (in.nearestObjective <= c.objectiveRange) return false;
+  if (in.chased) return false;
   return true;
 }
 

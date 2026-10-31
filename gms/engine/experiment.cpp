@@ -744,6 +744,7 @@ void Stats(unsigned now, bool histo) {
     if (agents::FormatLostStats(ag, sizeof ag)) Log("stats lost: %s", ag);         // BACKTOACTION
     if (agents::FormatNullPosStats(ag, sizeof ag)) Log("stats nullpos: %s", ag);   // NULLPOS
     if (agents::FormatKillFinishStats(ag, sizeof ag)) Log("stats killfinish: %s", ag);  // KILLFINISH
+    if (agents::FormatDefendStats(ag, sizeof ag)) Log("stats botdefend: %s", ag);       // BOTDEFEND
     if (agents::FormatBotTowerStats(ag, sizeof ag)) Log("stats bottower: %s", ag);      // BOTTOWER
     if (agents::FormatBotTowerBots(ag, sizeof ag)) Log("stats bottower bots: %s", ag);  // BOTTOWER
   }
@@ -1001,6 +1002,8 @@ void ReadConfig() {
     ao.testNullPosFollowS = HostOptionInt("test_nullpos_follow", 0);       // NULLPOS: the forced case (test aid)
     ao.botBackStep = HostOptionInt("bot_back_step", 1) != 0 && ao.botReflex;  // BOTBACK
     ao.botKillFinish = HostOptionInt("bot_kill_finish", 1) != 0 && ao.botReflex;  // KILLFINISH
+    ao.botDefend = HostOptionInt("bot_defend", 1) != 0 && ao.botReflex;           // BOTDEFEND
+    ao.botDefendLogLimit = HostOptionInt("bot_defend_log_limit", ao.botDefendLogLimit);  // BOTDEFEND
     ao.botTowerAware = HostOptionInt("bot_tower_aware", 1) != 0 && ao.botReflex;      // BOTTOWER
     ao.botTowerKeepOut = HostOptionInt("bot_tower_keepout", 1) != 0 && ao.botReflex;  // BOTTOWER
     ao.botReflexWalk = HostOptionInt("bot_reflex_walk", 1) != 0 && ao.botReflex;      // BOTTOWER (REFLEXWALK)

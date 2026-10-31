@@ -45,6 +45,20 @@ func TestAddFolderMaps(t *testing.T) {
 	if notes, err := addFolderMaps(""); notes != nil || err != nil {
 		t.Errorf("%v %v", notes, err)
 	}
+	// the folder read again after its package changed (This PC started again by the map editor's Test): replaced
+	edited := t.TempDir()
+	ring, err := os.ReadFile(filepath.Join(dir, "CM_Ring", "map.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(edited, "CM_Ring"), 0o755)
+	os.WriteFile(filepath.Join(edited, "CM_Ring", "map.json"), []byte(strings.Replace(string(ring), `"Test Ring"`, `"Test Ring v2"`, 1)), 0o644)
+	if notes, err := addFolderMaps(edited); err != nil || len(notes) != 1 || !strings.Contains(notes[0], `CM_Ring (~#ring, "Test Ring v2")`) {
+		t.Fatalf("the edited folder: %v %q", err, notes)
+	}
+	if blaze.LevelDisplay("CM_Ring") != "Test Ring v2" {
+		t.Errorf("after the edit: %q", blaze.LevelDisplay("CM_Ring"))
+	}
 }
 
 // mapVersions: the maps folder's archives in the host copy, hashed (a missing one named in a note); no host copy, no

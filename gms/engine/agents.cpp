@@ -16,6 +16,7 @@
 #include "core/agents/aggro.h"
 #include "core/agents/brain.h"
 #include "core/agents/campfinish.h"
+#include "core/agents/defend.h"
 #include "core/agents/desecrator.h"
 #include "core/agents/killfinish.h"
 #include "core/agents/leash.h"
@@ -243,6 +244,16 @@ struct AgentState {
   // failed at once (and every engage left at once) blocks the next engages until kfEngageBlockUntilMs
   bool kfEnteredByJoin = false;
   unsigned long long kfEngageBlockUntilMs = 0;
+  // BOTDEFEND (gms/core/agents/defend.h): its basic attack's reach as learned, the open episode under an enemy shaper's
+  // attack (the attacker, since when, the HP then, the shots it made, the phases it went through: bit 1 a back-off,
+  // bit 2 a flight), since when a fleeing bot's attacker has kept within reach, and the last decision (logged on change)
+  gms::agents::ReachMemory dfReach;
+  std::uint32_t dfAttacker = 0;
+  unsigned long long dfStartMs = 0, dfCaughtSinceMs = 0;
+  float dfStartHpFrac = 0.f;
+  unsigned dfShots = 0, dfOutOfReach = 0;
+  int dfPhases = 0, dfLastWhy = -1;
+  bool dfRecallBlocked = false;
   // BOTTEMPO: the hold watchdog's window (the instance holding the agent, since when, where the bot stood then)
   unsigned holdInst = 0;
   unsigned long long holdSinceMs = 0;
@@ -2405,6 +2416,7 @@ const char* RefusalName(int r) {
     case -0x2709: return "caster disabled";
     case -0x2706: return "blocked by an attribute";
     case -0x270C: return "out of range, no pursuit";
+    case gms::agents::kResultRecallChased: return "BOTDEFEND: a recall while chased";
     case gms::agents::kResultItemRefused: return "item refused";
     case gms::agents::kResultNullPos: return "NULLPOS: the goal is the null position";
     default: return "refused";
@@ -3992,8 +4004,191 @@ void CampFinishDeath(AgentState& st, std::uint32_t id, unsigned long long nowMs)
   st.campFullHp = 0.f;
 }
 
+// ---- BOTDEFEND (gms/core/agents/defend.h) ------------------------------------------------------------------------------
+// A bot an enemy shaper attacks while its plan backs off (PlayerCombat's Reposition phase: Counterattack false, e.g. below
+// 60 % HP) or flees: an episode per attack (opened by the shaper's hit, ended by the bot's death, the attacker's, a recall
+// or endMs without a hit), the decision at every think in such a phase, the basic attack on the attacker when it shoots,
+// and the recall's chaser rule. With [host] bot_defend 0 everything is measured and logged but no shot is made and no
+// recall held.
+const gms::agents::DefendConfig kDefend;
+using gms::agents::kResultRecallChased;
+
+struct DefendStats {
+  unsigned episodes = 0;                            // attacks on a bot by an enemy shaper
+  unsigned ends[gms::agents::kDeEndCount] = {};     // how they ended
+  unsigned retreating = 0;                          // episodes that went through a back-off or a flight
+  unsigned diedRetreating = 0, diedNoShot = 0;      // deaths in those; ... without a shot of the bot's on its attacker
+  unsigned thinks[gms::agents::kDwWhyCount] = {};   // decisions in a back-off or flight phase
+  unsigned shots = 0, outOfRange = 0, cooldown = 0, refused = 0;  // the shots' requests
+  unsigned recallsHeldHost = 0, recallsHeldData = 0;  // recalls held while chased: BOTRECALL's, the Flee gambit's
+  unsigned recallsChasedOff = 0;                      // bot_defend 0: recalls that would have been held
+  unsigned recallsStarted = 0, recallsStartedChased = 0;  // recalls the classic brain started; ... with a chaser near
+};
+DefendStats g_df;
+unsigned g_dfLines = 0;
+bool DefendLogBudget() {
+  ++g_dfLines;
+  return g_dfLines <= static_cast<unsigned>(g_opt.botDefendLogLimit) || g_dfLines % 10 == 0;
+}
+
+// The enemy shaper that hit the bot last, when the hit is at most `windowMs` old and it lives (nullptr otherwise).
+const Snap* DefendAttacker(const AgentState& st, const ObjInfo& self, long long windowMs, unsigned long long nowMs) {
+  if (!st.lastShaperAttacker || !st.lastShaperHitMs || st.lastShaperHitMs > nowMs) return nullptr;
+  if (static_cast<long long>(nowMs - st.lastShaperHitMs) > windowMs) return nullptr;
+  const Snap* a = FindSnap(g_snapPlayers, st.lastShaperAttacker);
+  if (!a || a->team == self.team || !(a->hp > 0.f)) return nullptr;
+  return a;
+}
+
+// Whether a recall now would start with a chaser near (defend.h RecallChased: a seen attacker of the last 8 s within 60).
+bool DefendChased(void* o, const AgentState& st, const ObjInfo& self, unsigned long long nowMs, float* distOut) {
+  *distOut = -1.f;
+  const Snap* a = DefendAttacker(st, self, kDefend.chaseMemoryMs, nowMs);
+  if (!a || (g_opt.botFogCheck && !SehVisible(o, a->obj))) return false;
+  *distOut = Dist2(a->pos, self.pos);
+  return gms::agents::RecallChased(*distOut, static_cast<long long>(nowMs - st.lastShaperHitMs), kDefend);
+}
+
+void DefendEnd(AgentState& st, std::uint32_t id, int end, float hpFrac, unsigned long long nowMs) {
+  if (!st.dfAttacker) return;
+  ++g_df.ends[end];
+  if (end == gms::agents::kDeDied && st.dfPhases) {
+    ++g_df.diedRetreating;
+    if (!st.dfShots) ++g_df.diedNoShot;
+  }
+  if (DefendLogBudget())
+    Log("botdefend: bot %08X %s episode on %08X ended: %s after %.1f s (hp %.0f%% -> %.0f%%, %s%s%s, shots %u, out of "
+        "reach %u, reach %.1f) (t %.2f s)",
+        id, st.noun, st.dfAttacker, gms::agents::DefendEndName(end),
+        static_cast<double>(nowMs - st.dfStartMs) / 1000.0, static_cast<double>(st.dfStartHpFrac * 100.f),
+        static_cast<double>(hpFrac * 100.f), st.dfPhases ? "" : "no retreat", (st.dfPhases & 1) ? "backed off" : "",
+        (st.dfPhases & 2) ? ((st.dfPhases & 1) ? " and fled" : "fled") : "", st.dfShots, st.dfOutOfReach,
+        static_cast<double>(st.dfReach.Get(kDefend)), static_cast<double>(nowMs) / 1000.0);
+  st.dfAttacker = 0;
+  st.dfCaughtSinceMs = 0;
+  st.dfLastWhy = -1;
+}
+
+// A recall the classic brain is about to request (`who`: BOTRECALL's walk home or the Flee phase's own gambit): true
+// when it is held because a chaser is near (bot_defend on); counted and logged either way.
+bool DefendHoldsRecall(void* o, AgentState& st, const ObjInfo& self, bool dataGambit, unsigned long long nowMs) {
+  float d = -1.f;
+  if (!g_opt.botReflex || !DefendChased(o, st, self, nowMs, &d)) return false;
+  if (!g_opt.botDefend) {
+    ++g_df.recallsChasedOff;
+    return false;
+  }
+  ++(dataGambit ? g_df.recallsHeldData : g_df.recallsHeldHost);
+  if (!st.dfRecallBlocked && DefendLogBudget())
+    Log("botdefend: bot %08X %s recall held (%s): %08X hit it %.1f s ago and is %.1f units away (BOTDEFEND) (t %.2f s)",
+        self.id, st.noun, dataGambit ? "the Flee gambit" : "BOTRECALL", st.lastShaperAttacker,
+        static_cast<double>(nowMs - st.lastShaperHitMs) / 1000.0, static_cast<double>(d),
+        static_cast<double>(nowMs) / 1000.0);
+  st.dfRecallBlocked = true;
+  return true;
+}
+
+// A recall the classic brain started: counted (with a chaser near: the case BOTDEFEND holds), and it ends the episode.
+void DefendRecallStarted(void* o, AgentState& st, const ObjInfo& self, unsigned long long nowMs) {
+  ++g_df.recallsStarted;
+  float d = -1.f;
+  if (g_opt.botReflex && DefendChased(o, st, self, nowMs, &d)) {
+    ++g_df.recallsStartedChased;
+    if (DefendLogBudget())
+      Log("botdefend: bot %08X %s recall started with %08X %.1f units away, its hit %.1f s ago (t %.2f s)", self.id,
+          st.noun, st.lastShaperAttacker, static_cast<double>(d),
+          static_cast<double>(nowMs - st.lastShaperHitMs) / 1000.0, static_cast<double>(nowMs) / 1000.0);
+  }
+  const float maxHp = SehMaxHp(o);
+  DefendEnd(st, self.id, gms::agents::kDeRecalled, maxHp > 0.f ? self.hp / maxHp : 0.f, nowMs);
+}
+
+// A basic attack's request on an enemy shaper teaches the bot its reach (started: at least that far; 5: less).
+void DefendNoteBasic(AgentState& st, const ObjInfo& self, std::uint32_t target, int res) {
+  if (!target || !(res == 1 || res == 2 || res == 5)) return;
+  const Snap* t = FindSnap(g_snapPlayers, target);
+  if (!t || t->team == self.team) return;
+  const float d = Dist2(t->pos, self.pos);
+  if (res == 5) st.dfReach.Miss(d, kDefend);
+  else st.dfReach.Hit(d, kDefend);
+}
+
+// This think's episode and decision; true when the bot shot (the think acted).
+bool DefendStep(void* o, AgentState& st, const ObjInfo& self, const BotView& v, float hpFrac, unsigned long long nowMs) {
+  if (!g_opt.botReflex || !g_sim) return false;
+  const gms::agents::DefendConfig& c = kDefend;
+  if (st.dfAttacker) {  // the open episode's end: its attacker died, or no shaper hit the bot for endMs
+    const Snap* ea = FindSnap(g_snapPlayers, st.dfAttacker);
+    if (!ea || !(ea->hp > 0.f))
+      DefendEnd(st, self.id, gms::agents::kDeAttackerDied, hpFrac, nowMs);
+    else if (!st.lastShaperHitMs || static_cast<long long>(nowMs - st.lastShaperHitMs) > c.endMs)
+      DefendEnd(st, self.id, gms::agents::kDeEscaped, hpFrac, nowMs);
+  }
+  const Snap* a = DefendAttacker(st, self, c.hitWindowMs, nowMs);
+  if (!a) return false;
+  if (!st.dfAttacker) {
+    ++g_df.episodes;
+    st.dfStartMs = nowMs;
+    st.dfStartHpFrac = hpFrac;
+    st.dfShots = st.dfOutOfReach = 0;
+    st.dfPhases = 0;
+    st.dfLastWhy = -1;
+    st.dfCaughtSinceMs = 0;
+    st.dfRecallBlocked = false;
+  }
+  st.dfAttacker = a->id;  // a new attacker takes the episode over
+  const int phase = gms::agents::DefendPhaseOf(v.phaseName);
+  const int bit = phase == gms::agents::kDefendBackOff ? 1 : phase == gms::agents::kDefendFlee ? 2 : 0;
+  if (bit && !st.dfPhases) ++g_df.retreating;
+  st.dfPhases |= bit;
+  gms::agents::DefendInputs in;
+  in.attacker = true;
+  in.visible = !g_opt.botFogCheck || SehVisible(o, a->obj);
+  in.dist = Dist2(a->pos, self.pos);
+  in.phase = phase;
+  in.reach = st.dfReach.Get(c);
+  st.dfCaughtSinceMs = static_cast<unsigned long long>(gms::agents::CaughtSince(
+      static_cast<long long>(st.dfCaughtSinceMs), phase == gms::agents::kDefendFlee, true, in.visible, in.dist, in.reach,
+      static_cast<long long>(nowMs)));
+  in.caughtForMs = st.dfCaughtSinceMs ? static_cast<long long>(nowMs - st.dfCaughtSinceMs) : 0;
+  const int why = gms::agents::DecideDefend(in, c);
+  if (phase != gms::agents::kDefendOtherPhase) ++g_df.thinks[why];
+  if (why != st.dfLastWhy && DefendLogBudget())
+    Log("botdefend: bot %08X %s plan %d (%s) phase %d (%s): attacker %08X at %.1f units (reach %.1f%s), hp %.0f%%, its "
+        "hit %.1f s ago -> %s%s (t %.2f s)",
+        self.id, st.noun, st.botPlan, v.planOk ? v.planName : "?", st.botPhase, v.phaseName ? v.phaseName : "?", a->id,
+        static_cast<double>(in.dist), static_cast<double>(in.reach), st.dfReach.reach < 0.f ? ", not learned" : "",
+        static_cast<double>(hpFrac * 100.f), static_cast<double>(nowMs - st.lastShaperHitMs) / 1000.0,
+        gms::agents::DefendWhyName(why), why == gms::agents::kDwShoot && !g_opt.botDefend ? " (off: logged only)" : "",
+        static_cast<double>(nowMs) / 1000.0);
+  st.dfLastWhy = why;
+  if (why != gms::agents::kDwShoot || !g_opt.botDefend) return false;
+  // the basic attack on the attacker, at its position; never mTarget (the Pursue leaf would follow it afterwards)
+  const int res = BotRequest(st.noun, "defend shot", gms::agents::NullPosUse::kGoal, 0, gms::agents::kSlotBasic, self.id,
+                             a->id, a->pos, 1);
+  if (res == 1 || res == 2) {
+    ++g_df.shots;
+    ++st.dfShots;
+    st.dfReach.Hit(in.dist, c);
+    return true;
+  }
+  if (res == gms::agents::kResultHoldsAgent) return true;  // its swing still runs: no retreat request aborts it
+  if (res == 5) {  // out of range: the plan's retreat request below replaces the pursuit the engine began
+    ++g_df.outOfRange;
+    ++st.dfOutOfReach;
+    st.dfReach.Miss(in.dist, c);
+    if (DefendLogBudget())
+      Log("botdefend: bot %08X %s shot at %08X out of range at %.1f units: reach now %.1f (t %.2f s)", self.id, st.noun,
+          a->id, static_cast<double>(in.dist), static_cast<double>(st.dfReach.Get(c)),
+          static_cast<double>(nowMs) / 1000.0);
+    return false;
+  }
+  ++(res == gms::agents::kResultCooldown ? g_df.cooldown : g_df.refused);
+  return false;
+}
+
 // The recall rule's inputs from the per-frame snapshots (BOTREFLEX's: players, towers, the parasite) and OnDamaged.
-bool RecallPossible(void* o, const AgentState& st, const ObjInfo& self, const char* phaseName, unsigned long long nowMs) {
+bool RecallPossible(void* o, AgentState& st, const ObjInfo& self, const char* phaseName, unsigned long long nowMs) {
   if (!g_opt.botRecall || !g_opt.botReflex || !g_sim) return false;
   gms::agents::RecallInputs in;
   in.fleePhase = InFleePhase(phaseName);
@@ -4020,7 +4215,9 @@ bool RecallPossible(void* o, const AgentState& st, const ObjInfo& self, const ch
   for (const Snap& ob : g_snapObjectives) in.nearestObjective = std::min(in.nearestObjective, Dist2(ob.pos, self.pos));
   float base[3];
   if (BotStartPoint(self, base)) in.baseDistance = Dist2(base, self.pos);
-  return gms::agents::RecallAllowed(in, kRecall);
+  if (!gms::agents::RecallAllowed(in, kRecall)) return false;
+  // BOTDEFEND: not while the shaper that hit it is still on it (defend.h RecallChased)
+  return !DefendHoldsRecall(o, st, self, false, nowMs);
 }
 
 // WELLDEF (gms/core/agents/welldef.h): the walk ends this far short of a defended well's centre, on the bot's side: inside
@@ -5050,6 +5247,9 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
     ObjInfo dead;  // KILLFINISH: a death ends an open episode (these leaves also run without one: HP 0 decides)
     if (st.kfEpisode && SehObjInfo(o, &dead) && dead.hasHp && dead.hp <= 0.f)
       KillFinishEpisodeStep(st, dead.id, true, nowMs);
+    ObjInfo gone;  // BOTDEFEND: a death ends an open episode under attack (HP 0 decides, as for KILLFINISH)
+    if (st.dfAttacker && SehObjInfo(o, &gone) && gone.hasHp && gone.hp <= 0.f)
+      DefendEnd(st, gone.id, gms::agents::kDeDied, 0.f, nowMs);
     st.kfHoldSinceMs = 0;
     if (dying) {  // HUNTERROUTE: a Hunter's death (counted once; HP 0 decides, as for KILLFINISH)
       ObjInfo d;
@@ -5085,6 +5285,7 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
   if (!SehObjInfo(o, &self) || GameOver(sim)) return;
   if (self.hasHp && self.hp <= 0.f) {
     hunterroute::BotDying(self.id);  // HUNTERROUTE
+    DefendEnd(st, self.id, gms::agents::kDeDied, 0.f, nowMs);  // BOTDEFEND
     return;
   }
   BotView v;
@@ -5407,6 +5608,11 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
     st.idleSinceMs = 0;
     return;
   }
+  // BOTDEFEND: attacked by an enemy shaper while the phase backs off or flees: a shot back when it can't get away
+  if (DefendStep(o, st, self, v, selfHpFrac, nowMs)) {
+    st.idleSinceMs = 0;
+    return;
+  }
   std::vector<gms::agents::GambitView> views(v.gambits.size());
   std::vector<std::uint32_t> targets(v.gambits.size(), 0);
   std::vector<float> spots(v.gambits.size() * 3, 0.f);
@@ -5473,10 +5679,17 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
           static const float kZero3[3] = {};
           const int raw = SehBotRequest(kAbilityReturnToBase, -1, self.id, 0, kZero3, 1);
           res = gms::agents::RecallRequestResult(raw);
-          if (raw == 1 || raw == 2) ++g_bot.recalls;
+          if (raw == 1 || raw == 2) {
+            ++g_bot.recalls;
+            DefendRecallStarted(o, st, self, nowMs);  // BOTDEFEND
+          }
         }
       }
-      if (res != 1 && res != 2) {
+      // BOTDEFEND: the Flee phase's own recall gambit (Bot_SafeRecall: nothing seen within 60) waits too while the
+      // shaper that hit the bot is still near; the refusal lets the list go on (the walk home, nBehavior_GoBack)
+      if (g.guid == kAbilityReturnToBase && DefendHoldsRecall(o, st, self, true, nowMs)) {
+        res = kResultRecallChased;
+      } else if (res != 1 && res != 2) {
         // DESECBOT-3: the Desecrator's E at an enemy shaper goes where it will stand when the hands strike, to that
         // point alone [assumed: a TerrainPoint request with an object aims at the object]
         float lead = 0.f;
@@ -5499,6 +5712,9 @@ void BotBrainStep(void* sim, void* o, AgentState& st, unsigned long long nowMs) 
             self.id, st.noun, st.botPhase, v.phaseName, idx, g.slot, target, res, static_cast<double>(nowMs) / 1000.0);
       st.fogSkipTarget = 0;
     }
+    // BOTDEFEND: a basic attack on an enemy shaper teaches the bot its reach; the Flee gambit's recall ends an episode
+    if (!g.guid && g.slot == gms::agents::kSlotBasic) DefendNoteBasic(st, self, target, res);
+    if (g.guid == kAbilityReturnToBase && (res == 1 || res == 2)) DefendRecallStarted(o, st, self, nowMs);
     if (res == 1 || res == 2) {
       ++g_bot.started;
       st.gambitReadyMs[static_cast<std::size_t>(idx)] =
@@ -6640,6 +6856,25 @@ bool FormatKillFinishStats(char* buf, std::size_t size) {
                 k.towerPhaseSkipped, k.retargets, k.luaQueries, k.luaHolds, g_bot.passThroughs,
                 g_opt.botPlanChain ? "" : " (chain off)", k.dwellHeld, k.engagesFailed, k.joins, k.joinsFailed,
                 k.joinsBlocked);
+  return true;
+}
+
+bool FormatDefendStats(char* buf, std::size_t size) {
+  const DefendStats& d = g_df;
+  if (!d.episodes && !d.recallsStarted) return false;
+  namespace ga = gms::agents;
+  std::snprintf(buf, size,
+                "BOTDEFEND %s: episodes %u (ended: the bot died %u, the attacker died %u, no more hits %u, recalled %u), "
+                "through a back-off or flight %u (died %u, %u of them without a shot on the attacker); decisions there: "
+                "shoot %u, out of reach %u, running %u, attacker hidden %u; shots %u (out of range %u, on cooldown %u, "
+                "refused %u); recalls started %u (with a chaser near %u), held while chased: BOTRECALL %u, the Flee "
+                "gambit %u%s",
+                g_opt.botDefend ? "on" : "off (logged only)", d.episodes, d.ends[ga::kDeDied], d.ends[ga::kDeAttackerDied],
+                d.ends[ga::kDeEscaped], d.ends[ga::kDeRecalled], d.retreating, d.diedRetreating, d.diedNoShot,
+                d.thinks[ga::kDwShoot], d.thinks[ga::kDwOutOfReach], d.thinks[ga::kDwRunning], d.thinks[ga::kDwHidden],
+                d.shots, d.outOfRange, d.cooldown, d.refused, d.recallsStarted, d.recallsStartedChased,
+                d.recallsHeldHost, d.recallsHeldData,
+                g_opt.botDefend ? "" : (std::string(", would have held ") + std::to_string(d.recallsChasedOff)).c_str());
   return true;
 }
 

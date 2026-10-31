@@ -1,4 +1,4 @@
-package main
+package mapctool
 
 // The texture commands: which of the copy's textures a baked ground can name, and pictures of them. Both read the
 // player's copy; the pictures are game content (keep them out of the repository).
@@ -32,7 +32,7 @@ import (
 const texturesUsage = `  mapc textures [--json] [--all] [--min N] <copy>
   mapc texture  [--json] [--max-texture N] <copy> <path.dds>... <out>`
 
-// textureCommands are the commands this file adds; run hands them their arguments before its own parsing.
+// textureCommands are the commands this file adds; Run hands them their arguments before its own parsing.
 var textureCommands = map[string]bool{"textures": true, "texture": true}
 
 // TextureInfo is one listed texture.

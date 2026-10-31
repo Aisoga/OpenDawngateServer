@@ -1,4 +1,4 @@
-package main
+package mapctool
 
 // The package scene from the compiled Level: `mapc scene` of a package lists the markers `mapc build` writes into the
 // map's archive (its Level's markersets, compiled from the copy's AssetData.snap), so a viewer shows what the game

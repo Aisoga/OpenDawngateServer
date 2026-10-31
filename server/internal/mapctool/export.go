@@ -1,4 +1,4 @@
-package main
+package mapctool
 
 // The export commands: the game's models, a map package's ground and a scene list, as glTF 2.0 and PNG for a
 // browser or a 3-D program. They read the player's copy and write into a folder the caller names; the output is
@@ -38,7 +38,7 @@ const exportUsage = `  mapc model  [--json] [--max-texture N] <copy> <model.bmdl
   mapc ground [--json] [--max-texture N] [--maps <dir>] <package> <copy> <out>
   mapc scene  [--json] [--max-texture N] [--maps <dir>] [--no-models] <copy> <package | level> <out>`
 
-// exportCommands are the commands this file adds; run hands them their arguments before its own parsing.
+// exportCommands are the commands this file adds; Run hands them their arguments before its own parsing.
 var exportCommands = map[string]func(t *exportTool, args []string) int{
 	"model":  (*exportTool).exportModel,
 	"ground": (*exportTool).exportGround,

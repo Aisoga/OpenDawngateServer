@@ -119,6 +119,10 @@ Start-Client.exe [<server address or tag>] [options]
 | `--discord on\|off` | Your Discord status while the game runs: `on` (the default) or `off`. |
 | `--discord-join on\|off` | Join from Discord: `on` (the default) or `off`. Needs the Discord status. |
 | `--map-download on\|off` | Map delivery: `on` (the default) downloads the maps a server offers that your game lacks, or has in another version, when you log in to it; `off` never. |
+| `--editor` | The map editor instead of the game ([Making maps](playing.md#making-maps)); `Map Editor.cmd` starts it so. `Start-Client.exe` sets up the game copy as always, then serves the editor's page, opens it in the browser and waits: the game starts only when the page's *Test* asks for it, on This PC with the tested map. Closing the console window (or Ctrl+C) quits the editor, the game and This PC's server. It needs the editor's page (the folder `editor` beside `Start-Client.exe`, from the editor's zip) and the server list: not with a `server`, `--picker off` or `--tunnel off`, not with `--check` or `--setup-only`, and not while `Start-Server.exe` runs in the same folder or another Dawngate client runs on the PC. |
+| `--editor-addr <address:port>` | With `--editor`: where the page is served, `127.0.0.1:17890` by default. Only an address of this PC (`127.x.x.x`) is taken, since the page writes into your `maps` folder. |
+| `--editor-pages <folder>` | With `--editor`: the editor's page folder, `editor` beside `Start-Client.exe` by default (a relative path is taken from that folder). A page made for another version of the editor's interface is refused with both versions named. |
+| `--mapc <command> ...` | Runs the map compiler instead of the client, with the compiler's own commands and arguments (`version`, `check`, `build`, `preview`, `bake`, `import`, and the listings and exports of the game's props, models and textures; most take `--json` for programs) and its exit code (0 done, 1 failed, 2 wrong arguments): for the map editor and for scripts that build or check map packages without Go. It must be the first argument. `Start-Client.exe --mapc version --json` prints the release, the map format and the version of the compiler's command line. |
 
 `Start-Client.ini` has the keys `server` (empty: the server list), `folder`, `tunnel`, `gateway_port`, `picker` (`auto`, `on`, `off`), `local_trust` (`on`, `off`), `update_check` (`on`, `off`), `discord` (`on`, `off`), `discord_join` (`on`, `off`), `discord_app_id`, `map_download` (`on`, `off`) and `map_download_max_mb` (the largest map package taken, in MB; empty: 512). An older `Start-Client.ini` keeps working: its `server` becomes the first server of a new list, and its comments are updated. The option on the command line wins over the key.
 
@@ -285,6 +289,7 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 | `host\` | The game copy the match hosts run, with `dgsim.dll`. `Start-Server.exe` makes it, or `Start-Client.exe` at the first login to This PC. |
 | `server.lock` | Which program runs the folder's server (`Start-Server.exe`, or `Start-Client.exe` for This PC), while it runs. |
 | `update\` | An update's download while it is installed; after a failed one, the release zip if it arrived whole. |
+| `editor\` | The map editor's working files: `cache\` (the 3-D view's models and pictures) and `out\` (Build's output, the ground bakes and exports). They are made from your game copy, so never share them; deleting the folder is safe, the editor makes them again. Your maps are in the `maps` folder beside the programs, not here. |
 
 Never share the game copies: they are the game's files.
 
@@ -299,7 +304,7 @@ With the tunnel (the default) the server listens for players on one port, on its
 | 10040 | TCP | The server's control channel to its match hosts | **Nobody. Never forward it.** It stays on 127.0.0.1 (on a server on a loopback address, that address). |
 | 10042–10051 | UDP | Matches, one port per running match, on a loopback address of their own: `127.0.N.10` for a server on `127.0.0.N`, else `127.0.1.10` | Nobody: the tunnel reaches them inside the PC. |
 
-Nothing else listens, so a `Start-Client.exe` on the same PC uses the game's own ports on `127.0.0.1` (TCP 42127, 10041, 17502, 18080 and 9988, UDP 17502 and 10042–10051) without a collision. The server `Start-Client.exe` runs for This PC listens on `127.0.1.11` only: TCP and UDP 42128, TCP 10040 and its matches' UDP 10042–10051.
+Nothing else listens, so a `Start-Client.exe` on the same PC uses the game's own ports on `127.0.0.1` (TCP 42127, 10041, 17502, 18080 and 9988, UDP 17502 and 10042–10051) without a collision. The server `Start-Client.exe` runs for This PC listens on `127.0.1.11` only: TCP and UDP 42128, TCP 10040 and its matches' UDP 10042–10051. The map editor (`Start-Client.exe --editor`) serves its page on TCP 17890 on `127.0.0.1` (`--editor-addr`), never on the network.
 
 With `tunnel = off` (an option for developers) the server listens on its address on TCP 42127 (the redirector, the client's first contact), 10041 (logins, menus, matchmaking and chat), 17502 (the connection-quality test, also UDP), 18080 (web content and the login screen's links) and 9988 (game telemetry), and the matches on UDP 10042–10051 there too.
 

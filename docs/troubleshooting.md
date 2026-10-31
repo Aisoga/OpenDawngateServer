@@ -5,6 +5,7 @@
 - [Starting a match](#starting-a-match)
 - [During a match](#during-a-match)
 - [Playing over a network](#playing-over-a-network)
+- [Making maps](#making-maps)
 - [Reporting a problem](#reporting-a-problem)
 
 ## Starting up
@@ -171,6 +172,34 @@ The server's tunnel refused the connection, usually because too many sessions co
 
 **A public server isn't reachable from outside**
 Forward TCP and UDP 42128 and TCP 443 to the server PC, and check that `address` is your current internet address. Many home connections get a new address now and then.
+
+## Making maps
+
+**"The map editor isn't here: the folder ... is missing"**
+The editor's zip isn't unpacked, or not beside `Start-Client.exe`. Unpack `Dawngate-Map-Editor-<version>.zip` into the folder with `Start-Client.exe`, so that the folder `editor` and `Map Editor.cmd` are next to it, and start `Map Editor.cmd` again. See [Making maps](playing.md#making-maps).
+
+**"The map editor can't serve 127.0.0.1:17890"**
+Another program uses the editor's port, most often a map editor that is already running: look for its console window and use that one, or close it. If another program needs the port, start the editor on another one from a console in the release folder: `Start-Client.exe --editor --editor-addr 127.0.0.1:<another port>`, then open `http://127.0.0.1:<that port>/`.
+
+**The editor's page says it is made for another version**
+The console shows a WARNING, and the page names both versions: *the map editor's page (version ...) is made for editor interface ..., but this program (release ...) has interface ...*. The editor's zip doesn't fit your release. Get the editor's zip made for your release (or update both: the release with `Start-Client.exe`'s update, the editor from the *Releases* page of [the map editor's repository](https://github.com/Aisoga/OpenDawngateMapEditor)) and unpack it over the old one.
+
+**"This folder's Start-Server.exe ... is running, so This PC is that server"**
+While `Start-Server.exe` runs in the same folder, This PC is that server, and the editor can't make it host your map, so the editor doesn't start (and *Test* refuses if it started meanwhile). Stop `Start-Server.exe` and start `Map Editor.cmd` again. Or, to play your map on that server, name it in its `Start-Server.ini` (`map = CM_<name>`) and start it again.
+
+**"The map editor plays your map on This PC ... which needs the server picker"**
+Your `Start-Client.ini` sets a `server`, `picker = off` or `tunnel = off`. *Test* plays on This PC, which only the login screen's server list has: leave `server =` empty and set `picker = auto` and `tunnel = auto`.
+
+**"another Dawngate client runs on this PC"**
+Only one game runs at a time. Close the other game (or the other `Start-Client.exe`), then start the editor again, or press *Test* again.
+
+**A map doesn't build**
+- In the editor, *Test* checks the saved map first: a map that fails the check doesn't start, the log shows its first error and *Check* lists them all, each with the place in the map it concerns. Fix them and *Save*. `editor\docs\making-maps.md` explains every rule and what to do about it.
+- Another package in the `maps` folder that can't be built doesn't stop a *Test*: it is left out of the game, with a line in the log saying why.
+- When you play normally, `Start-Client.exe` leaves out a package that doesn't read or breaks a rule, with a line in its window saying why. A package that reads but whose build fails stops it with *The game copy is not ready* and the package's error: fix the map in the editor, or move its folder out of `maps`, and start `Start-Client.exe` again.
+
+**A map you got from a server opens read-only**
+It came through map delivery (it has a `delivered.txt`), and that server would replace your changes at your next login there. Use *Save as my own copy*, which makes a package of your own under a new name.
 
 ## Reporting a problem
 

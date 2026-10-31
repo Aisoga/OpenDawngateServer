@@ -303,6 +303,26 @@ func Delivered(dir string) bool {
 	return err == nil && st.Mode().IsRegular()
 }
 
+// DeliveredFrom says whether the package in dir came by map delivery and, when its MarkerFile's first line names
+// it, the server it came from ("" when the line isn't the one this package writes).
+func DeliveredFrom(dir string) (server string, ok bool) {
+	if !Delivered(dir) {
+		return "", false
+	}
+	b, err := os.ReadFile(filepath.Join(dir, MarkerFile))
+	if err != nil {
+		return "", true
+	}
+	line, _, _ := strings.Cut(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n")
+	const pre = "This map package was downloaded by Start-Client from the server "
+	if rest, found := strings.CutPrefix(line, pre); found {
+		if i := strings.LastIndex(rest, " on "); i > 0 {
+			return rest[:i], true
+		}
+	}
+	return "", true
+}
+
 // BuildVerifier checks a received package against the player copy (the folder with game\): every rule (mapc.Check,
 // inside mapc.Build), the copy's catalog (mapc.CheckShipped: the nouns it names exist), then the archive built in
 // memory from the copy's own files exactly as the setup builds it (mapc.Build with the shared mesh); its SHA-256.

@@ -38,6 +38,7 @@ type Game struct {
 // StartGame runs only on Windows.
 func StartGame(string, StartOptions) (*Game, error) { return nil, errors.ErrUnsupported }
 
+func (g *Game) ID() int                                   { return g.Pid }
 func (g *Game) Wait() (uint32, error)                     { return 0, errors.ErrUnsupported }
 func (g *Game) Exited(time.Duration) bool                 { return true }
 func (g *Game) Close()                                    {}

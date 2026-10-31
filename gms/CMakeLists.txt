@@ -212,6 +212,7 @@ if(RAKNET_FOUND)
     tests/test_maped4b.cpp      # MAPED4b: the level's own ward spots (core/bots/wardspots.h)
     tests/test_nullpos.cpp      # NULLPOS: (0, 0) as the bots' null position (core/agents/nullpos.h, lost.h's clear)
     tests/test_killfinish.cpp   # KILLFINISH: stay to finish a won trade, the damage ring, BOTCYCLE's plan chain
+    tests/test_botdefend.cpp    # BOTDEFEND: shoot back while backing off or caught fleeing, no recall while chased
     tests/test_bottower.cpp     # BOTTOWER: tower dangers, the keep-out, REFLEXWALK, the time under tower fire
     tests/test_mikella.cpp      # MIKELLABOT: Mikella's profile, the Gladiator pin, her kit layer and guide build
     tests/test_draft.cpp        # BOTDRAFT: a custom game's bots draw after the humans (core/bots/draft.h)

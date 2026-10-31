@@ -1,4 +1,4 @@
-package main
+package mapctool
 
 import (
 	"encoding/json"

@@ -87,6 +87,40 @@ func AddLevels(ls ...PlayableLevel) (err error) {
 	return nil
 }
 
+// builtinLevels are the names of PlayableLevels' own entries, which ReplaceLevels never replaces.
+var builtinLevels = func() map[string]bool {
+	m := map[string]bool{}
+	for _, l := range PlayableLevels {
+		m[strings.ToLower(l.Name)] = true
+	}
+	return m
+}()
+
+// ReplaceLevels is AddLevels for a maps folder read again in the same process (Start-Client's server for This PC,
+// started again by the map editor's Test after a package changed): a level added before under the same name is
+// replaced (its tag, prefix or display may have changed). A built-in level's name is still refused.
+func ReplaceLevels(ls ...PlayableLevel) error {
+	orig := PlayableLevels
+	kept := make([]PlayableLevel, 0, len(orig))
+	for _, o := range orig {
+		replaced := false
+		for _, l := range ls {
+			if strings.EqualFold(o.Name, l.Name) && !builtinLevels[strings.ToLower(o.Name)] {
+				replaced = true
+			}
+		}
+		if !replaced {
+			kept = append(kept, o)
+		}
+	}
+	PlayableLevels = kept
+	if err := AddLevels(ls...); err != nil {
+		PlayableLevels = orig
+		return err
+	}
+	return nil
+}
+
 // LevelDisplay is the map's name for players' messages: its Display, else the level's own name.
 func LevelDisplay(level string) string {
 	if l, ok := FindLevel(level); ok && l.Display != "" {

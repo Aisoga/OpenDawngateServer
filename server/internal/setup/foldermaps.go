@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"dawngate/server/internal/setup/botprofiles"
 	"dawngate/server/internal/setup/localepatch"
@@ -21,6 +22,8 @@ type folderMaps struct {
 	any    bool // the folder holds a package (a sub-folder with map.json), whether it passes or not
 	built  map[string][]byte
 	loaded bool
+	// left are the packages left out by a rule check, by map name (lower case): why (MapLine)
+	left map[string]string
 }
 
 // mapsRead reads Setup.Maps: the packages (mapc.ReadFolder), each checked with every rule (mapc.Check) against the
@@ -31,6 +34,7 @@ func (s *Setup) mapsRead() *folderMaps {
 	}
 	s.maps.loaded = true
 	s.maps.built = map[string][]byte{}
+	s.maps.left = map[string]string{}
 	pkgs, errs := mapc.ReadFolder(s.Maps)
 	s.maps.any = len(pkgs)+len(errs) > 0
 	s.maps.errs = errs
@@ -48,6 +52,13 @@ func (s *Setup) mapsRead() *folderMaps {
 			continue
 		}
 		s.maps.pkgs = append(s.maps.pkgs, p)
+	}
+	for _, err := range s.maps.errs { // each names its package first: "map <name>: ..." or "map <name> (<dir>)..."
+		if name, ok := strings.CutPrefix(err.Error(), "map "); ok {
+			if i := strings.IndexAny(name, " :"); i > 0 {
+				s.maps.left[strings.ToLower(name[:i])] = "left out: " + err.Error()
+			}
+		}
 	}
 	return &s.maps
 }
@@ -124,6 +135,9 @@ func (s *Setup) stepFolderMap(step, copy string, i int) bool {
 		if s.Check {
 			return s.report(Missing, step, err.Error())
 		}
+		if s.SkipFailedMaps { // the map editor: the copy goes on without it (an archive built before stays)
+			return s.report(Skipped, step, "left out: its build fails: "+err.Error())
+		}
 		return s.report(Failed, step, err.Error())
 	}
 	line := fmt.Sprintf("%s: the map %s, %q (~#%s) from %s (%s)", s.show(added), p.Map.Name, p.Label.Display,
@@ -149,6 +163,26 @@ func (s *Setup) stepFolderMap(step, copy string, i int) bool {
 		why = "not there"
 	}
 	return s.report(Done, step, fmt.Sprintf("%s (was: %s)", line, why))
+}
+
+// MapLine is the line this setup reported for the maps folder's map name in one copy (where: "client" or "host", as
+// stepFolderMaps names its steps): its archive's step, or the SKIPPED line of a package a rule check left out; false
+// when the setup said nothing about it (no such package, or the copy's steps didn't run).
+func (s *Setup) MapLine(where, name string) (Line, bool) {
+	step := where + " " + name
+	for i := len(s.lines) - 1; i >= 0; i-- {
+		if strings.EqualFold(s.lines[i].Step, step) {
+			return s.lines[i], true
+		}
+	}
+	if why, ok := s.maps.left[strings.ToLower(name)]; ok {
+		for _, l := range s.lines {
+			if l.Step == where+" maps" && l.Detail == why {
+				return Line{Skipped, step, why}, true
+			}
+		}
+	}
+	return Line{}, false
 }
 
 // buildFolderMap reads the copy's inputs (each checked against the manifest) and builds package i's archive.

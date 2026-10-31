@@ -64,6 +64,12 @@ struct Tuning {
   float disengageExitOdds = 0.75f;  // ... until the odds are back to this (hysteresis; no enemy near: at once) ...
   float disengageMinS = 2.0f;     // ... and at least this long (the first v2 match flipped push and retreat 4 times in
                                   // 3 s as enemies left and entered the team's sight)
+  // BOTSFLIP (the user's VPS match, 2026-10-31: a bot of the base phase's gather flipped push and retreat every 2 s,
+  // walking back into the enemies it had just fled): the threat a bot disengaged from is remembered ...
+  float fleeMemoryS = 10.0f;      // ... this long after its last sight (refreshed while its enemies are seen there) ...
+  float fleeMemoryMaxS = 30.0f;   // ... at most this long after the disengage (then the bot looks again) ...
+  float fleeAvoidRange = 36.0f;   // ... and no macro walk or farm target takes the bot nearer to it than this (more
+                                  // than fightCountRange: the bot holds where the odds don't count those enemies)
   float towerOdds = 1.5f;         // a shooting structure in reach counts as this many full-HP shapers for its side
   float lowTargetBonus = 0.5f;    // a target below diveHp counts this much less: finish kills
   float fightCommitS = 3.0f;      // an engaged fight lasts at least this long unless the bot must retreat [rec]
@@ -109,6 +115,11 @@ struct Tuning {
   float guardSpawnKeep = 75.0f;     // round 12: the staging point stays this far from the enemy spawn (its defenders
                                     // respawn there; round 11's `_d1` staged 61 from it)
   float guardLaneStep = 35.0f;      // round 12: RouteTo's step along the push lane
+  float routeClear = 6.0f;          // BOTSFLIP: RouteTo goes round a living enemy Binding whose reach plus towerMargin the
+                                    // straight line passes by less than this (the game's path follows the lanes, not the
+                                    // line: the VPS match's bots took the top lane past its living Bindings) ...
+  float routeHysteresis = 6.0f;     // ... and keeps that way until the line clears by this much more (the VPS match: the
+                                    // line passed at 31.9 and 32.1 in turn, and every switch restarted the walk)
   float guardRetryS = 8.0f;         // no new engage this soon after a back-off
   float locusAvoid = 50.0f;       // the enemy Locus kills shapers within its aggro range 38.5 [data]: keep this clear
   float defendRadius = 45.0f;     // enemies this near an own Core or the Guardian are a threat to the base
@@ -228,6 +239,8 @@ struct Tuning {
                                   // retreats: rounds 3-6 head to head, classic fought, farmed and recalled better)
   float hybridIdleS = 3.0f;       // the classic brain leaving a calm bot this long without a move or a hit: v2 rescues it
   float hybridHoldS = 2.0f;       // a takeover lasts at least this long (no flip every think)
+  float hybridRescueHoldS = 8.0f; // BOTSFLIP: an idle rescue lasts at least this long while calm (the VPS match: 3 s
+                                  // standing, 2 s of v2, "no task", every 6 s, 15-36 swaps a bot)
   float hybridCalmRange = 38.0f;  // round 8: a takeover for a task needs no enemy shaper this near ...
   float hybridCalmS = 3.0f;       // ... for this long (round 7: 262 of 306 releases were "an enemy near", in bursts of
                                   // flips at the 30-unit line; 8 more than the fight range, about a second's walk)
@@ -244,6 +257,20 @@ struct Tuning {
   // ---- the census (measurement only, both brains) ----------------------------------------------------------------------
   float idleMove = 1.0f;          // a living bot away from its base that moved less than this in a second ...
   float idleHitS = 2.0f;          // ... and dealt no damage for this long had an idle second
+
+  // ---- the walk (the host's executor, walk.h) -------------------------------------------------------------------------
+  // BOTSFLIP: two bots stood 171 s in the follow leaf with an unchanged goal 250 units away (the game's follow had ended
+  // short of it, and an unchanged goal is never asked again: reaimDist). A walk whose bot moved less than walkStuckMove
+  // in walkStuckS, farther than walkStuckNear from its goal, is asked again.
+  float walkStuckS = 2.0f;
+  float walkStuckMove = 2.0f;
+  float walkStuckNear = 4.0f;
+  float unstuckRange = 6.0f;   // round 3: a walk that hasn't moved the bot walkStuckMove in walkStuckS, with enemy
+                               // minions this near, hits the weakest of them instead (botsflip_b2: two bots stood 40 and
+                               // 58 s in a ring of enemy minions, 17-26 walks asked, HP 93 % -> 34 %, no hit back)
+  float walkReaimMinS = 1.0f;  // round 2: a running walk is re-aimed at most this often while the bot hasn't moved
+                               // walkStuckMove since the last ask (botsflip_b1: 79 s standing, the goal jumping 34 units
+                               // with every think and each re-aim restarting the follow)
 };
 
 // One key of the table for ApplyOverrides and Describe.
@@ -280,6 +307,9 @@ inline const TuningField* TuningFields(int* n) {
       {"fleeOdds", &Tuning::fleeOdds, nullptr},
       {"disengageExitOdds", &Tuning::disengageExitOdds, nullptr},
       {"disengageMinS", &Tuning::disengageMinS, nullptr},
+      {"fleeMemoryS", &Tuning::fleeMemoryS, nullptr},
+      {"fleeMemoryMaxS", &Tuning::fleeMemoryMaxS, nullptr},
+      {"fleeAvoidRange", &Tuning::fleeAvoidRange, nullptr},
       {"towerOdds", &Tuning::towerOdds, nullptr},
       {"lowTargetBonus", &Tuning::lowTargetBonus, nullptr},
       {"fightCommitS", &Tuning::fightCommitS, nullptr},
@@ -313,6 +343,8 @@ inline const TuningField* TuningFields(int* n) {
       {"guardRetryS", &Tuning::guardRetryS, nullptr},
       {"guardSpawnKeep", &Tuning::guardSpawnKeep, nullptr},
       {"guardLaneStep", &Tuning::guardLaneStep, nullptr},
+      {"routeClear", &Tuning::routeClear, nullptr},
+      {"routeHysteresis", &Tuning::routeHysteresis, nullptr},
       {"locusAvoid", &Tuning::locusAvoid, nullptr},
       {"defendRadius", &Tuning::defendRadius, nullptr},
       {"defenders", nullptr, &Tuning::defenders},
@@ -381,6 +413,7 @@ inline const TuningField* TuningFields(int* n) {
       {"hybridFightRange", &Tuning::hybridFightRange, nullptr},
       {"hybridIdleS", &Tuning::hybridIdleS, nullptr},
       {"hybridHoldS", &Tuning::hybridHoldS, nullptr},
+      {"hybridRescueHoldS", &Tuning::hybridRescueHoldS, nullptr},
       {"hybridCalmRange", &Tuning::hybridCalmRange, nullptr},
       {"hybridCalmS", &Tuning::hybridCalmS, nullptr},
       {"hybridTaskBackoffS", &Tuning::hybridTaskBackoffS, nullptr},
@@ -389,6 +422,11 @@ inline const TuningField* TuningFields(int* n) {
       {"parasiteLead", nullptr, &Tuning::parasiteLead},
       {"idleMove", &Tuning::idleMove, nullptr},
       {"idleHitS", &Tuning::idleHitS, nullptr},
+      {"walkStuckS", &Tuning::walkStuckS, nullptr},
+      {"walkStuckMove", &Tuning::walkStuckMove, nullptr},
+      {"walkStuckNear", &Tuning::walkStuckNear, nullptr},
+      {"walkReaimMinS", &Tuning::walkReaimMinS, nullptr},
+      {"unstuckRange", &Tuning::unstuckRange, nullptr},
   };
   *n = static_cast<int>(sizeof k / sizeof k[0]);
   return k;

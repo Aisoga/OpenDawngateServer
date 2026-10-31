@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -14,8 +15,10 @@ import (
 	"syscall"
 	"time"
 
+	"dawngate/server/internal/mapedit"
 	"dawngate/server/internal/setup"
 	"dawngate/server/internal/setup/certs"
+	"dawngate/server/internal/setup/moviepatch"
 	"dawngate/server/internal/tunnel"
 	"dawngate/server/internal/update"
 	"dawngate/server/internal/version"
@@ -140,6 +143,10 @@ func RunClient(args []string, o IO) int {
 	discordFlag := fs.String("discord", "", "your Discord status while the game runs: on (the default) or off (Start-Client.ini discord)")
 	discordJoinFlag := fs.String("discord-join", "", "Join from Discord: on (the default) or off (Start-Client.ini discord_join)")
 	mapDownloadFlag := fs.String("map-download", "", "map delivery: on (the default) downloads a server's maps this copy lacks at the login, off never (Start-Client.ini map_download)")
+	var ed editorOptions
+	fs.BoolVar(&ed.on, "editor", false, "the map editor instead of the game: its page in the browser, the game started by its Test button (Map Editor.cmd)")
+	fs.StringVar(&ed.addr, "editor-addr", DefaultEditorAddr, "--editor: the address the map editor's page is served on (this PC only)")
+	fs.StringVar(&ed.pages, "editor-pages", "", "--editor: the map editor's page folder (default: the folder "+EditorFolder+" beside Start-Client.exe)")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -161,6 +168,15 @@ func RunClient(args []string, o IO) int {
 	}
 	in := bufio.NewReader(o.In)
 	fmt.Fprintf(o.Out, "OpenDawngateServer: Start-Client, version %s\n", version.String())
+	if ed.on {
+		if *check || *setupOnly {
+			return o.fail("--editor runs the map editor: not with --check or --setup-only")
+		}
+		if err := editorPrecheck(o.ExeDir, &ed); err != nil {
+			return o.fail("%v", err)
+		}
+		fmt.Fprintf(o.Out, "  editor   the map editor (its page %s)\n", ed.pages)
+	}
 	if *lane == "" && !*check && clientRunning() {
 		// a second Start-Client (e.g. Discord starting it for a Join while the game runs) changes nothing: the running
 		// one keeps the server list in memory and would write over what this one wrote
@@ -241,6 +257,9 @@ func RunClient(args []string, o IO) int {
 		return o.fail("%v", err)
 	}
 	picker, server := choice.picker, choice.server
+	if ed.on && !picker {
+		return o.fail("%v", errNoPicker)
+	}
 	if _, err := setup.ClientOptions(server); err != nil && !picker {
 		return o.fail("The server address %q: %v", server, err)
 	}
@@ -277,6 +296,12 @@ func RunClient(args []string, o IO) int {
 				ini = scfg
 			}
 			pc = newThisPC(o, l, patchFor, filepath.Join(o.ExeDir, "host"), ini, bookmarks, *check, localTrust)
+			if ed.on {
+				if held, ok := pc.folderServer(); ok {
+					return o.fail("%v", errFolderServer(held))
+				}
+				pc.skipFailedMaps = true
+			}
 			if preselect, err = pickerBookmarks(o, l, choice, *gwPinFlag, *check, pc); err != nil {
 				return o.fail("%v", err)
 			}
@@ -376,7 +401,12 @@ func RunClient(args []string, o IO) int {
 		return p, err
 	},
 		Manifest: manifest, WebDomain: ownServerDomain(scfg, o.ExeDir, l.Root, server), DataSuffix: *lane, Picker: picker,
-		Maps: MapsDir(o.ExeDir)}
+		Maps: MapsDir(o.ExeDir), SkipFailedMaps: ed.on}
+	if ed.on { // the editor saves its maps there (and This PC's server gets --maps only for a folder that exists)
+		if err := os.MkdirAll(s.Maps, 0o755); err != nil {
+			return o.fail("The maps folder %s: %v", s.Maps, err)
+		}
+	}
 	var release func()
 	if !*check {
 		if release, err = setup.Lock(l.Root); err != nil {
@@ -444,6 +474,41 @@ func RunClient(args []string, o IO) int {
 	gameArgs := ""
 	if *lane != "" {
 		gameArgs = "-multipleInstances"
+	}
+	if ed.on {
+		exe, err := os.Executable()
+		if err != nil {
+			return o.fail("The map editor needs this program's path (it runs it as mapc): %v", err)
+		}
+		game := &editorGame{out: o.Out, park: *park, foreground: ForegroundWindow, pc: pc, list: joinFront,
+			start: func() (gameProcess, error) {
+				g, err := StartGame(l.ClientCopy(), StartOptions{Args: gameArgs, NoActivate: *park})
+				if err != nil {
+					return nil, err
+				}
+				return g, nil
+			},
+			setup: func(out io.Writer) (*setup.Setup, error) {
+				again := &setup.Setup{Layout: l, Out: out, FindZip: pc.findZip, Manifest: manifest, WebDomain: s.WebDomain,
+					DataSuffix: *lane, Picker: picker, Maps: s.Maps, SkipFailedMaps: true}
+				release, err := setup.Lock(l.Root)
+				if err != nil {
+					return nil, err
+				}
+				defer release()
+				return again, again.Client(patchFor, ca)
+			},
+			dialogMaps: func() []moviepatch.Map { return folderDialogMaps(o.ExeDir) }}
+		if *lane == "" {
+			game.otherGame = clientRunning
+		}
+		c := mapedit.ReleaseConfig(exe, s.Maps, l, ed.pages)
+		c.Game = game
+		fmt.Fprintln(o.Out, "  discord  not used by the map editor")
+		interrupt := make(chan os.Signal, 1)
+		signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(interrupt)
+		return runEditor(o, ed, c, game, !*nonInteractive && *lane == "" && !*park, interrupt)
 	}
 	fmt.Fprintf(o.Out, "  discord  %s\n", dc.why)
 	var onJoin func(string)
@@ -624,21 +689,7 @@ func play(o IO, l setup.Layout, park bool, args string, presence func(pid int) f
 	defer close(stop)
 	if park {
 		fmt.Fprintln(o.Out, "  test hook: the game window is kept off the desktop, without a taskbar button, and out of the foreground (--test-park)")
-		go g.Park(stop, prev, ParkEvents{ForegroundBack: func(n int, ok bool) {
-			if n <= 20 {
-				res := "given back to the window that had it"
-				if !ok {
-					res = "Windows refused to give it back"
-				}
-				fmt.Fprintf(o.Out, "  test hook: the game took the foreground (%d); %s (%s)\n", n, res, time.Now().Format("15:04:05.000"))
-			}
-		}, Lock: func(locked bool) {
-			what := "the user is idle past ForegroundLockTimeout: foreground locked"
-			if !locked {
-				what = "the user is back: foreground lock released"
-			}
-			fmt.Fprintf(o.Out, "  test hook: %s (%s)\n", what, time.Now().Format("15:04:05.000"))
-		}})
+		go g.Park(stop, prev, parkEvents(o.Out))
 	}
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
@@ -654,10 +705,49 @@ func play(o IO, l setup.Layout, park bool, args string, presence func(pid int) f
 		return 0
 	case <-interrupt:
 		fmt.Fprintln(o.Out, "Closing the game ...")
-		g.Close()
-		if !g.Exited(4 * time.Second) { // in a match the game ignores WM_CLOSE; a closed console allows about 5 s
-			g.Kill()
-		}
+		closeGame(g, false)
 		return 0
 	}
+}
+
+// gameProcess is a started game as play and the map editor's Test use it (*Game; the tests' fakes).
+type gameProcess interface {
+	ID() int
+	Wait() (uint32, error)
+	Exited(d time.Duration) bool
+	Close()
+	Kill() error
+	Release()
+	Park(stop <-chan struct{}, prev uintptr, ev ParkEvents)
+}
+
+// closeGame ends a game: WM_CLOSE, and after 4 s (in a match the game ignores WM_CLOSE; a closed console allows about
+// 5 s) or at once with force, TerminateProcess.
+func closeGame(g gameProcess, force bool) {
+	if !force {
+		g.Close()
+		if g.Exited(4 * time.Second) {
+			return
+		}
+	}
+	g.Kill()
+}
+
+// parkEvents are the test hook's console lines while it keeps a game parked (--test-park).
+func parkEvents(out io.Writer) ParkEvents {
+	return ParkEvents{ForegroundBack: func(n int, ok bool) {
+		if n <= 20 {
+			res := "given back to the window that had it"
+			if !ok {
+				res = "Windows refused to give it back"
+			}
+			fmt.Fprintf(out, "  test hook: the game took the foreground (%d); %s (%s)\n", n, res, time.Now().Format("15:04:05.000"))
+		}
+	}, Lock: func(locked bool) {
+		what := "the user is idle past ForegroundLockTimeout: foreground locked"
+		if !locked {
+			what = "the user is back: foreground lock released"
+		}
+		fmt.Fprintf(out, "  test hook: %s (%s)\n", what, time.Now().Format("15:04:05.000"))
+	}}
 }

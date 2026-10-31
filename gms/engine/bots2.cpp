@@ -13,6 +13,7 @@
 #include "core/bots/kits.h"
 #include "core/bots2/brain.h"
 #include "core/bots2/census.h"
+#include "core/bots2/walk.h"
 #include "agents.h"
 #include "bots.h"
 #include "log.h"
@@ -53,6 +54,11 @@ struct Exec {
   unsigned long long recallAskedMs = 0;
   b2::Act lastAct = b2::Act::kNone;  // the last intent (for the idle-stretch line)
   const char* lastWhy = "";
+  b2::WalkWatch walk;  // BOTSFLIP: the walk asked last (mode 1), asked again when the bot stands short of it
+  // BOTSFLIP round 2: the walks asked and the re-aims held back (for the idle stretch's end line), and their counts
+  // at the stretch's start
+  unsigned walksAsked = 0, reaimsHeld = 0, walksAtStretch = 0, heldAtStretch = 0;
+  unsigned thinksV2 = 0, v2AtStretch = 0;
 };
 std::map<std::uint32_t, Exec> g_exec;
 unsigned g_idleStretchLines = 0;
@@ -65,6 +71,8 @@ struct Counters {
   // kills per team (its last hitter's team)
   unsigned spells = 0, spellsStarted = 0, potions = 0, potionsUsed = 0, wards = 0, wardsStarted = 0;
   unsigned workerKills[3] = {}, parasiteKills[3] = {};
+  unsigned walkStuck = 0;  // BOTSFLIP: walks asked again by the watchdog (core/bots2/walk.h)
+  unsigned reaimsHeld = 0;  // BOTSFLIP round 2: re-aims held back (WalkReaimNow)
 };
 Counters g_c;
 
@@ -432,6 +440,12 @@ void SampleCensus(const b2::World& w, double now) {
                     g_tuning.idleMove, g_tuning.idleHitS, busy);
     // an idle stretch reaching 3 s: what the bot was doing (its v2 state and intent, else nothing known)
     const double runAfter = g_census.Bots().at(b.creature).idleRunS;
+    if (runBefore < 1e-9 && runAfter > 0.0) {  // BOTSFLIP round 2: a stretch starts: the executor's counts now
+      Exec& es = g_exec[b.creature];
+      es.walksAtStretch = es.walksAsked;
+      es.heldAtStretch = es.reaimsHeld;
+      es.v2AtStretch = es.thinksV2;
+    }
     if (runBefore < 3.0 && runAfter >= 3.0 && ++g_idleStretchLines <= 300) {
       const b2::Memory* m = DrivesTeam(b.team) ? g_brain.MemoryOf(b.creature) : nullptr;
       const Exec& e = g_exec[b.creature];
@@ -442,10 +456,17 @@ void SampleCensus(const b2::World& w, double now) {
           b2::ActName(e.lastAct), e.lastWhy, now);
     }
     // BOTS2c: its end with its length (the line above comes at 3 s; the census's "long" is the longest stretch)
-    if (runBefore >= 3.0 && runAfter < 1e-9 && ++g_idleStretchLines <= 300)
-      Log("bots2 idle stretch end: bot %08X %s (player %d, team %d, %s) idle %.0f s, at (%.1f, %.1f) (t %.1f)",
+    // BOTSFLIP round 2: and what the executor did meanwhile (v2's thinks of it, the walks asked, the re-aims held
+    // back, the last walk's goal)
+    if (runBefore >= 3.0 && runAfter < 1e-9 && ++g_idleStretchLines <= 300) {
+      const Exec& e = g_exec[b.creature];
+      Log("bots2 idle stretch end: bot %08X %s (player %d, team %d, %s) idle %.0f s, at (%.1f, %.1f) (t %.1f); v2 "
+          "thinks %u, walks asked %u, re-aims held %u, last goal (%.1f, %.1f)",
           b.creature, agents::bot2io::Noun(b.creature), b.index, b.team, BrainOfTeam(b.team), runBefore,
-          static_cast<double>(s->pos.x), static_cast<double>(s->pos.y), now);
+          static_cast<double>(s->pos.x), static_cast<double>(s->pos.y), now, e.thinksV2 - e.v2AtStretch,
+          e.walksAsked - e.walksAtStretch, e.reaimsHeld - e.heldAtStretch, static_cast<double>(e.point.x),
+          static_cast<double>(e.point.y));
+    }
   }
   SampleLane10(w, now);  // BOTS2c
   if (now >= g_nextCensusLineS) {
@@ -571,14 +592,41 @@ void Execute(const b2::World& w, const b2::Shaper& me, const b2::Intent& in, uns
     case b2::Act::kMove: {
       const float z = in.point.z != 0.f ? in.point.z : me.pos.z;
       const b2::Vec3 goal = b2::V(in.point.x, in.point.y, z);
-      if (e.mode == 1 && b2::Dist(e.point, goal) <= g_tuning.reaimDist) return;  // still walking there
+      if (e.mode == 1 && b2::Dist(e.point, goal) <= g_tuning.reaimDist) {  // still walking there ...
+        // BOTSFLIP: ... unless the game's follow ended short of the goal (the VPS match: 171 s standing in the Pursue
+        // leaf with the goal unchanged): asked again
+        if (!b2::WalkStuck(e.walk, me.pos, w.now, g_tuning)) return;
+        const float q[3] = {e.point.x, e.point.y, e.point.z};
+        io::FollowPoint(me.id, q, true);
+        ++e.walksAsked;
+        ++g_c.walkStuck;
+        ++g_c.moveRestarts;
+        static unsigned stuckLines = 0;
+        if (++stuckLines <= 40 || stuckLines % 50 == 0)
+          Log("bots2: bot %08X %s walk asked again: stood %.1f s at (%.1f, %.1f), %.0f from its goal (%.1f, %.1f) (%s; "
+              "restart %u of this walk, %u in all) (t %.1f)",
+              me.id, io::Noun(me.id), static_cast<double>(g_tuning.walkStuckS), static_cast<double>(me.pos.x),
+              static_cast<double>(me.pos.y), static_cast<double>(b2::Dist(me.pos, e.point)),
+              static_cast<double>(e.point.x), static_cast<double>(e.point.y), in.why, e.walk.restarts, g_c.walkStuck,
+              w.now);
+        return;
+      }
+      // BOTSFLIP round 2: a running walk whose bot hasn't moved since the last ask is re-aimed at most every
+      // walkReaimMinS (each re-aim restarts the follow; botsflip_b1: 79 s standing under re-aims every think)
+      if (e.mode == 1 && !b2::WalkReaimNow(e.walk, me.pos, w.now, g_tuning)) {
+        ++g_c.reaimsHeld;
+        ++e.reaimsHeld;
+        return;
+      }
       const float p[3] = {goal.x, goal.y, goal.z};
       const bool restart = e.mode == 1 || e.mode == 2;
       io::FollowPoint(me.id, p, restart);
+      ++e.walksAsked;
       if (restart) ++g_c.moveRestarts;
       e.mode = 1;
       e.point = goal;
       e.target = 0;
+      b2::WalkStart(e.walk, goal, me.pos, w.now);
       ++g_c.moves;
       return;
     }
@@ -679,6 +727,7 @@ bool HybridTurn(const b2::World& w, const bots::Bot& b, const b2::Shaper& me) {
   v.idleRunS = cb != g_census.Bots().end() ? cb->second.idleRunS : 0.0;
   v.driven = hs.driven;
   v.drivenSince = hs.since;
+  v.rescue = hs.driven && hs.why == b2::HybridDriver::kV2Rescue;  // BOTSFLIP: a rescue holds hybridRescueHoldS
   v.backoff = w.now < hs.backoffUntil;
   // round 9: the base's siege with its edge; round 11: the Guardian phase, every living bot (a v2 takeover that holds)
   v.finish = (p.siege && p.siegeEdge && inGroup) || p.guard != b2::TeamPlan::kGuardOff;
@@ -827,6 +876,7 @@ void Think(const b2::World& w, unsigned long long nowMs) {
     const b2::Shaper* me = w.Find(b.creature);
     if (!me) continue;
     if (g_set.brains.Hybrid(b.team) && !HybridTurn(w, b, *me)) continue;  // round 7: the classic brain drives it now
+    ++g_exec[b.creature].thinksV2;  // BOTSFLIP round 2: for the idle stretch's end line
     const b2::Intent in = g_brain.Decide(w, b.creature);
     const b2::Memory* m = g_brain.MemoryOf(b.creature);
     const bool inBase = b2::InBase(w, *me, g_tuning);
@@ -966,7 +1016,8 @@ bool FormatExtraStats(char* buf, std::size_t size) {
                 "trade %u), back-offs %u, "
                 "stays at the Binding %u, Hunter stays in the jungle %u, first-wave waits in base %u; hybrid: v2 "
                 "drove %u of %u thinks, takeovers for a task %u, rescues %u, releases %u, task back-offs %u; guardian: "
-                "phases %u, engages %u with %u bots in all, back-offs %u",
+                "phases %u, engages %u with %u bots in all, back-offs %u; botsflip: threats remembered %u, holds %u, "
+                "route switches %u, walks asked again %u, re-aims held %u, unstuck hits %u",
                 BrainLabel(), s.extras[ks], g_c.spells, g_c.spellsStarted, n ? spells : "none",
                 s.extras[kp], g_c.potionsUsed, g_c.potions, s.extras[kw], g_c.wards, g_c.wardsStarted, s.wardDetours,
                 s.wellThreats, s.wellTasks[1], s.wellTasks[2], s.wellTasks[3], g_c.workerKills[1], g_c.workerKills[2],
@@ -974,7 +1025,8 @@ bool FormatExtraStats(char* buf, std::size_t size) {
                 g_c.parasiteKills[2], noWhy, s.trades, s.killLow + s.killGanks + s.tradeToKill, s.killLow, s.killGanks,
                 s.tradeToKill, s.backOffs, s.laneStays, s.jungleStays, s.firstWaveWaits, g_hc.thinksV2,
                 g_hc.thinksV2 + g_hc.thinksClassic, g_hc.takeoversTask, g_hc.takeoversRescue, g_hc.releases,
-                g_hc.backoffs, s.guardPhases, s.guardEngages, s.guardEngageBots, s.guardBackOffs);
+                g_hc.backoffs, s.guardPhases, s.guardEngages, s.guardEngageBots, s.guardBackOffs, s.fleeMemories,
+                s.fleeHolds, s.routeSwitches, g_c.walkStuck, g_c.reaimsHeld, s.unstuckHits);
   return true;
 }
 

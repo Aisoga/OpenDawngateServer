@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"dawngate/server/internal/setup/moviepatch"
 	"dawngate/server/internal/setup/snap"
 	"dawngate/server/internal/tunnel"
 	"dawngate/server/internal/version"
@@ -245,6 +246,54 @@ func (f *Front) ServerList() []byte {
 	sb.WriteString("end\n")
 	f.keepStatuses(sts)
 	return []byte(sb.String())
+}
+
+// PauseList stops the writes of the server list (refreshLoop's and a login's) until the function it returns, which
+// writes the list into the same copy again: the map editor's Test sets the player copy up again meanwhile. A write
+// that runs is waited for.
+func (f *Front) PauseList() (resume func() error) {
+	f.listMu.Lock()
+	copy := f.listCopy
+	f.listCopy = ""
+	f.listMu.Unlock()
+	f.writeMu.Lock()
+	f.lastList = nil // the setup may have written the archive anew: the next text is written whatever it is
+	f.writeMu.Unlock()
+	return func() error { return f.WriteServerList(copy) }
+}
+
+// EndSession closes the current tunnel session when it is to the server tag, before that server stops (the map
+// editor's Test restarts This PC's server): a session to a stopped server keeps connecting again and would carry the
+// next game's QoS probes and HTTP requests, which the front answers itself while it has no session (the game then
+// had no QoS result and its game join failed with ERR_SYSTEM). False when none was to tag.
+func (f *Front) EndSession(tag string) bool {
+	f.switchMu.Lock()
+	defer f.switchMu.Unlock()
+	f.mu.Lock()
+	s := f.cur
+	if s == nil || s.b.Tag != tag {
+		f.mu.Unlock()
+		return false
+	}
+	f.cur = nil
+	f.mu.Unlock()
+	f.logf("session to %s (%s) closed: its server stops (the map editor's Test)", s.b.Tag, s.b.Gateway())
+	s.c.Close()
+	return true
+}
+
+// SetMaps replaces the maps folder's create-dialog entries (Maps) after the folder changed (the map editor's Test).
+func (f *Front) SetMaps(maps []moviepatch.Map) {
+	f.listMu.Lock()
+	f.Maps = maps
+	f.listMu.Unlock()
+}
+
+// folderMaps are Maps, read under the lock SetMaps writes them with.
+func (f *Front) folderMaps() []moviepatch.Map {
+	f.listMu.Lock()
+	defer f.listMu.Unlock()
+	return f.Maps
 }
 
 // WriteServerList writes the list's archive into the player copy (the folder that holds game\Data); it remembers

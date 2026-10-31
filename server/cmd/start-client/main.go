@@ -11,10 +11,16 @@
 //
 //	Start-Client.exe [<server address or tag>] [--gateway-pin <key>] [--setup-only] [--check] [--non-interactive]
 //	    [--zip <Dawngate.zip>] [--tunnel off [--ca <ca_modulus.bin>] [--trust]] [--test-park]
+//	Start-Client.exe --mapc <command> [<args>]
 //
 // --test-park (or DAWNGATE_TEST_PARK=1) is the release's test hook: the game is started without activation and its
 // window kept off the desktop, as run_session.ps1 -Background keeps it; launch_monitor.ps1 -Attach then drives the
 // login and the clicks with posted messages. A player never needs it.
+//
+// --mapc, as the first argument, runs the map compiler's command line instead of the game (internal/mapctool: the
+// same code and output as the developers' tools/mapc; `--mapc version --json` names its interface's version): the
+// way other tools of the release check, build and preview a map package. It touches no game copy but the one its
+// arguments name.
 package main
 
 import (
@@ -22,10 +28,14 @@ import (
 	"slices"
 
 	"dawngate/server/internal/launcher"
+	"dawngate/server/internal/mapctool"
 )
 
 func main() {
 	args := os.Args[1:]
+	if len(args) > 0 && (args[0] == "--mapc" || args[0] == "-mapc") {
+		os.Exit(mapctool.Run(args[1:], os.Stdout, os.Stderr))
+	}
 	os.Exit(launcher.RunClient(args, launcher.StdIO(slices.Contains(args, "--non-interactive") ||
 		slices.Contains(args, "-non-interactive"))))
 }

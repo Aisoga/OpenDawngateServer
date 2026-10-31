@@ -21,7 +21,7 @@ func (f *Front) writeMapList(s *frontSession) {
 		return
 	}
 	tags, told := tunnel.FactMapTags(s.facts)
-	maps, why := dialogMaps(copy, f.Maps, serverInfo{tags: tags, told: told, versions: tunnel.FactMapVersions(s.facts)})
+	maps, why := dialogMaps(copy, f.folderMaps(), serverInfo{tags: tags, told: told, versions: tunnel.FactMapVersions(s.facts)})
 	names := dialogNames(maps)
 	changed, err := moviepatch.WriteMapList(copy, maps)
 	switch {
@@ -52,5 +52,5 @@ func (f *Front) installedMaps() []tunnel.InstalledMap {
 	f.listMu.Lock()
 	copy := f.listCopy
 	f.listMu.Unlock()
-	return InstalledMaps(copy, f.Maps)
+	return InstalledMaps(copy, f.folderMaps())
 }

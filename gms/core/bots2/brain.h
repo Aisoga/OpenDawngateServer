@@ -107,6 +107,15 @@ struct Memory {
   double potionReadyAt = -1e9;
   double wardReadyAt = -1e9;
   double wellDoneAt = -1e9;
+  // BOTSFLIP: the threat the bot last disengaged from (the seen enemies' centre), from when, and until when it is
+  // avoided (fleeMemoryS after its last sight, at most fleeMemoryMaxS after fledSince); RouteTo's way round a Binding
+  Vec3 fledFrom;
+  double fledSince = -1e9;
+  double fledUntil = -1e9;
+  bool routeLane = false;
+  // BOTSFLIP round 3: where the bot last moved walkStuckMove from, and when (a walk that doesn't move it)
+  Vec3 stillAt;
+  double stillSince = -1e9;
 };
 
 // Round 8: why a team's plan started no parasite attempt this think (counted in BrainStats::parasiteNo).
@@ -205,6 +214,10 @@ struct BrainStats {
   // stayed in lane (a potion) instead of recalling
   unsigned trades = 0, killLow = 0, killGanks = 0, tradeToKill = 0, backOffs = 0, laneStays = 0;
   unsigned jungleStays = 0, firstWaveWaits = 0;  // a hurt Hunter clearing on with a potion; a bot waiting in base
+  // BOTSFLIP: threats remembered (a disengage's start), thinks a walk or farm target was held back from one, and
+  // RouteTo's switches between the straight way and the lane
+  unsigned fleeMemories = 0, fleeHolds = 0, routeSwitches = 0;
+  unsigned unstuckHits = 0;  // round 3: thinks a walk that didn't move the bot became a hit on the minions round it
 };
 
 // BOTS2c, head to head (the user: "Imagine judging a chess bot by how well it plays against itself"): the brain of
@@ -271,6 +284,7 @@ struct HybridView {
   double idleRunS = 0.0;          // the census's current idle stretch
   bool driven = false;            // v2 drives it now ...
   double drivenSince = -1e9;      // ... since
+  bool rescue = false;            // BOTSFLIP: ... for an idle rescue (it holds hybridRescueHoldS while calm)
   double now = 0.0;
 };
 enum class HybridDriver : int { kClassic = 0, kV2Task = 1, kV2Rescue = 2 };
@@ -279,6 +293,7 @@ inline HybridDriver ChooseDriver(const HybridView& v, const Tuning& t) {
   if (v.finish && v.hp >= t.retreatHp) return HybridDriver::kV2Task;  // round 9: the finish commits
   if (v.nearestEnemy <= t.hybridFightRange || v.hp < t.retreatHp) return HybridDriver::kClassic;  // its fight, its retreat
   if (v.idleRunS >= t.hybridIdleS) return HybridDriver::kV2Rescue;  // the classic brain left it standing
+  if (v.driven && v.rescue && v.now - v.drivenSince < t.hybridRescueHoldS) return HybridDriver::kV2Rescue;  // BOTSFLIP
   const bool settled = v.driven || v.calmS >= t.hybridCalmS;
   if (v.teamTask && !v.backoff && settled) return HybridDriver::kV2Task;
   if (v.driven && v.now - v.drivenSince < t.hybridHoldS) return HybridDriver::kV2Task;
@@ -368,9 +383,14 @@ class Brain {
     m.fightTarget = m.farmTarget = 0;
     m.fightMode = Memory::kFightNone;
     m.backOffUntil = -1e9;
+    m.fledUntil = -1e9;  // BOTSFLIP: a threat the classic brain met in between is its own
+    m.routeLane = false;
   }
-  // Round 12: the way to `dest` past the enemy's living Bindings (by the push lane when the straight line passes one)
-  Vec3 RouteTo(const World& w, const Shaper& me, const Vec3& dest, int pushLane) const;
+  // Round 12: the way to `dest` past the enemy's living Bindings (by the push lane when the straight line passes one).
+  // BOTSFLIP: the last guardStageRadius of the line doesn't count (`dest` is a staging point outside every shooting
+  // structure's reach); with `viaLane` (the bot's last choice, updated) a way round is kept until the line clears by
+  // routeHysteresis.
+  Vec3 RouteTo(const World& w, const Shaper& me, const Vec3& dest, int pushLane, bool* viaLane = nullptr) const;
 
  private:
   Intent Finish(Memory& m, State s, const Intent& in, double now, bool inBase, bool alive = true);
@@ -403,6 +423,9 @@ class Brain {
   Extra RetreatSpell(const World& w, const Shaper& me, const Memory& m) const;
   Extra VanquishAt(const World& w, const Shaper& me, const Memory& m, std::uint32_t target, bool jungle) const;
   void AddExtras(const World& w, const Shaper& me, Memory& m, State s, Intent& in);
+  // BOTSFLIP: the threat memory (set and refreshed at each think) and the hold back from it (a macro walk or farm target)
+  void RememberThreat(const World& w, const Shaper& me, Memory& m);
+  bool HoldBack(const World& w, const Shaper& me, const Memory& m, State s, Intent& in);
 
   Tuning t_;
   bool teams_[3] = {false, true, true};

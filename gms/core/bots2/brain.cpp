@@ -137,6 +137,32 @@ int AlliesAt(const World& w, int team, const Vec3& at, float r) {
 
 bool Has(const std::vector<std::uint32_t>& v, std::uint32_t id) { return std::find(v.begin(), v.end(), id) != v.end(); }
 
+// The distance of `c` from the segment a-b (2-D).
+float SegDist(const Vec3& a, const Vec3& b, const Vec3& c) {
+  const float dx = b.x - a.x, dy = b.y - a.y;
+  const float len2 = dx * dx + dy * dy;
+  float u = len2 > 0.f ? ((c.x - a.x) * dx + (c.y - a.y) * dy) / len2 : 0.f;
+  u = std::max(0.f, std::min(1.f, u));
+  return Dist(V(a.x + u * dx, a.y + u * dy), c);
+}
+
+// BOTSFLIP: where an attack's target stands (a shaper, a unit, a structure); false if unknown.
+bool TargetPos(const World& w, std::uint32_t id, Vec3* out) {
+  if (const Shaper* s = w.Find(id)) {
+    *out = s->pos;
+    return true;
+  }
+  if (const Unit* u = w.FindUnit(id)) {
+    *out = u->pos;
+    return true;
+  }
+  if (const Structure* st = w.FindStructure(id)) {
+    *out = st->pos;
+    return true;
+  }
+  return false;
+}
+
 // BOTS2c: the lane's minions for `team`: how many of each side, the own minions' front and the enemy's (progress from
 // the team's base; core/bots/lanes.h ComputeFront's rule without its midpoint).
 struct LaneMinionFronts {
@@ -1016,26 +1042,33 @@ void Brain::PlanGuardian(const World& w, int team, TeamPlan& p) {
 // Round 12: the way to `dest` past the enemy's living Bindings: when the straight line passes within a Binding's reach
 // (plus towerMargin), first to the push lane (its Bindings are down), then along it toward the enemy base (round 11's
 // `_d1`: a bot walking straight to the staging point stepped into a Binding's fire and out again 104 times).
-Vec3 Brain::RouteTo(const World& w, const Shaper& me, const Vec3& dest, int pushLane) const {
-  auto segDist = [](const Vec3& a, const Vec3& b, const Vec3& c) {
-    const float dx = b.x - a.x, dy = b.y - a.y;
-    const float len2 = dx * dx + dy * dy;
-    float u = len2 > 0.f ? ((c.x - a.x) * dx + (c.y - a.y) * dy) / len2 : 0.f;
-    u = std::max(0.f, std::min(1.f, u));
-    return Dist(V(a.x + u * dx, a.y + u * dy), c);
-  };
+// BOTSFLIP: the staging point stands towerMargin + 2 outside every shooting structure's reach, so a straight way to it
+// ends near the reach of a Binding beside it: in the user's VPS match the line from about (-92, 5) passed the top inner
+// Binding at 31.9 and 32.1 in turn (reach 28 + 4), the way switched between the staging point and the bottom lane 140
+// units south with each step, and each switch restarted the walk (bots stood 3-28 s); and the game's own path from
+// there followed the top lane past its two living Bindings. The way's last guardStageRadius (the arrival) doesn't count,
+// a line closer than routeClear outside a Binding's reach plus towerMargin goes round, and a way round is kept until the
+// line clears by routeHysteresis more.
+Vec3 Brain::RouteTo(const World& w, const Shaper& me, const Vec3& dest, int pushLane, bool* viaLane) const {
+  const Vec3 end = Dist(me.pos, dest) > t_.guardStageRadius ? Toward(dest, me.pos, t_.guardStageRadius) : me.pos;
+  const float keep = t_.routeClear + (viaLane && *viaLane ? t_.routeHysteresis : 0.f);
   bool blocked = false;
   for (const Structure& s : w.structures)
     if (s.team != me.team && s.kind == Kind::kBinding && s.Shoots() &&
-        segDist(me.pos, dest, s.pos) < s.reach + t_.towerMargin)
+        SegDist(me.pos, end, s.pos) < s.reach + t_.towerMargin + keep)
       blocked = true;
   const gms::bots::LanePath* lane = w.Lane(pushLane);
+  if (viaLane) *viaLane = blocked && lane;
   if (!blocked || !lane) return dest;
   const float len = lane->Length();
   const float arc = me.team == 1 ? lane->Project(me.pos) : len - lane->Project(me.pos);
   const Vec3 onLane = LanePoint(*lane, me.team, arc);
-  if (Dist(me.pos, onLane) > t_.guardStageRadius) return onLane;  // to the open lane first
-  return LanePoint(*lane, me.team, arc + t_.guardLaneStep);       // then along it
+  // to the open lane first, then along it. BOTSFLIP round 2: by a step that grows as the bot nears the lane (none at
+  // 2 guardStageRadius off it, all of guardLaneStep within guardStageRadius); the old switch at guardStageRadius moved
+  // the goal 34 units with 0.3 units of jitter (botsflip_b1: a bot 14 off the top lane stood 79 s, re-aimed every think)
+  const float off = Dist(me.pos, onLane), r = t_.guardStageRadius;
+  const float ahead = t_.guardLaneStep * std::max(0.f, std::min(1.f, (2.f * r - off) / r));
+  return LanePoint(*lane, me.team, arc + ahead);
 }
 
 // A bot's part in the base phase: in with the group (the target, with its abilities), else to the staging point
@@ -1056,7 +1089,68 @@ bool Brain::GuardianIntent(const World& w, const Shaper& me, Memory& m, Intent* 
                         ? "guardian: back off together"
                         : Dist(me.pos, p.staging) > t_.guardStageRadius ? "guardian: to the staging point"
                                                                          : "guardian: wait for the group";
-  *out = MoveTo(RouteTo(w, me, p.staging, p.pushLane), why);
+  const bool wasLane = m.routeLane;
+  *out = MoveTo(RouteTo(w, me, p.staging, p.pushLane, &m.routeLane), why);
+  if (m.routeLane != wasLane) ++stats_.routeSwitches;
+  return true;
+}
+
+// BOTSFLIP: the threat a disengage fled (the user's VPS match: a bot of the base phase's gather met three enemy
+// shapers mid-map, disengaged "outnumbered", and 2 s later, out of their count range, the plan sent it straight back:
+// push -> retreat every 2 s). While the bot disengages, the seen enemy shapers within fightCountRange of it are the
+// threat (their centre); afterwards the memory is refreshed while enemy shapers are seen within fleeAvoidRange of it
+// (fleeMemoryS after the last sight, at most fleeMemoryMaxS after the disengage, then the bot looks again).
+void Brain::RememberThreat(const World& w, const Shaper& me, Memory& m) {
+  const bool active = w.now < m.fledUntil;
+  if (!m.disengaging && !active) return;
+  const Vec3 at = m.disengaging ? me.pos : m.fledFrom;
+  const float r = m.disengaging ? t_.fightCountRange : t_.fleeAvoidRange;
+  float sx = 0.f, sy = 0.f;
+  int n = 0;
+  for (const Shaper& s : w.shapers) {
+    if (s.team == me.team || !Seen(s, me.team) || Dist(s.pos, at) > r) continue;
+    sx += s.pos.x;
+    sy += s.pos.y;
+    ++n;
+  }
+  if (n == 0) return;
+  if (!active) {
+    m.fledSince = w.now;
+    ++stats_.fleeMemories;
+  }
+  m.fledFrom = V(sx / static_cast<float>(n), sy / static_cast<float>(n), me.pos.z);
+  m.fledUntil = std::min(w.now + t_.fleeMemoryS, m.fledSince + t_.fleeMemoryMaxS);
+}
+
+// BOTSFLIP: while the threat is remembered, a macro walk (the push, the lane, a well, the parasite, the jungle, the
+// base phase's gather) or a farm target that would take the bot nearer to it than fleeAvoidRange (or than it is now)
+// becomes a hold: on toward home (the retreat's way) while a seen enemy shaper is within fleeAvoidRange + 2 of the bot,
+// else a stand where it is. Not a fight (an enemy that hit the bot is answered), not the retreat, not a bot that went in
+// with the base phase's group. Round 3 (botsflip_b2): the hold "back" used to step away from the threat's centre,
+// which in the enemy base pointed deeper into it (a team 2 bot went from (-143, -194) to (-155, -214), toward the enemy
+// spawn, and was outnumbered again 2.4 s later, three times in 9 s); and its stand let the enemies walk up to it.
+bool Brain::HoldBack(const World& w, const Shaper& me, const Memory& m, State s, Intent& in) {
+  if (w.now >= m.fledUntil) return false;
+  if (s != State::kPush && s != State::kLane && s != State::kWell && s != State::kParasite && s != State::kJungle)
+    return false;
+  const TeamPlan& p = Plan(me.team);
+  if (p.guard == TeamPlan::kGuardEngage && Has(p.guardMembers, me.id)) return false;
+  Vec3 to;
+  if (in.act == Act::kMove) {
+    to = in.point;
+  } else if (in.act != Act::kAttack || !TargetPos(w, in.target, &to)) {
+    return false;
+  }
+  const float d = Dist(me.pos, m.fledFrom);
+  if (SegDist(me.pos, to, m.fledFrom) >= std::min(t_.fleeAvoidRange, d - 1.f)) return false;
+  ++stats_.fleeHolds;
+  float nearest = kHuge;
+  NearestEnemy(w, me, &nearest);
+  if (nearest < t_.fleeAvoidRange + 2.f) {
+    in = MoveTo(HomeOf(w, me), "hold: back from the threat it fled");
+  } else {
+    in = MoveTo(me.pos, "hold: wait out the threat it fled");
+  }
   return true;
 }
 
@@ -1091,13 +1185,25 @@ Intent Brain::Finish(Memory& m, State s, const Intent& in, double now, bool inBa
 }
 
 Intent Brain::Done(const World& w, const Shaper& me, Memory& m, State s, Intent in, bool inBase) {
+  const bool held = HoldBack(w, me, m, s, in);  // BOTSFLIP: not back into the threat it fled
+  // BOTSFLIP round 3: a walk that hasn't moved the bot walkStuckMove in walkStuckS, with enemy minions within
+  // unstuckRange, hits the weakest of them (a ring of minions holds a walking bot in place; it hits its way out)
+  if (in.act == Act::kMove && w.now - m.stillSince >= t_.walkStuckS && Dist(me.pos, in.point) > t_.walkStuckNear) {
+    const Unit* weakest = nullptr;
+    for (const Unit& u : w.minions)
+      if (u.team != me.team && Dist(u.pos, me.pos) <= t_.unstuckRange && (!weakest || u.hp < weakest->hp)) weakest = &u;
+    if (weakest) {
+      ++stats_.unstuckHits;
+      in = AttackIt(weakest->id, false, false, "unstuck: hit the minions in the way");
+    }
+  }
   AddExtras(w, me, m, s, in);
   // BOTS2c: a long walk's goal (the lane, the push's front, the way home, a gathering point) moves to the bot's own
   // side, by its lane slot (lane mates opposite sides) and a distance of its own (its rank, its lane), so bots with one
   // goal don't walk one path in single file; near the goal it is the goal itself. Not for a well's ring, a camp or a
   // ward spot, whose point matters.
   const bool spread = s == State::kLane || s == State::kPush || s == State::kRetreat || s == State::kParasite;
-  if (spread && in.act == Act::kMove && Dist(in.point, me.pos) >= 3.f * t_.walkSpread + 3.f &&
+  if (spread && !held && in.act == Act::kMove && Dist(in.point, me.pos) >= 3.f * t_.walkSpread + 3.f &&
       std::strncmp(in.why, "ward:", 5) != 0) {
     const LaneSlot slot = LaneSlotOf(w, me, t_);
     const float side = me.lane > 0 ? slot.side : WalkSideOf(me.id);
@@ -1784,9 +1890,16 @@ Intent Brain::Decide(const World& w, std::uint32_t bot) {
     m.fightTarget = 0;
     m.farmTarget = 0;
     m.wasInBase = false;
+    m.fledUntil = -1e9;  // BOTSFLIP: a respawn starts without the old threat
+    m.routeLane = false;
+    m.stillSince = -1e9;
     return Finish(m, State::kDead, Plain(Act::kNone, "dead"), now, false, false);
   }
   const Shaper& me = *mep;
+  if (m.stillSince < -1e8 || Dist(me.pos, m.stillAt) >= t_.walkStuckMove) {  // BOTSFLIP round 3: it moves
+    m.stillAt = me.pos;
+    m.stillSince = now;
+  }
   const TeamBase& base = w.base[me.team == 2 ? 2 : 1];
   const bool inBase = InBase(w, me, t_);
   const float hp = me.Frac();
@@ -1804,17 +1917,23 @@ Intent Brain::Decide(const World& w, std::uint32_t bot) {
   // round 11: a bot that went in with the group in the Guardian phase leaves only hurt (the team backs off as a unit)
   const TeamPlan& sp = Plan(me.team);
   const bool guardIn = sp.guard == TeamPlan::kGuardEngage && Has(sp.guardMembers, me.id);
-  if (guardIn) m.disengaging = false;
+  // BOTSFLIP round 2: a defender at its threatened base holds its ground too (botsflip_b1: 19 of 24 quick re-flips were
+  // "defend -> retreat: outnumbered", home, and "retreat -> defend" 2 s later, a team 2 bot 12 times); hurt and
+  // outnumbered it still leaves (the full retreat below)
+  const bool baseDefender = !guardIn && sp.threatened && Has(sp.defenders, me.id) &&
+                            Dist(me.pos, sp.threat) <= t_.defendRadius + t_.fightCountRange;
+  if (guardIn || baseDefender) m.disengaging = false;
 
   // 1. Retreat: low HP (latched until retreatExitHp), or outnumbered (disengaging until the odds reach
   // disengageExitOdds; outnumbered and hurt latches the full retreat)
   const float odds = FightOdds(w, me, nullptr, t_);
-  if (!m.disengaging && !guardIn && odds < t_.fleeOdds) {
+  if (!m.disengaging && !guardIn && !baseDefender && odds < t_.fleeOdds) {
     m.disengaging = true;
     m.disengageSince = now;
   }
   if (m.disengaging && (inBase || (odds >= t_.disengageExitOdds && now - m.disengageSince >= t_.disengageMinS)))
     m.disengaging = false;
+  RememberThreat(w, me, m);  // BOTSFLIP: the threat it fled, avoided for a while (HoldBack)
   const bool lanePhase = LanePhase(me.team);
   // BOTS2c: a Hunter clearing his camps with a potion to drink (or one healing), no enemy shaper near, clears on until
   // recallHp (round 2: the Hunters recalled 6-9 times in 10 minutes for the camps' damage)
@@ -1831,7 +1950,8 @@ Intent Brain::Decide(const World& w, std::uint32_t bot) {
   // times a bot in 10 minutes against 1.5-1.6 and lost the farm (creep score 2.1-2.3 a minute against 2.7-3.4).
   const bool threatened = nearest <= t_.escapeRange || now - m.hitByAt <= t_.threatS;
   const bool hurt = lanePhase ? (hp < t_.recallHp || (hp < t_.retreatHp && threatened)) : hp < t_.retreatHp;
-  if (!m.retreating && !jungleStay && (hurt || (m.disengaging && hp < t_.retreatOutnumberedHp))) {
+  const bool outnumbered = m.disengaging || (baseDefender && odds < t_.fleeOdds);
+  if (!m.retreating && !jungleStay && (hurt || (outnumbered && hp < t_.retreatOutnumberedHp))) {
     m.retreating = true;
     ++stats_.retreats;
   }

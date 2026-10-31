@@ -1,12 +1,14 @@
 // gms_tests: BOTS2, the second bot brain's decision layer (core/bots2): the tuning table and its overrides, the states
 // and their order, the hysteresis and the commitment, the structures' safety, the push, the defence, the jungle, the
 // never-idle rule over random worlds, and the census.
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
 
 #include "core/bots2/brain.h"
 #include "core/bots2/census.h"
+#include "core/bots2/walk.h"
 #include "core/matchrec/matchrec.h"
 #include "tests/check.h"
 
@@ -1801,4 +1803,278 @@ GMS_TEST(Bots2cFewerRecalls) {
   CHECK(gold(300.0, 3000.f, 0) != Act::kRecall);     // nothing to buy
   CHECK(gold(300.0, 3000.f, 3500) != Act::kRecall);  // not enough for the next step
   CHECK(gold(300.0, 3000.f, -1) == Act::kRecall);    // unknown: BOTS2's thresholds
+}
+
+// BOTSFLIP (the user's VPS match, 2026-10-31): in the base phase's gather a bot walking to the staging point met three
+// enemy shapers mid-map, disengaged ("outnumbered") and 2 s later, out of their count range, walked straight back into
+// them: push -> retreat every 2 s. A simple walk (7 units a second, a think every 0.25 s) past three standing enemies
+// flipped 4 times in 20 s before the fix; now one disengage, then it holds back from the threat while it is seen there,
+// and once the enemies are gone from sight it goes on within fleeMemoryS.
+GMS_TEST(BotsFlipNoPingPong) {
+  Brain b;
+  World w = MapWorld(1550.0);
+  AddStructure(w, 62, 2, Kind::kGuardian, 182.f, 182.f, 30.f);  // open: the base phase gathers for it
+  AddShaper(w, 21, 2, -5.f, 40.f);                               // three enemies mid-map, on the bot's way
+  AddShaper(w, 22, 2, 0.f, 45.f);
+  AddShaper(w, 23, 2, 5.f, 38.f);
+  AddShaper(w, 24, 2, 226.f, 230.f);  // two in their base
+  AddShaper(w, 25, 2, 230.f, 226.f);
+  AddShaper(w, 1, 1, -60.f, -5.f);  // the walker
+  for (std::uint32_t id = 2; id <= 5; ++id) AddShaper(w, id, 1, -150.f, -150.f + static_cast<float>(id));
+  const double dt = 0.25;
+  int flips = 0;
+  float nearest = 1.0e9f;
+  State last = State::kCount;
+  Intent in;
+  auto step = [&](double seconds) {
+    for (double s = 0.0; s < seconds; s += dt) {
+      in = Think(b, w, 1);
+      const State st = b.MemoryOf(1)->state;
+      if (st == State::kRetreat && last != State::kRetreat && last != State::kCount) ++flips;
+      last = st;
+      Shaper& me = w.shapers[5];
+      if (in.act == Act::kMove)
+        me.pos = Toward(me.pos, in.point, std::min(7.f * static_cast<float>(dt), Dist(me.pos, in.point)));
+      if (w.shapers[0].seenBy[1]) nearest = std::min(nearest, Dist(me.pos, V(0.f, 41.f)));
+      w.now += dt;
+    }
+  };
+  step(20.0);
+  CHECK(b.Plan(1).guard == TeamPlan::kGuardGather);
+  CHECK(flips <= 1);  // 4 before the fix (at 6.75, 10.5, 14.5 and 18.5 s)
+  CHECK(nearest >= 28.f);
+  const Memory* m = b.MemoryOf(1);
+  CHECK(m && m->state == State::kPush && std::string(in.why).rfind("hold:", 0) == 0);
+  CHECK(b.Stats().fleeMemories == 1u && b.Stats().fleeHolds > 0u);
+  // the enemies leave its team's sight: after fleeMemoryS it walks on to the staging point
+  for (size_t i = 0; i < 3; ++i) w.shapers[i].seenBy[1] = false;
+  const Vec3 held = w.shapers[5].pos;
+  step(static_cast<double>(b.tuning().fleeMemoryS) + 3.0);
+  CHECK(std::string(in.why) == "guardian: to the staging point");
+  CHECK(Dist(w.shapers[5].pos, b.Plan(1).staging) < Dist(held, b.Plan(1).staging) - 5.f);
+  // fleeMemoryMaxS: a threat that stays in sight is looked at again after at most that long
+  Brain b2;
+  World w2 = MapWorld(1550.0);
+  w2.shapers = w.shapers;
+  w2.structures = w.structures;
+  for (size_t i = 0; i < 3; ++i) w2.shapers[i].seenBy[1] = true;
+  w2.shapers[5].pos = V(-15.f, 25.f);  // within the three's count range: a disengage at once
+  Think(b2, w2, 1);
+  const double since = b2.MemoryOf(1)->fledSince;
+  CHECK(since == 1550.0 && b2.MemoryOf(1)->fledUntil > 1550.0);
+  w2.shapers[5].pos = V(-40.f, 0.f);  // out of their count range, still in sight: refreshed, but capped
+  for (int i = 1; i <= 200; ++i) {
+    w2.now = 1550.0 + 0.25 * i;
+    Think(b2, w2, 1);
+  }
+  CHECK(b2.MemoryOf(1)->fledUntil <= since + static_cast<double>(b2.tuning().fleeMemoryMaxS) + 1e-6);
+}
+
+// BOTSFLIP (2a): bots stood in 3-28 s stretches near (-92, 5) on their way to the staging point (136.8, 136.4). From
+// (-92, 6) the straight line passed the enemy's top inner Binding (110.9, 158.4) at 31.9, from (-90, -4) at 32.1 (its
+// reach 28 plus towerMargin 4): RouteTo switched between the staging point and the bottom lane 140 units south with
+// every step (each switch restarts the walk), and the game's own path went up the top lane past both living Bindings.
+// Now a line within routeClear of a Binding's reach plus towerMargin goes round by the push lane, every step of the
+// jitter the same way, and a way round is kept until the line clears by routeHysteresis more.
+GMS_TEST(BotsFlipRouteHolds) {
+  Brain b;
+  World w = MapWorld(1500.0);
+  AddStructure(w, 51, 2, Kind::kBinding, 44.3f, 124.4f, 28.f);  // the top lane's living Bindings (the VPS match)
+  AddStructure(w, 52, 2, Kind::kBinding, 110.9f, 158.4f, 28.f);
+  const Vec3 staging = V(136.8f, 136.4f);
+  const float jitter[][2] = {{-92.f, 6.f}, {-90.f, -4.f}, {-92.5f, 5.f}, {-91.f, 4.f}, {-93.f, 6.5f}, {-92.f, 5.5f}};
+  bool viaLane = false;
+  Vec3 first;
+  for (size_t i = 0; i < sizeof jitter / sizeof jitter[0]; ++i) {
+    Shaper me;
+    me.id = 7;
+    me.team = 1;
+    me.alive = true;
+    me.pos = V(jitter[i][0], jitter[i][1]);
+    const Vec3 r = b.RouteTo(w, me, staging, gms::bots::kLaneBottom, &viaLane);
+    if (i == 0) first = r;
+    CHECK(viaLane && Dist(r, staging) > 100.f);  // round by the bottom lane, every step ...
+    CHECK(Dist(r, first) < 6.f);                 // ... to about one point (within reaimDist: no restart)
+  }
+  // the clearances: a line 41 from a lone Binding (9 outside its reach plus towerMargin) is straight for a fresh
+  // choice, round for one that went round already (within routeClear + routeHysteresis); 50 is straight either way
+  World w2 = MapWorld(1500.0);
+  AddStructure(w2, 53, 2, Kind::kBinding, 124.5f, 44.4f, 28.f);
+  Shaper me;
+  me.id = 8;
+  me.team = 1;
+  me.alive = true;
+  me.pos = V(112.f, -20.f);
+  const Vec3 north = V(140.f, 130.f);
+  viaLane = false;
+  CHECK(Dist(b.RouteTo(w2, me, north, gms::bots::kLaneTop, &viaLane), north) > 1.f && viaLane);  // through it: round
+  me.pos = V(83.5f, -20.f);
+  const Vec3 north2 = V(83.5f, 130.f);
+  bool fresh = false;
+  CHECK(Dist(b.RouteTo(w2, me, north2, gms::bots::kLaneTop, &fresh), north2) < 0.01f && !fresh);  // fresh: straight
+  CHECK(Dist(b.RouteTo(w2, me, north2, gms::bots::kLaneTop, &viaLane), north2) > 1.f && viaLane);  // kept: round
+  me.pos = V(74.5f, -20.f);
+  const Vec3 north3 = V(74.5f, 130.f);
+  CHECK(Dist(b.RouteTo(w2, me, north3, gms::bots::kLaneTop, &viaLane), north3) < 0.01f && !viaLane);
+}
+
+// BOTSFLIP (2b): two bots stood 171 s in the follow leaf ("leaf 12 Pursue") with their goal unchanged 250 units away:
+// the game's follow had ended short of it and an unchanged goal is never asked again (reaimDist). The watchdog asks the
+// walk again once the bot moved less than walkStuckMove in walkStuckS, away from its goal; a moving bot or one at its
+// goal is left alone.
+GMS_TEST(BotsFlipWalkWatch) {
+  const Tuning t;
+  WalkWatch ww;
+  CHECK(!WalkStuck(ww, V(0.f, 1.f), 0.0, t));  // no walk yet
+  const Vec3 goal = V(136.8f, 136.4f);
+  WalkStart(ww, goal, V(-106.f, -4.f), 1300.0);
+  CHECK(!WalkStuck(ww, V(-106.f, -4.f), 1301.0, t));  // a second: not yet
+  CHECK(WalkStuck(ww, V(-106.5f, -3.5f), 1302.0, t));  // walkStuckS standing: again
+  CHECK(!WalkStuck(ww, V(-106.f, -4.f), 1303.0, t));    // the watchdog waits walkStuckS again ...
+  CHECK(WalkStuck(ww, V(-106.f, -4.f), 1304.0, t));     // ... then asks again
+  CHECK_EQ(ww.restarts, 2u);
+  for (int i = 1; i <= 20; ++i)  // walking: never
+    CHECK(!WalkStuck(ww, V(-106.f + 1.75f * static_cast<float>(i), -4.f + static_cast<float>(i)), 1304.0 + 0.25 * i, t));
+  WalkStart(ww, goal, V(134.f, 134.f), 1400.0);  // at its goal (the gather's wait): never
+  CHECK(!WalkStuck(ww, V(134.f, 134.f), 1405.0, t));
+}
+
+// BOTSFLIP round 2 (botsflip_b1): 19 of the 24 quick re-flips were a defender at its threatened base going "defend ->
+// retreat: outnumbered", home, and back 2 s later. A defender there holds its ground; hurt and outnumbered it leaves.
+GMS_TEST(BotsFlipDefenderHoldsGround) {
+  Brain b;
+  World w = MapWorld(1230.0);
+  AddStructure(w, 60, 1, Kind::kCore, -149.5f, -149.5f, 0.f);
+  AddShaper(w, 21, 2, -140.f, -132.f);  // three enemy shapers at the own Core
+  AddShaper(w, 22, 2, -136.f, -138.f);
+  AddShaper(w, 23, 2, -142.f, -128.f);
+  AddShaper(w, 1, 1, -150.f, -142.f);  // the defender beside it
+  Intent in = Think(b, w, 1);
+  CHECK(b.Plan(1).threatened);
+  int retreats = 0;
+  for (int i = 1; i <= 40; ++i) {  // 10 s of thinks
+    w.now = 1230.0 + 0.25 * i;
+    in = Think(b, w, 1);
+    if (b.MemoryOf(1)->state == State::kRetreat) ++retreats;
+  }
+  CHECK_EQ(retreats, 0);
+  CHECK(b.MemoryOf(1)->state == State::kDefend || b.MemoryOf(1)->state == State::kFight);
+  w.shapers[3].hp = 500.f;  // hurt (50 %, below retreatOutnumberedHp) and outnumbered: it leaves
+  w.now += 0.25;
+  in = Think(b, w, 1);
+  CHECK(b.MemoryOf(1)->state == State::kRetreat && b.MemoryOf(1)->retreating);
+}
+
+// BOTSFLIP round 2 (botsflip_b1): a team 2 bot 14 off the top lane stood 79 s: RouteTo's "to the lane first" (beyond
+// guardStageRadius) and "along it" (within) put the goal 34 units apart for 0.3 units of jitter, each think a re-aim.
+// The step along the lane now grows with nearness, so jitter moves the goal less than reaimDist; and the executor
+// re-aims a walk whose bot hasn't moved at most every walkReaimMinS.
+GMS_TEST(BotsFlipLaneStepContinuous) {
+  Brain b;
+  World w = MapWorld(2450.0);
+  AddStructure(w, 51, 1, Kind::kBinding, -110.9f, -158.4f, 28.f);  // team 1's last living Binding (the run)
+  bool via = true;  // the way round was chosen before
+  Shaper me;
+  me.id = 7;
+  me.team = 2;
+  me.alive = true;
+  Vec3 first;
+  for (int i = 0; i < 8; ++i) {
+    me.pos = V(-120.f + 0.3f * static_cast<float>(i % 2), 33.f + 0.2f * static_cast<float>(i % 3));
+    const Vec3 r = b.RouteTo(w, me, V(-137.f, -136.6f), gms::bots::kLaneTop, &via);
+    if (i == 0) first = r;
+    CHECK(via && Dist(r, first) < b.tuning().reaimDist);
+  }
+  me.pos = V(-160.f, 40.f);  // far off the lane: to the lane
+  const Vec3 far = b.RouteTo(w, me, V(-137.f, -136.6f), gms::bots::kLaneTop, &via);
+  me.pos = V(-110.f, 30.f);  // on it: a full step along it
+  const Vec3 on = b.RouteTo(w, me, V(-137.f, -136.6f), gms::bots::kLaneTop, &via);
+  CHECK(Dist(on, me.pos) > b.tuning().guardLaneStep - 5.f && Dist(far, V(-160.f, 40.f)) > 28.f);
+  // the executor's re-aim throttle
+  const Tuning t;
+  WalkWatch ww;
+  WalkStart(ww, V(-117.9f, -4.6f), V(-120.f, 33.f), 100.0);
+  CHECK(!WalkReaimNow(ww, V(-120.2f, 33.f), 100.25, t));  // not moved, 0.25 s: the walk keeps its goal
+  CHECK(WalkReaimNow(ww, V(-120.2f, 33.f), 101.0, t));    // walkReaimMinS later
+  CHECK(WalkReaimNow(ww, V(-120.f, 30.f), 100.5, t));     // moved: at once
+}
+
+// BOTSFLIP round 3 (botsflip_b2): a team 2 bot in team 1's base disengaged, and its hold "back from the threat" stepped
+// away from the enemies' centre, which pointed deeper into their base; outnumbered again 2.4 s later, three times in
+// 9 s. The hold now goes on toward home while an enemy shaper is within fleeAvoidRange + 2, and stands only beyond.
+GMS_TEST(BotsFlipHoldGoesHome) {
+  Brain b;
+  World w = MapWorld(1480.0);
+  AddStructure(w, 60, 1, Kind::kCore, -149.5f, -149.5f, 0.f);  // team 1's base open: team 2 gathers for it
+  AddShaper(w, 21, 1, -150.f, -180.f);                           // three defenders, one of them home-side of the bot
+  AddShaper(w, 22, 1, -140.f, -185.f);
+  AddShaper(w, 23, 1, -125.f, -175.f);
+  AddShaper(w, 9, 2, -143.f, -194.f);  // the team 2 bot
+  for (std::uint32_t id = 10; id <= 13; ++id) AddShaper(w, id, 2, 150.f, 150.f + static_cast<float>(id), 1.f, true);
+  Intent in = Think(b, w, 9);
+  CHECK(b.MemoryOf(9)->state == State::kRetreat);  // outnumbered: the disengage
+  w.shapers[0].pos = V(-178.f, -194.f);  // they step back: 35 from the bot (within 38, outside the count range 32)
+  w.shapers[1].pos = V(-143.f, -229.f);
+  w.shapers[2].pos = V(-118.f, -219.f);
+  for (int i = 1; i <= 12; ++i) {  // past disengageMinS
+    w.now = 1480.0 + 0.25 * i;
+    in = Think(b, w, 9);
+  }
+  CHECK(b.MemoryOf(9)->state == State::kPush && std::string(in.why) == "hold: back from the threat it fled");
+  CHECK(Dist(in.point, w.base[2].spawn) < 0.5f);  // on toward home, not deeper into their base
+  for (size_t i = 0; i < 3; ++i) w.shapers[i].pos = V(-200.f, -215.f + static_cast<float>(i));  // gone 60 back
+  w.now += 0.25;
+  in = Think(b, w, 9);
+  CHECK(std::string(in.why) == "hold: wait out the threat it fled");
+}
+
+// BOTSFLIP round 3 (botsflip_b2): two bots stood 40 and 58 s in a ring of enemy minions on their way to the staging
+// point, 17 and 26 walks asked, HP 93 % -> 34 %, never hitting back. A walk that hasn't moved the bot for walkStuckS with
+// enemy minions within unstuckRange hits the weakest of them.
+GMS_TEST(BotsFlipUnstuckHitsMinions) {
+  Brain b;
+  World w = MapWorld(2575.0);
+  AddStructure(w, 62, 2, Kind::kGuardian, 182.f, 182.f, 30.f);  // the base phase
+  AddShaper(w, 1, 1, 182.8f, 125.1f);
+  for (std::uint32_t id = 2; id <= 5; ++id) AddShaper(w, id, 1, -150.f, -150.f + static_cast<float>(id));
+  AddMinion(w, 31, 2, 181.5f, 125.1f, 300.f);  // the ring
+  AddMinion(w, 32, 2, 180.2f, 123.0f, 120.f);
+  AddMinion(w, 33, 2, 184.f, 128.f, 300.f);
+  AddMinion(w, 34, 2, 185.f, 122.f, 300.f);
+  Intent in = Think(b, w, 1);
+  CHECK(in.act == Act::kMove);  // the walk first
+  w.now += 1.0;
+  in = Think(b, w, 1);
+  CHECK(in.act == Act::kMove);
+  w.now += 1.25;  // walkStuckS without a step
+  in = Think(b, w, 1);
+  CHECK(in.act == Act::kAttack && in.target == 32u && std::string(in.why) == "unstuck: hit the minions in the way");
+  CHECK_EQ(b.Stats().unstuckHits, 1u);
+  w.shapers[0].pos = V(178.f, 130.f);  // it moved: the walk again
+  w.minions.clear();
+  w.now += 0.25;
+  in = Think(b, w, 1);
+  CHECK(in.act == Act::kMove);
+}
+
+// BOTSFLIP (3): an idle rescue holds hybridRescueHoldS while calm (the VPS match: 3 s standing, 2 s of v2, "no task",
+// every 6 s); an enemy near or the bot hurt still ends it at once.
+GMS_TEST(BotsFlipRescueHolds) {
+  const Tuning t;
+  HybridView v;
+  v.alive = true;
+  v.hp = 0.9f;
+  v.driven = true;
+  v.rescue = true;
+  v.drivenSince = 1000.0;
+  v.now = 1000.0 + t.hybridHoldS + 1.0;
+  CHECK(ChooseDriver(v, t) == HybridDriver::kV2Rescue);  // past hybridHoldS, within hybridRescueHoldS
+  v.now = 1000.0 + t.hybridRescueHoldS + 0.5;
+  CHECK(ChooseDriver(v, t) == HybridDriver::kClassic);  // no task: back to the classic brain
+  v.now = 1003.0;
+  v.nearestEnemy = 20.f;
+  CHECK(ChooseDriver(v, t) == HybridDriver::kClassic);  // its fight
+  v.nearestEnemy = 1.0e30f;
+  v.rescue = false;
+  CHECK(ChooseDriver(v, t) == HybridDriver::kClassic);  // a task's takeover keeps hybridHoldS only
 }

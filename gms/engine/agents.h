@@ -113,6 +113,11 @@ struct Options {
   // links, its FleeTowerTargeting phase, its Back gambit and BOTREFLEX's tower back-off held); needs bot_reflex. Off,
   // the decision is still made and logged ("would hold")
   bool botKillFinish = true;         // [host] bot_kill_finish
+  // BOTDEFEND (gms/core/agents/defend.h): a bot an enemy shaper attacks while its plan backs off (Reposition) shoots
+  // back with its basic attack, a fleeing one when it is caught; no recall while a recent attacker is within 60. Off,
+  // the episodes are still measured and logged (what it would have done); needs bot_reflex
+  bool botDefend = true;             // [host] bot_defend
+  int botDefendLogLimit = 1500;      // [host] bot_defend_log_limit: the "botdefend:" lines (then every 10th)
   // BOTTOWER (gms/core/agents/towersafety.h): a tower that targets the bot, or has none of its minions in range, is a
   // danger as a recent hit is (BOTREFLEX's rule 1); targets under an unsafe enemy tower are left alone; a retreat step
   // held off by another walk of the same ability ends it (REFLEXWALK). All need bot_reflex; the measurement runs anyway
@@ -249,6 +254,8 @@ bool KillFinishWouldHold(std::uint32_t bot);
 bool KillFinishEngageBlocked(std::uint32_t bot);
 void NoteBailWhy(std::uint32_t bot, const char* why);
 bool FormatKillFinishStats(char* buf, std::size_t size);
+// BOTDEFEND: the "stats botdefend:" line (false while no bot was attacked by an enemy shaper)
+bool FormatDefendStats(char* buf, std::size_t size);
 // BOTTOWER: "stats bottower:" (the counts, the exposure totals) and "stats bottower bots:" (per bot)
 bool FormatBotTowerStats(char* buf, std::size_t size);
 bool FormatBotTowerBots(char* buf, std::size_t size);

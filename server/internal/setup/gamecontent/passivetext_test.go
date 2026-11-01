@@ -60,7 +60,7 @@ func TestPassiveText(t *testing.T) {
 	}), 0o644)
 	desc := `<font color="#FFFF99">Bolt</font>: Deals ~modifier_Item_Test_Bolt.damage~ (<font color="#55ff55">+~precision1.modifier_Item_Test_Bolt.ratioPct~%</font>) ` +
 		`damage &amp; slows by ~precision2.modifier_Item_Test_Bolt_Slow.slow~ for ~ modifier_Item_Test_Bolt.duration~ seconds.<br><br>` +
-		`Current Bonus: ~modifier_Item_Test_Bolt.stacks~<br>Unknown: ~nowhere.x~`
+		`Current Bonus: ~modifier_Item_Test_Bolt.stacks~<br>Unknown: ~nowhere.x~<br>Renamed: ~modifier_Item_Test_Gone.ratioPct~%`
 	pkg, err := dbpf.Parse(dbpf.WritePackage([]dbpf.NewEntry{
 		{Type: 1, Group: 1, Instance: uint64(fnv("ItemModifiers")), Data: []byte("0x00000050 " + desc + "\n")},
 	}))
@@ -73,11 +73,12 @@ func TestPassiveText(t *testing.T) {
 		t.Fatal(err)
 	}
 	text, parts := passiveText(sc, sc.get("modifier_Item_Test_Bolt"), 2, loc)
-	if want := "Deals 75 (+12.5%) damage & slows by 0.3 for 3 seconds."; text != want {
+	// a token naming a script the game lacks takes the text's own script's (Will's Void) when that one has it
+	if want := "Deals 75 (+12.5%) damage & slows by 0.3 for 3 seconds.\n\nRenamed: 12%"; text != want {
 		t.Errorf("text %q\nwant %q", text, want)
 	}
 	wantParts := []content.TextPart{{Text: "Deals 75 ("}, {Text: "+12.5%", Color: "#55FF55"},
-		{Text: ") damage & slows by 0.3 for 3 seconds."}}
+		{Text: ") damage & slows by 0.3 for 3 seconds.\n\nRenamed: 12%"}}
 	if !reflect.DeepEqual(parts, wantParts) {
 		t.Errorf("parts %+v", parts)
 	}

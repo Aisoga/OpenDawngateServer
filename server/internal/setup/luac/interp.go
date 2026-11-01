@@ -348,21 +348,22 @@ func (e *Env) call(fn Value, args []Value, depth int) ([]Value, error) {
 			}
 			return nil, nil
 		case "nAbility.GetRankedValue":
-			// a rank table's entry for the rank (1-based); past the table's end its last entry [assumed]
-			if x, ok := arg(0).(float64); ok { // a value without ranks
-				return []Value{x}, nil
+			// as the game's own (ServerData's Lua/Global.lua): a table's entry at the rank, clamped to 1..#t, and 0
+			// for an empty table; anything else as it is, nil too (Harmony's Symbiosis asks for a field its script
+			// lacks: its healthRegen token reads magicResist, so the token is nil and the text takes the field)
+			t, ok := arg(0).(*Table)
+			if !ok {
+				return []Value{arg(0)}, nil
 			}
-			if t, ok := arg(0).(*Table); ok {
-				r, _ := num(1)
-				n := 0
-				for t.Get(float64(n+1)) != nil {
-					n++
-				}
-				if n > 0 {
-					i := min(max(int(r), 1), n)
-					return []Value{t.Get(float64(i))}, nil
-				}
+			r, _ := num(1)
+			n := 0
+			for t.Get(float64(n+1)) != nil {
+				n++
 			}
+			if n == 0 {
+				return []Value{0.0}, nil
+			}
+			return []Value{t.Get(float64(min(max(int(r), 1), n)))}, nil
 		case "nGameObject.GetPlayerLevel":
 			// the shaper's level: a scaled value of its own ("300 (+30 per level)", the spells' damage and shields)
 			return []Value{Scaled{Attr: LevelAttr, Factor: 1}}, nil
@@ -372,6 +373,18 @@ func (e *Env) call(fn Value, args []Value, depth int) ([]Value, error) {
 					return []Value{Scaled{Attr: name, Factor: 1}}, nil
 				}
 			}
+		case "nAttribute.GetDerivedAttributeValue": // Insight's Puncture: TotalBasicAttackDamage times a factor
+			if attr, ok := arg(1).(Global); ok {
+				if name, ok := strings.CutPrefix(string(attr), "nDerivedAttributeType."); ok {
+					return []Value{Scaled{Attr: name, Factor: 1}}, nil
+				}
+			}
+		case "nGameObject.GetMaxHitPoints": // the Vim Flask's heal and Glory's Blazing Aura: maximum Health times a factor
+			return []Value{Scaled{Attr: "MaxHealth", Factor: 1}}, nil
+		case "nPlayer.HasItem":
+			// the texts describe an item for its holder (Glory's aura counts the item's own Health only for a
+			// shaper without it: the shop's preview) [inferred]
+			return []Value{true}, nil
 		case "math.floor", "math.ceil", "math.abs":
 			if s, ok := arg(0).(Scaled); ok {
 				return []Value{s}, nil // a scaled value keeps its factor (the tooltip shows the ratio)

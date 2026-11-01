@@ -21,7 +21,9 @@ import (
 // content format 3 (the item details) it is Build's own: the pipeline's dump gives the same file but for the
 // passives' titles, texts and labels, the stat lines and the shop filters' titles, which only the game folder's
 // scripts and Locale resolve (TestBuildMatchesDump).
-const contentSHA = "aac14ad4e78325a0e6b3ec8d98e3e1e230369bb9755556714db136d41a8f8e13"
+// COLLTEXT (2026-11-01) changed five item texts on purpose (Harmony, Will, the Vim Flask, Glory, Insight: whole
+// paragraphs no longer dropped; Wisdom's for the holder): passivetext.go.
+const contentSHA = "05cc9b1264f7112fb620a6b1c04e5fb3b4fa7c6ab0f65e1009e7a4e2c54836c8"
 
 func TestBuildMatchesPipeline(t *testing.T) {
 	dir := testgame.Dir(t)

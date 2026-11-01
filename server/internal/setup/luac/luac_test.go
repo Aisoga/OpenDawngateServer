@@ -239,8 +239,26 @@ func TestBuiltinsAndLookup(t *testing.T) {
 	if got, _ := e.call(Global("nAbility.GetRankedValue"), []Value{7.0, 2.0}, 0); got[0] != 7.0 {
 		t.Errorf("GetRankedValue of a plain value %v", got)
 	}
-	if got, _ := e.call(Global("nPlayer.HasItem"), nil, 0); got[0] != (Unknown{}) {
+	// as the game's own Lua/Global.lua: nil as it is (Harmony's Symbiosis), an empty table 0
+	if got, _ := e.call(Global("nAbility.GetRankedValue"), []Value{nil, 1.0}, 0); got[0] != nil {
+		t.Errorf("GetRankedValue(nil) = %v", got)
+	}
+	if got, _ := e.call(Global("nAbility.GetRankedValue"), []Value{NewTable(), 1.0}, 0); got[0] != 0.0 {
+		t.Errorf("GetRankedValue({}) = %v", got)
+	}
+	if got, _ := e.call(Global("nPlayer.GetPlayerIdForObject"), nil, 0); got[0] != (Unknown{}) {
 		t.Errorf("an API call %v", got)
+	}
+	// the texts describe an item for its holder; the holder's maximum Health and derived attributes are scaled
+	if got, _ := e.call(Global("nPlayer.HasItem"), nil, 0); got[0] != true {
+		t.Errorf("HasItem %v", got)
+	}
+	if got, _ := e.call(Global("nGameObject.GetMaxHitPoints"), nil, 0); got[0] != (Scaled{Attr: "MaxHealth", Factor: 1}) {
+		t.Errorf("GetMaxHitPoints %v", got)
+	}
+	if got, _ := e.call(Global("nAttribute.GetDerivedAttributeValue"),
+		[]Value{nil, Global("nDerivedAttributeType.TotalBasicAttackDamage")}, 0); got[0] != (Scaled{Attr: "TotalBasicAttackDamage", Factor: 1}) {
+		t.Errorf("GetDerivedAttributeValue %v", got)
 	}
 	other := NewTable()
 	other.Set("maxStackCount", 30.0)

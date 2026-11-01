@@ -117,6 +117,37 @@ func TestItemDetails(t *testing.T) {
 			}
 		}
 	}
+	// COLLTEXT: the first paragraphs these texts once lost to a value the build couldn't know (Harmony: the game's
+	// healthRegen token reads a field its script lacks; Will: a script the game lacks; the Vim Flask, Glory, Insight:
+	// the holder's maximum Health and basic attack damage, now scaled), and no item loses one any more
+	full := map[string]string{
+		"Legendary_Harmony": "Nearby allied shapers gain 10 Health Regen and Symbiosis. When allies under the influence of " +
+			"Symbiosis deal damage, your cooldowns are reduced by 0.25 seconds. Whenever you deal damage, allies under " +
+			"the influence of Symbiosis gain 20 Power for 2 seconds.\n\nThe cooldown reduction effect can only be " +
+			"triggered once every 0.5 seconds.",
+		"Basic_Will": "Attempts to reduce any magical damage taken by 10%. The amount of damage reduced cannot exceed 10 " +
+			"damage.\n\nWhen stacked, the amount reduced and the damage limit for every Void beyond the first is only 50% " +
+			"as effective as the previous stack.",
+		"Legendary_Glory": "You are wreathed in flame, dealing 20 (+1.5% of maximum Health) magical damage per second to " +
+			"nearby enemies.\n\nThe additional bonus damage is equal to 1.5% of your maximum Health.",
+		"Legendary_Insight": "Your basic attacks will deal an additional 10% of basic attack damage bonus true damage." +
+			"\n\nThe damage is equal to 10% of your basic attack damage.",
+	}
+	for name, want := range full {
+		it, _ := c.MatchItem(name)
+		found := false
+		for _, p := range it.Passives {
+			found = found || p.Text == want
+		}
+		if !found {
+			t.Errorf("%s: %+v\nwant a passive %q", name, it.Passives, want)
+		}
+	}
+	if it, _ := c.MatchItem("Consumable_Flask_Vim"); it.ActiveInfo == nil || it.ActiveInfo.Text != "Increases maximum "+
+		"Health by 90 (+15 per level) for 120 seconds. In addition, you regain 0.6% of maximum Health per second while "+
+		"in combat.\n\nThe healing is equal to 0.6% of your maximum Health. This effect persists through death." {
+		t.Errorf("the Vim Flask: %+v", it.ActiveInfo)
+	}
 	if motion, _ := c.MatchItem("Advanced_Motion"); len(motion.From) != 1 || motion.From[0] != (content.ItemStep{Item: "Basic_Time", Price: 480}) ||
 		motion.Into[0] != (content.ItemStep{Item: "Legendary_Fluidity", Price: 1200}) {
 		t.Errorf("Motion's steps %+v %+v", motion.From, motion.Into)

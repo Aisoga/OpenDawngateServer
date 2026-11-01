@@ -60,7 +60,7 @@ func formatNumber(v float64, precision int) string {
 // attrNames are the attributes' words in a scaled value ("40% of Power").
 var attrNames = map[string]string{"Power": "Power", "Mastery": "Mastery", "MaxHealth": "maximum Health",
 	"MaxResourcePoints": "maximum Vim", "PhysicalDamageReduction": "Armor", "MagicalDamageReduction": "Magic Resist",
-	"Haste": "Haste", "HealthRegen": "Health Regen"}
+	"Haste": "Haste", "HealthRegen": "Health Regen", "TotalBasicAttackDamage": "basic attack damage"}
 
 func formatScaled(s luac.Scaled, precision int) string {
 	if s.Attr == luac.LevelAttr { // a value by the shaper's level: its value at level 1 and the step per level
@@ -147,8 +147,21 @@ func passiveText(sc *scripts, main *luac.Script, rank int, loc *assetdata.Locale
 			// "~totalHealing~"; ITEMSHOP) [inferred]
 			return scriptToken(sc, main, m[3], prec, rank)
 		}
+		if sc.get(script) == nil {
+			// a script the game doesn't have: the text's own (Will's Void names
+			// modifier_Item_Legendary_StackingMRShieldFlat, which build 854 lacks; its own script has the tokens)
+			// [inferred]
+			return scriptToken(sc, main, m[3], prec, rank)
+		}
 		return tokenValue(sc, script, m[3], prec, rank)
 	})
+	// a value of an attribute followed by the attribute's word: "0.6% of maximum Health</font> Health per second" (the
+	// Vim Flask's text names the number's unit, which the scaled value already says)
+	for _, name := range attrNames {
+		w := name[strings.LastIndexByte(name, ' ')+1:]
+		raw = regexp.MustCompile(`of `+regexp.QuoteMeta(name)+`((?:</[a-z]+>)*) `+regexp.QuoteMeta(w)+`\b`).
+			ReplaceAllString(raw, "of "+name+"$1")
+	}
 	var kept []string
 	for _, line := range brRe.Split(raw, -1) {
 		plain := strings.TrimSpace(html.UnescapeString(markRe.ReplaceAllString(line, "")))

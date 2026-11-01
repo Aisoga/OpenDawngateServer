@@ -120,11 +120,12 @@ func (g *Group) takes(p Point) bool {
 
 // Scatter spreads props along the walls of team 1's half (and mirrors them): each on a wall cell next to walkable
 // ground, Inset metres into the wall, at least Spacing from every other (and from every mirrored one), with a noun
-// of Nouns, a turn and a scale in Scale drawn from Seed. Circle or Polygon limit it to a region.
+// of Nouns, a turn and a scale in Scale drawn from Seed. Circle or Polygon limit it to a region. With Along "area"
+// it fills the region instead (fill.go: On, Blocks, Footprint, Density).
 type Scatter struct {
 	Nouns   []string   `json:"nouns"`
 	Seed    uint64     `json:"seed"`
-	Along   string     `json:"along,omitempty"` // "walls" (the default)
+	Along   string     `json:"along,omitempty"` // "walls" (the default) or "area" (fill.go)
 	Circle  *Point     `json:"circle,omitempty"`
 	R       float64    `json:"r,omitempty"`
 	Polygon []Point    `json:"polygon,omitempty"`
@@ -133,6 +134,12 @@ type Scatter struct {
 	Scale   [2]float64 `json:"scale,omitempty"`   // [min, max], default [0.8, 1.2]
 	Max     int        `json:"max,omitempty"`     // at most this many on team 1's half, default DefaultScatter
 	Shadow  bool       `json:"shadow,omitempty"`
+
+	// the fill's (along "area"; fill.go)
+	On        string  `json:"on,omitempty"`        // which cells: "any" (the default), "walls", "off-ground", "ground"
+	Blocks    bool    `json:"blocks,omitempty"`    // rocks and trees on walkable ground, blocking it
+	Footprint float64 `json:"footprint,omitempty"` // a blocking prop's footprint diameter at scale 1 (m), default 2
+	Density   float64 `json:"density,omitempty"`   // the share of the spaced places that get a prop (0-1], default 1
 }
 
 // NounBounds is a noun's box (its bbox times its graphicsScale, in the model's frame).
@@ -359,9 +366,10 @@ func (c *checker) propRules() {
 				c.errorf("scatter.nouns", fmt.Sprintf("%s.nouns[%d]", path, i), nil, "an empty noun")
 			}
 		}
-		if s.Along != "" && s.Along != "walls" {
-			c.errorf("scatter.along", path+".along", nil, "along %q: \"walls\"", s.Along)
+		if s.Along != "" && s.Along != "walls" && s.Along != "area" {
+			c.errorf("scatter.along", path+".along", nil, "along %q: \"walls\" or \"area\"", s.Along)
 		}
+		c.fillRules(path, s) // fill.go
 		if s.Spacing != 0 && !(s.Spacing >= MinSpacing) {
 			c.errorf("scatter.spacing", path+".spacing", nil, "spacing %g: at least %g m", s.Spacing, MinSpacing)
 		}
@@ -782,8 +790,17 @@ func placeSides(p Prop, pl Placed) []Placed {
 	return sides(pl)
 }
 
-// Scattered are scatter[k]'s props on both sides, in the order they were drawn.
+// Scattered are scatter[k]'s props on both sides, in the order they were drawn (none with NoDerived; a fill's
+// footprints stay stamped). Compile places them (placeScatters, fill.go).
 func (cm *Compiled) Scattered(k int) []Placed {
+	if cm.NoDerived || k >= len(cm.scattered) {
+		return nil
+	}
+	return cm.scattered[k]
+}
+
+// alongWalls are walls scatter[k]'s props on both sides, in the order they were drawn.
+func (cm *Compiled) alongWalls(k int) []Placed {
 	s := cm.Map.Scatter[k]
 	ly := cm.Layers
 	spacing := s.Spacing

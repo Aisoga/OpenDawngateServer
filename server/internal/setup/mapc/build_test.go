@@ -19,8 +19,8 @@ import (
 // archive from build 854's files with the shared mesh (the level files and the assets), RingTiled854SHA256 the same
 // with the tiled ground and no decals (the archive before the baked ground).
 const (
-	RingMadeUpSHA256   = "b2e8323144ca77b4f5e7619edf5b797c0e2d0156bc2c9fafbcd0336235f8120d"
-	Ring854SHA256      = "0e25f79534e7aa94b4a33d55d432dfc78b944fcfd4b3fba74403c508389a241d"
+	RingMadeUpSHA256   = "58485edeb47776c7a1ef30ae8633b7f0cfa476f4bc6fa315632618a9447079e8"
+	Ring854SHA256      = "729eb1b39189826d5ccdfc91ce270218cb86a6ba56ae3981811627478ba26c2f"
 	RingTiled854SHA256 = "f0fd13daab5ba836fb465065494dfdb0b2292f48476e382637e1f2637092da37"
 )
 

@@ -3,6 +3,7 @@ package mapedit
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -148,7 +149,7 @@ func TestPagesLayout(t *testing.T) {
 	src := t.TempDir()
 	os.MkdirAll(filepath.Join(src, "web"), 0o755)
 	os.WriteFile(filepath.Join(src, "web", "index.html"), []byte("checkout page"), 0o644)
-	os.WriteFile(filepath.Join(src, ManifestFile), []byte(`{"version": "1.2.3", "api": 1}`), 0o644)
+	os.WriteFile(filepath.Join(src, ManifestFile), []byte(fmt.Sprintf(`{"version": "1.2.3", "api": %d}`, API)), 0o644)
 	copyPackage(t, testmaps.Pkg("CM_Marsh"), filepath.Join(src, "templates", "CM_Marsh"))
 	p, err = LoadPages(src)
 	if err != nil || p.Web != filepath.Join(src, "web") || p.Templates != filepath.Join(src, "templates") ||
@@ -207,8 +208,8 @@ func TestPageVersion(t *testing.T) {
 	}
 	var ve *VersionError
 	if err := s.PageError(); !errors.As(err, &ve) || ve.Page.API != API+1 || ve.Backend != API ||
-		!strings.Contains(err.Error(), "version 0.1.0-test") || !strings.Contains(err.Error(), "interface 2") ||
-		!strings.Contains(err.Error(), "interface 1") {
+		!strings.Contains(err.Error(), "version 0.1.0-test") || !strings.Contains(err.Error(), fmt.Sprintf("interface %d", API+1)) ||
+		!strings.Contains(err.Error(), fmt.Sprintf("interface %d", API)) {
 		t.Fatalf("PageError: %v", err)
 	}
 	e = serve(t, c, e.maps)
@@ -219,11 +220,11 @@ func TestPageVersion(t *testing.T) {
 	b, _ := io.ReadAll(res.Body)
 	res.Body.Close()
 	if res.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(b), "can't start") ||
-		!strings.Contains(string(b), "interface 2") || strings.Contains(string(b), "test page") {
+		!strings.Contains(string(b), fmt.Sprintf("interface %d", API+1)) || strings.Contains(string(b), "test page") {
 		t.Errorf("GET /: %d %s", res.StatusCode, b)
 	}
 	var st struct{ PageError string }
-	if e.call("GET", "/api/state", nil, &st); !strings.Contains(st.PageError, "interface 2") {
+	if e.call("GET", "/api/state", nil, &st); !strings.Contains(st.PageError, fmt.Sprintf("interface %d", API+1)) {
 		t.Errorf("state's pageError %q", st.PageError)
 	}
 	c.Pages = ""

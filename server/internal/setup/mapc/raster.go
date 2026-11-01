@@ -6,6 +6,7 @@ import (
 
 	"dawngate/server/internal/setup/mapmm/fogmap"
 	"dawngate/server/internal/setup/mapmm/grassmap"
+	"dawngate/server/internal/setup/mapmm/ground"
 	"dawngate/server/internal/setup/mapmm/los"
 )
 
@@ -43,6 +44,11 @@ type Layers struct {
 	Size   float64
 	Kind   []byte // Wall, Open, Chasm, Solid, Island
 	Bushes []Bush
+	// With authored heights (a shape's height, height.go; else nil): Top is each cell's plateau height (walls, > 0)
+	// or depth (chasms, < 0), 0 elsewhere; TopShape the shape that set it (-1: terrain.default); Relief the blend.
+	Top      []float64
+	TopShape []int
+	Relief   *ground.Relief
 }
 
 // CellCentre is cell (i, j)'s centre in world units.
@@ -242,6 +248,12 @@ func Rasterise(m *Map) (*Layers, error) {
 	for k := range ly.Kind {
 		ly.Kind[k] = def
 	}
+	if HasHeights(m) {
+		ly.Top, ly.TopShape = make([]float64, len(ly.Kind)), make([]int, len(ly.Kind))
+		for k := range ly.Top {
+			ly.Top[k], ly.TopShape[k] = kindTop(def, nil), -1
+		}
+	}
 	for k, s := range m.Terrain.Shapes {
 		g, err := geom(m, s)
 		if err != nil {
@@ -265,9 +277,18 @@ func Rasterise(m *Map) (*Layers, error) {
 			for _, c := range cells {
 				ly.Kind[c] = v
 			}
+			if ly.Top != nil { // the later shape wins, as for the kinds
+				t := kindTop(v, s.Height)
+				for _, c := range cells {
+					ly.Top[c], ly.TopShape[c] = t, k
+				}
+			}
 		}
 	}
 	ly.stampProps(m)
+	if ly.Top != nil {
+		ly.Relief = ground.NewRelief(Grid, Grid, m.Size, ly.Top)
+	}
 	return ly, nil
 }
 

@@ -182,7 +182,7 @@
         [-Login 'email|password' [-LoginAt 12]] [-Actions '<t>:<fx>,<fy>;<t>:key=<vk>;...'] [-ShotTimes '8,20']
         [-GmsProbe silent|connected|session [-GmsArgs '<gms_script options>']]
         [-HostDir client\run_854_server\Dawngate [-HostAfter <s>] [-HostOptions 'key=value;...']] [-Background]
-        [-ShotFocus auto|on|off]
+        [-ShotFocus auto|on|off] [-ShotWidth <px>]
         [-GmsHost client\run_854_server|gms\build\Release\gms_script.exe [-GmsHostArgs '...'] [-HostOptions '...']]
         [-HostKillAt <s>] [-ServerArgs '<dgserver flags>'] [-FreshData] [-KeepAlive <s>] [-Play [-NoCapture]]
         [-Lane a|b|c|d] [-Lan <IPv4>|auto] [-SecondClient [-SecondAfter <s>] [-Login2 'email|password' [-LoginAt2 <s>]]
@@ -208,6 +208,8 @@
   where the window lies on a monitor (V1-live; parked it is black or frozen); 'auto' (default) means on without
   -Background, off with it. The 'shots' line says how
   the screenshots were taken (window/screen) and whether one didn't get the focus.
+  -ShotWidth <px> (COLLITEMS12; default 1280) is passed on: screenshots wider than this are scaled down to it; a value
+  at least the window's width (e.g. 1920) keeps them 1:1, for judging a few pixels.
   Exit code: 0 clean session; 1 egress_report.py flagged something (stop launching, fix that first);
              2 setup or run failure (reason in the summary).
   This file must stay ASCII: Windows PowerShell 5.1 reads scripts without a BOM in the ANSI codepage.
@@ -231,6 +233,7 @@ param(
     [int]$HostKillAt = 0,
     [switch]$Background,
     [ValidateSet('auto', 'on', 'off')][string]$ShotFocus = 'auto',
+    [int]$ShotWidth = 1280,
     [string]$ServerArgs,
     [switch]$FreshData,
     [int]$KeepAlive = -1,
@@ -1312,6 +1315,7 @@ try {
     if ($Background) { $monArgs += @('-Background') }
     if ($KeepAlive -gt 0) { $monArgs += @('-KeepAlive', $KeepAlive); Say "keep-alive: a key-up of VK_F24 every $KeepAlive s (B12, against the AFK kick)" }
     if ($ShotFocus -ne 'auto') { $monArgs += @('-ShotFocus', $ShotFocus) }
+    if ($ShotWidth -ne 1280) { $monArgs += @('-ShotWidth', $ShotWidth) }
     if ($Play) { $monArgs += @('-SnapLen', 256) }
     if ($NoCapture) { $monArgs += @('-NoCapture') }
     # A6: lane b's client beside lane a's; the colon form, since -File would take a value starting with '-' for a parameter

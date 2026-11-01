@@ -142,16 +142,18 @@ type Terrain struct {
 // island: seen through, walked by NPCs only, so a well on it is out of the players' reach; bush: grass on the cells,
 // which keep their ground) and exactly one geometry: a lane id (its corridor at the lane's width; not for a bush or an
 // island), a circle (centre and r), a polygon (at least 3 corners) or a path (at least 2 points) with a width. A chasm
-// may hold water (water.go).
+// may hold water (water.go). A wall may set its plateau's height and a chasm its depth (height.go: Height, metres,
+// positive for a wall, negative for a chasm; none: ground.Plateau, 5 m up or down).
 type Shape struct {
-	Type    string  `json:"type"`
-	Lane    int     `json:"lane,omitempty"`
-	Circle  *Point  `json:"circle,omitempty"`
-	R       float64 `json:"r,omitempty"`
-	Polygon []Point `json:"polygon,omitempty"`
-	Path    []Point `json:"path,omitempty"`
-	Width   float64 `json:"width,omitempty"`
-	Water   *Water  `json:"water,omitempty"`
+	Type    string   `json:"type"`
+	Lane    int      `json:"lane,omitempty"`
+	Circle  *Point   `json:"circle,omitempty"`
+	R       float64  `json:"r,omitempty"`
+	Polygon []Point  `json:"polygon,omitempty"`
+	Path    []Point  `json:"path,omitempty"`
+	Width   float64  `json:"width,omitempty"`
+	Height  *float64 `json:"height,omitempty"`
+	Water   *Water   `json:"water,omitempty"`
 }
 
 // Ground is how the ground model is made: style "tiled" (the heightfield with tiled dirt and grass) or "baked" (its

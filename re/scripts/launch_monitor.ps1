@@ -118,6 +118,7 @@ param(
     [switch]$Background,      # keep the game window off the desktop (see above)
     [ValidateSet('auto', 'on', 'off')][string]$ShotFocus = 'auto',  # bring the game in front for each screenshot (V1)
     [int]$ShotFocusMs = 500,  # wait after bringing it in front, before the capture
+    [int]$ShotWidth = 1280,   # COLLITEMS12: shots wider than this are scaled down to it (the window's width: 1:1)
     [int]$SnapLen = 0,        # dumpcap -s: bytes kept per packet (0 = whole packets)
     [switch]$NoCapture,       # no dumpcap (play mode only)
     [int]$KeepAlive = 0,      # B12: post a key-up of VK_F24 every N s against the AFK kick (even; 0 = off)
@@ -546,7 +547,7 @@ function PlacedShot($p, $name) {
     $fg = [WindowShot]::IsForeground($h)
     $file = Join-Path $OutDir "$name.png"
     $w = 0; $hgt = 0
-    try { $how = [WindowShot]::Save($h, $file, 1280, [ref]$w, [ref]$hgt) } catch { $how = "failed: $($_.Exception.Message)" }
+    try { $how = [WindowShot]::Save($h, $file, $ShotWidth, [ref]$w, [ref]$hgt) } catch { $how = "failed: $($_.Exception.Message)" }
     $back = [WindowShot]::Restore($h, $moved, [IntPtr]::Zero)
     if ($how -eq 'screen' -and -not $fg) { Remove-Item $file -Force -ErrorAction SilentlyContinue; $how = 'screen copy deleted (it would show other windows)' }
     Log "screenshot ${name}: ${w}x${hgt} ($how) $placed$(if ($moved) { ",on-screen$([WindowShot]::LastPlaced)" }) foreground=$(if ($fg) { 'GAME' } else { 'not the game' }) back=$back -> $file"
@@ -566,7 +567,7 @@ function PlacedBurst($p, $name, $n, $gapMs) {
         $fg = [WindowShot]::IsForeground($h)
         $file = Join-Path $OutDir "${name}_$k.png"
         $w = 0; $hgt = 0
-        try { $how = [WindowShot]::Save($h, $file, 1280, [ref]$w, [ref]$hgt) } catch { $how = "failed: $($_.Exception.Message)" }
+        try { $how = [WindowShot]::Save($h, $file, $ShotWidth, [ref]$w, [ref]$hgt) } catch { $how = "failed: $($_.Exception.Message)" }
         if ($how -eq 'screen' -and -not $fg) { Remove-Item $file -Force -ErrorAction SilentlyContinue; $how = 'screen copy deleted (it would show other windows)' }
         Log "screenshot ${name}_${k}: ${w}x${hgt} ($how) burst +$([int]((Get-Date) - $t0).TotalMilliseconds) ms foreground=$(if ($fg) { 'GAME' } else { 'not the game' }) -> $file"
     }
@@ -589,7 +590,7 @@ function Shot($p, $name) {
     }
     $file = Join-Path $OutDir "$name.png"
     $w = 0; $hgt = 0
-    try { $how = [WindowShot]::Save($h, $file, 1280, [ref]$w, [ref]$hgt) } catch { $how = "failed: $($_.Exception.Message)" }
+    try { $how = [WindowShot]::Save($h, $file, $ShotWidth, [ref]$w, [ref]$hgt) } catch { $how = "failed: $($_.Exception.Message)" }
     # the previous foreground window by its class only (no titles of the user's windows in the log)
     if ($FocusShots) { $focus += " back=$([WindowShot]::Restore($h, $moved, $prev))$(if ($prev -ne [IntPtr]::Zero -and $prev -ne $h) { " ($([WindowShot]::ClassOf($prev)))" })" }
     if ($how -eq 'empty') { Log "screenshot ${name}: empty rect$focus"; return }

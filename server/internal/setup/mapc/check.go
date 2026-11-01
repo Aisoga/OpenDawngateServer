@@ -156,8 +156,10 @@ func Check(m *Map, others []Other) (*Report, *Compiled) {
 			cm = nil
 		} else {
 			c.geometry(cm)
-			c.graphGeometry(cm) // graph.go
-			c.waterGeometry(cm) // water.go
+			c.graphGeometry(cm)   // graph.go
+			c.waterGeometry(cm)   // water.go
+			c.heightGeometry(cm)  // height.go
+			c.scatterGeometry(cm) // fill.go
 			c.groundFiles()
 			c.voidFiles() // void.go
 		}
@@ -233,11 +235,12 @@ func (c *checker) structure(others []Other) {
 	if !inList(m.Tuning, SharedLevels, false) {
 		c.errorf("refs.tuning", "tuning", nil, "tuning %q: one of %s", m.Tuning, strings.Join(SharedLevels, ", "))
 	}
-	c.ground()     // groundtex.go
-	c.propRules()  // props.go
-	c.waterRules() // water.go
-	c.voidRules()  // void.go
-	c.graphRules() // graph.go
+	c.ground()      // groundtex.go
+	c.propRules()   // props.go
+	c.waterRules()  // water.go
+	c.heightRules() // height.go
+	c.voidRules()   // void.go
+	c.graphRules()  // graph.go
 	// lanes
 	if n := len(m.Lanes); n < 1 || n > 2 {
 		c.errorf("lanes.count", "lanes", nil, "%d lanes, 1 or 2", n)

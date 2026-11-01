@@ -177,7 +177,7 @@ func (cm *Compiled) GroundSpec() ground.Spec {
 	ly := cm.Layers
 	return ground.Spec{Size: cm.Map.Size, Bases: [2][2]float64{a, b},
 		Down: func(x, y float64) bool { return ly.KindAt(Point{x, y}) == Chasm }, Dips: cm.Map.fords,
-		Cut: cm.Map.voidCut()}
+		Cut: cm.Map.voidCut(), Relief: ly.Relief}
 }
 
 // MinimapSpec is the minimap's: the base ends, the wells on islands (MM_Map_v3's island colour round them), the

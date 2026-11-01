@@ -54,7 +54,9 @@ type TextureRef struct {
 // varied by Vary; drawn at Opacity where its mask is. The mask is the automatic rule Auto, then the picture Image
 // (grey 0..255 over the level's square, north up), then the shapes in order (an Erase shape takes away); Soft metres
 // soften every edge of the rule and the shapes, Noise metres break it up. Mirror (default true) draws every mask
-// part with its point mirror too.
+// part with its point mirror too. Two rules follow the gameplay shapes (EDUX7): "lanes" covers every lane's corridor
+// (Width metres wide when given, else each lane's own width), "edge" a band of the walkable ground along its edge,
+// Range metres from it (negative: onto the blocked side), against the walls, the chasms or both (Along).
 type GroundLayer struct {
 	Name    string      `json:"name,omitempty"`
 	Texture TextureRef  `json:"texture"`
@@ -66,6 +68,9 @@ type GroundLayer struct {
 	Opacity *float64    `json:"opacity,omitempty"`
 	Auto    string      `json:"auto,omitempty"`
 	Slope   float64     `json:"slope,omitempty"` // Auto "slope": the steepness (degrees) where the layer is half drawn
+	Width   float64     `json:"width,omitempty"` // Auto "lanes": the band's width (m; default each lane's own)
+	Range   *[2]float64 `json:"range,omitempty"` // Auto "edge": from, to (m from the walkable edge; default 0, 6)
+	Along   string      `json:"along,omitempty"` // Auto "edge": "walls", "chasms" (default: both)
 	Image   string      `json:"image,omitempty"`
 	Shapes  []MaskShape `json:"shapes,omitempty"`
 	Soft    *float64    `json:"soft,omitempty"`
@@ -133,6 +138,12 @@ const (
 	DefaultScale    = 16.0 // metres per repeat
 	DefaultSoft     = 2.0  // metres
 	DefaultSlope    = 35.0 // degrees (Auto "slope")
+	DefaultEdgeNear = 0.0  // metres from the walkable edge (Auto "edge")
+	DefaultEdgeFar  = 6.0
+	MinEdge         = -20.0 // Range's limits (negative: onto the blocked side)
+	MaxEdge         = 60.0
+	MinLaneBand     = 2.0 // Width's limits (Auto "lanes")
+	MaxLaneBand     = 120.0
 	DefaultCliffDeg = 50.0
 	DefaultCliffM   = 10.0
 	MaxLayers       = 12
@@ -161,8 +172,49 @@ func DefaultLayers() []GroundLayer {
 
 var (
 	archiveRe = regexp.MustCompile(`^[A-Za-z0-9_]+\.snap$`)
-	autoRules = []string{"all", "floor", "high", "slope", "chasm", "bushes"}
+	autoRules = []string{"all", "floor", "high", "slope", "chasm", "bushes", "lanes", "edge"}
+	edgeAlong = []string{"walls", "chasms"} // an "edge" rule's Along
 )
+
+// DerivedRule reports whether an auto rule is one of the art a map derives from its gameplay shapes ("lanes" and
+// "edge": a lane's path, the bands along walls and chasms), which the editor can hide to show the ground without
+// it. The older rules ("high", "slope", "chasm", ...) give the ground its basic reading and stay.
+func DerivedRule(auto string) bool { return auto == "lanes" || auto == "edge" }
+
+// derivedRule checks the members of the rules "lanes" and "edge": each in its range, and a warning when a layer of
+// another rule has one (it isn't read).
+func (c *checker) derivedRule(p string, l GroundLayer) {
+	if l.Width != 0 {
+		if !(l.Width >= MinLaneBand && l.Width <= MaxLaneBand) {
+			c.errorf("ground.width", p+".width", nil, "width %g: %g to %g metres", l.Width, MinLaneBand, MaxLaneBand)
+		} else if l.Auto != "lanes" {
+			c.warnf("ground.width", p+".width", nil, "width is read with auto \"lanes\" only")
+		}
+	}
+	if r := l.Range; r != nil {
+		if !(r[0] >= MinEdge && r[1] <= MaxEdge && r[0] < r[1]) {
+			c.errorf("ground.range", p+".range", nil, "range %v: from < to, each %g to %g metres from the walkable edge",
+				*r, MinEdge, MaxEdge)
+		} else if l.Auto != "edge" {
+			c.warnf("ground.range", p+".range", nil, "range is read with auto \"edge\" only")
+		}
+	}
+	if l.Along != "" {
+		if !inList(l.Along, edgeAlong, false) {
+			c.errorf("ground.along", p+".along", nil, "along %q: \"walls\" or \"chasms\" (none: both)", l.Along)
+		} else if l.Auto != "edge" {
+			c.warnf("ground.along", p+".along", nil, "along is read with auto \"edge\" only")
+		}
+	}
+}
+
+// edgeRange is an "edge" rule's band: from, to metres from the walkable edge.
+func edgeRange(l GroundLayer) (near, far float64) {
+	if l.Range == nil {
+		return DefaultEdgeNear, DefaultEdgeFar
+	}
+	return l.Range[0], l.Range[1]
+}
 
 func boolOr(b *bool, def bool) bool {
 	if b == nil {
@@ -335,6 +387,7 @@ func (c *checker) ground() {
 		if l.Slope != 0 && !(l.Slope >= 5 && l.Slope <= 85) {
 			c.errorf("ground.slope", p+".slope", nil, "slope %g: 5 to 85 degrees", l.Slope)
 		}
+		c.derivedRule(p, l)
 		if l.Image != "" {
 			if err := PackagePath(l.Image, ".png"); err != nil {
 				c.errorf("ground.file", p+".image", nil, "%v", err)
@@ -686,6 +739,31 @@ type Baked struct {
 	Spec   *bake.Spec
 	Ground *ground.Ground
 	Field  *ground.Field
+
+	kinds map[byte]*ground.Field // kindField's fields, made when a layer first needs one
+}
+
+// kindField is the signed distance (m) to the cells of one ground kind (positive inside them), or nil when the map
+// has none (or nothing else).
+func (cm *Compiled) kindField(b *Baked, kind byte) *ground.Field {
+	if f, ok := b.kinds[kind]; ok {
+		return f
+	}
+	cells := make([]byte, len(cm.Layers.Kind))
+	for i, v := range cm.Layers.Kind {
+		if v == kind {
+			cells[i] = 128
+		}
+	}
+	f, err := ground.NewField(Grid, Grid, cells, cm.Map.Size)
+	if err != nil { // none of the kind (or only it): no edge to measure from
+		f = nil
+	}
+	if b.kinds == nil {
+		b.kinds = map[byte]*ground.Field{}
+	}
+	b.kinds[kind] = f
+	return f
 }
 
 // normalZ is the ground's normal's z at (x, y), bilinear between vertices.
@@ -724,10 +802,34 @@ func (cm *Compiled) layerMask(k int, l GroundLayer, b *Baked, pic *bake.Image) (
 			boxes = append(boxes, gm.box(reach))
 		}
 	}
+	auto := l.Auto
+	if cm.NoDerived && DerivedRule(auto) {
+		auto = ""
+	}
 	var bushes []shapeGeom
-	if l.Auto == "bushes" {
+	if auto == "bushes" {
 		for _, bu := range cm.Layers.Bushes {
 			bushes = append(bushes, shapeGeom{polygon: bu.Outline})
+		}
+	}
+	var lanes []shapeGeom // "lanes": every lane's corridor (two lanes are each other's mirror, one is its own)
+	if auto == "lanes" {
+		for _, ln := range cm.Map.Lanes {
+			half := ln.Width / 2
+			if l.Width > 0 {
+				half = l.Width / 2
+			}
+			lanes = append(lanes, shapeGeom{path: ln.Knots, half: half})
+		}
+	}
+	near, far := edgeRange(l) // "edge": the band, measured from the edge of the walkable ground or of one kind
+	var own, other *ground.Field
+	if auto == "edge" {
+		switch l.Along {
+		case "walls":
+			own, other = cm.kindField(b, Wall), cm.kindField(b, Chasm)
+		case "chasms":
+			own, other = cm.kindField(b, Chasm), cm.kindField(b, Wall)
 		}
 	}
 	slope := l.Slope
@@ -738,6 +840,7 @@ func (cm *Compiled) layerMask(k int, l GroundLayer, b *Baked, pic *bake.Image) (
 	size := cm.Map.Size
 	seed := 101 + 7*k
 	ly := cm.Layers
+	spec := cm.GroundSpec()
 	picAt := func(x, y float64) float64 {
 		if x < -size/2 || x > size/2 || y < -size/2 || y > size/2 {
 			return 0
@@ -748,17 +851,24 @@ func (cm *Compiled) layerMask(k int, l GroundLayer, b *Baked, pic *bake.Image) (
 	return func(x, y float64) float64 {
 		nz := edgeNoise(x, y, l.Noise, seed)
 		v := 0.0
-		if l.Auto != "" {
+		if auto != "" {
 			d := b.Field.At(x, y)
 			chasm := d > 0 && ly.KindAt(Point{x, y}) == Chasm
-			switch l.Auto {
+			switch auto {
 			case "all":
 				v = 1
 			case "floor":
 				v = cover(d-1.0+nz, soft)
 			case "high":
 				if !chasm {
-					v = cover(3.0-d+nz, soft)
+					// past the 5-m cliff's steep part; a taller wall's cliff is wider (height.go): as far up it
+					from := 3.0
+					if ly.Relief != nil {
+						_, hi := ground.CliffBand(d, x, y, &spec)
+						from = ground.CliffLo + float64((3.0-ground.CliffLo)*(hi-ground.CliffLo)/
+							(ground.CliffHi-ground.CliffLo))
+					}
+					v = cover(from-d+nz, soft)
 				}
 			case "chasm":
 				if chasm {
@@ -772,6 +882,26 @@ func (cm *Compiled) layerMask(k int, l GroundLayer, b *Baked, pic *bake.Image) (
 					sd = math.Min(sd, g.signed(Point{x, y}))
 				}
 				v = cover(sd+nz, soft)
+			case "lanes":
+				sd := math.Inf(1)
+				for _, g := range lanes {
+					sd = math.Min(sd, g.signed(Point{x, y}))
+				}
+				v = cover(sd+nz, soft)
+			case "edge":
+				gate := 1.0
+				switch {
+				case l.Along == "":
+				case own == nil: // the map has none of the kind
+					d = math.Inf(1)
+				default:
+					d = own.At(x, y)
+					if other != nil { // not on the other kind's ground
+						gate = cover(other.At(x, y), soft)
+					}
+				}
+				t := nz - d // metres into the walkable ground, the edge moved by the noise
+				v = float64(math.Min(cover(t-far, soft), cover(near-t, soft)) * gate)
 			}
 		}
 		if pic != nil {

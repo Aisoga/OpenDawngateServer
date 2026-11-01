@@ -118,18 +118,21 @@ package {
         // larger of its two item-icon sizes below the Current Selection (the same share of the card's width as the
         // spells' Spell Book icon on their tall card)
         private static const ITEM_ICON:Number = 44;
-        // A card's group line (its info's second line, Card_1_1's info field at 12): a group longer than
-        // INFO_FIT_CHARS ("Offense / Utility / Defense") is cut by the card's frame at 12, so it shows at INFO_SMALL
-        // (COLLITEMS10; "Offense / Defense" fits at 12)
-        private static const INFO_FIT_CHARS:int = 20, INFO_SMALL:int = 9;
-        // Card_1_1's two info lines inside the frame in both states (COLLITEMS11). The card's timeline moves its mcInfo
-        // from y 44 (IdleOut) to 60 (IdleOver) while the frame's bottom edge moves only 10 units (Collections_Source.gfx,
-        // sprite 185), so the hovered card's second line fell 4-5 units below the frame's inner edge and the unhovered
-        // card's descenders 2-3. The info's lines are INFO_LEADING apart instead of the field's 2, and the field sits
-        // INFO_SHIFT_IDLE units lower on the unhovered card and INFO_SHIFT_OVER on the hovered one, in between with the
-        // card's own animation (fitInfo). Spells keep theirs: Card_1_2's info has room.
-        private static const INFO_IDLE_Y:Number = 44, INFO_OVER_Y:Number = 60;
-        private static const INFO_LEADING:int = -2, INFO_SHIFT_IDLE:Number = 3, INFO_SHIFT_OVER:Number = -1;
+        // A card's group line (its info's second line): a group longer than INFO_FIT_CHARS ("Offense / Utility /
+        // Defense") is cut by the card's frame, so it shows at INFO_SMALL (COLLITEMS10), and its field sits
+        // INFO_SMALL_DROP units lower (COLLITEMS12: the smaller line sat about 2 pixels higher than a group line at
+        // INFO_SIZE, its tops under the unhovered card's title bar and its ends on the frame's corners)
+        private static const INFO_FIT_CHARS:int = 20, INFO_SMALL:int = 8, INFO_SMALL_DROP:Number = 1.5;
+        // Card_1_1's two info lines inside the frame in both states (COLLITEMS11, COLLITEMS12). The card's timeline
+        // moves its mcInfo from y 44 (IdleOut) to 60 (IdleOver) while the frame's bottom edge moves only 10 units
+        // (Collections_Source.gfx, sprite 185); the hovered card's band between the title bar's bottom edge (45.5 units)
+        // and the frame's inner bottom edge (72) is 26.5 units, and two lines at the field's 12 points filled it (the
+        // first under the title bar at smaller windows). An item's info is at INFO_SIZE, its lines INFO_LEADING apart
+        // instead of the field's 2, and the field sits INFO_SHIFT_IDLE units lower on the unhovered card and
+        // INFO_SHIFT_OVER on the hovered one, in between with the card's own animation (fitInfo). Spells keep theirs:
+        // Card_1_2's info has room.
+        private static const INFO_IDLE_Y:Number = 44, INFO_OVER_Y:Number = 60, INFO_SIZE:int = 10;
+        private static const INFO_LEADING:int = -2, INFO_SHIFT_IDLE:Number = 6.3, INFO_SHIFT_OVER:Number = 2.5;
         // The shop's item tile (ItemShopRenderer, ITEMSHOP's reading of ItemShopUI.gfx, in its 1920 x 1080 units): a
         // band 128 x 40 at (0, 6), black at 53/255 (no hover change of ours), the icon 36 x 36 at (2, 8) (stretched to
         // its box, kIconSizeStretch: the 256 texture drawn smaller), the name (14, the tier's colour) at (38, 6) and
@@ -907,11 +910,12 @@ package {
         }
 
         // a card's info: its kind, then its group (the line the unhovered card shows below its title bar); an item's
-        // lines INFO_LEADING apart (fitInfo places them)
+        // lines at INFO_SIZE, INFO_LEADING apart (fitInfo places them)
         private static function infoHtml(it:Object):String {
             var s:String = kindLabel(it.kind) + (it.group == "" ? "" : "<br>" + (it.group.length > INFO_FIT_CHARS ?
                 "<font size=\"" + INFO_SMALL + "\">" + it.group + "</font>" : it.group));
-            return it.kind == "spell" ? s : "<textformat leading=\"" + INFO_LEADING + "\">" + s + "</textformat>";
+            return it.kind == "spell" ? s : "<textformat leading=\"" + INFO_LEADING + "\"><font size=\"" + INFO_SIZE +
+                "\">" + s + "</font></textformat>";
         }
 
         // a click on one of our cards: our own details panel (the game's details screens ask C++ for the item)
@@ -1800,6 +1804,9 @@ package {
                 var f:Number = (Number(c.mcInfo.y) - INFO_IDLE_Y) / (INFO_OVER_Y - INFO_IDLE_Y);
                 f = f < 0 ? 0 : (f > 1 ? 1 : f);
                 y += INFO_SHIFT_IDLE + (INFO_SHIFT_OVER - INFO_SHIFT_IDLE) * f;
+                if (String(it.group).length > INFO_FIT_CHARS) {
+                    y += INFO_SMALL_DROP; // the smaller group line sits higher in its line (COLLITEMS12)
+                }
             }
             if (Math.abs(tf.y - y) > 0.04) {
                 tf.y = y;

@@ -101,7 +101,7 @@ func TestPreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	var idx mapc.PreviewIndex
-	if err := json.Unmarshal(b, &idx); err != nil || len(idx.Files) != 9 || len(idx.Objects) == 0 {
+	if err := json.Unmarshal(b, &idx); err != nil || len(idx.Files) != 10 || len(idx.Objects) == 0 {
 		t.Fatalf("%v: %d files, %d objects", err, len(idx.Files), len(idx.Objects))
 	}
 	for _, f := range idx.Files {
@@ -117,5 +117,13 @@ func TestUsage(t *testing.T) {
 		if code, _, _ := call(args...); code != 2 {
 			t.Errorf("%q: exit %d, 2 expected", args, code)
 		}
+	}
+}
+
+// TestParseNoDerived: --no-derived is an option of bake and ground.
+func TestParseNoDerived(t *testing.T) {
+	o, err := parse([]string{"--no-derived", "--json", "a", "b", "c"})
+	if err != nil || !o.noDerived || !o.json || len(o.args) != 3 {
+		t.Errorf("%+v %v", o, err)
 	}
 }

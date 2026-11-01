@@ -41,3 +41,5 @@ gms/build/
 # server/testdata/maps
 /maps/*
 !/maps/README.md
+# the map editor's mock-up: its pictures are made from the game's files
+mapedit/mock/img/

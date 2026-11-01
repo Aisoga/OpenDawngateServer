@@ -413,8 +413,9 @@ func (s *Server) bake(w http.ResponseWriter, r *http.Request) {
 	n := s.g.bakes[pkg]
 	s.g.mu.Unlock()
 	out := filepath.Join(s.c.Work, pkg, "bake"+strconv.Itoa(n))
-	stdout, code, err := s.mapc(3*time.Minute, "bake", "--json", "--maps", s.c.Maps, s.draftOrPackage(pkg, dir),
-		s.c.Copy, out)
+	args := append([]string{"bake", "--json"}, derivedArgs(r)...)
+	stdout, code, err := s.mapc(3*time.Minute, append(args, "--maps", s.c.Maps, s.draftOrPackage(pkg, dir),
+		s.c.Copy, out)...)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "%v", err)
 		return

@@ -92,6 +92,29 @@
         "break": 0.8
       },
       {
+        "name": "cliff foot",
+        "texture": {"procedural": "dirt"},
+        "scale": 12,
+        "tint": [0.66, 0.66, 0.56],
+        "opacity": 0.8,
+        "auto": "edge",
+        "range": [-1, 3],
+        "along": "walls",
+        "soft": 2,
+        "noise": 1.5
+      },
+      {
+        "name": "lane",
+        "texture": {"procedural": "dirt"},
+        "scale": 16,
+        "tint": [1.4, 1.32, 1.15],
+        "break": 0.6,
+        "auto": "lanes",
+        "width": 10,
+        "soft": 3,
+        "noise": 1.2
+      },
+      {
         "name": "path",
         "texture": {"procedural": "dirt"},
         "scale": 16,
@@ -122,6 +145,17 @@
         "tint": [0.45, 0.42, 0.36],
         "soft": 3,
         "shapes": []
+      },
+      {
+        "name": "pond rim",
+        "texture": {"procedural": "dirt"},
+        "scale": 10,
+        "tint": [0.55, 0.52, 0.44],
+        "auto": "edge",
+        "range": [-1, 2.5],
+        "along": "chasms",
+        "soft": 2,
+        "noise": 1
       }
     ],
     "stamps": [
@@ -171,6 +205,14 @@
         "rock_forest_small_02"],
       "seed": 52731,
       "polygon": [[-142, -112], [-92, -112], [-92, -62], [-142, -62]]
+    },
+    {
+      "nouns": ["rock_forest_small_02", "rock_forest_large_03"],
+      "seed": 7031,
+      "spacing": 18,
+      "inset": 2,
+      "scale": [0.7, 1.1],
+      "max": 50
     }
   ]
 }

@@ -97,6 +97,15 @@ func (s *Server) sceneLevel(w http.ResponseWriter, r *http.Request) {
 }
 
 // ground runs `mapc ground` on the latest draft into cache\ground\<pkg>\<n> and keeps the last two such folders.
+// derivedArgs is mapc's --no-derived for a request with ?derived=0: the bake or the ground without the art the map
+// derives from its gameplay shapes (the page's "Hide derived art").
+func derivedArgs(r *http.Request) []string {
+	if r.URL.Query().Get("derived") == "0" {
+		return []string{"--no-derived"}
+	}
+	return nil
+}
+
 func (s *Server) ground(w http.ResponseWriter, r *http.Request) {
 	pkg, dir := s.pkgDir(w, r)
 	if pkg == "" {
@@ -113,8 +122,9 @@ func (s *Server) ground(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	base := filepath.Join(s.c.Cache, "ground", pkg)
 	out := filepath.Join(base, strconv.Itoa(n))
-	stdout, code, err := s.mapc(2*time.Minute, "ground", "--json", "--maps", s.c.Maps, s.draftOrPackage(pkg, dir),
-		s.c.Copy, out)
+	args := append([]string{"ground", "--json"}, derivedArgs(r)...)
+	stdout, code, err := s.mapc(2*time.Minute, append(args, "--maps", s.c.Maps, s.draftOrPackage(pkg, dir),
+		s.c.Copy, out)...)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "%v", err)
 		return

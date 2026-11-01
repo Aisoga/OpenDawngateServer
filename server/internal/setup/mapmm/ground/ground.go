@@ -3,8 +3,9 @@
 // reference byte for byte.
 //
 // The model is a heightfield over the map: the open cells (where units walk) a flat floor at z 0, the blocked
-// cells a plateau 5 m up, joined by a cliff that rises from 1 m to 4.5 m past the line-of-sight edge; low hills
-// roll on the plateau and a shallow dip marks the water plane at the map's centre. It is 25 tiles of 64 x 64 cells
+// cells a plateau 5 m up (or a map's authored heights, relief.go), joined by a cliff that rises from 1 m to 4.5 m
+// past the line-of-sight edge; low hills roll on the plateau and a shallow dip marks the water plane at the map's
+// centre. It is 25 tiles of 64 x 64 cells
 // (each a mesh and a part), the triangles split by material: a dirt floor and cliff, a grass plateau. Its tree,
 // its vertex layout (32 bytes: position, normal, tangent, UV, colour) and its two one-texture vertex-lit
 // materials come from a shipped terrain model, the template. The vertex colours shade the cliff and the plateau
@@ -70,6 +71,9 @@ type Spec struct {
 	Cut      float64
 	Backdrop *Backdrop
 	Mist     *Backdrop // a second plane, drawn after the Backdrop (a see-through layer above it)
+	// Relief is the authored heights of the walls' plateaus and the chasms' depths (relief.go; nil: every one
+	// Plateau, the ground as before heights).
+	Relief *Relief
 }
 
 // Backdrop goes with Cut (void.go): a flat plane at height Z (negative: below the floor) from
@@ -300,13 +304,16 @@ func fordMask(x, y float64) float64 {
 	return smooth(pmin(ex, ey) / fordEdge)
 }
 
+// height is the relief (relief.go's comment has the formula): the floor, the cliff up to the plateau (h, the
+// authored height or Plateau) with low hills past it, or the drop into a chasm.
 func height(d, x, y float64, s *Spec) float64 {
-	z := float64(Plateau * smooth((d-cliffLo)/(cliffHi-cliffLo)))
-	if d > 0 && s.Down != nil && s.Down(x, y) {
+	h, hi, down := cliff(d, x, y, s)
+	z := float64(h * smooth((d-cliffLo)/(hi-cliffLo)))
+	if down {
 		return -z
 	}
-	if d > 6.0 {
-		z += float64(float64(roll*(float64(2*valueNoise(x, y, 23.0, 7, 0))-1)) * smooth((d-6.0)/8.0))
+	if r := hi + RollFrom; d > r {
+		z += float64(float64(roll*(float64(2*valueNoise(x, y, 23.0, 7, 0))-1)) * smooth((d-r)/8.0))
 	}
 	if d < 0 && s.Ford {
 		z += float64(float64(fordDepth*fordMask(x, y)) * smooth(-d/2.0))
@@ -320,11 +327,12 @@ func height(d, x, y float64, s *Spec) float64 {
 // colour is the vertex colour (RGB 0..1): the shade by zone, times the base tint.
 func colour(d, z, x, y float64, s *Spec) [3]float64 {
 	var c float64
+	h, hi, _ := cliff(d, x, y, s)
 	switch {
 	case d <= cliffLo: // the floor, shaded towards the cliff's foot
 		c = 1.0 - float64(0.28*smooth((d+4.0)/(4.0+cliffLo)))
-	case d < cliffHi:
-		c = 0.72 - float64(0.30*pmin(pmax(z/Plateau, 0.0), 1.0))
+	case d < hi:
+		c = 0.72 - float64(0.30*pmin(pmax(z/h, 0.0), 1.0))
 	default:
 		c = 0.60 * (0.88 + float64(0.12*valueNoise(x, y, 9.0, 3, 0)))
 	}
@@ -359,6 +367,7 @@ type Ground struct {
 	D, Z    []float64
 	Normal  [][3]float64
 	RGB     [][3]float64
+	Top     []float64 // with authored heights (Spec.Relief), each vertex's plateau height or chasm depth; else nil
 }
 
 // NewGround samples the field on grid x grid cells of cell metres (cell <= 0: two line-of-sight cells), centred
@@ -390,6 +399,12 @@ func NewGroundSpec(f *Field, grid int, cell float64, spec Spec) *Ground {
 			d := f.At(x, y)
 			g.D[j*n+i] = d
 			g.Z[j*n+i] = height(d, x, y, &spec)
+			if spec.Relief != nil {
+				if g.Top == nil {
+					g.Top = make([]float64, n*n)
+				}
+				g.Top[j*n+i], _, _ = cliff(d, x, y, &spec)
+			}
 		}
 	}
 	for j := 0; j < n; j++ {
@@ -409,8 +424,16 @@ func (g *Ground) uv(i, j int) [2]float64 {
 	return [2]float64{triWave(float64(i) / uvCells), triWave(float64(j) / uvCells)}
 }
 
-// material: 0 dirt (floor and cliff), 1 grass (the plateau's top).
+// material: 0 dirt (floor and cliff), 1 grass (the plateau's top: every corner at least three quarters up).
 func (g *Ground) material(ks [3]int) int {
+	if g.Top != nil {
+		for _, k := range ks {
+			if g.Z[k] < 0.75*g.Top[k] {
+				return 0
+			}
+		}
+		return 1
+	}
 	m := g.Z[ks[0]]
 	for _, k := range ks[1:] {
 		if g.Z[k] < m {

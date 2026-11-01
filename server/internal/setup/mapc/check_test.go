@@ -109,7 +109,7 @@ func TestRules(t *testing.T) {
 		}},
 		{"ground.mask", Error, nil, func(m *Map) { bakeLayer(m, GroundLayer{Texture: TextureRef{Procedural: "dirt"}}) }},
 		{"ground.auto", Error, nil, func(m *Map) {
-			bakeLayer(m, GroundLayer{Texture: TextureRef{Procedural: "dirt"}, Auto: "lanes"})
+			bakeLayer(m, GroundLayer{Texture: TextureRef{Procedural: "dirt"}, Auto: "lane"})
 		}},
 		{"ground.shape", Error, nil, func(m *Map) {
 			bakeLayer(m, GroundLayer{Texture: TextureRef{Procedural: "dirt"}, Shapes: []MaskShape{{Lane: 3}}})

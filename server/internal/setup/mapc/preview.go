@@ -188,6 +188,26 @@ func (cm *Compiled) Preview(r *Report) (map[string][]byte, error) {
 	})); err != nil {
 		return nil, err
 	}
+	// where a fill may stand (fill.go; the page's estimate reads it): grey the cells a fill never uses, green the cells
+	// the blocking fills stamped (walkable before), white the rest
+	barred, err := cm.FillBarred()
+	if err != nil {
+		return nil, err
+	}
+	solid := cm.FillSolid()
+	if err := put("fill.png", "where a filled scatter may stand: grey never (the lanes' and the fixed set's keep-out, "+
+		"the edge, past the void's cut), green the blocking fills' footprints (walkable before), white the rest",
+		cm.cellImage(func(k int) color.RGBA {
+			switch {
+			case barred[k]:
+				return color.RGBA{90, 90, 90, 255}
+			case solid != nil && solid[k]:
+				return color.RGBA{60, 160, 60, 255}
+			}
+			return color.RGBA{255, 255, 255, 255}
+		})); err != nil {
+		return nil, err
+	}
 	for _, g := range []struct {
 		name, shows string
 		b           *Blocks
@@ -450,9 +470,12 @@ func (cm *Compiled) groundImage() (*image.RGBA, error) {
 			k := j*g.N + i
 			n := g.Normal[k]
 			sh := math.Max(0.25, n[0]*l[0]+n[1]*l[1]+n[2]*l[2])
-			z := g.Z[k]
+			z, top := g.Z[k], ground.Plateau
+			if g.Top != nil { // authored heights (height.go)
+				top = g.Top[k]
+			}
 			tone := [3]float64{150, 120, 90} // the dirt floor
-			if z > 2.5 {
+			if z > top/2 {
 				tone = [3]float64{90, 130, 70} // the grass plateau
 			} else if z < -0.5 {
 				tone = [3]float64{50, 50, 70} // a chasm

@@ -14,7 +14,7 @@ import (
 // bake (a map whose ground is baked) writes the bake as pictures, from the copy's textures, without building the
 // archive:
 //
-//	mapc bake [--json] [--full] [--maps <dir>] <package> <copy> <dir>
+//	mapc bake [--json] [--full] [--no-derived] [--maps <dir>] <package> <copy> <dir>
 //
 // <dir> gets ground.png (the whole ground from above, north up, at most 2048 pixels a side), minimap.png (the
 // minimap as the archive gets it) and mask_<k>.png (layer k's mask, white where it is drawn; the first layer has
@@ -24,6 +24,9 @@ import (
 // --full also writes every tile at its own size, tile_<i>_<j>.png (i from the west, j from the south): exactly the
 // tile's texture in the archive, margins included (the outer "margin" pixels of each side are the neighbours'
 // ground). Listed in that order as the ground's "picture", they bake back the same tiles.
+//
+// --no-derived leaves out the art the map derives from its gameplay shapes (the layers' rules "lanes" and "edge";
+// the editor's "Hide derived art").
 
 const bakeSide = 2048
 
@@ -48,6 +51,7 @@ func (t *tool) bakePictures() int {
 		}
 		return 1
 	}
+	cm.NoDerived = t.o.noDerived
 	in, err := mapc.ReadInputs(copyDir)
 	if err != nil {
 		return t.fail(2, "%v", err)

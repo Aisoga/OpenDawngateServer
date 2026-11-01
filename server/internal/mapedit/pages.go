@@ -15,8 +15,10 @@ import (
 // API is the version of the interface between the page and this backend (the routes, their arguments and replies).
 // The page's editor.json names the one it was made for; a page with another is refused (VersionError). It goes up
 // when a route or a reply changes incompatibly (removed, renamed, another meaning); a new route or a new member old
-// pages ignore keeps it.
-const API = 1
+// pages ignore keeps it. 2 (editor 0.2.0, release v0.14): the page's templates and its new tools write map.json
+// members an older mapc refuses (a shape's height, the ground's auto rules "lanes" and "edge", a scatter along
+// "area"), and the page asks /api/ground and /api/bake with ?derived=0, so a page of 2 needs this backend's mapc.
+const API = 2
 
 // ManifestFile is the page's manifest: {"version": "<the page's release>", "api": <API it was made for>}.
 const ManifestFile = "editor.json"

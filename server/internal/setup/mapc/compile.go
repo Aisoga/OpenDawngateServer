@@ -3,6 +3,7 @@ package mapc
 import (
 	"fmt"
 
+	"dawngate/server/internal/setup/mapmm/ground"
 	"dawngate/server/internal/setup/mapmm/navgraph"
 )
 
@@ -35,6 +36,16 @@ type Compiled struct {
 	Player, NPC Blocks // the NPC graph's Areas count its Guardian islands too
 	Mask        []bool // the walkable cells the Player graph is cut from (navgraph.WalkableMask)
 	NPCMask     []bool // the NPC graph's: Mask with the islands (MAPED-ISLAND)
+
+	// NoDerived leaves the art a map derives from its gameplay shapes out of the bake and the props: the ground
+	// layers' rules "lanes" and "edge" (DerivedRule) and the scatter. Only for the editor's view ("Hide derived
+	// art"); a build never sets it.
+	NoDerived bool
+
+	scattered [][]Placed    // each scatter's props (placeScatters, fill.go)
+	barred    []bool        // the cells a fill never uses (fillBarred)
+	fillSolid []bool        // the cells the blocking fills stamped
+	field     *ground.Field // the ground model's field, for the fills' heights
 }
 
 // walkableBlock reports whether every cell of block (bx, by) is in the walkable mask.
@@ -58,6 +69,9 @@ func Compile(m *Map) (*Compiled, error) {
 		return nil, err
 	}
 	c := &Compiled{Map: m, Layout: Resolve(m), Layers: ly}
+	if err := c.placeScatters(); err != nil { // fill.go: a blocking fill stamps its footprints before the graphs
+		return nil, err
+	}
 	mask := navgraph.WalkableMask(ly.Walk().Pix, Grid, Grid, Erode)
 	c.Mask = mask
 	c.NPCMask = navgraph.WalkableMask(ly.NPCWalk().Pix, Grid, Grid, Erode)

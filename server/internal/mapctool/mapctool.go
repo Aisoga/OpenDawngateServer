@@ -20,7 +20,7 @@
 //	go run ./tools/mapc check   [--json] [--copy <copy>] [--maps <dir>] <package>
 //	go run ./tools/mapc build   [--json] [--no-mesh] [--maps <dir>] <package> <copy> <out>
 //	go run ./tools/mapc preview [--json] [--copy <copy>] [--maps <dir>] <package> <dir>
-//	go run ./tools/mapc bake    [--json] [--full] [--maps <dir>] <package> <copy> <dir>  (bake.go: a baked ground's pictures)
+//	go run ./tools/mapc bake    [--json] [--full] [--no-derived] [--maps <dir>] <package> <copy> <dir>  (bake.go: a baked ground's pictures)
 //	go run ./tools/mapc cook-shared [--json] <physcook.exe> <PhysXCooking.dll>
 //	go run ./tools/mapc model | ground | scene ...  (export.go: models, the ground and scene lists as glTF)
 //	go run ./tools/mapc props | nouns ...  (props.go: what a map's props place, the nouns a prop may name)
@@ -76,13 +76,14 @@ const usage = `usage:
   mapc check   [--json] [--copy <copy>] [--maps <dir>] <package>
   mapc build   [--json] [--no-mesh] [--maps <dir>] <package> <copy> <out>
   mapc preview [--json] [--copy <copy>] [--maps <dir>] <package> <dir>
-  mapc bake    [--json] [--full] [--maps <dir>] <package> <copy> <dir>
+  mapc bake    [--json] [--full] [--no-derived] [--maps <dir>] <package> <copy> <dir>
   mapc cook-shared [--json] <physcook.exe> <PhysXCooking.dll>
   mapc import [--json] [--force] [--dress] --copy <copy> [--name N] [--display D] [--tag T] [--prefix P] <level> <package>`
 
 type opts struct {
 	json, noMesh bool
 	full         bool // bake: every tile at its own size too
+	noDerived    bool // bake, ground: without the art derived from the gameplay shapes (mapc.Compiled.NoDerived)
 	copyDir      string
 	mapsDir      string
 	args         []string
@@ -98,6 +99,8 @@ func parse(argv []string) (opts, error) {
 			o.noMesh = true
 		case "--full", "-full":
 			o.full = true
+		case "--no-derived", "-no-derived":
+			o.noDerived = true
 		case "--copy", "-copy":
 			if i+1 == len(argv) {
 				return o, fmt.Errorf("--copy needs a folder")

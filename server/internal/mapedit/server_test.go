@@ -213,7 +213,7 @@ func TestOpenCheckSaveUnchanged(t *testing.T) {
 	e := newEnv(t, false)
 	doc, text, sha := e.open("CM_Ring")
 	r := e.check("CM_Ring", doc)
-	if !r.Report.OK || r.Exit != 0 || r.Preview == nil || len(r.Preview.Files) != 9 || r.Text != text {
+	if !r.Report.OK || r.Exit != 0 || r.Preview == nil || len(r.Preview.Files) != 10 || r.Text != text {
 		t.Fatalf("check of the unchanged map: %+v", r.Report)
 	}
 	res, err := http.Get(e.srv.URL + r.Images + "layout.png")

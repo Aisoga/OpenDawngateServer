@@ -220,3 +220,16 @@ func TestGroundBake(t *testing.T) {
 		res.Body.Close()
 	}
 }
+
+// TestDerivedArgs: ?derived=0 asks mapc for the bake or ground without the art derived from the gameplay shapes.
+func TestDerivedArgs(t *testing.T) {
+	for q, want := range map[string]string{"?derived=0": "--no-derived", "": "", "?derived=1": ""} {
+		r, err := http.NewRequest("POST", "http://127.0.0.1/api/bake/CM_Ring"+q, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(derivedArgs(r), " "); got != want {
+			t.Errorf("%q: %q, want %q", q, got, want)
+		}
+	}
+}

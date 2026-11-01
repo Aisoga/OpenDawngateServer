@@ -5,7 +5,7 @@ package mapctool
 // game content (keep it out of the repository).
 //
 //	mapc model  [--json] [--max-texture N] <copy> <model.bmdl | Name.Noun>... <out>
-//	mapc ground [--json] [--max-texture N] [--maps <dir>] <package> <copy> <out>
+//	mapc ground [--json] [--max-texture N] [--no-derived] [--maps <dir>] <package> <copy> <out>
 //	mapc scene  [--json] [--max-texture N] [--maps <dir>] [--no-models] <copy> <package | level> <out>
 //
 // model exports models of the copy (by path, or a noun's model) as <out>/<path with folders joined by _>.gltf with
@@ -35,7 +35,7 @@ import (
 )
 
 const exportUsage = `  mapc model  [--json] [--max-texture N] <copy> <model.bmdl | Name.Noun>... <out>
-  mapc ground [--json] [--max-texture N] [--maps <dir>] <package> <copy> <out>
+  mapc ground [--json] [--max-texture N] [--no-derived] [--maps <dir>] <package> <copy> <out>
   mapc scene  [--json] [--max-texture N] [--maps <dir>] [--no-models] <copy> <package | level> <out>`
 
 // exportCommands are the commands this file adds; Run hands them their arguments before its own parsing.
@@ -191,6 +191,7 @@ func (t *exportTool) exportGround(args []string) int {
 	if cm == nil {
 		return code
 	}
+	cm.NoDerived = t.o.noDerived // the ground without the art derived from the gameplay shapes
 	d, code := t.depot(args[1])
 	if d == nil {
 		return code

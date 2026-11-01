@@ -228,9 +228,10 @@ inline bool DrawsAggro(float dealt, bool attackerPresent, bool attackerAlive) {
 // Step 13: lifedrain heals the attacker by dealt x LifeDrain (x 0.33 for AoE and DoT) [text], through the heal core with
 // noScaling (so HealIncrease doesn't count, HealingReduction does: HealAmount). D13 [code]: never for a dead attacker,
 // as the Lua binding refuses a heal on HP <= 0 without its resurrect flag (HealAllowed); the heal core itself would
-// resurrect (a projectile with lifedrain landing after its caster died brought it back).
-inline float LifedrainAmount(float dealt, float lifeDrain, unsigned descLo, bool attackerAlive) {
-  if (!(dealt > 0.f) || !(lifeDrain > 0.f) || !attackerAlive) return 0.f;
+// resurrect (a projectile with lifedrain landing after its caster died brought it back). STRUCTCRIT (the user's decision
+// of 2026-11-01): never from a hit on a structure (rules.h MayCrit).
+inline float LifedrainAmount(float dealt, float lifeDrain, unsigned descLo, bool attackerAlive, bool structureTarget) {
+  if (!(dealt > 0.f) || !(lifeDrain > 0.f) || !attackerAlive || structureTarget) return 0.f;
   return dealt * lifeDrain * ((descLo & (kIsAoE | kIsDoT)) ? 0.33f : 1.f);
 }
 // Step 14: the spell overload's share, (Mastery / spellOverloadFromMasteryRating + FlatSpellOverloadDamage) / 100.

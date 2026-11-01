@@ -64,11 +64,12 @@ GMS_TEST(DamageDefenseMultiplier) {
 }
 
 GMS_TEST(DamageDescriptorRules) {
-  CHECK(MayCrit(kIsBasic | kIsPhysical | kIsMelee, true));
-  CHECK(!MayCrit(kIsBasic, false));
-  CHECK(!MayCrit(kIsBasic | kCanNotCrit, true));
-  CHECK(!MayCrit(kIsBasic | kIsSpellOverload, true));
-  CHECK(!MayCrit(kIsPhysical | kIsProjectile, true));  // the tower shot (IsBasic stripped)
+  CHECK(MayCrit(kIsBasic | kIsPhysical | kIsMelee, true, false));
+  CHECK(!MayCrit(kIsBasic, false, false));
+  CHECK(!MayCrit(kIsBasic | kCanNotCrit, true, false));
+  CHECK(!MayCrit(kIsBasic | kIsSpellOverload, true, false));
+  CHECK(!MayCrit(kIsPhysical | kIsProjectile, true, false));  // the tower shot (IsBasic stripped)
+  CHECK(!MayCrit(kIsBasic | kIsPhysical | kIsMelee, true, true));  // STRUCTCRIT: never on a structure
   CHECK(MayOverload(kIsMagical, true));
   CHECK(!MayOverload(kIsMagical | kIsSpellOverload, true));
   CHECK(!MayOverload(kIsBasic, true));

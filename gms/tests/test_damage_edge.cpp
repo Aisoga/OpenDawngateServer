@@ -475,7 +475,7 @@ GMS_TEST(DamageEdgeBelowZero) {
   CHECK(Near(r.final, 4.0, 1e-5));
   CHECK(Near(w.Find(1)->minSeen, 4.0, 1e-5));
   // nothing follows a hit of 0: no lifedrain, no overload; the events still fire [assumed]
-  CHECK_EQ(LifedrainAmount(0.f, 0.5f, kBasic, true), 0.f);
+  CHECK_EQ(LifedrainAmount(0.f, 0.5f, kBasic, true, false), 0.f);
   CHECK_EQ(OverloadDamage(-16.f, 0.5f, 0, false, 0.f, kIsMagical, true), 0.f);
   // a negative pre-mitigation damage that a Final handler lifted above 0 doesn't overload with a negative amount
   CHECK_EQ(OverloadDamage(-5.f, 0.5f, 0, false, 3.f, kIsMagical, true), 0.f);
@@ -531,13 +531,14 @@ GMS_TEST(DamageEdgeOnHitThroughShield) {
 
 // Lifedrain on basic attacks and abilities, and the healing number.
 GMS_TEST(DamageEdgeLifedrain) {
-  CHECK(Near(LifedrainAmount(100.f, 0.1f, kBasic, true), 10.0, 1e-5));
-  CHECK(Near(LifedrainAmount(100.f, 0.1f, kIsMagical, true), 10.0, 1e-5));  // abilities drain at full rate
-  CHECK(Near(LifedrainAmount(100.f, 0.1f, kIsMagical | kIsAoE, true), 3.3, 1e-4));
-  CHECK(Near(LifedrainAmount(100.f, 0.1f, kIsMagical | kIsDoT, true), 3.3, 1e-4));
-  CHECK_EQ(LifedrainAmount(0.f, 0.1f, kBasic, true), 0.f);   // a shield took it all: nothing to drain
-  CHECK_EQ(LifedrainAmount(100.f, 0.f, kBasic, true), 0.f);
-  CHECK_EQ(LifedrainAmount(100.f, 0.1f, kBasic, false), 0.f);  // D13: never for a dead attacker
+  CHECK(Near(LifedrainAmount(100.f, 0.1f, kBasic, true, false), 10.0, 1e-5));
+  CHECK(Near(LifedrainAmount(100.f, 0.1f, kIsMagical, true, false), 10.0, 1e-5));  // abilities drain at full rate
+  CHECK(Near(LifedrainAmount(100.f, 0.1f, kIsMagical | kIsAoE, true, false), 3.3, 1e-4));
+  CHECK(Near(LifedrainAmount(100.f, 0.1f, kIsMagical | kIsDoT, true, false), 3.3, 1e-4));
+  CHECK_EQ(LifedrainAmount(0.f, 0.1f, kBasic, true, false), 0.f);   // a shield took it all: nothing to drain
+  CHECK_EQ(LifedrainAmount(100.f, 0.f, kBasic, true, false), 0.f);
+  CHECK_EQ(LifedrainAmount(100.f, 0.1f, kBasic, false, false), 0.f);  // D13: never for a dead attacker
+  CHECK_EQ(LifedrainAmount(100.f, 0.1f, kBasic, true, true), 0.f);  // STRUCTCRIT: never from a hit on a structure
   // the heal core with noScaling (lifesteal): HealIncrease is ignored, HealingReduction is not
   HealResult h = ApplyHeal(200.f, 450.f, 10.f, true, 0.5f, 0.f, 1.f, 0.f);
   CHECK(Near(h.amount, 10.0, 1e-6));
@@ -634,7 +635,7 @@ GMS_TEST(DamageEdgeDeadAttacker) {
   CHECK(!DrawsAggro(50.f, true, false));
   CHECK(!DrawsAggro(50.f, false, true));
   CHECK(!DrawsAggro(0.f, true, true));
-  CHECK_EQ(LifedrainAmount(50.f, 0.2f, kBasic, false), 0.f);
+  CHECK_EQ(LifedrainAmount(50.f, 0.2f, kBasic, false, false), 0.f);
   // its OnDealtDamage still fires (the Tactician's vim, if its role passive still exists: it ends 3 scheduler runs
   // after the death)
   CHECK(FiresDamageEvents(kBasic | kIsProjectile));

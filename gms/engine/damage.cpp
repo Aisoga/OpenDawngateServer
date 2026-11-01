@@ -470,9 +470,10 @@ bool Core(void* target, void* snapshot, float damage, float coef, unsigned lo, u
   dmg::HitInput hin;
   hin.initial = SehInitial(damage, coef, lo, hi, attacker, snapshot, targetId, dir);
   t.initial = hin.initial;
-  // 3. crit (basic attacks)
+  // 3. crit (basic attacks; STRUCTCRIT: none on a structure, and no lifedrain from one, step 13)
+  const bool structureTarget = SehIsStructure(target);
   char* tuning = SehAttributeTuning();
-  if (dmg::MayCrit(lo, snapshot != nullptr) && tuning && SehRollCrit(snapshot, lo, hi, tuning, target)) {
+  if (dmg::MayCrit(lo, snapshot != nullptr, structureTarget) && tuning && SehRollCrit(snapshot, lo, hi, tuning, target)) {
     t.crit = true;
     ++g_st.crits;
     t.critMult = Field<float>(tuning, attrTuning::kCritDamageBonus) + SehSnapAttr(snapshot, attr::kFlatCritDamage) +
@@ -577,7 +578,7 @@ bool Core(void* target, void* snapshot, float damage, float coef, unsigned lo, u
   // dead attacker is skipped, as nGameObject.HealDamage (0x009401B0) refuses a heal on HP <= 0 without its resurrect flag.
   if (g_opt.lifedrain && dealt > 0.f && attacker && snapshot) {
     const float ld = SehSnapAttr(snapshot, attr::kLifeDrain);
-    const float amount = dmg::LifedrainAmount(dealt, ld, lo, attackerAlive);
+    const float amount = dmg::LifedrainAmount(dealt, ld, lo, attackerAlive, structureTarget);
     if (amount > 0.f) {
       t.healed = SehHeal(attacker, snapshot, amount, lo | dmg::kNoDamageCallbacks, hi);
       ++g_st.lifedrains;

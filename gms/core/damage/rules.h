@@ -42,8 +42,11 @@ constexpr unsigned kHitDoT = 0x200;
 constexpr unsigned kHitKnockback = 0x400;
 
 // Step 3: crits only on basic attacks that may crit, not on an overload, and only with a snapshot (the roll needs it).
-inline bool MayCrit(unsigned descLo, bool snapshot) {
-  return snapshot && (descLo & kIsBasic) && !(descLo & kCanNotCrit) && !(descLo & kIsSpellOverload);
+// STRUCTCRIT (the user's decision of 2026-11-01): never on a structure (GameObject_IsStructure: a Binding, the Guardian,
+// the Locus, a gold mine, a Nub, a Titan), as the game's own on-hit rule (nAbility.ShouldProcOnHit) leaves them out;
+// the client's roll ignores its target, and the server's core that chose when to roll is gone.
+inline bool MayCrit(unsigned descLo, bool snapshot, bool structureTarget) {
+  return snapshot && !structureTarget && (descLo & kIsBasic) && !(descLo & kCanNotCrit) && !(descLo & kIsSpellOverload);
 }
 // Step 14: the heal core's exact test (0x008E0720): no overload of an overload, a basic, an item or true damage.
 inline bool MayOverload(unsigned descLo, bool snapshot) {

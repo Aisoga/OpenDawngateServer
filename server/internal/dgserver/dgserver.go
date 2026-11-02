@@ -925,24 +925,14 @@ var listenerNames = []string{"redirector", "blaze", "qos", "http", "telemetry"}
 // qosListener is QoS's index in config.ports and listenerNames.
 const qosListener = 2
 
-// listenTCPAndUDP binds TCP and UDP on one port. With port 0 (tests) the system picks the TCP port, and Windows
-// may have reserved that number for UDP (excluded port ranges, e.g. on CI runners): then another port is tried.
+// listenTCPAndUDP binds TCP and UDP on one port of bind (an IPv4 address; with port 0, tests: past Windows' excluded
+// port ranges, tunnel.ListenTCPAndUDP).
 func listenTCPAndUDP(bind string, port int) (net.Listener, *net.UDPConn, error) {
-	for attempt := 0; ; attempt++ {
-		ln, err := net.Listen("tcp4", net.JoinHostPort(bind, strconv.Itoa(port)))
-		if err != nil {
-			return nil, nil, err
-		}
-		p := ln.Addr().(*net.TCPAddr).Port
-		udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(bind), Port: p})
-		if err == nil {
-			return ln, udp, nil
-		}
-		ln.Close()
-		if port != 0 || attempt == 19 {
-			return nil, nil, err
-		}
+	tln, udp, err := tunnel.ListenTCPAndUDP(net.ParseIP(bind), port)
+	if err != nil {
+		return nil, nil, err
 	}
+	return tln, udp, nil
 }
 
 // limitsReportEvery is how often the limits' refusals are summed up in the log.

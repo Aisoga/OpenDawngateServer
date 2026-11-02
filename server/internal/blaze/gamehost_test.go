@@ -215,7 +215,8 @@ func TestHostedPracticeGame(t *testing.T) {
 		"[blaze]    game 1 \"player's Game\": match host 1 starting (pid ",
 		"GMS port 10042), player 2000000001; NotifyGameSetup follows gameReady",
 		"[host] match 1: started pid ",
-		"[blaze]    game 1: GMS 127.0.0.1:10042 (HNET) ready 0.0 s after resetDedicatedServer",
+		// the time between is measured: 0.0 s here, 0.1 s on a loaded machine (GOFLAKE2)
+		"[blaze]    game 1: GMS 127.0.0.1:10042 (HNET) ready ", " s after resetDedicatedServer",
 		"[blaze] -> GameManager::NotifyGameSetup notification, ",
 		"[blaze]    game 1: player 2000000001 joined the GMS (index 0)",
 		"[blaze]    game 1 finished: winner team 1, 61.5 s, guardian",

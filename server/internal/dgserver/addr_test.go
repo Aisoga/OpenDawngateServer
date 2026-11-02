@@ -174,6 +174,9 @@ func TestServerPublicHost(t *testing.T) {
 		if want := fmt.Sprintf("<ips><ips>%d</ips></ips>", ipv4(c.want)); !strings.Contains(string(qrep), want) {
 			t.Errorf("%s: firewall reply lacks %q:\n%s", c.public, want, qrep)
 		}
+		// the redirector logs its reply after sending it: before the stop closes the log (GOFLAKE2, twice on Linux)
+		replyLine := fmt.Sprintf("[redirector] -> getServerInstance reply: %s:%d, SECU=0\n", c.want, in.ports[1])
+		waitLog(t, logDir, replyLine)
 		in.stop()
 
 		files, _ := filepath.Glob(filepath.Join(logDir, "*.log"))
@@ -181,7 +184,7 @@ func TestServerPublicHost(t *testing.T) {
 		text := strings.ReplaceAll(string(raw), "\r\n", "\n")
 		for _, want := range []string{"[stub] redirector on 127.0.0.1:", c.logLine,
 			"[stub] note: the announced " + c.want + " is not loopback, but every port listens on 127.0.0.1 only",
-			fmt.Sprintf("[redirector] -> getServerInstance reply: %s:%d, SECU=0\n", c.want, in.ports[1])} {
+			replyLine} {
 			if !strings.Contains(text, want) {
 				t.Errorf("log lacks %q:\n%s", want, text)
 			}

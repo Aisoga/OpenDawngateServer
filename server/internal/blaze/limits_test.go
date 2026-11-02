@@ -120,8 +120,15 @@ func TestLimitsRequestRate(t *testing.T) {
 	if d := time.Since(start); d < 100*time.Millisecond { // 3 past the burst at 25/s: 120 ms
 		t.Errorf("8 pings answered in %s; want them slowed down", d)
 	}
-	b := ts.dial("b")
-	for i := 0; i < 200; i++ {
+	// the flood on a server of 2/s: its gate stops holding a connection back once a whole token has come back while
+	// a request was handled, so at 25/s a server that took over 40 ms a ping (a loaded machine: GOFLAKE2, the Linux
+	// container's 2 of 3) never closed the flood; at 2/s that takes a ping of over 500 ms
+	fcfg := testLimits()
+	fcfg.Requests = limits.Rate{PerSec: 2, Burst: 2}
+	fcfg.RequestHeld = 250 * time.Millisecond
+	fs := newTCPServer(t, func(s *Server) { s.Limits = limits.New(fcfg, nil) })
+	b := fs.dial("b")
+	for range 200 {
 		b.send(ComponentUtil, CmdUtilPing, nil)
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -137,8 +144,8 @@ func TestLimitsRequestRate(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if !strings.Contains(ts.log.String(), "limits: connection from 127.0.0.1 closed: requests held back to 25/s (burst 5) for more than 250ms") {
-		t.Errorf("log:\n%s", ts.log.String())
+	if !strings.Contains(fs.log.String(), "limits: connection from 127.0.0.1 closed: requests held back to 2/s (burst 2) for more than 250ms") {
+		t.Errorf("log:\n%s", fs.log.String())
 	}
 }
 

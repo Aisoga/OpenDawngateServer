@@ -19,6 +19,7 @@ import (
 	"dawngate/server/internal/logging"
 	"dawngate/server/internal/redirector"
 	"dawngate/server/internal/setup/certs"
+	"dawngate/server/internal/tunnel"
 	"dawngate/server/internal/web"
 )
 
@@ -256,7 +257,14 @@ func TestHeldPorts(t *testing.T) {
 	}
 	defer ln.Close()
 	p := ln.Addr().(*net.TCPAddr).Port
-	free := httpPortClosed(t)
+	// free for TCP and UDP (a port TCP picks may be in Windows' excluded UDP ranges: GOFLAKE2 (6))
+	ftl, fudp, err := tunnel.ListenTCPAndUDP(net.IPv4(127, 0, 0, 1), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	free := ftl.Addr().(*net.TCPAddr).Port
+	ftl.Close()
+	fudp.Close()
 	held := HeldPorts("127.0.0.1", []Port{{p, false, "taken"}, {free, false, "free"}, {free, true, "free udp"}})
 	if len(held) != 1 || !strings.Contains(held[0], "taken") {
 		t.Errorf("held %v", held)

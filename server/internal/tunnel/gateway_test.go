@@ -55,6 +55,20 @@ func (s *syncBuf) String() string {
 	return s.b.String()
 }
 
+// waitFor waits up to d until the log holds every one of wants (the gateway logs a session after its reply, so a
+// client that has its session may be ahead of the line).
+func (s *syncBuf) waitFor(d time.Duration, wants ...string) bool {
+	for deadline := time.Now().Add(d); ; time.Sleep(5 * time.Millisecond) {
+		text, all := s.String(), true
+		for _, w := range wants {
+			all = all && strings.Contains(text, w)
+		}
+		if all || time.Now().After(deadline) {
+			return all
+		}
+	}
+}
+
 // udpEcho is a stand-in match host: it echoes every datagram and counts what it got.
 type udpEcho struct {
 	conn *net.UDPConn
@@ -512,12 +526,7 @@ type relay struct {
 
 func newRelay(t *testing.T, gateway string, mangle func([]byte) [][]byte) *relay {
 	t.Helper()
-	tln, err := net.Listen("tcp4", relayIP+":0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := tln.Addr().(*net.TCPAddr).Port
-	udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(relayIP), Port: port})
+	tln, udp, err := ListenTCPAndUDP(net.ParseIP(relayIP), 0) // one port for both, past excluded ranges
 	if err != nil {
 		t.Fatal(err)
 	}

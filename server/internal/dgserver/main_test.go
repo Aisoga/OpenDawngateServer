@@ -159,7 +159,27 @@ func TestServer(t *testing.T) {
 	c.(*net.TCPConn).CloseWrite()
 	io.ReadAll(c)
 	c.Close()
-	time.Sleep(200 * time.Millisecond) // let the handlers log the close
+	h := "127.0.0.1"
+	wants := []string{
+		fmt.Sprintf("[stub] redirector on %s:%d (TLS), Blaze on %s:%d, QoS on %s:%d (HTTP, UDP), HTTP (CDN/crash) on %s:%d, telemetry on %s:%d, GMS (UDP, logged) on %s:%d; log %s\n",
+			h, in.ports[0], h, in.ports[1], h, in.ports[2], h, in.ports[3], h, in.ports[4], h, gmsPort, in.log.Path),
+		" 21 bytes: 0x05 ID_OPEN_CONNECTION_REQUEST_1, offline magic, protocol version 6, padded to 21 bytes (MTU probe)\n",
+		"[gms]    first of its kind:\n    0000  05 00 ff ff 00 fe fe fe fe fd fd fd fd 12 34 56 ",
+		"), TLSv1.1 AES256-SHA\n",
+		fmt.Sprintf("[redirector] -> getServerInstance reply: 127.0.0.1:%d, SECU=0\n", in.ports[1]),
+		"[blaze] -> preAuth reply, ",
+		"[blaze] -> ping reply, 9 bytes:\n",
+		"[http] -> 200 OK, 7119 bytes (built-in)\n",
+		") GET /qos/qos?vers=1&qtyp=1&prpt=3659 HTTP/1.1\n",
+		"[qos] -> 200 OK, <qos><numprobes>0</numprobes>",
+		"[qos] udp ('127.0.0.1', ",
+		" latency probe: request 2, requestid 1, flags 1 -> echo\n",
+		" 4 bytes left over, not a full packet:\n    0000  26 6c 67 72 ",
+		" closed after 4 bytes, 0 packets, 0 events\n",
+	}
+	// the services log a reply after sending it and a close after their handler saw it: wait for the lines (a
+	// fixed 200 ms before the stop was a guess: GOFLAKE2)
+	waitLog(t, logDir, wants...)
 	in.stop()
 
 	files, _ := filepath.Glob(filepath.Join(logDir, "*.log"))
@@ -174,25 +194,7 @@ func TestServer(t *testing.T) {
 		}
 		text = strings.ReplaceAll(text, "\r\n", "\n")
 	}
-	h := "127.0.0.1"
-	for _, want := range []string{
-		fmt.Sprintf("[stub] redirector on %s:%d (TLS), Blaze on %s:%d, QoS on %s:%d (HTTP, UDP), HTTP (CDN/crash) on %s:%d, telemetry on %s:%d, GMS (UDP, logged) on %s:%d; log %s\n",
-			h, in.ports[0], h, in.ports[1], h, in.ports[2], h, in.ports[3], h, in.ports[4], h, gmsPort, files[0]),
-		" 21 bytes: 0x05 ID_OPEN_CONNECTION_REQUEST_1, offline magic, protocol version 6, padded to 21 bytes (MTU probe)\n",
-		"[gms]    first of its kind:\n    0000  05 00 ff ff 00 fe fe fe fe fd fd fd fd 12 34 56 ",
-		"), TLSv1.1 AES256-SHA\n",
-		fmt.Sprintf("[redirector] -> getServerInstance reply: 127.0.0.1:%d, SECU=0\n", in.ports[1]),
-		"[blaze] -> preAuth reply, ",
-		"[blaze] -> ping reply, 9 bytes:\n",
-		"[http] -> 200 OK, 7119 bytes (built-in)\n",
-		") GET /qos/qos?vers=1&qtyp=1&prpt=3659 HTTP/1.1\n",
-		"[qos] -> 200 OK, <qos><numprobes>0</numprobes>",
-		"[qos] udp ('127.0.0.1', ",
-		" latency probe: request 2, requestid 1, flags 1 -> echo\n",
-		" 4 bytes left over, not a full packet:\n    0000  26 6c 67 72 ",
-		" closed after 4 bytes, 0 packets, 0 events\n",
-		"[stub] stopped\n",
-	} {
+	for _, want := range append(wants, "[stub] stopped\n") {
 		if !strings.Contains(text, want) {
 			t.Errorf("log lacks %q:\n%s", want, text)
 		}

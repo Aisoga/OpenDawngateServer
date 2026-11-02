@@ -145,11 +145,15 @@ func TestPackage(t *testing.T) {
 		}
 	}
 	pr.Close()
-	// a second request: from the package made before; a restart (a new Package on the same folder) too
+	// a second request: from the package made before; a restart (a new Package on the same folder) too. Each
+	// restart closes the Package before (as the server's end does): a Package still running would build again in
+	// the background once it found the file gone, which Write's remove-and-rename leaves for a moment, putting
+	// its ini back and deleting the other versions' folders (removeOld) while the next one builds (GOFLAKE2 (3))
 	n := f.Count()
 	if again, err := p.Get(context.Background()); err != nil || again != file {
 		t.Errorf("again: %s %v", again, err)
 	}
+	p.Close()
 	p2 := newPkg(t, f, "v0.7", dir)
 	p2.Start(ini, "")
 	if again, err := p2.Get(context.Background()); err != nil || again != file || f.Count() != n {
@@ -157,6 +161,7 @@ func TestPackage(t *testing.T) {
 	}
 	// another ini (a new key): rebuilt from the kept release, without GitHub
 	ini2 := []byte("server = 203.0.113.5\r\ngateway_pin = " + strings.Repeat("cd", 32) + "\r\n")
+	p2.Close()
 	p3 := newPkg(t, f, "v0.7", dir)
 	p3.Start(ini2, "")
 	if _, err := p3.Get(context.Background()); err != nil || f.Count() != n {
@@ -167,6 +172,7 @@ func TestPackage(t *testing.T) {
 	}
 	// the server updated to v0.8: its own package; v0.7's removed
 	serve(f, "v0.8", fakeRelease("v0.8").Zip(nil))
+	p3.Close()
 	p4 := newPkg(t, f, "v0.8", dir)
 	p4.Start(ini, "")
 	if f8, err := p4.Get(context.Background()); err != nil || filepath.Base(filepath.Dir(f8)) != "v0.8" {

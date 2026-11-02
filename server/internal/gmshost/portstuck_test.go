@@ -211,8 +211,15 @@ func TestStuckPort(t *testing.T) {
 			rec2.wait(t)
 			hasAll(t, "server", f.log.String(), fmt.Sprintf("killed false; port %d free", base+1))
 
-			// after the quarantine the port is back, and with its holder gone it works
+			// after the quarantine the port is back, and with its holder gone it works. The quarantine began at the
+			// host's report, after quarantinedAt: on a loaded machine more than 50 ms after (GOFLAKE2, the Linux
+			// container), so the wait ends when the pool says so
 			time.Sleep(time.Until(quarantinedAt.Add(q + 50*time.Millisecond)))
+			for deadline := time.Now().Add(5 * time.Second); f.m.Sites()[0].Quarantined != 0; time.Sleep(10 * time.Millisecond) {
+				if time.Now().After(deadline) {
+					t.Fatalf("port %d still in quarantine 5 s after its %v: %+v", base, q, f.m.Sites())
+				}
+			}
 			rec3 := newRecorder()
 			mt3, err := f.m.Start(practice, rec3.Events())
 			if err != nil {

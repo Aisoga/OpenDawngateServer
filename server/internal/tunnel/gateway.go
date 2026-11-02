@@ -175,22 +175,10 @@ func (g *Gateway) Start(addr string) error {
 	if err != nil {
 		return err
 	}
-	// TCP and UDP on one port. With port 0 (tests) the system picks the TCP port, and Windows may have reserved
-	// that number for UDP (excluded port ranges, e.g. on CI runners): then another port is tried.
-	var tln *net.TCPListener
-	var udp *net.UDPConn
-	for attempt := 0; ; attempt++ {
-		if tln, err = net.ListenTCP("tcp4", ta); err != nil {
-			return err
-		}
-		ua := &net.UDPAddr{IP: ta.IP, Port: tln.Addr().(*net.TCPAddr).Port}
-		if udp, err = net.ListenUDP("udp4", ua); err == nil {
-			break
-		}
-		tln.Close()
-		if ta.Port != 0 || attempt == 19 {
-			return err
-		}
+	// TCP and UDP on one port (with port 0, tests: past Windows' excluded port ranges, ListenTCPAndUDP)
+	tln, udp, err := ListenTCPAndUDP(ta.IP, ta.Port)
+	if err != nil {
+		return err
 	}
 	var raw net.Listener = tln
 	if g.Limits != nil { // per real address, before the TLS handshake

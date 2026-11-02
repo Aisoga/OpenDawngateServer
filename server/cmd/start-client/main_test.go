@@ -24,7 +24,9 @@ func buildTool(t *testing.T, dir, name, pkg string) string {
 	if runtime.GOOS == "windows" {
 		exe += ".exe"
 	}
-	cmd := exec.Command(gobin, "build", "-trimpath", "-ldflags",
+	// -buildvcs=false: the VCS stamp is the same in both and printed by neither, and with it go build fails wherever
+	// git won't read the checkout (another owner's, as the Linux container's bind mount: GOFLAKE2)
+	cmd := exec.Command(gobin, "build", "-trimpath", "-buildvcs=false", "-ldflags",
 		"-X dawngate/server/internal/version.release=mapc-test", "-o", exe, pkg)
 	cmd.Dir = filepath.Join("..", "..")
 	if out, err := cmd.CombinedOutput(); err != nil {

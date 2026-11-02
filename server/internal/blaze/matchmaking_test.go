@@ -3,6 +3,7 @@ package blaze
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -205,7 +206,8 @@ func TestMatchmakingHosted(t *testing.T) {
 	if acct.Flags&store.FlagFTUEDone != 0 {
 		t.Error("a PvP game set the FTUE flag")
 	}
-	if log := ts.log.String(); !strings.Contains(log, "ready 0.0 s after the match formed") ||
+	// the time is measured: 0.0 s here, 0.1 s on a loaded machine (GOFLAKE2, the Linux container)
+	if log := ts.log.String(); !regexp.MustCompile(`ready \d+\.\d s after the match formed`).MatchString(log) ||
 		!strings.Contains(log, "match host 1 starting (pid ") {
 		t.Errorf("log:\n%s", log)
 	}

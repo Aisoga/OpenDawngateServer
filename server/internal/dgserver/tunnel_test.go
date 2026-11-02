@@ -213,10 +213,8 @@ func tunnelThroughServer(t *testing.T, plainOff bool) {
 		t.Errorf("the client doesn't listen on the GMS port %d: %v", gmsPort, gmsListed)
 	}
 	game.WriteToUDP(append(append([]byte{0x05}, gms.OfflineMagic...), 6, 0, 0, 0), &net.UDPAddr{IP: net.ParseIP(tunIP), Port: gmsPort})
-	time.Sleep(300 * time.Millisecond)
 
-	text := logText(t, logDir)
-	for _, want := range []string{
+	wants := []string{
 		"tunnel gateway on " + srvIP + ":",
 		"; a new gateway key in ",
 		"tunnel address " + tunIP,
@@ -225,7 +223,9 @@ func tunnelThroughServer(t *testing.T, plainOff bool) {
 		fmt.Sprintf("[redirector] -> getServerInstance reply: %s:%d, SECU=0", tunIP, in.ports[1]),
 		"[qos] udp ('" + tunIP + "', ",
 		"[gms] udp ('" + gmsFrom + "', ",
-	} {
+	}
+	text := waitLog(t, logDir, wants...) // the datagram and the replies' lines come after the replies
+	for _, want := range wants {
 		if !strings.Contains(text, want) {
 			t.Errorf("log lacks %q:\n%s", want, text)
 		}
@@ -376,6 +376,22 @@ func containsInt(xs []int, x int) bool {
 		}
 	}
 	return false
+}
+
+// waitLog waits up to 5 s until the log in dir holds every one of wants and returns its text (LF line ends). The
+// services log a reply after they have sent it and a connection's end after its handler saw it, so a client that has
+// its answer can be ahead of the line (GOFLAKE2: a fixed sleep before reading the log failed on loaded runners).
+func waitLog(t *testing.T, dir string, wants ...string) string {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		text, all := logText(t, dir), true
+		for _, w := range wants {
+			all = all && strings.Contains(text, w)
+		}
+		if all || time.Now().After(deadline) {
+			return text
+		}
+	}
 }
 
 func logText(t *testing.T, dir string) string {

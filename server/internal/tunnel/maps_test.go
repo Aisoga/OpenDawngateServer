@@ -101,6 +101,9 @@ func TestTunnelMaps(t *testing.T) {
 	if maps, named := gatewayAddr(g, s.id).Maps(); !named || !reflect.DeepEqual(maps, []InstalledMap{ring}) {
 		t.Errorf("Maps() = %+v, %v", maps, named)
 	}
+	// c ends first (the gateway keeps its session for the grace): a running c would take its session up again at
+	// once with its own list when the raw hello's attach closes c's connection (GOFLAKE2 (2))
+	c.Close()
 	other := InstalledMap{Archive: "zz_CM_Ring.snap", SHA256: sha256.Sum256([]byte("other"))}
 	lo := [4]byte{127, 0, 0, 1}
 	if st := rawHello(t, g, sessionHello{tunnelIP: lo, resumeID: s.id, resumeToken: s.token, release: "rel-A",
@@ -110,7 +113,6 @@ func TestTunnelMaps(t *testing.T) {
 	if maps, _ := gatewayAddr(g, s.id).Maps(); len(maps) != 1 || maps[0] != other {
 		t.Errorf("taken up again: Maps() = %+v", maps)
 	}
-	c.Close()
 	// a client without maps names an empty list; one with nil Maps none (a version 2 hello)
 	empty := &Client{Gateway: g.Addr(), Pin: g.Identity.Pin, TunnelIP: net.ParseIP(tunIP), DialIP: net.ParseIP(peerIP),
 		External: true, Release: "rel-A", Maps: ReadInstalledMaps(t.TempDir(), "zz_CM_Ring.snap")}
@@ -130,8 +132,7 @@ func TestTunnelMaps(t *testing.T) {
 		t.Error("a client with nil Maps named a list")
 	}
 	none.Close()
-	if !strings.Contains(buf.String(), "release rel-A, maps zz_CM_Ring.snap "+ring.Short()) ||
-		!strings.Contains(buf.String(), "release rel-A, maps none") {
+	if !buf.waitFor(3*time.Second, "release rel-A, maps zz_CM_Ring.snap "+ring.Short(), "release rel-A, maps none") {
 		t.Errorf("the gateway's log:\n%s", buf.String())
 	}
 	if _, named := (&Addr{}).Maps(); named {
@@ -160,9 +161,9 @@ func TestTunnelMaps(t *testing.T) {
 	if _, named := gatewayAddr(old, oc.session(time.Second).id).Maps(); named {
 		t.Error("an older gateway's session names maps")
 	}
-	if !strings.Contains(cbuf.String(), "takes no map list (a release before it): session hello version 2") ||
-		!strings.Contains(buf2.String(), "tunnel version 3 not supported") ||
-		!strings.Contains(buf2.String(), "maps not named (a Start-Client from before the map check per version)") {
+	if !cbuf.waitFor(3*time.Second, "takes no map list (a release before it): session hello version 2") ||
+		!buf2.waitFor(3*time.Second, "tunnel version 3 not supported",
+			"maps not named (a Start-Client from before the map check per version)") {
 		t.Errorf("the logs:\nclient %s\ngateway %s", cbuf.String(), buf2.String())
 	}
 }

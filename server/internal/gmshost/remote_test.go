@@ -666,6 +666,9 @@ func TestAgentSilentOrReplaced(t *testing.T) {
 	one := dialRaw(t, m2.Addr())
 	one.register(testKey, "twin", nonceA, offer)
 	one.recv(3 * time.Second)
+	// agentReady comes before the site is published: a second registration in between would be published first
+	// and then replaced by the first one's (GOFLAKE2 (5))
+	waitSite(t, m2, "twin", true)
 	two := dialRaw(t, m2.Addr())
 	two.register(testKey, "twin", "ffeeddccbbaa99887766554433221100", AgentAuth{Bind: "10.1.2.4", Public: "192.168.1.22", Ports: "23042-23042"})
 	two.recv(3 * time.Second)

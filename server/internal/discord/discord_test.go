@@ -247,7 +247,18 @@ func TestCloseWithoutApp(t *testing.T) {
 	var l logLines
 	p := New(fastOptions(app, &l))
 	p.Set(&Activity{Details: "In the menu"})
-	time.Sleep(200 * time.Millisecond)
+	// three refused dials (a fixed 200 ms saw only two on a loaded runner: GOFLAKE2 (4))
+	for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		app.mu.Lock()
+		dials := app.dials
+		app.mu.Unlock()
+		if dials >= 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d dials in 3 s (one every 50 ms wanted)", dials)
+		}
+	}
 	done := make(chan struct{})
 	go func() { p.Close(); close(done) }()
 	select {
@@ -261,7 +272,7 @@ func TestCloseWithoutApp(t *testing.T) {
 			n++
 		}
 	}
-	if n != 1 || app.dials < 3 {
+	if n != 1 {
 		t.Errorf("%d failure lines (want 1) after %d dials: %q", n, app.dials, l.lines)
 	}
 }

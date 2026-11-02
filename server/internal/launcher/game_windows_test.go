@@ -95,7 +95,9 @@ func TestParkWindows(t *testing.T) {
 	cls, _ := syscall.UTF16PtrFromString("DawngateLauncherTestWindow")
 	wc := wndClassEx{wndProc: procDefWindowProcW.Addr(), className: cls}
 	wc.size = uint32(unsafe.Sizeof(wc))
-	if r, _, err := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc))); r == 0 {
+	// a second run in this process (-count, -cpu) finds the class registered
+	const errorClassAlreadyExists = syscall.Errno(1410)
+	if r, _, err := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc))); r == 0 && err != errorClassAlreadyExists {
 		t.Fatalf("RegisterClassEx: %v", err)
 	}
 	// Made visible with WS_VISIBLE, this off-screen test window took the foreground from the user's window once

@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "core/damage/regen.h"
+#include "core/matchflow/camps.h"
 #include "core/protocol/wire.h"
 #include "core/replication/create_order.h"
 #include "core/replication/outgoing.h"
@@ -301,6 +302,10 @@ int ScanRaw(void* sim, NetObject* out, int max, bool pendingEffects) {
       if (i.data[kPartProjectile])
         i.target = Field<std::uint32_t>(i.data[kPartProjectile], projdata::kTargetObjectId);
       i.pendingDelete = pending;
+      i.playerControlled = Field<std::uint8_t>(o, gobj::kPlayerControlled) != 0;
+      void* npcOf = Field<void*>(o, npc::kOfObject);
+      char* npcData = npcOf ? Field<char*>(npcOf, noun::kData) : nullptr;
+      if (npcData) i.npcType = Field<std::int32_t>(npcData, npc::kType);
     }
     return n;
   } __except (SehNote(GetExceptionInformation(), "Scan")) {
@@ -1040,7 +1045,7 @@ bool InstanceExists(std::uint32_t instance) {
 }
 
 void BuildWorld(void* sim, unsigned index, bool all, RecordsFn records, void* ctx, std::vector<WorldMessage>* out,
-                WorldCounts* counts) {
+                WorldCounts* counts, const std::unordered_set<std::uint32_t>* hold) {
   *counts = WorldCounts{};
   if (!g_ready) return;
   std::vector<NetObject> objs;
@@ -1062,6 +1067,10 @@ void BuildWorld(void* sim, unsigned index, bool all, RecordsFn records, void* ct
       continue;
     }
     if (o.known & bit) continue;
+    if (hold && hold->count(o.id)) {  // SEC5: its team doesn't see it; the replication step creates it at first sight
+      ++counts->held;
+      continue;
+    }
     const size_t before = out->size();
     int b = 0;
     const Bytes recs = records ? records(ctx, o.id) : Bytes();
@@ -1076,9 +1085,9 @@ void BuildWorld(void* sim, unsigned index, bool all, RecordsFn records, void* ct
   }
   counts->messages = static_cast<int>(out->size());
   Log("replication: world for player %u: %d networked objects, %d created (%d with attributes or HP), %d not sent, "
-      "%d failed; %d messages, %d bytes",
-      index, counts->networked, counts->created, counts->withHp, counts->skipped, counts->failed, counts->messages,
-      counts->bytes);
+      "%d failed, %d held in fog (SEC5); %d messages, %d bytes",
+      index, counts->networked, counts->created, counts->withHp, counts->skipped, counts->failed, counts->held,
+      counts->messages, counts->bytes);
 }
 
 int PendingOutgoing(void* sim) {
@@ -1390,49 +1399,6 @@ char* SehUiCamps(void* sim, int* count) {
     return nullptr;
   }
 }
-std::uint32_t SehCampMarker(char* c) {
-  __try {
-    return Field<std::uint32_t>(c, camp::kSpawnMarkerId);
-  } __except (SehNote(GetExceptionInformation(), "UI camp")) {
-    return 0;
-  }
-}
-}  // namespace
-
-int CampUpdate(void* sim, bool full, bool withFieldState, Bytes* out) {
-  out->clear();
-  if (!g_ready) return 0;
-  int count = 0;
-  char* camps = SehUiCamps(sim, &count);
-  if (!camps || count <= 0) return 0;
-  if (count > 32) count = 32;  // the mask is a u32
-  static unsigned char buf[256];
-  Bytes body;
-  std::uint32_t mask = 0;
-  int total = 0;
-  for (int i = 0; i < count; ++i) {
-    char* c = camps + i * kCampSize;
-    if (full && !SehCampMarker(c)) continue;  // an entry the director never added (AIDirector's camp pool has 32)
-    int written = 0;
-    const int n = UiBody(c, kCamp, c + camp::kFieldState, full, withFieldState, buf, sizeof buf, &written);
-    if (n < 0) {
-      Log("replication: UICreepCampUpdate camp %d (%s) not written (%d: %s)", i, full ? "full" : "delta", n,
-          WriteError(n));
-      return n;
-    }
-    if (n == 0) continue;
-    mask |= 1u << i;
-    body.insert(body.end(), buf, buf + n);
-    total += written;
-  }
-  if (!mask) return 0;
-  out->push_back(gms::kGmsUICreepCampUpdate);
-  PutU32(*out, mask);
-  out->insert(out->end(), body.begin(), body.end());
-  return total;
-}
-
-namespace {
 // Copies `n` bytes of the server's camp list (under SEH); false on an exception.
 bool SehCopyCamps(const char* from, char* to, std::size_t n) {
   __try {
@@ -1444,9 +1410,10 @@ bool SehCopyCamps(const char* from, char* to, std::size_t n) {
 }
 }  // namespace
 
-int CampViewUpdate(void* sim, CampViewBuffer* view, int (*bitsOf)(std::uint32_t marker), bool full,
-                   bool withFieldState, Bytes* out) {
+int CampViewUpdate(void* sim, CampViewBuffer* view, int audience, int (*truthOf)(std::uint32_t marker), bool full,
+                   bool withFieldState, Bytes* out, std::string* sent) {
   out->clear();
+  if (sent) sent->clear();
   if (!g_ready || !view) return 0;
   int count = 0;
   char* camps = SehUiCamps(sim, &count);
@@ -1469,19 +1436,24 @@ int CampViewUpdate(void* sim, CampViewBuffer* view, int (*bitsOf)(std::uint32_t 
     if (!SehCopyCamps(camps + i * kCampSize, v, camp::kFieldState)) return 0;  // mCampVisibleToTeam, mSpawnMarkerId
     std::uint32_t marker = 0;
     std::memcpy(&marker, v + camp::kSpawnMarkerId, 4);
-    if (bitsOf && marker) {
-      const int b = bitsOf(marker);
-      if (b >= 0) v[0] = static_cast<char>(b);
-    }
-    if (full && !marker) continue;
+    // SEC4: the audience's part of the server's byte (a team never gets the other team's bit)
+    const int truth = truthOf && marker ? truthOf(marker) : -1;
+    v[0] = static_cast<char>(gms::flow::CampAudienceBits(audience, static_cast<std::uint8_t>(v[0]), truth));
+    if (full && !marker) continue;  // an entry the director never added (AIDirector's camp pool has 32)
     int written = 0;
     const int n = UiBody(v, kCamp, v + camp::kFieldState, full, withFieldState, buf, sizeof buf, &written);
     if (n < 0) {
-      Log("replication: UICreepCampUpdate (spectators) camp %d (%s) not written (%d: %s)", i, full ? "full" : "delta",
-          n, WriteError(n));
+      Log("replication: UICreepCampUpdate (audience %d) camp %d (%s) not written (%d: %s)", audience, i,
+          full ? "full" : "delta", n, WriteError(n));
       return n;
     }
     if (n == 0) continue;
+    if (sent) {
+      char item[64];
+      std::snprintf(item, sizeof item, "%scamp %d (marker %u) = 0x%02X", sent->empty() ? "" : ", ", i,
+                    static_cast<unsigned>(marker), static_cast<unsigned>(static_cast<std::uint8_t>(v[0])));
+      *sent += item;
+    }
     mask |= 1u << i;
     body.insert(body.end(), buf, buf + n);
     total += written;

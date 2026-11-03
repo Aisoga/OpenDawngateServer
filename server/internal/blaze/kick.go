@@ -232,7 +232,7 @@ func (s *Server) kickFromGames(conn *Conn) bool {
 			payload := PlayerRemovedNotification(hg.game.ID, pid, RemovedPlayerKicked)
 			conn.Push(s, ComponentGameManager, NotifyPlayerRemovedID, "NotifyPlayerRemoved", payload)
 			hg.push(NotifyPlayerRemovedID, "NotifyPlayerRemoved", func(*hostedPlayer) []byte { return payload })
-			hg.lobbyLeft(pid)
+			hg.removedLeft(pid) // SEC6: and its match chats
 		}
 	}
 	return found

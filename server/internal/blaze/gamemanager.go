@@ -288,6 +288,7 @@ func registerGameManager(s *Server) {
 			return r.Server.startHostedGame(r, g, p)
 		}
 		r.Server.Log.Logf("blaze", "   game %d %q: GMS %s (HNET), player %d", g.ID, g.Name, g.GMS, p.ID)
+		r.Server.unhostedJoined(r.Conn, g.ID, p) // SEC6: its match chats (matchchat.go)
 		r.Notify(ComponentGameManager, NotifyGameSetupID, "NotifyGameSetup", GameSetupNotification(r.Conn.ForClient(g), p))
 		return JoinGameReply(g.ID)
 	})
@@ -307,7 +308,9 @@ func registerGameManager(s *Server) {
 			r.Server.kickFromCustomGame(r, gid, pid, reason)
 			return nil
 		}
-		r.Server.leaveHostedGame(r, gid, pid, reason)
+		if !r.Server.leaveHostedGame(r, gid, pid, reason) {
+			r.Server.unhostedLeft(gid, pid) // SEC6: a game without a match host (matchchat.go)
+		}
 		return nil
 	})
 	// updateMeshConnection (Blaze::GameManager::UpdateMeshConnectionRequest 0x012E7828: GID, TARG list of

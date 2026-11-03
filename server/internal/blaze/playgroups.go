@@ -15,7 +15,8 @@ import (
 //
 // What the game uses it for during a match: its chat (cBlazeClientPlaygroup, snblaze_rooms.cpp) joins
 // the playgroup "GG-<game id>" with createPlaygroup (JOIN 1: create or join by UKEY), and leaves it with
-// leavePlaygroup when the key is cleared (0x00AAE2B0 -> Leave 0x00AAE170). The client's side of a create:
+// leavePlaygroup when the key is cleared (0x00AAE2B0 -> Leave 0x00AAE170). Who may be in a match's chats is the
+// server's call (SEC6, matchchat.go). The client's side of a create:
 //
 //	createPlaygroup -> JoinPlaygroupResponse: PlaygroupAPI's callback (0x00C90970) makes a Playgroup
 //	  (0x00C905C0) from INFO, keeps the title's callback in it and lists it as pending (+0x1A0);
@@ -265,7 +266,8 @@ func (pg *playgroup) addLocked(m PlaygroupMember, conn *Conn) joinResult {
 		res.again = true
 		res.member = pg.members[i].PlaygroupMember
 	} else {
-		if lim := pg.info.MemberLimit; lim > 0 && int64(len(pg.members)) >= lim {
+		// a match chat's roster bounds it (SEC6: spectators have no limit of their own)
+		if lim := pg.info.MemberLimit; lim > 0 && int64(len(pg.members)) >= lim && !isMatchChatKey(pg.info.Key) {
 			return joinResult{err: ErrPlaygroupFull}
 		}
 		m.Slot = pg.nextSID
@@ -348,6 +350,15 @@ func registerPlaygroups(s *Server) {
 		}
 		m := PlaygroupMember{AccountID: sess.Account.UserID, BlazeID: sess.Persona.ID, Name: sess.Persona.Name,
 			JoinTime: r.Server.Now().Unix()}
+		// SEC6: a match's chat only for the match's players, with the server's info (matchchat.go)
+		if isMatchChatKey(req.Key) {
+			if ok, why := r.Server.matchChatAllowed(req.Key, m.BlazeID); !ok {
+				r.Server.Log.Logf("blaze", "   playgroup %q: refused for %d (%s); error %#04x", req.Key, m.BlazeID, why, ErrPlaygroupNotAuthorized)
+				r.Fail(ErrPlaygroupNotAuthorized)
+				return nil
+			}
+			req = matchChatInfo(req.Key)
+		}
 		res := r.Server.groups.createOrJoin(req, join != 0, m, r.Conn)
 		if res.err != 0 {
 			r.Server.Log.Logf("blaze", "   playgroup %q: error %#04x", req.Key, res.err)

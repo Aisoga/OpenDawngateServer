@@ -732,7 +732,7 @@ func (s *Server) kickFromCustomGame(r *Request, gid, pid, reason int64) {
 			kicked.Push(s, ComponentGameManager, NotifyPlayerRemovedID, "NotifyPlayerRemoved", note)
 		}
 		hg.push(NotifyPlayerRemovedID, "NotifyPlayerRemoved", func(*hostedPlayer) []byte { return note })
-		hg.lobbyLeft(pid)
+		hg.removedLeft(pid)
 	})
 }
 
@@ -953,6 +953,9 @@ func registerCustomGames(s *Server) {
 		}
 		hg.mu.Unlock()
 		r.Server.Log.Logf("blaze", "   game %d: teams swapped: %d asked, %d moved %v", gid, len(moves), len(moved), moved)
+		if len(moved) > 0 { // SEC6: a moved player leaves its old team chat (matchchat.go)
+			r.Server.pruneMatchChats(gid)
+		}
 		if ignored > 0 {
 			r.Server.Log.Logf("blaze", "   game %d: %d moves off team 0 ignored (a practice group)", gid, ignored)
 		}

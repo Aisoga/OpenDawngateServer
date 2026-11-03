@@ -320,7 +320,7 @@ func (s *Server) leaveHostedGame(r *Request, gameID, playerID, reason int64) boo
 				conn.Push(s, ComponentGameManager, NotifyPlayerRemovedID, "NotifyPlayerRemoved", payload)
 				hg.push(NotifyPlayerRemovedID, "NotifyPlayerRemoved", func(*hostedPlayer) []byte { return payload })
 			})
-			hg.lobbyLeft(playerID) // B15: a custom game's roster, its admin, the game browser
+			hg.removedLeft(playerID) // B15: a custom game's roster, its admin, the game browser; SEC6: the match chats
 		})
 	}
 	return true

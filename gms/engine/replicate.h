@@ -21,6 +21,7 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace repl {
@@ -71,6 +72,8 @@ struct NetObject {
   std::uint32_t parent = 0;  // cLocomotionData +8 (attach parent, follow target): created first too (FARISW)
   std::uint32_t target = 0;  // cProjectileData +0x80 (mTargetObjectId): created first too (ABILVFX)
   bool pendingDelete = false;  // ScanPendingEffects only: marked for delete (+0x55) in this tick (ABILVFX)
+  bool playerControlled = false;  // object +0x56 (mbPlayerControlled): a player's creature (SEC5: always created)
+  std::int32_t npcType = -1;      // nNPCType (object +0x78 -> data +0x68), -1 without one (SEC5b: AnnouncedNpcType)
 };
 
 // The live networked objects (network component, not pending delete), in the object manager's order. -1 on an
@@ -150,19 +153,21 @@ bool InstanceExists(std::uint32_t instance);
 
 // The initial world for the server player `index` (D2f), in the server's object order, written with the field states
 // for objects nobody knew; sets bit `index` in every created object's known and visible masks. `all`: Replicated()'s
-// rule. `records(carrier)` gives an object's modifier records (8F).
+// rule. `records(carrier)` gives an object's modifier records (8F). SEC5: the objects in `hold` (may be null) are not
+// created (the player's team doesn't see them; the replication step creates them at first sight).
 struct WorldCounts {
   int networked = 0;  // live objects with a network component
   int created = 0;    // created for the player
   int withHp = 0;     // of those, with attribute or combatant data
   int skipped = 0;    // networked, but not of a replicated noun type (spawn points, base regeneration zones)
   int failed = 0;     // an object whose bodies could not be built (logged)
+  int held = 0;       // SEC5: in `hold`, not created (the player's team doesn't see it)
   int messages = 0;
   int bytes = 0;
 };
 using RecordsFn = Bytes (*)(void* ctx, std::uint32_t carrier);
 void BuildWorld(void* sim, unsigned index, bool all, RecordsFn records, void* ctx, std::vector<WorldMessage>* out,
-                WorldCounts* counts);
+                WorldCounts* counts, const std::unordered_set<std::uint32_t>* hold = nullptr);
 
 // ---- the outgoing vector (seam 1) -----------------------------------------------------------------------------------
 
@@ -234,18 +239,19 @@ int UIDataUpdate(void* sim, bool full, bool withFieldState, Bytes* out);
 // the player's first 8B (the client walks the mask only up to its node capacity).
 int SpiritWellUpdate(void* sim, bool full, bool withFieldState, Bytes* out);
 
-// UICreepCampUpdate (8D): u32 camp mask, then one reflected cBattlegroundsUICampData per set bit, from the server's camp
-// list (UI data +0x368, count +0x36C, field state +0x8 per camp); full (the camps the director added, with the field
-// states if `withFieldState`) or the changed members, as SpiritWellUpdate. Must follow the player's first 8B.
-int CampUpdate(void* sim, bool full, bool withFieldState, Bytes* out);
-
-// CAMPICONS: a second view of the camp list for the spectators, with its own field states: `view` holds a copy of the
-// server's entries (0x18 bytes each, made at the first call); each call copies every entry's mCampVisibleToTeam and
-// mSpawnMarkerId into it, puts `bitsOf(marker)` (when >= 0) into its mCampVisibleToTeam, and writes the 8D as
-// CampUpdate does from the copy (full, or the copy's changed members against the copy's field states).
+// UICreepCampUpdate (8D): u32 camp mask, then one reflected cBattlegroundsUICampData per set bit (mCampVisibleToTeam,
+// mSpawnMarkerId), from a copy of the server's camp list (UI data +0x368, count +0x36C, 0x18 bytes each, field state
+// +0x8) for one audience (gms::flow::CampAudience). CAMPICONS made the spectators' copy, SEC4 one per team: the
+// server's entry holds every team's knowledge, and no player gets it as it is. `view` is made at the first call (the
+// whole entries, the field states as the engine set them up); each call copies every entry's mCampVisibleToTeam and
+// mSpawnMarkerId into it, puts gms::flow::CampAudienceBits(audience, the server's byte, truthOf(marker)) into its
+// mCampVisibleToTeam (`truthOf` may be null: -1), and writes the 8D from the copy: full (the camps the director added,
+// with the copy's field states if `withFieldState`) or the copy's changed members against the copy's field states, so
+// an audience gets no 8D when its own bytes didn't change. Must follow the player's first 8B. `sent` (if given) gets
+// "camp <i> (marker <m>) = 0x<bits>" for every entry written.
 typedef std::vector<char> CampViewBuffer;
-int CampViewUpdate(void* sim, CampViewBuffer* view, int (*bitsOf)(std::uint32_t marker), bool full,
-                   bool withFieldState, Bytes* out);
+int CampViewUpdate(void* sim, CampViewBuffer* view, int audience, int (*truthOf)(std::uint32_t marker), bool full,
+                   bool withFieldState, Bytes* out, std::string* sent = nullptr);
 
 // The server player's team (false if there is no such player).
 bool PlayerTeam(void* sim, unsigned index, std::uint8_t* team);

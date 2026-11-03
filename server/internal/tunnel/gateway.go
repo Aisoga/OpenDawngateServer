@@ -308,6 +308,7 @@ func (g *Gateway) acceptLoop() {
 
 func (g *Gateway) serveConn(c *tls.Conn) {
 	peer := logging.Peer(c.RemoteAddr())
+	defer g.Log.Recover(who, peer, c) // a panic ends this connection (and its session's stream) only
 	c.SetDeadline(time.Now().Add(g.HandshakeTimeout))
 	if err := c.Handshake(); err != nil {
 		g.logf("%s: TLS handshake failed: %v", peer, err)
@@ -770,6 +771,7 @@ func (s *session) counts() string {
 }
 
 func (s *session) receive(pkt []byte, from *net.UDPAddr) {
+	defer s.g.Log.Recover(who, logging.Peer(from), nil) // one datagram's panic drops only that datagram
 	s.mu.Lock()
 	up := s.up
 	s.mu.Unlock()

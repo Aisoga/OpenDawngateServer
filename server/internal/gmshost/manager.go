@@ -588,6 +588,7 @@ func newToken() string {
 // goes to its match) or an agent's agentHello (remote.go). Anything else closes it.
 func (m *Manager) handshake(c net.Conn) {
 	peer := logging.Peer(c.RemoteAddr())
+	defer m.log.Recover(who, peer, c) // a panic ends this control connection only
 	c.SetReadDeadline(time.Now().Add(m.cfg.HelloTimeout))
 	r := NewLineReader(c)
 	line, err := r.Next()
@@ -686,6 +687,7 @@ type ctlConn struct {
 }
 
 func (cc *ctlConn) readLoop(mt *Match) {
+	defer mt.m.log.Recover(who, logging.Peer(cc.c.RemoteAddr()), cc.c) // a panic ends this host's connection only
 	defer close(cc.gone)
 	for {
 		line, err := cc.r.Next()

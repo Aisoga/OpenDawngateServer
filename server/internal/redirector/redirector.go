@@ -93,6 +93,7 @@ func (s *Server) ServeConn(c net.Conn) {
 	defer c.Close()
 	const who = "redirector"
 	peer := logging.Peer(c.RemoteAddr())
+	defer s.Log.Recover(who, peer, c) // a panic ends this connection only
 	host := s.Host
 	if a := tunnel.Local(c); a != nil {
 		host = a.IP.String()
@@ -110,6 +111,7 @@ func (s *Server) ServeConn(c net.Conn) {
 		s.Log.Logf(who, "connection from %s (no TLS)", peer)
 	}
 	r := fire.NewReader(c)
+	r.MaxPayload = fire.PreLoginMaxPayload // the redirector serves only getServerInstance, before any login
 	for {
 		f, err := r.Next()
 		if err != nil {

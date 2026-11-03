@@ -112,6 +112,14 @@ func registerPlaygroupLobby(s *Server) {
 		key, _ := r.Body.Str("UKEY")
 		m := PlaygroupMember{AccountID: sess.Account.UserID, BlazeID: sess.Persona.ID, Name: sess.Persona.Name,
 			JoinTime: r.Server.Now().Unix()}
+		// SEC6: a match's chat by its id or key only for the match's players (matchchat.go)
+		if k := r.Server.groups.keyFor(id, key); isMatchChatKey(k) {
+			if ok, why := r.Server.matchChatAllowed(k, m.BlazeID); !ok {
+				r.Server.Log.Logf("blaze", "   playgroup %d %q: join refused for %d (%s); error %#04x", id, k, m.BlazeID, why, ErrPlaygroupNotAuthorized)
+				r.Fail(ErrPlaygroupNotAuthorized)
+				return nil
+			}
+		}
 		res := r.Server.groups.join(id, key, m, r.Conn)
 		if res.err != 0 {
 			r.Server.Log.Logf("blaze", "   playgroup %d %q: join by %d: error %#04x", id, key, m.BlazeID, res.err)
@@ -311,7 +319,8 @@ func (p *playgroups) update(id, blazeID int64, leaderOnly bool, fn func(pg *play
 		return lobbyChange{err: ErrPlaygroupNotFound}
 	case pg.indexOf(blazeID) < 0:
 		return lobbyChange{err: ErrPlaygroupNotInGroup}
-	case leaderOnly && pg.info.Owner != blazeID:
+	case leaderOnly && pg.info.Owner != blazeID,
+		isMatchChatKey(pg.info.Key): // SEC6: a match's chat is the server's (matchchat.go); the client changes none
 		return lobbyChange{err: ErrPlaygroupNotAuthorized}
 	}
 	before := append([]pgMember{}, pg.members...)
@@ -343,6 +352,20 @@ func (p *playgroups) snapshot(id int64) (members []pgMember, owner int64, ok boo
 		return nil, 0, false
 	}
 	return append([]pgMember{}, pg.members...), pg.info.Owner, true
+}
+
+// keyFor is the unique key of the playgroup join(id, key) would find ("" for none or an unkeyed one; key itself when
+// id is 0 and no group has it).
+func (p *playgroups) keyFor(id int64, key string) string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if pg := p.byID[id]; pg != nil {
+		return pg.info.Key
+	}
+	if id == 0 {
+		return key
+	}
+	return ""
 }
 
 // join adds m to playgroup id (joinPlaygroup; by its unique key when id is 0). A closed playgroup

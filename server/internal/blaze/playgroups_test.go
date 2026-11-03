@@ -77,7 +77,7 @@ func payloadOf(t *testing.T, class string, f fire.Frame) *tdf.Struct {
 // get empty replies. A second player with the same key joins the same playgroup (the first member hears
 // of it), and leaves it by disconnecting.
 func TestChatPlaygroup(t *testing.T) {
-	ps := newPipeSession(t)
+	ps := newPipeSessionWith(t, seatFirst(2)) // both players in game 1 (SEC6: only they may join GG-1)
 	ps.send(6, 1, 0, ps.request("createplaygroup_request"))
 	tdfcheck.Require(t, "Blaze::Playgroups::CreatePlaygroupRequest", ps.request("createplaygroup_request"))
 	ps.loginAs("player@example.com", 1)

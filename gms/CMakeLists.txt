@@ -228,6 +228,7 @@ if(RAKNET_FOUND)
     tests/test_net.cpp          # Q3c: the endpoint's timing and network simulator against a RakNet client on loopback
     tests/test_limits.cpp       # the network limits (NetLimiter) and the endpoint with them on, on loopback
     tests/test_banter.cpp       # D11b: the banter, kill, assist and presence lines, the sequential emotes
+    tests/test_create_hold.cpp  # SEC5: a new object's create held from the players whose team doesn't see it
     tests/test_command_queue.cpp  # D7c: a move during an attack order (the queued-move step, the takeover)
     tests/test_d3d9.cpp         # H1d: the host without Direct3D 9 (the plan, the verdict, the stand-in IDirect3D9)
     tests/test_check.cpp        # the strict message check (every type's malformed inputs, the world, the guard)

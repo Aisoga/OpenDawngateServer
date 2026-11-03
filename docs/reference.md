@@ -350,6 +350,16 @@ These limits apply on public servers, or with `--limits on`.
 
 A player who hits a limit sees a *LOGIN ERROR* or "no game server" message and can try again shortly. A household fits within the limits easily. A LAN party of ten players behind one internet address may not.
 
+These apply always, on every server:
+
+| What | Limit |
+|---|---|
+| Request body on the game's HTTP port | 32 MiB for the game's crash and error reports, 1 MiB for everything else; a larger one is answered `413 Content Too Large` and the connection closed, a malformed request `400 Bad Request` |
+| Request head on the game's HTTP port | 64 KiB |
+| A lobby message before login | 4 KB; the game's own messages before login take a few hundred bytes, so only a login name or password thousands of characters long makes a bigger one, and the server then drops the connection instead of refusing the login |
+
+An error while the server serves one connection closes only that connection; the server logs it with the details and goes on.
+
 ## The issue tracker's API
 
 With `issues = on` the website serves a JSON API for a reviewer under `https://<server address>/api/`. Every request

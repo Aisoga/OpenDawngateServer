@@ -65,8 +65,26 @@ func Encode(f Frame) ([]byte, error) {
 	return append(b, f.Payload...), nil
 }
 
+// The payload caps of a server's connection (Reader.MaxPayload). Before login a client sends only small requests:
+// the redirector's getServerInstance (200 bytes in the client's capture), preAuth (231), ping and login (50 in the
+// capture; about 420 with the longest name and password tried, 289 and 100 characters). PreLoginMaxPayload leaves
+// about ten times that. After login the cap is the wire's own (the u16 length): the client's largest request seen
+// is startMatchmaking (745 bytes), but what chat, petitions or settings may carry isn't bounded by the client.
+const (
+	PreLoginMaxPayload = 4096
+	MaxPayload         = 0xFFFF
+)
+
+// ErrFrameTooLarge is Next's error for a frame whose header claims more than Reader.MaxPayload bytes; the
+// payload isn't read, and the stream can't be resynchronised, so the connection is closed.
+var ErrFrameTooLarge = errors.New("fire: frame over the payload cap")
+
 // Reader splits a byte stream into frames.
 type Reader struct {
+	// MaxPayload is the largest payload Next accepts (0 = MaxPayload, the wire's limit). It is checked as soon as
+	// a header is in, before the payload is buffered.
+	MaxPayload int
+
 	src   io.Reader
 	buf   []byte
 	chunk []byte
@@ -76,11 +94,16 @@ type Reader struct {
 func NewReader(src io.Reader) *Reader { return &Reader{src: src, chunk: make([]byte, 65536)} }
 
 // Next returns the next complete frame. At the end of the stream it returns io.EOF (or the read
-// error); Pending then holds any bytes that didn't form a whole frame.
+// error); Pending then holds any bytes that didn't form a whole frame. A header over MaxPayload ends the stream
+// with an error wrapping ErrFrameTooLarge.
 func (r *Reader) Next() (Frame, error) {
 	for {
 		if len(r.buf) >= HeaderLen {
 			n := int(binary.BigEndian.Uint16(r.buf[0:]))
+			if max := r.MaxPayload; max > 0 && n > max {
+				return Frame{}, fmt.Errorf("%w: %d bytes claimed, %d allowed (component %#04x, command %#04x)", ErrFrameTooLarge,
+					n, max, binary.BigEndian.Uint16(r.buf[2:]), binary.BigEndian.Uint16(r.buf[4:]))
+			}
 			if len(r.buf) >= HeaderLen+n {
 				msg := binary.BigEndian.Uint32(r.buf[8:])
 				f := Frame{
@@ -233,6 +256,10 @@ func SafeHexdump(b []byte) string {
 
 // LogEnd logs the end of a connection: leftover bytes and a read error other than EOF, if any.
 func LogEnd(log *logging.Log, who string, r *Reader, err error) {
+	if errors.Is(err, ErrFrameTooLarge) { // the pending bytes are the refused frame's start: not dumped
+		log.Logf(who, "connection closed: %v (%d bytes unread)", err, len(r.Pending()))
+		return
+	}
 	if p := r.Pending(); len(p) > 0 {
 		log.Logf(who, "connection closed with %d unparsed bytes:\n%s", len(p), SafeHexdump(p))
 	}

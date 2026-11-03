@@ -163,6 +163,36 @@ func Fingerprint(modulus []byte) string {
 // maxHead bounds the request head, like asyncio's StreamReader limit.
 const maxHead = 64 * 1024
 
+// The request body's limits: a body longer than its path's limit (Content-Length, or the chunks' running total) is
+// answered 413 and the connection closed, before any of it is read. Nothing here uses a body beyond logging its
+// first logging.MaxDump bytes, so the body is read in pieces and only those bytes are kept, whatever its length.
+// The game's only bodies are CrashRpt's reports: an error report was 62 KB, a crash's report (a minidump, the logs and
+// a picture of every screen) is untested, so the crash paths get room for several big pictures; every other path
+// (the web content, the home page, the history, the maps, the QoS requests) is GETs only.
+const (
+	maxBody      = 1 << 20  // 1 MiB: every path but the crash reports'
+	maxCrashBody = 32 << 20 // 32 MiB: CrashRpt's reports under /crash/
+	maxChunkLine = 4096     // a chunk's size line (with its extensions), bufio.Reader's default size
+)
+
+// bodyLimit is the body limit for a request target.
+func bodyLimit(target string) int64 {
+	if strings.HasPrefix(urlPath(target), "/crash/") {
+		return maxCrashBody
+	}
+	return maxBody
+}
+
+// errTooLarge is a body over its path's limit (413).
+type errTooLarge struct {
+	limit int64
+	what  string // the claimed length or the chunk that went over
+}
+
+func (e errTooLarge) Error() string {
+	return fmt.Sprintf("body over the limit of %d bytes (%s)", e.limit, e.what)
+}
+
 // Serve accepts connections until the listener is closed.
 func (h *HTTP) Serve(ln net.Listener) error {
 	for {
@@ -179,7 +209,17 @@ type header struct{ name, value string }
 type request struct {
 	line    string
 	headers []header
-	body    []byte
+	body    []byte // the body's first logging.MaxDump bytes
+	size    int64  // the body's length
+}
+
+// Write keeps a body's first logging.MaxDump bytes and counts the rest (readRequest's sink).
+func (r *request) Write(p []byte) (int, error) {
+	if room := logging.MaxDump - len(r.body); room > 0 {
+		r.body = append(r.body, p[:min(room, len(p))]...)
+	}
+	r.size += int64(len(p))
+	return len(p), nil
 }
 
 func (r *request) get(name string) string {
@@ -191,15 +231,18 @@ func (r *request) get(name string) string {
 	return ""
 }
 
-// ServeConn reads one request (30 s limit), logs it, answers and closes the connection.
+// ServeConn reads one request (30 s limit), logs it, answers and closes the connection. A request it can't read
+// is answered 400 (malformed) or 413 (a body over its limit, bodyLimit); a panic in its handling is logged and
+// ends only this connection.
 func (h *HTTP) ServeConn(c net.Conn) {
 	defer c.Close()
 	const who = "http"
 	peer := logging.Peer(c.RemoteAddr())
+	defer h.Log.Recover(who, peer, c)
 	c.SetReadDeadline(time.Now().Add(30 * time.Second))
-	req, err := readRequest(bufio.NewReader(c))
+	req, err := readRequest(bufio.NewReaderSize(c, maxChunkLine))
 	if err != nil {
-		h.Log.Logf(who, "%s %s", peer, describeErr(err))
+		refuse(h.Log, who, c, peer, req, err)
 		return
 	}
 	if req == nil {
@@ -230,12 +273,12 @@ func (h *HTTP) ServeConn(c net.Conn) {
 		hdrs = append(hdrs, "    "+hd.name+": "+hd.value)
 	}
 	msg := peer + " " + req.line + "\n" + strings.Join(hdrs, "\n")
-	if len(req.body) > 0 {
+	if req.size > 0 {
 		more := ""
-		if len(req.body) > logging.MaxDump {
-			more = fmt.Sprintf(" (first %d shown)", logging.MaxDump)
+		if req.size > int64(len(req.body)) {
+			more = fmt.Sprintf(" (first %d shown)", len(req.body))
 		}
-		msg += fmt.Sprintf("\n    body %d bytes%s:\n%s", len(req.body), more, logging.Hexdump(req.body[:min(len(req.body), logging.MaxDump)]))
+		msg += fmt.Sprintf("\n    body %d bytes%s:\n%s", req.size, more, logging.Hexdump(req.body))
 	}
 	h.Log.Log(who, msg)
 
@@ -416,6 +459,10 @@ func describeErr(err error) string {
 	if errors.As(err, &ve) {
 		return "ValueError: " + ve.msg
 	}
+	var tl errTooLarge
+	if errors.As(err, &tl) {
+		return "TooLarge: " + tl.Error()
+	}
 	return logging.ErrName(err) + ": " + err.Error()
 }
 
@@ -454,38 +501,105 @@ func readRequest(r *bufio.Reader) (*request, error) {
 			}
 		}
 	}
+	// The body: every length the client claims is checked against what is left of the path's limit before a byte of
+	// it is read, and it goes to req's sink in bufio-sized pieces (nothing is ever sized by a claimed length).
+	target := "/"
+	if f := strings.Fields(req.line); len(f) >= 2 {
+		target = f[1]
+	}
+	limit := bodyLimit(target)
 	switch {
 	case strings.EqualFold(req.get("transfer-encoding"), "chunked"):
 		for {
-			line, err := r.ReadString('\n')
+			line, err := r.ReadSlice('\n') // at most the reader's buffer (maxChunkLine)
+			if errors.Is(err, bufio.ErrBufferFull) {
+				return req, errValue{fmt.Sprintf("chunk size line longer than %d bytes", maxChunkLine)}
+			}
 			if err != nil {
-				return nil, err
+				return req, unexpectedEOF(err)
 			}
-			sizeText := strings.TrimSpace(strings.SplitN(line, ";", 2)[0])
-			size, perr := strconv.ParseInt(sizeText, 16, 64)
-			if perr != nil || size < 0 {
-				return nil, errValue{fmt.Sprintf("invalid chunk size %q", line)}
+			sizeText := strings.TrimSpace(strings.SplitN(string(line), ";", 2)[0])
+			size, perr := strconv.ParseUint(sizeText, 16, 64)
+			if perr != nil {
+				if errors.Is(perr, strconv.ErrRange) {
+					return req, errTooLarge{limit, "a chunk of 0x" + sizeText + " bytes"}
+				}
+				return req, errValue{fmt.Sprintf("invalid chunk size %q", line)}
 			}
-			chunk := make([]byte, size+2)
-			if _, err := io.ReadFull(r, chunk); err != nil {
-				return nil, err
+			if size > uint64(limit-req.size) { // req.size <= limit throughout, so no overflow
+				return req, errTooLarge{limit, fmt.Sprintf("a chunk of %d bytes after %d", size, req.size)}
+			}
+			if _, err := io.CopyN(req, r, int64(size)); err != nil {
+				return req, unexpectedEOF(err)
+			}
+			if _, err := r.Discard(2); err != nil { // the chunk's CRLF (after the last chunk: the body's end)
+				return req, unexpectedEOF(err)
 			}
 			if size == 0 {
 				break
 			}
-			req.body = append(req.body, chunk[:size]...)
 		}
 	case req.get("content-length") != "":
-		n, err := strconv.Atoi(req.get("content-length"))
-		if err != nil || n < 0 {
-			return nil, errValue{fmt.Sprintf("invalid content-length %q", req.get("content-length"))}
+		n, err := strconv.ParseInt(req.get("content-length"), 10, 64)
+		if errors.Is(err, strconv.ErrRange) && !strings.HasPrefix(req.get("content-length"), "-") {
+			return req, errTooLarge{limit, "Content-Length " + req.get("content-length")}
 		}
-		req.body = make([]byte, n)
-		if _, err := io.ReadFull(r, req.body); err != nil {
-			return nil, err
+		if err != nil || n < 0 {
+			return req, errValue{fmt.Sprintf("invalid content-length %q", req.get("content-length"))}
+		}
+		if n > limit {
+			return req, errTooLarge{limit, fmt.Sprintf("Content-Length %d", n)}
+		}
+		if _, err := io.CopyN(req, r, n); err != nil {
+			return req, unexpectedEOF(err)
 		}
 	}
 	return req, nil
+}
+
+// unexpectedEOF is a body read's error, io.EOF (the connection closed before the body's end) made
+// io.ErrUnexpectedEOF.
+func unexpectedEOF(err error) error {
+	if errors.Is(err, io.EOF) {
+		return io.ErrUnexpectedEOF
+	}
+	return err
+}
+
+// refuse logs a request readRequest couldn't read (req: its head, nil if that wasn't read) and answers it: 413 for a
+// body over its limit, 400 for a malformed request; a connection that failed, closed or timed out gets no answer.
+func refuse(log *logging.Log, who string, c net.Conn, peer string, req *request, err error) {
+	what := describeErr(err)
+	if req != nil {
+		what = req.line + ": " + what
+	}
+	log.Logf(who, "%s %s", peer, what)
+	var tooLarge errTooLarge
+	var bad errValue
+	status, text := "", ""
+	switch {
+	case errors.As(err, &tooLarge):
+		status, text = "413 Content Too Large", fmt.Sprintf("The request's body is over this server's limit of %d bytes.", tooLarge.limit)
+	case errors.As(err, &bad):
+		status, text = "400 Bad Request", "The request can't be read."
+	default:
+		return
+	}
+	body := text + "\n"
+	c.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	if _, err := fmt.Fprintf(c, "HTTP/1.1 %s\r\nContent-Type: text/plain\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+		status, len(body), body); err != nil {
+		log.Logf(who, "%s %s: %v", peer, logging.ErrName(err), err)
+		return
+	}
+	log.Log(who, "-> "+status)
+	// The client may still be sending the body: closing with its bytes unread would reset the connection, and the
+	// reset can take the answer with it. So end our side, then read (and drop) a bounded amount before the close.
+	if cw, ok := c.(interface{ CloseWrite() error }); ok {
+		cw.CloseWrite()
+	}
+	c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	io.CopyN(io.Discard, c, maxBody)
 }
 
 func latin1(b []byte) string {

@@ -636,6 +636,7 @@ func (c *Client) acceptLoop(port int, ln net.Listener) {
 		go func() {
 			defer c.wg.Done()
 			defer c.track(lc, false)
+			defer c.Log.Recover(who, logging.Peer(lc.RemoteAddr()), lc) // a panic ends this stream only
 			c.serveStream(port, lc)
 		}()
 	}

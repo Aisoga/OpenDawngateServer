@@ -86,6 +86,7 @@ func TestRatingValue(t *testing.T) {
 func TestRatingInExtendedData(t *testing.T) {
 	for _, show := range []bool{true, false} {
 		ps := newPipeSessionWith(t, func(s *Server) {
+			seatFirst(2)(s) // both play game 1, whose chat GG-1 they join (SEC6)
 			s.ShowRating = show
 			for _, email := range []string{"player@example.com", "second@example.com"} {
 				if _, _, err := s.Store.Login(email, time.Unix(testTime, 0)); err != nil {

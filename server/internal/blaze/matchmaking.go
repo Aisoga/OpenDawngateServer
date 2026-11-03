@@ -477,6 +477,7 @@ func (s *Server) startMatch(m matchmaker.Match) (MatchStarted, bool) {
 	}
 	s.Log.Logf("blaze", "   game %d %q: GMS %s (HNET), players %v", g.ID, g.Name, g.GMS, playerIDs(players))
 	for _, hp := range hps {
+		s.unhostedJoined(hp.conn, g.ID, hp.p) // SEC6: its match chats (matchchat.go)
 		hp.conn.Push(s, ComponentGameManager, NotifyGameSetupID, "NotifyGameSetup", setup(hp.conn.ForClient(g), hp))
 	}
 	return started, true

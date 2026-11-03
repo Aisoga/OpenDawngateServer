@@ -173,6 +173,8 @@ type Server struct {
 	results atomic.Pointer[ResultPosts]
 	// the last finished matches for the home page, without names (recent.go)
 	recent recentResults
+	// SEC6: the players of the games of a server without match hosts, for their match chats (matchchat.go)
+	unhosted unhostedRosters
 
 	handlers map[key]Handler
 }
@@ -421,14 +423,19 @@ func (s *Server) Serve(ln net.Listener) error {
 func (s *Server) ServeConn(c net.Conn) {
 	defer c.Close()
 	const who = "blaze"
+	defer s.Log.Recover(who, logging.Peer(c.RemoteAddr()), c) // a panic ends this connection only
 	s.Log.Log(who, "connection from "+logging.Peer(c.RemoteAddr()))
 	conn := &Conn{nc: c, tun: tunnel.Local(c), gone: make(chan struct{})}
 	defer close(conn.gone)
 	defer s.forgetMapNotes(conn)
 	defer conn.endSession(true)
 	r := fire.NewReader(c)
-	gate := s.requestGate(conn) // requests per connection
+	r.MaxPayload = fire.PreLoginMaxPayload // until the connection's first login (fire.MaxPayload from then on)
+	gate := s.requestGate(conn)            // requests per connection
 	for {
+		if conn.Session != nil {
+			r.MaxPayload = fire.MaxPayload
+		}
 		f, err := r.Next()
 		if err != nil {
 			fire.LogEnd(s.Log, who, r, err)

@@ -303,7 +303,8 @@ func TestMessagingChat(t *testing.T) {
 	a.msgNote(b)
 	b.none(ComponentMessaging, NotifyMessageID, 50*time.Millisecond)
 
-	// the game's chat: GG-7 as the client joins it (createPlaygroup JOIN 1, B11)
+	// the game's chat: GG-7 as the client joins it (createPlaygroup JOIN 1, B11); a, b and c play game 7 (SEC6)
+	seat(ts.s, 7, 0, a.id, b.id, c.id)
 	gg := tdf.NewWriter().Int("JOIN", 1).Struct("PGRP", func(w *tdf.Writer) {
 		w.Map("ATTR", tdf.TypeString, tdf.TypeString, tdf.KV(PlaygroupKeyAttr, "GG-7")).Int("MLIM", 15).String("NAME", "GG-7").String("UKEY", "GG-7")
 	}).Bytes()
@@ -329,6 +330,7 @@ func TestMessagingChat(t *testing.T) {
 			t.Errorf("%s: TTYP %v", x.name, f.Value)
 		}
 	}
+	wantErr(t, "GG-7 for one who isn't in game 7", d.pgCall(CmdPlaygroupsCreatePlaygroup, gg), ErrPlaygroupNotAuthorized)
 	wantErr(t, "game one isn't in", d.sendMsg(msg(MessageTypeChat, 0, ObjTypeGame, chatLine("x"), 7)), ErrMessagingTargetNotFound)
 	wantErr(t, "unknown game", a.sendMsg(msg(MessageTypeChat, 0, ObjTypeGame, chatLine("x"), 8)), ErrMessagingTargetNotFound)
 	d.none(ComponentMessaging, NotifyMessageID, 50*time.Millisecond)

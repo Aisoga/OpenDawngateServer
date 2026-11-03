@@ -248,7 +248,8 @@ func TestJoinCodeParty(t *testing.T) {
 		t.Errorf("a new code after the holders left: %+v (old %q)", nc, pc.Code)
 	}
 
-	// a game's chat playgroup isn't a party
+	// a game's chat playgroup isn't a party (e plays game 9: SEC6)
+	seat(ts.s, 9, 0, e.id)
 	f = e.pgCall(CmdPlaygroupsCreatePlaygroup, tdf.NewWriter().Int("JOIN", 1).Struct("PGRP", func(w *tdf.Writer) {
 		w.Map("ATTR", tdf.TypeString, tdf.TypeString, tdf.KV(PlaygroupKeyAttr, "GG-9")).Int("MLIM", 15).String("NAME", "GG-9").String("UKEY", "GG-9")
 	}).Bytes())

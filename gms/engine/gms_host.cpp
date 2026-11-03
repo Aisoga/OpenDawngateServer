@@ -17,6 +17,7 @@
 #include <random>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -26,9 +27,11 @@
 #include "core/agents/nullpos.h"
 #include "core/bots/composition.h"
 #include "core/commands/testlua.h"
+#include "core/matchflow/camps.h"
 #include "core/postgame/postgame.h"
 #include "core/protocol/messages.h"
 #include "core/protocol/wire.h"
+#include "core/replication/create_hold.h"
 #include "core/replication/create_order.h"
 #include "core/replication/fow_data.h"
 #include "core/replication/modifiers.h"
@@ -1265,6 +1268,14 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     evLogLimit_ = logLimit;
   }
 
+  // SEC5 ([host] fog_creates_by_vision 1, fog_creates_log_limit 200): with fog of war, a new
+  // object is created only for the players whose team sees it, the others get its create at first sight
+  // (core/replication/create_hold.h); 0 = every new object to every player, fogged in the same tick (FOGSOUND's rule).
+  void SetCreateHold(bool on, int logLimit) {
+    holdCreates_ = on;
+    holdLogLimit_ = logLimit;
+  }
+
   // FOGSOUND test aid ([host] fog_events_trace = wire bytes in hex, e.g. "a4,af"; fog_events_trace_limit 3000): every
   // message of these from the simulator's outgoing vector is logged with its recipients ("fog trace:" lines).
   void SetEventTrace(const char* spec, int limit) {
@@ -1413,6 +1424,11 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
                         "creates",
                         fogEnters_, fogExits_, fogA3_, fogKind3_, evUnseenMessages_,
                         eventsByVision_ ? "held back" : "SENT", evFoggedCreates_);
+          note += "; " + std::string(buf);
+          std::snprintf(buf, sizeof buf,
+                        "fog creates: %s, %d held, %d at first sight, %d pulled in, %d died unseen",
+                        holdCreates_ ? "by vision" : "off", holdObjects_, holdFirstSight_, holdPulled_,
+                        holdUnseenDeaths_);
           note += "; " + std::string(buf);
         }
       }
@@ -1575,6 +1591,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     bool catchUp = false;
     bool rejoined = false;  // G3: a rejoin; its catch-up also carries its own A9 3-7 and AA (its kills, gold, items)
     bool spectator = false;  // B15b: a spectator (gameplay index 10-14): no creature, no team, no input
+    int campAudience = -1;   // SEC4: the camp audience (gms::flow::CampAudience) of its last full 8D (-1: none yet)
   };
 
   // B15b: the spectators that have the world (bit = gameplay index 10-14).
@@ -1592,6 +1609,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   // 193 "localObjectID != kObjIDNone" asserts on the updates of the rest). Returns the objects changed, -1 on an error.
   int ForgetObjects(int index) {
     if (index < 0 || index >= 16) return 0;
+    heldCreates_.ForgetPlayer(index);  // SEC5: its next world starts the holds over
     BoundTo b(sim_);
     if (!repl::Init()) return -1;
     std::vector<repl::NetObject> objs;
@@ -1923,8 +1941,11 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     std::vector<repl::WorldMessage> world;
     // D2g-live: with the field states (the first incremental pass then sends nothing), the replicated noun types and
     // the objects' modifier records from the registry
+    // SEC5: without the objects its team doesn't see (the replication step creates them at first sight)
+    std::unordered_set<uint32_t> hold;
+    const bool holding = !pl.spectator && WorldHoldSet(pl.index, &hold);
     repl::BuildWorld(sim_, static_cast<unsigned>(pl.index), allTypes_, &ServerMatch::RecordsOf, this, &world,
-                     &pl.counts);
+                     &pl.counts, holding ? &hold : nullptr);
     std::vector<std::string> lines;
     for (const auto& m : world) {
       out.Send(conn, m.msg, "world: " + m.what);
@@ -2211,7 +2232,9 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   // the world. Every ModifierCreated/Updated goes into the registry first (whoever gets it); kind 2 of an object
   // deleted in the same tick goes to its deletion's recipients; a deletion drops the object's registry entries.
   // `lines` (the world file): at the world point the sends are logged one by one (D2f's way), else quietly.
-  void DrainStep(gms::ISender& out, std::vector<std::string>* lines) {
+  // SEC5b: `heldObjs`/`createdNow` (the replication step's scan and creates, or null): see PullInNamedByFeedback.
+  void DrainStep(gms::ISender& out, std::vector<std::string>* lines,
+                 const std::vector<repl::NetObject>* heldObjs = nullptr, std::vector<uint16_t>* createdNow = nullptr) {
     KindScope traffic(gms::timing::kTrafficForwarded);
     BoundTo b(sim_);
     std::vector<repl::Outgoing> msgs;
@@ -2291,6 +2314,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
         ++deletes_;
         Log("replication: delete %08X -> ObjectDelete to players 0x%04x (known 0x%04x)%s", m.object, to, r.recipients,
             recs ? (", " + std::to_string(recs) + " modifier record(s) dropped").c_str() : "");
+        NoteHeldDeletion(m.object, world);  // SEC5
         // ABILVFX: a short effect's delete waits [host] short_effect_hold_ms, so the client keeps the object (and the
         // effect attached to it) long enough to play
         const auto held = shortHeld_.find(m.object);
@@ -2312,6 +2336,11 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
                     m.kind, m.object, r.players);
         continue;
       }
+      // SEC5b: a ClientFeedbackEvent names objects by id (the parasite's kill to both teams, its killer); a recipient
+      // that doesn't have one gets its create first (pulled in, fogged by this tick's 93), else the client's starting
+      // announcement can't find it (ClientFeedback.cpp 1831, 1160/1164)
+      if (heldObjs && createdNow && m.kind == 1 && r.wire == gms::kGmsClientFeedbackEvent && m.msg.size() > 1)
+        PullInNamedByFeedback(out, m.msg, to, *heldObjs, createdNow);
       char what[96];
       std::snprintf(what, sizeof what, "from the simulator (kind %d%s)", m.kind,
                     m.kind == 0 || m.kind == 2 ? (", object " + Hex8(m.object)).c_str() : "");
@@ -2417,12 +2446,40 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       order[k] = gms::CreateOrderItem{objs[k].id, createOrderParents_ ? objs[k].owner : 0u,
                                       createOrderParents_ ? objs[k].parent : 0u,
                                       createOrderTargets_ ? objs[k].target : 0u};  // ABILVFX: the projectile's target
-    for (const size_t i : gms::CreateOrder(order)) {
+    const std::vector<size_t> createOrder = gms::CreateOrder(order);
+    // SEC5 ([host] fog_creates_by_vision, 1): a new object only to the players whose team sees it (its own team and the
+    // spectators always; a player's creature and the level's objects to everyone), plus the players a visible new
+    // object needs it for (its owner, parent or target: "pulled in", then fogged by this tick's 93). The rest get it
+    // at first sight (core/replication/create_hold.h)
+    std::vector<gms::CreateHoldItem> holdItems(objs.size());
+    for (size_t k = 0; k < objs.size(); ++k) {
+      const repl::NetObject& o = objs[k];
+      gms::CreateHoldItem& h = holdItems[k];
+      h.id = o.id;
+      h.owner = order[k].owner;
+      h.parent = order[k].parent;
+      h.target = order[k].target;
+      if (repl::Replicated(o, allTypes_) && !failedCreates_.count(o.id))
+        h.missing = static_cast<uint16_t>(world & ~o.known);
+      h.exempt = HoldExempt(o);
+      if (eventsVisionNow_) {
+        const auto it = seeNow_.find(o.id);
+        if (it != seeNow_.end()) h.sees = it->second.players;
+      }
+    }
+    const bool holding = holdCreates_ && eventsVisionNow_;
+    const std::vector<gms::CreatePlanEntry> plan = gms::PlanCreates(holdItems, createOrder, holding);
+    const auto nowMs = static_cast<unsigned long long>(gms::timing::NowMs());
+    for (const size_t i : createOrder) {
       const repl::NetObject& o = objs[i];
       if (!repl::Replicated(o, allTypes_)) continue;
-      const uint16_t missing = static_cast<uint16_t>(world & ~o.known);
+      const uint16_t missing = plan[i].to;
       if (o.known) ++known;
+      if (holding) NoteHeldCreate(o, plan[i], nowMs);
       if (!missing || failedCreates_.count(o.id)) continue;
+      if (holding && holdItems[i].exempt && holdItems[i].sees != gms::kCreateSeesUnknown &&
+          (missing & ~holdItems[i].sees))
+        ++holdExemptUnseen_;  // a player's creature or a level object created in fog (93 follows), as before
       std::vector<repl::WorldMessage> msgs;
       int bytes = 0;
       if (!repl::BuildCreate(o, o.known == 0, mods_.RecordsFor(o.id), &msgs, &bytes) ||
@@ -2435,7 +2492,13 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       ++creates_;
       ++known;
     }
-    if (drain_) DrainStep(out, nullptr);
+    // its deletions report the objects that died unseen (NoteHeldDeletion); SEC5b: an A5 pulls in what it names
+    if (drain_) DrainStep(out, nullptr, holding ? &objs : nullptr, holding ? &createdNow : nullptr);
+    if (holding) {
+      heldCreates_.Retain([&](uint32_t id) { return seeNow_.count(id) != 0; });
+      for (auto it = heldNames_.begin(); it != heldNames_.end();)
+        it = heldCreates_.HeldFrom(it->first) ? std::next(it) : heldNames_.erase(it);
+    }
     perf::SetKind(gms::timing::kTrafficDeltas);
     for (size_t i = 0; i < objs.size(); ++i) {
       const repl::NetObject& o = objs[i];
@@ -2809,9 +2872,143 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     eventsVisionNow_ = fog_ && fogReady_;
     if (!eventsVisionNow_) return;
     const std::vector<gms::vision::FogPlayer> players = FogPlayers();
+    holdTeams_.clear();  // SEC5: the teams that see each object, kept for a world built between two steps
     for (size_t i = 0; i < objs.size() && i < ents.size(); ++i)
-      if (ents[i].id)
+      if (ents[i].id) {
         seeNow_[objs[i].id] = {gms::vision::PlayersForTeams(model_.Bits(i), players), objs[i].name, ents[i].team};
+        holdTeams_[objs[i].id] = model_.Bits(i);
+      }
+  }
+
+  // SEC5: always created for everyone that lacks them: a player's creature (the scoreboard, the HUD, B3 and A9's
+  // mCurrentCreatureId name it; B3's reader asserts on an unknown creature) and the level's own objects (marker id:
+  // Bindings, nubs, shops, mines, the camps' icon spawn points; their place is in every client's level file).
+  // SEC5b: and the objects the game announces to every team by name (gms::AnnouncedNpcType: the parasite, whose kill
+  // A5 names it to both teams; the structures).
+  static bool HoldExempt(const repl::NetObject& o) {
+    return o.playerControlled || o.markerId != 0 || gms::AnnouncedNpcType(o.npcType);
+  }
+
+  // SEC5: a world (SendWorld) without the objects the player's team doesn't see, by the last vision step's answer
+  // (holdTeams_), with the same dependency rule as the replication step's creates. False: nothing to hold (the rule
+  // off, no fog, no answer yet).
+  bool WorldHoldSet(int index, std::unordered_set<uint32_t>* hold) {
+    if (!holdCreates_ || !fog_ || !fogReady_ || holdTeams_.empty() || index < 0) return false;
+    std::uint8_t team = 0xFF;
+    if (!repl::PlayerTeam(sim_, static_cast<unsigned>(index), &team)) return false;
+    std::vector<repl::NetObject> objs;
+    if (repl::Scan(sim_, &objs) < 0) return false;
+    const uint16_t bit = static_cast<uint16_t>(1u << index);
+    std::vector<gms::CreateHoldItem> items(objs.size());
+    std::vector<gms::CreateOrderItem> order(objs.size());
+    for (size_t k = 0; k < objs.size(); ++k) {
+      const repl::NetObject& o = objs[k];
+      order[k] = gms::CreateOrderItem{o.id, o.owner, o.parent, o.target};  // BuildWorld's order
+      gms::CreateHoldItem& h = items[k];
+      h.id = o.id;
+      h.owner = o.owner;
+      h.parent = o.parent;
+      h.target = o.target;
+      if (repl::Replicated(o, allTypes_) && !(o.known & bit)) h.missing = bit;
+      h.exempt = HoldExempt(o);
+      const auto it = holdTeams_.find(o.id);
+      if (it != holdTeams_.end()) h.sees = (it->second & gms::vision::TeamBit(team)) ? bit : 0;
+    }
+    const std::vector<gms::CreatePlanEntry> plan = gms::PlanCreates(items, gms::CreateOrder(order), true);
+    const auto nowMs = static_cast<unsigned long long>(gms::timing::NowMs());
+    for (size_t k = 0; k < objs.size(); ++k) {
+      if (!plan[k].held) continue;
+      hold->insert(objs[k].id);
+      NoteHeldCreate(objs[k], plan[k], nowMs);
+    }
+    if (!hold->empty())
+      Log("fog creates: world for player %d (team %u) without %zu object(s) its team doesn't see (SEC5)", index, team,
+          hold->size());
+    return true;
+  }
+
+  // SEC5: the ledger and the log of one object's plan in a create pass (held, created at first sight, pulled in).
+  void NoteHeldCreate(const repl::NetObject& o, const gms::CreatePlanEntry& p, unsigned long long nowMs) {
+    const bool wasHeld = heldCreates_.HeldFrom(o.id) != 0;
+    unsigned long long waited = 0;
+    const uint16_t first = heldCreates_.OnPlanned(o.id, p.to, p.held, nowMs, &waited);
+    if (p.held && !wasHeld) {
+      ++holdObjects_;
+      heldNames_[o.id] = o.name;
+      if (++holdLogged_ <= holdLogLimit_)
+        Log("fog creates: %08X %-30s create held from players 0x%04x, whose team doesn't see it (at (%.1f, %.1f); "
+            "owner %08X)",
+            o.id, o.name, p.held, o.pos[0], o.pos[1], o.owner);
+    }
+    if (first) {
+      holdFirstSight_ += Popcount(first);
+      if (++holdLogged_ <= holdLogLimit_)
+        Log("fog creates: %08X %-30s created for players 0x%04x at first sight, after %.1f s held (at (%.1f, %.1f))",
+            o.id, o.name, first, waited / 1000.0, o.pos[0], o.pos[1]);
+    }
+    if (p.pulled) {
+      holdPulled_ += Popcount(p.pulled);
+      if (++holdLogged_ <= holdLogLimit_)
+        Log("fog creates: %08X %-30s pulled in for players 0x%04x (the owner, parent or target of a new object they "
+            "see), fogged by this tick's 93",
+            o.id, o.name, p.pulled);
+    }
+    if (!heldCreates_.HeldFrom(o.id)) heldNames_.erase(o.id);
+  }
+
+  // SEC5b: the objects an A5 names (gms::FeedbackEventObjects: objectId, targetId) created for the recipients that don't
+  // have them, before the A5 (same flush); the fog step fogs them in the same tick (createdNow). An object outside this
+  // tick's scan stays unknown (the A5 goes out as before).
+  void PullInNamedByFeedback(gms::ISender& out, const gms::Bytes& msg, uint16_t to,
+                             const std::vector<repl::NetObject>& objs, std::vector<uint16_t>* createdNow) {
+    uint32_t ids[2] = {0, 0};
+    if (!gms::FeedbackEventObjects(msg.data() + 1, msg.size() - 1, &ids[0], &ids[1])) return;
+    for (const uint32_t id : ids) {
+      if (!id) continue;
+      for (size_t i = 0; i < objs.size() && i < createdNow->size(); ++i) {
+        const repl::NetObject& o = objs[i];
+        if (o.id != id) continue;
+        const uint16_t need = static_cast<uint16_t>(to & ~(o.known | (*createdNow)[i]));
+        if (!need || !repl::Replicated(o, allTypes_) || failedCreates_.count(o.id)) break;
+        std::vector<repl::WorldMessage> msgs;
+        int bytes = 0;
+        if (!repl::BuildCreate(o, o.known == 0 && !(*createdNow)[i], mods_.RecordsFor(o.id), &msgs, &bytes) ||
+            !repl::AddPlayerBits(o.object, need, need)) {
+          failedCreates_.insert(o.id);
+          break;
+        }
+        SendCreate(out, o, need, msgs);
+        (*createdNow)[i] = static_cast<uint16_t>((*createdNow)[i] | need);
+        ++creates_;
+        holdPulled_ += Popcount(need);
+        heldCreates_.OnPlanned(o.id, need, 0, static_cast<unsigned long long>(gms::timing::NowMs()));
+        if (!heldCreates_.HeldFrom(o.id)) heldNames_.erase(o.id);
+        if (++holdLogged_ <= holdLogLimit_)
+          Log("fog creates: %08X %-30s pulled in for players 0x%04x (named by a ClientFeedbackEvent %08X they get), "
+              "fogged by this tick's 93",
+              o.id, o.name, need, msg.size() >= 6 ? gms::GetU32LE(msg.data() + 2) : 0u);
+        break;
+      }
+    }
+  }
+
+  // SEC5: a deletion of an object some players never got (it died unseen by them: no create, no 91).
+  void NoteHeldDeletion(uint32_t id, uint16_t world) {
+    const uint16_t unseen = static_cast<uint16_t>(heldCreates_.OnDeleted(id) & world);
+    const auto name = heldNames_.find(id);
+    if (unseen) {
+      ++holdUnseenDeaths_;
+      if (++holdLogged_ <= holdLogLimit_)
+        Log("fog creates: %08X %-30s deleted unseen by players 0x%04x: never created for them, no ObjectDelete", id,
+            name != heldNames_.end() ? name->second.c_str() : "?", unseen);
+    }
+    if (name != heldNames_.end()) heldNames_.erase(name);
+  }
+
+  static int Popcount(uint16_t m) {
+    int n = 0;
+    for (; m; m = static_cast<uint16_t>(m & (m - 1))) ++n;
+    return n;
   }
 
   // A new object's create messages to the players that don't know it yet. FOGSOUND: a player whose team doesn't see
@@ -2871,6 +3068,15 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
           evUnseenMessages_, eventsByVision_ ? "held back from" : "SENT to", evUnseenSends_,
           evUnseen_.Empty() ? "" : ": ", evUnseen_.Format().c_str(), evFoggedCreates_, evFoggedCreateSkips_);
     }
+    // SEC5: the held creates, when they changed
+    const int holdNow = holdObjects_ + holdFirstSight_ + holdPulled_ + holdUnseenDeaths_ + holdExemptUnseen_;
+    if (fog_ && holdCreates_ && holdNow != holdReported_) {
+      holdReported_ = holdNow;
+      Log("fog creates: %d object(s) held from players whose team didn't see them, %d create(s) at first sight, %d "
+          "pulled in as a dependency, %d object(s) deleted unseen, %d exempt create(s) in fog (creatures, level "
+          "objects); %zu held now",
+          holdObjects_, holdFirstSight_, holdPulled_, holdUnseenDeaths_, holdExemptUnseen_, heldCreates_.Size());
+    }
     // D2h: the FoW data's sends, when they changed
     const int fowDataNow = fowDataDeltas_ + fowDataFull_ + fowDataDrops_;
     if (fowDataByVision_ && fowDataNow != fowDataReported_) {
@@ -2912,26 +3118,11 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       out.Send(conn, w, "UISpiritWellUpdate (full: the four spirit wells)");
       counts_.Add(w[0], w.size());
     }
-    // D2g-live step 3: the creep camps (8D), after the 8B that gave the client its camp list. CAMPICONS: with
-    // camp_icons=3 a player's entries carry each team's knowledge (the server's own list, so a rejoin gets its team's
-    // view back), a spectator's the truth (its own copy of the list with its own field states: SpectatorCampView)
+    // D2g-live step 3: the creep camps (8D), after the 8B that gave the client its camp list. CAMPICONS, SEC4: a
+    // player's entries carry its own team's knowledge only (its team's copy of the list; the server's entry, which a
+    // rejoin's full one reads too, holds every team's), a spectator's the truth
     gms::Bytes c;
-    const bool spectatorView = pl.spectator && director::CampIconMode() == 3;
-    int campMembers = 0;
-    if (spectatorView) {
-      campMembers = repl::CampViewUpdate(sim_, &spectatorCamps_, &director::SpectatorCampBits, true,
-                                         !spectatorCampFieldStateUsed_, &c);
-      spectatorCampFieldStateUsed_ = true;
-    } else {
-      campMembers = repl::CampUpdate(sim_, true, !campFieldStateUsed_, &c);
-      campFieldStateUsed_ = true;
-    }
-    if (campMembers > 0) {
-      out.Send(conn, c,
-               spectatorView ? "UICreepCampUpdate (full: the creep camps as they are, for a spectator)"
-                             : "UICreepCampUpdate (full: the creep camps)");
-      counts_.Add(c[0], c.size());
-    }
+    const int campMembers = SendCampFull(conn, pl, out, &c);
     gms::Logf("%s match: UI data for player %d %s: 8B %d members (%zu B), 8C %d members (%zu B), 8D %d members (%zu B)%s",
               gms::Clock().c_str(), pl.index, when, members, m.size(), wellMembers, w.size(), campMembers, c.size(),
               withFieldState ? ", with the field states" : "");
@@ -2959,13 +3150,12 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     if (!match::Enabled() || !replicate_) return;
     BoundTo b(sim_);
     if (!repl::Init()) return;
-    uint16_t have = 0, haveSpectators = 0;
+    uint16_t have = 0;
     for (auto& kv : players_) {
       Player& pl = kv.second;
       if (!pl.world || pl.index < 0) continue;
       if (pl.ui) {
         have = static_cast<uint16_t>(have | (1u << pl.index));
-        if (pl.spectator) haveSpectators = static_cast<uint16_t>(haveSpectators | (1u << pl.index));
         continue;
       }
       if (!pl.inGame) continue;
@@ -2976,19 +3166,71 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     if (repl::UIDataUpdate(sim_, false, true, &d) > 0) SendTo(out, have, d, nullptr);
     gms::Bytes wd;
     if (repl::SpiritWellUpdate(sim_, false, true, &wd) > 0) SendTo(out, have, wd, nullptr);
-    gms::Bytes cd;
-    if (director::CampIconMode() == 3) {
-      // CAMPICONS: the players' entries (each team's knowledge) to the players, the spectators' copy (the truth) to the
-      // spectators
-      const uint16_t players = static_cast<uint16_t>(have & ~haveSpectators);
-      if (players && repl::CampUpdate(sim_, false, true, &cd) > 0) SendTo(out, players, cd, nullptr);
-      gms::Bytes sd;
-      if (haveSpectators && spectatorCampFieldStateUsed_ &&
-          repl::CampViewUpdate(sim_, &spectatorCamps_, &director::SpectatorCampBits, false, true, &sd) > 0)
-        SendTo(out, haveSpectators, sd, nullptr);
-    } else if (repl::CampUpdate(sim_, false, true, &cd) > 0) {
-      SendTo(out, have, cd, nullptr);
+    // CAMPICONS, SEC4: each audience's deltas from its own copy of the camps to its own recipients only (a team gets
+    // nothing when only the other team's knowledge changed). A player whose audience changed (its team known only now,
+    // or another team) gets its new audience's full 8D first.
+    uint16_t audience[gms::flow::kCampAudiences] = {};
+    for (auto& kv : players_) {
+      Player& pl = kv.second;
+      if (!pl.world || pl.index < 0 || !pl.ui) continue;
+      const int a = CampAudienceOf(pl);
+      if (a != pl.campAudience) {
+        gms::Bytes c;
+        const int prev = pl.campAudience;
+        const int members = SendCampFull(kv.first, pl, out, &c);
+        gms::Logf("%s match: player %d's camp audience %d -> %d: its full 8D again (%d members, %zu B)",
+                  gms::Clock().c_str(), pl.index, prev, a, members, c.size());
+        continue;  // it has the copy's state now; the deltas below compare against what the copy last sent
+      }
+      audience[a] = static_cast<uint16_t>(audience[a] | (1u << pl.index));
     }
+    for (int a = 0; a < gms::flow::kCampAudiences; ++a) {
+      if (!audience[a] || !campFieldStateUsed_[a]) continue;
+      gms::Bytes cd;
+      std::string sent;
+      if (repl::CampViewUpdate(sim_, &campViews_[a], a, &director::SpectatorCampBits, false, true, &cd, &sent) <= 0)
+        continue;
+      SendTo(out, audience[a], cd, nullptr);
+      LogCampSend(a, "delta", audience[a], cd.size(), sent);
+    }
+  }
+
+  // SEC4: a recipient's camp audience (gms::flow::CampAudienceOf): a spectator's, else its server player's team.
+  int CampAudienceOf(const Player& pl) const {
+    std::uint8_t team = 0;
+    if (!pl.spectator && pl.index >= 0 && !repl::PlayerTeam(sim_, static_cast<unsigned>(pl.index), &team)) team = 0;
+    return gms::flow::CampAudienceOf(pl.spectator, team);
+  }
+
+  // SEC4: the full 8D for `pl` from its audience's copy of the camps (the copy's field states written by the
+  // audience's first full one); returns the members written.
+  int SendCampFull(gms::ConnId conn, Player& pl, gms::ISender& out, gms::Bytes* c) {
+    const int a = CampAudienceOf(pl);
+    std::string sent;
+    const int members = repl::CampViewUpdate(sim_, &campViews_[a], a, &director::SpectatorCampBits, true,
+                                             !campFieldStateUsed_[a], c, &sent);
+    campFieldStateUsed_[a] = true;
+    pl.campAudience = a;
+    if (members > 0) {
+      out.Send(conn, *c,
+               a == gms::flow::kCampAudienceSpectators ? "UICreepCampUpdate (full: the creep camps as they are, for a "
+                                                         "spectator)"
+                                                       : "UICreepCampUpdate (full: the creep camps as the team knows "
+                                                         "them)");
+      counts_.Add((*c)[0], c->size());
+      LogCampSend(a, "full", static_cast<uint16_t>(1u << pl.index), c->size(), sent);
+    }
+    return members;
+  }
+
+  // SEC4: one line per 8D sent (camp changes are rare: a few a minute), the audience, its recipients and each entry's
+  // byte as sent, so a session shows that a team got only its own bit.
+  void LogCampSend(int a, const char* kind, uint16_t to, std::size_t size, const std::string& sent) {
+    static const char* const kNames[gms::flow::kCampAudiences] = {"no team", "team 1", "team 2", "spectators"};
+    ++campSends_[a];
+    if (campSends_[a] > 400) return;  // a budget per audience
+    gms::Logf("%s match: camps 8D %s to %s (players 0x%04X, %zu B): %s%s", gms::Clock().c_str(), kind, kNames[a],
+              static_cast<unsigned>(to), size, sent.c_str(), campSends_[a] == 400 ? " (the last such line)" : "");
   }
 
  public:
@@ -3553,6 +3795,14 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   int evUnseenMessages_ = 0, evUnseenSends_ = 0, evUnseenLogged_ = 0, evUnseenReported_ = -1;
   int evFoggedCreates_ = 0, evFoggedCreateSkips_ = 0;  // creates for players that don't see the new object
   int evLogLimit_ = 200;
+  // SEC5 ([host] fog_creates_by_vision, 1): a new object's create held from the players whose team doesn't see it
+  bool holdCreates_ = true;
+  int holdLogLimit_ = 200, holdLogged_ = 0;
+  gms::HeldCreates heldCreates_;
+  std::unordered_map<uint32_t, std::string> heldNames_;  // the held objects' noun names, for the log
+  std::unordered_map<uint32_t, uint8_t> holdTeams_;      // the last vision step's teams per object (SendWorld)
+  int holdObjects_ = 0, holdFirstSight_ = 0, holdPulled_ = 0, holdUnseenDeaths_ = 0, holdReported_ = -1;
+  int holdExemptUnseen_ = 0;  // creates of exempt objects (players' creatures, level objects) to players in fog
   std::set<uint8_t> evTrace_;  // [host] fog_events_trace: these wire bytes' every forward is logged (a test aid)
   int evTraceLimit_ = 3000, evTraced_ = 0;
   // D2h: the players' FoW data (AA) by vision (FowDataStep)
@@ -3583,9 +3833,11 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   int animDeltas_ = 0;
   // D1c-live
   bool uiFieldStateUsed_ = false;
-  bool campFieldStateUsed_ = false;            // CAMPICONS: the players' 8D field states written by a full one
-  repl::CampViewBuffer spectatorCamps_;        // CAMPICONS: the spectators' copy of the camp list (the truth)
-  bool spectatorCampFieldStateUsed_ = false;
+  // CAMPICONS, SEC4: a copy of the camp list per audience (no team, team 1, team 2, the spectators: the truth), each
+  // with its own 8D field states, written by the audience's first full one
+  repl::CampViewBuffer campViews_[gms::flow::kCampAudiences];
+  bool campFieldStateUsed_[gms::flow::kCampAudiences] = {};
+  int campSends_[gms::flow::kCampAudiences] = {};  // the 8D sends per audience (full and deltas), for the log
   match::End end_;
   // D8-live
   gms::postgame::PostGame postgame_;
@@ -4096,6 +4348,13 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   // FOGSOUND: the simulator's messages about an object only to the players that see it now
   const bool eventsByVision = HostOptionInt("fog_events_by_vision", 1) != 0;
   g->match->SetEventRouting(eventsByVision, HostOptionInt("fog_events_log_limit", 200));
+  // SEC5: a new object's create only to the players whose team sees it, the others at first sight
+  const bool createsByVision = HostOptionInt("fog_creates_by_vision", 1) != 0;
+  g->match->SetCreateHold(createsByVision, HostOptionInt("fog_creates_log_limit", 200));
+  Log("host: new objects %s",
+      createsByVision ? "created only for the players whose team sees them (own team, spectators, players' creatures "
+                        "and level objects always), the others at first sight (SEC5, [host] fog_creates_by_vision 1)"
+                      : "created for every player and fogged in the same tick ([host] fog_creates_by_vision 0)");
   {
     char trace[256];
     HostOptionString("fog_events_trace", "", trace, sizeof trace);

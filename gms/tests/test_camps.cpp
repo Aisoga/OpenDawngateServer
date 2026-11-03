@@ -167,3 +167,101 @@ GMS_TEST(CampIconsNeverRespawns) {
   CHECK_EQ(k.Observe(1.0e6, 0, kSpirit, false, -1.0).size(), 1u);  // Spirit sees it empty: off for good too
   CHECK(!k.Icon(2));
 }
+
+// SEC4: each team gets only its own part of the server's camp byte; the spectators the truth.
+namespace {
+using gms::flow::CampAudienceBits;
+using gms::flow::CampAudienceOf;
+constexpr int kNoTeam = gms::flow::kCampAudienceNoTeam, kTeam1 = gms::flow::kCampAudienceTeam1,
+              kTeam2 = gms::flow::kCampAudienceTeam2, kSpectators = gms::flow::kCampAudienceSpectators;
+}  // namespace
+
+GMS_TEST(Sec4CampAudienceOfARecipient) {
+  CHECK_EQ(CampAudienceOf(false, 1), kTeam1);
+  CHECK_EQ(CampAudienceOf(false, 2), kTeam2);
+  CHECK_EQ(CampAudienceOf(false, 0), kNoTeam);  // a player whose team isn't known (yet)
+  CHECK_EQ(CampAudienceOf(false, 3), kNoTeam);  // no third team's bit is ever sent to a player
+  CHECK_EQ(CampAudienceOf(false, 255), kNoTeam);
+  CHECK_EQ(CampAudienceOf(true, 0), kSpectators);  // a spectator has no team
+  CHECK_EQ(CampAudienceOf(true, 1), kSpectators);
+  CHECK_EQ(static_cast<int>(gms::flow::kCampAudiences), 4);
+}
+
+GMS_TEST(Sec4CampTeamGetsOnlyItsOwnBit) {
+  for (int b = 0; b < 256; ++b) {
+    const uint8_t s = static_cast<uint8_t>(b);
+    const int t1 = CampAudienceBits(kTeam1, s, -1), t2 = CampAudienceBits(kTeam2, s, -1);
+    CHECK_EQ(t1, s & 0x03);  // the NPC bit as the server wrote it, and Mortal's
+    CHECK_EQ(t2, s & 0x05);  // the NPC bit and Spirit's
+    CHECK_EQ(t1 & kSpirit, 0);
+    CHECK_EQ(t2 & kMortal, 0);
+    CHECK_EQ(static_cast<int>(CampAudienceBits(kNoTeam, s, -1)), s & 0x01);
+    // a team never gets the truth's other bits either
+    CHECK_EQ(static_cast<int>(CampAudienceBits(kTeam1, s, 0x07)), t1);
+    CHECK_EQ(static_cast<int>(CampAudienceBits(kTeam2, s, 0x07)), t2);
+  }
+}
+
+GMS_TEST(Sec4CampSpectatorsGetTheTruth) {
+  // a camp Mortal saw cleared (0x05) that is empty: the spectators 0x01; alive but stale for Spirit (0x03): 0x07
+  CHECK_EQ(static_cast<int>(CampAudienceBits(kSpectators, 0x05, gms::flow::CampTruthBits(false))), 0x01);
+  CHECK_EQ(static_cast<int>(CampAudienceBits(kSpectators, 0x03, gms::flow::CampTruthBits(true))), 0x07);
+  // no truth (the parasite's camp, camp_icons other than 3): the server's byte as it is, both bits
+  CHECK_EQ(static_cast<int>(CampAudienceBits(kSpectators, 0x07, -1)), 0x07);
+  CHECK_EQ(static_cast<int>(CampAudienceBits(kSpectators, 0x05, -1)), 0x05);
+}
+
+// A team's copy of the camp list changes (so its 8D delta is not empty) exactly when its own bits change: the delta
+// writer compares each member's hash against the copy's field state, and the copy holds CampAudienceBits.
+GMS_TEST(Sec4CampNoDeltaWhenOnlyTheOtherTeamChanged) {
+  for (int a = 0; a < 8; ++a)
+    for (int b = 0; b < 8; ++b) {
+      const uint8_t x = static_cast<uint8_t>(a), y = static_cast<uint8_t>(b);
+      const bool t1Changed = CampAudienceBits(kTeam1, x, -1) != CampAudienceBits(kTeam1, y, -1);
+      const bool t2Changed = CampAudienceBits(kTeam2, x, -1) != CampAudienceBits(kTeam2, y, -1);
+      CHECK_EQ(t1Changed, ((x ^ y) & 0x03) != 0);
+      CHECK_EQ(t2Changed, ((x ^ y) & 0x05) != 0);
+    }
+  // through the knowledge model: what each team's copy holds after every event, and when it would send a delta
+  struct Sent {
+    int t1 = -1, t2 = -1;
+    int deltas1 = 0, deltas2 = 0;
+    void Step(uint8_t server) {
+      const int n1 = CampAudienceBits(kTeam1, server, -1), n2 = CampAudienceBits(kTeam2, server, -1);
+      if (n1 != t1) ++deltas1;
+      if (n2 != t2) ++deltas2;
+      t1 = n1;
+      t2 = n2;
+    }
+  };
+  CampKnowledge k;
+  k.Init(gms::flow::kCampRevealSmallS);
+  Sent s;
+  s.Step(k.Bits());  // the full ones at the join: 0x01 each
+  CHECK_EQ(s.t1, 0x01);
+  CHECK_EQ(s.t2, 0x01);
+  k.OnSpawned();  // public: both
+  s.Step(k.Bits());
+  CHECK_EQ(s.t1, 0x03);
+  CHECK_EQ(s.t2, 0x05);
+  CHECK_EQ(s.deltas1, 2);
+  CHECK_EQ(s.deltas2, 2);
+  k.OnCleared(kSpirit, 160.0);  // Spirit alone saw the clear: the server's byte 0x07 -> 0x03
+  CHECK_EQ(k.Bits(), 0x03);
+  s.Step(k.Bits());
+  CHECK_EQ(s.deltas1, 2);  // nothing to Mortal: its icon stays (stale), and no update tells it Spirit saw anything
+  CHECK_EQ(s.deltas2, 3);
+  CHECK_EQ(s.t2, 0x01);
+  k.Observe(120.0, 0, kMortal, false, 160.0);  // Mortal sees the spot empty: its icon off
+  CHECK_EQ(k.Bits(), 0x01);
+  s.Step(k.Bits());
+  CHECK_EQ(s.deltas1, 3);
+  CHECK_EQ(s.deltas2, 3);  // nothing to Spirit
+  k.Observe(160.0, 0, 0, false, 160.0);  // Spirit's known time came: its icon on without sight
+  CHECK_EQ(k.Bits(), 0x05);
+  s.Step(k.Bits());
+  CHECK_EQ(s.deltas1, 3);  // nothing to Mortal: it can't learn when Spirit knew the respawn time
+  CHECK_EQ(s.deltas2, 4);
+  CHECK_EQ(s.t1, 0x01);
+  CHECK_EQ(s.t2, 0x05);
+}

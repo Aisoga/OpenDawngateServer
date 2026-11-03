@@ -439,6 +439,7 @@ func (f *Front) acceptLoop(port int, ln net.Listener) {
 			defer f.wg.Done()
 			defer f.track(c, false)
 			defer c.Close()
+			defer f.Log.Recover(frontWho, logging.Peer(c.RemoteAddr()), c) // a panic ends this connection only
 			f.serveTCP(port, c)
 		}()
 	}

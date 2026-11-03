@@ -287,6 +287,7 @@ func TestWatchBroadcasts(t *testing.T) {
 // both clients know each other; when the leader's wins change after a game, the guest gets them at once.
 func TestPartyMemberWins(t *testing.T) {
 	ps := newPipeSessionWith(t, func(s *Server) {
+		seatFirst(2)(s) // both play game 1, whose chat GG-1 they join (SEC6)
 		if _, _, err := s.Store.Login("player@example.com", time.Unix(testTime, 0)); err != nil {
 			t.Fatal(err)
 		}

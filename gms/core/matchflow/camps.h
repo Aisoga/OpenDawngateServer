@@ -1,8 +1,10 @@
 // CAMPICONS: a jungle camp's minimap icon as each team's knowledge of the camp. The client draws a camp spawn point's
 // icon only while the camp's 8D entry (cBattlegroundsUICampData +0 mCampVisibleToTeam) has the local team's bit,
-// 1 << team (GGMinimap_UpdateObjectIcon 0x005801F0), and the entry has a bit per team, so one byte carries what each
-// team knows. The original's writer was stripped; the rule is the user's (2026-10-17, League's model: "an icon shows
-// what a team knows"):
+// 1 << team (GGMinimap_UpdateObjectIcon 0x005801F0), and the entry has a bit per team. The server's own entry holds
+// every team's knowledge in that byte, but each team gets only its own part of it (SEC4: CampAudienceBits, the NPC bit
+// and the team's own bit, from a copy of the camp list per team with its own field states, so a team gets no 8D at
+// all when only the other team's knowledge changed); spectators get the truth. The original's writer was stripped;
+// the rule is the user's (2026-10-17, League's model: "an icon shows what a team knows"):
 //   - no team has the icon before the camp's first spawn; the spawn is public: every team gets it;
 //   - a witnessed death (the camp's last creature dies while a team sees it: that creature's mVisibleToTeam at its death
 //     tick, and the killer's team whatever its vision) turns that team's icon off and makes the respawn time known to
@@ -28,6 +30,39 @@ constexpr double kCampRevealSmallS = 10.0;  // the small camps
 
 // The camp entry's bits for a spectator: the camp's real state (every team's bit while a creature lives).
 inline uint8_t CampTruthBits(bool alive) { return static_cast<uint8_t>(alive ? 0x07 : 0x01); }
+
+// SEC4: who an 8D is written for. Each audience has its own copy of the camp list (its own field states), so its
+// deltas follow only its own bytes.
+enum CampAudience {
+  kCampAudienceNoTeam = 0,      // a player without a team (yet): the NPC bit only
+  kCampAudienceTeam1 = 1,       // team 1 (Mortal): the NPC bit and 0x02
+  kCampAudienceTeam2 = 2,       // team 2 (Spirit): the NPC bit and 0x04
+  kCampAudienceSpectators = 3,  // the truth (every bit)
+  kCampAudiences = 4
+};
+
+// The audience of a recipient: a spectator's is the spectators', a player's its team's (1 or 2), anything else none.
+inline int CampAudienceOf(bool spectator, int team) {
+  if (spectator) return kCampAudienceSpectators;
+  return team == 1 || team == 2 ? team : kCampAudienceNoTeam;
+}
+
+// The bits of mCampVisibleToTeam an audience may get: the NPC bit 0x01 (bit 0: team 0's, set by every writer of the
+// entry, so kept as it is) and the audience's own team bit 1 << team; every bit for the spectators.
+inline uint8_t CampAudienceKeep(int audience) {
+  if (audience == kCampAudienceSpectators) return 0xFF;
+  if (audience == kCampAudienceTeam1 || audience == kCampAudienceTeam2)
+    return static_cast<uint8_t>(0x01 | (1u << audience));
+  return 0x01;
+}
+
+// The entry's byte as `audience` gets it: `players` = the server's entry (every team's knowledge), `truth` = the
+// spectators' value of the camp (CampTruthBits; < 0 = none, then the spectators get the server's byte as it is). A
+// team never gets another team's bit, whatever `truth` says.
+inline uint8_t CampAudienceBits(int audience, uint8_t players, int truth) {
+  if (audience == kCampAudienceSpectators) return truth >= 0 ? static_cast<uint8_t>(truth) : players;
+  return static_cast<uint8_t>(players & CampAudienceKeep(audience));
+}
 
 class CampKnowledge {
  public:
@@ -89,7 +124,8 @@ class CampKnowledge {
     return out;
   }
 
-  // The camp entry's byte for the players: the NPC bit and every team with the icon.
+  // The server's camp entry's byte: the NPC bit and every team with the icon (each team is sent only its own part of
+  // it, CampAudienceBits).
   uint8_t Bits() const {
     uint8_t b = 0x01;
     for (int i = 0; i < kTeams; ++i)

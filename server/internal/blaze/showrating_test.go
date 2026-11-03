@@ -101,6 +101,7 @@ func TestShownRatingAtLogin(t *testing.T) {
 		want, other int64
 	}{{true, 12, 2105, 2105}, {false, 12, 0, 0}, {true, 9, 0, 0}} {
 		ps := newPipeSessionWith(t, func(s *Server) {
+			seatFirst(2)(s) // both play game 1, whose chat GG-1 they join (SEC6)
 			s.ShowRating = c.show
 			for _, email := range []string{"player@example.com", "second@example.com"} {
 				if _, _, err := s.Store.Login(email, time.Unix(testTime, 0)); err != nil {

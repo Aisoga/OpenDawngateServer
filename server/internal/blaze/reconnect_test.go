@@ -140,6 +140,11 @@ func TestHostedGameReconnect(t *testing.T) {
 	if pgid != PersistedGameID(1) {
 		t.Fatalf("PGID %q", pgid)
 	}
+	// SEC6: the matchmade game's chats, each player its own team's (A team index 0, B 1), not the enemy's
+	wantOK(t, "A: GG-1", a.pgCall(CmdPlaygroupsCreatePlaygroup, chatCreate("GG-1", 15, "GG-1")))
+	wantOK(t, "B: GG-1", b.pgCall(CmdPlaygroupsCreatePlaygroup, chatCreate("GG-1", 15, "GG-1")))
+	wantOK(t, "B: TG-1-1", b.pgCall(CmdPlaygroupsCreatePlaygroup, chatCreate("TG-1-1", 15, "TG-1-1")))
+	wantErr(t, "A: the enemy's TG-1-1", a.pgCall(CmdPlaygroupsCreatePlaygroup, chatCreate("TG-1-1", 15, "TG-1-1")), ErrPlaygroupNotAuthorized)
 	// B's client saves it, then its connection drops
 	id := b.send(ComponentBGOps, CmdBGOpsSetGameID, tdf.NewWriter().Int("ACID", 0).String("GMID", pgid).Bytes())
 	b.reply(ComponentBGOps, CmdBGOpsSetGameID, id)
@@ -197,6 +202,9 @@ func TestHostedGameReconnect(t *testing.T) {
 	}
 	f = a.note(ComponentGameManager, NotifyPlayerJoiningID)
 	tdfcheck.Require(t, "Blaze::GameManager::NotifyPlayerJoining", f.Payload)
+	// SEC6: back in the game, its chats again (the dropped connection took B out of them)
+	wantOK(t, "B again: GG-1", b2.pgCall(CmdPlaygroupsCreatePlaygroup, chatCreate("GG-1", 15, "GG-1")))
+	wantOK(t, "B again: TG-1-1", b2.pgCall(CmdPlaygroupsCreatePlaygroup, chatCreate("TG-1-1", 15, "TG-1-1")))
 
 	// a game that isn't running
 	ask = tdf.NewWriter().List("PIDL", tdf.TypeString, []string{PersistedGameID(9)}).Bytes()

@@ -154,10 +154,11 @@ func (q *QoS) Serve(ln net.Listener) error {
 func (q *QoS) ServeConn(c net.Conn) {
 	defer c.Close()
 	peer := logging.Peer(c.RemoteAddr())
+	defer q.Log.Recover(qosWho, peer, c)
 	c.SetReadDeadline(time.Now().Add(30 * time.Second))
-	req, err := readRequest(bufio.NewReader(c))
+	req, err := readRequest(bufio.NewReaderSize(c, maxChunkLine))
 	if err != nil {
-		q.Log.Logf(qosWho, "%s %s", peer, describeErr(err))
+		refuse(q.Log, qosWho, c, peer, req, err)
 		return
 	}
 	if req == nil {
@@ -390,6 +391,7 @@ func (q *QoS) TunnelPacket(p []byte, from *tunnel.Addr, reply func([]byte) error
 
 func (q *QoS) packet(p []byte, from *udpPeer) {
 	peer := logging.Peer(from.addr)
+	defer q.Log.Recover(qosWho, peer, nil) // one datagram's panic drops only that datagram
 	switch {
 	case len(p) == 20:
 		q.latency(p, from, peer)

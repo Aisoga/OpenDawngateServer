@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"unicode/utf8"
 )
 
 // Value is one decoded TDF value. Its dynamic type depends on the wire type:
@@ -145,12 +146,84 @@ var (
 	errTruncated = errors.New("truncated TDF")
 )
 
-// maxCount bounds list, map and intlist lengths so a corrupt count can't allocate gigabytes.
-const maxCount = 1 << 20
+// The decoder's bounds: a payload comes from anyone who can connect (Blaze decodes requests before login), so
+// nothing it claims may cost the server more than its own bytes justify.
+//
+//   - A list, map or intlist count must fit the bytes left (each item takes at least minSize bytes); a larger one
+//     is an error at once, and no slice is reserved beyond what those bytes could hold.
+//   - Containers (structs, lists, maps, unions) nest at most MaxDepth deep (a payload's top-level struct counts 0);
+//     the deepest message the tests decode nests 8 (BattlegroundsAccounts::getCompleteData's reply with perk pages).
+//   - A payload's decoded values may take at most DecodeBudget(len) bytes (estimated Go heap, charged by charge),
+//     a bound on how far a payload can expand: the tests' messages of 500 bytes or more stay under 11 times their
+//     size, the smaller ones under the base. A payload made mostly of empty structs (about 40 bytes for each byte)
+//     or of map entries with one-byte keys and values (about 40 for 2) goes over it.
+const (
+	MaxDepth = 32
+
+	budgetFactor = 32
+	budgetBase   = 4096
+)
+
+// DecodeBudget is the estimated heap a payload of n bytes may decode into.
+func DecodeBudget(n int) int { return budgetFactor*n + budgetBase }
 
 type reader struct {
-	d []byte
-	p int
+	d      []byte
+	p      int
+	depth  int // containers open around the value being read
+	budget int // estimated heap bytes left (DecodeBudget)
+}
+
+// The estimated heap of decoded values (amd64; charged by charge): an interface slot, a Field, a struct, a
+// list, a map entry with its index entry, and the smaller boxed values.
+const (
+	costSlot   = 16
+	costField  = 48
+	costStruct = 24
+	costList   = 32
+	costMap    = 56
+	costEntry  = 64
+	costUnion  = 24
+	costBoxed  = 8
+)
+
+func (r *reader) charge(n int) error {
+	if r.budget -= n; r.budget < 0 {
+		return fmt.Errorf("decoded size over the budget of %d bytes at %d", DecodeBudget(len(r.d)), r.p)
+	}
+	return nil
+}
+
+// enter opens a container (struct, list, map, union); leave closes it.
+func (r *reader) enter() error {
+	if r.depth++; r.depth > MaxDepth {
+		return fmt.Errorf("nested deeper than %d at %d", MaxDepth, r.p)
+	}
+	return nil
+}
+
+func (r *reader) leave() { r.depth-- }
+
+// minSize is the fewest bytes a value of type t takes on the wire (1 for an unknown type, which fails at its
+// first item anyway). A struct list element takes 1 (its terminator, or a list union's member byte).
+func minSize(t Type) int {
+	switch t {
+	case TypeList, TypeObjType:
+		return 2 // element type and count; component and type
+	case TypeMap, TypeObjID:
+		return 3
+	case TypeFloat:
+		return 4
+	}
+	return 1
+}
+
+// fits checks a claimed count of items of per bytes each against the bytes left.
+func (r *reader) fits(n, per int) error {
+	if n > (len(r.d)-r.p)/per {
+		return fmt.Errorf("count %d too large for the %d bytes left at %d", n, len(r.d)-r.p, r.p)
+	}
+	return nil
 }
 
 func (r *reader) byte() (byte, error) {
@@ -209,8 +282,8 @@ func (r *reader) count() (int, error) {
 	if n < 0 {
 		return 0, nil
 	}
-	if n > maxCount {
-		return 0, fmt.Errorf("count %d too large at %d", n, r.p)
+	if n > int64(len(r.d)-r.p) { // no item takes less than a byte (fits checks the element's own size)
+		return 0, fmt.Errorf("count %d too large for the %d bytes left at %d", n, len(r.d)-r.p, r.p)
 	}
 	return int(n), nil
 }
@@ -236,6 +309,9 @@ func (r *reader) header() (string, Type, error) {
 func (r *reader) value(t Type) (Value, error) {
 	switch t {
 	case TypeInt, TypeTimeValue:
+		if err := r.charge(costBoxed); err != nil {
+			return nil, err
+		}
 		return r.int()
 	case TypeString:
 		n, err := r.int64()
@@ -244,6 +320,9 @@ func (r *reader) value(t Type) (Value, error) {
 		}
 		b, err := r.take(n)
 		if err != nil {
+			return nil, err
+		}
+		if err := r.charge(costSlot + 3*int(n)); err != nil { // U+FFFD takes 3 bytes for 1
 			return nil, err
 		}
 		return decodeUTF8(b[:len(b)-1]), nil // drops the NUL (tdf.py drops the last byte, NUL or not)
@@ -256,15 +335,32 @@ func (r *reader) value(t Type) (Value, error) {
 		if err != nil {
 			return nil, err
 		}
+		if err := r.charge(costSlot + int(n)); err != nil {
+			return nil, err
+		}
 		return append([]byte(nil), b...), nil
 	case TypeStruct:
+		if err := r.enter(); err != nil {
+			return nil, err
+		}
+		defer r.leave()
 		return r.structBody()
 	case TypeList:
+		if err := r.enter(); err != nil {
+			return nil, err
+		}
+		defer r.leave()
 		et, err := r.byte()
 		if err != nil {
 			return nil, err
 		}
 		n, err := r.count()
+		if err == nil {
+			err = r.fits(n, minSize(Type(et)))
+		}
+		if err == nil {
+			err = r.charge(costList + costSlot*n)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -278,6 +374,10 @@ func (r *reader) value(t Type) (Value, error) {
 		}
 		return l, nil
 	case TypeMap:
+		if err := r.enter(); err != nil {
+			return nil, err
+		}
+		defer r.leave()
 		kt, err := r.byte()
 		if err != nil {
 			return nil, err
@@ -287,6 +387,12 @@ func (r *reader) value(t Type) (Value, error) {
 			return nil, err
 		}
 		n, err := r.count()
+		if err == nil {
+			err = r.fits(n, minSize(Type(kt))+minSize(Type(vt)))
+		}
+		if err == nil {
+			err = r.charge(costMap)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -302,6 +408,9 @@ func (r *reader) value(t Type) (Value, error) {
 				return nil, err
 			}
 			id := Repr(k)
+			if err := r.charge(costEntry + len(id)); err != nil {
+				return nil, err
+			}
 			if j, dup := index[id]; dup {
 				m.Entries[j].Value = v
 				continue
@@ -311,7 +420,14 @@ func (r *reader) value(t Type) (Value, error) {
 		}
 		return m, nil
 	case TypeUnion:
+		if err := r.enter(); err != nil {
+			return nil, err
+		}
+		defer r.leave()
 		member, err := r.byte()
+		if err == nil {
+			err = r.charge(costUnion)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -319,6 +435,9 @@ func (r *reader) value(t Type) (Value, error) {
 			return &Union{Member: member}, nil
 		}
 		label, ft, err := r.header()
+		if err == nil {
+			err = r.charge(costField)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -329,6 +448,9 @@ func (r *reader) value(t Type) (Value, error) {
 		return &Union{Member: member, Field: &Field{Label: label, Type: ft, Value: v}}, nil
 	case TypeIntList:
 		n, err := r.count()
+		if err == nil {
+			err = r.charge(costSlot + costBoxed*n) // count fits the bytes left: an int takes at least one
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -342,6 +464,9 @@ func (r *reader) value(t Type) (Value, error) {
 		}
 		return l, nil
 	case TypeObjType:
+		if err := r.charge(costSlot); err != nil {
+			return nil, err
+		}
 		var o ObjType
 		var err error
 		if o.Component, err = r.int64(); err == nil {
@@ -349,6 +474,9 @@ func (r *reader) value(t Type) (Value, error) {
 		}
 		return o, err
 	case TypeObjID:
+		if err := r.charge(costSlot + costBoxed); err != nil {
+			return nil, err
+		}
 		var o ObjID
 		var err error
 		if o.Component, err = r.int64(); err == nil {
@@ -370,8 +498,15 @@ func (r *reader) value(t Type) (Value, error) {
 // listItem reads one list element; a struct element starting with 0x01..0x7F is a union (ListUnion).
 func (r *reader) listItem(t Type) (Value, error) {
 	if t == TypeStruct && r.p < len(r.d) && r.d[r.p] > 0 && r.d[r.p] <= UnionUnset {
+		if err := r.enter(); err != nil {
+			return nil, err
+		}
+		defer r.leave()
 		member := r.d[r.p]
 		r.p++
+		if err := r.charge(costSlot); err != nil {
+			return nil, err
+		}
 		if member == UnionUnset {
 			return &ListUnion{Member: member}, nil
 		}
@@ -386,51 +521,65 @@ func (r *reader) listItem(t Type) (Value, error) {
 
 // structBody reads members up to a 0x00 terminator or the end of the data.
 func (r *reader) structBody() (*Struct, error) {
+	if err := r.charge(costStruct); err != nil {
+		return nil, err
+	}
 	s := &Struct{}
 	for r.p < len(r.d) {
 		if r.d[r.p] == 0 {
 			r.p++
 			break
 		}
-		label, t, err := r.header()
-		if err != nil {
+		if err := r.member(s); err != nil {
 			return nil, err
 		}
-		v, err := r.value(t)
-		if err != nil {
-			return nil, err
-		}
-		s.set(Field{Label: label, Type: t, Value: v})
 	}
 	return s, nil
 }
 
-// Decode reads a packet payload: a top-level struct without terminator.
+// member reads one tagged member into s.
+func (r *reader) member(s *Struct) error {
+	label, t, err := r.header()
+	if err == nil {
+		err = r.charge(costField)
+	}
+	if err != nil {
+		return err
+	}
+	v, err := r.value(t)
+	if err != nil {
+		return err
+	}
+	s.set(Field{Label: label, Type: t, Value: v})
+	return nil
+}
+
+// Decode reads a packet payload: a top-level struct without terminator. It refuses a payload that claims more
+// items than its bytes can hold, nests deeper than MaxDepth or decodes into more than DecodeBudget(len(payload))
+// bytes (the decoder's bounds, above).
 func Decode(payload []byte) (*Struct, error) {
-	r := &reader{d: payload}
+	r := &reader{d: payload, budget: DecodeBudget(len(payload))}
 	s := &Struct{}
 	for r.p < len(payload) {
-		label, t, err := r.header()
-		if err != nil {
+		if err := r.member(s); err != nil {
 			return nil, err
 		}
-		v, err := r.value(t)
-		if err != nil {
-			return nil, err
-		}
-		s.set(Field{Label: label, Type: t, Value: v})
 	}
 	return s, nil
 }
 
 // decodeUTF8 is Python's bytes.decode("utf-8", "replace"): each maximal invalid subsequence becomes
-// one U+FFFD.
+// one U+FFFD. Valid text is copied as it is; otherwise the result grows as it is written (at most 3 bytes for
+// each input byte).
 func decodeUTF8(b []byte) string {
-	out := make([]rune, 0, len(b))
+	if utf8.Valid(b) {
+		return string(b)
+	}
+	out := make([]byte, 0, len(b))
 	for i := 0; i < len(b); {
 		c := b[i]
 		if c < 0x80 {
-			out = append(out, rune(c))
+			out = append(out, c)
 			i++
 			continue
 		}
@@ -452,7 +601,7 @@ func decodeUTF8(b []byte) string {
 		case c == 0xF4:
 			need, hi = 3, 0x8F
 		default:
-			out = append(out, 0xFFFD)
+			out = utf8.AppendRune(out, 0xFFFD)
 			i++
 			continue
 		}
@@ -464,15 +613,11 @@ func decodeUTF8(b []byte) string {
 			}
 		}
 		if j <= need { // incomplete or invalid: replace the valid prefix as one character
-			out = append(out, 0xFFFD)
+			out = utf8.AppendRune(out, 0xFFFD)
 			i += j
 			continue
 		}
-		r := rune(c) & (0x7F >> (need + 1))
-		for k := 1; k <= need; k++ {
-			r = r<<6 | rune(b[i+k]&0x3F)
-		}
-		out = append(out, r)
+		out = append(out, b[i:i+need+1]...) // a valid sequence: its bytes as they are
 		i += need + 1
 	}
 	return string(out)

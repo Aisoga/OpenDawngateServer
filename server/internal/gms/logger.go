@@ -58,6 +58,7 @@ func (l *Logger) Serve() error {
 // datagram of each peer, kind and length.
 func (l *Logger) Packet(p []byte, from net.Addr) {
 	peer := logging.Peer(from)
+	defer l.Log.Recover(who, peer, nil) // one datagram's panic drops only that datagram
 	l.Log.Logf(who, "udp %s %d bytes: %s", peer, len(p), Describe(p))
 	key := fmt.Sprintf("%s/%d/%d", peer, firstByte(p), len(p))
 	l.mu.Lock()

@@ -41,6 +41,7 @@ const who = "telemetry"
 func (s *Sink) ServeConn(c net.Conn) {
 	defer c.Close()
 	peer := logging.Peer(c.RemoteAddr())
+	defer s.Log.Recover(who, peer, c) // a panic ends this connection only
 	s.Log.Log(who, "connection from "+peer)
 	var pending []byte
 	total, packets, events := 0, 0, 0

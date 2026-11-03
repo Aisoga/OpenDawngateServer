@@ -39,6 +39,8 @@ ITEMSHOP_SYNTH_SHA = "5094c226d16433e5616eaede8b29ea86fb503aa34bb508d9b2a017b9cc
 # movie) with the tags b"OURTAGS" and that list through the collection spec, as collection_test.go pins them
 COLLECTION_LIST_SHA = "60ed944ce678df5c0caea1bf3ff28d8f8f6ebce6f392082d3158fd1c78a5f9ea"
 COLLECTION_SYNTH_SHA = "7cd32e2fbe63535ccd17a171b07a8b48227f2bbf3eab90e9cd8762fc5969dc5d"
+# the same with a second class's tags b"MORETAGS" after them (the lobby's ready check's Part), as collection_test.go
+COLLECTION_SYNTH_TWO_SHA = "9bf00c1c4f43663f79946de51969323b200af876f2a6842c383660a841bb3459"
 
 
 def sha(b):
@@ -375,6 +377,31 @@ def main(argv):
         arc = plm.build(csnap, b"OURTAGS", cs, content=made_up)
         check(sha(arc) == COLLECTION_SYNTH_SHA,
               f"a made-up Collection archive as collection_test.go pins it ({len(arc)} bytes)")
+        two = plm.build(csnap, b"OURTAGS" + b"MORETAGS", cs, content=made_up)
+        check(sha(two) == COLLECTION_SYNTH_TWO_SHA,
+              f"a made-up two-class archive as collection_test.go pins it ({len(two)} bytes)")
+    # the custom lobby's ready check: the collection spec's second class (character and depth 2001)
+    parts = cs.parts()
+    check([(p.class_name, p.char_id, p.depth) for p in parts] == [("CollectionItems", 2000, 2000), ("LobbyReady", 2001, 2001),
+                                                                  ("LeaderboardRating", 2002, 2002)],
+          "the collection spec's classes: CollectionItems 2000/2000, LobbyReady 2001/2001, LeaderboardRating 2002/2002")
+    ltags = plm.read_tags(parts[1].tags)
+    lt = plm.tags_of(ltags, 0, len(ltags))
+    check([c for c, *_ in lt] == [39, 82, 76, 70] and lt[-1][3] == len(ltags) and
+          plm._pairs(ltags, lt[2][2], lt[2][3]) == [(2001, "LobbyReady")] and
+          ltags[lt[3][2]:lt[3][3]] == bytes([0x06, 0]) + struct.pack("<HH", 2001, 2001) + b"\0" and
+          b"~#rdy " in ltags and b"customMatchLobby" in ltags,
+          "lobby_tags.hex: DefineSprite, DoABC, SymbolClass 2001 -> LobbyReady, PlaceObject3 at 2001")
+    # the Leaderboard's Rating column: the third class (character and depth 2002)
+    rtags = plm.read_tags(parts[2].tags)
+    rt = plm.tags_of(rtags, 0, len(rtags))
+    check([c for c, *_ in rt] == [39, 82, 76, 70] and rt[-1][3] == len(rtags) and
+          plm._pairs(rtags, rt[2][2], rt[2][3]) == [(2002, "LeaderboardRating")] and
+          rtags[rt[3][2]:rt[3][3]] == bytes([0x06, 0]) + struct.pack("<HH", 2002, 2002) + b"\0" and
+          b"<dgr r='" in rtags and b"^FE_Leaderboard!0x5e70d001" in rtags,
+          "leaderboard_tags.hex: DefineSprite, DoABC, SymbolClass 2002 -> LeaderboardRating, PlaceObject3 at 2002")
+    check(plm.spec_tags(cs) == ctags + ltags + rtags,
+          "the collection spec's tags: the Collection's, the lobby's, then the Leaderboard's")
     if game and os.environ.get("DAWNGATE_COLLECTION_GO"):
         # moviepatch's TestBuildCollection854 output and the content it was made from (<file>.content.json)
         go_out = os.environ["DAWNGATE_COLLECTION_GO"]

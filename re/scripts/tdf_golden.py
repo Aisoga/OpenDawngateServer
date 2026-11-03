@@ -189,10 +189,24 @@ def user_authenticated():  # Blaze::UserSessionLoginInfo 0x01462488
     return bytes(w)
 
 
-def extended_data_update(user_info=0):  # Blaze::UserSessionExtendedDataUpdate 0x012F1FF8
+RATING2_START = 1500  # RATING2: DMAP[0x00070035], the skill rating rounded; a new account's start value
+
+
+def rating_dmap(w, wins=0, rating=RATING2_START, shown=0):
+    """RATING2: UserSessionExtendedData's DMAP, {0x00070034: the wins (R11), 0x00070035: the skill rating}, each key
+    only when its value isn't 0, the map only when one is there (BlazePlatform_GetUserExtendedInfo 0x00AD4F90 reads
+    both into its record, +0x10 and +0x14; the custom lobby's BALANCE 0x006A1DC0 balances by +0x14). RATINGSHOW1:
+    0x00070037, the rating players see (the setup's exe patch shows it in the main menu's profile box)."""
+    pairs = [(k, v) for k, v in ((0x00070034, wins), (0x00070035, rating), (0x00070037, shown)) if v]
+    if pairs:
+        w.map("DMAP", INT, INT, pairs)
+    return w
+
+
+def extended_data_update(user_info=0, wins=0, rating=RATING2_START, shown=0):  # UserSessionExtendedDataUpdate 0x012F1FF8
     w = tdf.Writer()
     with w.struct("DATA"):  # Blaze::UserSessionExtendedData 0x012F1F70
-        w.string("BPS", "local").string("CTY", "")
+        rating_dmap(w.string("BPS", "local").string("CTY", ""), wins, rating, shown)
         with w.struct("QDAT"):  # Blaze::Util::NetworkQosData 0x01462610
             w.int("DBPS", 0).int("NATT", 0).int("UBPS", 0)
         w.int("UATT", user_info)  # B7a: the stored user info attribute
@@ -506,14 +520,8 @@ def b7c_basic_data_after_game():  # BGAMetagameGetBasicAccountDataResponse: leve
     return bytes(tdf.Writer().list("BASD", STRUCT, [w]))
 
 
-def b7c_extended_data_wins(wins):  # UserSessionExtendedDataUpdate with DMAP {0x00070034: wins} (R11)
-    w = tdf.Writer()
-    with w.struct("DATA"):
-        w.string("BPS", "local").string("CTY", "").map("DMAP", INT, INT, [(0x00070034, wins)])
-        with w.struct("QDAT"):
-            w.int("DBPS", 0).int("NATT", 0).int("UBPS", 0)
-        w.int("UATT", 0)
-    return bytes(w.int("SUBS", 1).int("USID", B5_PID))
+def b7c_extended_data_wins(wins):  # UserSessionExtendedDataUpdate with DMAP {0x00070034: wins} (R11; RATING2's rating)
+    return extended_data_update(0, wins)
 
 
 def b7c_commerce_profile(asec, aspc, ctec, ctpc):  # GetCommerceProfileResponse 0x012F34FC, CommerceProfile 0x012F2DC0
@@ -855,7 +863,7 @@ def a5b_user_data(uid, pid, name, online):
     USER = UserIdentification 0x012F1C70 {AID the account, ALOC, ID the persona, NAME}; EXBB, EXID, ORIG defaults."""
     w = tdf.Writer()
     with w.struct("EDAT"):
-        w.string("BPS", "local").string("CTY", "")
+        rating_dmap(w.string("BPS", "local").string("CTY", ""))  # RATING2: the start rating
         with w.struct("QDAT"):
             w.int("DBPS", 0).int("NATT", 0).int("UBPS", 0)
         w.int("UATT", 0)
@@ -956,8 +964,9 @@ def b13b_get_lists_reply():
 
 def b13b_extended_data(w, presence):
     """Blaze::UserSessionExtendedData 0x012F1F70 of another user: as extended_data_update's DATA with CMAP {0x5550: the
-    presence} (the client attribute updateExtendedDataAttribute sets; the presence manager reads it, 0x00AA9A90)."""
-    w.string("BPS", "local").map("CMAP", INT, INT, [(0x5550, presence)]).string("CTY", "")
+    presence} (the client attribute updateExtendedDataAttribute sets; the presence manager reads it, 0x00AA9A90) and,
+    since RATING2, DMAP with the start rating."""
+    rating_dmap(w.string("BPS", "local").map("CMAP", INT, INT, [(0x5550, presence)]).string("CTY", ""))
     with w.struct("QDAT"):
         w.int("DBPS", 0).int("NATT", 0).int("UBPS", 0)
     return w.int("UATT", 0)
@@ -1033,29 +1042,29 @@ def b14_system_message(mgid, tag, attrs):
     return bytes(w.int("TIME", B5_TIME))
 
 
-def b14_extended_data(w, presence, wins):
+def b14_extended_data(w, presence, wins, rating=RATING2_START, shown=0):
     """UserSessionExtendedData 0x012F1F70 of another user with its presence (CMAP) and wins (DMAP {0x00070034: wins},
-    R11's key the main menu and the party lobby read)."""
-    w.string("BPS", "local").map("CMAP", INT, INT, [(0x5550, presence)]).string("CTY", "")
-    w.map("DMAP", INT, INT, [(0x00070034, wins)])
+    R11's key the main menu and the party lobby read; since RATING2 also 0x00070035, the rating BALANCE reads)."""
+    rating_dmap(w.string("BPS", "local").map("CMAP", INT, INT, [(0x5550, presence)]).string("CTY", ""), wins, rating,
+                shown)
     with w.struct("QDAT"):
         w.int("DBPS", 0).int("NATT", 0).int("UBPS", 0)
     return w.int("UATT", 0)
 
 
-def b14_user_added(uid, pid, name, presence, wins):
+def b14_user_added(uid, pid, name, presence, wins, rating=RATING2_START, shown=0):
     w = tdf.Writer()
     with w.struct("DATA"):
-        b14_extended_data(w, presence, wins)
+        b14_extended_data(w, presence, wins, rating, shown)
     with w.struct("USER"):
         w.int("AID", uid).int("ALOC", B5_LOCALE).int("ID", pid).string("NAME", name)
     return bytes(w)
 
 
-def b14_member_data(pid, presence, wins):
+def b14_member_data(pid, presence, wins, rating=RATING2_START):
     w = tdf.Writer()
     with w.struct("DATA"):
-        b14_extended_data(w, presence, wins)
+        b14_extended_data(w, presence, wins, rating)
     return bytes(w.int("SUBS", 1).int("USID", pid))
 
 
@@ -1069,6 +1078,24 @@ B14_CASES = {
     # ONLINECOUNT: the players-online count, a broadcast of our own (id 100, the marquee only, after a login's list)
     "notifymessage_onlinecount_notification": lambda: b14_system_message(4, 2, [
         (0xB0000, "100"), (0xB0001, "4"), (0xB0002, "604800"), (0xB0003, "2 players online, 1 in a match")]),
+}
+
+# RATING2: every user's skill rating as DMAP[0x00070035] beside the wins (server/internal/blaze/usersessions.go
+# RatingValue), for the custom lobby's BALANCE (GameRosterManager_BalanceTeams 0x006A1DC0 reads it through
+# BlazePlatform_GetUserExtendedInfo 0x00AD4F90's record +0x14). The own push after a rated game won (3 wins, 1662:
+# two new players 1 v 1), another user's data with a rating but no wins (UserAdded, 2105), and a known user's again
+# (UserSessionExtendedDataUpdate, 1338).
+RATING2_CASES = {
+    "rating2_extendeddataupdate_notification": lambda: extended_data_update(0, 3, 1662),
+    "rating2_useradded_notification": lambda: b14_user_added(B5_UID, B5_PID, B5_NAME, 0, 0, 2105),
+    "rating2_memberdata_notification": lambda: b14_member_data(B5_PID, 0x20001, 3, 1338),
+}
+
+# RATINGSHOW1: the rating players see, DMAP[0x00070037] (server/internal/blaze/showrating.go), beside the wins and
+# RATING2's rating: the player's own data (an account with 12 rated games at 1612.4 and 3 wins) and another user's
+RATINGSHOW1_CASES = {
+    "ratingshow1_extendeddataupdate_notification": lambda: extended_data_update(0, 3, 1612, 1612),
+    "ratingshow1_useradded_notification": lambda: b14_user_added(B5_UID, B5_PID, B5_NAME, 0, 0, 1612, 1612),
 }
 
 # MAPGUARD: the map check's message to a player kept out of a game on MM_Map_v3 (server/internal/blaze/mapguard.go): a
@@ -1793,6 +1820,26 @@ DISCORD3A_CASES = {
 }
 
 
+# RATINGSHOW2: the Leaderboard's 'Skill' reply with the shown ratings in the names (server/internal/blaze/leaderboard.go
+# RatingMark, which the front end's class LeaderboardRating takes out into its Rating column): rows (persona id, name,
+# rating, rated games, wins, shaper, shown) by rating; STAT = rating, games, wins, shaper; the second account has
+# fewer than the Leaderboard's 10 rated games, so its name has no mark.
+def ratingshow2_leaderboard(rows, first_rank=1):
+    items = []
+    for i, (pid, name, rating, games, wins, shaper, shown) in enumerate(rows):
+        if shown:
+            name += "<dgr r='%d'/>" % rating
+        items.append(tdf.Writer().string("ENAM", name).int("ENID", pid).int("RANK", first_rank + i)
+                     .list("STAT", STRING, [str(rating), str(games), str(wins), str(shaper)]))
+    return bytes(tdf.Writer().list("LDLS", STRUCT, items))
+
+
+RATINGSHOW2_CASES = {
+    "ratingshow2_getleaderboard_reply": lambda: ratingshow2_leaderboard(
+        [(B11_SECOND_PID, B11_SECOND_NAME, 1688, 13, 9, LBFIX_SHAPER, True), (B5_PID, B5_NAME, 1500, 3, 2, 0, False)]),
+}
+
+
 LBFIX_CASES = {
     "getleaderboard_reply": lambda: lbfix_leaderboard([(B11_SECOND_PID, B11_SECOND_NAME, 4, 3, LBFIX_SHAPER),
                                                        (B5_PID, B5_NAME, 5, 3, 0)]),
@@ -1915,10 +1962,13 @@ WRITER_CASES = {
     **G3_CASES,
     **B13B_CASES,
     **B14_CASES,
+    **RATING2_CASES,
+    **RATINGSHOW1_CASES,
     **MAPGUARD_CASES,
     **B15_CASES,
     **PH5B_CASES,
     **LBFIX_CASES,
+    **RATINGSHOW2_CASES,
     **DISCORD3A_CASES,
     **ROOMS1_CASES,
     **ROOMS3_CASES,

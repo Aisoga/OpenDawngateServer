@@ -1,0 +1,57 @@
+{{define "content"}}
+{{$csrf := .CSRF}}
+{{with .Admin.Issue}}
+<p class="issuehead">{{template "chip" .Status}} <span class="muted">{{.Area}}{{if not .Listed}} · no longer listed{{end}} · <a href="/issues/{{.ID}}">the players' page</a></span></p>
+<h2>What we assumed</h2>
+<p>{{.Assumed}}</p>
+<h2>What to look for</h2>
+<p>{{.LookFor}}</p>
+<p class="muted">Looks correct: {{.CorrectClaims}} claim(s), weight {{.Tally.Correct}} · Looks wrong: {{.WrongClaims}}
+claim(s), weight {{.Tally.Wrong}} · {{.Tally.Videos}} video(s) · {{.Tally.Hidden}} hidden</p>
+{{if .Open}}
+<h2>Verdict</h2>
+<form method="post" action="/admin/issues/verdict" class="claimform">
+<input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="issue" value="{{.ID}}">
+<fieldset><legend>The guess</legend>
+<label class="check"><input type="radio" name="verdict" value="confirmed" required{{if eq .Verdict "confirmed"}} checked{{end}}> confirmed (it matches the original)</label>
+<label class="check"><input type="radio" name="verdict" value="disproven"{{if eq .Verdict "disproven"}} checked{{end}}> disproven (it is wrong; a fix is planned)</label>
+<label class="check"><input type="radio" name="verdict" value="closed"{{if eq .Verdict "closed"}} checked{{end}}> closed (can't be verified)</label>
+</fieldset>
+<label>Note <small>(required, up to 2,000 characters: what the evidence shows; players read it on the closed issue)</small>
+<textarea name="note" maxlength="2000" rows="4" required>{{.Note}}</textarea></label>
+<button type="submit">Close the issue</button>
+</form>
+{{else}}
+<div class="verdict">
+<h2>{{.Status.Label}}{{with .ClosedAt}} <span class="muted">({{.}})</span>{{end}}</h2>
+{{if .VerdictNote}}<p class="usertext">{{.VerdictNote}}</p>{{end}}
+<p class="muted">By {{.ClosedBy}}. Players see the note and the date, not who gave it.</p>
+</div>
+<form method="post" action="/admin/issues/reopen" class="row">
+<input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="issue" value="{{.ID}}">
+<label>Why <small>(optional; the audit log keeps it with the old verdict)</small>
+<input type="text" name="note" maxlength="2000"></label>
+<button type="submit" class="danger">Reopen</button>
+</form>
+{{end}}
+<h2>Claims</h2>
+{{if .Claims}}
+<div class="table-wrap"><table class="admin">
+<tr><th>Claim</th><th>Player</th><th>Stance / weight</th><th>Note and videos</th><th>Made (UTC)</th><th></th></tr>
+{{range .Claims}}
+<tr><td>{{.ID}}{{if .Hidden}}<br><b>hidden</b>{{end}}</td>
+<td>{{.Persona}}<br><a href="/admin/accounts?q={{.UserID}}" class="muted">account {{.UserID}}</a></td>
+<td>{{.StanceLabel}}<br>weight {{.Weight}}</td>
+<td>{{if .Note}}<p class="usertext">{{.Note}}</p>{{end}}{{range .Videos}}<a href="{{.URL}}" rel="nofollow noopener noreferrer ugc">{{.Label}}</a> <span class="muted">{{.Short}}</span><br>{{end}}</td>
+<td>{{.Created}}{{with .Edited}}<br>edited {{.}}{{end}}</td>
+<td><form method="post" action="/admin/issues/claim">
+<input type="hidden" name="csrf" value="{{$csrf}}"><input type="hidden" name="issue" value="{{$.Admin.Issue.ID}}"><input type="hidden" name="claim" value="{{.ID}}">
+{{if .Hidden}}<input type="hidden" name="hidden" value="0"><button type="submit" class="small">Show</button>{{else}}<input type="hidden" name="hidden" value="1"><button type="submit" class="small danger">Hide</button>{{end}}
+</form></td></tr>
+{{end}}
+</table></div>
+{{else}}<p>No claims yet.</p>{{end}}
+<p class="note">A hidden claim no longer counts, and only its own player sees it (marked). Hiding works on a closed
+issue too. <a href="/admin/issues">Back to the issues</a>.</p>
+{{end}}
+{{end}}

@@ -10,6 +10,8 @@ It logs in as an admin (an account given the role with dgserver --make-admin), t
                                                    seconds more, then end it (the host's abortGame); prints the page
     audit                                          print the audit log's newest entries
     signup <open|invite|closed>                    set the sign-up mode
+    token <name>                                   make an API token of the issue tracker on /admin/tokens and
+                                                   write it to --out (needed; the token is never printed)
     invite [uses] [days] [note]                    make an invite code (default 1 use, 14 days); prints
                                                    "code: <code>" and writes it to --out
     register <login name> [display name]           register on the public /signup form as a player would:
@@ -31,6 +33,7 @@ Usage:
     ... --wait-match --after 30 status player1 disabled           (a player in a match)
     ... end-match [--after 20] [--timeout 300] [--reason "live check"]
     ... invite 1 1 "release check" --out <file>
+    ... token reviewer --out <file outside the repository>
     admin_page.py --base https://192.168.20.40 --cafile <pem> --password-file <file> --code-file <file> register player2 Player2
 """
 import argparse
@@ -155,10 +158,11 @@ def main():
     ap.add_argument("--reason", default="")
     ap.add_argument("--wait-online", type=int, default=0, help="status/delete: first wait until this many players are online")
     ap.add_argument("--wait-match", action="store_true", help="status/delete: first wait until a match has a player in it")
-    ap.add_argument("--out", help="invite: write the code to this file")
+    ap.add_argument("--out", help="invite: write the code to this file; token: write the token to it")
     ap.add_argument("--code", default="", help="register: the invite code")
     ap.add_argument("--code-file", help="register: read the invite code from this file")
-    ap.add_argument("action", choices=["status", "delete", "matches", "end-match", "audit", "signup", "invite", "register"])
+    ap.add_argument("action", choices=["status", "delete", "matches", "end-match", "audit", "signup", "invite", "register",
+                                       "token"])
     ap.add_argument("args", nargs="*")
     a = ap.parse_args()
     if not a.cafile and not a.insecure:
@@ -240,6 +244,19 @@ def main():
         if a.out:
             with open(a.out, "w", encoding="utf-8") as f:
                 f.write(inv + "\n")
+        return 0
+    if a.action == "token":
+        if not a.out or len(a.args) != 1:
+            ap.error("token <name> --out <file>")
+        code, page = site.post("/admin/tokens", {"name": a.args[0]})
+        m = re.search(r'<p class="secret">([^<]+)</p>', page)
+        say(f"token {a.args[0]!r}: {code} {text(page)}")
+        if code != 200 or not m:
+            return 1
+        os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
+        with open(a.out, "w", encoding="utf-8") as f:
+            f.write(html.unescape(m.group(1)).strip() + "\n")
+        say(f"token written to {a.out}")
         return 0
     if a.action == "matches":
         for game, info, players in matches(site):

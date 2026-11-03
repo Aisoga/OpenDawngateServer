@@ -42,7 +42,12 @@ And for the Collection's Items category (--spec collection): client_ui/collectio
 server/internal/setup/moviepatch/collection_tags.hex, the front end's movie UI/Scaleform/CDN/swf/code/UIRuntime.gfx from
 game/Data/code.snap, the added archive game/Data/zz_CollectionItems.snap (the same id and depth, 2000). That archive
 also holds the item list, UI/Scaleform/Collection/dgitems.json (item_list), written from the server's content.json
-(--content; the item icons are the game's own textures, which the front end has mounted).
+(--content; the item icons are the game's own textures, which the front end has mounted). The same movie also gets the
+custom game lobby's ready check, client_ui/lobby/LobbyReady.as (its tags server/internal/setup/moviepatch/lobby_tags.hex
+after the Collection's, character and depth 2001) and the Leaderboard's Rating column,
+client_ui/leaderboard/LeaderboardRating.as (leaderboard_tags.hex, after the lobby's, 2002): a spec's `more` Parts are
+further classes of its movie, each with its own id and depth, their tags in order (another class of that movie is one more Part, here and in Go's
+moviepatch.Collection.More). --tags <file> replaces all of a spec's tags.
 
 Usage (python -I: the game's files are untrusted input):
     python -I re/scripts/patch_login_movie.py <game/Data/LoginScreen.snap> <out zz_ServerPicker.snap> [--tags <file>]
@@ -72,17 +77,30 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 MOVIEPATCH = os.path.join(REPO, "server", "internal", "setup", "moviepatch")
 
 
+class Part:
+    """One more class in a spec's movie: its name, character id, root depth and committed tags (build_picker.py)."""
+
+    def __init__(self, class_name, char_id, depth, tags):
+        self.class_name, self.char_id, self.depth, self.tags = class_name, char_id, depth, tags
+
+
 class Spec:
-    """One added class: the archive its movie comes from, the added archive, the movie's path, the committed tags."""
+    """One added class: the archive its movie comes from, the added archive, the movie's path, the committed tags; more
+    classes of the same movie in `more` (Parts, their tags after the spec's own, each with its own id and depth)."""
 
     def __init__(self, what, source, rel, movie_path, tags, class_name, char_id=2000, depth=2000, map_list=False,
-                 web_root=False, extra=(), items=False):
+                 web_root=False, extra=(), items=False, more=()):
         self.what, self.source, self.rel, self.movie_path = what, source, rel, movie_path
         self.tags, self.class_name, self.char_id, self.depth = tags, class_name, char_id, depth
         self.map_list = map_list  # the archive also holds the create dialog's map list (MAP_LIST_PATH)
         self.web_root = web_root  # the archive also holds the server's web root (WEB_ROOT_PATH)
         self.extra = tuple(extra)  # more files of the archive, after the movie: (path, bytes)
         self.items = items  # the archive also holds the Collection's item list (ITEMS_PATH, from a content.json)
+        self.more = tuple(more)
+
+    def parts(self):
+        """Every class of the movie: the spec's own, then `more`, in the order their tags go in."""
+        return [Part(self.class_name, self.char_id, self.depth, self.tags)] + list(self.more)
 
 
 SPECS = {
@@ -102,7 +120,11 @@ SPECS = {
                      extra=(("UI/Scaleform/HUD/dgrefund.json", b"dawngate-refund\t1\nend\n"),)),
     "collection": Spec("the Collection's items", "game/Data/code.snap", "game/Data/zz_CollectionItems.snap",
                        "UI/Scaleform/CDN/swf/code/UIRuntime.gfx", os.path.join(MOVIEPATCH, "collection_tags.hex"),
-                       "CollectionItems", items=True),
+                       "CollectionItems", items=True,
+                       # the front end's movie carries more classes of ours: one Part each (the next free character
+                       # id and depth; moviepatch.Collection's More, in the same order)
+                       more=(Part("LobbyReady", 2001, 2001, os.path.join(MOVIEPATCH, "lobby_tags.hex")),
+                             Part("LeaderboardRating", 2002, 2002, os.path.join(MOVIEPATCH, "leaderboard_tags.hex")))),
 }
 # The shop refund's settings file (client_ui/itemshop/ShopRefund.as reads it as HUD/dgrefund.json): the setup writes
 # the default (no settings), since the class always asks for it and a missing file costs a FileDepot.cpp 138 assert
@@ -418,12 +440,13 @@ def patch_movie(raw, tags, spec=PICKER):
     if not d.eof:
         raise MovieError("zlib: the stream is cut short")
     ids, names, depths, show = scan(body)
-    if spec.class_name in names:
-        raise MovieError(f"the movie has {spec.what} already")
-    if spec.char_id in ids:
-        raise MovieError(f"the movie uses character id {spec.char_id}")
-    if spec.depth in depths:
-        raise MovieError(f"the movie uses depth {spec.depth} on its root timeline")
+    for p in spec.parts():
+        if p.class_name in names:
+            raise MovieError(f"the movie has {spec.what} already ({p.class_name})")
+        if p.char_id in ids:
+            raise MovieError(f"the movie uses character id {p.char_id}")
+        if p.depth in depths:
+            raise MovieError(f"the movie uses depth {p.depth} on its root timeline")
     if show is None:
         raise MovieError("no ShowFrame on the root timeline")
     new = body[:show] + tags + body[show:]
@@ -435,6 +458,11 @@ def read_tags(path=TAGS):
     """The tags' bytes from their committed hex text."""
     with open(path, "rb") as f:
         return bytes.fromhex(f.read().decode("ascii"))
+
+
+def spec_tags(spec):
+    """Every class's tags of a spec, in order (the spec's own, then its more Parts')."""
+    return b"".join(read_tags(p.tags) for p in spec.parts())
 
 
 def copy_maps(data_dir):
@@ -566,7 +594,7 @@ def build(snap_path, tags=None, spec=PICKER, maps=None, host=None, content=None,
     data; required)."""
     if spec.items and content is None:
         raise ValueError(f"{spec.what} needs the server's content.json (its item list)")
-    tags = read_tags(spec.tags) if tags is None else tags
+    tags = spec_tags(spec) if tags is None else tags
     s = snap.Snap(snap_path)
     entry = next((e for e in s.entries if e.name == spec.movie_path), None)
     if entry is None:
@@ -660,7 +688,7 @@ def main(argv):
         if not spec.items:
             sys.exit("--debug only with --spec collection")
         args.remove("--debug")
-    tags_path = spec.tags
+    tags_path = None
     if "--tags" in args:
         i = args.index("--tags")
         tags_path = args[i + 1]
@@ -669,7 +697,7 @@ def main(argv):
         sys.exit("run this with python -I: it reads the game's files")
     if len(args) == 2 and args[0] == "--read-map-list":
         return print_map_list(args[1])
-    tags = read_tags(tags_path)
+    tags = spec_tags(spec) if tags_path is None else read_tags(tags_path)
     if len(args) == 3 and args[0] == "--movie":
         with open(args[1], "rb") as f:
             out = patch_movie(f.read(), tags, spec)

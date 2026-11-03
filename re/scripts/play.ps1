@@ -207,7 +207,23 @@ function Update-Maps([string]$copy, [string]$what, [switch]$Client) {
     } finally { Pop-Location }
 }
 
-function Update-AddedArchive([string]$copy, [string]$what, [string]$scriptName, [string]$label, [string]$staleWord) {
+function Update-ExePatches([string]$copy, [string]$fix) {
+    # RATINGSHOW1: the client exe carries patch_client.py's later default patches (the map-name cave, the profile box's
+    # rating); a copy patched before them is patched again (patch_client.py always starts from Dawngate.exe.orig)
+    $exe = Join-Path $copy 'game\Dawngate.exe'
+    $patcher = Join-Path $PSScriptRoot 'patch_client.py'
+    $label = 'client exe patches (map names, the profile box''s rating)'
+    $want = @('preload=all', 'maptable=on', 'rating=on')
+    $show = @(& $Python -I $patcher --show $exe)
+    if (-not @($want | Where-Object { $show -notcontains $_ }).Count) { Ok $label; return }
+    Write-Host "  install  $label (an older patch)" -ForegroundColor Yellow
+    & $Python -I $patcher $exe (Join-Path $Certs 'ca_modulus.bin') 127.0.0.1 | ForEach-Object { Write-Host "           $_" -ForegroundColor Gray }
+    $show = @(& $Python -I $patcher --show $exe)
+    if (-not @($want | Where-Object { $show -notcontains $_ }).Count) { Ok $label }
+    else { Missing "patching the $label failed (is the game running from the client copy?)" @($fix) }
+}
+
+function Update-AddedArchive([string]$copy,[string]$what, [string]$scriptName, [string]$label, [string]$staleWord) {
     # one added archive that a script makes from the copy's own AssetData.snap (<script> <game\Data> [--check])
     $data = Join-Path $copy 'game\Data'
     $script = Join-Path $PSScriptRoot $scriptName
@@ -258,7 +274,10 @@ try {
         Missing 'the client copy is not patched (it would contact EA)' $patchCmds
     } elseif ((Test-Path $Python) -and (Test-Path (Join-Path $Certs 'ca_modulus.bin')) -and -not (Test-CaInExe (Join-Path $ClientDir 'game\Dawngate.exe'))) {
         Missing 'the client copy does not carry server\certs'' CA (new certificates?)' @($patchCmds[0])
-    } else { Ok 'client copy client\run_854 (patched, our CA)' }
+    } else {
+        Ok 'client copy client\run_854 (patched, our CA)'
+        if (Test-Path $Python) { Update-ExePatches $ClientDir $patchCmds[0] }
+    }
     # B6-live: without our host in Config_Pack.package's WebkitAllowedDomains the main menu's home page (centre panel)
     # stays empty; not needed to play, so only a note
     $pack = Join-Path $ClientDir 'game\Data\Config_Pack.package'

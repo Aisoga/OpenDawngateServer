@@ -79,7 +79,7 @@ func TestB7aRepliesMatchGolden(t *testing.T) {
 		{"b7a_getusersettings_reply", GetUserSettingsReply(f.acct.Settings)},
 		{"b7a_getstatgroup_reply", StatGroupReply("PlayerStats", StatGroups["PlayerStats"])},
 		{"b7a_getstatsasync_notification", f.statsNotification()},
-		{"b7a_extendeddataupdate_notification", ExtendedDataUpdateNotification(store.FirstPersonaID, f.acct.UserInfo, 0)},
+		{"b7a_extendeddataupdate_notification", ExtendedDataUpdateNotification(store.FirstPersonaID, f.acct.UserInfo, 0, 1500, 0)},
 	} {
 		if got, want := hex.EncodeToString(c.got), g.WriterCase(t, c.name).Hex; got != want {
 			t.Errorf("%s\n got %s\nwant %s", c.name, got, want)

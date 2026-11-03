@@ -36,14 +36,14 @@ func MadeUp() []byte {
 // The SHA-256s re/scripts/patch_locale.py gives for the same inputs (test_ph2b.py pins the same values).
 const (
 	madeUpSHA        = "97766712cea3cf54c20204922cc472d86ac9d592c40e955f7c1a635e0567f25e"
-	madeUpLaneB      = "346751fbfa659f69a74c91a6eebe15e97cc0206a35a276bf358e37b487233a3e" // --host 127.0.0.2
-	madeUpWebDomain  = "e2ca3fa68bb3c50190a98fa8cc33f704793d64350452326e15f6c39bb5f302cf" // 192.168.1.20, Play.Example.org:8443
-	madeUpLobbyAny   = "b5313cd2bf11cafcf66eca7029b62d4dfa10971121ae5170d688d28d560be98e" // 127.0.0.2, LobbyMapAny, testMaps
+	madeUpLaneB      = "48adf42d2782fcbf4ebffcf23c5497fe1eb13465b2c9df3ef9906e138c2ae6a1" // --host 127.0.0.2
+	madeUpWebDomain  = "167fe96dce5a000ec6b04d89b40a52ac44c2eb6eac92531ecca7afbe843925f9" // 192.168.1.20, Play.Example.org:8443
+	madeUpLobbyAny   = "93415e9102b9915fc4e5a17325c86fc57e1a596ed75e0ad5dc83bd634ae2c8c9" // 127.0.0.2, LobbyMapAny, testMaps
 	synthLocaleSHA   = "528ce9623b3b1542fa600b1036136a3c39e8e68bb586019fb3a6d3c2f6374832" // synthgame.Locale()
-	synthLocal       = "476b2381284742ffbb866771e082af47beb87900b1567f35fc15c2cf3d420a7f" // the synthetic game, 127.0.0.1
-	game854Local     = "44bb48de9bd21aefa1886d8ea70e672e27d57c0ad1b3abfa53b6f3e35f690024" // build 854, --host 127.0.0.1
-	game854LaneB     = "0c36b450e08e6c92431236b9312431d3e093dce51c1f7cc6b700903edcb3cbb3" // --host 127.0.0.2
-	game854WebDomain = "ce31788c2878cd41273039ac60765a9561bb51f6bdf70745b30c5dd783f64b97" // 203.0.113.7, dawngate.example.org
+	synthLocal       = "09e70b3d8ae98c467044606da14a39f5c8045d1b5ccef1a8edd43f81125d1bb6" // the synthetic game, 127.0.0.1
+	game854Local     = "d5dc6938666a43ab80eb2c3000fe474a0c205982fe71e1bc446337f91e68953f" // build 854, --host 127.0.0.1
+	game854LaneB     = "47b26aed6c9a6c2e4a04c7b20e5447e1051533dc159692034eb09291bfa9c951" // --host 127.0.0.2
+	game854WebDomain = "4eece808fe745e3bad7d43d71449458af5a302c2052fd50b5313fc1da54125d2" // 203.0.113.7, dawngate.example.org
 )
 
 // testMaps are a maps folder's packages (test_ph2b.py's MAPS): CM_Ring, and one named like MM_Map_v3 (its line is the

@@ -58,7 +58,7 @@ func TestB5RepliesMatchGolden(t *testing.T) {
 		{"login_reply", LoginReply(acct, testKey, testTime)},
 		{"loginpersona_reply", SessionInfoReply(acct, p, testKey, true, testTime)},
 		{"userauthenticated_notification", UserAuthenticatedNotification(acct, p, testKey, true, testTime)},
-		{"extendeddataupdate_notification", ExtendedDataUpdateNotification(p.ID, 0, 0)},
+		{"extendeddataupdate_notification", ExtendedDataUpdateNotification(p.ID, 0, 0, 1500, 0)},
 		{"postauth_reply", PostAuthReply("127.0.0.1", 9988, acct.UserID)},
 		{"gettelemetryserver_reply", TelemetryServerReply("127.0.0.1", 9988)},
 		{"enterservice_reply", EnterServiceReply()},

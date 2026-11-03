@@ -85,5 +85,7 @@ func SyntheticExe() []byte {
 	put(mapMiss, mapMissOrig)
 	put(mapFound, mapFoundOrig)
 	put(mapResume, mapResumeOrig)
+	put(ratingSite1, ratingSite1Orig)
+	put(ratingSite2, append(bytes.Clone(ratingSite2Orig), ratingNext2...))
 	return b
 }

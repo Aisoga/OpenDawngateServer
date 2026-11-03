@@ -31,6 +31,15 @@ func ChatRoomsFlags(cfg Config) []string { return keyFlags(cfg, []string{"chat_r
 // dgserver checks it.
 func MatchHistoryFlags(cfg Config) []string { return keyFlags(cfg, []string{"match_history_names"}) }
 
+// ratingKeys are Start-Server.ini's skill rating keys, each dgserver's flag of the same name: rating_leaderboard
+// (the Leaderboard ranks by the rating) and show_rating (players see their rating in the main menu's profile box).
+var ratingKeys = []string{"rating_leaderboard", "show_rating"}
+
+// RatingFlags are dgserver's --rating-leaderboard and --show-rating for the rating keys that are set (an empty or
+// missing key, as in a file from an earlier release, keeps dgserver's default: on for both). They come before
+// server_flags; dgserver checks them.
+func RatingFlags(cfg Config) []string { return keyFlags(cfg, ratingKeys) }
+
 // MatchRecordFlags is dgserver's --match-record for the match_record key when it is set (an empty or missing key, as
 // in a file from an earlier release, keeps dgserver's default: off). It comes before server_flags; dgserver checks
 // it.
@@ -39,6 +48,10 @@ func MatchRecordFlags(cfg Config) []string { return keyFlags(cfg, []string{"matc
 // HalloweenFlags is dgserver's --halloween for the halloween key when it is set (an empty or missing key, as in a file
 // from an earlier release, keeps dgserver's default: off). It comes before server_flags; dgserver checks it.
 func HalloweenFlags(cfg Config) []string { return keyFlags(cfg, []string{"halloween"}) }
+
+// IssuesFlags is dgserver's --issues for the issues key when it is set (an empty or missing key, as in a file from an
+// earlier release, keeps dgserver's default: off). It comes before server_flags; dgserver checks it.
+func IssuesFlags(cfg Config) []string { return keyFlags(cfg, []string{"issues"}) }
 
 // MapFlags are dgserver's --map and --custom-maps for the map and custom_maps keys that are set (an empty or missing
 // key, as in a file from an earlier release, keeps dgserver's default: SM_Map_v5, no other map for custom games). They

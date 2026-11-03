@@ -24,8 +24,8 @@ func TestLBFIXRepliesMatchGolden(t *testing.T) {
 		got  []byte
 	}{
 		{"getleaderboard_reply", LeaderboardReply([]store.LeaderRow{
-			{PersonaID: store.FirstPersonaID + 1, Name: "second", Games: 4, Wins: 3, Shaper: 1001},
-			{PersonaID: store.FirstPersonaID, Name: "player", Games: 5, Wins: 3}}, 1)},
+			{PersonaID: store.FirstPersonaID + 1, Name: "second", Games: 4, Wins: 3, Shaper: 1001, Skill: 3},
+			{PersonaID: store.FirstPersonaID, Name: "player", Games: 5, Wins: 3, Skill: 3}}, 1)},
 		{"getleaderboard_empty_reply", LeaderboardReply(nil, 1)},
 		{"filepetition_reply", FilePetitionReply("report-1")},
 		{"selectcategoryupdates_reply", SelectCategoryUpdatesReply(0)},
@@ -65,6 +65,7 @@ func seedGames(t *testing.T, s *Server, email string, ranked store.GamesWon, sha
 func TestLeaderboardSession(t *testing.T) {
 	ps := newPipeSessionWith(t, func(s *Server) {
 		s.LeaderboardMinGames = 1
+		s.RatingLeaderboard = false // LBMIN's wins ranking (--rating-leaderboard off); the rating's: TestRatingLeaderboardSession
 		seedGames(t, s, "player@example.com", store.GamesWon{Games: 5, Wins: 3}, map[uint32]store.GamesWon{1002: {Games: 1}}, nil)
 		seedGames(t, s, "second@example.com", store.GamesWon{Games: 4, Wins: 3}, map[uint32]store.GamesWon{1001: {Games: 4, Wins: 3}},
 			&store.GamesWon{Games: 3, Wins: 3})
@@ -74,13 +75,13 @@ func TestLeaderboardSession(t *testing.T) {
 	// 'Skill': the golden reply but for player's shaper (1002 here)
 	ps.send(ComponentStats, CmdStatsGetLeaderboard, 10, ps.request("getleaderboard_request"))
 	want := LeaderboardReply([]store.LeaderRow{
-		{PersonaID: store.FirstPersonaID + 1, Name: "second", Games: 4, Wins: 3, Shaper: 1001},
-		{PersonaID: store.FirstPersonaID, Name: "player", Games: 5, Wins: 3, Shaper: 1002}}, 1)
+		{PersonaID: store.FirstPersonaID + 1, Name: "second", Games: 4, Wins: 3, Shaper: 1001, Skill: 3},
+		{PersonaID: store.FirstPersonaID, Name: "player", Games: 5, Wins: 3, Shaper: 1002, Skill: 3}}, 1)
 	ps.expectPayload(ComponentStats, CmdStatsGetLeaderboard, fire.Reply, 10, want)
 	ps.send(ComponentStats, CmdStatsGetLeaderboard, 11, ps.request("getleaderboard_daily_request"))
 	want = LeaderboardReply([]store.LeaderRow{
-		{PersonaID: store.FirstPersonaID, Name: "player", Games: 5, Wins: 3, Shaper: 1002},
-		{PersonaID: store.FirstPersonaID + 1, Name: "second", Games: 1, Wins: 0, Shaper: 1001}}, 1)
+		{PersonaID: store.FirstPersonaID, Name: "player", Games: 5, Wins: 3, Shaper: 1002, Skill: 3},
+		{PersonaID: store.FirstPersonaID + 1, Name: "second", Games: 1, Wins: 0, Shaper: 1001, Skill: 0}}, 1)
 	ps.expectPayload(ComponentStats, CmdStatsGetLeaderboard, fire.Reply, 11, want)
 	ps.send(ComponentStats, CmdStatsGetLeaderboard, 12, tdf.NewWriter().Int("COUN", 200).String("NAME", "Kills").
 		Int("STRT", 1).Bytes())
@@ -91,7 +92,7 @@ func TestLeaderboardSession(t *testing.T) {
 	ps.send(ComponentStats, CmdStatsGetLeaderboard, 14, tdf.NewWriter().Int("COUN", 1).String("NAME", "Skill").
 		Int("STRT", 2).Bytes())
 	ps.expectPayload(ComponentStats, CmdStatsGetLeaderboard, fire.Reply, 14, LeaderboardReply([]store.LeaderRow{
-		{PersonaID: store.FirstPersonaID, Name: "player", Games: 5, Wins: 3, Shaper: 1002}}, 2))
+		{PersonaID: store.FirstPersonaID, Name: "player", Games: 5, Wins: 3, Shaper: 1002, Skill: 3}}, 2))
 
 	ps.send(ComponentGpsContentController, CmdGpsFilePetition, 15, ps.request("filepetition_request"))
 	f := ps.next("filePetition reply")
@@ -120,23 +121,24 @@ func TestLeaderboardSession(t *testing.T) {
 }
 
 // By default an account needs the 10 Leaderboard games the screen's text names (the setup's FE_Leaderboard line): 9
-// games aren't ranked, 10 are.
+// games aren't ranked, 10 are (the wins ranking; the rating's: TestRatingLeaderboardSession, whose third has 9).
 func TestLeaderboardMinGames(t *testing.T) {
 	ps := newPipeSessionWith(t, func(s *Server) {
+		s.RatingLeaderboard = false
 		seedGames(t, s, "player@example.com", store.GamesWon{Games: 9, Wins: 8}, nil, nil)
 		seedGames(t, s, "second@example.com", store.GamesWon{Games: 10, Wins: 3}, nil, nil)
 	})
 	ps.loginAs("player@example.com", 1)
 	ps.send(ComponentStats, CmdStatsGetLeaderboard, 10, ps.request("getleaderboard_request"))
 	ps.expectPayload(ComponentStats, CmdStatsGetLeaderboard, fire.Reply, 10, LeaderboardReply([]store.LeaderRow{
-		{PersonaID: store.FirstPersonaID + 1, Name: "second", Games: 10, Wins: 3}}, 1))
+		{PersonaID: store.FirstPersonaID + 1, Name: "second", Games: 10, Wins: 3, Skill: 3}}, 1))
 	ps.close()
 }
 
 // The number in the Leaderboard screen's text, which the player copy's setup writes (localepatch), is the default's.
 func TestLeaderboardTextNumber(t *testing.T) {
 	if localepatch.LeaderboardMinGames != LeaderboardMinGames ||
-		!strings.Contains(localepatch.LeaderboardLines[0x101], fmt.Sprintf(" at least %d games played.", LeaderboardMinGames)) {
+		!strings.Contains(localepatch.LeaderboardLines[0x101], fmt.Sprintf(" at least %d rated games.", LeaderboardMinGames)) {
 		t.Errorf("the screen says %q, the default is %d", localepatch.LeaderboardLines[0x101], LeaderboardMinGames)
 	}
 }

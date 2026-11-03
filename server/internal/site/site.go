@@ -8,13 +8,17 @@
 //
 // Server-rendered html/template pages, no script. Every form carries a CSRF token bound to a cookie (csrf.go), every
 // POST passes a per-address rate (always on) and, when dgserver's limits are on (internal/limits), the same
-// per-address and per-account login backoff as the game's login for the forms that check a password. The site keeps
-// no login session: each self-service form names the account and is confirmed by its password. The request log has
+// per-address and per-account login backoff as the game's login for the forms that check a password. The
+// self-service keeps no login session: each self-service form names the account and is confirmed by its password
+// (only the admin page and the issue tracker have sessions). The request log has
 // one line per request (address, method, path, status, what happened) and never a request body: the plain HTTP
 // logger (internal/web) hexdumps bodies, so the forms never go through it.
 //
 // The page names are the client's login-screen links' (internal/sitelinks): / (start), /signup, /password
-// (forgotten password), /terms, /privacy; dgserver's plain HTTP port redirects /dawngate/<page> to them.
+// (forgotten password), /terms, /privacy; dgserver's plain HTTP port redirects /dawngate/<page> to them. With
+// Config.Issues the issue tracker's pages for players are under /issues (issues.go), behind a login with the game
+// account (issues_session.go); the admin page gets the tracker's part (admin_issues.go: the issues, hiding claims,
+// verdicts, the API's tokens), and its JSON API for a reviewer is under /api (api.go, Bearer tokens, no cookies).
 package site
 
 import (
@@ -94,6 +98,14 @@ type Config struct {
 	// Download is the server's client package (dgserver --client-package; nil: none): the page /download and the
 	// file at Download.Path.
 	Download *Download
+	// Issues turns on the issue tracker's pages for players under /issues (issues.go; dgserver --issues): the
+	// store's issues (issues.Sync has filled them), a login with the game account, claims. With it the admin page
+	// (Admin) gets /admin/issues and /admin/tokens, and the site serves the tracker's API under /api (api.go).
+	Issues bool
+	// APILimits counts the API's failed Bearer attempts per address (nil = a limiter of the site's own with
+	// limits.API(), always on); APIRate is each token's request rate (zero = DefaultAPIRate).
+	APILimits Limiter
+	APIRate   Rate
 }
 
 // Download is the client package on the website.
@@ -125,7 +137,9 @@ type Site struct {
 	pages   map[string]*template.Template
 	forms   *buckets
 	started time.Time
-	admin   *adminState // nil without Config.Admin
+	admin   *adminState  // nil without Config.Admin
+	players *playerState // the issue tracker's sessions; nil without Config.Issues
+	api     *apiState    // the tracker's API; nil without Config.Issues
 }
 
 //go:embed templates/*.html static/site.css
@@ -163,7 +177,7 @@ func New(cfg Config) (*Site, error) {
 	if _, err := rand.Read(s.key); err != nil {
 		return nil, err
 	}
-	base, err := template.New("layout.html").Funcs(template.FuncMap{"upper": strings.ToUpper}).
+	base, err := template.New("layout.html").Funcs(template.FuncMap{"upper": strings.ToUpper, "rows": rowsArg}).
 		ParseFS(files, "templates/layout.html")
 	if err != nil {
 		return nil, err
@@ -209,6 +223,15 @@ func New(cfg Config) (*Site, error) {
 	if cfg.Admin != nil {
 		s.admin = newAdminState(*cfg.Admin, cfg.Now)
 		s.adminRoutes(m)
+	}
+	if cfg.Issues {
+		s.players = newPlayerState()
+		s.issuesRoutes(m)
+		s.api = newAPIState(cfg)
+		s.apiRoutes(m)
+		if cfg.Admin != nil {
+			s.adminIssuesRoutes(m)
+		}
 	}
 	m.HandleFunc("GET /site.css", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
@@ -261,7 +284,11 @@ func (s *Site) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.HSTS {
 		h.Set("Strict-Transport-Security", "max-age=31536000")
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+	limit := int64(maxBody)
+	if s.cfg.Issues && strings.HasPrefix(r.URL.Path, "/issues/") && strings.HasSuffix(r.URL.Path, "/claim") {
+		limit = maxClaimBody // a claim's note may be 1,000 characters of 4 bytes each
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	rec := &recorder{ResponseWriter: w}
 	r, https := s.fromProxy(r)
 	switch {
@@ -349,6 +376,9 @@ type view struct {
 	Admin   *adminView // the admin pages' data (nil on the player's pages)
 	// Download is the client package's link and state (nil: the server hands out none)
 	Download *downloadView
+	// Issues: the issue tracker is on (the nav's link); Tracker is its pages' data (nil elsewhere)
+	Issues  bool
+	Tracker *issuesView
 }
 
 type downloadView struct {
@@ -366,7 +396,7 @@ func (s *Site) render(w http.ResponseWriter, r *http.Request, status int, page s
 		http.Error(w, "no page "+page, http.StatusInternalServerError)
 		return
 	}
-	v.Version, v.Mode, v.Rules = s.cfg.Version, s.cfg.Policy.CurrentMode().String(), theRules
+	v.Version, v.Mode, v.Rules, v.Issues = s.cfg.Version, s.cfg.Policy.CurrentMode().String(), theRules, s.cfg.Issues
 	if d := s.cfg.Download; d != nil && v.Download == nil {
 		v.Download = &downloadView{Path: d.Path, File: d.File}
 	}

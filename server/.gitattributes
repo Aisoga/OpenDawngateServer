@@ -5,3 +5,5 @@ go.mod text eol=lf
 testdata/** -text
 # The web content dgserver embeds and serves (B6): the bytes on the wire must not depend on the checkout.
 internal/web/www/** -text
+# The issue tracker's list, embedded by internal/issues: the same bytes on every checkout.
+internal/issues/assumptions.json text eol=lf

@@ -21,6 +21,8 @@ import (
 const (
 	collectionList  = "60ed944ce678df5c0caea1bf3ff28d8f8f6ebce6f392082d3158fd1c78a5f9ea"
 	collectionSynth = "7cd32e2fbe63535ccd17a171b07a8b48227f2bbf3eab90e9cd8762fc5969dc5d"
+	// the same with a second class, tags "MORETAGS" as LobbyReady at 2001/2001
+	collectionSynthTwo = "9bf00c1c4f43663f79946de51969323b200af876f2a6842c383660a841bb3459"
 )
 
 func madeUpContent(t *testing.T) *content.Content {
@@ -185,6 +187,7 @@ func TestCollectionTags(t *testing.T) {
 	}
 	withOurs := sp
 	withOurs.Tags = []byte("OURTAGS")
+	withOurs.More = nil
 	withOurs.ItemList = ItemList(madeUpContent(t), false)
 	out, err := withOurs.Build(source)
 	if err != nil {
@@ -199,6 +202,97 @@ func TestCollectionTags(t *testing.T) {
 	}
 	if got := sum(out); got != collectionSynth {
 		t.Errorf("a made-up Collection archive: %d bytes, %s; patch_login_movie.py's: %s", len(out), got, collectionSynth)
+	}
+	// with a second class (a Part of More): both tag sets in order, both ids and depths checked
+	two := withOurs
+	two.More = []Part{{Class: "LobbyReady", CharID: 2001, Depth: 2001, Tags: []byte("MORETAGS")}}
+	out, err = two.Build(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sum(out); got != collectionSynthTwo {
+		t.Errorf("a made-up two-class archive: %d bytes, %s; patch_login_movie.py's: %s", len(out), got, collectionSynthTwo)
+	}
+	movie, err := two.PatchMovie(m)
+	if err != nil || !bytes.Contains(inflate(t, movie[8:]), []byte("OURTAGSMORETAGS")) {
+		t.Errorf("the two classes' tags not in order: %v", err)
+	}
+	clash := two
+	clash.More = []Part{{Class: "Second", CharID: 2000, Depth: 2001, Tags: []byte("X")}}
+	if _, err := clash.PatchMovie(m); err != nil {
+		t.Errorf("a Part's id is checked against the movie only: %v", err)
+	}
+	// a movie that has a Part's class already is refused (the real tags: their SymbolClass names it)
+	real := Collection
+	real.ItemList = withOurs.ItemList
+	patched, err := real.PatchMovie(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := real.PatchMovie(patched); err == nil || !strings.Contains(err.Error(), "already") {
+		t.Errorf("a movie with the classes already: %v", err)
+	}
+	other := two
+	other.Class, other.CharID, other.Depth = "Other", 3000, 3000
+	if _, err := other.PatchMovie(patched); err == nil || !strings.Contains(err.Error(), "LobbyReady") {
+		t.Errorf("a movie with LobbyReady already: %v", err)
+	}
+}
+
+func TestLobbyTags(t *testing.T) {
+	// DefineSprite 2001, DoABC "lobbyready", SymbolClass 2001 -> LobbyReady, PlaceObject3 at depth 2001
+	p := Collection.More[0]
+	tags, err := tagsOf(p.Tags, 0, len(p.Tags))
+	if err != nil || len(tags) != 4 || tags[3].end != len(p.Tags) {
+		t.Fatalf("lobby_tags.hex: %d tags, %v", len(tags), err)
+	}
+	for i, code := range []int{39, 82, 76, 70} {
+		if tags[i].code != code {
+			t.Errorf("tag %d: code %d, want %d", i, tags[i].code, code)
+		}
+	}
+	if d := p.Tags[tags[1].start:tags[1].end]; !bytes.HasPrefix(d, []byte("\x01\x00\x00\x00lobbyready\x00")) {
+		t.Errorf("DoABC %x…: not lazy and named lobbyready", d[:16])
+	}
+	if !bytes.Contains(p.Tags, []byte("~#rdy ")) || !bytes.Contains(p.Tags, []byte("customMatchLobby")) {
+		t.Error("the class doesn't speak the ready check's lines in the custom lobby")
+	}
+	ps, err := pairs(p.Tags, tags[2].start, tags[2].end)
+	if err != nil || len(ps) != 1 || ps[0] != (pair{2001, "LobbyReady"}) || p.Class != "LobbyReady" || p.CharID != 2001 {
+		t.Errorf("SymbolClass %+v, %v: want 2001 -> LobbyReady", ps, err)
+	}
+	d := p.Tags[tags[3].start:tags[3].end]
+	if !bytes.Equal(d, cat([]byte{0x06, 0}, u16s(2001, 2001), []byte{0})) || p.Depth != 2001 {
+		t.Errorf("PlaceObject3 %x: not character 2001 at depth 2001 without a name", d)
+	}
+}
+
+func TestLeaderboardTags(t *testing.T) {
+	// DefineSprite 2002, DoABC "leaderboardrating", SymbolClass 2002 -> LeaderboardRating, PlaceObject3 at depth 2002
+	p := Collection.More[1]
+	tags, err := tagsOf(p.Tags, 0, len(p.Tags))
+	if err != nil || len(tags) != 4 || tags[3].end != len(p.Tags) {
+		t.Fatalf("leaderboard_tags.hex: %d tags, %v", len(tags), err)
+	}
+	for i, code := range []int{39, 82, 76, 70} {
+		if tags[i].code != code {
+			t.Errorf("tag %d: code %d, want %d", i, tags[i].code, code)
+		}
+	}
+	if d := p.Tags[tags[1].start:tags[1].end]; !bytes.HasPrefix(d, []byte("\x01\x00\x00\x00leaderboardrating\x00")) {
+		t.Errorf("DoABC %x…: not lazy and named leaderboardrating", d[:16])
+	}
+	if !bytes.Contains(p.Tags, []byte("<dgr r='")) || !bytes.Contains(p.Tags, []byte("^FE_Leaderboard!0x5e70d001")) {
+		t.Error("the class doesn't read the server's tag or name the column's locale line")
+	}
+	ps, err := pairs(p.Tags, tags[2].start, tags[2].end)
+	if err != nil || len(ps) != 1 || ps[0] != (pair{2002, "LeaderboardRating"}) || p.Class != "LeaderboardRating" ||
+		p.CharID != 2002 {
+		t.Errorf("SymbolClass %+v, %v: want 2002 -> LeaderboardRating", ps, err)
+	}
+	d := p.Tags[tags[3].start:tags[3].end]
+	if !bytes.Equal(d, cat([]byte{0x06, 0}, u16s(2002, 2002), []byte{0})) || p.Depth != 2002 {
+		t.Errorf("PlaceObject3 %x: not character 2002 at depth 2002 without a name", d)
 	}
 }
 
@@ -231,7 +325,8 @@ func TestBuildCollection854(t *testing.T) {
 		t.Fatal(err)
 	}
 	s, err := scan(inflate(t, movie[8:]))
-	if err != nil || !s.names["CollectionItems"] || !s.ids[2000] || !s.depths[2000] {
+	if err != nil || !s.names["CollectionItems"] || !s.ids[2000] || !s.depths[2000] || !s.names["LobbyReady"] ||
+		!s.ids[2001] || !s.depths[2001] || !s.names["LeaderboardRating"] || !s.ids[2002] || !s.depths[2002] {
 		t.Errorf("the patched movie: %v", err)
 	}
 	// for a byte-for-byte comparison with the Python twin: the archive, and beside it the content it was made from

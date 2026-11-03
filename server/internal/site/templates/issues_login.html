@@ -1,0 +1,17 @@
+{{define "content"}}
+<p>Help us check how the original game played. The rules this server plays by are partly our guesses: here you can
+compare them with videos of the original and tell us whether a guess looks correct or wrong.</p>
+<p>Log in with your game account (the login name and password you play with).</p>
+<form method="post" action="/issues/login" autocomplete="off">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<input type="hidden" name="next" value="{{.Tracker.Next}}">
+<label>Login name
+<input name="name" value="{{.Name}}" required maxlength="64" autocomplete="username"></label>
+<label>Password
+<input type="password" name="password" required maxlength="{{.Rules.MaxPassword}}" autocomplete="current-password"{{if index .Fields "password"}} aria-invalid="true"{{end}}></label>
+{{with index .Fields "password"}}<p class="field-error">{{.}}</p>{{end}}
+<button type="submit">Log in</button>
+</form>
+<p class="note">Logging in sets a cookie that keeps you logged in on this browser for up to 30 days (7 days without a
+visit). Your claims show your display name to other players logged in here.</p>
+{{end}}

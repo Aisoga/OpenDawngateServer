@@ -126,6 +126,15 @@ func (s *Store) MatchesOf(personaID int64, before int64, limit int) ([]Match, er
 		WHERE persona_id = ? AND match_id < ? ORDER BY match_id DESC LIMIT ?) ORDER BY id DESC`, personaID, before, limit)
 }
 
+// MatchesAfter returns the matches after the match after (0 = from the first), oldest first, at most limit (paged as
+// RecentMatches), for a replay of the whole history in the order it was played (the rating's seed).
+func (s *Store) MatchesAfter(after int64, limit int) ([]Match, error) {
+	_, limit = page(0, limit)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.matches(`SELECT `+matchColumns+` FROM matches WHERE id > ? ORDER BY id LIMIT ?`, max(after, 0), limit)
+}
+
 // Match returns one match with everything stored for it (found false when there is none).
 func (s *Store) Match(id int64) (Match, bool, error) {
 	s.mu.Lock()

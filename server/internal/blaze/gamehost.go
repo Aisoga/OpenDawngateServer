@@ -187,6 +187,11 @@ type hostedPlayer struct {
 	// M18: the gameplay index the host's addPlayer reported (indexed false before), the player's seat in the history
 	index   int
 	indexed bool
+	// RATING1: the player was in the game (not removed) when it went IN_GAME; a custom game's player who left its lobby
+	// before then has no seat in the match (matchLocked), so it isn't one of the humans the rating's rule counts
+	atStart bool
+	// READY2, the custom lobby's ready check (ready.go): the player's client said hi (it has the class), and its state
+	readyClass, ready bool
 }
 
 // startHostedGame is resetDedicatedServer with a match host: reply now, announce the game once the
@@ -379,6 +384,9 @@ func (hg *hostedGame) setState(state int64) {
 	hg.state = state
 	if state == GameStateInGame && hg.inGameAt.IsZero() {
 		hg.inGameAt = hg.s.Now() // HOME1: the home page's match minutes count from here
+		for _, hp := range hg.players {
+			hp.atStart = !hp.removed // RATING1: who was in the game when it started
+		}
 	}
 	hg.mu.Unlock()
 	if changed {
@@ -463,9 +471,12 @@ func (hg *hostedGame) events() gmshost.Events {
 		Finish: func(mt *gmshost.Match, f gmshost.FinishGame) {
 			s.Log.Logf("blaze", "   game %d finished: winner team %d, %.1f s, %s", gid, f.WinnerTeam,
 				float64(f.DurationMs)/1000, f.Reason)
-			hg.persist(mt, f)
-			id := hg.storeMatch(f) // M18: the match history (matchhistory.go)
-			hg.postResult(f, id)   // DISCORD2c: the result on Discord (results.go), store or not; HOME1's ring with the id
+			pushes := hg.persist(mt, f)
+			m := hg.historyMatch(f)
+			id := hg.storeMatch(m)      // M18: the match history (matchhistory.go)
+			hg.rate(m)                  // RATING1: the skill rating of a rated game (rating.go), from the same seats
+			hg.pushExtendedData(pushes) // the new wins and rating (RATING2: DMAP[0x00070035] for the lobby's BALANCE)
+			hg.postResult(f, id)        // DISCORD2c: the result on Discord (results.go), store or not; HOME1's ring with the id
 			hg.setState(GameStatePostGame)
 		},
 		// M18: the match's statistics, kept for the match history until finishGame (matchhistory.go)
@@ -560,16 +571,18 @@ func (hg *hostedGame) events() gmshost.Events {
 //
 // D8c: in a game with a karma vote (progress.Game.KarmaVote: matchmade) the rewards are held (hg.held) until
 // the host's playerKarma for the player (grantHeld), so the karma votes count in the bag score; everything
-// else is stored here as before, and the wins are pushed now.
-func (hg *hostedGame) persist(mt *gmshost.Match, f gmshost.FinishGame) {
+// else is stored here as before. The players whose extended data changed are returned; the finishGame handler pushes
+// it after the rating (pushExtendedData, RATING2).
+func (hg *hostedGame) persist(mt *gmshost.Match, f gmshost.FinishGame) []afterGamePush {
 	s := hg.s
 	if s.Store == nil {
-		return
+		return nil
 	}
 	practice := hg.mode == gmshost.ModePractice
 	hg.mu.Lock()
 	ranked := hg.ranked()
 	var joined []*hostedPlayer
+	var pushes []afterGamePush
 	for _, hp := range hg.players {
 		// B15b: a custom game's spectator joins the GMS (the host's addPlayer) but plays nothing: no result, no
 		// history, no rewards
@@ -617,12 +630,37 @@ func (hg *hostedGame) persist(mt *gmshost.Match, f gmshost.FinishGame) {
 		if mt != nil && !hold {
 			mt.Rewards(hp.p.ID, toWire(res.Rewards))
 		}
-		if !removed {
-			hp.conn.Push(s, ComponentUserSessions, NotifyUserSessionExtendedDataUpdate, "UserSessionExtendedDataUpdate",
-				ExtendedDataUpdateNotification(hp.p.ID, acct.UserInfo, res.Wins))
+		pushes = append(pushes, afterGamePush{hp: hp, acct: acct, own: !removed, others: err == nil})
+	}
+	return pushes
+}
+
+// afterGamePush is a finished game's player whose extended data persist changed: own = push it to the player's own
+// client (not when it left the game), others = to the clients that know the player (it was stored).
+type afterGamePush struct {
+	hp          *hostedPlayer
+	acct        store.Account
+	own, others bool
+}
+
+// pushExtendedData sends the finished game's players their new extended data, after the rating (RATING2): the wins
+// the main menu shows (B7c) and the rating the custom lobby's BALANCE reads (DMAP[0x00070035]), read again from the
+// store so a rated game's new rating is in it. The player's own client gets UserSessionExtendedDataUpdate; B14's
+// refreshKnownUser tells the clients that know the player (its party, its game's chat, a lobby's members).
+func (hg *hostedGame) pushExtendedData(ps []afterGamePush) {
+	s := hg.s
+	for _, p := range ps {
+		acct := p.acct
+		if a, _, ok := s.Store.PersonaByID(p.hp.p.ID); ok {
+			acct = a
 		}
-		if err == nil {
-			s.refreshKnownUser(hp.p.ID) // B14: the clients that know the player (its party, its game's chat) see the new wins
+		if p.own {
+			p.hp.conn.Push(s, ComponentUserSessions, NotifyUserSessionExtendedDataUpdate, "UserSessionExtendedDataUpdate",
+				ExtendedDataUpdateNotification(p.hp.p.ID, acct.UserInfo, progress.Wins(acct.Stats[progress.PlayerStats]),
+					RatingValue(acct), s.ShownValue(acct)))
+		}
+		if p.others {
+			s.refreshKnownUser(p.hp.p.ID)
 		}
 	}
 }

@@ -74,7 +74,7 @@ func b7cPayloads(t testing.TB) []struct {
 			PurchaseWithPCReply(Purchase{BlazeID: pid, Count: 1, Balance: 700, Items: []uint32{0x1000000B}, Quantity: []uint32{1}})},
 		{"b7c_getcommerceprofile_reply", "Blaze::BGEcommerce::GetCommerceProfileResponse",
 			GetCommerceProfileReply(store.Commerce{SpentEC: 650, SpentPC: 300, CountEC: 2, CountPC: 1})},
-		{"b7c_extendeddataupdate_notification", "Blaze::UserSessionExtendedDataUpdate", ExtendedDataUpdateNotification(pid, 0, 1)},
+		{"b7c_extendeddataupdate_notification", "Blaze::UserSessionExtendedDataUpdate", ExtendedDataUpdateNotification(pid, 0, 1, 1500, 0)},
 		{"b7c_getbasicdata_reply", "Blaze::BattlegroundsAccounts::BGAMetagameGetBasicAccountDataResponse",
 			BasicAccountDataReply([]BasicData{{BlazeID: pid, Level: 2, XP: 124, Avatar: 0x1000000A, Flags: 1}})},
 		{"b7c_getstatsasync_notification", "Blaze::Stats::KeyScopedStatValues", StatsAsyncNotification("PlayerStats", 1, pid, b7cStatValues())},
@@ -421,11 +421,15 @@ func TestHostedPvPProgression(t *testing.T) {
 	b.queue(0)
 	for _, c := range []*tcpClient{a, b} {
 		c.note(ComponentGameManager, NotifyGameSetupID)
+		// the push after the game: the wins (bravo won) and, after the rating (RATING2), the new rating of a 1 v 1
+		// between two new players
 		ext := decode(t, c.note(ComponentUserSessions, NotifyUserSessionExtendedDataUpdate))
-		data, _ := ext.Sub("DATA")
-		_, hasWins := data.Get("DMAP")
-		if hasWins != (c == b) {
-			t.Errorf("%s: DMAP present %v", c.name, hasWins)
+		wantWins, wantRating := int64(0), int64(1338)
+		if c == b {
+			wantWins, wantRating = 1, 1662
+		}
+		if w, r := winsOf(t, ext), ratingOf(t, ext); w != wantWins || r != wantRating {
+			t.Errorf("%s: DMAP wins %d, rating %d; want %d, %d", c.name, w, r, wantWins, wantRating)
 		}
 		c.note(ComponentGameManager, NotifyPlayerRemovedID)
 	}
@@ -469,6 +473,17 @@ func TestHostedPvPProgression(t *testing.T) {
 		}
 		if r := acct.History.Ranked; r != want || len(acct.History.Days) != 1 || acct.History.Days[0].Ranked != want {
 			t.Errorf("account %d: Leaderboard counts %+v, history days %+v", c.uid, r, acct.History.Days)
+		}
+		// RATING1: a 1 v 1 PvP game is rated, at finishGame, from the match history's seats
+		if r := acct.History.Rating; r.Games != 1 || r.Wins != want.Wins || (r.Value > 1500) != (want.Wins == 1) ||
+			acct.History.Days[0].Rated != want {
+			t.Errorf("account %d: rating %+v, day %+v", c.uid, r, acct.History.Days[0])
+		}
+	}
+	for _, line := range []string{"account 1000000001: game 1 rating: 1500 -> 1338 (rated: 1 v 1 humans)\n",
+		"account 1000000002: game 1 rating: 1500 -> 1662 (rated: 1 v 1 humans)\n"} {
+		if !strings.Contains(ts.log.String(), line) {
+			t.Errorf("log lacks %q", line)
 		}
 	}
 }

@@ -56,10 +56,10 @@ func TestLeaderboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []LeaderRow{
-		{ids[1], name(1), 8, 4, 9},
-		{ids[0], name(0), 10, 4, 7},
-		{ids[2], name(2), 3, 3, 0},
-		{ids[5], name(5), 2, 2, 0},
+		{ids[1], name(1), 8, 4, 9, 4, 1500, 0},
+		{ids[0], name(0), 10, 4, 7, 4, 1500, 0},
+		{ids[2], name(2), 3, 3, 0, 3, 1500, 0},
+		{ids[5], name(5), 2, 2, 0, 2, 1500, 0},
 	}
 	if !reflect.DeepEqual(rows, want) {
 		t.Errorf("all time:\n got %+v\nwant %+v", rows, want)
@@ -69,9 +69,9 @@ func TestLeaderboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	want = []LeaderRow{
-		{ids[0], name(0), 10, 4, 7},
-		{ids[2], name(2), 3, 3, 0},
-		{ids[1], name(1), 5, 1, 9},
+		{ids[0], name(0), 10, 4, 7, 4, 1500, 0},
+		{ids[2], name(2), 3, 3, 0, 3, 1500, 0},
+		{ids[1], name(1), 5, 1, 9, 1, 1500, 0},
 	}
 	if !reflect.DeepEqual(rows, want) {
 		t.Errorf("before today:\n got %+v\nwant %+v", rows, want)
@@ -81,9 +81,9 @@ func TestLeaderboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	want = []LeaderRow{
-		{ids[0], name(0), 10, 4, 7},
-		{ids[2], name(2), 3, 3, 0},
-		{ids[1], name(1), 4, 1, 9},
+		{ids[0], name(0), 10, 4, 7, 4, 1500, 0},
+		{ids[2], name(2), 3, 3, 0, 3, 1500, 0},
+		{ids[1], name(1), 4, 1, 9, 1, 1500, 0},
 	}
 	if !reflect.DeepEqual(rows, want) {
 		t.Errorf("before yesterday:\n got %+v\nwant %+v", rows, want)

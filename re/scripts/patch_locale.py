@@ -25,8 +25,9 @@ copy's own file at setup time):
                             slot, 0x5e70b200 + slot, 64 slots: http://<host>:<http port>/dawngate/pick/<slot>/<page>,
                             which Start-Client's front answers)
   FE_Leaderboard 0xE3B520DE the Leaderboard screen: the title 0x100 "Top 200" (was "Solo Top 200") and the rule 0x101
-                            as dgserver ranks: PvP and custom games only, at least LEADERBOARD_MIN_GAMES (10, dgserver's
-                            default --leaderboard-min-games; a server that changes it makes this number wrong)
+                            as dgserver ranks by default: skill rating from balanced PvP and custom games, at least
+                            LEADERBOARD_MIN_GAMES rated games (10, dgserver's default --leaderboard-min-games; a
+                            server that changes it, or runs --rating-leaderboard off, makes the text wrong)
   FE_MatchType 0xFF007FE0   the PLAY screen's lines that said a group's games don't count (0x0fd838a1, 0x0fd84a0a,
                             0x0ec1b32d): group PvP queue games count
   FE_CustomGameLobby 0x7BE32E1A the custom lobby's map line for a level the client's map table can't name: the
@@ -190,11 +191,15 @@ LOGIN_LINES = {
     0x5E70A136: "Sign up first: only its operator makes accounts (Sign up now! below the login says how).",
     0x5E70A137: "No sign-up and no password here: any name logs in.",
 }
-# the main menu's Leaderboard screen: its title and the rule under it, as dgserver ranks (only PvP and custom games
-# count, practice games don't; the number is dgserver's default --leaderboard-min-games)
+# the main menu's Leaderboard screen: its title and the rule under it, as dgserver ranks by default (its skill
+# rating from balanced PvP and custom games, --rating-leaderboard on; the number is dgserver's default
+# --leaderboard-min-games); 0x5e70d001 (ours, appended) the header of the Rating column the front end's class adds
+# (client_ui/leaderboard/LeaderboardRating.as)
 LEADERBOARD_LINES = {
     0x00000100: "Top 200",
-    0x00000101: f"Rank is based upon PvP and custom games. Must have at least {LEADERBOARD_MIN_GAMES} games played.",
+    0x00000101: ("Rank is based upon skill rating from balanced PvP and custom games. "
+                 f"Must have at least {LEADERBOARD_MIN_GAMES} rated games."),
+    0x5E70D001: "Rating",
 }
 # the PLAY screen's lines that said a group's games don't count for the Leaderboard (0x0fd84a0a keeps its 80 blanks,
 # which break the line in the tile)

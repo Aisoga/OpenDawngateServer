@@ -108,6 +108,14 @@ type Server struct {
 	// --leaderboard-min-games; leaderboard.go). NewServer sets LeaderboardMinGames (10, the number the setup puts into the
 	// screen's text).
 	LeaderboardMinGames int
+	// RatingLeaderboard ranks the Leaderboard by the skill rating (RATING1, dgserver --rating-leaderboard, on by
+	// default: NewServer sets it): its games are then the rated ones (the balanced PvP and custom games); off, by the
+	// wins of every PvP and custom game (LBMIN). The ratings are updated in both modes.
+	RatingLeaderboard bool
+	// ShowRating lets players see skill ratings (RATINGSHOW1, dgserver --show-rating, on by default: NewServer sets
+	// it): the main menu's profile box shows the player's own (DMAP[ExtendedDataShownRating], the setup's exe patch).
+	// Every place that shows a rating asks ShownRating, which reads this switch; the ratings are kept in both modes.
+	ShowRating bool
 	// Rand is the random source of the post-game rewards (B7c, progression.go); nil = math/rand/v2's.
 	Rand progress.Rand
 	// ShaperSelect asks the match hosts for shaper select with each player's content (D3-live step 4,
@@ -126,6 +134,9 @@ type Server struct {
 	// admin without players on the teams, so a bots-only match (5 bots a team, with CustomBots) for tests and head-to-head
 	// bot comparisons couldn't start. The start is the admin's advanceGameState IN_GAME's.
 	CustomAutoStart time.Duration
+	// TestRefuseStart refuses each custom game's first advanceGameState IN_GAME as the ready check's backstop does
+	// (dgserver --test-refuse-start, a test aid): the lobby after a refused start can be seen without a race.
+	TestRefuseStart bool
 	// Halloween shows the map's Halloween decoration in every hosted match (dgserver --halloween, Start-Server.ini
 	// halloween): createGame's levelFlags gets gmshost.LevelFlagHalloween, which the host loads its level with and sends
 	// in GamePrepareForStart; a client whose copy has zz_Halloween.snap then loads the holiday markerset. Off = level
@@ -358,7 +369,7 @@ const Service = "battlegrounds-1-pc"
 func NewServer(log *logging.Log, host string, qosPort int) *Server {
 	s := &Server{Log: log, Host: host, QosPort: qosPort, Service: Service, Now: time.Now, Store: store.New(),
 		NewKey: randomKey, GMSPort: GMSPort, Policy: DefaultPolicy(), MM: matchmaker.New(DefaultMatchmaking()),
-		LeaderboardMinGames: LeaderboardMinGames, handlers: map[key]Handler{}}
+		LeaderboardMinGames: LeaderboardMinGames, RatingLeaderboard: true, ShowRating: true, handlers: map[key]Handler{}}
 	registerUtil(s)
 	registerAuthentication(s)
 	registerUserSessions(s)

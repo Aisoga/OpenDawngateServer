@@ -170,6 +170,30 @@ func ImportRanked(h store.History, now, at time.Time, won bool) store.History {
 	return out
 }
 
+// ApplyRated stores one rated game's new skill rating (internal/rating; RATING1) and returns the new history (h is not
+// changed): History.Rating becomes next's rating, RD and volatility with one more rated game (and win), and the UTC day
+// of at (the game's end; now for a live game, the stored match's for the seed) counts the game too, its RatingBefore
+// the rating before its first rated game (h's), while that day is one of the HistoryDays days before now that an
+// account keeps; days older than that are dropped, as ApplyRanked drops them.
+func ApplyRated(h store.History, now, at time.Time, next store.Rating, won bool) store.History {
+	out := h.Clone()
+	win := uint32(0)
+	if won {
+		win = 1
+	}
+	before := out.Rating.OrStart()
+	out.Rating = store.Rating{Value: next.Value, RD: next.RD, Vol: next.Vol, Games: before.Games + 1, Wins: before.Wins + win}
+	if off, _ := dayOffset(now, day(at).Format(dayLayout)); off >= 0 && off < HistoryDays {
+		d := &out.Days[dayIndex(&out, at)]
+		if d.Rated.Games == 0 {
+			d.RatingBefore = before.Value
+		}
+		d.Rated = store.GamesWon{Games: d.Rated.Games + 1, Wins: d.Rated.Wins + win}
+	}
+	pruneDays(&out, now)
+	return out
+}
+
 // dayIndex returns the index of now's UTC day in h.Days, adding the day in order if it has none.
 func dayIndex(h *store.History, now time.Time) int {
 	today := day(now).Format(dayLayout)

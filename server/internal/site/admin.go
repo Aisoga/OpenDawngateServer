@@ -102,6 +102,12 @@ type adminView struct {
 	Counts             adminCounts
 	LoginLimits        string
 	CanEnd             bool
+	// the issue tracker (admin_issues.go)
+	Filter       string
+	IssueFilters []filterLink
+	IssueRows    []adminIssueRow
+	Issue        *adminIssueView
+	Tokens       []tokenRow
 }
 
 type adminCounts struct {

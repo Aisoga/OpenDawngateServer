@@ -71,7 +71,7 @@ func (s *Server) userNotes(id int64) (added, status []byte, ok bool) {
 	if !ok {
 		return nil, nil, false
 	}
-	return UserAddedNotification(acct, p, s.presenceOf(id)), UserUpdatedNotification(id, s.personaOnline(id)), true
+	return UserAddedNotification(acct, p, s.presenceOf(id), s.ShownValue(acct)), UserUpdatedNotification(id, s.personaOnline(id)), true
 }
 
 // introduce queues UserAdded and UserUpdated for persona id before the reply, unless the client knows it already.
@@ -130,10 +130,10 @@ func (s *Server) userDataNotes(c *Conn, id int64) []userNote {
 	}
 	presence := s.presenceOf(id)
 	if c.firstSight(id) {
-		return []userNote{{NotifyUserAdded, "UserAdded", UserAddedNotification(acct, p, presence)},
+		return []userNote{{NotifyUserAdded, "UserAdded", UserAddedNotification(acct, p, presence, s.ShownValue(acct))},
 			statusNote(id, s.personaOnline(id))}
 	}
-	return []userNote{presenceNote(acct, p, presence)}
+	return []userNote{presenceNote(acct, p, presence, s.ShownValue(acct))}
 }
 
 // knows reports whether c's client was told about user id (UserAdded) since its login.
@@ -157,14 +157,14 @@ func (s *Server) refreshKnownUser(id int64) {
 			if !ok {
 				return
 			}
-			note = PresenceNotification(acct, p, s.presenceOf(id))
+			note = PresenceNotification(acct, p, s.presenceOf(id), s.ShownValue(acct))
 		}
 		c.Push(s, ComponentUserSessions, NotifyUserSessionExtendedDataUpdate, "UserSessionExtendedDataUpdate", note)
 	}
 }
 
-func presenceNote(acct store.Account, p store.Persona, presence int64) userNote {
-	return userNote{NotifyUserSessionExtendedDataUpdate, "UserSessionExtendedDataUpdate", PresenceNotification(acct, p, presence)}
+func presenceNote(acct store.Account, p store.Persona, presence, shown int64) userNote {
+	return userNote{NotifyUserSessionExtendedDataUpdate, "UserSessionExtendedDataUpdate", PresenceNotification(acct, p, presence, shown)}
 }
 
 func statusNote(id int64, online bool) userNote {
@@ -202,7 +202,9 @@ func (s *Server) presenceChanged(r *Request, v int64) {
 	s.setPresence(p.ID, v)
 	s.Log.Logf("blaze", "   presence of %d %q: %#x", p.ID, p.Name, v)
 	r.After(func() {
-		s.tellFriends(p, func(acct store.Account) []userNote { return []userNote{presenceNote(acct, p, s.presenceOf(p.ID))} })
+		s.tellFriends(p, func(acct store.Account) []userNote {
+			return []userNote{presenceNote(acct, p, s.presenceOf(p.ID), s.ShownValue(acct))}
+		})
 	})
 }
 
@@ -231,7 +233,7 @@ func (s *Server) friendsLogin(r *Request, p store.Persona) {
 		}
 		s.setPresence(p.ID, 0)
 		s.tellFriends(p, func(acct store.Account) []userNote {
-			return []userNote{presenceNote(acct, p, 0), statusNote(p.ID, false)}
+			return []userNote{presenceNote(acct, p, 0, s.ShownValue(acct)), statusNote(p.ID, false)}
 		})
 	})
 }

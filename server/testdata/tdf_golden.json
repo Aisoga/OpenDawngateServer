@@ -78,8 +78,8 @@
   },
   {
    "name": "extendeddataupdate_notification",
-   "hex": "921d21038b0cc001066c6f63616c008f4e40010100c6487403922c330000ba1d340000d62c33000000d61d34000000cf58b30001d73a640081d0acf30e",
-   "pretty": "    DATA: \n      BPS: 'local'\n      CTY: ''\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    SUBS: 1\n    USID: 2000000001"
+   "hex": "921d21038b0cc001066c6f63616c008f4e4001010092d87005000001b580389c17c6487403922c330000ba1d340000d62c33000000d61d34000000cf58b30001d73a640081d0acf30e",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CTY: ''\n      DMAP: \n        458805: 1500\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    SUBS: 1\n    USID: 2000000001"
   },
   {
    "name": "postauth_reply",
@@ -208,8 +208,8 @@
   },
   {
    "name": "b7a_extendeddataupdate_notification",
-   "hex": "921d21038b0cc001066c6f63616c008f4e40010100c6487403922c330000ba1d340000d62c33000000d61d34008080808080808080800100cf58b30001d73a640081d0acf30e",
-   "pretty": "    DATA: \n      BPS: 'local'\n      CTY: ''\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 4611686018427387904\n    SUBS: 1\n    USID: 2000000001"
+   "hex": "921d21038b0cc001066c6f63616c008f4e4001010092d87005000001b580389c17c6487403922c330000ba1d340000d62c33000000d61d34008080808080808080800100cf58b30001d73a640081d0acf30e",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CTY: ''\n      DMAP: \n        458805: 1500\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 4611686018427387904\n    SUBS: 1\n    USID: 2000000001"
   },
   {
    "name": "notifygamestatechange_notification",
@@ -368,13 +368,13 @@
   },
   {
    "name": "lookupuser_reply",
-   "hex": "964874038b0cc001066c6f63616c008f4e40010100c6487403922c330000ba1d340000d62c33000000d61d340000009ac9f30002d73972038699000082a8d6b90786cbe30093d5f2d60ca640000082d0acf30eba1b6501077365636f6e640000",
-   "pretty": "    EDAT: \n      BPS: 'local'\n      CTY: ''\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    FLGS: 2\n    USER: \n      AID: 1000000002\n      ALOC: 1701729619\n      ID: 2000000002\n      NAME: 'second'"
+   "hex": "964874038b0cc001066c6f63616c008f4e4001010092d87005000001b580389c17c6487403922c330000ba1d340000d62c33000000d61d340000009ac9f30002d73972038699000082a8d6b90786cbe30093d5f2d60ca640000082d0acf30eba1b6501077365636f6e640000",
+   "pretty": "    EDAT: \n      BPS: 'local'\n      CTY: ''\n      DMAP: \n        458805: 1500\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    FLGS: 2\n    USER: \n      AID: 1000000002\n      ALOC: 1701729619\n      ID: 2000000002\n      NAME: 'second'"
   },
   {
    "name": "lookupuser_offline_reply",
-   "hex": "964874038b0cc001066c6f63616c008f4e40010100c6487403922c330000ba1d340000d62c33000000d61d340000009ac9f30000d73972038699000082a8d6b90786cbe30093d5f2d60ca640000082d0acf30eba1b6501077365636f6e640000",
-   "pretty": "    EDAT: \n      BPS: 'local'\n      CTY: ''\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    FLGS: 0\n    USER: \n      AID: 1000000002\n      ALOC: 1701729619\n      ID: 2000000002\n      NAME: 'second'"
+   "hex": "964874038b0cc001066c6f63616c008f4e4001010092d87005000001b580389c17c6487403922c330000ba1d340000d62c33000000d61d340000009ac9f30000d73972038699000082a8d6b90786cbe30093d5f2d60ca640000082d0acf30eba1b6501077365636f6e640000",
+   "pretty": "    EDAT: \n      BPS: 'local'\n      CTY: ''\n      DMAP: \n        458805: 1500\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    FLGS: 0\n    USER: \n      AID: 1000000002\n      ALOC: 1701729619\n      ID: 2000000002\n      NAME: 'second'"
   },
   {
    "name": "b7c_getcompletedata_reply",
@@ -423,8 +423,8 @@
   },
   {
    "name": "b7c_extendeddataupdate_notification",
-   "hex": "921d21038b0cc001066c6f63616c008f4e4001010092d87005000001b4803801c6487403922c330000ba1d340000d62c33000000d61d34000000cf58b30001d73a640081d0acf30e",
-   "pretty": "    DATA: \n      BPS: 'local'\n      CTY: ''\n      DMAP: \n        458804: 1\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    SUBS: 1\n    USID: 2000000001"
+   "hex": "921d21038b0cc001066c6f63616c008f4e4001010092d87005000002b4803801b580389c17c6487403922c330000ba1d340000d62c33000000d61d34000000cf58b30001d73a640081d0acf30e",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CTY: ''\n      DMAP: \n        458804: 1\n        458805: 1500\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    SUBS: 1\n    USID: 2000000001"
   },
   {
    "name": "b7c_getbasicdata_reply",
@@ -533,8 +533,8 @@
   },
   {
    "name": "useradded_notification",
-   "hex": "921d21038b0cc001066c6f63616c008ed8700500000190d502008f4e40010100c6487403922c330000ba1d340000d62c33000000d61d34000000d73972038699000082a8d6b90786cbe30093d5f2d60ca640000082d0acf30eba1b6501077365636f6e640000",
-   "pretty": "    DATA: \n      BPS: 'local'\n      CMAP: \n        21840: 0\n      CTY: ''\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    USER: \n      AID: 1000000002\n      ALOC: 1701729619\n      ID: 2000000002\n      NAME: 'second'"
+   "hex": "921d21038b0cc001066c6f63616c008ed8700500000190d502008f4e4001010092d87005000001b580389c17c6487403922c330000ba1d340000d62c33000000d61d34000000d73972038699000082a8d6b90786cbe30093d5f2d60ca640000082d0acf30eba1b6501077365636f6e640000",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CMAP: \n        21840: 0\n      CTY: ''\n      DMAP: \n        458805: 1500\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    USER: \n      AID: 1000000002\n      ALOC: 1701729619\n      ID: 2000000002\n      NAME: 'second'"
   },
   {
    "name": "userupdated_online_notification",
@@ -548,8 +548,8 @@
   },
   {
    "name": "presence_notification",
-   "hex": "921d21038b0cc001066c6f63616c008ed8700500000190d5028180088f4e40010100c6487403922c330000ba1d340000d62c33000000d61d34000000cf58b30001d73a640082d0acf30e",
-   "pretty": "    DATA: \n      BPS: 'local'\n      CMAP: \n        21840: 65537\n      CTY: ''\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    SUBS: 1\n    USID: 2000000002"
+   "hex": "921d21038b0cc001066c6f63616c008ed8700500000190d5028180088f4e4001010092d87005000001b580389c17c6487403922c330000ba1d340000d62c33000000d61d34000000cf58b30001d73a640082d0acf30e",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CMAP: \n        21840: 65537\n      CTY: ''\n      DMAP: \n        458805: 1500\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    SUBS: 1\n    USID: 2000000002"
   },
   {
    "name": "adduserstolist_friend_reply",
@@ -593,18 +593,43 @@
   },
   {
    "name": "useradded_wins_notification",
-   "hex": "921d21038b0cc001066c6f63616c008ed8700500000190d502008f4e4001010092d87005000001b4803803c6487403922c330000ba1d340000d62c33000000d61d34000000d73972038699000081a8d6b90786cbe30093d5f2d60ca640000081d0acf30eba1b650107706c617965720000",
-   "pretty": "    DATA: \n      BPS: 'local'\n      CMAP: \n        21840: 0\n      CTY: ''\n      DMAP: \n        458804: 3\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    USER: \n      AID: 1000000001\n      ALOC: 1701729619\n      ID: 2000000001\n      NAME: 'player'"
+   "hex": "921d21038b0cc001066c6f63616c008ed8700500000190d502008f4e4001010092d87005000002b4803803b580389c17c6487403922c330000ba1d340000d62c33000000d61d34000000d73972038699000081a8d6b90786cbe30093d5f2d60ca640000081d0acf30eba1b650107706c617965720000",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CMAP: \n        21840: 0\n      CTY: ''\n      DMAP: \n        458804: 3\n        458805: 1500\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    USER: \n      AID: 1000000001\n      ALOC: 1701729619\n      ID: 2000000001\n      NAME: 'player'"
   },
   {
    "name": "memberdata_notification",
-   "hex": "921d21038b0cc001066c6f63616c008ed8700500000190d502008f4e4001010092d87005000001b4803803c6487403922c330000ba1d340000d62c33000000d61d34000000cf58b30001d73a640081d0acf30e",
-   "pretty": "    DATA: \n      BPS: 'local'\n      CMAP: \n        21840: 0\n      CTY: ''\n      DMAP: \n        458804: 3\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    SUBS: 1\n    USID: 2000000001"
+   "hex": "921d21038b0cc001066c6f63616c008ed8700500000190d502008f4e4001010092d87005000002b4803803b580389c17c6487403922c330000ba1d340000d62c33000000d61d34000000cf58b30001d73a640081d0acf30e",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CMAP: \n        21840: 0\n      CTY: ''\n      DMAP: \n        458804: 3\n        458805: 1500\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    SUBS: 1\n    USID: 2000000001"
   },
   {
    "name": "notifymessage_onlinecount_notification",
    "hex": "9ac8670000b67a640004ba1b65010100c39b2403874d3205000104808058043130300081805802340082805807363034383030008380581f3220706c6179657273206f6e6c696e652c203120696e2061206d61746368009ac8670000cf48740000d219c00002d29933040000d34e70080000d39c2500ac0400cf28e509000000d29b650083b0b5ac0d",
    "pretty": "    FLAG: 0\n    MGID: 4\n    NAME: ''\n    PYLD: \n      ATTR: \n        720896: '100'\n        720897: '4'\n        720898: '604800'\n        720899: '2 players online, 1 in a match'\n      FLAG: 0\n      STAT: 0\n      TAG: 2\n      TIDS: []\n      TTYP: \n        (0, 0)\n      TYPE: 300\n    SRCE: \n      (0, 0, 0)\n    TIME: 1791405059"
+  },
+  {
+   "name": "rating2_extendeddataupdate_notification",
+   "hex": "921d21038b0cc001066c6f63616c008f4e4001010092d87005000002b4803803b58038be19c6487403922c330000ba1d340000d62c33000000d61d34000000cf58b30001d73a640081d0acf30e",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CTY: ''\n      DMAP: \n        458804: 3\n        458805: 1662\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    SUBS: 1\n    USID: 2000000001"
+  },
+  {
+   "name": "rating2_useradded_notification",
+   "hex": "921d21038b0cc001066c6f63616c008ed8700500000190d502008f4e4001010092d87005000001b58038b920c6487403922c330000ba1d340000d62c33000000d61d34000000d73972038699000081a8d6b90786cbe30093d5f2d60ca640000081d0acf30eba1b650107706c617965720000",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CMAP: \n        21840: 0\n      CTY: ''\n      DMAP: \n        458805: 2105\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    USER: \n      AID: 1000000001\n      ALOC: 1701729619\n      ID: 2000000001\n      NAME: 'player'"
+  },
+  {
+   "name": "rating2_memberdata_notification",
+   "hex": "921d21038b0cc001066c6f63616c008ed8700500000190d5028180108f4e4001010092d87005000002b4803803b58038ba14c6487403922c330000ba1d340000d62c33000000d61d34000000cf58b30001d73a640081d0acf30e",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CMAP: \n        21840: 131073\n      CTY: ''\n      DMAP: \n        458804: 3\n        458805: 1338\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    SUBS: 1\n    USID: 2000000001"
+  },
+  {
+   "name": "ratingshow1_extendeddataupdate_notification",
+   "hex": "921d21038b0cc001066c6f63616c008f4e4001010092d87005000003b4803803b580388c19b780388c19c6487403922c330000ba1d340000d62c33000000d61d34000000cf58b30001d73a640081d0acf30e",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CTY: ''\n      DMAP: \n        458804: 3\n        458805: 1612\n        458807: 1612\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    SUBS: 1\n    USID: 2000000001"
+  },
+  {
+   "name": "ratingshow1_useradded_notification",
+   "hex": "921d21038b0cc001066c6f63616c008ed8700500000190d502008f4e4001010092d87005000002b580388c19b780388c19c6487403922c330000ba1d340000d62c33000000d61d34000000d73972038699000081a8d6b90786cbe30093d5f2d60ca640000081d0acf30eba1b650107706c617965720000",
+   "pretty": "    DATA: \n      BPS: 'local'\n      CMAP: \n        21840: 0\n      CTY: ''\n      DMAP: \n        458805: 1612\n        458807: 1612\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    USER: \n      AID: 1000000001\n      ALOC: 1701729619\n      ID: 2000000001\n      NAME: 'player'"
   },
   {
    "name": "notifymessage_mapcheck_notification",
@@ -705,6 +730,11 @@
    "name": "selectcategoryupdates_reply",
    "hex": "db7a640000",
    "pretty": "    VWID: 0"
+  },
+  {
+   "name": "ratingshow2_getleaderboard_reply",
+   "hex": "b24b3304030296e86d01167365636f6e643c64677220723d2731363838272f3e0096ea640082d0acf30eca1bab0001cf4874040104053136383800033133000239000531303031000096e86d0107706c617965720096ea640081d0acf30eca1bab0002cf487404010405313530300002330002320002300000",
+   "pretty": "    LDLS: \n      - \n        ENAM: \"second<dgr r='1688'/>\"\n        ENID: 2000000002\n        RANK: 1\n        STAT: \n          - '1688'\n          - '13'\n          - '9'\n          - '1001'\n      - \n        ENAM: 'player'\n        ENID: 2000000001\n        RANK: 2\n        STAT: \n          - '1500'\n          - '3'\n          - '2'\n          - '0'"
   },
   {
    "name": "issuejoincode_reply",

@@ -119,6 +119,10 @@ type customLobby struct {
 	ready     bool    // NotifyGameSetup went out (its host is ready, or it has none): the browser may list it
 	region    string  // PSAS for the browser: the creator's lowest-latency ping site
 	nextSlot  int64   // the next joiner's Blaze slot (SID)
+	// READY2: the lobby chat message a class holder sent last, whose form the server's ready lines take (ready.go)
+	readyForm *ClientMessage
+	// READY2b: the first start was refused for Server.TestRefuseStart
+	testRefused bool
 }
 
 // LobbyPlayer is a custom game's player as NotifyGameSetup's PROS, NotifyPlayerJoining's PDAT and the game browser's
@@ -602,6 +606,12 @@ func (s *Server) joinCustomGame(r *Request, hg *hostedGame) []byte {
 		hg.custom.nextSlot++
 		hg.players = append(hg.players, hp)
 	}
+	// READY2: a rejoin is a new lobby entry (its class says hi again): its state goes back to 0 for the others
+	var readyLines []readySend
+	if back {
+		readyLines = hg.readyClearLocked(hp, hp)
+	}
+	hp.readyClass, hp.ready = false, false
 	hp.conn, hp.removed, hp.completed, hp.setupCtx = r.Conn, false, false, SetupContextJoinGame
 	hp.p.Ext, hp.p.Int = s.ClientAddr(ext), s.ClientAddr(in)
 	if len(attrs) > 0 {
@@ -632,6 +642,7 @@ func (s *Server) joinCustomGame(r *Request, hg *hostedGame) []byte {
 		hg.pushExcept(me, NotifyPlayerJoiningID, "NotifyPlayerJoining", note)
 		hg.syncHostRoster()
 		s.browserChanged(hg)
+		hg.sendReady(readyLines)
 	})
 	return JoinGameReply(gid)
 }
@@ -831,8 +842,21 @@ func registerCustomGames(s *Server) {
 		}
 		r.Server.Log.Logf("blaze", "   game %d: attributes set: %s", gid, strings.Join(keys, ", "))
 		note := GameAttribChangeNotification(gid, set)
+		// RATING2b: the admin's own lobby doesn't redraw after BALANCE. cGameRosterManager::AdminSetTeams (0x0069FA10,
+		// BALANCE's apply) never tells the roster listeners (0x0069F370), unlike AdminSwapSlots (0x0069F880, Join
+		// Team), and the admin's echo of its own TeamRostersKey changes nothing there (0x006A1230 tells them only when
+		// the rosters differ). The lobby is also a UserManager listener: slot 1 (0x004260E0) redraws the roster for
+		// any extended data update of a roster member, so the admin gets its own extended data again (the login's).
+		admin, own := r.Conn, []byte(nil)
+		if attrValue(set, AttrTeamRosters) != "" && r.Conn.Session != nil {
+			own = r.Server.OwnExtendedData(r.Conn.Session.Persona.ID)
+		}
 		r.After(func() {
 			hg.push(NotifyGameAttribChangeID, "NotifyGameAttribChange", func(*hostedPlayer) []byte { return note })
+			if own != nil {
+				admin.Push(r.Server, ComponentUserSessions, NotifyUserSessionExtendedDataUpdate, "UserSessionExtendedDataUpdate", own)
+				hg.sendRatings(nil) // RATINGSHOW3: the rosters changed (a newcomer): every class holder's tiles' ratings
+			}
 			hg.syncHostRoster() // the packed rosters order the host's slots
 			r.Server.browserChanged(hg)
 		})
@@ -919,10 +943,12 @@ func registerCustomGames(s *Server) {
 			}
 		}
 		var moved []move
+		var readyLines []readySend
 		for _, hp := range hg.players {
 			if t, ok := teams[hp.p.ID]; ok && !hp.removed && t != hp.p.Team {
 				hp.p.Team = t
 				moved = append(moved, move{hp.p.ID, t})
+				readyLines = append(readyLines, hg.readyClearLocked(hp, nil)...) // READY2: a team change clears the state
 			}
 		}
 		hg.mu.Unlock()
@@ -939,6 +965,7 @@ func registerCustomGames(s *Server) {
 				hg.syncHostRoster()
 				r.Server.browserChanged(hg)
 				r.Server.armAutoStart(hg)
+				hg.sendReady(readyLines)
 			}
 		})
 		return nil
@@ -959,6 +986,15 @@ func registerCustomGames(s *Server) {
 		if state == GameStateInGame && hg.custom.started {
 			hg.mu.Unlock()
 			r.Fail(ErrInvalidGameStateAction)
+			return nil
+		}
+		if waiting := hg.readyWaitingLocked(); start && len(waiting) > 0 {
+			r.Server.refuseUnreadyStart(r, hg, waiting, "") // READY2's backstop (ready.go); unlocks hg.mu
+			return nil
+		}
+		if start && r.Server.TestRefuseStart && !hg.custom.testRefused {
+			hg.custom.testRefused = true
+			r.Server.refuseUnreadyStart(r, hg, nil, " (--test-refuse-start: the first start, a test aid)")
 			return nil
 		}
 		if start {

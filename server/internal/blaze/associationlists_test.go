@@ -136,10 +136,10 @@ func TestB13bRepliesMatchGolden(t *testing.T) {
 		got         []byte
 	}{
 		{"getlists_members_reply", "Blaze::Association::Lists", GetListsReply(lists, 0)},
-		{"useradded_notification", "Blaze::NotifyUserAdded", UserAddedNotification(secondAcct, second, 0)},
+		{"useradded_notification", "Blaze::NotifyUserAdded", UserAddedNotification(secondAcct, second, 0, 0)},
 		{"userupdated_online_notification", "Blaze::UserStatus", UserUpdatedNotification(second.ID, true)},
 		{"userupdated_offline_notification", "Blaze::UserStatus", UserUpdatedNotification(second.ID, false)},
-		{"presence_notification", "Blaze::UserSessionExtendedDataUpdate", PresenceNotification(secondAcct, second, 0x10001)},
+		{"presence_notification", "Blaze::UserSessionExtendedDataUpdate", PresenceNotification(secondAcct, second, 0x10001, 0)},
 		{"adduserstolist_friend_reply", "Blaze::Association::UpdateListMembersResponse",
 			UpdateListMembersReply([]store.ListMember{secondMember}, nil)},
 		{"removeusersfromlist_friend_reply", "Blaze::Association::UpdateListMembersResponse",

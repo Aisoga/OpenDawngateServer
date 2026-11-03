@@ -12,7 +12,9 @@
 <li><a href="/admin/invites">Invite codes</a>: make, list, revoke</li>
 <li><a href="/admin/signup">Sign-up mode</a>: open, invite or closed</li>
 <li><a href="/admin/matches">Running matches</a>: players, duration; end one</li>
-<li><a href="/admin/audit">Audit log</a>: every admin action and the operator's account commands</li>
+{{if .Issues}}<li><a href="/admin/issues">Issues</a>: the issue tracker's guesses and claims; hide a claim; close with a verdict, reopen</li>
+<li><a href="/admin/tokens">API tokens</a>: the reviewer's access to the tracker's API; make, revoke</li>
+{{end}}<li><a href="/admin/audit">Audit log</a>: every admin action and the operator's account commands</li>
 </ul>
 <p class="note">Logged in as {{.Admin.Name}}. The session ends after 30 minutes without a page, after 12 hours, at a
 server restart or when you log out.</p>

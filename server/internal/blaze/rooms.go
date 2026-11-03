@@ -602,7 +602,7 @@ func (r *Request) introduceAnnouncer() {
 	}
 	acct := store.Account{UserID: queueAnnouncerUser}
 	r.NotifyFirst(ComponentUserSessions, NotifyUserAdded, "UserAdded",
-		UserAddedNotification(acct, store.Persona{ID: QueueAnnouncerID, Name: QueueAnnouncerName}, 1))
+		UserAddedNotification(acct, store.Persona{ID: QueueAnnouncerID, Name: QueueAnnouncerName}, 1, 0))
 	r.NotifyFirst(ComponentUserSessions, NotifyUserUpdated, "UserUpdated", UserUpdatedNotification(QueueAnnouncerID, true))
 }
 

@@ -1,6 +1,6 @@
 """Builds the compiled bytes of our UI classes from their ActionScript source, or checks the committed ones.
 
-Six classes run inside the game's own UI movies, each placed there by four added SWF tags (the game's bytecode stays
+Eight classes run inside the game's own UI movies, each placed there by four added SWF tags (the game's bytecode stays
 as it is; re/scripts/patch_login_movie.py and its Go port, server/internal/setup/moviepatch, insert them):
     picker        client_ui/serverpicker/ServerPicker.as, the server picker on the login screen (Start-Client's
                   picker mode), in UI/Scaleform/LoginScreen/LoginScreen_BG.gfx
@@ -15,15 +15,21 @@ as it is; re/scripts/patch_login_movie.py and its Go port, server/internal/setup
                   of this visit can be undone, the Refund texts and tooltip line), in UI/Scaleform/HUD/ItemShopUI.gfx
     collection    client_ui/collection/CollectionItems.as, the Collection's Items category (the match items as the
                   Collection's own cards), in the front end's UI/Scaleform/CDN/swf/code/UIRuntime.gfx
+    lobby         client_ui/lobby/LobbyReady.as, the custom game lobby's ready check (the READY toggle, the tiles'
+                  marks, the host's START held until all are ready), in the same movie as collection, after its tags
+                  (character and depth 2001)
+    leaderboard   client_ui/leaderboard/LeaderboardRating.as, the Leaderboard's Rating column, in the same movie
+                  as collection, after lobby's tags (character and depth 2002)
 Their compiled form is committed (as hex text, 32 bytes a line), so the release and the setup need no compiler:
     client_ui/<folder>/<Class>.abc.hex                 the class as an ABC (ActionScript bytecode) file
     server/internal/setup/moviepatch/<name>_tags.hex   the four SWF tags the setup adds to the movie:
-        DefineSprite  character 2000, one empty frame
+        DefineSprite  character 2000 (a second class of the same movie 2001, ...), one empty frame
         DoABC         the ABC above (lazy initialization, named after the class in lower case)
         SymbolClass   2000 -> the class (itemshop also binds the movie's own character 250, the vim symbol it
                       places as mcCoins, to ShopVim, so the class can make the game's flame)
-        PlaceObject3  character 2000 at depth 2000 on the root timeline, no instance name (the movies' document
-                      classes are sealed: an instance name would make the player set a property they don't have)
+        PlaceObject3  the character at its depth (2000, 2001, ...) on the root timeline, no instance name (the
+                      movies' document classes are sealed: an instance name would make the player set a property
+                      they don't have)
 
 Compiling needs the Apache Flex SDK's mxmlc (4.16.1), a playerglobal.swc for Flash Player 11.1 and Java: by default
 tools/flex_sdk_4.16.1, tools/ffdec_26.3.0/flashlib/playerglobal32_0.swc and tools/jdk-21.0.12.1+1 of this checkout (or
@@ -31,10 +37,10 @@ of a folder above it), else the environment variables FLEX_SDK, PLAYERGLOBAL and
 the same source, so `check` can compare byte for byte.
 
 Usage:
-    python -I re/scripts/build_picker.py build [picker|matchoptions|chatrooms|aftaction|itemshop|collection]   # compile and write both files (default: all)
-    python -I re/scripts/build_picker.py check [picker|matchoptions|chatrooms|aftaction|itemshop|collection]   # compile into a temporary folder; exit 1 if a
+    python -I re/scripts/build_picker.py build [picker|matchoptions|chatrooms|aftaction|itemshop|collection|lobby|leaderboard]   # compile and write both files (default: all)
+    python -I re/scripts/build_picker.py check [picker|matchoptions|chatrooms|aftaction|itemshop|collection|lobby|leaderboard]   # compile into a temporary folder; exit 1 if a
                                                                          file differs
-    python -I re/scripts/build_picker.py tags <file.abc> <out.hex> [--spec picker|matchoptions|chatrooms|aftaction|itemshop|collection]   # only the tags
+    python -I re/scripts/build_picker.py tags <file.abc> <out.hex> [--spec picker|matchoptions|chatrooms|aftaction|itemshop|collection|lobby|leaderboard]   # only the tags
     python -I re/scripts/build_picker.py compile <Source.as> <out_tags.hex>   # a throwaway class (a spike): its tags,
                                                      character 2000 at depth 2000, class = the file's name
 """
@@ -56,15 +62,15 @@ DEPTH = 2000
 class Spec:
     """One class: its source, its committed files, its character id and depth in its movie."""
 
-    def __init__(self, folder, class_name, tags_name, symbols=()):
+    def __init__(self, folder, class_name, tags_name, symbols=(), char_id=CHAR_ID, depth=DEPTH):
         self.source_dir = os.path.join(REPO, "client_ui", folder)
         self.class_name = class_name
         self.source = os.path.join(self.source_dir, class_name + ".as")
         self.abc_out = os.path.join(self.source_dir, class_name + ".abc.hex")
         self.tags_out = os.path.join(MOVIEPATCH, tags_name)
         self.abc_name = class_name.lower()
-        self.char_id = CHAR_ID
-        self.depth = DEPTH
+        self.char_id = char_id  # a second class in the same movie takes the next free id and depth (2001, ...)
+        self.depth = depth
         self.symbols = tuple(symbols)  # more SymbolClass pairs: (a character of the movie, a class of ours)
 
 
@@ -75,6 +81,8 @@ SPECS = {
     "aftaction": Spec("aftaction", "AfterActionTabs", "aftaction_tags.hex"),
     "itemshop": Spec("itemshop", "ShopRefund", "itemshop_tags.hex", symbols=((250, "ShopVim"),)),
     "collection": Spec("collection", "CollectionItems", "collection_tags.hex"),
+    "lobby": Spec("lobby", "LobbyReady", "lobby_tags.hex", char_id=2001, depth=2001),
+    "leaderboard": Spec("leaderboard", "LeaderboardRating", "leaderboard_tags.hex", char_id=2002, depth=2002),
 }
 # The picker's names, as before the specs (the tests and older tools read them).
 SOURCE_DIR = SPECS["picker"].source_dir

@@ -23,9 +23,33 @@ var collectionTagsHex string
 // list (ItemsPath). Every player copy gets it; the setup sets ItemList (ItemList of the copy's own game data). A click
 // on one of its cards opens the item's details (its stats and texts, the route from and into it as cards); the
 // Collection's search field, Sort dropdown and an "Item Filters" category of the class's own act on its cards.
+//
+// The same movie carries the custom game lobby's ready check (client_ui/lobby, LobbyReady: a READY toggle for the
+// players on the teams, a mark on each tile, the host's START held until all are ready; the server's side is
+// blaze/ready.go), character and depth 2001, and the Leaderboard's Rating column (client_ui/leaderboard,
+// LeaderboardRating), 2002. Another class of the front end's movie is one more Part in More (the
+// next free id and depth), with its tags file embedded here and the same Part in re/scripts/patch_login_movie.py's
+// SPECS["collection"].
 var Collection = Spec{What: "the Collection's items", Source: "game/Data/code.snap",
 	Rel: "game/Data/zz_CollectionItems.snap", MoviePath: "UI/Scaleform/CDN/swf/code/UIRuntime.gfx",
-	Class: "CollectionItems", CharID: 2000, Depth: 2000, Tags: CollectionTags, Items: true}
+	Class: "CollectionItems", CharID: 2000, Depth: 2000, Tags: CollectionTags, Items: true,
+	More: []Part{{Class: "LobbyReady", CharID: 2001, Depth: 2001, Tags: LobbyTags},
+		{Class: "LeaderboardRating", CharID: 2002, Depth: 2002, Tags: LeaderboardTags}}}
+
+// LobbyTags are the lobby's ready check's four tags: DefineSprite 2001, DoABC (the class), SymbolClass 2001 ->
+// LobbyReady, PlaceObject3 of 2001 at depth 2001 without an instance name.
+var LobbyTags = mustHex(lobbyTagsHex)
+
+//go:embed lobby_tags.hex
+var lobbyTagsHex string
+
+// LeaderboardTags are the Leaderboard's Rating column's four tags (client_ui/leaderboard, LeaderboardRating: a column
+// Rating with the number the server appends to each name, blaze.RatingMark): DefineSprite 2002, DoABC (the class),
+// SymbolClass 2002 -> LeaderboardRating, PlaceObject3 of 2002 at depth 2002 without an instance name.
+var LeaderboardTags = mustHex(leaderboardTagsHex)
+
+//go:embed leaderboard_tags.hex
+var leaderboardTagsHex string
 
 // ItemsPath is the Collection's item list in zz_CollectionItems.snap, which client_ui/collection/CollectionItems.as
 // reads as Collection/dgitems.json. The file (UTF-8, LF, tab-separated):

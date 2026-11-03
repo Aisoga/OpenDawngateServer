@@ -16,13 +16,18 @@ import (
 type Actor struct {
 	Name   string // the admin's login name ("" = the operator on the command line)
 	UserID int64  // the admin's account (0 = none)
-	Source string // where from: "web <address>", "command line", "server start"
+	Source string // where from: "web <address>", "command line", "server start", "api <address>"
+	// API is the name of the issue tracker's API token that acted ("" = none): the actor is then "api:<name>"
+	API string
 }
 
 // CommandLine is the operator's account commands (dgserver / Start-Server.exe).
 var CommandLine = Actor{Source: "command line"}
 
 func (a Actor) String() string {
+	if a.API != "" {
+		return "api:" + a.API
+	}
 	if a.UserID == 0 {
 		return "operator"
 	}

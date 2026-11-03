@@ -351,6 +351,47 @@ func (s *Store) UpdateMany(userIDs []int64, fn func(a *Account), key, value stri
 	return tx.Commit()
 }
 
+// UpdateGroup changes the accounts in userIDs together through fn, in one transaction (a rated game: every player's new
+// rating depends on the others' old ones). fn gets the stored accounts that exist, in userIDs' order (an id twice
+// once; an unknown id is left out), maps allocated as Update's, and must not keep them. It returns copies of the
+// changed accounts in the same order.
+func (s *Store) UpdateGroup(userIDs []int64, fn func(as []*Account)) ([]Account, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	var as, befores []*Account
+	seen := map[int64]bool{}
+	for _, id := range userIDs {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		a, err := load(tx, id)
+		if errors.Is(err, ErrNoAccount) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		before := copyAccount(a)
+		as, befores = append(as, a), append(befores, &before)
+	}
+	fn(as)
+	out := make([]Account, len(as))
+	for i, a := range as {
+		a.UserID = befores[i].UserID
+		if err := save(tx, befores[i], a); err != nil {
+			return nil, err
+		}
+		out[i] = copyAccount(a)
+	}
+	return out, tx.Commit()
+}
+
 // UpdatePair changes two accounts through fn in one transaction (B13b: a friendship is added to or
 // removed from both accounts at once). fn gets the stored accounts (maps allocated, as Update's; the same pointer
 // twice if the ids are equal) and must not keep them. It returns copies of both; ErrNoAccount if either is unknown.
@@ -496,10 +537,13 @@ func load(q querier, userID int64) (*Account, error) {
 	var level, xp, avatar, ec, pc, cc, spentEC, spentPC, countEC, countPC uint32
 	var flags, userInfo int64
 	err := q.QueryRow(`SELECT email, created, last_login, granted, level, xp, flags, avatar, ec, pc, cc, user_info,
-		first_win_day, spent_ec, spent_pc, count_ec, count_pc, ranked_games, ranked_wins FROM accounts WHERE user_id = ?`,
+		first_win_day, spent_ec, spent_pc, count_ec, count_pc, ranked_games, ranked_wins, rating, rating_rd, rating_vol,
+		rated_games, rated_wins FROM accounts WHERE user_id = ?`,
 		userID).Scan(
 		&a.Email, &created, &lastLogin, &granted, &level, &xp, &flags, &avatar, &ec, &pc, &cc, &userInfo,
-		&a.FirstWinDay, &spentEC, &spentPC, &countEC, &countPC, &a.History.Ranked.Games, &a.History.Ranked.Wins)
+		&a.FirstWinDay, &spentEC, &spentPC, &countEC, &countPC, &a.History.Ranked.Games, &a.History.Ranked.Wins,
+		&a.History.Rating.Value, &a.History.Rating.RD, &a.History.Rating.Vol, &a.History.Rating.Games,
+		&a.History.Rating.Wins)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoAccount
 	}
@@ -511,6 +555,9 @@ func load(q querier, userID int64) (*Account, error) {
 	}
 	if a.LastLogin, err = parseTime(lastLogin); err != nil {
 		return nil, err
+	}
+	if a.History.Rating == StartRating {
+		a.History.Rating = Rating{} // no rated game yet: the zero value, as an account made in memory has it
 	}
 	a.Granted = granted != 0
 	a.Level, a.XP, a.Flags, a.Avatar = level, xp, uint64(flags), avatar
@@ -619,11 +666,12 @@ func loadHistory(q querier, a *Account) error {
 	err = each(q, func(r *sql.Rows) error {
 		var pos int
 		var d HistoryDay
-		err := r.Scan(&pos, &d.Day, &d.Ranked.Games, &d.Ranked.Wins)
+		err := r.Scan(&pos, &d.Day, &d.Ranked.Games, &d.Ranked.Wins, &d.Rated.Games, &d.Rated.Wins, &d.RatingBefore)
 		byPos[pos] = len(a.History.Days)
 		a.History.Days = append(a.History.Days, d)
 		return err
-	}, `SELECT pos, day, ranked_games, ranked_wins FROM history_days WHERE user_id = ? ORDER BY pos`, a.UserID)
+	}, `SELECT pos, day, ranked_games, ranked_wins, rated_games, rated_wins, rating_before FROM history_days
+		WHERE user_id = ? ORDER BY pos`, a.UserID)
 	if err != nil || len(a.History.Days) == 0 {
 		return err
 	}
@@ -701,13 +749,15 @@ func insertAccount(q querier, a *Account) error {
 // save writes what changed between before and a (before nil: everything but the account's key columns, which
 // insertAccount wrote). The account's row is always written; each collection only when it differs.
 func save(q querier, before, a *Account) error {
+	rt := a.History.Rating.OrStart() // an account without a rating gets the start values, as the columns' defaults
 	if _, err := q.Exec(`UPDATE accounts SET email = ?, email_key = ?, created = ?, last_login = ?, granted = ?, level = ?,
 		xp = ?, flags = ?, avatar = ?, ec = ?, pc = ?, cc = ?, user_info = ?, first_win_day = ?, spent_ec = ?, spent_pc = ?,
-		count_ec = ?, count_pc = ?, ranked_games = ?, ranked_wins = ? WHERE user_id = ?`,
+		count_ec = ?, count_pc = ?, ranked_games = ?, ranked_wins = ?, rating = ?, rating_rd = ?, rating_vol = ?,
+		rated_games = ?, rated_wins = ? WHERE user_id = ?`,
 		a.Email, emailKey(a.Email), a.Created.Format(timeFormat), a.LastLogin.Format(timeFormat), a.Granted, a.Level,
 		a.XP, int64(a.Flags), a.Avatar, a.EC, a.PC, a.CC, int64(a.UserInfo), a.FirstWinDay, a.Commerce.SpentEC,
 		a.Commerce.SpentPC, a.Commerce.CountEC, a.Commerce.CountPC, a.History.Ranked.Games, a.History.Ranked.Wins,
-		a.UserID); err != nil {
+		rt.Value, rt.RD, rt.Vol, rt.Games, rt.Wins, a.UserID); err != nil {
 		return err
 	}
 	if before == nil {
@@ -763,9 +813,11 @@ func save(q querier, before, a *Account) error {
 		ids := slices.Sorted(maps.Keys(h.Shapers))
 		w.replace("history_shapers", `INSERT INTO history_shapers (user_id, catalog_id, games, wins) VALUES (?, ?, ?, ?)`,
 			len(ids), func(i int) []any { g := h.Shapers[ids[i]]; return []any{a.UserID, ids[i], g.Games, g.Wins} })
-		w.replace("history_days", `INSERT INTO history_days (user_id, pos, day, ranked_games, ranked_wins) VALUES (?, ?, ?, ?, ?)`,
-			len(h.Days),
-			func(i int) []any { d := h.Days[i]; return []any{a.UserID, i, d.Day, d.Ranked.Games, d.Ranked.Wins} })
+		w.replace("history_days", `INSERT INTO history_days (user_id, pos, day, ranked_games, ranked_wins, rated_games,
+			rated_wins, rating_before) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, len(h.Days), func(i int) []any {
+			d := h.Days[i]
+			return []any{a.UserID, i, d.Day, d.Ranked.Games, d.Ranked.Wins, d.Rated.Games, d.Rated.Wins, d.RatingBefore}
+		})
 		var shapers, roles [][]any
 		for pos, d := range h.Days {
 			for _, id := range slices.Sorted(maps.Keys(d.Shapers)) {

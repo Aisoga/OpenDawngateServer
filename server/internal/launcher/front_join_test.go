@@ -461,7 +461,7 @@ func TestJoinNewsOverlay(t *testing.T) {
 	}
 	update := func(bc *blazeConn, pid int64, uatt uint64) {
 		bc.watchLogin(fire.Frame{Type: fire.Notification, Component: blaze.ComponentUserSessions, Command: blaze.NotifyUserSessionExtendedDataUpdate,
-			Payload: blaze.ExtendedDataUpdateNotification(pid, uatt, 0)})
+			Payload: blaze.ExtendedDataUpdateNotification(pid, uatt, 0, 0, 0)})
 	}
 	// seen at an earlier login: ready joinAfterNews later
 	a := &blazeConn{f: f}

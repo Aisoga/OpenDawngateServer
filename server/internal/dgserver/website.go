@@ -174,7 +174,8 @@ func startWebsite(cfg config, lg *logging.Log, st *store.Store, lim *limits.Limi
 			strings.Join(cert.Leaf.DNSNames, ", ")+ipList(cert.Leaf.IPAddresses), made, where, fp)
 	}
 	sc := site.Config{Store: st, Policy: cfg.accounts, Status: status, Pages: dir, HSTS: wc.domain != "", Admin: admin,
-		EndSessions: endSessions, Download: wc.download, Log: func(format string, a ...any) { lg.Logf("web", format, a...) }}
+		EndSessions: endSessions, Download: wc.download, Issues: cfg.issues,
+		Log: func(format string, a ...any) { lg.Logf("web", format, a...) }}
 	if lim != nil { // not a nil *Limiter in the interface: the site skips the calls without limits
 		sc.Limits = lim
 	}
@@ -205,6 +206,9 @@ func startWebsite(cfg config, lg *logging.Log, st *store.Store, lim *limits.Limi
 	if admin != nil {
 		ws.note += "; " + describeAdmin(st, ws.url)
 	}
+	if cfg.issues {
+		ws.note += "; the issue tracker at " + ws.url + "issues"
+	}
 	return ws, nil
 }
 
@@ -219,7 +223,7 @@ func startProxiedWebsite(cfg config, lg *logging.Log, st *store.Store, lim *limi
 	}
 	ws := &website{url: webURL(wc.domain, 443)}
 	sc := site.Config{Store: st, Policy: cfg.accounts, Status: status, Pages: dir, HSTS: true, Admin: admin,
-		EndSessions: endSessions, Proxy: true, PublicURL: ws.url, Download: wc.download,
+		EndSessions: endSessions, Proxy: true, PublicURL: ws.url, Download: wc.download, Issues: cfg.issues,
 		Log: func(format string, a ...any) { lg.Logf("web", format, a...) }}
 	if lim != nil { // not a nil *Limiter in the interfaces: the site skips the calls without limits
 		sc.Limits, sc.Conns = lim, lim
@@ -250,6 +254,9 @@ func startProxiedWebsite(cfg config, lg *logging.Log, st *store.Store, lim *limi
 		"%s; the HTTP port's /dawngate/<page> redirect there", ws.url, ws.proxyAddr, wc.domain, limitsNote, pages)
 	if admin != nil {
 		ws.note += "; " + describeAdmin(st, ws.url)
+	}
+	if cfg.issues {
+		ws.note += "; the issue tracker at " + ws.url + "issues"
 	}
 	return ws, nil
 }

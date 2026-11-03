@@ -309,7 +309,8 @@ func TestSchema(t *testing.T) {
 			t.Errorf("%s: %d rows left (%v)", table, rows, err)
 		}
 	}
-	// every table of the schema (version 6: the match history, which an account's deletion leaves alone)
+	// every table of the schema (version 6: the match history, which an account's deletion leaves alone; version 8: the
+	// issue tracker, whose claims DeleteAccount removes)
 	var tables []string
 	each(r.db, func(rows *sql.Rows) error {
 		var name string
@@ -317,9 +318,10 @@ func TestSchema(t *testing.T) {
 		tables = append(tables, name)
 		return err
 	}, `SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`)
-	if want := []string{"accounts", "audit", "counters", "history_day_roles", "history_day_shapers", "history_days",
-		"history_shapers", "invites", "items", "list_members", "match_seats", "matches", "perk_pages", "personas",
-		"schema_version", "server_settings", "settings", "signups", "stats"}; !slices.Equal(tables, want) {
+	if want := []string{"accounts", "api_tokens", "audit", "counters", "history_day_roles", "history_day_shapers",
+		"history_days", "history_shapers", "invites", "issue_claims", "issue_videos", "issues", "items", "list_members",
+		"match_seats", "matches", "perk_pages", "personas", "schema_version", "server_settings", "settings", "signups",
+		"stats"}; !slices.Equal(tables, want) {
 		t.Errorf("tables %q\nwant %q", tables, want)
 	}
 }

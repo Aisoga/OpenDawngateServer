@@ -72,11 +72,15 @@ var LobbyLines = map[uint32]string{
 const LeaderboardMinGames = 10
 
 // LeaderboardLines are FE_Leaderboard's: the screen's title (was "Solo Top 200") and the rule under it, as dgserver
-// ranks (only PvP and custom games count, practice games don't).
+// ranks by default (its skill rating from balanced PvP and custom games, --rating-leaderboard on; practice games never
+// count). A server with --rating-leaderboard off ranks by wins under the same text. 0x5E70D001 (ours, appended) is
+// the header of the Rating column the front end's class adds (client_ui/leaderboard/LeaderboardRating.as; the
+// header cell translates the key itself, as it does EA's 0x200-0x203).
 var LeaderboardLines = map[uint32]string{
 	0x00000100: "Top 200",
-	0x00000101: "Rank is based upon PvP and custom games. Must have at least " + strconv.Itoa(LeaderboardMinGames) +
-		" games played.",
+	0x00000101: "Rank is based upon skill rating from balanced PvP and custom games. Must have at least " +
+		strconv.Itoa(LeaderboardMinGames) + " rated games.",
+	0x5E70D001: "Rating",
 }
 
 // MatchTypeLines are FE_MatchType's lines that said a group's games don't count for the Leaderboard; group PvP queue

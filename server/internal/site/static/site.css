@@ -16,7 +16,7 @@ label { display: grid; gap: .2rem; font-weight: 600; }
 label small { font-weight: 400; color: var(--muted); }
 label.check { display: flex; gap: .5rem; align-items: center; }
 input { font: inherit; padding: .45rem .55rem; border: 1px solid var(--line); border-radius: 4px; background: transparent; color: inherit; width: 100%; }
-input[type=checkbox] { width: auto; }
+input[type=checkbox], input[type=radio] { width: auto; flex: none; margin: 0; }
 input[aria-invalid=true] { border-color: var(--error); }
 button { font: inherit; padding: .55rem 1rem; border: 0; border-radius: 4px; background: var(--accent); color: #fff; cursor: pointer; justify-self: start; }
 button.danger { background: var(--error); }
@@ -42,3 +42,46 @@ form.row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: end; }
 form.row label { flex: 1 1 10rem; }
 .secret { font: 1.2rem/1.4 ui-monospace, monospace; padding: .6rem .8rem; border: 2px dashed var(--accent); display: inline-block; user-select: all; }
 .muted { color: var(--muted); }
+/* the issue tracker (no script: the weight bar's widths are the classes p0 ... p100, in steps of 5) */
+.trackerbar { display: flex; gap: .75rem; align-items: center; margin: .5rem 0; }
+.howto ol { margin: .25rem 0 1rem; padding-left: 1.4rem; }
+nav.filters { gap: .25rem .9rem; border-bottom: 1px solid var(--line); margin-bottom: .5rem; }
+ul.issues { list-style: none; padding: 0; margin: 0 0 1rem; }
+ul.issues li { padding: .35rem 0; border-bottom: 1px solid var(--line); }
+.id { font: .85rem ui-monospace, monospace; color: var(--muted); }
+.chip { display: inline-block; padding: 0 .5rem; border-radius: 999px; font-size: .8rem; font-weight: 600; border: 1px solid currentColor; white-space: nowrap; }
+.chip-needs-verification { color: var(--muted); }
+.chip-needs-video { color: var(--accent); }
+.chip-disputed { color: #b04a00; }
+.chip-leaning-correct, .chip-confirmed { color: var(--ok); }
+.chip-leaning-wrong, .chip-disproven { color: var(--error); }
+.chip-confirmed, .chip-disproven, .chip-closed { background: var(--line); }
+.chip-closed { color: var(--fg); }
+.own { font-size: .8rem; font-weight: 600; }
+.own-correct, .stance-correct { color: var(--ok); }
+.own-wrong, .stance-wrong { color: var(--error); }
+.lookfor { border-left: 4px solid var(--accent); background: rgba(138, 90, 0, .08); padding: .1rem 1rem; margin: 1rem 0; }
+.verdict { border: 1px solid var(--line); padding: .1rem 1rem; margin: 1rem 0; }
+.bar { display: flex; height: .8rem; border-radius: 4px; overflow: hidden; background: var(--line); margin: .5rem 0; }
+.bar .side-correct { background: var(--ok); }
+.bar .side-wrong { background: var(--error); }
+.bar .p0 { width: 0; } .bar .p5 { width: 5%; } .bar .p10 { width: 10%; } .bar .p15 { width: 15%; } .bar .p20 { width: 20%; }
+.bar .p25 { width: 25%; } .bar .p30 { width: 30%; } .bar .p35 { width: 35%; } .bar .p40 { width: 40%; } .bar .p45 { width: 45%; }
+.bar .p50 { width: 50%; } .bar .p55 { width: 55%; } .bar .p60 { width: 60%; } .bar .p65 { width: 65%; } .bar .p70 { width: 70%; }
+.bar .p75 { width: 75%; } .bar .p80 { width: 80%; } .bar .p85 { width: 85%; } .bar .p90 { width: 90%; } .bar .p95 { width: 95%; }
+.bar .p100 { width: 100%; }
+ul.claims { list-style: none; padding: 0; }
+li.claim { border-left: 4px solid var(--line); padding: .1rem .8rem; margin: .6rem 0; }
+li.claim-correct { border-left-color: var(--ok); }
+li.claim-wrong { border-left-color: var(--error); }
+li.claim-own { background: rgba(127, 127, 127, .08); }
+.usertext { white-space: pre-wrap; overflow-wrap: anywhere; }
+ul.videos { padding-left: 1.2rem; margin: .2rem 0 .5rem; }
+fieldset { border: 1px solid var(--line); border-radius: 4px; display: flex; flex-wrap: wrap; gap: .6rem 1.5rem; }
+fieldset[aria-invalid=true] { border-color: var(--error); }
+textarea { font: inherit; padding: .45rem .55rem; border: 1px solid var(--line); border-radius: 4px; background: transparent; color: inherit; width: 100%; }
+textarea[aria-invalid=true] { border-color: var(--error); }
+.linkrow { display: flex; flex-wrap: wrap; gap: .5rem; }
+.linkrow label { flex: 1 1 18rem; }
+.linkrow label.time { flex: 0 1 8rem; }
+nav.prevnext { justify-content: space-between; border-top: 1px solid var(--line); margin-top: 1.5rem; }

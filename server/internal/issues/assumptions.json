@@ -1,0 +1,1118 @@
+[
+	{
+		"id": "MN1",
+		"area": "Minions and waves",
+		"title": "Who a minion attacks",
+		"assumed": "Lane minions attack enemy minions before shapers, but turn on a shaper who hurts one of their team's shapers nearby.",
+		"lookFor": "Whether enemy minions keep hitting your minions while you stand among them, and whether they turn on you at once when you hit an enemy shaper near them.",
+		"top": true,
+		"order": 1
+	},
+	{
+		"id": "MN1b",
+		"area": "Minions and waves",
+		"title": "Lane minions and shapers",
+		"assumed": "A lane minion attacks towers and enemy minions before any shaper, and goes for a shaper only when nothing else is in reach or that shaper just hit one of its team's shapers.",
+		"lookFor": "Minions ignoring a shaper who stands among them until that shaper hits one of their team's shapers, and leaving a shaper who walks away.",
+		"top": false,
+		"order": 2
+	},
+	{
+		"id": "MN1c",
+		"area": "Minions and waves",
+		"title": "How far a lane minion chases a shaper",
+		"assumed": "A lane minion chasing a shaper gives up after about 3 seconds or 20 units, walks back to its lane and ignores that shaper for a few seconds.",
+		"lookFor": "How long and how far an enemy wave follows you when you walk away from it, and whether it takes you again at once when you stop.",
+		"top": false,
+		"order": 3
+	},
+	{
+		"id": "MN1d",
+		"area": "Minions and waves",
+		"title": "A minion stops following when its target changes",
+		"assumed": "A minion following a shaper stops at once when it loses that shaper or another target comes into reach, and walks back to its lane.",
+		"lookFor": "Whether minions turn back at once when you lead them into the jungle or into tall grass and they lose you.",
+		"top": false,
+		"order": 4
+	},
+	{
+		"id": "MN2",
+		"area": "Minions and waves",
+		"title": "When a minion or tower gives up a chase",
+		"assumed": "Minions and towers drop a target within about half a second when it leaves their range or their area, or hides in fog or tall grass.",
+		"lookFor": "How far a minion follows you off its lane, and whether minions or a tower stop hitting you at once when you step into tall grass.",
+		"top": true,
+		"order": 5
+	},
+	{
+		"id": "MN3",
+		"area": "Minions and waves",
+		"title": "Minions in the enemy base",
+		"assumed": "Minions that reach the enemy base attack the nearest core or the Guardian and stay on them, taking on only enemies that come near.",
+		"lookFor": "Which core minions hit first when they break into a base, and whether they leave the cores to chase a shaper.",
+		"top": false,
+		"order": 6
+	},
+	{
+		"id": "MN4",
+		"area": "Minions and waves",
+		"title": "The order of an empowered wave",
+		"assumed": "An empowered wave after the parasite's last stage spawns its big Strider first, then three melee minions, then three casters, half a second apart.",
+		"lookFor": "Whether the Strider of an empowered wave comes out first or last.",
+		"top": false,
+		"order": 7
+	},
+	{
+		"id": "TW1",
+		"area": "Towers (Bindings), cores and the Guardian",
+		"title": "Who a Binding shoots",
+		"assumed": "A Binding shoots minions before shapers, but switches to a shaper who hurts an allied shaper in its range and keeps shooting that shaper until it leaves the range.",
+		"lookFor": "Whom a Binding shoots when minions and shapers stand in its range, and how long it keeps shooting a shaper who hit one of its team's shapers.",
+		"top": true,
+		"order": 8
+	},
+	{
+		"id": "TW2",
+		"area": "Towers (Bindings), cores and the Guardian",
+		"title": "No tier protection for Bindings",
+		"assumed": "Every Binding can be attacked at any time; an inner Binding has no protection while the outer one of its lane stands.",
+		"lookFor": "Damage on a middle or inner Binding while the outer one of its lane still stands, or a shield on a later Binding.",
+		"top": true,
+		"order": 9
+	},
+	{
+		"id": "TW3",
+		"area": "Towers (Bindings), cores and the Guardian",
+		"title": "The Guardian's shield comes back with a core",
+		"assumed": "When a destroyed core regrows, the Guardian's shield comes back.",
+		"lookFor": "Whether the Guardian is shielded again after all its cores fell and one of them regrew.",
+		"top": true,
+		"order": 10
+	},
+	{
+		"id": "TW4",
+		"area": "Towers (Bindings), cores and the Guardian",
+		"title": "The Guardian aims at shapers",
+		"assumed": "The Guardian's basic attack goes to a random enemy shaper in reach when there is one, otherwise to minions, and its special attacks aim only at shapers.",
+		"lookFor": "Whether the Guardian shoots you or your minions when you stand near it beside them, and whether its specials land only on shapers.",
+		"top": false,
+		"order": 11
+	},
+	{
+		"id": "TW5",
+		"area": "Towers (Bindings), cores and the Guardian",
+		"title": "Each core takes one Guardian special with it",
+		"assumed": "Each of the five cores powers one of the Guardian's special attacks, which stops while that core is down, and the specials come more slowly with each lost core.",
+		"lookFor": "Whether a special (such as the laser after the rear right core fell) still comes before the core regrows, and whether the defenders ever got health packs from their Guardian.",
+		"top": false,
+		"order": 12
+	},
+	{
+		"id": "WL1",
+		"area": "Spirit wells",
+		"title": "Well income: for every player, every second",
+		"assumed": "Each worker at a well pays 1.5 gold a minute to every player of its team, paid out every second.",
+		"lookFor": "The score panel's gold per minute compared with the number of wells and workers, and how fast an idle player's gold grows with full wells.",
+		"top": true,
+		"order": 13
+	},
+	{
+		"id": "WL2",
+		"area": "Spirit wells",
+		"title": "Who gets the capture's gold",
+		"assumed": "The 50 gold for capturing a well and the well's bounty go to every player of the capturing team, even those far away.",
+		"lookFor": "Whether teammates elsewhere on the map get +50 gold at a capture, and how big the bounty is.",
+		"top": true,
+		"order": 14
+	},
+	{
+		"id": "WL3",
+		"area": "Spirit wells",
+		"title": "What pauses a capture: an enemy shaper's hit",
+		"assumed": "Only enemy shapers pause a capture: an enemy shaper's hit pauses the capturer's share for 5 seconds, while damage from workers, minions, creeps or towers does not.",
+		"lookFor": "Whether a capture keeps filling while an enemy shaper hits the capturer from outside the ring, for example with a ranged poke or damage over time.",
+		"top": false,
+		"order": 15
+	},
+	{
+		"id": "WL4",
+		"area": "Spirit wells",
+		"title": "Workers: when they come and are replaced",
+		"assumed": "A well starts with no workers and gets one more every 15 seconds from the start of the match, up to 18, and a killed worker is replaced on the same 15-second timer.",
+		"lookFor": "How many workers a well has at 0:30, 1:00 and 2:00, and how soon a killed worker is replaced.",
+		"top": true,
+		"order": 16
+	},
+	{
+		"id": "WL5",
+		"area": "Spirit wells",
+		"title": "A capture fading after the capturers leave",
+		"assumed": "An abandoned capture ring empties at the speed of a one-shaper capture, a full ring in about 16 seconds.",
+		"lookFor": "How long the ring of a capture abandoned half-way takes to empty.",
+		"top": true,
+		"order": 17
+	},
+	{
+		"id": "WL6",
+		"area": "Spirit wells",
+		"title": "The \"well under attack\" alert",
+		"assumed": "The \"Spirit Well under attack\" alert plays only when an enemy hits one of the well's workers, not when enemies just start a capture.",
+		"lookFor": "Whether the alert plays when enemies start a capture without hitting a worker.",
+		"top": false,
+		"order": 18
+	},
+	{
+		"id": "WL7",
+		"area": "Spirit wells",
+		"title": "Gold for killing a worker: how close you must be",
+		"assumed": "Killing a worker pays 6 gold and 15 XP to your team's shapers within about 16 units of it, and nothing when it is killed from farther away.",
+		"lookFor": "Whether gold pops up when a worker is killed from long range.",
+		"top": false,
+		"order": 19
+	},
+	{
+		"id": "WL8",
+		"area": "Spirit wells",
+		"title": "Workers destroyed by a capture pay nothing",
+		"assumed": "The workers that vanish when a well is captured pay no gold or XP to anyone.",
+		"lookFor": "The capturers' gold at the moment of a capture.",
+		"top": false,
+		"order": 20
+	},
+	{
+		"id": "WL9",
+		"area": "Spirit wells",
+		"title": "Where workers mine",
+		"assumed": "Each worker gathers at its own spot at the edge of the well's platform and carries the Vim to near the well's centre.",
+		"lookFor": "Where workers pick up and where they drop off as they walk.",
+		"top": false,
+		"order": 21
+	},
+	{
+		"id": "WL10",
+		"area": "Spirit wells",
+		"title": "The unlock and lock animations",
+		"assumed": "A well's dais plays its unlock animation for 2 seconds when the well opens and its lock animation for 2 seconds after a capture.",
+		"lookFor": "The dais at 15:00 and right after a capture.",
+		"top": false,
+		"order": 22
+	},
+	{
+		"id": "WL11",
+		"area": "Spirit wells",
+		"title": "Who is named in \"Spirit Well captured\"",
+		"assumed": "When several shapers capture a well together, the announcement names the one who comes first in the team's player order.",
+		"lookFor": "Which shaper the \"Spirit Well captured\" announcement names when two shapers capture together.",
+		"top": false,
+		"order": 23
+	},
+	{
+		"id": "WL12",
+		"area": "Spirit wells",
+		"title": "A worker stays on its well's platform",
+		"assumed": "A worker never chases off its well's platform: it drops a target just beyond the platform's edge and goes back to mining.",
+		"lookFor": "Whether a worker steps off its platform after a shaper who hit it, and whether it hits a shaper standing just outside the ring.",
+		"top": false,
+		"order": 24
+	},
+	{
+		"id": "JG1",
+		"area": "Jungle camps and buffs",
+		"title": "Camp timers: the creatures' values",
+		"assumed": "Small camps first appear at 1:30 and come back 3:00 after a clear, the buff camps at 1:30 and 5:00 after a clear, and the Gold Pigs at 3:30 and 5:00 after a clear.",
+		"lookFor": "How soon after a clear a small camp comes back, and whether all small camps first appear at 1:30.",
+		"top": true,
+		"order": 25
+	},
+	{
+		"id": "JG2",
+		"area": "Jungle camps and buffs",
+		"title": "A camp's timer starts when the whole camp is dead",
+		"assumed": "A camp's respawn timer starts when its last creature dies, so a camp with one creature left alive never brings the others back.",
+		"lookFor": "The time from a camp's last kill to its return, and whether the others come back while one creature is left alive.",
+		"top": true,
+		"order": 26
+	},
+	{
+		"id": "JG3",
+		"area": "Jungle camps and buffs",
+		"title": "Who gets a jungle buff",
+		"assumed": "A jungle buff goes only to the shaper who lands the last hit on the big creature and is alive then; a kill by a minion or a tower gives nobody the buff.",
+		"lookFor": "Whether anyone gets the buff when a minion finishes a buff creature, and whether a teammate who is dead when the parasite dies gets the team buff.",
+		"top": false,
+		"order": 27
+	},
+	{
+		"id": "JG4",
+		"area": "Jungle camps and buffs",
+		"title": "The buff creature's size",
+		"assumed": "A camp's big creature has its normal size, not twice the size.",
+		"lookFor": "The size of the big Fish, Fungus and Ugger next to the small ones.",
+		"top": false,
+		"order": 28
+	},
+	{
+		"id": "JG5",
+		"area": "Jungle camps and buffs",
+		"title": "How far a camp follows you",
+		"assumed": "A jungle creature follows you up to about 18 to 22 units from its spot, gives up a chase after 5 seconds without landing a hit, and then the whole camp walks home.",
+		"lookFor": "How far a buff creature follows you before it turns back, and whether a ranged shaper can shoot a camp from far outside it without the camp coming out.",
+		"top": false,
+		"order": 29
+	},
+	{
+		"id": "JG6",
+		"area": "Jungle camps and buffs",
+		"title": "A camp's big creature walks through its small ones",
+		"assumed": "A camp's big creature walks through its own small creatures to reach a shaper standing behind them.",
+		"lookFor": "Whether the big creature reaches you when you stand behind one of its small camp-mates, and whether it walks through, pushes or walks around it.",
+		"top": false,
+		"order": 30
+	},
+	{
+		"id": "PA1",
+		"area": "The parasite",
+		"title": "The parasite ignores you until you hit it",
+		"assumed": "The parasite attacks only those who hit it and leaves a shaper standing near it alone.",
+		"lookFor": "Whether the parasite attacks someone walking close past it without attacking it.",
+		"top": true,
+		"order": 31
+	},
+	{
+		"id": "PA2",
+		"area": "The parasite",
+		"title": "Whom the parasite attacks, and its specials",
+		"assumed": "Once hit, the parasite attacks the nearest enemy shaper in its melee reach, and from its second stage on every fifth attack is a special: the fire breath, and at the third stage the fire breath and the orb barrage in turn.",
+		"lookFor": "A fire breath after every four attacks of a second-stage parasite, the two specials taking turns at the third stage, and whether it hits the shaper next to it rather than the one who hit it first from range.",
+		"top": false,
+		"order": 32
+	},
+	{
+		"id": "CB1",
+		"area": "Combat, damage and death",
+		"title": "The death timer",
+		"assumed": "You respawn after 15 seconds plus half a second per level plus 1.25 seconds per minute of the match.",
+		"lookFor": "The respawn countdown at a known level and match time.",
+		"top": true,
+		"order": 33
+	},
+	{
+		"id": "CB2",
+		"area": "Combat, damage and death",
+		"title": "Assists: 10 seconds",
+		"assumed": "Every enemy who hit or debuffed the victim, or buffed a teammate who hit it, in the last 10 seconds before the kill gets an assist.",
+		"lookFor": "The scoreboard's assists when someone hit the victim 8 to 12 seconds before the kill.",
+		"top": false,
+		"order": 34
+	},
+	{
+		"id": "CB3",
+		"area": "Combat, damage and death",
+		"title": "Extra damage reductions",
+		"assumed": "Damage reductions such as the Orange buff's stacks, a weakening debuff on the attacker, area resistance and the bonuses against structures all apply after armor and magic resist.",
+		"lookFor": "The same ability's damage number on a target with and without such an effect.",
+		"top": false,
+		"order": 35
+	},
+	{
+		"id": "CB4",
+		"area": "Combat, damage and death",
+		"title": "On-hit effects through a shield",
+		"assumed": "On-hit effects of items still trigger when a shield takes the whole hit, and such a hit still cancels a recall.",
+		"lookFor": "Hitting a fully shielded enemy with an on-hit item, and whether a recall stops when the enemy's shield takes the hit.",
+		"top": false,
+		"order": 36
+	},
+	{
+		"id": "CB5",
+		"area": "Combat, damage and death",
+		"title": "Where damage-changing effects act",
+		"assumed": "Flat damage cuts such as Toughness's \"-3 damage from basic attacks\" apply after armor, while effects that change the damage a unit takes apply before it.",
+		"lookFor": "A basic attack's damage number on a target with Toughness.",
+		"top": false,
+		"order": 37
+	},
+	{
+		"id": "CB6",
+		"area": "Combat, damage and death",
+		"title": "Which shield absorbs first",
+		"assumed": "When a shaper has several shields, the one that runs out first absorbs first, and a magic-only shield takes magic damage before the others.",
+		"lookFor": "Two shields on one shaper and which one's bar empties first.",
+		"top": false,
+		"order": 38
+	},
+	{
+		"id": "CB7",
+		"area": "Combat, damage and death",
+		"title": "Streaks and bounties",
+		"assumed": "Dying several times in a row lowers your bounty step by step, only a kill (not an assist) ends that streak, and kills within 10 seconds of each other make a multi-kill.",
+		"lookFor": "The gold for killing a player who died several times in a row and then got only assists.",
+		"top": false,
+		"order": 39
+	},
+	{
+		"id": "CB8",
+		"area": "Combat, damage and death",
+		"title": "Your orders end at your death",
+		"assumed": "Your orders end when you die, so after the respawn your shaper stands still at the base.",
+		"lookFor": "Whether a shaper who died while attacking a Binding walks back to it by itself after the respawn.",
+		"top": false,
+		"order": 40
+	},
+	{
+		"id": "CB9",
+		"area": "Combat, damage and death",
+		"title": "Small damage details",
+		"assumed": "A hit on an immune target does nothing and shows \"Immune\", and a projectile still hits after its caster died but heals the dead caster nothing.",
+		"lookFor": "The \"Immune\" text on an immune target, and heals from spell overload's extra hits.",
+		"top": false,
+		"order": 41
+	},
+	{
+		"id": "CB10",
+		"area": "Combat, damage and death",
+		"title": "Hits below one HP show no number",
+		"assumed": "A hit that takes less than one whole point of health shows no damage number, though it still counts in full.",
+		"lookFor": "The small numbers under each hit of a fast multi-hit ability, such as Faris's ranged W, and whether any of them is ever 0.",
+		"top": false,
+		"order": 42
+	},
+	{
+		"id": "CB11",
+		"area": "Combat, damage and death",
+		"title": "Drain heals its caster again",
+		"assumed": "Each tick of Drain sends three small bolts back from the target and heals the caster 90 percent of the tick's damage when they arrive.",
+		"lookFor": "Three small bolts flying back after each tick of Drain, and the caster's health rising by about nine tenths of each tick's damage.",
+		"top": false,
+		"order": 43
+	},
+	{
+		"id": "AB1",
+		"area": "Abilities, items and perks",
+		"title": "Item passives stop at death and come back at the respawn",
+		"assumed": "Item passives that end at death, such as Purity's heal and the Legendary auras, stop while you are dead and start again at once when you respawn.",
+		"lookFor": "An item's aura or heal while its holder is dead, and whether it is back right after the respawn.",
+		"top": true,
+		"order": 44
+	},
+	{
+		"id": "AB2",
+		"area": "Abilities, items and perks",
+		"title": "The roles' bonuses are on",
+		"assumed": "The four roles' bonuses are on from the start: the Gladiator's stored minion gold, the Hunter's extra creep gold, the Predator's double worker gold and the Tactician's +20 gold for hitting an enemy shaper.",
+		"lookFor": "The roles' gold popups in a match, such as the Tactician's +20 on a hit.",
+		"top": true,
+		"order": 45
+	},
+	{
+		"id": "AB3",
+		"area": "Abilities, items and perks",
+		"title": "A perk page's percent stats and Spiritstone effects",
+		"assumed": "A perk page's percent stats and its Spiritstones' effects are given to your shaper at the start of the match and kept through deaths.",
+		"lookFor": "Your stats panel in a match compared with the loadout's statistics, and a Spiritstone's effect in play.",
+		"top": false,
+		"order": 46
+	},
+	{
+		"id": "AB4",
+		"area": "Abilities, items and perks",
+		"title": "Perk effects that end at death come back at the respawn",
+		"assumed": "The Vanguard Spiritstone's aura stops while you are dead and comes back when you respawn, while every other Spiritstone's effect stays through death.",
+		"lookFor": "The Vanguard aura on nearby enemies after a respawn.",
+		"top": false,
+		"order": 47
+	},
+	{
+		"id": "AB5",
+		"area": "Abilities, items and perks",
+		"title": "Shaper passives from the start and after each respawn",
+		"assumed": "Every shaper's passive runs from the start of the match and starts again after each respawn.",
+		"lookFor": "A passive's icon or effect right after a respawn.",
+		"top": false,
+		"order": 48
+	},
+	{
+		"id": "AB6",
+		"area": "Abilities, items and perks",
+		"title": "Mikella's W: the coins' bonus ends with the W",
+		"assumed": "A coin of Mikella's that lands after her W has ended gets no bonus.",
+		"lookFor": "The damage of a coin landing just after Mikella's W ended.",
+		"top": false,
+		"order": 49
+	},
+	{
+		"id": "AB7",
+		"area": "Abilities, items and perks",
+		"title": "Empathy's cooldown on the HUD",
+		"assumed": "The item Empathy never shows a cooldown on the HUD.",
+		"lookFor": "Whether Empathy showed a cooldown on the HUD in the original.",
+		"top": false,
+		"order": 50
+	},
+	{
+		"id": "AB8",
+		"area": "Abilities, items and perks",
+		"title": "The shop's delivery comes from the nearer archon",
+		"assumed": "A bought item's delivery flies from the shop archon of your base nearest to you, and that archon plays its purchase animation.",
+		"lookFor": "Which archon (or both) the delivery leaves from when a shaper buys from either side of the shop.",
+		"top": false,
+		"order": 51
+	},
+	{
+		"id": "AB10",
+		"area": "Abilities, items and perks",
+		"title": "A one-moment ground effect stays for a second",
+		"assumed": "A ground effect that an ability makes for only an instant, such as Khagen's Q sand burst, stays on screen for one second.",
+		"lookFor": "How long Khagen's Q sand burst shows, and whether it is cut short.",
+		"top": false,
+		"order": 52
+	},
+	{
+		"id": "AB11",
+		"area": "Abilities, items and perks",
+		"title": "Raina's shield drains her Discipline, and drops when it runs out",
+		"assumed": "Raina's W shield drains her Discipline at 12.5 a second, so a full bar lasts 8 seconds, and the shield drops when the bar runs out; raising it needs 15 Discipline but doesn't spend them.",
+		"lookFor": "Raina's Discipline bar when she raises her W: whether it drops by 15 at once, how fast it falls, and whether the shield drops when it is empty.",
+		"top": false,
+		"order": 53
+	},
+	{
+		"id": "AB13",
+		"area": "Abilities, items and perks",
+		"title": "A debuff's visual marker goes with the debuff",
+		"assumed": "A Duress stack marker over an enemy disappears when its 4-second counter runs out, also while the enemy is in the fog.",
+		"lookFor": "Whether the Duress pips vanish about 4 seconds after the last hit, or ever linger.",
+		"top": false,
+		"order": 54
+	},
+	{
+		"id": "BT1",
+		"area": "Bots",
+		"title": "The practice match's bots",
+		"assumed": "A practice match is five against five, its bots on shapers such as High Huntress, Tidal Queen, Guardian, Artist and Warden, each seat filled from the game's own bot plan.",
+		"lookFor": "The bot lineup of a practice match.",
+		"top": true,
+		"order": 55
+	},
+	{
+		"id": "BT2",
+		"area": "Bots",
+		"title": "The bots' lanes",
+		"assumed": "In a practice match two bots of each team go to the top lane and three to the bottom lane.",
+		"lookFor": "Where the bots go when they leave the base at about 1:05.",
+		"top": false,
+		"order": 56
+	},
+	{
+		"id": "BT3",
+		"area": "Bots",
+		"title": "The bots' shopping",
+		"assumed": "A bot buys its shaper's recommended build in order, never sells, keeps two potions, and shops whenever it stands in its shop with the gold.",
+		"lookFor": "A bot's items on the scoreboard at 10:00, and whether a bot that never dies falls behind in items.",
+		"top": false,
+		"order": 57
+	},
+	{
+		"id": "BT4",
+		"area": "Bots",
+		"title": "Bots are a little stronger",
+		"assumed": "Every bot gets a small stat bonus in place of a perk page, with more power, health, haste and armor (a High Huntress bot has 628 health at level 1 instead of 520).",
+		"lookFor": "A bot's health at level 1.",
+		"top": false,
+		"order": 58
+	},
+	{
+		"id": "BT5",
+		"area": "Bots",
+		"title": "The bots' teamwork",
+		"assumed": "A bot going in for a kill calls two more bots to join it.",
+		"lookFor": "How many bots come to a gank or to defend a tower.",
+		"top": false,
+		"order": 59
+	},
+	{
+		"id": "BT6",
+		"area": "Bots",
+		"title": "The bots' reaction time",
+		"assumed": "A bot makes its decisions five times a second.",
+		"lookFor": "How fast bots react to a stun or a dash.",
+		"top": false,
+		"order": 60
+	},
+	{
+		"id": "BT7",
+		"area": "Bots",
+		"title": "Bots flee and dodge",
+		"assumed": "Bots run from the Guardian's and the parasite's ground attacks, flee when clearly outnumbered, and chase a target up to about 55 units.",
+		"lookFor": "Whether bots flee when outnumbered, and how far they chase.",
+		"top": false,
+		"order": 61
+	},
+	{
+		"id": "BT8",
+		"area": "Bots",
+		"title": "Softer bots in a first-time game",
+		"assumed": "In a player's first practice game the bots play softer against the human.",
+		"lookFor": "Whether practice bots play softer in a player's first game than later.",
+		"top": false,
+		"order": 62
+	},
+	{
+		"id": "BT9",
+		"area": "Bots",
+		"title": "The bots play as a team",
+		"assumed": "Each bot team follows one plan at a time (defend the base, push a lane when it has the advantage, take the parasite together, raid an unguarded well, or farm) and pings its plans on the minimap to its human teammates.",
+		"lookFor": "Whether bots take the parasite alone or as a group, when they group up to push, and whether they ping.",
+		"top": false,
+		"order": 63
+	},
+	{
+		"id": "BT10",
+		"area": "Bots",
+		"title": "Bots recall when they get away, and step back in lane",
+		"assumed": "A fleeing bot walks home until it is out of danger and then recalls, and in a lane fight a bot backs off only a short step toward its base.",
+		"lookFor": "How far a fleeing bot walks before it recalls, and whether bots in lane back off a little or go home.",
+		"top": false,
+		"order": 64
+	},
+	{
+		"id": "BT11",
+		"area": "Bots",
+		"title": "Bot pushes last, and the late siege",
+		"assumed": "Bots keep a push going while they are not outnumbered, and from 20 minutes on they group up to siege the enemy base.",
+		"lookFor": "Whether bots group up and siege after 20 minutes, whether they turn back to their base or keep pushing, and how soon they come again after a lost fight.",
+		"top": false,
+		"order": 65
+	},
+	{
+		"id": "BT12",
+		"area": "Bots",
+		"title": "The bot jungler takes part",
+		"assumed": "The bot jungler leaves its camps to defend its base, to join pushes, the parasite and well captures nearby, and from 3:00 to gank a lane when the odds favour it.",
+		"lookFor": "How often the bot jungler shows up in a lane, and whether it comes to defend and joins pushes and objectives.",
+		"top": false,
+		"order": 66
+	},
+	{
+		"id": "BT13",
+		"area": "Bots",
+		"title": "Bots follow your minimap pings",
+		"assumed": "Bots answer your minimap pings: a ping on an enemy tower makes them push that lane, on the parasite take it, on an enemy well capture it, and on your own tower or well defend it.",
+		"lookFor": "Whether bots reacted to minimap pings at all, and to which.",
+		"top": false,
+		"order": 67
+	},
+	{
+		"id": "BT14",
+		"area": "Bots",
+		"title": "When the bot jungler takes on a shaper, and where it fights the parasite",
+		"assumed": "The bot jungler attacks a lone enemy shaper it meets in the jungle unless it is outnumbered or clearly weaker, and fights the parasite from the edge on its own side.",
+		"lookFor": "Whether the bot jungler attacks you when you pass it alone in the jungle at similar health, backs off when you clearly outclass it, and keeps hitting the parasite.",
+		"top": false,
+		"order": 68
+	},
+	{
+		"id": "BT15",
+		"area": "Bots",
+		"title": "Which bots defend a spirit well, how far they come and when they give up",
+		"assumed": "A nearby bot Tactician, Hunter or Predator comes to defend its team's well when enemies capture it, and leaves when it is clearly outnumbered.",
+		"lookFor": "Whether a bot comes when you start capturing an enemy well near it, stays while you are in the ring, and leaves when you bring two friends.",
+		"top": false,
+		"order": 69
+	},
+	{
+		"id": "BT17",
+		"area": "Bots",
+		"title": "The bot jungler's priorities: pushes, the base, waves, its own camps first",
+		"assumed": "The bot jungler joins its team's pushes, defends the base only when it is close, farms a lane wave when no camp is near, clears its own half of the jungle first, and catches up when it falls behind in levels.",
+		"lookFor": "The bot junglers' levels at 10, 15 and 20 minutes compared with their teams', and how often they join a push.",
+		"top": false,
+		"order": 70
+	},
+	{
+		"id": "BT23",
+		"area": "Bots",
+		"title": "The bot jungler finishes a camp it is winning",
+		"assumed": "A bot jungler at low health keeps fighting a camp it is winning instead of walking away from a creature at a sliver of health.",
+		"lookFor": "Whether the bot jungler walks away from a camp with one creature at a sliver of health, and whether it dies to camps.",
+		"top": false,
+		"order": 71
+	},
+	{
+		"id": "BT24",
+		"area": "Bots",
+		"title": "Bot shapers finish a fight they are winning, and no longer flicker between stances",
+		"assumed": "A bot at low health finishes an enemy shaper at a sliver of health when it can win the trade, but doesn't dive a tower for a kill it can't make quickly.",
+		"lookFor": "Whether a low-health bot finishes an enemy at a sliver of health, and whether it dives a tower for a kill.",
+		"top": false,
+		"order": 72
+	},
+	{
+		"id": "BT40",
+		"area": "Bots",
+		"title": "A bot you attack shoots back while it backs off, and doesn't recall with you on it",
+		"assumed": "A bot you attack shoots back at you while it backs off, and doesn't recall while you are on it.",
+		"lookFor": "Whether a bot that backs off turns and shoots between its steps, and whether it starts a recall while you chase it.",
+		"top": false,
+		"order": 73
+	},
+	{
+		"id": "BT27",
+		"area": "Bots",
+		"title": "The bot jungler's opening route and Vanquish",
+		"assumed": "The bot jungler opens with a fixed route through its own jungle (the green buff, the small camps, the blue buff, then the bigger camps) until level 6 or 10 minutes.",
+		"lookFor": "The bot jungler's first camps, and when it reaches level 2.",
+		"top": false,
+		"order": 74
+	},
+	{
+		"id": "BT32",
+		"area": "Bots",
+		"title": "When a bot turns back from an enemy tower",
+		"assumed": "A bot backs off from an enemy tower that hit it recently or aims at it, and leaves targets under such a tower alone unless it can finish a low-health shaper or the tower.",
+		"lookFor": "Whether bots take several tower shots in a row or die chasing under a tower, and whether they hang back at a tower's edge while their minions tank it.",
+		"top": false,
+		"order": 75
+	},
+	{
+		"id": "GX1",
+		"area": "Gold, XP, rewards and progression",
+		"title": "Gold for a last hit, and for standing near",
+		"assumed": "A lane minion pays its last hitter three times its gold (12 for a melee minion), and every other shaper of the team nearby gets a share (4 each for a melee minion).",
+		"lookFor": "The gold numbers at a last hit on a melee minion, and whether a teammate standing near gets 4.",
+		"top": true,
+		"order": 76
+	},
+	{
+		"id": "GX1b",
+		"area": "Gold, XP, rewards and progression",
+		"title": "How the roles' 200 % apply to minion gold",
+		"assumed": "A Gladiator's last hit on a lane minion pays its bonus twice (12 + 12 for a melee minion) and a Tactician's nearby share is doubled (4 + 4), each role's part shown as a second, smaller gold number.",
+		"lookFor": "The gold numbers of a Gladiator's last hit on a melee minion at level 1, and a Tactician's when a teammate last-hits a minion beside it.",
+		"top": false,
+		"order": 77
+	},
+	{
+		"id": "GX2",
+		"area": "Gold, XP, rewards and progression",
+		"title": "Gold and XP for a player kill",
+		"assumed": "A kill pays the killer the victim's bounty of 300 gold (more for kill streaks, less after death streaks) plus 100 for first blood, and the assisters a share of it (70 percent with one assister).",
+		"lookFor": "The gold numbers at a kill, an assist and first blood.",
+		"top": true,
+		"order": 78
+	},
+	{
+		"id": "GX3",
+		"area": "Gold, XP, rewards and progression",
+		"title": "Passive gold paid every second",
+		"assumed": "Passive gold of 100 a minute comes in from 1:00, paid every second rather than once a minute.",
+		"lookFor": "The gold counter of an idle player between 1:00 and 2:00.",
+		"top": true,
+		"order": 79
+	},
+	{
+		"id": "GX4",
+		"area": "Gold, XP, rewards and progression",
+		"title": "What counts for the creep score",
+		"assumed": "Only last hits on minions and jungle creeps count for the creep score, not workers, structures or the parasite.",
+		"lookFor": "The creep score after killing a worker.",
+		"top": false,
+		"order": 80
+	},
+	{
+		"id": "GX5",
+		"area": "Gold, XP, rewards and progression",
+		"title": "The loot bag after a match",
+		"assumed": "A won first-time practice game gives the Platinum loot bag with a Spiritstone and two Sparks, any other practice game the Bronze bag, and other games the bag their score reaches.",
+		"lookFor": "The loot bags and the Destiny shown after practice and player-versus-player matches.",
+		"top": false,
+		"order": 81
+	},
+	{
+		"id": "GX6",
+		"area": "Gold, XP, rewards and progression",
+		"title": "Duplicate items become crafting currency",
+		"assumed": "A reward item you already own turns into crafting currency: 50 for a Spiritstone, 15 for a Spark, 25 for anything else.",
+		"lookFor": "The post-game screen when a reward is an item you already own.",
+		"top": false,
+		"order": 82
+	},
+	{
+		"id": "GX7",
+		"area": "Gold, XP, rewards and progression",
+		"title": "Karma votes",
+		"assumed": "Each karma vote you get after a player-versus-player match adds 10 points to your loot bag's score.",
+		"lookFor": "The karma bonus in the Blessings view after a match.",
+		"top": false,
+		"order": 83
+	},
+	{
+		"id": "FG1",
+		"area": "Fog of war and vision",
+		"title": "How far a shaper sees",
+		"assumed": "A shaper sees about 35 units around itself.",
+		"lookFor": "The size of the lit circle around a shaper, on screen and on the minimap.",
+		"top": true,
+		"order": 84
+	},
+	{
+		"id": "FG2",
+		"area": "Fog of war and vision",
+		"title": "Tall grass and walls",
+		"assumed": "Tall grass hides what is in it and behind it from anyone outside, and a wall hides what is behind it, as the game draws its fog.",
+		"lookFor": "Whether enemies at wall corners and just behind grass are seen or not.",
+		"top": false,
+		"order": 85
+	},
+	{
+		"id": "FG3",
+		"area": "Fog of war and vision",
+		"title": "Stealth",
+		"assumed": "Nothing reveals stealth: a stealthed shaper, a ward after its first seconds or a trap stays hidden from enemies even right next to them.",
+		"lookFor": "Whether a stealthed shaper next to an enemy is visible, faint or hidden.",
+		"top": false,
+		"order": 86
+	},
+	{
+		"id": "FG13",
+		"area": "Fog of war and vision",
+		"title": "Wards can't be destroyed",
+		"assumed": "A placed ward can't be attacked or destroyed by anyone and lasts its full three minutes.",
+		"lookFor": "A player attacking an enemy ward it can see, and whether the ward takes damage or dies.",
+		"top": false,
+		"order": 87
+	},
+	{
+		"id": "FG4",
+		"area": "Fog of war and vision",
+		"title": "A death at the edge of sight",
+		"assumed": "A unit you saw when it died stays visible until it is removed, so you see its whole death.",
+		"lookFor": "A unit dying at the edge of your vision.",
+		"top": false,
+		"order": 88
+	},
+	{
+		"id": "FG5",
+		"area": "Fog of war and vision",
+		"title": "Objects that follow their owner's visibility",
+		"assumed": "An enemy's orbs, books and crystals are seen exactly when their owner is.",
+		"lookFor": "An enemy's orbiting objects while the enemy itself is hidden.",
+		"top": false,
+		"order": 89
+	},
+	{
+		"id": "FG6",
+		"area": "Fog of war and vision",
+		"title": "Large objects",
+		"assumed": "A large object such as Marah's trees is seen as soon as a vision circle reaches any part of it, not only its centre.",
+		"lookFor": "Marah's trees seen from a distance.",
+		"top": false,
+		"order": 90
+	},
+	{
+		"id": "FG7",
+		"area": "Fog of war and vision",
+		"title": "Sounds from the fog",
+		"assumed": "You hear and see the effects, animations and hits of an object only while your team sees it, so nothing sounds from the fog.",
+		"lookFor": "Whether you hear enemy units, recalls or casts that you can't see.",
+		"top": false,
+		"order": 91
+	},
+	{
+		"id": "FG8",
+		"area": "Fog of war and vision",
+		"title": "What you know of an enemy out of sight",
+		"assumed": "The scoreboard shows an enemy's level, items, gold and creep score as you last saw them, and updates them the moment the enemy shows again.",
+		"lookFor": "Whether an enemy who has been out of sight for a while shows its current level and items on the scoreboard, or older ones.",
+		"top": false,
+		"order": 92
+	},
+	{
+		"id": "FG9",
+		"area": "Fog of war and vision",
+		"title": "Kensu's R trail and sight",
+		"assumed": "The trail of Kensu's R never blocks sight, and where it crosses a wall it opens the wall for sight while it lasts.",
+		"lookFor": "Whether an enemy standing behind a wall that Kensu's trail crosses is seen through the trail.",
+		"top": false,
+		"order": 93
+	},
+	{
+		"id": "MF1",
+		"area": "Match flow: start, surrender, end, post-game",
+		"title": "When a team may surrender, and the vote",
+		"assumed": "A team may surrender from 20:00, or earlier when a player has been gone for 5 minutes or the team is far behind, and a vote passes with two thirds of the team.",
+		"lookFor": "When the surrender option appeared in matches, and how votes ended.",
+		"top": false,
+		"order": 94
+	},
+	{
+		"id": "MF2",
+		"area": "Match flow: start, surrender, end, post-game",
+		"title": "No surrender in practice games",
+		"assumed": "Practice games against bots have no surrender.",
+		"lookFor": "Whether the Options menu offered to surrender the game in a practice match.",
+		"top": false,
+		"order": 95
+	},
+	{
+		"id": "MF3",
+		"area": "Match flow: start, surrender, end, post-game",
+		"title": "A team that left surrenders",
+		"assumed": "When every player of a team has been gone for 60 seconds while the other team still has a player, that team surrenders.",
+		"lookFor": "Whether a match where a whole team left ended, and when.",
+		"top": false,
+		"order": 96
+	},
+	{
+		"id": "MF4",
+		"area": "Match flow: start, surrender, end, post-game",
+		"title": "The end of the post-game",
+		"assumed": "The post-game ends 105 seconds after the Guardian's death if nobody clicks on.",
+		"lookFor": "How long the victory screen stays when nobody clicks.",
+		"top": false,
+		"order": 97
+	},
+	{
+		"id": "MF5",
+		"area": "Match flow: start, surrender, end, post-game",
+		"title": "Custom games end like a lost practice game",
+		"assumed": "A custom game ends like a lost practice game: its end screen and rewards come at once, with no karma vote.",
+		"lookFor": "The end screens of a custom game.",
+		"top": false,
+		"order": 98
+	},
+	{
+		"id": "MF6",
+		"area": "Match flow: start, surrender, end, post-game",
+		"title": "Karma votes for bots",
+		"assumed": "The karma vote offers the bots, but a vote for a bot counts for nobody, and bots never vote.",
+		"lookFor": "Whether bots appeared in the karma vote, and what a vote for one did.",
+		"top": false,
+		"order": 99
+	},
+	{
+		"id": "SS1",
+		"area": "Shaper select and lobby",
+		"title": "The \"Match Found — accept\" prompt",
+		"assumed": "A matchmade game starts without the \"Match Found, accept\" prompt.",
+		"lookFor": "Whether \"Match Found, click accept to join\" appeared in videos of the player-versus-player queue.",
+		"top": false,
+		"order": 100
+	},
+	{
+		"id": "SS2",
+		"area": "Shaper select and lobby",
+		"title": "No rejoin after a drop in shaper select",
+		"assumed": "A player who drops during shaper select is not offered to rejoin; only one who drops during the match is.",
+		"lookFor": "A disconnect during shaper select, and whether a Rejoin button was offered.",
+		"top": false,
+		"order": 101
+	},
+	{
+		"id": "SS3",
+		"area": "Shaper select and lobby",
+		"title": "The bots' picks",
+		"assumed": "The bots pick their shapers one after another within the first few seconds of shaper select.",
+		"lookFor": "When the bots lock in their shapers in a practice match's shaper select.",
+		"top": false,
+		"order": 102
+	},
+	{
+		"id": "SS5",
+		"area": "Shaper select and lobby",
+		"title": "Spectators",
+		"assumed": "A spectator of a custom game sees both teams without fog of war, and the players' screens list who is watching.",
+		"lookFor": "A spectator's screen, and whether the players saw who watched.",
+		"top": false,
+		"order": 103
+	},
+	{
+		"id": "SS6",
+		"area": "Shaper select and lobby",
+		"title": "Ward skins and announcer packs for everyone",
+		"assumed": "In shaper select every account can pick any ward skin and announcer pack, owned or not.",
+		"lookFor": "Whether an account that didn't own a ward skin could pick one in shaper select.",
+		"top": false,
+		"order": 104
+	},
+	{
+		"id": "UI1",
+		"area": "The client's screens and announcements",
+		"title": "The minion announcements",
+		"assumed": "The announcer warns about the minions at 0:30, half a minute before the first wave, and announces them as the first wave spawns at 1:00.",
+		"lookFor": "The announcer at the start of a match.",
+		"top": false,
+		"order": 105
+	},
+	{
+		"id": "UI2",
+		"area": "The client's screens and announcements",
+		"title": "Jungle camp icons show what your team knows; the parasite's while it lives",
+		"assumed": "A jungle camp's minimap icon shows what your team knows: no icon before the first spawn, gone when your team sees the camp cleared, back when it respawns; the parasite's icon shows while it lives.",
+		"lookFor": "Whether the camp icons showed before the first spawn, whether a camp's icon went away when you cleared it and stayed when the enemy cleared it unseen, and whether the parasite's icon is there before it is born at 5:00.",
+		"top": false,
+		"order": 106
+	},
+	{
+		"id": "UI3",
+		"area": "The client's screens and announcements",
+		"title": "No number when a shield goes up",
+		"assumed": "No number pops up when a shield is put on a unit.",
+		"lookFor": "Whether a number pops up when a shield is cast.",
+		"top": false,
+		"order": 107
+	},
+	{
+		"id": "UI4",
+		"area": "The client's screens and announcements",
+		"title": "Who hears voice lines",
+		"assumed": "Quick-chat callouts go only to your team, while laugh, joke, compliment, flirt, taunt and dance lines are heard by everyone.",
+		"lookFor": "Whether you hear an enemy's laugh or callout in a video from the other team's side.",
+		"top": false,
+		"order": 108
+	},
+	{
+		"id": "UI5",
+		"area": "The client's screens and announcements",
+		"title": "The shapers' banter",
+		"assumed": "Two shapers who know each other exchange a line near each other at the start of a match, and a kill gives a line from the killer and one assister, heard while your team sees the speaker.",
+		"lookFor": "The shapers' lines at the start of a match and at kills.",
+		"top": false,
+		"order": 109
+	},
+	{
+		"id": "UI6",
+		"area": "The client's screens and announcements",
+		"title": "\"Player left\" and \"reconnected\" alerts",
+		"assumed": "The \"player left\" and \"reconnected\" alerts go to everyone in the match, both teams.",
+		"lookFor": "Whether the other team sees that someone left.",
+		"top": false,
+		"order": 110
+	},
+	{
+		"id": "UI7",
+		"area": "The client's screens and announcements",
+		"title": "The respawn voice line",
+		"assumed": "Your shaper's respawn line plays only for you, and a bot's respawn plays no line.",
+		"lookFor": "Whether you heard an ally's respawn line.",
+		"top": false,
+		"order": 111
+	},
+	{
+		"id": "UI8",
+		"area": "The client's screens and announcements",
+		"title": "The death recap",
+		"assumed": "The death recap shows the hits of the fight that killed you, up to 30 seconds back to the first pause of 5 seconds, with the most recent sources first.",
+		"lookFor": "A death recap after a long fight.",
+		"top": false,
+		"order": 112
+	},
+	{
+		"id": "UI9",
+		"area": "The client's screens and announcements",
+		"title": "The HUD's Binding icons",
+		"assumed": "The top bar's Binding icons are ordered top lane first, outer before middle before inner.",
+		"lookFor": "Whether the right icon on the top bar is marked after the top outer Binding falls.",
+		"top": false,
+		"order": 113
+	},
+	{
+		"id": "UI10",
+		"area": "The client's screens and announcements",
+		"title": "The HUD's well icons",
+		"assumed": "The top bar's four well icons are in a fixed order that we picked from the map.",
+		"lookFor": "The top bar's well icons compared with the wells on the map.",
+		"top": false,
+		"order": 114
+	},
+	{
+		"id": "UI11",
+		"area": "The client's screens and announcements",
+		"title": "Death animations",
+		"assumed": "A critical killing blow shows a critical death, an area or damage-over-time kill its own death, and a knockback kill a knockback death.",
+		"lookFor": "The death animations of critical kills and knockback kills.",
+		"top": false,
+		"order": 115
+	},
+	{
+		"id": "SV1",
+		"area": "The server: accounts, matchmaking, store",
+		"title": "Prices of Spiritstones and Sparks",
+		"assumed": "A Spiritstone costs 500 Destiny and a Spark 150 in the store.",
+		"lookFor": "The store prices of Spiritstones and Sparks in videos or screenshots.",
+		"top": false,
+		"order": 116
+	},
+	{
+		"id": "SV2",
+		"area": "The server: accounts, matchmaking, store",
+		"title": "How many perk pages",
+		"assumed": "A player can own up to 10 perk pages.",
+		"lookFor": "How many loadout pages a player could own.",
+		"top": false,
+		"order": 117
+	},
+	{
+		"id": "SV3",
+		"area": "The server: accounts, matchmaking, store",
+		"title": "No bots in custom games",
+		"assumed": "A custom game has only the players its lobby gathered, with no bots.",
+		"lookFor": "Whether custom games in videos had bots.",
+		"top": false,
+		"order": 118
+	},
+	{
+		"id": "SV4",
+		"area": "The server: accounts, matchmaking, store",
+		"title": "Which error a refused purchase shows",
+		"assumed": "A refused store purchase shows the client's error message that fits best.",
+		"lookFor": "The error popups of the original store.",
+		"top": false,
+		"order": 119
+	},
+	{
+		"id": "SV6",
+		"area": "The server: accounts, matchmaking, store",
+		"title": "A disabled or banned player is thrown out without a message",
+		"assumed": "A player who is banned or disabled during a session is sent back to an empty login screen without a message, and sees the reason only at the next login.",
+		"lookFor": "What a player banned during a session saw.",
+		"top": false,
+		"order": 120
+	},
+	{
+		"id": "SV8",
+		"area": "The server: accounts, matchmaking, store",
+		"title": "The filled \"Starter\" perk page",
+		"assumed": "A new account's first perk page, \"Starter\", is filled with a blue, a green and two red starter Spiritstones, each with its colour's plain Spark.",
+		"lookFor": "A new account's Loadouts screen.",
+		"top": false,
+		"order": 121
+	},
+	{
+		"id": "NT1",
+		"area": "Timing and network",
+		"title": "Regeneration in half-second steps",
+		"assumed": "Health and resources regenerate in steps every half second, and the dead regenerate nothing.",
+		"lookFor": "Whether the health number rises smoothly, every half second or every second while regenerating.",
+		"top": false,
+		"order": 122
+	},
+	{
+		"id": "NT2",
+		"area": "Timing and network",
+		"title": "Lane casters' reach",
+		"assumed": "Lane casters walk up to about 15 units from their target before they shoot.",
+		"lookFor": "How far casters stand from their target.",
+		"top": false,
+		"order": 123
+	},
+	{
+		"id": "NT3",
+		"area": "Timing and network",
+		"title": "A command on a target that just died or vanished into fog",
+		"assumed": "An ability or ping on a target that just died, or that vanished from view more than 2 seconds ago, simply doesn't happen, with no error text.",
+		"lookFor": "Whether clicking an ability on an enemy the moment it dies or steps into a bush shows an error text or nothing.",
+		"top": false,
+		"order": 124
+	}
+]

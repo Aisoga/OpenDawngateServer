@@ -62,17 +62,30 @@ func (hg *hostedGame) keepTimeline(tl gmshost.MatchTimeline) {
 	hg.timeline = &tl
 }
 
+// historyMatch is the finished match's record (Finish, after persist): matchLocked's, its seats also the humans the
+// skill rating's rule counts (rating.go).
+func (hg *hostedGame) historyMatch(f gmshost.FinishGame) historyRecord {
+	hg.mu.Lock()
+	defer hg.mu.Unlock()
+	m, skipped := hg.matchLocked(f, hg.s.Now())
+	return historyRecord{Match: m, skipped: skipped, stats: len(hg.seatStats), timeline: hg.timeline != nil}
+}
+
+// historyRecord is historyMatch's record and what storeMatch's log line says about it.
+type historyRecord struct {
+	store.Match
+	skipped, stats int  // seatStats lines left out, seatStats lines kept
+	timeline       bool // the host sent a matchTimeline
+}
+
 // storeMatch stores the finished match in the history (Finish, after persist, before postResult, which gives the home
 // page's ring the id) and returns its id: 0 when nothing was stored (no store, no seat, the store's error).
-func (hg *hostedGame) storeMatch(f gmshost.FinishGame) int64 {
+func (hg *hostedGame) storeMatch(rec historyRecord) int64 {
 	s := hg.s
 	if s.Store == nil {
 		return 0
 	}
-	hg.mu.Lock()
-	m, skipped := hg.matchLocked(f, s.Now())
-	stats, timeline := len(hg.seatStats), hg.timeline != nil
-	hg.mu.Unlock()
+	m, skipped, stats, timeline := rec.Match, rec.skipped, rec.stats, rec.timeline
 	if len(m.Seats) == 0 {
 		s.Log.Logf("blaze", "   game %d: not stored in the match history (no seat)", hg.game.ID)
 		return 0
@@ -98,7 +111,8 @@ func (hg *hostedGame) storeMatch(f gmshost.FinishGame) int64 {
 }
 
 // matchLocked builds the history's record of the finished match (hg.mu held). The humans are resultLocked's (the
-// roster's on teams 1 and 2; in a custom game only those who joined), each at the gameplay index the host's seatStats
+// roster's on teams 1 and 2; in a custom game only those who joined, and since RATING1 not those who left its lobby
+// before it went IN_GAME), each at the gameplay index the host's seatStats
 // or addPlayer gave it (else its roster position), with its playerFinish stats and its seatStats' merged (seatStats'
 // win on a key both have). Won is playerFinish's "won" when the host sent it, else the team is finishGame's winner.
 // Then a seat per bot the host sent a seatStats for (user 0 or bot true). A seatStats line that matches no human or
@@ -125,6 +139,9 @@ func (hg *hostedGame) matchLocked(f gmshost.FinishGame, now time.Time) (m store.
 	for i, hp := range hg.players {
 		if hp.p.Team < 0 || hp.p.Team > 1 || (hg.custom != nil && !hp.joined) {
 			continue
+		}
+		if hg.custom != nil && hp.removed && !hp.atStart && !hg.inGameAt.IsZero() {
+			continue // left the lobby before the start: not a player of the match
 		}
 		seat := i
 		if hp.indexed {

@@ -29,7 +29,7 @@ func TestLookupUserRepliesMatchGolden(t *testing.T) {
 		name   string
 		online bool
 	}{{"lookupuser_reply", true}, {"lookupuser_offline_reply", false}} {
-		got := UserDataReply(acct, p, c.online)
+		got := UserDataReply(acct, p, c.online, 0)
 		tdfcheck.Require(t, "Blaze::UserData", got)
 		if h, want := hex.EncodeToString(got), g.WriterCase(t, c.name).Hex; h != want {
 			t.Errorf("%s\n got %s\nwant %s", c.name, h, want)

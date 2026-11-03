@@ -1,0 +1,26 @@
+{{define "content"}}
+{{template "trackerbar" .}}
+<section class="howto">
+<h2>How this works</h2>
+<ol>
+<li>Each issue is one of our guesses about the original game: what we assumed, and what to look for.</li>
+<li>Find it in a video of the original and say whether it looks correct or wrong; a YouTube link with the time counts most.</li>
+<li>Once the evidence is clear we close the issue: confirmed, or disproven and fixed on the server.</li>
+</ol>
+</section>
+{{with .Tracker}}
+<nav class="filters" aria-label="Filter">
+{{range .Filters}}{{if .On}}<strong>{{.Label}} ({{.Count}})</strong>{{else}}<a href="/issues?filter={{.ID}}">{{.Label}} ({{.Count}})</a>{{end}}
+{{end}}</nav>
+{{if not .Shown}}<p class="note">No issue is {{.Label}} just now.</p>{{end}}
+{{if .Top}}<h2>Most important ({{len .Top}})</h2>
+{{template "issuerows" (rows .Top .Filter)}}{{end}}
+{{range .Areas}}<h2>{{.Name}} ({{len .Rows}})</h2>
+{{template "issuerows" (rows .Rows $.Tracker.Filter)}}
+{{end}}
+{{end}}
+{{end}}
+{{define "issuerows"}}<ul class="issues">
+{{range .Rows}}<li><a href="/issues/{{.ID}}{{if ne $.Filter "needs-verification"}}?filter={{$.Filter}}{{end}}"><span class="id">{{.ID}}</span> {{.Title}}</a>
+{{template "chip" .Status}}{{if .Videos}} <span class="muted">{{.Videos}} video{{if ne .Videos 1}}s{{end}}</span>{{end}}{{if .Own}} <span class="own own-{{.Own}}">you: looks {{.Own}}</span>{{end}}</li>
+{{end}}</ul>{{end}}

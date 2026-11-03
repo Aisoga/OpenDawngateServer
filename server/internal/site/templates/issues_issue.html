@@ -1,0 +1,69 @@
+{{define "content"}}
+{{template "trackerbar" .}}
+{{$f := .Tracker.Filter}}{{$csrf := .CSRF}}
+{{with .Tracker.Issue}}
+<p class="issuehead">{{template "chip" .Status}} <span class="muted">{{.Area}}{{if .Top}} · most important{{end}}</span></p>
+{{if .Withdrawn}}<p class="note">This guess is no longer on our list. It is shown as it was and takes no claims.</p>{{end}}
+<h2>What we assumed</h2>
+<p>{{.Assumed}}</p>
+<div class="lookfor">
+<h2>What to look for</h2>
+<p>{{.LookFor}}</p>
+</div>
+{{if not .Status.Open}}<div class="verdict">
+<h2>{{.Status.Label}}{{with .ClosedAt}} <span class="muted">({{.}})</span>{{end}}</h2>
+{{if .VerdictNote}}<p class="usertext">{{.VerdictNote}}</p>{{end}}
+<p class="note">This issue is closed: it is read-only.</p>
+</div>{{end}}
+<h2>The evidence</h2>
+<div class="bar" aria-hidden="true"><span class="side-correct p{{.CorrectPct}}"></span><span class="side-wrong p{{.WrongPct}}"></span></div>
+<p class="muted">Looks correct: weight {{.Correct}} · Looks wrong: weight {{.Wrong}} (a claim weighs 1 with a note,
+2 with a video, 3 with a video and its time)</p>
+{{if .Claims}}<ul class="claims">
+{{range .Claims}}<li class="claim claim-{{.Stance}}{{if .Own}} claim-own{{end}}">
+<p><strong class="stance-{{.Stance}}">{{.StanceLabel}}</strong> · {{.Persona}}{{if .Own}} (you){{end}} · {{.Date}}{{with .Edited}}, edited {{.}}{{end}} · weight {{.Weight}}{{if .Hidden}} · <em>hidden by an admin: only you see it</em>{{end}}</p>
+{{if .Note}}<p class="usertext">{{.Note}}</p>{{end}}
+{{if .Videos}}<ul class="videos">{{range .Videos}}<li><a href="{{.URL}}" rel="nofollow noopener noreferrer ugc">{{.Label}}</a> <span class="muted">{{.Short}}</span></li>{{end}}</ul>{{end}}
+</li>
+{{end}}</ul>{{else}}<p class="note">No claims yet.</p>{{end}}
+{{if .Open}}
+<h2>{{if .HasOwn}}Your claim{{else}}Make a claim{{end}}</h2>
+<form method="post" action="/issues/{{.ID}}/claim" class="claimform">
+<input type="hidden" name="csrf" value="{{$csrf}}">
+<input type="hidden" name="filter" value="{{$f}}">
+<fieldset{{if index .Form.Errors "stance"}} aria-invalid="true"{{end}}>
+<legend>In the original game, this guess</legend>
+<label class="check"><input type="radio" name="stance" value="correct"{{if eq .Form.Stance "correct"}} checked{{end}}> looks correct</label>
+<label class="check"><input type="radio" name="stance" value="wrong"{{if eq .Form.Stance "wrong"}} checked{{end}}> looks wrong</label>
+</fieldset>
+{{with index .Form.Errors "stance"}}<p class="field-error">{{.}}</p>{{end}}
+<label>Note <small>(optional, plain text, up to 1,000 characters: what you saw, where)</small>
+<textarea name="note" maxlength="1000" rows="4"{{if index .Form.Errors "note"}} aria-invalid="true"{{end}}>{{.Form.Note}}</textarea></label>
+{{with index .Form.Errors "note"}}<p class="field-error">{{.}}</p>{{end}}
+<p class="note">Up to three YouTube videos of the original game (youtube.com or youtu.be links). The time is where
+it shows (1:23, or 1:02:03); a link's own t= counts too.</p>
+{{range .Form.Links}}<div class="linkrow">
+<label>Video {{.N}} <small>(YouTube link)</small>
+<input name="link{{.N}}" value="{{.Link}}" maxlength="512" inputmode="url"{{if .Err}} aria-invalid="true"{{end}}></label>
+<label class="time">Time <small>(optional)</small>
+<input name="time{{.N}}" value="{{.Time}}" maxlength="16"></label>
+</div>
+{{with .Err}}<p class="field-error">{{.}}</p>{{end}}
+{{end}}
+<button type="submit">{{if .HasOwn}}Save my changes{{else}}Save my claim{{end}}</button>
+</form>
+{{if .HasOwn}}<form method="post" action="/issues/{{.ID}}/claim/delete">
+<input type="hidden" name="csrf" value="{{$csrf}}">
+<input type="hidden" name="filter" value="{{$f}}">
+<button type="submit" class="danger small">Delete my claim</button>
+</form>{{end}}
+<p class="note">Other players logged in here see your claim with your display name. It is deleted with your account
+and is part of <a href="/account/data">your data</a>.</p>
+{{end}}
+<nav class="prevnext">
+{{with .Prev}}<a href="/issues/{{.ID}}{{if ne $f "needs-verification"}}?filter={{$f}}{{end}}" rel="prev">&larr; {{.ID}} {{.Title}}</a>{{end}}
+<a href="/issues{{if ne $f "needs-verification"}}?filter={{$f}}{{end}}">The list</a>
+{{with .Next}}<a href="/issues/{{.ID}}{{if ne $f "needs-verification"}}?filter={{$f}}{{end}}" rel="next">{{.ID}} {{.Title}} &rarr;</a>{{end}}
+</nav>
+{{end}}
+{{end}}

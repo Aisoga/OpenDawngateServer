@@ -47,8 +47,8 @@ func b14Payloads() []struct {
 			SystemMessageNotification(2, HideBroadcastsMessage(), testTime)},
 		{"notifymessage_broadcast_notification", "Blaze::Messaging::ServerMessage",
 			SystemMessageNotification(3, BroadcastMessage(b14Broadcast), testTime)},
-		{"useradded_wins_notification", "Blaze::NotifyUserAdded", UserAddedNotification(acct, p, 0)},
-		{"memberdata_notification", "Blaze::UserSessionExtendedDataUpdate", PresenceNotification(acct, p, 0)},
+		{"useradded_wins_notification", "Blaze::NotifyUserAdded", UserAddedNotification(acct, p, 0, 0)},
+		{"memberdata_notification", "Blaze::UserSessionExtendedDataUpdate", PresenceNotification(acct, p, 0, 0)},
 	}
 }
 

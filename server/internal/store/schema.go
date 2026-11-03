@@ -233,6 +233,71 @@ CREATE TABLE match_seats (
 ) WITHOUT ROWID;
 CREATE INDEX match_seats_persona ON match_seats (persona_id, match_id DESC);
 `},
+	// the skill rating (History.Rating, internal/rating): Glicko-2's rating, RD and volatility with Glickman's start
+	// values as defaults, its rated games and wins (the balanced PvP and custom games), and per history day the day's
+	// rated games and wins and the rating before its first rated one (the daily ranking). dgserver seeds the values
+	// once from the stored matches (the server setting rating_seed).
+	{7, "the skill rating (RATING1)", `
+ALTER TABLE accounts ADD COLUMN rating REAL NOT NULL DEFAULT 1500;
+ALTER TABLE accounts ADD COLUMN rating_rd REAL NOT NULL DEFAULT 350;
+ALTER TABLE accounts ADD COLUMN rating_vol REAL NOT NULL DEFAULT 0.06;
+ALTER TABLE accounts ADD COLUMN rated_games INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE accounts ADD COLUMN rated_wins INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE history_days ADD COLUMN rated_games INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE history_days ADD COLUMN rated_wins INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE history_days ADD COLUMN rating_before REAL NOT NULL DEFAULT 0;
+`},
+	// the issue tracker (issues.go): one row per tracked guess about the original game (its player-facing text, kept
+	// in step with the list the server carries; in_doc 0 = no longer listed), its state (open, or the verdict that
+	// closed it), the players' claims on it (one per account and issue, stance 1 looks correct / 2 looks wrong; hidden
+	// by an admin), each claim's YouTube videos (only the id and the start in seconds, -1 = none; at most 3), and the
+	// API's tokens (only their SHA-256, never the token). A claim goes with its account (DeleteAccount, and the
+	// foreign key) and its videos with the claim.
+	{8, "the issue tracker (ISSUES1)", `
+CREATE TABLE issues (
+	id           TEXT    PRIMARY KEY,
+	area         TEXT    NOT NULL DEFAULT '',
+	title        TEXT    NOT NULL DEFAULT '',
+	assumed      TEXT    NOT NULL DEFAULT '',
+	look_for     TEXT    NOT NULL DEFAULT '',
+	top          INTEGER NOT NULL DEFAULT 0,
+	ord          INTEGER NOT NULL DEFAULT 0,
+	in_doc       INTEGER NOT NULL DEFAULT 1,
+	state        TEXT    NOT NULL DEFAULT 'open',
+	verdict_note TEXT    NOT NULL DEFAULT '',
+	closed_at    TEXT    NOT NULL DEFAULT '',
+	closed_by    TEXT    NOT NULL DEFAULT '',
+	updated      TEXT    NOT NULL
+) WITHOUT ROWID;
+CREATE TABLE issue_claims (
+	id       INTEGER PRIMARY KEY,
+	issue_id TEXT    NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+	user_id  INTEGER NOT NULL REFERENCES accounts(user_id) ON DELETE CASCADE,
+	stance   INTEGER NOT NULL,
+	note     TEXT    NOT NULL DEFAULT '',
+	created  TEXT    NOT NULL,
+	updated  TEXT    NOT NULL,
+	hidden   INTEGER NOT NULL DEFAULT 0,
+	UNIQUE (issue_id, user_id)
+);
+CREATE INDEX issue_claims_user ON issue_claims(user_id);
+CREATE TABLE issue_videos (
+	claim_id INTEGER NOT NULL REFERENCES issue_claims(id) ON DELETE CASCADE,
+	pos      INTEGER NOT NULL,
+	video_id TEXT    NOT NULL,
+	seconds  INTEGER NOT NULL DEFAULT -1,
+	PRIMARY KEY (claim_id, pos)
+) WITHOUT ROWID;
+CREATE TABLE api_tokens (
+	id         INTEGER PRIMARY KEY,
+	name       TEXT    NOT NULL,
+	sha256     TEXT    NOT NULL UNIQUE,
+	created    TEXT    NOT NULL,
+	created_by TEXT    NOT NULL DEFAULT '',
+	last_used  TEXT    NOT NULL DEFAULT '',
+	revoked    INTEGER NOT NULL DEFAULT 0
+);
+`},
 }
 
 // SchemaVersion is the schema version this build writes (the last migration's).

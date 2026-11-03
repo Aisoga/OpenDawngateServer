@@ -1,0 +1,24 @@
+{{define "content"}}
+{{if .Admin.Secret}}<p>{{.Admin.SecretWhat}}:</p><p class="secret">{{.Admin.Secret}}</p>{{end}}
+<h2>Make a token</h2>
+<form method="post" action="/admin/tokens" class="row" autocomplete="off">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label>Name <small>(whom it is for; the audit log names its verdicts api:&lt;name&gt;)</small>
+<input type="text" name="name" maxlength="40" required></label>
+<button type="submit">Make the token</button>
+</form>
+<h2>Tokens</h2>
+{{if .Admin.Tokens}}
+<div class="table-wrap"><table class="admin">
+<tr><th>Token</th><th>Name</th><th>Made (UTC)</th><th>By</th><th>Last used (UTC)</th><th>State</th><th></th></tr>
+{{range .Admin.Tokens}}
+<tr><td>{{.ID}}</td><td>{{.Name}}</td><td>{{.CreatedAt}}</td><td>{{.CreatedBy}}</td><td>{{.Used}}</td>
+<td>{{if .Revoked}}revoked{{else}}active{{end}}</td>
+<td>{{if not .Revoked}}<form method="post" action="/admin/tokens/revoke"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button type="submit" class="small danger">Revoke</button></form>{{end}}</td></tr>
+{{end}}
+</table></div>
+{{else}}<p>No tokens yet.</p>{{end}}
+<p class="note">A token lets its holder read every issue with its claims and give verdicts that close issues, through
+the API under <code>/api/issues</code> (sent as <code>Authorization: Bearer &lt;token&gt;</code>). The server keeps
+only its SHA-256: a token is shown once, when it is made. Revoke it when it is no longer needed or may have leaked.</p>
+{{end}}

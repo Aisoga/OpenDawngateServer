@@ -178,9 +178,10 @@ The two pages come from the server you are playing on, so they show the matches 
   - Your first page, **Starter**, comes filled: the Blue Spiritstone of Vigor on the left half of the grid, the Green Spiritstone of Bravery at the top right and two Red Spiritstones of Fervor sharing the bottom-right square, with a Spark in every socket (Health +108, Power +9, Haste +4, Armor +4). Every account owns these Spiritstones and Sparks, also on a server where new accounts start with only the basics. Change or clear the page as you like; once you have saved a page, the server leaves your pages alone. An account from before this page existed gets it at its next login, but only if it has never saved a page.
   - The **+** beside the page tabs buys another page, up to 10.
   - Six Spiritstones that were never in the live game (Vanguard, Savant, Piledriver, Colossus, Spellweaver, Marauder) aren't offered, and a few unfinished or duplicate skins and two ward skins can't be picked. If one of your pages used such a Spiritstone, it leaves the page at your next login; its Sparks go back to your collection.
-- **Leaderboard:** the server's top 200 players with at least 10 games (the server's operator can change the number), ranked by wins, then by fewer games. Only PvP games (queued alone or as a group) and custom games count, for both the games and the wins; practice games (alone or with a group, against bots) don't. Your profile still counts every game. The arrows show how a rank changed since the start of the day (UTC).
+- **Leaderboard:** the server's top 200 players by skill rating, among those with at least 10 rated games (the server's operator can change the number). A game is rated when it is a PvP game (queued alone or as a group) or a custom game, it ended with a winner, and both teams had the same number of human players, at least one each; bots filling the other seats don't count, so a 2 v 2 of players with bots is rated, a 2 v 3 isn't, and a game of players against bots only isn't either. Practice games (alone or with a group) are never rated. Every player starts at 1500; a win against a stronger team gains more than one against a weaker team, and a new player's rating moves faster than a settled one's. If you leave a match early, you keep your team's result. The games column shows your rated games and wins, and the **Rating** column at the right each player's rating (empty for a player with fewer than 10 rated games; no such column on a server that shows no ratings). Your profile still counts every game. The arrows show how a rank changed since the start of the day (UTC). A server can also rank by wins instead (the operator's choice): then every PvP and custom game counts, whatever the teams, and the screen's text still describes the rating.
 - **Profile:** your career, recent history and all-time statistics.
 - **Wins** show on the trophy at the top right.
+- **Your rating** shows in the profile box at the top right, above your name ("Rating 1532"), once you have 10 rated games (the same number the Leaderboard needs). Before that the box shows none, and a server may choose to show no ratings at all. It updates when you come back to the main menu after a rated game. In a custom game's lobby each player on the Mortal or Spirit team shows their rating the same way, after their wins ("Rating 1532"; spectators show no wins and no rating).
 
 ## Playing with other people
 
@@ -203,7 +204,8 @@ Everyone on a server needs their own account. The ways to play together:
   - **LEAVE CURRENT MATCH** in the gear menu works the same way: you can rejoin later.
   - If every player of a team stays away for 60 seconds, that team surrenders.
 - **Custom games:** under **CUSTOM**, **CREATE GAME** makes a lobby with a name and an optional password; **BROWSE GAMES** lists the server's games (a padlock marks a password), with **JOIN GAME** and **SPECTATE GAME**.
-  - In the lobby, **Join Mortal Team**/**Join Spirit Team** and **Join as Spectator** switch your side. The game's creator (the crown) can kick a player with a right-click on their slot and starts the game with **Start Game**.
+  - In the lobby, **Join Mortal Team**/**Join Spirit Team** and **Join as Spectator** switch your side. The game's creator (the crown) can kick a player with a right-click on their slot and starts the game with **Start Game**. The creator's **balance** button (at the bottom, beside the add-players button) splits the players into the two teams with the closest average skill rating (the Leaderboard's rating; a player without rated games counts as 1500); spectators stay spectators. Known issue: the lobby doesn't redraw after it yet and keeps showing the old teams.
+  - **Ready check:** every player on the Mortal or Spirit team except the creator has a **READY** button where the creator has Start Game; a click marks you ready (the button then reads **NOT READY**, to take it back). Every player's slot shows a check box and *READY* or *NOT READY*. The creator's **Start Game** stays greyed, with the count above it (for example *1/3 ready*), until everyone on the teams is ready; it starts the game as before then. Spectators never need to be ready, the creator is ready by starting, and a lobby with only the creator starts at once (bots fill the seats as before). Moving to the other team, to the spectators, or leaving and rejoining sets you back to not ready. A player whose game was set up before the ready check (or with another setup) has no button, no marks and doesn't hold up the start.
   - If the creator leaves the lobby, the game closes for everyone.
   - **Fill open seats with bots**, a check box in the CREATE GAME dialog (under the password field), has bots take every seat no player holds when the game starts. The browser and the lobby then show the game as **[Bots] <name>**. The box starts unticked each time the dialog opens. A name too long for the markers the dialog adds is shortened: to 25 characters with the box ticked; when the dialog has a map list (below), to 27 without the box and 21 with it.
   - Without the check box, empty seats stay empty unless the server's operator has bots fill them in every custom game.
@@ -247,6 +249,15 @@ A login with a name the server doesn't know, on a server that needs a sign-up fi
 
 - On a server's website you can also change your password, download your data or delete your account.
 - If you forget your password, ask the operator: the server doesn't send e-mail.
+
+#### Help check the rules
+
+Nobody has the original game's rules any more: much of how this server plays is our best guess. If a server's website
+has a **Check the rules** link, log in there with your game account. Each guess says what we assumed and what to look
+for; watch a video of the original game (2014 to 2015, on YouTube) and say whether the guess looks correct or wrong,
+with a note and up to three links, each with the time where it shows (a link with a time counts most). Other players
+logged in there see your claim with your display name; you can change or delete it while the guess is open, and it
+is deleted with your account. Once the evidence is clear, a guess is confirmed, or found wrong and fixed.
 
 #### The server list
 

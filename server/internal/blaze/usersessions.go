@@ -1,6 +1,8 @@
 package blaze
 
 import (
+	"math"
+
 	"dawngate/server/internal/progress"
 	"dawngate/server/internal/store"
 	"dawngate/server/internal/tdf"
@@ -45,6 +47,11 @@ const (
 	CmdUserSessionsSetUserInfoAttribute        = 0x1A
 	// ExtendedDataWins is the UserSessionExtendedData.DMAP key of the main menu's wins (R11).
 	ExtendedDataWins = 0x00070034
+	// ExtendedDataRating is the DMAP key of the player's skill rating (RATING2): BlazePlatform_GetUserExtendedInfo
+	// (0x00AD4F90, platform slot +0x124) reads it into its record's +0x14, which the custom lobby's BALANCE
+	// (GameRosterManager_BalanceTeams 0x006A1DC0) balances the teams by and the client's telemetry reports as a
+	// Glicko rating (LABS_MATCHMAKER_END GLI1..GLI5, LABS_VIEWED_PROFILE PELO/TELO, LABS_PURCHASING PELO).
+	ExtendedDataRating = 0x00070035
 	// ErrUserNotFound is USER_ERR_USER_NOT_FOUND (0x00017802; GetUserSessionsErrorName 0x00C79CC0).
 	ErrUserNotFound = 0x0001
 	// UserDataFlagOnline is UserData.FLGS's "online" bit [assumed: BlazeSDK's UserDataFlags subscribed 0x1,
@@ -144,7 +151,7 @@ func registerUserSessions(s *Server) {
 		online := r.Server.personaOnline(p.ID)
 		r.Server.Log.Logf("blaze", "   lookupUser id %d name %q: persona %d %q (%s)", id, name, p.ID, p.Name,
 			map[bool]string{true: "online", false: "offline"}[online])
-		return UserDataReply(acct, p, online)
+		return UserDataReply(acct, p, online, r.Server.ShownValue(acct))
 	})
 }
 
@@ -153,9 +160,9 @@ func registerUserSessions(s *Server) {
 // attribute and wins), FLGS = UserDataFlagOnline while the persona has a connection, USER =
 // UserIdentification (0x012F1C70) {AID the account id, ALOC, ID the persona id = BlazeId, NAME}; EXBB, EXID and
 // ORIG keep their defaults, as in UserAuthenticated (a PC account has no first-party id).
-func UserDataReply(acct store.Account, p store.Persona, online bool) []byte {
+func UserDataReply(acct store.Account, p store.Persona, online bool, shown int64) []byte {
 	w := tdf.NewWriter()
-	w.Struct("EDAT", extendedData(acct.UserInfo, progress.Wins(acct.Stats[progress.PlayerStats]), nil))
+	w.Struct("EDAT", extendedData(acct.UserInfo, progress.Wins(acct.Stats[progress.PlayerStats]), RatingValue(acct), shown, nil))
 	w.Int("FLGS", b2i(online)*UserDataFlagOnline)
 	w.Struct("USER", userIdentification(acct, p))
 	return w.Bytes()
@@ -174,21 +181,41 @@ func userIdentification(acct store.Account, p store.Persona) func(w *tdf.Writer)
 
 // extendedData writes Blaze::UserSessionExtendedData (0x012F1F70) as the server keeps it for a user: BPS (best ping
 // site, our only one), CMAP (the client attributes: since B13b only the presence, written when presence isn't nil),
-// CTY, DMAP (the wins the main menu shows, when there are any), QDAT and UATT (the user info attribute); see
-// ExtendedDataUpdateNotification for the members left out.
-func extendedData(userInfo uint64, wins int64, presence *int64) func(w *tdf.Writer) {
+// CTY, DMAP (the wins the main menu shows and, since RATING2, the skill rating, since RATINGSHOW1 the rating players
+// see, shown (Server.ShownValue); each key only when its value isn't 0, DMAP only when one of them is there), QDAT and
+// UATT (the user info attribute); see ExtendedDataUpdateNotification for the members left out.
+func extendedData(userInfo uint64, wins, rating, shown int64, presence *int64) func(w *tdf.Writer) {
 	return func(w *tdf.Writer) {
 		w.String("BPS", "local")
 		if presence != nil {
 			w.Map("CMAP", tdf.TypeInt, tdf.TypeInt, tdf.KV(int64(PresenceAttribute), *presence))
 		}
 		w.String("CTY", "")
+		var dmap []tdf.Pair // in key order
 		if wins > 0 {
-			w.Map("DMAP", tdf.TypeInt, tdf.TypeInt, tdf.KV(int64(ExtendedDataWins), wins))
+			dmap = append(dmap, tdf.KV(int64(ExtendedDataWins), wins))
+		}
+		if rating > 0 {
+			dmap = append(dmap, tdf.KV(int64(ExtendedDataRating), rating))
+		}
+		if shown > 0 {
+			dmap = append(dmap, tdf.KV(int64(ExtendedDataShownRating), shown))
+		}
+		if len(dmap) > 0 {
+			w.Map("DMAP", tdf.TypeInt, tdf.TypeInt, dmap...)
 		}
 		w.Struct("QDAT", func(w *tdf.Writer) { w.Int("DBPS", 0).Int("NATT", 0).Int("UBPS", 0) })
 		w.Uint("UATT", userInfo)
 	}
+}
+
+// RatingValue is a user's DMAP[0x00070035] (RATING2): the account's Glicko-2 rating rounded to a whole number (the
+// start value 1500 for an account without a rated game, store.Rating.OrStart), at least 0, since the client reads it
+// as an unsigned 32-bit number (BALANCE converts it to a float as one). Sent whatever show_rating says: the ratings
+// are kept either way, and no screen shows this value (the profile box shows ExtendedDataShownRating, RATINGSHOW1,
+// which the server sends only for a rating players are to see).
+func RatingValue(acct store.Account) int64 {
+	return max(0, int64(math.Round(acct.History.Rating.OrStart().Value)))
 }
 
 // UserAddedNotification is UserSessions::UserAdded -> Blaze::NotifyUserAdded (member table 0x012F2020: DATA
@@ -204,9 +231,9 @@ func extendedData(userInfo uint64, wins int64, presence *int64) func(w *tdf.Writ
 // clear, i.e. no UserAdded copied it before (a user made from a playgroup's member or a game roster has it clear, so
 // UserAdded fills it); with the bit set it only releases the reference it just took (0x00C8BFD0, the user release).
 // UserSessionExtendedDataUpdate replaces a known user's data at any time.
-func UserAddedNotification(acct store.Account, p store.Persona, presence int64) []byte {
+func UserAddedNotification(acct store.Account, p store.Persona, presence, shown int64) []byte {
 	w := tdf.NewWriter()
-	w.Struct("DATA", extendedData(acct.UserInfo, progress.Wins(acct.Stats[progress.PlayerStats]), &presence))
+	w.Struct("DATA", extendedData(acct.UserInfo, progress.Wins(acct.Stats[progress.PlayerStats]), RatingValue(acct), shown, &presence))
 	w.Struct("USER", userIdentification(acct, p))
 	return w.Bytes()
 }
@@ -222,9 +249,9 @@ func UserUpdatedNotification(id int64, online bool) []byte {
 // PresenceNotification is another user's UserSessionExtendedDataUpdate (B13b): the user's extended data with its
 // presence in CMAP, so the presence manager's listener (0x00AA9C40) sees the new value and the chat shows it
 // (UpdateRemoteUserPresence, 0x0049DC20). The handler (0x00C8C400) ignores a user the client doesn't know.
-func PresenceNotification(acct store.Account, p store.Persona, presence int64) []byte {
+func PresenceNotification(acct store.Account, p store.Persona, presence, shown int64) []byte {
 	w := tdf.NewWriter()
-	w.Struct("DATA", extendedData(acct.UserInfo, progress.Wins(acct.Stats[progress.PlayerStats]), &presence))
+	w.Struct("DATA", extendedData(acct.UserInfo, progress.Wins(acct.Stats[progress.PlayerStats]), RatingValue(acct), shown, &presence))
 	w.Int("SUBS", 1)
 	w.Int("USID", p.ID)
 	return w.Bytes()
@@ -290,11 +317,26 @@ func UserAuthenticatedNotification(acct store.Account, p store.Persona, key stri
 // (0x004DE0D0) reads the local user's DMAP[0x00070034] (component 7 Stats << 16 | key 0x34, through
 // BlazeUser_GetExtendedDataValue 0x00C8B560; R11) and shows it with SetExtendedData(wins, rating), 0
 // when absent. So DMAP is left out while wins is 0, and the server pushes this notification again after
-// a game (gamehost.go), since its handler (0x00C8C400) replaces the user's extended data.
-func ExtendedDataUpdateNotification(blazeID int64, userInfo uint64, wins int64) []byte {
+// a game (gamehost.go), since its handler (0x00C8C400) replaces the user's extended data. Since RATING2 DMAP also
+// carries the skill rating (DMAP[0x00070035], RatingValue), so a stored account always has a DMAP; a rating of 0 is
+// left out like the wins. Since RATINGSHOW1 shown is DMAP[0x00070037], the rating the setup's exe patch shows in the
+// main menu's profile box (Server.ShownValue; 0 = left out: no rating shown).
+func ExtendedDataUpdateNotification(blazeID int64, userInfo uint64, wins, rating, shown int64) []byte {
 	w := tdf.NewWriter()
-	w.Struct("DATA", extendedData(userInfo, wins, nil))
+	w.Struct("DATA", extendedData(userInfo, wins, rating, shown, nil))
 	w.Int("SUBS", 1)
 	w.Int("USID", blazeID)
 	return w.Bytes()
+}
+
+// OwnExtendedData is persona id's UserSessionExtendedDataUpdate for its own client, from the stored account: the
+// login's notification with the account as it is now (nil for an unknown persona). RATING2b sends it to a custom
+// lobby's admin after its packed rosters change, so its lobby redraws (customgames.go, setGameAttributes).
+func (s *Server) OwnExtendedData(id int64) []byte {
+	acct, _, ok := s.Store.PersonaByID(id)
+	if !ok {
+		return nil
+	}
+	return ExtendedDataUpdateNotification(id, acct.UserInfo, progress.Wins(acct.Stats[progress.PlayerStats]), RatingValue(acct),
+		s.ShownValue(acct))
 }

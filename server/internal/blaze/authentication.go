@@ -157,7 +157,8 @@ func handleLoginPersona(r *Request) []byte {
 	r.Notify(ComponentUserSessions, NotifyUserAuthenticated, "UserAuthenticated",
 		UserAuthenticatedNotification(acct, p, sess.Key, sess.First, now))
 	r.Notify(ComponentUserSessions, NotifyUserSessionExtendedDataUpdate, "UserSessionExtendedDataUpdate",
-		ExtendedDataUpdateNotification(p.ID, acct.UserInfo, progress.Wins(acct.Stats[progress.PlayerStats])))
+		ExtendedDataUpdateNotification(p.ID, acct.UserInfo, progress.Wins(acct.Stats[progress.PlayerStats]), RatingValue(acct),
+			r.Server.ShownValue(acct)))
 	conn := r.Conn
 	r.After(func() { r.Server.sendSystemMessages(conn, p) }) // B14: kill switches and broadcasts, after those
 	return SessionInfoReply(acct, p, sess.Key, sess.First, now)

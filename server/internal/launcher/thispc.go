@@ -475,6 +475,7 @@ func (p *thisPC) flags() []string {
 	own = append(own, MatchHistoryFlags(ini)...) // and its match history names
 	own = append(own, HalloweenFlags(ini)...)    // and its Halloween decoration
 	own = append(own, MatchRecordFlags(ini)...)  // and its match recorder
+	own = append(own, RatingFlags(ini)...)       // and its skill rating settings
 	own = append(own, MapFlags(ini)...)          // and its maps
 	if dir := p.mapsDir(); dir != "" {
 		own = append(own, MapsFlags(filepath.Dir(dir))...) // the maps folder beside the programs

@@ -83,12 +83,14 @@ func DeleteAccount(st *store.Store, name, password string) Result {
 }
 
 // Export is what the website's "download your data" hands the player (JSON): everything the store keeps of the
-// account except the password hash.
+// account except the password hash, and its claims on the issue tracker.
 type Export struct {
 	Exported time.Time     `json:"exported"`
 	Server   string        `json:"server,omitempty"`
 	Status   string        `json:"status"`
 	Account  store.Account `json:"account"`
+	// Claims are the account's claims on the issue tracker (each with its issue's id and title, stance, note, videos).
+	Claims []store.Claim `json:"issueClaims,omitempty"`
 }
 
 // ExportAccount returns the account's data for its player (confirmed by the password).
@@ -101,6 +103,10 @@ func ExportAccount(st *store.Store, name, password string, now time.Time) (Expor
 	if !ok {
 		return Export{}, refuse(CodeSystem, "account %d: not readable", cred.UserID)
 	}
-	return Export{Exported: now.UTC(), Status: cred.Status.String(), Account: a},
+	claims, err := st.ClaimsOf(cred.UserID)
+	if err != nil {
+		return Export{}, refuse(CodeSystem, "account %d: its issue claims not readable: %v", cred.UserID, err)
+	}
+	return Export{Exported: now.UTC(), Status: cred.Status.String(), Account: a, Claims: claims},
 		Result{Account: a, Note: fmt.Sprintf("account %d downloaded its data", cred.UserID)}
 }

@@ -16,7 +16,9 @@
 <a href="/admin/invites">Invite codes</a>
 <a href="/admin/signup">Sign-up</a>
 <a href="/admin/matches">Matches</a>
-<a href="/admin/audit">Audit log</a>
+{{if .Issues}}<a href="/admin/issues">Issues</a>
+<a href="/admin/tokens">API tokens</a>
+{{end}}<a href="/admin/audit">Audit log</a>
 <form method="post" action="/admin/logout" class="inline"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit" class="link">Log out {{.Admin.Name}}</button></form>
 </nav>{{end}}{{else}}<nav>
 {{if .Download}}<a href="/download">Download</a>
@@ -25,7 +27,8 @@
 <a href="/password">Forgot password?</a>
 <a href="/account/data">Your data</a>
 <a href="/account/delete">Delete account</a>
-<a href="/status">Status</a>
+{{if .Issues}}<a href="/issues">Check the rules</a>
+{{end}}<a href="/status">Status</a>
 </nav>{{end}}
 </header>
 <main{{if .Admin}} class="wide"{{end}}>
@@ -40,3 +43,6 @@
 </footer>
 </body>
 </html>
+{{define "chip"}}<span class="chip chip-{{.}}">{{.Label}}</span>{{end}}
+{{define "trackerbar"}}<form method="post" action="/issues/logout" class="trackerbar"><input type="hidden" name="csrf" value="{{.CSRF}}">
+<span class="muted">Logged in as {{.Tracker.Player}}</span> <button type="submit" class="link">Log out</button></form>{{end}}

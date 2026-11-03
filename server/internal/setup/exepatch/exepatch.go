@@ -25,6 +25,11 @@
 //     not-found exit jumps to a 45-byte cave after the bind cave, which names any other LevelId by the line of that id
 //     in the lobby's table FE_CustomGameLobby (the key in .tls's slack; .text's and .tls's VirtualSize raised to map
 //     the slack); the setup writes a line for every installed map (localepatch). On unless NoMapTable.
+//   - rating: the main menu's profile box shows EA's rating field (MainMenuUI.gfx's m_glickoText), which both of its
+//     C++ callers fill with an empty string; each now calls a 129-byte cave after the map-name cave that reads the
+//     local user's DMAP[0x00070037] and passes L"Rating <n>" when it is above 0 (the text built in .tls's slack after
+//     the map key), else the empty string as shipped. The server sends the key only for a rating players are to see
+//     (blaze.ShownRating). On unless NoRating.
 //
 // Profiles: "local" (the default; the server on a loopback address, every wildcard bind narrowed to it) and "lan" (a
 // server elsewhere on our own network: ServerHost required, the binds as shipped unless ClientBind names this
@@ -87,6 +92,22 @@ const (
 	mapKeyLen = 0x40
 	// mapKeyPrefix is the key before the LevelId's 8 hex digits: the custom lobby's own table.
 	mapKeyPrefix = "^FE_CustomGameLobby!0x"
+	// The profile box's rating text (patch_client.py's RATING_*): the two SetExtendedData callers' rating value, what
+	// the cave calls, and where its text goes.
+	ratingSite1     = 0x004DE1C9 // MainMenuUI_OnUserExtendedDataChanged: the value's type 7 and pointer stores
+	ratingSite2     = 0x004E0661 // MainMenuUI_BindExtFunctions: mov ebp,7 (the caller stores ebp and ebx)
+	emptyWString    = 0x0199D2A0 // the shared empty wide string both callers pass
+	platformPtr     = 0x01BB6154 // SporeOnline_GetPlatform's [0x01BB6154]
+	findUser        = 0x00C8AFD0 // UserManager_FindUserByBlazeId
+	getExtValue     = 0x00C8B560 // BlazeUser_GetExtendedDataValue
+	ratingKey       = 0x37       // DMAP[0x00070037]
+	ratingCave      = 0x011AB170 // in .text's slack after the map-name cave
+	ratingLabel     = "Rating "  // before the number
+	ratingLabelVA   = 0x01C00080 // in .tls's slack after the map key
+	ratingLabelRoom = 0x10
+	ratingText      = 0x01C00090 // the text, built backwards from its NUL at ratingTextEnd
+	ratingTextRoom  = 0x30
+	ratingTextEnd   = ratingText + ratingTextRoom - 2
 )
 
 var (
@@ -108,7 +129,13 @@ var (
 	mapFoundOrig       = mustHex("56" + "8b34cd783a3f01")                                       // push esi; mov esi,[ecx*8+0x013F3A78]
 	mapResumeOrig      = mustHex("3bf7" + "740d")                                               // cmp esi,edi; jz ...
 	mapMissNew         = append([]byte{0xE9}, le32(mapCave-(mapMiss+5))...)                     // jmp mapCave
-	dataFolders        = []struct {
+	ratingSite1Orig    = mustHex("c744245807000000" + "c744245ca0d29901")                       // mov [esp+0x58],7; mov [esp+0x5c],empty
+	ratingSite2Orig    = mustHex("bd07000000")                                                  // mov ebp,7
+	ratingNext2        = mustHex("8954244c" + "c744245003000000" + "89442454" + "89542464" + "896c2468" + "895c246c")
+	// call text; mov [esp+0x5c],ebx; push 7; pop ecx; mov [esp+0x58],ecx
+	ratingSite1New = append(append([]byte{0xE8}, le32(ratingCave+5-(ratingSite1+5))...), mustHex("895c245c"+"6a07"+"59"+"894c2458")...)
+	ratingSite2New = append([]byte{0xE8}, le32(ratingCave-(ratingSite2+5))...) // call mov ebp,7 + text
+	dataFolders    = []struct {
 		va   uint32
 		room int
 		name string
@@ -157,6 +184,58 @@ func mapCaveCode() []byte {
 	return append(code, le32(mapResume-(mapCave+uint32(len(code))+4))...) // jmp mapResume
 }
 
+// ratingCaveCode is the rating cave (patch_client.py's rating_cave_code). Entry ratingCave (the second site): mov
+// ebp,7, then the text routine at ratingCave+5 (the first site): ebx = L"Rating <n>" when the local user's
+// DMAP[0x00070037] is above 0, else the empty string; every other register is kept (pushad, ebx written into its slot).
+func ratingCaveCode() []byte {
+	var c []byte
+	emit := func(h string, tail ...[]byte) {
+		c = append(c, mustHex(h)...)
+		for _, t := range tail {
+			c = append(c, t...)
+		}
+	}
+	call := func(to uint32) { c = append(c, le32(to-(ratingCave+uint32(len(c))+4))...) }
+	hole := func() int { c = append(c, 0); return len(c) - 1 }
+	emit("bd07000000")                     // mov ebp,7        (the second site's instruction)
+	emit("60")                             // text: pushad
+	emit("6a00" + "6a00")                  // push 0; push 0   ; [esp] = the int64 value
+	emit("bb", le32(emptyWString))         // mov ebx,empty
+	emit("8b35", le32(platformPtr))        // mov esi,[platform]
+	emit("8b06" + "8bce" + "ff90e4000000") // mov eax,[esi]; mov ecx,esi; call [eax+0xE4] ; the local Blaze id
+	emit("8b4e18" + "8b8998040000")        // mov ecx,[esi+0x18]; mov ecx,[ecx+0x498]    ; the user manager
+	emit("85c9" + "74")                    // test ecx,ecx; jz done
+	j1 := hole()
+	emit("52" + "50" + "e8") // push edx; push eax; call FindUserByBlazeId
+	call(findUser)
+	emit("85c0" + "74") // test eax,eax; jz done
+	j2 := hole()
+	emit("8bc8" + "54")           // mov ecx,eax; push esp (&value)
+	emit("6a", []byte{ratingKey}) // push 0x37
+	emit("6a07" + "e8")           // push 7; call GetExtendedDataValue
+	call(getExtValue)
+	emit("84c0" + "74") // test al,al; jz done
+	j3 := hole()
+	emit("8b0424" + "85c0" + "7e") // mov eax,[esp]; test eax,eax; jle done
+	j4 := hole()
+	emit("bb", le32(ratingTextEnd)) // mov ebx,the NUL
+	emit("6a0a" + "59")             // push 10; pop ecx
+	d := len(c)                     // d: xor edx,edx; div ecx; add edx,'0'; ebx-=2; [ebx]=dx; jnz d
+	emit("33d2" + "f7f1" + "83c230" + "4b4b" + "668913" + "85c0" + "75")
+	c = append(c, byte(d-(len(c)+1)))
+	emit("6a", []byte{byte(len(ratingLabel))}, []byte{0x59}) // push len; pop ecx
+	p := len(c)                                              // p: ebx-=2; mov ax,[ecx*2+label-2]; mov [ebx],ax; loop p
+	emit("4b4b"+"668b044d", le32(ratingLabelVA-2))
+	emit("668903" + "e2")
+	c = append(c, byte(p-(len(c)+1)))
+	done := len(c)
+	for _, j := range []int{j1, j2, j3, j4} {
+		c[j] = byte(done - (j + 1))
+	}
+	emit("83c408" + "895c2410" + "61" + "c3") // done: add esp,8; mov [esp+0x10],ebx; popad; ret
+	return c
+}
+
 // mapKeyText is the key as the patch writes it (the cave fills in the digits).
 const mapKeyText = mapKeyPrefix + "00000000"
 
@@ -175,6 +254,7 @@ type Options struct {
 	NoLAA      bool   // leave out LARGE_ADDRESS_AWARE (patch_client.py --laa off)
 	NoPreload  bool   // leave out the preload of every player index's shaper (patch_client.py --preload off)
 	NoMapTable bool   // leave out the map-name cave (patch_client.py --maptable off)
+	NoRating   bool   // leave out the profile box's rating text (patch_client.py --rating off)
 }
 
 // Error is a refusal: the exe isn't the expected build, or the options don't fit the profile (patch_client.py's
@@ -524,15 +604,52 @@ func Patch(orig, modulus []byte, o Options) ([]byte, string, error) {
 		write(mapMiss, mapMissNew)
 		summary += fmt.Sprintf("; every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x%08x)", mapCave)
 	}
+	// RATINGSHOW1: the profile box's rating text from the local user's DMAP[0x00070037]
+	if err := expect(ratingSite1, ratingSite1Orig, "the extended-data handler's rating value"); err != nil {
+		return nil, "", err
+	}
+	if err := expect(ratingSite2, append(bytes.Clone(ratingSite2Orig), ratingNext2...), "the main menu bind's rating value"); err != nil {
+		return nil, "", err
+	}
+	if !o.NoRating {
+		if img.dllChars&0x40 != 0 || img.characteristics&0x1 == 0 {
+			return nil, "", errorf("exe is relocatable (ASLR or relocations); absolute addresses in the cave would break")
+		}
+		cave := ratingCaveCode()
+		if !(mapCave+uint32(len(mapCaveCode())) <= ratingCave &&
+			uint64(ratingCave)+uint64(len(cave)) <= uint64(ImageBase)+uint64(text.va)+uint64(text.rawSize)) {
+			return nil, "", errorf("the rating cave doesn't fit into .text's slack (wrong build?)")
+		}
+		if !(mapKey+mapKeyLen <= ratingLabelVA && ratingText+ratingTextRoom <= tlsVA+tlsRaw &&
+			2*(len(ratingLabel)+10)+2 <= ratingTextRoom) {
+			return nil, "", errorf("the rating text doesn't fit into .tls's slack")
+		}
+		if err := expect(ratingCave, make([]byte, len(cave)), "unused slack after the map-name cave"); err != nil {
+			return nil, "", err
+		}
+		if err := expect(ratingLabelVA, make([]byte, ratingLabelRoom+ratingTextRoom), "unused slack after the map key"); err != nil {
+			return nil, "", err
+		}
+		// map the slack: VirtualSize = SizeOfRawData
+		binary.LittleEndian.PutUint32(data[text.headerAt+8:], text.rawSize)
+		binary.LittleEndian.PutUint32(data[tls.headerAt+8:], tlsRaw)
+		write(ratingCave, cave)
+		label := wide(ratingLabel)
+		write(ratingLabelVA, padded(label[:len(label)-2], ratingLabelRoom))
+		write(ratingSite1, ratingSite1New)
+		write(ratingSite2, ratingSite2New)
+		summary += fmt.Sprintf("; the profile box shows the rating the server sends (rating cave at 0x%08x)", ratingCave)
+	}
 	return data, summary, nil
 }
 
 // Description is what an exe carries (patch_client.py's describe, --show), by key: redirector, bind, appdata,
-// documents, raknet_loopback, ca_sha256, ca_flag, laa, preload, maptable (DescriptionKeys, in --show's order).
+// documents, raknet_loopback, ca_sha256, ca_flag, laa, preload, maptable, rating (DescriptionKeys, in --show's
+// order).
 type Description map[string]string
 
 // DescriptionKeys are Description's keys in patch_client.py --show's order.
-var DescriptionKeys = []string{"redirector", "bind", "appdata", "documents", "raknet_loopback", "ca_sha256", "ca_flag", "laa", "preload", "maptable"}
+var DescriptionKeys = []string{"redirector", "bind", "appdata", "documents", "raknet_loopback", "ca_sha256", "ca_flag", "laa", "preload", "maptable", "rating"}
 
 // HostKeys are what a match host's copy must carry (setup_all.py's HOST_KEYS): its sockets are the harness's.
 var HostKeys = []string{"redirector", "appdata", "documents"}
@@ -562,6 +679,10 @@ func Describe(data []byte) (Description, error) {
 	miss := at(mapMiss, len(mapMissOrig))
 	mcave := at(mapCave, len(mapCaveCode()))
 	keyHead := at(mapKey, 2*len(mapKeyPrefix))
+	site1 := at(ratingSite1, len(ratingSite1Orig))
+	site2 := at(ratingSite2, len(ratingSite2Orig))
+	rcave := at(ratingCave, len(ratingCaveCode()))
+	label := at(ratingLabelVA, 2*len(ratingLabel))
 	if err != nil {
 		return nil, err
 	}
@@ -622,6 +743,15 @@ func Describe(data []byte) (Description, error) {
 		out["maptable"] = "on"
 	default:
 		out["maptable"] = "unknown"
+	}
+	switch {
+	case bytes.Equal(site1, ratingSite1Orig) && bytes.Equal(site2, ratingSite2Orig):
+		out["rating"] = "as-shipped"
+	case bytes.Equal(site1, ratingSite1New) && bytes.Equal(site2, ratingSite2New) && bytes.Equal(rcave, ratingCaveCode()) &&
+		bytes.Equal(label, wide(ratingLabel)[:2*len(ratingLabel)]):
+		out["rating"] = "on"
+	default:
+		out["rating"] = "unknown"
 	}
 	return out, nil
 }

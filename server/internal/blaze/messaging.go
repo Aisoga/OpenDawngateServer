@@ -365,10 +365,11 @@ func (m *messaging) allowLocked(blazeID int64, now time.Time) bool {
 // relayResult is what sendMessage did.
 type relayResult struct {
 	note      ServerMessage
-	conns     []*Conn // connections that get NotifyMessage (each once)
-	delivered []int64 // users whose connections get it
-	stored    []int64 // users whose inboxes keep it
-	blocked   []int64 // users who don't get it because they blocked the sender (B13b)
+	conns     []*Conn    // connections that get NotifyMessage (each once)
+	delivered []int64    // users whose connections get it
+	stored    []int64    // users whose inboxes keep it
+	blocked   []int64    // users who don't get it because they blocked the sender (B13b)
+	lobby     *lobbyLine // READY2: a lobby line (ready.go), swallowed: nobody gets it, the server handles it
 	err       uint16
 	why       string
 }
@@ -456,6 +457,12 @@ func (s *Server) relay(sender store.Persona, msg ClientMessage) relayResult {
 				}
 			}
 		}
+	}
+	// READY2: a lobby line ("~#rdy 1~", ready.go) in a game's chat is never relayed (no echo either): the server
+	// handles it, and only the clients with our lobby class get the server's lines
+	if kind, args, ok := lobbyLineOf(msg); ok {
+		return relayResult{note: ServerMessage{ID: m.newID()}, lobby: &lobbyLine{game: s.lobbyGameOf(msg.TargetType, msg.Targets[0]),
+			kind: kind, args: args, msg: msg}}
 	}
 	// B13b: a user who blocked the sender gets none of its messages, nor a stored copy. The client drops them too
 	// (the receivers' block checks, e.g. the friend messages' 0x00AC07B0 and SporeOnlinePlatform_IsUserBlocked
@@ -629,6 +636,17 @@ func registerMessaging(s *Server) {
 			r.Server.Log.Logf("blaze", "   message from %d (%s): error %#04x (%s)", sess.Persona.ID, desc, res.err, res.why)
 			r.Fail(res.err)
 			return nil
+		}
+		if l := res.lobby; l != nil {
+			r.Server.Log.Logf("blaze", "   message %d from %d %q (%s): a lobby line %q for game %d; not relayed", res.note.ID,
+				sess.Persona.ID, sess.Persona.Name, desc, LobbyLine(l.kind, l.args...), l.game)
+			if l.kind == LobbyLineReady {
+				me := sess.Persona.ID
+				r.After(func() { r.Server.readyLine(me, *l) })
+			} else {
+				r.Server.Log.Logf("blaze", "   a lobby line only the server sends (%s); ignored", l.kind)
+			}
+			return SendMessageReply(res.note.ID, nil)
 		}
 		dropped := ""
 		if len(res.blocked) > 0 {

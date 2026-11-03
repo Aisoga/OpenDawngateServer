@@ -175,6 +175,18 @@ func Admin() Config {
 	}
 }
 
+// API is the issue tracker's API (a Bearer token per request): the website keeps a Limiter of its own with this
+// Config, always on. A request with a token that isn't valid (unknown, revoked, malformed) is a failed login of its
+// address: 5 are free, then 5 min doubling to 24 h, forgotten after a quiet day, and while an address is locked even a
+// valid token from it waits. There is no per-address rate of attempts (each request would take from it); the
+// per-token request rate is the website's own. Only its AddrFail is used (Login and LoginDone with account "").
+func API() Config {
+	return Config{
+		AddrFail: Backoff{Free: 5, Base: 5 * time.Minute, Max: 24 * time.Hour, Forget: 24 * time.Hour},
+		MaxKeys:  50000,
+	}
+}
+
 // DescribeLogins is the login part of Describe (the admin login's line).
 func (c Config) DescribeLogins() string {
 	return fmt.Sprintf("%s logins per address; backoff after %d failures per login name (%s doubling to %s) and %d per "+

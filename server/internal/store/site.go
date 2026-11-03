@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 )
 
 // This file holds what the website's self-service needs from the database: a chosen display name's
@@ -47,7 +48,8 @@ func (s *Store) DisplayNameTaken(name string) (bool, error) {
 //   - the match history stays without the name: the account's row with its level and XP, its stats and its history
 //     by shaper, role and day (the profile's panels), keyed by the anonymous user id;
 //   - other accounts lose the persona from their friends and blocked lists, and their recent players show it as
-//     DeletedName.
+//     DeletedName;
+//   - the account's claims on the issue tracker go, with their videos (the issues count as changed).
 //
 // ErrNoAccount if there is no such account.
 func (s *Store) DeleteAccount(userID int64) error {
@@ -92,6 +94,9 @@ func (s *Store) DeleteAccount(userID int64) error {
 		if _, err := tx.Exec(`UPDATE list_members SET name = ? WHERE persona_id = ?`, DeletedName, id); err != nil {
 			return err
 		}
+	}
+	if err := deleteClaimsOf(tx, userID, time.Now()); err != nil {
+		return fmt.Errorf("issue claims: %v", err)
 	}
 	for _, table := range []string{"settings", "list_members", "items", "perk_pages"} {
 		if _, err := tx.Exec(`DELETE FROM `+table+` WHERE user_id = ?`, userID); err != nil {

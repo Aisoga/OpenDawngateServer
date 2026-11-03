@@ -1,0 +1,23 @@
+{{define "content"}}
+<nav class="filters" aria-label="Filter">
+{{range .Admin.IssueFilters}}{{if .On}}<strong>{{.Label}} ({{.Count}})</strong>{{else}}<a href="/admin/issues?filter={{.ID}}">{{.Label}} ({{.Count}})</a>{{end}}
+{{end}}</nav>
+{{if .Admin.IssueRows}}
+<div class="table-wrap"><table class="admin">
+<tr><th>Issue</th><th>Status</th><th>Looks correct</th><th>Looks wrong</th><th>Videos</th><th>Hidden</th><th>Changed (UTC)</th></tr>
+{{range .Admin.IssueRows}}
+<tr><td><a href="/admin/issues/{{.ID}}">{{.ID}}</a> {{.Title}}<br><span class="muted">{{.Area}}{{if not .Listed}} · no longer listed{{end}}</span></td>
+<td>{{template "chip" .Status}}</td>
+<td>{{.CorrectClaims}} (weight {{.Tally.Correct}})</td>
+<td>{{.WrongClaims}} (weight {{.Tally.Wrong}})</td>
+<td>{{.Tally.Videos}}</td>
+<td>{{.Tally.Hidden}}</td>
+<td>{{.Updated}}</td></tr>
+{{end}}
+</table></div>
+{{else}}<p>No issue here.</p>{{end}}
+<p class="note">An open issue's status is computed from its visible claims (a claim weighs 1 with a note, 2 with a
+video, 3 with a video and its time). A verdict closes the issue: confirmed, disproven (a fix is planned) or closed;
+it is then read-only for players until it is reopened. The API's reviewer gives verdicts too
+(<a href="/admin/tokens">API tokens</a>); every verdict is in the <a href="/admin/audit">audit log</a>.</p>
+{{end}}

@@ -150,6 +150,12 @@ web_proxy = off
 ;        certificate) and keeps it in Dawngate-Data\data\client-package.
 client_package = off
 
+; The issue tracker on the website (/issues, needs web_port): players log in with their game account and check this
+; server's guesses about the original game against YouTube videos of it (looks correct or looks wrong, a note, up to
+; three links); the server only stores the links' video ids and times and never contacts YouTube. on, or off (the
+; default).
+issues = off
+
 ; The folder for the game copies (about 3 GB), the certificates, the accounts and the logs: relative to this
 ; program's folder, or a full path such as D:\Games\Dawngate-Data.
 folder = Dawngate-Data
@@ -186,6 +192,15 @@ chat_rooms = General, Looking for group, Matchmaking:queue:open
 ; The match history (every finished match with its statistics, on the game's home page): players see everyone's
 ; games with the players' names (on), or each player sees only their own name and their own games' list (off).
 match_history_names = on
+
+; The main menu's Leaderboard: on ranks the players by their skill rating from balanced PvP and custom games (both
+; teams with as many players, bots not counted); off ranks them by their wins in every PvP and custom game. The
+; ratings are kept either way. The screen's text describes the rating (on).
+rating_leaderboard = on
+
+; The skill rating in the main menu's profile box ("Rating 1532" above the player's name): on shows each player their
+; own rating once they have played as many rated games as the Leaderboard asks (10); off shows no rating.
+show_rating = on
 
 ; The match recorder: on writes a file per match next to the match's logs (Dawngate-Data\logs\hosts\<match>\
 ; matchrec_<match>_<start>.txt): the seats, every player's commands, every player's position and state five times a
@@ -245,7 +260,7 @@ var serverKeys = []string{"address", "bind", RiskAckKey, "profile", "tunnel", "g
 	"wine", ClientPackageKey, "discord_webhook", "discord_webhook_queue", "discord_webhook_result", "discord_webhook_server", "discord_queue_ping",
 	"discord_ping_cooldown", "discord_ping_min_wait", "discord_names", "discord_queue_edit", "discord_result_modes",
 	"online_count", "online_count_every", "chat_rooms", "match_history_names", "halloween", "map", "custom_maps",
-	"match_record"}
+	"match_record", "rating_leaderboard", "show_rating", "issues"}
 
 // IO is where a launcher talks: the console normally, buffers in tests.
 type IO struct {
@@ -662,7 +677,7 @@ func RunServer(args []string, o IO) int {
 		return 0
 	}
 
-	own := append(append(append(loginFlags, web.Flags()...), DiscordFlags(cfg)...), append(append(append(append(append(OnlineCountFlags(cfg), ChatRoomsFlags(cfg)...), MatchHistoryFlags(cfg)...), HalloweenFlags(cfg)...), MatchRecordFlags(cfg)...), append(append(MapFlags(cfg), MapsFlags(o.ExeDir)...), ServeMapsFlags(cfg)...)...)...)
+	own := append(append(append(loginFlags, web.Flags()...), DiscordFlags(cfg)...), append(append(append(append(append(OnlineCountFlags(cfg), ChatRoomsFlags(cfg)...), MatchHistoryFlags(cfg)...), HalloweenFlags(cfg)...), append(append(MatchRecordFlags(cfg), RatingFlags(cfg)...), IssuesFlags(cfg)...)...), append(append(MapFlags(cfg), MapsFlags(o.ExeDir)...), ServeMapsFlags(cfg)...)...)...)
 	if clientPackage {
 		own = append(own, "--client-package")
 	}

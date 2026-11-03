@@ -9,6 +9,7 @@ package dgserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -187,6 +188,29 @@ func onOff(on bool) string {
 		return "on"
 	}
 	return "off"
+}
+
+// leaderboardNote and leaderboardGames are the start's Leaderboard line (RATING1): what it ranks by and what it counts.
+func leaderboardNote(rating bool) string {
+	if rating {
+		return "ranked by skill rating"
+	}
+	return "ranked by wins"
+}
+
+func leaderboardGames(rating bool) string {
+	if rating {
+		return "rated games (balanced PvP and custom games)"
+	}
+	return "PvP and custom games"
+}
+
+// profileRatingNote is the start's profile box line (RATINGSHOW1): whether players see their rating, and from when.
+func profileRatingNote(show bool, minGames int) string {
+	if show {
+		return fmt.Sprintf("each player's skill rating shown from %d rated games", minGames)
+	}
+	return "no rating shown"
 }
 
 // perkTitle is a spirit stone's title ("Spiritstone of the Adventurer"), else its asset name.

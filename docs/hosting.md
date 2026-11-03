@@ -237,6 +237,34 @@ The server runs a small website at `https://<server address>/` (`web_port`, 443 
 
 The admin login is limited strictly against password guessing. Sessions end after 30 idle minutes.
 
+**The issue tracker** (`issues = on` in `Start-Server.ini`, off by default) adds the pages *Check the rules* at
+`https://<server address>/issues`. The server's rules are partly guesses about how the original game played; there
+players log in with their game account, read each guess and what to look for, and say whether it looks correct or
+wrong in a video of the original game: a note and up to three YouTube links with a time. Only logged-in players see
+the pages and the claims. The server stores a link's video id and time only and never contacts YouTube; the pages
+show plain links, no embedded videos. A player's claims are part of their data download and are deleted with their
+account; mention them in your `privacy.html` if you have one (the default privacy text already does).
+
+With the tracker on, the admin page has two more parts:
+
+- **Issues** (`/admin/issues`): every guess with its status and claims, filtered (open, leaning, disputed, needing
+  video proof or any claim, with a verdict, with hidden claims, no longer listed). On an issue you see each claim with
+  the account behind it and can hide it (it no longer counts and only its player still sees it) or show it again.
+  You close an issue with a verdict and a note that players read on its page: *confirmed* (the guess matches the
+  original), *disproven* (it is wrong; a fix is planned) or *closed* (it can't be verified). A closed issue is
+  read-only for players until you reopen it.
+- **API tokens** (`/admin/tokens`): access for a reviewer, such as an AI assistant that reads the claims and gives
+  verdicts through the server's API. Make a token with a name for whoever uses it; it is shown once, so copy it
+  then (the server keeps only a fingerprint of it). Revoke it when it is no longer needed or may have leaked.
+
+**The review.** A reviewer with a token reads the open issues with their claims and closes those where the evidence
+is clear. It can't watch the videos, so it judges by the claims' weights (a note, a video, a video with its time),
+by whether several players agree independently, and by the notes and times. Its verdicts take effect at once, like
+yours. Every verdict, reopening, hidden claim and token is in the audit log with who did it (a token's verdicts as
+`api:<name>`), and you can reopen any issue. Give a token only to a reviewer you trust with closing issues, keep it
+out of shared folders and repositories, and use the website's HTTPS address with it. The API's requests are in
+the [reference](reference.md#the-issue-trackers-api).
+
 **Your own pages:** put HTML fragments named `privacy.html`, `terms.html` and `about.html` into `Dawngate-Data\data\site`, and the website shows them. A public server should have a privacy page that says who runs it and what it keeps.
 
 ## Announcements
@@ -283,6 +311,44 @@ until the next login. So by default every player is in *Matchmaking* and sees th
 rooms off. Rooms have no passwords, nobody can create rooms in the game, and the rooms start empty with every server
 start. A `Start-Server.ini` from before this setting keeps its own line (`…Matchmaking:queue`, no room opens); add
 `:open` to the rooms you want opened.
+
+## The Leaderboard
+
+The main menu's Leaderboard ranks the players by a skill rating (Glicko-2, the system chess servers use). Every
+account starts at 1500. A game is **rated** when it is a PvP or custom game, it ended with a winner, and both teams had
+the same number of human players at its start, at least one each; bots and spectators don't count as players. So a
+2 v 2 of players with bots filling the seats is rated, a 1 v 1 with bots too, a 2 v 3 isn't, nor is a game of players
+against bots only; practice games never are. After a rated game each player's rating moves against the other team's
+players taken together (their average rating), by the team's result: a player who left early keeps it. The Leaderboard
+lists the players with at least 10 rated games (`--leaderboard-min-games`), highest rating first, with their rated games
+and wins; the arrows compare with the ranking at the end of the day before (UTC).
+
+To rank by wins instead, as earlier versions did (every PvP and custom game counts, whatever the teams):
+
+```ini
+rating_leaderboard = off
+```
+
+The ratings are still kept and updated, so turning it back on shows them at once; the custom lobby's balance button
+splits the teams by the rating in both modes. The screen's text ("Rank is based
+upon skill rating from balanced PvP and custom games. Must have at least 10 rated games.") is written into the players'
+game copies by their setup, so it stays the same with `rating_leaderboard = off`.
+
+Each player also sees their own rating in the main menu's profile box, above their name ("Rating 1532"), once they
+have played as many rated games as the Leaderboard needs (10, `--leaderboard-min-games`); before that, the box shows
+none. The Leaderboard shows the same numbers in a Rating column at the right, and a custom game's lobby after each
+team player's wins. To show no rating to anyone:
+
+```ini
+show_rating = off
+```
+
+This changes only what players see: the ratings are kept and updated either way, and the custom lobby's team
+balancing uses them either way. The setting takes effect at each player's next login.
+
+The first start of a server with the rating gives every account its rating from the matches the server has stored
+(the match history below), replaying them in the order they were played, once; its log says how many matches it
+replayed and how many were rated. Games played before the server kept a match history are not in it.
 
 ## The match history
 

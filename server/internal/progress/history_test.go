@@ -86,6 +86,41 @@ func TestApplyRanked(t *testing.T) {
 	}
 }
 
+// ApplyRated stores the new rating with one more rated game (and win), and counts the game on its day while that day
+// is kept, the day's RatingBefore the rating before its first rated game (the start's for an account without one).
+func TestApplyRated(t *testing.T) {
+	now := at(8) // 2026-10-09: the days kept are 2026-10-03 .. 2026-10-09
+	h := ApplyRanked(store.History{}, now, true)
+	before := h.Clone()
+	r1 := store.Rating{Value: 1580, RD: 290, Vol: 0.06}
+	got := ApplyRated(h, now, at(0), r1, true) // 2026-10-01: too old for a day
+	if !reflect.DeepEqual(h, before) {
+		t.Fatal("ApplyRated changed its input")
+	}
+	r2 := store.Rating{Value: 1550, RD: 260, Vol: 0.0599}
+	got = ApplyRated(got, now, at(3), r2, false) // 2026-10-04's first: before it 1580
+	r3 := store.Rating{Value: 1590, RD: 240, Vol: 0.0599}
+	got = ApplyRated(got, now, at(3), r3, true) // its second: RatingBefore stays
+	r4 := store.Rating{Value: 1610, RD: 230, Vol: 0.0598}
+	got = ApplyRated(got, now, now, r4, true) // today, beside the Leaderboard's game
+	want := store.History{
+		Days: []store.HistoryDay{
+			{Day: "2026-10-04", Rated: store.GamesWon{Games: 2, Wins: 1}, RatingBefore: 1580},
+			{Day: "2026-10-09", Ranked: store.GamesWon{Games: 1, Wins: 1}, Rated: store.GamesWon{Games: 1, Wins: 1},
+				RatingBefore: 1590},
+		},
+		Ranked: store.GamesWon{Games: 1, Wins: 1},
+		Rating: store.Rating{Value: 1610, RD: 230, Vol: 0.0598, Games: 4, Wins: 3},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("history\n got %+v\nwant %+v", got, want)
+	}
+	if first := ApplyRated(store.History{}, now, now, r1, false); first.Days[0].RatingBefore != 1500 ||
+		first.Rating != (store.Rating{Value: 1580, RD: 290, Vol: 0.06, Games: 1}) {
+		t.Errorf("a first rated game: %+v", first)
+	}
+}
+
 // ImportRanked adds an old game to the all-time count, and to its own day only while that day is still kept (the
 // HistoryDays days up to now); a live day's count is added to, never replaced.
 func TestImportRanked(t *testing.T) {

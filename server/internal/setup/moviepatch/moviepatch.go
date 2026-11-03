@@ -23,7 +23,8 @@
 //
 // The output is deterministic: the movie keeps its CFX header (the version, the u32 length as stored plus the tags'
 // size) and its body is a zlib stream of stored blocks (65,535 bytes each, the last one final), which the archive
-// compresses (Snappy, snap.Encode). The class's character id and depth (2000 each) must be free in the movie.
+// compresses (Snappy, snap.Encode). The class's character id and depth (2000 each; a spec's More classes the next ones)
+// must be free in the movie.
 package moviepatch
 
 import (
@@ -118,6 +119,21 @@ type Spec struct {
 	// Items: the archive also holds the Collection's item list (ItemsPath), ItemList's bytes, which the setup sets
 	Items    bool
 	ItemList []byte
+	// More are further classes of ours in the same movie, their tags after the spec's own, each with its own character
+	// id and root depth (the front end's movie: the Collection's class, then the lobby's ready check; Collection)
+	More []Part
+}
+
+// Part is one more class in a spec's movie: its name, character id, root depth and tags.
+type Part struct {
+	Class         string
+	CharID, Depth int
+	Tags          []byte
+}
+
+// Parts are every class of the spec's movie: its own, then More, in the order their tags go in.
+func (sp Spec) Parts() []Part {
+	return append([]Part{{Class: sp.Class, CharID: sp.CharID, Depth: sp.Depth, Tags: sp.Tags}}, sp.More...)
 }
 
 // RefundSettingsPath is the shop refund's settings file in zz_ItemShop.snap, which client_ui/itemshop/ShopRefund.as
@@ -341,7 +357,8 @@ func PatchMovie(raw, tags []byte) ([]byte, error) {
 	return sp.PatchMovie(raw)
 }
 
-// PatchMovie returns the movie (a CFX file) with the spec's tags inserted before the root timeline's first ShowFrame.
+// PatchMovie returns the movie (a CFX file) with the spec's tags (every Part's, in order) inserted before the root
+// timeline's first ShowFrame.
 func (sp Spec) PatchMovie(raw []byte) ([]byte, error) {
 	if len(raw) < 8 || (string(raw[:3]) != "CFX" && string(raw[:3]) != "CWS") {
 		return nil, errors.New("not a compressed Scaleform movie (CFX)")
@@ -359,17 +376,21 @@ func (sp Spec) PatchMovie(raw []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch {
-	case s.names[sp.Class]:
-		return nil, fmt.Errorf("the movie has %s already", sp.What)
-	case s.ids[sp.CharID]:
-		return nil, fmt.Errorf("the movie uses character id %d", sp.CharID)
-	case s.depths[sp.Depth]:
-		return nil, fmt.Errorf("the movie uses depth %d on its root timeline", sp.Depth)
-	case s.firstShow < 0:
+	var tags []byte
+	for _, p := range sp.Parts() {
+		switch {
+		case s.names[p.Class]:
+			return nil, fmt.Errorf("the movie has %s already (%s)", sp.What, p.Class)
+		case s.ids[p.CharID]:
+			return nil, fmt.Errorf("the movie uses character id %d", p.CharID)
+		case s.depths[p.Depth]:
+			return nil, fmt.Errorf("the movie uses depth %d on its root timeline", p.Depth)
+		}
+		tags = append(tags, p.Tags...)
+	}
+	if s.firstShow < 0 {
 		return nil, errors.New("no ShowFrame on the root timeline")
 	}
-	tags := sp.Tags
 	nb := make([]byte, 0, len(body)+len(tags))
 	nb = append(append(append(nb, body[:s.firstShow]...), tags...), body[s.firstShow:]...)
 	out := append([]byte(nil), raw[:4]...)

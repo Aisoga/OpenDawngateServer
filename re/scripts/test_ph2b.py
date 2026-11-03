@@ -27,17 +27,17 @@ import dbpf  # noqa: E402
 import patch_locale as pl  # noqa: E402
 
 MADE_UP_SHA = "97766712cea3cf54c20204922cc472d86ac9d592c40e955f7c1a635e0567f25e"
-MADE_UP_LANE_B = "346751fbfa659f69a74c91a6eebe15e97cc0206a35a276bf358e37b487233a3e"  # --host 127.0.0.2
-MADE_UP_WEB = "e2ca3fa68bb3c50190a98fa8cc33f704793d64350452326e15f6c39bb5f302cf"  # 192.168.1.20, Play.Example.org:8443
-MADE_UP_LOBBY_ANY = "b5313cd2bf11cafcf66eca7029b62d4dfa10971121ae5170d688d28d560be98e"  # 127.0.0.2, LOBBY_MAP_ANY, MAPS
+MADE_UP_LANE_B = "48adf42d2782fcbf4ebffcf23c5497fe1eb13465b2c9df3ef9906e138c2ae6a1"  # --host 127.0.0.2
+MADE_UP_WEB = "167fe96dce5a000ec6b04d89b40a52ac44c2eb6eac92531ecca7afbe843925f9"  # 192.168.1.20, Play.Example.org:8443
+MADE_UP_LOBBY_ANY = "93415e9102b9915fc4e5a17325c86fc57e1a596ed75e0ad5dc83bd634ae2c8c9"  # 127.0.0.2, LOBBY_MAP_ANY, MAPS
 # a maps folder's packages (localepatch_test.go's maps): CM_Ring, and one named like MM_Map_v3 (its line is the first's)
 MAPS = [("CM_Ring", "Test Ring"), ("mm_map_V3", "Not this")]
 SYNTH_LOCALE_SHA = "528ce9623b3b1542fa600b1036136a3c39e8e68bb586019fb3a6d3c2f6374832"
-SYNTH_LOCAL = "476b2381284742ffbb866771e082af47beb87900b1567f35fc15c2cf3d420a7f"  # the synthetic game, 127.0.0.1
+SYNTH_LOCAL = "09e70b3d8ae98c467044606da14a39f5c8045d1b5ccef1a8edd43f81125d1bb6"  # the synthetic game, 127.0.0.1
 GAME_854 = {  # build 854's Locale.package
-    ("127.0.0.1", None): "44bb48de9bd21aefa1886d8ea70e672e27d57c0ad1b3abfa53b6f3e35f690024",
-    ("127.0.0.2", None): "0c36b450e08e6c92431236b9312431d3e093dce51c1f7cc6b700903edcb3cbb3",
-    ("203.0.113.7", "dawngate.example.org"): "ce31788c2878cd41273039ac60765a9561bb51f6bdf70745b30c5dd783f64b97",
+    ("127.0.0.1", None): "d5dc6938666a43ab80eb2c3000fe474a0c205982fe71e1bc446337f91e68953f",
+    ("127.0.0.2", None): "47b26aed6c9a6c2e4a04c7b20e5447e1051533dc159692034eb09291bfa9c951",
+    ("203.0.113.7", "dawngate.example.org"): "4eece808fe745e3bad7d43d71449458af5a302c2052fd50b5313fc1da54125d2",
 }
 # synthgame.Locale() (server/internal/setup/testgame/synthgame): one RefPack-compressed table, no login table
 SYNTH_LOCALE = bytes.fromhex(
@@ -116,10 +116,12 @@ class SameAsGo(Temp):
                 text = pkg.read(e)
                 for lid, line in tabs[e.instance].items():
                     self.assertEqual(text.count(f"0x{lid:08x} {line}\r\n".encode()), 1, (hex(e.instance), lid))
-                if e.instance in (pl.FE_LEADERBOARD, pl.FE_MATCH_TYPE):  # LBMIN: every line replaced in place
+                if e.instance == pl.FE_MATCH_TYPE:  # LBMIN: every line replaced in place
                     self.assertNotIn(pl.ADDED_COMMENT.encode(), text)
+                if e.instance == pl.FE_LEADERBOARD:  # LBMIN's in place; RATINGSHOW2's column header appended
+                    self.assertTrue(text.endswith(pl.ADDED_COMMENT.encode() + b"\r\n0x5e70d001 Rating\r\n"), text[-80:])
             lb = [pkg.read(e) for e in pkg.entries if e.instance == pl.FE_LEADERBOARD]
-            self.assertIn(b"0x00000101 Rank is based upon PvP and custom games. Must have at least 10 games played.\r\n",
+            self.assertIn(b"0x00000101 Rank is based upon skill rating from balanced PvP and custom games. Must have at least 10 rated games.\r\n",
                           lb[0])
             # MAPPICK-label: the lobby's table is the shipped one (no final line end) plus the appended map line
             shipped = pl.find_table(dbpf.Package(path), pl.FE_CUSTOM_GAME_LOBBY)

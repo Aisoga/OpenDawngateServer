@@ -30,7 +30,9 @@
      BUILD.txt (commit, Go version, every file's SHA-256). The compiled classes of the server picker, the bot check box,
      the chat rooms opened by default and the After Action Review's tabs are checked to be in the SWF tags Start-Client.exe
      embeds (picker_tags.hex, matchoptions_tags.hex, chatrooms_tags.hex, aftaction_tags.hex, itemshop_tags.hex,
-     collection_tags.hex), and those in
+     collection_tags.hex, lobby_tags.hex, leaderboard_tags.hex: the Collection's class, the lobby's ready check and the
+     Leaderboard's Rating column go into the same movie),
+     and those in
      the built Start-Client.exe; the notices name their AGPL sources and the development-only tools (the Flex SDK compiler, FFDec), which aren't shipped.
      The folder <Out>\<Name>-linux\ (unless -NoLinux): start-server, the same host\ files, dawngate.service (the
      systemd unit) and README.txt (re\scripts\release\README-Linux.txt), LICENSE.txt, THIRD-PARTY-NOTICES.txt (for
@@ -187,6 +189,8 @@ $chatRooms = Test-UiClass 'the chat rooms opened by default' 'chatrooms_tags.hex
 $aarTabs = Test-UiClass "the After Action Review's tabs" 'aftaction_tags.hex' 'aftaction' 'AfterActionTabs'
 $shopRefund = Test-UiClass "the shop's inline refund" 'itemshop_tags.hex' 'itemshop' 'ShopRefund'
 $collection = Test-UiClass "the Collection's items" 'collection_tags.hex' 'collection' 'CollectionItems'
+$lobbyReady = Test-UiClass "the custom lobby's ready check" 'lobby_tags.hex' 'lobby' 'LobbyReady'
+$leaderboardRating = Test-UiClass "the Leaderboard's Rating column" 'leaderboard_tags.hex' 'leaderboard' 'LeaderboardRating'
 $tagsBytes = $picker.Bytes; $firstLine = $picker.First
 # start-server links the setup with the tags too (only Start-Client.exe uses them); its notice names them if it holds them
 $linuxPicker = $Linux -and ([IO.File]::ReadAllText((Join-Path $ldir 'start-server'), $latin1)).Contains($firstLine)

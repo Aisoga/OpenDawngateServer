@@ -11,8 +11,9 @@ friends, recent players and blocked lists.</li>
 <li>Logs of the connections: your internet address, your login name and what the game asked for (no password), kept
 as long as the operator sets (30 days by default).</li>
 <li>For the cap on new accounts: how many accounts each internet address made today (no names).</li>
+{{if .Issues}}<li>Your claims on the issue tracker (<a href="/issues">Check the rules</a>): whether a guess looks correct or wrong, your note and the YouTube links (only the video ids and times), when you made and changed them. Every player logged into the tracker sees them with your display name. They are deleted with your account and are part of your data download.</li>{{end}}
 </ul>
 <p>You can <a href="/account/data">download your data</a> or <a href="/account/delete">delete your account</a> on
-this site. The site sets one cookie, only to protect its forms; it has no tracking and no script.</p>
+this site. The site sets one cookie, only to protect its forms{{if .Issues}}, and while you are logged into the issue tracker a second one that keeps you logged in (at most 30 days){{end}}; it has no tracking and no script.</p>
 {{end}}
 {{end}}

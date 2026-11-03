@@ -24,5 +24,6 @@ func userInfoChanged(r *Request) {
 	}
 	acct := sess.Account
 	r.Notify(ComponentUserSessions, NotifyUserSessionExtendedDataUpdate, "UserSessionExtendedDataUpdate",
-		ExtendedDataUpdateNotification(sess.Persona.ID, acct.UserInfo, progress.Wins(acct.Stats[progress.PlayerStats])))
+		ExtendedDataUpdateNotification(sess.Persona.ID, acct.UserInfo, progress.Wins(acct.Stats[progress.PlayerStats]), RatingValue(acct),
+			r.Server.ShownValue(acct)))
 }

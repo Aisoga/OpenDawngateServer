@@ -82,6 +82,17 @@ Patches (each checks the original bytes first):
            LevelId in the lobby's own table, which the setup writes into AA_Server.package (patch_locale.py) for every
            installed map; a LevelId without a line gives an empty name (SPStringManager's empty string), no assert.
            SM_Map_v5 keeps its own entry.
+  rating   Since RATINGSHOW1, in every profile (--rating off leaves it out): the main menu's profile box has EA's field
+           mcProfile.m_glickoText (MainMenuUI.gfx; shown when SetExtendedData's second argument isn't null), and both
+           C++ callers (MainMenuUI_OnUserExtendedDataChanged 0x004DE0D0, MainMenuUI_BindExtFunctions 0x004DFFC0) pass
+           an empty wide string (0x0199D2A0) as that text. Each now calls a cave in .text's slack after the map-name
+           cave (RATING_CAVE) for the text instead: the local user's extended-data value DMAP[0x00070037] (Blaze user
+           of the local Blaze id, BlazeUser_GetExtendedDataValue 0x00C8B560, as BlazePlatform_GetUserExtendedInfo
+           0x00AD4F90 reads 0x34-0x36), and when it is above 0 the text L"Rating <value>" (built in .tls's slack after
+           the map key), else the empty string as shipped. The server sends 0x00070037 only when players are to see
+           their rating (dgserver --show-rating), so the switch stays the server's. Sites: 0x004DE1C9 (16 bytes: the
+           value's type 7 and pointer stores) and 0x004E0661 (mov ebp,7, whose ebp/ebx the caller stores as type and
+           pointer); the cave keeps every register but ebx (the text) and ebp (7 at the second site).
 
 Profiles (roadmap A5, docs/RUNNING_THE_CLIENT.md "Playing across machines (A5)"):
   local    (default) everything above; redirector host 127.0.0.1 (or a loopback address given as [host]
@@ -243,6 +254,87 @@ def map_cave_code():
 MAP_CAVE_CODE = map_cave_code()
 MAP_MISS_NEW = b"\xe9" + ((MAP_CAVE - (MAP_MISS + 5)) & 0xFFFFFFFF).to_bytes(4, "little")  # jmp MAP_CAVE
 
+# RATINGSHOW1: the profile box's rating text. Both SetExtendedData callers build GFx values {0, type, value} of 0x18
+# bytes: wins (type 3, int) and the rating (type 7, a wide string: the empty string 0x0199D2A0).
+RATING_SITE1 = 0x004DE1C9                 # MainMenuUI_OnUserExtendedDataChanged: mov [esp+0x58],7; mov [esp+0x5c],empty
+RATING_SITE1_ORIG = bytes.fromhex("c744245807000000" "c744245ca0d29901")
+RATING_SITE2 = 0x004E0661                 # MainMenuUI_BindExtFunctions: mov ebp,7 (stored at 0x004E067A, ebx at 0x004E067E)
+RATING_SITE2_ORIG = bytes.fromhex("bd07000000")
+RATING_NEXT2 = bytes.fromhex("8954244c" "c744245003000000" "89442454" "89542464" "896c2468" "895c246c")  # unchanged
+EMPTY_WSTRING = 0x0199D2A0                # the shared empty wide string both callers pass
+PLATFORM_PTR = 0x01BB6154                 # SporeOnline_GetPlatform (0x00AD3800) returns [0x01BB6154]
+FIND_USER = 0x00C8AFD0                    # UserManager_FindUserByBlazeId (ecx = user manager; id lo, hi), ret 8
+GET_EXT_VALUE = 0x00C8B560                # BlazeUser_GetExtendedDataValue (ecx = user; component, key, &int64), ret 0xC
+RATING_KEY = 0x37                         # DMAP[0x00070037] (component 7 << 16 | 0x37): the rating to show
+RATING_CAVE = 0x011AB170                  # in .text's slack after the map-name cave (0x011AB140, 45 bytes)
+RATING_LABEL = "Rating "                  # before the number
+RATING_LABEL_VA = 0x01C00080              # in .tls's slack after the map key (0x01C00040-0x01C0007F)
+RATING_LABEL_ROOM = 0x10
+RATING_TEXT = 0x01C00090                  # the text the cave builds backwards from its NUL at RATING_TEXT_END
+RATING_TEXT_ROOM = 0x30
+RATING_TEXT_END = RATING_TEXT + RATING_TEXT_ROOM - 2
+
+
+def rel32(frm, to):
+    """The rel32 of a jmp/call whose next instruction is at `frm`."""
+    return ((to - frm) & 0xFFFFFFFF).to_bytes(4, "little")
+
+
+def rating_cave_code():
+    """The rating cave. Entry RATING_CAVE (the second site): mov ebp,7, then the text routine at RATING_CAVE+5 (the
+    first site): ebx = L"Rating <n>" when the local user's DMAP[0x00070037] is above 0, else the empty string; every
+    other register is kept (pushad, ebx written into its slot)."""
+    a = RATING_CAVE
+    c = bytearray()
+
+    def emit(hexs, *tail):
+        c.extend(bytes.fromhex(hexs))
+        for t in tail:
+            c.extend(t)
+
+    emit("bd07000000")                                        # mov ebp,7        (the second site's instruction)
+    emit("60")                                                # text: pushad
+    emit("6a00" "6a00")                                       # push 0; push 0   ; [esp] = the int64 value
+    emit("bb", EMPTY_WSTRING.to_bytes(4, "little"))           # mov ebx,empty
+    emit("8b35", PLATFORM_PTR.to_bytes(4, "little"))          # mov esi,[platform]
+    emit("8b06" "8bce" "ff90e4000000")                        # mov eax,[esi]; mov ecx,esi; call [eax+0xE4] ; edx:eax = local Blaze id
+    emit("8b4e18" "8b8998040000")                             # mov ecx,[esi+0x18]; mov ecx,[ecx+0x498]    ; the user manager
+    emit("85c9" "74")                                         # test ecx,ecx; jz done
+    j1 = len(c); c.append(0)
+    emit("52" "50" "e8")                                      # push edx; push eax; call FindUserByBlazeId
+    c.extend(rel32(a + len(c) + 4, FIND_USER))
+    emit("85c0" "74")                                         # test eax,eax; jz done
+    j2 = len(c); c.append(0)
+    emit("8bc8" "54")                                         # mov ecx,eax; push esp (&value)
+    emit("6a", bytes([RATING_KEY]))                           # push 0x37
+    emit("6a07" "e8")                                         # push 7; call GetExtendedDataValue
+    c.extend(rel32(a + len(c) + 4, GET_EXT_VALUE))
+    emit("84c0" "74")                                         # test al,al; jz done
+    j3 = len(c); c.append(0)
+    emit("8b0424" "85c0" "7e")                                # mov eax,[esp]; test eax,eax; jle done
+    j4 = len(c); c.append(0)
+    emit("bb", RATING_TEXT_END.to_bytes(4, "little"))         # mov ebx,the NUL
+    emit("6a0a" "59")                                         # push 10; pop ecx
+    d = len(c)
+    emit("33d2" "f7f1" "83c230" "4b4b" "668913" "85c0" "75")  # d: xor edx,edx; div ecx; add edx,'0'; ebx-=2; [ebx]=dx; jnz d
+    c.append((d - (len(c) + 1)) & 0xFF)
+    emit("6a", bytes([len(RATING_LABEL)]), bytes.fromhex("59"))  # push len; pop ecx
+    p = len(c)
+    emit("4b4b" "668b044d", (RATING_LABEL_VA - 2).to_bytes(4, "little"))  # p: ebx-=2; mov ax,[ecx*2+label-2]
+    emit("668903" "e2")                                       # mov [ebx],ax; loop p
+    c.append((p - (len(c) + 1)) & 0xFF)
+    done = len(c)
+    for j in (j1, j2, j3, j4):
+        c[j] = done - (j + 1)
+    emit("83c408" "895c2410" "61" "c3")                       # done: add esp,8; mov [esp+0x10],ebx; popad; ret
+    return bytes(c)
+
+
+RATING_CAVE_CODE = rating_cave_code()
+RATING_SITE1_NEW = (b"\xe8" + rel32(RATING_SITE1 + 5, RATING_CAVE + 5)   # call text
+                    + bytes.fromhex("895c245c" "6a07" "59" "894c2458"))  # mov [esp+0x5c],ebx; push 7; pop ecx; mov [esp+0x58],ecx
+RATING_SITE2_NEW = b"\xe8" + rel32(RATING_SITE2 + 5, RATING_CAVE)       # call mov ebp,7 + text
+
 
 def wide(text):
     """A NUL-terminated UTF-16LE string."""
@@ -310,7 +402,7 @@ def check_data_suffix(suffix):
 
 
 def patch_bytes(orig, modulus, profile="local", host=None, server_host=None, client_bind=None, data_suffix=None,
-                laa=True, preload=True, maptable=True):
+                laa=True, preload=True, maptable=True, rating=True):
     """Patch a copy of the untouched exe's bytes; returns (patched bytes, summary text)."""
     server, cave_address = resolve_profile(profile, host, server_host, client_bind)
     check_data_suffix(data_suffix)
@@ -448,6 +540,31 @@ def patch_bytes(orig, modulus, profile="local", host=None, server_host=None, cli
         data[off(MAP_KEY):off(MAP_KEY) + MAP_KEY_ROOM] = wide(MAP_KEY_TEXT).ljust(MAP_KEY_ROOM, b"\0")
         data[off(MAP_MISS):off(MAP_MISS) + len(MAP_MISS_NEW)] = MAP_MISS_NEW
         summary += f"; every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at {MAP_CAVE:#010x})"
+
+    # --- RATINGSHOW1: the profile box's rating text from the local user's DMAP[0x00070037]
+    for va, want, what in ((RATING_SITE1, RATING_SITE1_ORIG, "the extended-data handler's rating value"),
+                           (RATING_SITE2, RATING_SITE2_ORIG + RATING_NEXT2, "the main menu bind's rating value")):
+        expect(va, want, what)
+    if rating:
+        if pe.OPTIONAL_HEADER.DllCharacteristics & 0x40 or not pe.FILE_HEADER.Characteristics & 0x1:
+            raise PatchError("exe is relocatable (ASLR or relocations); absolute addresses in the cave would break")
+        if not (MAP_CAVE + len(MAP_CAVE_CODE) <= RATING_CAVE
+                and RATING_CAVE + len(RATING_CAVE_CODE) <= IMAGE_BASE + text.VirtualAddress + text.SizeOfRawData):
+            raise PatchError("the rating cave doesn't fit into .text's slack (wrong build?)")
+        if not (MAP_KEY + MAP_KEY_ROOM <= RATING_LABEL_VA and RATING_TEXT + RATING_TEXT_ROOM <= TLS_VA + TLS_RAW
+                and 2 * (len(RATING_LABEL) + 10) + 2 <= RATING_TEXT_ROOM):
+            raise PatchError("the rating text doesn't fit into .tls's slack")
+        expect(RATING_CAVE, bytes(len(RATING_CAVE_CODE)), "unused slack after the map-name cave")
+        expect(RATING_LABEL_VA, bytes(RATING_LABEL_ROOM + RATING_TEXT_ROOM), "unused slack after the map key")
+        for sec, size in ((text, text.SizeOfRawData), (tls, TLS_RAW)):  # map the slack (VirtualSize = SizeOfRawData)
+            vsize_at = sec.get_file_offset() + 8
+            data[vsize_at:vsize_at + 4] = size.to_bytes(4, "little")
+        data[off(RATING_CAVE):off(RATING_CAVE) + len(RATING_CAVE_CODE)] = RATING_CAVE_CODE
+        label = RATING_LABEL.encode("utf-16-le")
+        data[off(RATING_LABEL_VA):off(RATING_LABEL_VA) + RATING_LABEL_ROOM] = label.ljust(RATING_LABEL_ROOM, b"\0")
+        data[off(RATING_SITE1):off(RATING_SITE1) + len(RATING_SITE1_NEW)] = RATING_SITE1_NEW
+        data[off(RATING_SITE2):off(RATING_SITE2) + len(RATING_SITE2_NEW)] = RATING_SITE2_NEW
+        summary += f"; the profile box shows the rating the server sends (rating cave at {RATING_CAVE:#010x})"
     return bytes(data), summary
 
 
@@ -491,6 +608,15 @@ def describe(data):
         out["maptable"] = "on"
     else:
         out["maptable"] = "unknown"
+    site1, site2 = at(RATING_SITE1, len(RATING_SITE1_ORIG)), at(RATING_SITE2, len(RATING_SITE2_ORIG))
+    if site1 == RATING_SITE1_ORIG and site2 == RATING_SITE2_ORIG:
+        out["rating"] = "as-shipped"
+    elif (site1 == RATING_SITE1_NEW and site2 == RATING_SITE2_NEW
+          and at(RATING_CAVE, len(RATING_CAVE_CODE)) == RATING_CAVE_CODE
+          and at(RATING_LABEL_VA, 2 * len(RATING_LABEL)) == RATING_LABEL.encode("utf-16-le")):
+        out["rating"] = "on"
+    else:
+        out["rating"] = "unknown"
     return out
 
 
@@ -517,6 +643,8 @@ def main(argv):
                     help="SNDBANK: preload every player index's shaper (and its sound banks); on by default")
     ap.add_argument("--maptable", choices=("on", "off"), default="on",
                     help="MAPTABLE: name every map by its LevelId's line in FE_CustomGameLobby; on by default")
+    ap.add_argument("--rating", choices=("on", "off"), default="on",
+                    help="RATINGSHOW1: the main menu's profile box shows the rating the server sends; on by default")
     args = ap.parse_args(argv[1:])
     exe = os.path.abspath(args.exe)
     if os.sep + "ia_" in exe or "/ia_" in exe:
@@ -539,7 +667,7 @@ def main(argv):
     try:
         data, summary = patch_bytes(untouched, modulus, args.profile, args.host, args.server_host, args.client_bind,
                                     args.data_suffix, laa=args.laa == "on", preload=args.preload == "on",
-                                    maptable=args.maptable == "on")
+                                    maptable=args.maptable == "on", rating=args.rating == "on")
     except PatchError as e:
         sys.exit(str(e))
     with open(exe, "wb") as f:

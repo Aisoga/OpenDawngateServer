@@ -10,6 +10,7 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 - [Ports](#ports)
 - [Linux](#linux)
 - [Limits](#limits)
+- [The issue tracker's API](#the-issue-trackers-api)
 
 ## Start-Server.ini
 
@@ -36,6 +37,7 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 | `web_domain` | empty | Your domain name for the website, for a free Let's Encrypt certificate. Needs TCP 443 forwarded. |
 | `web_email` | empty | An e-mail address for Let's Encrypt (optional). |
 | `web_proxy` | `off` | `on` puts the website behind a reverse proxy such as nginx that already serves HTTPS on port 443: the website then listens on `127.0.0.1:<web_port>` over plain HTTP, for the proxy only, and has no certificate of its own. Needs `web_domain` and a `web_port` above 1023 (for example `8095`); `web_email` isn't used. See [The website behind nginx](hosting.md#the-website-behind-nginx). |
+| `issues` | `off` | `on` adds the issue tracker to the website: the pages *Check the rules* at `/issues`, where players log in with their game account and say whether the server's guesses about the original game look correct or wrong, with a note and up to three YouTube links (only the video ids and times are stored; the server never contacts YouTube). Needs `web_port`. |
 | `client_package` | `off` | `on` hands out the game client for your server: the Windows release of the server's own version, with a `Start-Client.ini` that preselects your server and trusts its key, at `/dawngate/download/OpenDawngate-<name>.zip` and on the website's **Download** page. The server downloads that release from github.com once and keeps it in `Dawngate-Data\data\client-package`. Needs the tunnel. See [Hand out a ready package](hosting.md#hand-out-a-ready-package). |
 | `folder` | `Dawngate-Data` | Where the game copies, certificates, accounts and logs go: relative to the program's folder, or a full path. |
 | `zip` | empty | Where `Dawngate.zip` is, if it's not next to the program or in your Downloads folder. Only needed for setup and repairs. Set, it turns the download off. |
@@ -57,6 +59,8 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 | `chat_rooms` | `General, Looking for group, Matchmaking:queue:open` | The public chat rooms, comma-separated in the list's order: a name, optionally `:<capacity>` (2-1000, default 50), `:queue` (the room that gets the PvP queue's news, at most one) and `:open` (every player joins it by itself at each login, as a minimised tab; closed, it stays closed until the next login). `none` = no rooms. See [Chat rooms](hosting.md#chat-rooms). |
 | `match_record` | `off` | `on` records every match: a file per match in its folder `Dawngate-Data\logs\hosts\<match>\` (`matchrec_<match>_<start time>.txt`: the seats, every player's commands, every player's position and state five times a second, the events; about 350 KB per match minute, at most 64 MB a match). See [Recording matches](hosting.md#recording-matches). |
 | `match_history_names` | `on` | The match history shows every player's name. `off`: each player sees only their own name (everyone else's games without names) and only their own list of games. See [The match history](hosting.md#the-match-history). |
+| `rating_leaderboard` | `on` | The main menu's Leaderboard ranks the players by skill rating from rated games (PvP and custom games with a winner and as many human players on each team, at least one each). `off`: by wins in every PvP and custom game, as before. The ratings are kept either way. The Leaderboard screen's text describes the rating whatever this key says. See [The Leaderboard](hosting.md#the-leaderboard). |
+| `show_rating` | `on` | Each player sees their own skill rating in the main menu's profile box ("Rating 1532", above their name) once they have as many rated games as the Leaderboard needs (10), and the Leaderboard has a Rating column with the rating of every player listed who has that many, and a custom game's lobby shows each such team player's rating after their wins. `off`: no rating is shown (the Leaderboard keeps its four columns). The ratings are kept, and the custom lobby's team balancing uses them, either way. See [The Leaderboard](hosting.md#the-leaderboard). |
 
 ## Start-Server.exe options
 
@@ -253,12 +257,15 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 | `--mm-bots=false` | on | Leave the empty seats of a queue match empty instead of filling them with bots. |
 | `--custom-bots` | off | Fill a custom game's empty seats with bots. In shaper select the bots pick their shapers and roles after the players have chosen, as in every game with bots. |
 | `--custom-autostart` | 0 (off) | Start a custom game by itself this long (e.g. `5s`) after every human in it has moved to the spectators. The lobby offers no Start Game without players on the teams, so this is how a game of bots alone (with `--custom-bots`) starts, for example to watch two bot teams play each other. |
-| `--leaderboard-min-games N` | `10` | The fewest games a player needs to appear on the Leaderboard. Only PvP and custom games count, practice games don't. The Leaderboard screen's text says 10 whatever this flag is (the number is written into the players' game copies by their setup), so a server that changes it makes the screen's number wrong. |
+| `--leaderboard-min-games N` | `10` | The fewest games a player needs to appear on the Leaderboard: rated games (with `--rating-leaderboard off`: PvP and custom games). Practice games never count. The same number of rated games shows a player's rating in their profile box (`--show-rating`). The Leaderboard screen's text says 10 whatever this flag is (the number is written into the players' game copies by their setup), so a server that changes it makes the screen's number wrong. |
+| `--rating-leaderboard on\|off` | `on` | The Leaderboard by skill rating (`on`) or by wins (`off`); Start-Server.ini's `rating_leaderboard`. The screen's text describes the rating either way (it is written into the players' game copies by their setup). |
+| `--show-rating on\|off` | `on` | Players see their own skill rating in the main menu's profile box and every listed player's in the Leaderboard's Rating column and on a custom lobby's team tiles (`on`, from `--leaderboard-min-games` rated games) or none (`off`); Start-Server.ini's `show_rating`. Needs the players' game copies set up by this release (an older copy shows no rating). |
 | `--kill-switches <names>` | `WalletTopUp` | Client features to switch off, comma-separated: `Matchmaking`, `WalletTopUp` (the add-funds button), `EUGameServers`, `PracticeSoloGames`, `FTUESoloGames`, `PurchaseWithWaypoints`, `PracticeGroupGames`, `CustomGames`, `ForwardRenderer`. `none` switches nothing off. |
 | `--broadcast <text>` | none | One announcement, in addition to `broadcast.txt`. |
 | `--broadcast-flags N` | `4` | Where announcements show by default (see [Announcements](hosting.md#announcements)). |
 | `--chat-rooms <rooms>` | `General, Looking for group, Matchmaking:queue:open` | The public chat rooms, as the key `chat_rooms`. |
 | `--match-record on\|off` | `off` | Record every match, as the key `match_record`. |
+| `--issues on\|off` | `off` | The issue tracker on the website (`/issues`), as the key `issues`. |
 | `--halloween on\|off` | `off` | The map's Halloween decoration in every match, as the key `halloween`. |
 | `--map <name>` | `SM_Map_v5` | The map of every match, as the key `map`. `--level` is the same option. |
 | `--custom-maps <names>` | none | The maps custom games may pick by a name tag, as the key `custom_maps`; `none` = none. |
@@ -342,3 +349,34 @@ These limits apply on public servers, or with `--limits on`.
 | Match traffic per connection | 200 game messages a second (bursts of 600); a connection that keeps exceeding it is closed |
 
 A player who hits a limit sees a *LOGIN ERROR* or "no game server" message and can try again shortly. A household fits within the limits easily. A LAN party of ten players behind one internet address may not.
+
+## The issue tracker's API
+
+With `issues = on` the website serves a JSON API for a reviewer under `https://<server address>/api/`. Every request
+sends a token made on the admin page's *API tokens*:
+
+```
+Authorization: Bearer <token>
+```
+
+The API reads no cookies. A request without a valid token (none, malformed, unknown or revoked) gets
+`401 {"error": "a valid API token is needed (Authorization: Bearer <token>)"}`, the same answer whatever the reason.
+After 5 invalid tokens from one address in a row, that address waits 5 minutes, doubling up to 24 hours, also with a
+valid token (`429`, with `Retry-After`); a quiet day clears it. Each token may send 60 requests at once, then one a
+second. Bodies are JSON (`Content-Type: application/json`), at most 8 KB. Errors are `{"error": "<text>"}`.
+
+| Request | What |
+|---|---|
+| `GET /api/issues` | Every listed issue with its claims, and `now`, the server's time. `?state=open`, `confirmed`, `disproven` or `closed` filters by state; `?since=<RFC 3339 time>` returns only the issues changed at or after it (pass the last answer's `now`); `?withdrawn=1` adds the issues no longer listed. |
+| `GET /api/issues/<id>` | One issue. |
+| `POST /api/issues/<id>/verdict` | `{"verdict": "confirmed", "note": "...", "claims": [12, 15]}`. `verdict` is `confirmed`, `disproven` or `closed` (each needs a `note` of up to 2,000 characters, which players read on the closed issue) or `reopen` (the note is optional). `claims` names the issue's claims the verdict rests on. An issue that has a verdict must be reopened first (`409`). The answer is `{"done": "<what happened>", "issue": {…}}`. |
+
+An issue has `id`, `area`, `title`, `assumed`, `lookFor`, `top`, `order`, `listed`, `state`, `status` (for an open
+issue computed from its claims: `needs-verification`, `needs-video`, `leaning-correct`, `leaning-wrong`, `disputed`),
+`statusLabel`, `verdict` (`note`, `at`, `by`: `api:<token name>` or `admin`), `updated`, `tally` (the visible
+claims' weights and counts per side, the timestamped ones, videos, hidden claims) and `claims`, best evidence first.
+A claim has `id`, `persona` (the player's display name), `stance` (`correct` or `wrong`), `note` (the player's plain
+text), `videos` (each `url`, the canonical YouTube link, `video`, `seconds`, -1 without a time, and `timestamp`),
+`weight` (1 a note, 2 a video, 3 a video with its time), `created`, `updated` and `hidden`. Times are RFC 3339 in
+UTC. The API never shows login names, e-mail addresses or account numbers. Every verdict and reopening is in the
+admin page's audit log under the token's name.

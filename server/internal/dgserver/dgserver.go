@@ -33,6 +33,7 @@ import (
 	"dawngate/server/internal/limits"
 	"dawngate/server/internal/logging"
 	"dawngate/server/internal/matchmaker"
+	"dawngate/server/internal/rating"
 	"dawngate/server/internal/redirector"
 	"dawngate/server/internal/setup/exepatch"
 	"dawngate/server/internal/setup/gamecontent"
@@ -80,10 +81,14 @@ type config struct {
 	testLoginErrors      []uint16           // test aid: the n-th login's error reply (--test-login-errors)
 	testHomeJSON         string             // test aid: home.json from this file (--test-home-json)
 	testHistorySeed      string             // test aid: N[:<login name>] made-up matches in an empty history (--test-history-seed)
+	testRating           string             // test aid: <login name>=<rating>[,...] set at the start (--test-rating)
 	mmBots               bool               // B10d: bots in a matchmade game's open seats (--mm-bots, on by default)
 	leaderboardMinGames  int                // LBFIX: the fewest games for the Leaderboard (--leaderboard-min-games)
+	ratingLeaderboard    bool               // RATING1: the Leaderboard ranks by skill rating (--rating-leaderboard, on by default)
+	showRating           bool               // RATINGSHOW1: players see their rating in the profile box (--show-rating, on by default)
 	customBots           bool               // B15: bots in a custom game's open seats (--custom-bots)
 	customAutoStart      time.Duration      // BOTS2c: a custom game whose humans all spectate starts by itself
+	testRefuseStart      bool               // READY2b: each custom game's first start refused (--test-refuse-start, a test aid)
 	level                string             // MAPLEVEL1: the level hosted games load (--map, --level; "" = blaze.HostedLevel)
 	customLevels         []string           // MAPPICK: the levels a custom game's name tag may pick (--custom-maps)
 	mapsDir              string             // MAPED2b: the maps folder whose packages are playable levels (--maps)
@@ -91,6 +96,7 @@ type config struct {
 	mapTrust             blaze.MapTrust     // MAPGUARD: the clients without the tunnel that may play MM_Map_v3 (--trust-maps)
 	tunnelRelease        string             // MAPGUARD: --tunnel-client's release name in its session hello (--tunnel-release, a test aid)
 	halloween            bool               // HOLIDAY1: the map's Halloween decoration in every hosted match (--halloween)
+	issues               bool               // M22: the issue tracker's pages for players on the website (--issues)
 	shaperSelect         blaze.ShaperSelect // D3-live step 4: --shaper-select, --free-rotation, --shaper-timers
 
 	// MAPED-GUARD: the host copy's hashes of the maps folder's archives (mapVersions) and their start-up lines, the
@@ -636,8 +642,14 @@ func start(cfg config) (*instance, error) {
 	bz.Accounts = cfg.accounts
 	bz.MMBots = cfg.mmBots
 	bz.LeaderboardMinGames = cfg.leaderboardMinGames
+	bz.RatingLeaderboard = cfg.ratingLeaderboard
+	bz.ShowRating = cfg.showRating
 	bz.CustomBots = cfg.customBots
 	bz.CustomAutoStart = cfg.customAutoStart
+	bz.TestRefuseStart = cfg.testRefuseStart
+	if cfg.testRefuseStart {
+		log.Logf("stub", "TEST: each custom game's first start is refused (--test-refuse-start, a test aid)")
+	}
 	bz.Level = cfg.level
 	bz.CustomLevels = cfg.customLevels
 	bz.MapTrust, bz.Release = cfg.mapTrust, version.String()
@@ -696,9 +708,27 @@ func start(cfg config) (*instance, error) {
 	}
 	log.Logf("stub", "match history (MHIST2): games.json and game.json beside the home page, player names %s (--match-history-names)",
 		onOff(cfg.historyNames))
+	if bz.Store != nil { // RATING1: the ratings from the stored matches, once (after the test aid's made-up ones)
+		if rep, err := rating.Seed(bz.Store, bz.Now()); err != nil {
+			log.Logf("stub", "skill rating: the seed from the stored matches FAILED (ratings as they are): %v", err)
+		} else {
+			log.Logf("stub", "skill rating (RATING1): %s", rep)
+		}
+		if cfg.testRating != "" { // RATING2's test aid (testrating.go), after the seed
+			if note, err := applyTestRating(bz.Store, cfg.testRating, bz.Now()); err != nil {
+				log.Logf("stub", "TEST: --test-rating %s: %v", cfg.testRating, err)
+			} else {
+				log.Logf("stub", "TEST: skill rating: %s (--test-rating, a test aid)", note)
+			}
+		}
+	}
+	log.Logf("stub", "leaderboard: %s, at least %d %s (--rating-leaderboard %s, --leaderboard-min-games)", leaderboardNote(cfg.ratingLeaderboard),
+		cfg.leaderboardMinGames, leaderboardGames(cfg.ratingLeaderboard), onOff(cfg.ratingLeaderboard))
+	log.Logf("stub", "profile box: %s (--show-rating %s)", profileRatingNote(cfg.showRating, cfg.leaderboardMinGames), onOff(cfg.showRating))
 	if pkg != nil {
 		httpSrv.Download, cfg.web.download = webDownload(pkg), siteDownload(pkg)
 	}
+	log.Logf("stub", "issue tracker (M22): %s", syncIssues(cfg, st, bz.Now()))
 	if cfg.web.port > 0 { // the website, before the HTTP port serves (its redirects)
 		if in.website, err = startWebsite(cfg, log, st, in.limits, websiteStatus(bz, in.hosts), websiteAdmin(bz),
 			bz.EndAccountSessions, public,
@@ -1140,11 +1170,14 @@ func Run(args []string, h Hooks) int {
 	fs.DurationVar(&cfg.mm.MaxWait, "mm-max-wait", 0, "PvP matchmaking: the longest a player waits in the queue before it gives up (SESSION_TIMED_OUT; 0 = the client's 3 h)")
 	testLoginErrors := fs.String("test-login-errors", "", "test aid: comma-separated 16-bit error codes (hex 0x.. or decimal); the n-th login gets the n-th as its error reply (0 = answered as usual), later logins are answered as usual; e.g. 0x0C,0x4072,0")
 	fs.StringVar(&cfg.testHistorySeed, "test-history-seed", "", "test aid: N[:<login name>]: an empty match history gets N made-up matches at the start (the login's account, made without a password when missing, in every one), for looking at the history page")
+	fs.StringVar(&cfg.testRating, "test-rating", "", "test aid: <login name>=<rating>[,...]: each account (made without a password when missing) gets this skill rating at the start, after the seed from the stored matches")
 	fs.StringVar(&cfg.testHomeJSON, "test-home-json", "", "test aid: answer the home page's home.json with this file's bytes, read anew at every request (the live data while it can't be read)")
 	fs.BoolVar(&cfg.mmRefuse, "mm-refuse", false, "PvP matchmaking test aid: refuse every startMatchmaking (GAMEMANAGER_ERR_INVALID_MATCHMAKING_CRITERIA)")
 	fs.BoolVar(&cfg.mmBots, "mm-bots", true, "PvP matchmaking with match hosts: a game that starts with open seats (after --mm-fill-after) gets bots in them, up to --mm-team-size a team (B10d); --mm-bots=false leaves them empty")
 	discordOpts := addDiscordFlags(fs)
-	fs.IntVar(&cfg.leaderboardMinGames, "leaderboard-min-games", blaze.LeaderboardMinGames, "the main menu's Leaderboard lists the accounts with at least this many PvP and custom games (the screen says 10)")
+	fs.IntVar(&cfg.leaderboardMinGames, "leaderboard-min-games", blaze.LeaderboardMinGames, "the main menu's Leaderboard lists the accounts with at least this many rated games (with --rating-leaderboard off: PvP and custom games; the screen says 10)")
+	ratingBoard := fs.String("rating-leaderboard", "on", `the main menu's Leaderboard ranks by skill rating from balanced PvP and custom games (on), or by the wins of every PvP and custom game (off); the ratings are kept either way`)
+	showRating := fs.String("show-rating", "on", `players see their own skill rating in the main menu's profile box once they have --leaderboard-min-games rated games (on), or no rating (off); the ratings are kept either way`)
 	level := fs.String("map", blaze.HostedLevel, "the map every hosted game loads: SM_Map_v5 (the game's map) or MM_Map_v3 (the cut one-lane map; every player's copy and the host copy need its zz_MM_Map_v3.snap) or a map of --maps, by its name or tag; a custom game's name tag may pick another (--custom-maps)")
 	fs.StringVar(level, "level", blaze.HostedLevel, "the same as --map")
 	fs.StringVar(&cfg.mapsDir, "maps", "", "a folder of map packages (a sub-folder with map.json each) this server may host besides SM_Map_v5 and MM_Map_v3, by --map and --custom-maps with their names or tags; every player's copy and the host copy need each map's archive, which their setup compiles from the same folder")
@@ -1155,6 +1188,7 @@ func Run(args []string, h Hooks) int {
 	fs.StringVar(&cfg.tunnelRelease, "tunnel-release", "", "--tunnel-client test aid: the release name its session hello gives instead of this build's (a server with --allow-any-client lets it in as another release)")
 	customMaps := fs.String("custom-maps", "", `the maps a custom game's creator may pick with a tag at the end of the game's name ("~#mm" MM_Map_v3, "~#sm" SM_Map_v5), comma-separated, besides SM_Map_v5 and --map; "" or "none" = only those`)
 	fs.BoolVar(&cfg.customBots, "custom-bots", false, "custom games with match hosts: bots fill the open seats when the game starts (B15; off: only the lobby's players)")
+	fs.BoolVar(&cfg.testRefuseStart, "test-refuse-start", false, "test aid: each custom game's first start (its admin's advanceGameState IN_GAME) is refused, as the ready check refuses a start while a player isn't ready")
 	fs.DurationVar(&cfg.customAutoStart, "custom-autostart", 0, "a custom game whose humans all moved to the spectators starts by itself after this (e.g. 5s; 0 = off): a game of bots alone with --custom-bots, for tests")
 	fs.BoolVar(&cfg.shaperSelect.On, "shaper-select", false, "match hosts run shaper select with each player's shapers, skins, wards and announcers from its account (D3-live)")
 	freeRotation := fs.String("free-rotation", "", `shaper select: shapers in the free rotation, comma-separated ("gunman,PC_Otter,Fenmore")`)
@@ -1165,6 +1199,7 @@ func Run(args []string, h Hooks) int {
 	fs.Int64Var(&cfg.broadcastFlags, "broadcast-flags", blaze.DefaultBroadcastFlags, "display flags of the broadcast messages: 4 the main menu's marquee and shaper select, 2 a System chat line (also in a match), 1 the main menu chat's notifications; added up")
 	chatRooms := fs.String("chat-rooms", blaze.DefaultChatRooms, `the Social panel's public chat rooms, comma-separated in the Rooms tab's order: a name, optionally :<capacity> (2-1000, default 50), :queue (the room where the server posts the PvP queue's news) and :open (the client joins it by itself at every login, as a minimised tab; ROOMS3); "none" = no rooms`)
 	halloween := fs.String("halloween", "off", `the map's Halloween decoration (candles, pumpkins, jack-o'-lanterns) in every match with a match host: on or off; players see it with a player copy set up by this release (its zz_Halloween.snap)`)
+	issuesFlag := fs.String("issues", "off", `the issue tracker on the website (/issues, with --web-port): players log in with their game account and check the server's guesses about the original game against YouTube videos of it (looks correct or wrong, a note, links); on or off`)
 	matchRecord := fs.String("match-record", "off", `record every match on the match hosts: on or off (a file per match beside the host's dgsim.log: the seats, every command, every player's state five times a second, the events; at most 64 MB a match)`)
 	historyNames := fs.String("match-history-names", "on", `the match history (the home page's recent games) shows the players' names: on, or off (only each player's own name; a player sees only their own games' list and everyone's games without names)`)
 	onlineCount := fs.String("online-count", "on", `the main menu's marquee and shaper select show how many players are online ("2 players online, 1 in a match"): on or off`)
@@ -1311,12 +1346,30 @@ func Run(args []string, h Hooks) int {
 		return 2
 	}
 	cfg.halloween = halloweenOn
+	issuesOn, issuesErr := discordhook.ParseOnOff(*issuesFlag)
+	if issuesErr != nil {
+		fmt.Fprintln(os.Stderr, "dgserver: --issues:", issuesErr)
+		return 2
+	}
+	cfg.issues = issuesOn
 	namesOn, namesErr := discordhook.ParseOnOff(*historyNames)
 	if namesErr != nil {
 		fmt.Fprintln(os.Stderr, "dgserver: --match-history-names:", namesErr)
 		return 2
 	}
 	cfg.historyNames = namesOn
+	boardOn, boardErr := discordhook.ParseOnOff(*ratingBoard)
+	if boardErr != nil {
+		fmt.Fprintln(os.Stderr, "dgserver: --rating-leaderboard:", boardErr)
+		return 2
+	}
+	cfg.ratingLeaderboard = boardOn
+	ratingOn, ratingErr := discordhook.ParseOnOff(*showRating)
+	if ratingErr != nil {
+		fmt.Fprintln(os.Stderr, "dgserver: --show-rating:", ratingErr)
+		return 2
+	}
+	cfg.showRating = ratingOn
 	recordOn, recordErr := discordhook.ParseOnOff(*matchRecord)
 	if recordErr != nil {
 		fmt.Fprintln(os.Stderr, "dgserver: --match-record:", recordErr)

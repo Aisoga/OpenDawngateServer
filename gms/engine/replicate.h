@@ -39,6 +39,7 @@ std::uint32_t DeployShaper(void* sim, unsigned index);
 struct WorldMessage {
   Bytes msg;         // wire byte first
   std::string what;  // for the session's send log
+  int visibleAt = -1;  // the offset of mVisibleToTeam's byte in msg (a create's 8E, a fog exit's 90), -1 if none
 };
 
 // ---- objects (D2g-live) ---------------------------------------------------------------------------------------------
@@ -135,7 +136,10 @@ int AnimationOverrideDelta(const NetObject& o, std::uint32_t* shadow, bool* seed
 
 // One incremental update: `part`'s members whose value hash differs from the field state (mode 8), as the whole
 // message (wire byte, u32 id, body). Returns the number of members written: 0 = nothing changed, < 0 = error (logged).
-int BuildDelta(const NetObject& o, int part, Bytes* out);
+// `withoutVisible`: the object part without member 0, mVisibleToTeam (the host sends that per audience).
+int BuildDelta(const NetObject& o, int part, Bytes* out, bool withoutVisible = false);
+// The object's mVisibleToTeam (+0x888) as the last fog step left it.
+bool VisibleBits(const NetObject& o, std::uint8_t* bits);
 
 // network component +0xE |= known, +0x10 |= visible. False if the object has no network component.
 bool AddPlayerBits(void* object, std::uint16_t known, std::uint16_t visible);

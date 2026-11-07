@@ -4,7 +4,7 @@
   game window parked and never focused (the user's rule of 2026-10-09), and checks the result:
     1. lane a must be free: its lock names no live session (or names -LockPid, a holder the caller started), no
        Dawngate.exe, dgserver.exe, Start-Server.exe or Start-Client.exe runs, no dumpcap writes into re\logs, and
-       lane a's ports (TCP 42127, 10041, 17502, 18080, 9988, 10040; UDP 17502, 10042-10051) are free;
+       lane a's ports (TCP 42127, 10041, 17502, 18080, 9988, 10039, 10040; UDP 17502, 10042-10051) are free;
     2. re\scripts\focus_watch.ps1 logs every foreground change and every game window on the desktop (focus.log);
     3. Start-Server.exe --non-interactive (hidden console, output server.txt): the first start sets everything up next
        to it (Dawngate-Data), then runs the server;
@@ -169,7 +169,7 @@ function Say([string]$m, [string]$c = 'Gray') {
 }
 function In-S([string]$f) { Join-Path $Session $f }
 
-$TcpPorts = @(42127, 10041, 17502, 18080, 9988, 10040, 42128, 443)
+$TcpPorts = @(42127, 10041, 17502, 18080, 9988, 10039, 10040, 42128, 443)
 $UdpPorts = @(17502, 42128) + (10042..10051)
 $LaneAddrs = @('127.0.0.1', '0.0.0.0', '::')
 if ($IsLan) { $LaneAddrs += $Address }

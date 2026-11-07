@@ -113,6 +113,9 @@ var ErrNoSite = errors.New("gmshost: no host machine (no local hosts and no agen
 // Events are the caller's callbacks. They run on the match's goroutine, one at a time, in the order
 // the host sent the messages; any may be nil. A callback must not wait for the match to end.
 type Events struct {
+	// VerifyHello answers the host's verifyHello: may the GMS connection at v.Addr claim v.User? Without it the
+	// answer is no.
+	VerifyHello  func(mt *Match, v VerifyHello) bool
 	Ready        func(mt *Match, port int) // gameReady: announce the GMS address (NotifyGameSetup)
 	PlayerAdded  func(mt *Match, p AddPlayer)
 	PlayerGone   func(mt *Match, p DisconnectPlayer)
@@ -899,6 +902,9 @@ func (mt *Match) run() {
 			if mt.ev.Ready != nil {
 				mt.ev.Ready(mt, v.Port)
 			}
+		case VerifyHello:
+			ok := mt.ev.VerifyHello != nil && mt.ev.VerifyHello(mt, v)
+			send(HelloVerdict{Addr: v.Addr, User: v.User, OK: ok})
 		case AddPlayer:
 			if mt.ev.PlayerAdded != nil {
 				mt.ev.PlayerAdded(mt, v)

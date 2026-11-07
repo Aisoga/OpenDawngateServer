@@ -761,6 +761,7 @@ func TestPracticeGroupTeams(t *testing.T) {
 	for i, tidx := range []int64{1, 0, 0xFFFF, 1} { // the stale invite's TIDX 1 first
 		c := ts.client(fmt.Sprintf("p%d@example.com", i))
 		others = append(others, c)
+		ts.s.noteGameInvite(1, a.id, []int64{c.id}, "") // a practice group takes those its members invited
 		wantReply(t, fmt.Sprintf("join %d (TIDX %d)", i, tidx),
 			c.gm(CmdGameManagerJoinGame, tdf.NewWriter().Int("GID", 1).Int("TIDX", tidx).Bytes()))
 		pj := decode(t, a.note(ComponentGameManager, NotifyPlayerJoiningID))
@@ -770,6 +771,7 @@ func TestPracticeGroupTeams(t *testing.T) {
 		}
 	}
 	f := ts.client("full@example.com")
+	ts.s.noteGameInvite(1, a.id, []int64{f.id}, "")
 	wantError(t, "a sixth joins", f.gm(CmdGameManagerJoinGame, tdf.NewWriter().Int("GID", 1).Int("TIDX", 1).Bytes()), ErrTeamFull)
 
 	swap := tdf.NewWriter().Int("GID", 1).List("LGAM", tdf.TypeStruct, []*tdf.Writer{

@@ -565,8 +565,8 @@ func TestFrontServerSwitch(t *testing.T) {
 		resp.Body.Close()
 		return resp.StatusCode, string(body)
 	}
-	get("/dawngate-picker/servers")
-	waitLog(t, logB, "GET /dawngate-picker/servers", 1)
+	get("/x/common/home.json?passed=1")
+	waitLog(t, logB, "passed=1", 0)
 	if code, body := get("/dawngate/signup"); code != 200 || !strings.Contains(body, "pick the server") ||
 		!strings.Contains(body, `href="/dawngate/pick/1/signup"`) || !strings.Contains(body, "open: your first login") {
 		t.Errorf("the plain sign-up link: %d\n%s", code, body)

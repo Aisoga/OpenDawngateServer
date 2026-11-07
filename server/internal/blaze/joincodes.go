@@ -577,6 +577,12 @@ func (s *Server) redeemJoinCode(joiner int64, code string) (JoinCodeRedeemed, []
 	}
 	number := s.joins.invite(joiner, st.inviter, inviteAnswerType(st.kind), now)
 	msg := JoinInviteMessage(st.kind, t.id, st.inviterName, number, joiner)
+	switch st.kind { // the code stands for a member's invite (access.go)
+	case JoinKindParty:
+		s.groups.inviteByServer(t.id, joiner)
+	case JoinKindPracticeGroup:
+		s.noteGameInvite(t.id, st.inviter, []int64{joiner}, "")
+	}
 	id := m.newID()
 	s.Log.Logf("blaze", "   message %d: the server's %s %#x to %d in the name of %d %q (invite %d, %s %d)", id,
 		messageTypeName(msg.Type), msg.Type, joiner, st.inviter, st.inviterName, number, joinKindName(st.kind), t.id)

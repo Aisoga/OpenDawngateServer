@@ -36,6 +36,10 @@ func (s *Sink) Serve(ln net.Listener) error {
 
 const who = "telemetry"
 
+// maxConnBytes is what one connection may have logged: a whole match's telemetry is a few hundred KB, and without a bound any
+// client could write to the log for as long as it stays connected.
+const maxConnBytes = 8 << 20
+
 // ServeConn decodes packets until the client closes the connection. Bytes that aren't a ProtoAries
 // packet are hexdumped, and the rest of that connection is hexdumped as it arrives, as before R5.
 func (s *Sink) ServeConn(c net.Conn) {
@@ -46,12 +50,19 @@ func (s *Sink) ServeConn(c net.Conn) {
 	var pending []byte
 	total, packets, events := 0, 0, 0
 	raw := false // lost the packet framing: dump what follows
+	over := false
 	buf := make([]byte, 65536)
 	for {
 		n, err := c.Read(buf)
 		if n > 0 {
 			total += n
-			if raw {
+			if total > maxConnBytes { // a real session sends far less: what follows isn't read into the log
+				if !over {
+					over = true
+					s.Log.Logf(who, "%s over %d bytes: the rest of this connection isn't logged", peer, maxConnBytes)
+					pending, raw = nil, true
+				}
+			} else if raw {
 				s.dump(peer, fmt.Sprintf("%d bytes", n), buf[:n])
 			} else {
 				pending = append(pending, buf[:n]...)

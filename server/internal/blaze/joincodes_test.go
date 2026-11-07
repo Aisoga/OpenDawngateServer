@@ -236,6 +236,7 @@ func TestJoinCodeParty(t *testing.T) {
 	pair, _ := info.Int("PGID")
 	c.note(ComponentPlaygroups, NotifyJoinPlaygroupID)
 	pc := c.issueCode(JoinTargetParty, pair)
+	ts.s.groups.inviteByServer(pair, d.id)
 	wantOK(t, "delta joins", d.pgCall(CmdPlaygroupsJoinPlaygroup, tdf.NewWriter().Int("PGID", pair).Bytes()))
 	if full := c.issueCode(JoinTargetParty, pair); full.Code != pc.Code || full.Joinable || full.Reason != JoinFull || full.Size != 2 {
 		t.Errorf("full: %+v", full)

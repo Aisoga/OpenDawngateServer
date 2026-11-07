@@ -87,6 +87,12 @@ func (ts *tcpServer) dialFrom(email, local string) *tcpClient {
 	if err != nil {
 		ts.t.Fatal(err)
 	}
+	return ts.clientOn(c, email)
+}
+
+// clientOn is a fake client on a connection the test made (through the tunnel, SEATAUTH), not logged in yet.
+func (ts *tcpServer) clientOn(c net.Conn, email string) *tcpClient {
+	ts.t.Helper()
 	tc := &tcpClient{t: ts.t, c: c, name: store.PersonaName(email), signal: make(chan struct{}, 1)}
 	ts.t.Cleanup(func() { c.Close() })
 	go func() {

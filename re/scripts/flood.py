@@ -7,7 +7,7 @@ d's 127.0.0.4 from 127.0.4.9 (lane d's address range; no other lane's address is
 --any-loopback and must still be 127.x. Stdlib only; nothing here reads game files.
 
 Modes (run together, each in its own threads, for --seconds):
-  connect  TCP connects to every server port (42127, 10041, 17502, 18080, 9988), up to --hold open at once
+  connect  TCP connects to every server port (42127, 10041, 17502, 18080, 9988, 10039), up to --hold open at once
   login    Blaze login requests (Authentication::login, random names and passwords) on --login-conns connections,
            each waiting for its answer; counts replies and ERR_SERVER_BUSY (0x4072) refusals; reconnects when closed
   blaze    Util::ping requests as fast as the socket takes them on one connection; counts the replies and how long
@@ -43,7 +43,7 @@ import sys
 import threading
 import time
 
-TCP_PORTS = {"redirector": 42127, "blaze": 10041, "qos": 17502, "http": 18080, "telemetry": 9988}
+TCP_PORTS = {"redirector": 42127, "blaze": 10041, "qos": 17502, "http": 18080, "telemetry": 9988, "uichannel": 10039}
 QOS_PORT = 17502
 GMS_PORTS = range(10042, 10052)
 SERVER_BUSY = 0x4072

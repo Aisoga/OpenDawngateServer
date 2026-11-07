@@ -196,11 +196,14 @@ func TestLoginBackoff(t *testing.T) {
 		t.Fatal("3 failures are free")
 	}
 	l.LoginDone("1.2.3.4", "victim", false) // the 4th: 10 s
-	if w, why := l.Login("5.6.7.8", "victim"); w != 10*time.Second || !strings.Contains(why, `4 failed logins for "victim"`) {
+	if w, why := l.Login("1.2.3.4", "victim"); w != 10*time.Second || !strings.Contains(why, `4 failed logins for "victim"`) {
 		t.Fatalf("after 4: wait %s (%s)", w, why)
 	}
-	if w, _ := l.Login("5.6.7.8", "other"); w != 0 {
+	if w, _ := l.Login("1.2.3.4", "other"); w != 0 {
 		t.Fatal("another account is locked too")
+	}
+	if w, _ := l.Login("5.6.7.8", "victim"); w != 0 { // the guesser's failures don't lock the owner out of its own account
+		t.Fatal("the account is locked from every address")
 	}
 	c.add(10 * time.Second)
 	fail() // the 5th: 20 s

@@ -44,13 +44,20 @@ const DefaultKeepalive = 15 * time.Second
 
 // Client is the player's side of the tunnel (Start-Client.exe; dgserver --tunnel-client for the test lanes): it
 // listens on TunnelIP at every port the gateway names and carries the game's connections and datagrams to the
-// gateway.
+// gateway. A server that names UDP ports outside MinUDPPort and MaxUDPPorts, or a TCP port outside AllowTCP, is refused.
 type Client struct {
 	Log *logging.Log // nil: no log
 	// Gateway is the gateway's address (host:port, TCP and UDP).
 	Gateway string
 	// Pin is the gateway key's pin; a gateway with another key is refused.
 	Pin Pin
+	// AllowTCP, when set, are the only TCP ports a server may name (ErrTCPPort): Start-Client's one tunnel passes the
+	// game's, since a listener on any other would catch another program's connections on this PC. nil: any (dgserver's
+	// test aid; External mode listens on nothing itself).
+	AllowTCP []int
+	// AcceptConn, when set, says whether a connection to a local TCP port may open a stream; one it refuses closes at once
+	// (Start-Client's one tunnel: only the game's programs, launcher.gameGuard). nil: every one.
+	AcceptConn func(port int, c net.Conn) bool
 	// TunnelIP is the loopback address the player copy is patched for (the local profile: 127.0.0.1).
 	TunnelIP net.IP
 	// DialIP is the local address of the tunnel's own sockets to the gateway (nil: the system's choice; the test
@@ -99,17 +106,26 @@ type Client struct {
 	sessReady chan struct{} // closed while a session is up
 	closed    bool
 
-	udpEcho                                            chan struct{}
-	echoOnce                                           sync.Once
-	upN, upBytes, downN, downBytes, streams            atomic.Uint64
-	dropBig, dropAuth, dropPort, dropNotLocal, trimmed atomic.Uint64
-	sessions                                           atomic.Uint64
-	streamFails                                        atomic.Uint64
-	firstEcho                                          atomic.Int64
-	started                                            time.Time
-	lastSessionID                                      atomic.Uint64
-	resumes                                            atomic.Uint64
+	// spoke holds the local sockets that have sent through this client, each with the server port it sent to: the only
+	// places a datagram from the gateway may go (noteSpoke)
+	spokeMu sync.Mutex
+	spoke   map[flowKey]struct{}
+
+	udpEcho                                                          chan struct{}
+	echoOnce                                                         sync.Once
+	upN, upBytes, downN, downBytes, streams                          atomic.Uint64
+	dropBig, dropAuth, dropPort, dropNotLocal, dropNotSpoke, trimmed atomic.Uint64
+	sessions                                                         atomic.Uint64
+	streamFails                                                      atomic.Uint64
+	firstEcho                                                        atomic.Int64
+	started                                                          time.Time
+	lastSessionID                                                    atomic.Uint64
+	resumes                                                          atomic.Uint64
 }
+
+// maxSpoke bounds Client.spoke, since any local program can send from as many sockets as it likes. Past it the map starts
+// over: a socket still in use is back with its next datagram.
+const maxSpoke = 4096
 
 type clientSession struct {
 	id    uint64
@@ -170,6 +186,10 @@ func (c *Client) Start() error {
 	if err != nil {
 		return err
 	}
+	if err := c.checkPorts(rep); err != nil {
+		s.ctrl.Close()
+		return fmt.Errorf("the tunnel gateway at %s: %w", c.Gateway, err)
+	}
 	for _, p := range rep.tcp {
 		c.tcp = append(c.tcp, int(p))
 	}
@@ -211,6 +231,44 @@ func (c *Client) Start() error {
 	}
 	c.wg.Add(1)
 	go c.keepaliveLoop()
+	return nil
+}
+
+// ErrTCPPort is a server naming a TCP port outside Client.AllowTCP.
+var ErrTCPPort = errors.New("the server names a TCP port the game doesn't use")
+
+// The UDP ports a server may name, each of which a client then listens on: the QoS port and the match hosts'. A server
+// is refused rather than cut down to these, since a cut would silently lose the highest port, usually the QoS one.
+const (
+	MinUDPPort  = 1024
+	MaxUDPPorts = 64
+)
+
+// checkUDPPorts is the rule on UDP ports, for a gateway's list and for what a client is told.
+func checkUDPPorts(ports []uint16) error {
+	if len(ports) > MaxUDPPorts {
+		return fmt.Errorf("%d UDP ports, where at most %d are allowed", len(ports), MaxUDPPorts)
+	}
+	for _, p := range ports {
+		if p < MinUDPPort {
+			return fmt.Errorf("UDP port %d, where %d is the lowest allowed", p, MinUDPPort)
+		}
+	}
+	return nil
+}
+
+// checkPorts refuses a server's list of ports.
+func (c *Client) checkPorts(rep sessionReply) error {
+	if err := checkUDPPorts(rep.udp); err != nil {
+		return err
+	}
+	if c.AllowTCP != nil {
+		for _, p := range rep.tcp {
+			if !slices.Contains(c.AllowTCP, int(p)) {
+				return fmt.Errorf("%w: %d", ErrTCPPort, p)
+			}
+		}
+	}
 	return nil
 }
 
@@ -417,9 +475,9 @@ func (c *Client) Close() {
 
 // Counts describes the client's traffic so far.
 func (c *Client) Counts() string {
-	return fmt.Sprintf("up %d datagrams (%d bytes), down %d (%d bytes), %d streams (%d failed), %d session(s) (%d taken up again); RakNet MTU probes cut to 1200's %d; dropped: too big %d, auth %d, unknown port %d, not loopback %d",
+	return fmt.Sprintf("up %d datagrams (%d bytes), down %d (%d bytes), %d streams (%d failed), %d session(s) (%d taken up again); RakNet MTU probes cut to 1200's %d; dropped: too big %d, auth %d, unknown port %d, not loopback %d, not spoken %d",
 		c.upN.Load(), c.upBytes.Load(), c.downN.Load(), c.downBytes.Load(), c.streams.Load(), c.streamFails.Load(),
-		c.sessions.Load(), c.resumes.Load(), c.trimmed.Load(), c.dropBig.Load(), c.dropAuth.Load(), c.dropPort.Load(), c.dropNotLocal.Load())
+		c.sessions.Load(), c.resumes.Load(), c.trimmed.Load(), c.dropBig.Load(), c.dropAuth.Load(), c.dropPort.Load(), c.dropNotLocal.Load(), c.dropNotSpoke.Load())
 }
 
 // controlLoop keeps the control connection: heartbeats, and when it fails a new one that takes the session up again.
@@ -546,6 +604,13 @@ func (c *Client) gatewayLoop() {
 			c.dropNotLocal.Add(1)
 			continue
 		}
+		// and of those only to one that has sent to this port through the tunnel: a server answers (the QoS site's
+		// replies and a match host's flow each name the socket and port a datagram came from), so nothing honest is lost,
+		// and a server can't talk to another program's UDP socket on this PC
+		if !c.hasSpoken(in) {
+			c.dropNotSpoke.Add(1)
+			continue
+		}
 		c.downN.Add(1)
 		c.downBytes.Add(uint64(len(payload)))
 		if c.External {
@@ -595,14 +660,38 @@ func (c *Client) SendDatagram(port int, src *net.UDPAddr, data []byte) bool {
 	if s == nil {
 		return false
 	}
-	pkt, err := s.up.Seal(InnerFor(KindData, port, src), data)
+	in := InnerFor(KindData, port, src)
+	pkt, err := s.up.Seal(in, data)
 	if err != nil {
 		return false
 	}
+	c.noteSpoke(in) // before the send, or a quick answer could arrive first and be dropped
 	c.upN.Add(1)
 	c.upBytes.Add(uint64(len(data)))
 	_, err = c.udp.WriteToUDP(pkt, c.gwUDP)
 	return err == nil
+}
+
+// noteSpoke records that a local socket has sent to a server port through this client.
+func (c *Client) noteSpoke(in Inner) {
+	k := flowKey{ip: in.IP, clientPort: in.ClientPort, port: in.Port}
+	c.spokeMu.Lock()
+	defer c.spokeMu.Unlock()
+	if _, ok := c.spoke[k]; ok {
+		return
+	}
+	if c.spoke == nil || len(c.spoke) >= maxSpoke {
+		c.spoke = map[flowKey]struct{}{}
+	}
+	c.spoke[k] = struct{}{}
+}
+
+// hasSpoken reports whether the socket a datagram from the gateway names has sent to that server port.
+func (c *Client) hasSpoken(in Inner) bool {
+	c.spokeMu.Lock()
+	defer c.spokeMu.Unlock()
+	_, ok := c.spoke[flowKey{ip: in.IP, clientPort: in.ClientPort, port: in.Port}]
+	return ok
 }
 
 // Up says whether the client has a session (false while the control connection is being made again, and after
@@ -637,6 +726,10 @@ func (c *Client) acceptLoop(port int, ln net.Listener) {
 			defer c.wg.Done()
 			defer c.track(lc, false)
 			defer c.Log.Recover(who, logging.Peer(lc.RemoteAddr()), lc) // a panic ends this stream only
+			if c.AcceptConn != nil && !c.AcceptConn(port, lc) {
+				lc.Close()
+				return
+			}
 			c.serveStream(port, lc)
 		}()
 	}

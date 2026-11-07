@@ -226,9 +226,11 @@ if(RAKNET_FOUND)
     tests/test_d14.cpp          # D14: the map rules (reward buffs, aggro on sight, camp spots, the Guardian's shield)
     tests/test_timing.cpp       # Q3c: the tick, traffic and command-latency arithmetic, the CSV, the simulator's rule
     tests/test_net.cpp          # Q3c: the endpoint's timing and network simulator against a RakNet client on loopback
+    tests/test_seatauth.cpp     # who may claim a seat (SEATAUTH), what a client may decide (HOSTHARD)
     tests/test_limits.cpp       # the network limits (NetLimiter) and the endpoint with them on, on loopback
     tests/test_banter.cpp       # D11b: the banter, kill, assist and presence lines, the sequential emotes
     tests/test_create_hold.cpp  # SEC5: a new object's create held from the players whose team doesn't see it
+    tests/test_team_private.cpp  # SEC4B: what one team may not learn through shared sends (core/replication/team_private.h)
     tests/test_command_queue.cpp  # D7c: a move during an attack order (the queued-move step, the takeover)
     tests/test_d3d9.cpp         # H1d: the host without Direct3D 9 (the plan, the verdict, the stand-in IDirect3D9)
     tests/test_check.cpp        # the strict message check (every type's malformed inputs, the world, the guard)
@@ -258,6 +260,11 @@ if(RAKNET_FOUND)
                                                GMS_REPO_ROOT="${CMAKE_CURRENT_LIST_DIR}/..")
   target_link_libraries(gms_tests PRIVATE gms_scripted_match gms_core raknet_p5)
   add_test(NAME gms_tests COMMAND gms_tests)
+  # test tools that stay out of the public copy (.gitattributes), when this checkout has them
+  file(GLOB GMS_PRIVATE_TOOLS CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/tests/*.private.cmake")
+  foreach(tool ${GMS_PRIVATE_TOOLS})
+    include(${tool})
+  endforeach()
 else()
   message(WARNING "${RAKNET_ERROR}. Building only the harness (dgsim, without its GMS endpoint); gms_core, gms_script "
                   "and gms_tests need RakNet.")

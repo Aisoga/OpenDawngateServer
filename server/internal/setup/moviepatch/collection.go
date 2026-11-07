@@ -32,7 +32,7 @@ var collectionTagsHex string
 // SPECS["collection"].
 var Collection = Spec{What: "the Collection's items", Source: "game/Data/code.snap",
 	Rel: "game/Data/zz_CollectionItems.snap", MoviePath: "UI/Scaleform/CDN/swf/code/UIRuntime.gfx",
-	Class: "CollectionItems", CharID: 2000, Depth: 2000, Tags: CollectionTags, Items: true,
+	Class: "CollectionItems", CharID: 2000, Depth: 2000, Tags: CollectionTags, Items: true, Channel: true,
 	More: []Part{{Class: "LobbyReady", CharID: 2001, Depth: 2001, Tags: LobbyTags},
 		{Class: "LeaderboardRating", CharID: 2002, Depth: 2002, Tags: LeaderboardTags}}}
 

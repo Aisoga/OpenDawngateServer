@@ -94,6 +94,8 @@ void HostControl::Poll(int64_t nowMs) {
       removed_.push_back(*rp);
     } else if (auto* pr = std::get_if<PlayerRewards>(&m)) {
       rewards_.push_back(*pr);
+    } else if (auto* hv = std::get_if<HelloVerdict>(&m)) {
+      verdicts_.push_back(*hv);
     } else if (auto* ab = std::get_if<AbortGame>(&m)) {
       if (!abort_) {
         abort_ = true;
@@ -128,6 +130,19 @@ std::vector<RemovePlayer> HostControl::TakeRemoved() {
 std::vector<PlayerRewards> HostControl::TakeRewards() {
   std::vector<PlayerRewards> out;
   out.swap(rewards_);
+  return out;
+}
+
+void HostControl::SendVerifyHello(const std::string& addr, int64_t user) {
+  VerifyHello m;
+  m.addr = addr;
+  m.user = user;
+  SendMsg(m);
+}
+
+std::vector<HelloVerdict> HostControl::TakeVerdicts() {
+  std::vector<HelloVerdict> out;
+  out.swap(verdicts_);
   return out;
 }
 

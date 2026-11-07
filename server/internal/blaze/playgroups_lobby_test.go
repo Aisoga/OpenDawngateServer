@@ -62,6 +62,8 @@ func TestPvPLobbyPlaygroup(t *testing.T) {
 	}
 
 	join := tdf.NewWriter().Int("PGID", pgid).Bytes()
+	ts.s.groups.inviteByServer(pgid, b.id)
+	ts.s.groups.inviteByServer(pgid, c.id)
 	wantOK(t, "join", b.pgCall(CmdPlaygroupsJoinPlaygroup, join))
 	if n := b.pgNote(NotifyJoinPlaygroupID, "Blaze::Playgroups::NotifyJoinPlaygroup"); n != nil {
 		if mf, _ := n.Get("MLST"); len(mf.Value.(*tdf.List).Items) != 2 {

@@ -172,7 +172,7 @@ def expected_exe(lane, root):
     ca = os.path.join(root, cfg["certs"], "ca_modulus.bin")
     want = {"redirector": cfg["address"], "bind": cfg["address"], "appdata": "DawngateData" + cfg["suffix"],
             "documents": "Dawngate" + cfg["suffix"], "raknet_loopback": cfg["address"], "ca_flag": "0",
-            "laa": "on", "preload": "all", "maptable": "on", "rating": "on"}
+            "laa": "on", "preload": "all", "maptable": "on", "rating": "on", "heaplocks": "on", "numfmt": "on", "averages": "on"}
     if os.path.exists(ca):
         with open(ca, "rb") as f:
             want["ca_sha256"] = hashlib.sha256(f.read()).hexdigest()[:16]
@@ -316,14 +316,15 @@ def content_file():
     return os.path.join(main_root(), "server", "data", "content.json")
 
 
-def collection_step(data_dir, check_only, missing):
+def collection_step(data_dir, address, check_only, missing):
     """a client copy's added front-end movie with the Collection's Items category and the item list of the lanes'
-    content file (patch_login_movie.py --spec collection --content <content_file()>: game/Data/zz_CollectionItems.snap),
+    content file, and where the copy's server has its UI channel (patch_login_movie.py --spec collection --host <address>
+    --content <content_file()>: game/Data/zz_CollectionItems.snap),
     byte for byte what it makes from the copy's own code.snap; left out (with a line) without the content file."""
     if not os.path.isfile(content_file()):
         print(f"  the Collection's items left out: no {content_file()} (setup_all.py's content step)")
         return
-    movie_step(data_dir, check_only, missing, "collection", content=content_file())
+    movie_step(data_dir, check_only, missing, "collection", address, content=content_file())
 
 
 def movie_step(data_dir, check_only, missing, name, host=None, content=None):
@@ -340,7 +341,7 @@ def movie_step(data_dir, check_only, missing, name, host=None, content=None):
             return
         if check_only and spec.map_list and patch_login_movie.map_list_only(have, want):
             return  # the map list a tunnel front wrote for the server of the last login: current (the setup resets it)
-    host_args = (["--host", host] if host and spec.web_root else []) + (["--content", content] if content else [])
+    host_args = (["--host", host] if host and (spec.web_root or spec.channel) else []) + (["--content", content] if content else [])
     if check_only:
         missing.append(f"{added} (patch_login_movie.py --spec {name}{''.join(' ' + a for a in host_args)})")
         return
@@ -423,7 +424,7 @@ def setup(lane, dll, with_host, check_only, root=None):
         chat_rooms_step(data_dir, check_only, missing)
         after_action_step(data_dir, cfg["address"], check_only, missing)
         item_shop_step(data_dir, check_only, missing)
-        collection_step(data_dir, check_only, missing)
+        collection_step(data_dir, cfg["address"], check_only, missing)
     # 4. the match-host copy with the harness (setup_server_copy.py copies the lane's client copy once)
     host_keys = HOST_KEYS if lane == "a" else None
     if with_host:
@@ -481,7 +482,7 @@ def expected_extra(name, root):
     lane = LANES[cfg["lane"]]
     want = {"redirector": lane["address"], "bind": cfg["bind"], "appdata": "DawngateData" + cfg["suffix"],
             "documents": "Dawngate" + cfg["suffix"], "raknet_loopback": cfg["bind"], "ca_flag": "0",
-            "laa": "on", "preload": "all", "maptable": "on", "rating": "on"}
+            "laa": "on", "preload": "all", "maptable": "on", "rating": "on", "heaplocks": "on", "numfmt": "on", "averages": "on"}
     sha = ca_sha(os.path.join(root, *lane["certs"].split("/")))
     if sha:
         want["ca_sha256"] = sha
@@ -493,7 +494,7 @@ def expected_lan(address, root):
     sockets narrowed to it, RakNet's start-up send test to it, its own data folders."""
     want = {"redirector": address, "bind": address, "appdata": "DawngateData" + LAN["suffix"],
             "documents": "Dawngate" + LAN["suffix"], "raknet_loopback": address, "ca_flag": "0",
-            "laa": "on", "preload": "all", "maptable": "on", "rating": "on"}
+            "laa": "on", "preload": "all", "maptable": "on", "rating": "on", "heaplocks": "on", "numfmt": "on", "averages": "on"}
     sha = ca_sha(os.path.join(root, *LAN["certs"].split("/")))
     if sha:
         want["ca_sha256"] = sha
@@ -589,7 +590,7 @@ def setup_extra(name, check_only, root=None):
         chat_rooms_step(data_dir, check_only, missing)
         after_action_step(data_dir, lane["address"], check_only, missing)
         item_shop_step(data_dir, check_only, missing)
-        collection_step(data_dir, check_only, missing)
+        collection_step(data_dir, lane["address"], check_only, missing)
     return finish(f"copy {name}", missing, check_only)
 
 
@@ -649,7 +650,7 @@ def setup_lan(address, check_only, new_certs=False, root=None):
         chat_rooms_step(data_dir, check_only, missing)
         after_action_step(data_dir, address, check_only, missing)
         item_shop_step(data_dir, check_only, missing)
-        collection_step(data_dir, check_only, missing)
+        collection_step(data_dir, address, check_only, missing)
     return finish("lan copy", missing, check_only)
 
 

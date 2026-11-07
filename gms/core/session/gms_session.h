@@ -60,6 +60,12 @@
 //   culprits restart matchmaking by themselves), then IMatch::OnGameAborted once each answered 0x40000 or after
 //   abortAckMs; the host then ends the game.
 //
+// Who is behind a connection (SEATAUTH): RakNet has no password
+//   and a HelloReq carries only a claimed user id, so a match with a control channel asks the server first
+//   (IMatch::AskHelloVerdict); the HelloReq waits (state line "HelloReq being verified") until OnHelloVerdict or
+//   verifyTimeoutMs. Refused, or a roster refusal: the connection closes. Only a connection's first HelloReq counts, and
+//   its id is taken only once that is let through. A connection that sends no HelloReq within helloTimeoutMs closes too;
+//   KickUser closes a user's connections and, with bar, refuses its later HelloReqs.
 // A custom game's lobby (B15; docs/HOST_CONTROL.md *Custom games on the match host (B15)*): while IMatch::HoldHello is
 //   true the session keeps a connection's HelloReq unanswered (state line "HelloReq held") and asks again every Tick;
 //   once false it answers it as if it had just come (OnHelloReq with the final slot, HelloPlayer, ...).
@@ -91,6 +97,7 @@
 #include "core/common/bytes.h"
 #include "core/net/endpoint.h"
 #include "core/protocol/check.h"
+#include "core/protocol/comm_rate.h"
 #include "core/session/match.h"
 #include "core/session/rejoin.h"
 
@@ -136,6 +143,16 @@ struct SessionOptions {
   // B15b: the players' clients get the spectators too (HelloPlayer, PlayerJoined, their statuses); a spectator's client
   // always gets every player
   bool nameSpectators = true;
+  // SEATAUTH: how long a HelloReq waits for its verdict (no verdict = refused, the connection closes), and how long a
+  // connection may stay without a HelloReq (0 = for ever; never with stopAfter before kStepHello). HOSTHARD: progress-only
+  // status echoes go out at most this often per connection (a changed status word always does), and the first
+  // statusEchoLogs of them are logged
+  int verifyTimeoutMs = 5000;
+  int helloTimeoutMs = 30000;
+  int progressEchoMs = 250;
+  int statusEchoLogs = 16;
+  // HOSTHARD: a player's pings, dances, taunts and voice lines (part of the strict check: nothing with its mode 0)
+  CommRateOptions commRate;
   // the strict message check (core/protocol/check.h): mode 1 drops a bad message (the default), 2 only counts and
   // logs it, 0 is off; kickCount malformed or invalid messages within kickWindowMs close the connection
   check::GuardOptions check;
@@ -157,6 +174,14 @@ class GmsSession final : public ISender {
   void OnMessage(ConnId conn, const uint8_t* data, size_t n);
   // Timed steps, delayed sends and the periodic state line; call every few ms.
   void Tick();
+  // SEATAUTH: the answer to IMatch::AskHelloVerdict for the connection at `addr` ("ip:port") that claimed `user`: on ok
+  // its HelloReq goes on (it may still be held for a lobby), else it is refused and the connection closes. A verdict
+  // nobody waits for (the connection ended meanwhile) is dropped.
+  void OnHelloVerdict(const std::string& addr, uint64_t user, bool ok);
+  // SEATAUTH: closes every connection of `user` (seated, held or under verification; a seated player then counts as
+  // departed, as after any lost connection). With `bar` its later HelloReqs are refused (a kick from a running match).
+  // Returns the connections closed.
+  int KickUser(uint64_t user, const std::string& why, bool bar);
   // The last state line of every connection; forgets them.
   void Finish();
 
@@ -206,6 +231,11 @@ class GmsSession final : public ISender {
     uint64_t userId = 0;
   };
   void HandleHello(Conn& c, const HelloReq& req, SteadyClock::time_point now);  // B15: also a held one
+  void AdmitHello(Conn& c, const HelloReq& req, SteadyClock::time_point now);   // SEATAUTH: after its verdict
+  void RefuseHello(Conn& c, const std::string& why);                            // SEATAUTH: closes at the next Tick
+  void CloseDue(SteadyClock::time_point now);
+  void CloseConn(ConnId conn);
+  bool AllLoaded(const Conn& c) const;  // HOSTHARD
   void SendStep(Conn& c, int step, const Bytes& m);
   bool SendRaw(Conn& c, const Bytes& m, const std::string& what);
   void Point(Conn& c, SessionPoint p);
@@ -262,6 +292,9 @@ class GmsSession final : public ISender {
   bool othersLoaded_ = false;         // the other players' 0x400 went out
   // G3a: several humans
   RejoinMap seats_;                       // user id -> slot
+  std::set<uint64_t> barred_;             // SEATAUTH: kicked from the running match; their HelloReqs are refused
+  bool quietSends_ = false;               // HOSTHARD: SendRaw writes no line (the echoes past statusEchoLogs)
+  CommRate commRate_;                     // HOSTHARD
   std::map<uint8_t, Departed> departed_;  // humans whose connection ended (or who never connected), by index
   std::set<uint8_t> picked_;              // the indices IMatch::OnShaperPicks has had
   // G3: the pre-game gate (waitForPlayers)

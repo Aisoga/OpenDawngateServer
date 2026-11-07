@@ -93,10 +93,12 @@ const (
 	AttrRosterLocked  = "RosterLockedKey"
 	AttrTeamsBalanced = "TeamsBalancedKey"
 	AttrSpectators    = "SpectatorPlayerIdList"
-	AttrPrivateMatch  = "PrivateMatch"  // "1": the browser's padlock (0x006810E0)
-	AttrGameOwnerID   = "GameOwnerId"   // the browser asserts it (hex, 0x004E40A0)
-	AttrGameOwnerName = "GameOwnerName" // the browser's Owner column
-	AttrLevelID       = "LevelId"
+	AttrPrivateMatch  = "PrivateMatch" // "1": the browser's padlock (0x006810E0)
+	// AttrPrivateAuthToken is the player attribute a joiner of a private game sends: the token its owner answered with
+	AttrPrivateAuthToken = "PrivateAuthToken"
+	AttrGameOwnerID      = "GameOwnerId"   // the browser asserts it (hex, 0x004E40A0)
+	AttrGameOwnerName    = "GameOwnerName" // the browser's Owner column
+	AttrLevelID          = "LevelId"
 
 	// BotFillMarker ends a custom game's name when its creator ticked the create dialog's bot checkbox (our addition
 	// to MatchOptionsUI, BOTBOX): the server strips it, fills the open seats with bots and shows the game with
@@ -113,14 +115,22 @@ func IsLobbyGame(flags int64) bool {
 
 // customLobby is a custom game's Blaze side beside its hostedGame (guarded by the hostedGame's mutex).
 type customLobby struct {
+	// who may take a seat (access.go): those its admin removed may not; a practice group takes the invited, a private game
+	// those with its owner's token
+	kicked    map[int64]bool
+	invited   map[int64]bool
+	token     string
 	admins    []int64 // ADMN: the creator
 	started   bool    // advanceGameState IN_GAME came (the host got startGame)
 	browsable bool    // the game browser lists it: a custom game (a practice group's isn't)
 	ready     bool    // NotifyGameSetup went out (its host is ready, or it has none): the browser may list it
 	region    string  // PSAS for the browser: the creator's lowest-latency ping site
 	nextSlot  int64   // the next joiner's Blaze slot (SID)
-	// READY2: the lobby chat message a class holder sent last, whose form the server's ready lines take (ready.go)
-	readyForm *ClientMessage
+	// the ready check (ready.go)
+	check readyCheck
+	// when lobby.state last went out to everyone, and whether a later one is waiting for its turn (publishLobby)
+	lastPublish time.Time
+	publishDue  bool
 	// READY2b: the first start was refused for Server.TestRefuseStart
 	testRefused bool
 }
@@ -457,6 +467,11 @@ func (s *Server) startCustomGame(r *Request, g Game, p Player) []byte {
 	hp := &hostedPlayer{p: p, userID: r.Conn.Session.Account.UserID, conn: r.Conn, setupCtx: SetupContextCreateGame}
 	lobby := &customLobby{admins: []int64{p.ID}, browsable: flags&GameFlagBotsFillTeams == 0,
 		region: lobbyRegion(r.Conn.Net.PingSites), nextSlot: 1}
+	defer func() { // a lobby nobody starts doesn't hold its host for ever (access.go)
+		if hg := s.hosted.get(g.ID); hg != nil {
+			time.AfterFunc(LobbyMaxAge, hg.expireLobby)
+		}
+	}()
 	kind := "custom game"
 	if !lobby.browsable {
 		kind = "practice group game"
@@ -577,6 +592,9 @@ func (s *Server) joinCustomGame(r *Request, hg *hostedGame) []byte {
 	}
 	hp := hg.playerLocked(me)
 	back := hp != nil
+	if code, why := hg.custom.joinRefusal(me, attrValue(hg.game.Attrs, AttrPrivateMatch) == "1", attrValue(attrs, AttrPrivateAuthToken)); code != 0 && (!back || hg.custom.kicked[me]) {
+		return fail(code, why)
+	}
 	if !back {
 		switch {
 		case tidx == SpectatorTeam:
@@ -606,12 +624,8 @@ func (s *Server) joinCustomGame(r *Request, hg *hostedGame) []byte {
 		hg.custom.nextSlot++
 		hg.players = append(hg.players, hp)
 	}
-	// READY2: a rejoin is a new lobby entry (its class says hi again): its state goes back to 0 for the others
-	var readyLines []readySend
-	if back {
-		readyLines = hg.readyClearLocked(hp, hp)
-	}
-	hp.readyClass, hp.ready = false, false
+	// a rejoin is a new lobby entry: until its class enters again, the player isn't in the ready check
+	hg.custom.check.Leave(me)
 	hp.conn, hp.removed, hp.completed, hp.setupCtx = r.Conn, false, false, SetupContextJoinGame
 	hp.p.Ext, hp.p.Int = s.ClientAddr(ext), s.ClientAddr(in)
 	if len(attrs) > 0 {
@@ -640,9 +654,8 @@ func (s *Server) joinCustomGame(r *Request, hg *hostedGame) []byte {
 	note := LobbyPlayerJoiningNotification(gid, joining)
 	r.After(func() {
 		hg.pushExcept(me, NotifyPlayerJoiningID, "NotifyPlayerJoining", note)
-		hg.syncHostRoster()
+		hg.lobbyRosterChanged()
 		s.browserChanged(hg)
-		hg.sendReady(readyLines)
 	})
 	return JoinGameReply(gid)
 }
@@ -719,6 +732,10 @@ func (s *Server) kickFromCustomGame(r *Request, gid, pid, reason int64) {
 		return
 	}
 	hp.removed = true
+	if hg.custom.kicked == nil {
+		hg.custom.kicked = map[int64]bool{}
+	}
+	hg.custom.kicked[pid] = true
 	kicked, mt, ended := hp.conn, hg.match, hg.ended
 	hg.mu.Unlock()
 	name := removedReasonName(reason)
@@ -770,7 +787,7 @@ func (hg *hostedGame) lobbyLeft(playerID int64) {
 		hg.endLobby("its admin left the lobby")
 		return
 	}
-	hg.syncHostRoster()
+	hg.lobbyRosterChanged()
 	s.browserChanged(hg)
 }
 
@@ -855,9 +872,8 @@ func registerCustomGames(s *Server) {
 			hg.push(NotifyGameAttribChangeID, "NotifyGameAttribChange", func(*hostedPlayer) []byte { return note })
 			if own != nil {
 				admin.Push(r.Server, ComponentUserSessions, NotifyUserSessionExtendedDataUpdate, "UserSessionExtendedDataUpdate", own)
-				hg.sendRatings(nil) // RATINGSHOW3: the rosters changed (a newcomer): every class holder's tiles' ratings
 			}
-			hg.syncHostRoster() // the packed rosters order the host's slots
+			hg.lobbyRosterChanged() // the packed rosters order the host's slots
 			r.Server.browserChanged(hg)
 		})
 		return nil
@@ -943,12 +959,11 @@ func registerCustomGames(s *Server) {
 			}
 		}
 		var moved []move
-		var readyLines []readySend
 		for _, hp := range hg.players {
 			if t, ok := teams[hp.p.ID]; ok && !hp.removed && t != hp.p.Team {
 				hp.p.Team = t
 				moved = append(moved, move{hp.p.ID, t})
-				readyLines = append(readyLines, hg.readyClearLocked(hp, nil)...) // READY2: a team change clears the state
+				hg.custom.check.Set(hp.p.ID, false) // a team change clears the state
 			}
 		}
 		hg.mu.Unlock()
@@ -965,10 +980,9 @@ func registerCustomGames(s *Server) {
 				hg.push(NotifyGamePlayerTeamChangeID, "NotifyGamePlayerTeamChange", func(*hostedPlayer) []byte { return note })
 			}
 			if len(moved) > 0 {
-				hg.syncHostRoster()
+				hg.lobbyRosterChanged()
 				r.Server.browserChanged(hg)
 				r.Server.armAutoStart(hg)
-				hg.sendReady(readyLines)
 			}
 		})
 		return nil

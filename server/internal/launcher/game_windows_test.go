@@ -15,6 +15,7 @@ const childEnv = "DG_LAUNCHER_TEST_CHILD"
 
 func TestMain(m *testing.M) {
 	discordRegistry = &memRegistry{} // no test writes the real registry
+	checkGameOwner = false           // the tests' "game" is the test binary; TestGameGuard turns it on
 	if code := os.Getenv(childEnv); code != "" {
 		var n int
 		fmt.Sscan(code, &n)

@@ -231,6 +231,7 @@ func TestMapCheckQueue(t *testing.T) {
 	if f := a.reply(6, 1, a.send(6, 1, golden.Bytes(t, decodeCase(t, g, "createplaygroup_party_request")))); f.Type != fire.Reply {
 		t.Fatalf("party: %s %#x", f.Type, f.Error)
 	}
+	ts.s.groups.inviteByServer(1, b.id)
 	if f := b.reply(6, 3, b.send(6, 3, golden.Bytes(t, decodeCase(t, g, "joinplaygroup_request")))); f.Type != fire.Reply {
 		t.Fatalf("join party: %s %#x", f.Type, f.Error)
 	}

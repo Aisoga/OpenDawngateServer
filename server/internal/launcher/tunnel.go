@@ -290,7 +290,15 @@ func startTunnel(o IO, l setup.Layout, gw string, pin tunnel.Pin, tunnelIP strin
 		}
 	}
 	c := &tunnel.Client{Log: log, Gateway: gw, Pin: pin, TunnelIP: net.ParseIP(tunnelIP), RedirectorTLS: tlsCfg,
-		Maps: InstalledMaps(l.ClientCopy(), folderDialogMaps(o.ExeDir))}
+		AllowTCP: DefaultFrontPorts.TCP(), Maps: InstalledMaps(l.ClientCopy(), folderDialogMaps(o.ExeDir))}
+	// The HTTP port stays open to every program here: this path has no front, so the login screen's links reach the server
+	// on it, in the player's browser. A hostile web page can still use that one port under picker = off.
+	guard := newGameGuard(l.ClientCopy(), func(format string, a ...any) {
+		if log != nil {
+			log.Logf("tunnel", format, a...)
+		}
+	})
+	c.AcceptConn = func(port int, lc net.Conn) bool { return port == HTTPPort || guard.allows(port, lc) }
 	closeAll := func() {
 		c.Close()
 		if f != nil {
@@ -300,6 +308,9 @@ func startTunnel(o IO, l setup.Layout, gw string, pin tunnel.Pin, tunnelIP strin
 	if err := c.Start(); err != nil {
 		if f != nil {
 			f.Close()
+		}
+		if errors.Is(err, tunnel.ErrTCPPort) { // this path has no port mapping: a server's own Blaze or QoS port ends here
+			err = fmt.Errorf("%w; the server picker (picker = auto, the default) plays on a server with its own port numbers", err)
 		}
 		return nil, nil, err
 	}

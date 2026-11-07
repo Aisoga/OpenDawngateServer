@@ -66,6 +66,9 @@ The link of a server you have just added, before the list knows it, or of a game
 **The sign-up page says "New server key"**
 You haven't logged in to that server yet, so its key isn't trusted. Compare the fingerprint on the page with the one the server's operator gives you; only if they match, confirm. That trusts the key for your logins as well. "KEY CHANGED" on the page means the same as in the server list (below): don't continue until the operator confirms the new key.
 
+**Another program can't reach the game's ports, or a page says "This port of Start-Client on this PC serves the game"**
+Only the programs of your game copy may use `Start-Client.exe`'s ports on your PC, so that a web page or another program can't act for you. The login screen's links still open in your browser. If the game itself is refused, `Dawngate-Data\logs\front-*.log` says `refused a connection: not the game` with the program it saw: that happens when something other than your game copy connects, or when security software stands in between.
+
 **This PC takes any password**
 That is how the server `Start-Client.exe` runs for This PC works: only your PC reaches it, so it checks no password (`local_trust = on` in `Start-Client.ini`, the default; `off` makes it check them). While `Start-Server.exe` runs in the same folder, This PC is that server, and it checks passwords: the first login there from this PC gives an account you made without a password its password.
 

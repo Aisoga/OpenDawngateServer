@@ -375,7 +375,7 @@ func (s *Setup) Client(server string, ca []byte) error {
 		s.stepChatRooms("chat rooms", s.ClientCopy())
 		s.stepAfterAction("after action review", s.ClientCopy(), server)
 		s.stepItemShop("shop refund", s.ClientCopy())
-		s.stepCollection("collection items", s.ClientCopy())
+		s.stepCollection("collection items", s.ClientCopy(), server)
 		if s.Picker {
 			s.stepPicker("server picker", s.ClientCopy())
 		} else {

@@ -303,6 +303,7 @@ func TestPartyMemberWins(t *testing.T) {
 	ps.next("NotifyJoinPlaygroup (the leader alone)")
 	two := ps.another()
 	two.loginAs("second@example.com", 0)
+	ps.srv.groups.inviteByServer(1, store.FirstPersonaID+1) // a party takes those its members invited
 	two.send(6, 3, 2, ps.request("joinplaygroup_request"))
 	two.expect(6, 3, fire.Reply, 2, "createplaygroup_party_reply")
 	two.expect(ComponentUserSessions, NotifyUserAdded, fire.Notification, 0, "useradded_wins_notification")

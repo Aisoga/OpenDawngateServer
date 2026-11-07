@@ -215,6 +215,20 @@ struct AbortGame {
   std::string reason;
 };
 
+// host -> server (SEATAUTH): who is behind this GMS connection? `addr` is the connection's address as the host sees it
+// ("ip:port"), `user` the id its HelloReq claims. The host holds the HelloReq until the verdict. Go: gmshost.VerifyHello.
+struct VerifyHello {
+  std::string addr;
+  int64_t user = 0;
+};
+
+// server -> host (SEATAUTH): the answer to verifyHello, echoing its addr and user. Go: gmshost.HelloVerdict.
+struct HelloVerdict {
+  std::string addr;
+  int64_t user = 0;
+  bool ok = false;
+};
+
 // server -> host (B15): a custom game's lobby roster after a change (createGame's mode "custom"): every human who may
 // connect, with a provisional gameplay index and team. The host lets them connect and holds their HelloReq until
 // startGame. Go: gmshost.UpdateRoster.
@@ -284,7 +298,7 @@ struct MatchTimeline {
 
 using Message = std::variant<Hello, CreateGame, GameReady, AddPlayer, DisconnectPlayer, GMSUpdate, PlayerFinish,
                              FinishGame, GMSError, LogoutGMS, RemovePlayer, AbortGame, PlayerRewards, PlayerKarma,
-                             UpdateRoster, StartGame, SeatStats, MatchTimeline>;
+                             UpdateRoster, StartGame, SeatStats, MatchTimeline, VerifyHello, HelloVerdict>;
 
 // TypeName returns a message's "t".
 const char* TypeName(const Message& m);

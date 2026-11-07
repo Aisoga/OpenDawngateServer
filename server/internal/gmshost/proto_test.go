@@ -49,7 +49,7 @@ func TestExamplesRoundTrip(t *testing.T) {
 	}
 	for _, typ := range []string{THello, TCreateGame, TGameReady, TAddPlayer, TDisconnectPlayer, TReportGMSUpdate,
 		TPlayerFinish, TFinishGame, TReportGMSError, TLogoutGMS, TRemovePlayer, TAbortGame, TPlayerRewards,
-		TPlayerKarma, TUpdateRoster, TStartGame, TSeatStats, TMatchTimeline} {
+		TPlayerKarma, TUpdateRoster, TStartGame, TSeatStats, TMatchTimeline, TVerifyHello, THelloVerdict} {
 		if !seen[typ] {
 			t.Errorf("no example for %s", typ)
 		}
@@ -62,6 +62,12 @@ func TestEncodeValues(t *testing.T) {
 		want string
 	}{
 		{LogoutGMS{}, `{"t":"logoutGMS"}`},
+		// SEATAUTH: the host's question and the answer
+		{VerifyHello{Addr: "127.0.1.10:50123", User: 2000000001}, `{"t":"verifyHello","addr":"127.0.1.10:50123","user":2000000001}`},
+		{HelloVerdict{Addr: "127.0.1.10:50123", User: 2000000001, OK: true},
+			`{"t":"helloVerdict","addr":"127.0.1.10:50123","user":2000000001,"ok":true}`},
+		{HelloVerdict{Addr: "127.0.1.10:50123", User: 2000000002},
+			`{"t":"helloVerdict","addr":"127.0.1.10:50123","user":2000000002,"ok":false}`},
 		// B15: a custom game's lobby roster and its start (a spectator: team 0, index 10, "spectator":true)
 		{UpdateRoster{Roster: []RosterEntry{{User: 2000000001, Name: "player", Team: 1}}},
 			`{"t":"updateRoster","roster":[{"user":2000000001,"name":"player","index":0,"team":1,"noun":"","bot":false}]}`},

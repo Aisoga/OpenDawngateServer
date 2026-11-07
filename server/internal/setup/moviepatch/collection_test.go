@@ -20,9 +20,9 @@ import (
 // pins the same hashes (COLLECTION_LIST_SHA, COLLECTION_SYNTH_SHA).
 const (
 	collectionList  = "60ed944ce678df5c0caea1bf3ff28d8f8f6ebce6f392082d3158fd1c78a5f9ea"
-	collectionSynth = "7cd32e2fbe63535ccd17a171b07a8b48227f2bbf3eab90e9cd8762fc5969dc5d"
+	collectionSynth = "21d215ab94977f7f988ded0ba1e566179c6cecd0a2009ec1b22b3ef4d27b658f"
 	// the same with a second class, tags "MORETAGS" as LobbyReady at 2001/2001
-	collectionSynthTwo = "9bf00c1c4f43663f79946de51969323b200af876f2a6842c383660a841bb3459"
+	collectionSynthTwo = "2f3800a7868beb2ae38f53cea46f4b64d3024eda71cad46f80d985cfd668ef14"
 )
 
 func madeUpContent(t *testing.T) *content.Content {
@@ -194,8 +194,12 @@ func TestCollectionTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	arc, err := snap.Parse(out)
-	if err != nil || len(arc.Entries) != 2 || arc.Entries[0].Name != sp.MoviePath || arc.Entries[1].Name != ItemsPath {
+	if err != nil || len(arc.Entries) != 3 || arc.Entries[0].Name != sp.MoviePath || arc.Entries[1].Name != ItemsPath ||
+		arc.Entries[2].Name != ChannelPath {
 		t.Fatalf("the archive: %v, %+v", err, arc)
+	}
+	if b, err := arc.Read(arc.Entries[2]); err != nil || string(b) != "dawngate-channel\t1\nhost\t127.0.0.1\nport\t10039\nend\n" {
+		t.Errorf("the channel file in the archive %q, %v", b, err)
 	}
 	if b, err := arc.Read(arc.Entries[1]); err != nil || !bytes.Equal(b, withOurs.ItemList) {
 		t.Errorf("the item list in the archive %q, %v", b, err)
@@ -254,8 +258,12 @@ func TestLobbyTags(t *testing.T) {
 	if d := p.Tags[tags[1].start:tags[1].end]; !bytes.HasPrefix(d, []byte("\x01\x00\x00\x00lobbyready\x00")) {
 		t.Errorf("DoABC %x…: not lazy and named lobbyready", d[:16])
 	}
-	if !bytes.Contains(p.Tags, []byte("~#rdy ")) || !bytes.Contains(p.Tags, []byte("customMatchLobby")) {
-		t.Error("the class doesn't speak the ready check's lines in the custom lobby")
+	if !bytes.Contains(p.Tags, []byte("lobby.setReady")) || !bytes.Contains(p.Tags, []byte("customMatchLobby")) ||
+		!bytes.Contains(p.Tags, []byte("Channel/dgchannel.json")) {
+		t.Error("the class doesn't set the ready state over the UI channel in the custom lobby")
+	}
+	if bytes.Contains(p.Tags, []byte("~#")) || bytes.Contains(p.Tags, []byte("ChatManager")) {
+		t.Error("the class still touches the chat")
 	}
 	ps, err := pairs(p.Tags, tags[2].start, tags[2].end)
 	if err != nil || len(ps) != 1 || ps[0] != (pair{2001, "LobbyReady"}) || p.Class != "LobbyReady" || p.CharID != 2001 {
@@ -317,7 +325,8 @@ func TestBuildCollection854(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, err := snap.Parse(out)
-	if err != nil || len(a.Entries) != 2 || a.Entries[0].Name != sp.MoviePath || a.Entries[1].Name != ItemsPath {
+	if err != nil || len(a.Entries) != 3 || a.Entries[0].Name != sp.MoviePath || a.Entries[1].Name != ItemsPath ||
+		a.Entries[2].Name != ChannelPath {
 		t.Fatalf("the archive: %v, %+v", err, a)
 	}
 	movie, err := a.Read(a.Entries[0])

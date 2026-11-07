@@ -173,6 +173,48 @@ func TestMatchLifecycle(t *testing.T) {
 	}
 }
 
+// SEATAUTH: the host's verifyHello reaches Events.VerifyHello and its answer the host; no such event means no.
+func TestVerifyHelloEvent(t *testing.T) {
+	ask := func(t *testing.T, ev Events) HelloVerdict {
+		t.Helper()
+		got := make(chan HelloVerdict, 1)
+		f := newFixture(t, 1, func(env Env, p *FakeProcess) {
+			PlayHost(env, p, func(h *HostConn, _ CreateGame) error {
+				if err := h.Send(VerifyHello{Addr: "127.0.1.10:50123", User: 2000000001}); err != nil {
+					return err
+				}
+				m, err := h.Recv(5 * time.Second)
+				if err != nil {
+					return err
+				}
+				got <- m.(HelloVerdict)
+				return nil
+			})
+		})
+		if _, err := f.m.Start(practice, ev); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case v := <-got:
+			return v
+		case <-time.After(5 * time.Second):
+			t.Fatal("no helloVerdict")
+		}
+		return HelloVerdict{}
+	}
+	var seen VerifyHello
+	yes := ask(t, Events{VerifyHello: func(mt *Match, v VerifyHello) bool { seen = v; return true }})
+	if seen != (VerifyHello{Addr: "127.0.1.10:50123", User: 2000000001}) || yes != (HelloVerdict{Addr: "127.0.1.10:50123", User: 2000000001, OK: true}) {
+		t.Errorf("asked %+v, answered %+v", seen, yes)
+	}
+	if no := ask(t, Events{VerifyHello: func(*Match, VerifyHello) bool { return false }}); no.OK {
+		t.Errorf("refused, answered %+v", no)
+	}
+	if none := ask(t, Events{}); none.OK || none.User != 2000000001 {
+		t.Errorf("without the event, answered %+v", none)
+	}
+}
+
 // D8c: a matchmade game's karma votes after finishGame reach Events.PlayerKarma, and the server's answer (the
 // rewards with the karma counted) reaches the host as playerRewards with karma.
 func TestPlayerKarma(t *testing.T) {

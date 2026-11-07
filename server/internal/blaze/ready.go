@@ -1,331 +1,401 @@
 package blaze
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
-	"strconv"
-	"strings"
+	"net"
+	"net/netip"
+	"slices"
+	"time"
 
 	"dawngate/server/internal/tdf"
+	"dawngate/server/internal/tunnel"
+	"dawngate/server/internal/uichannel"
 )
 
-// The custom lobby's ready check. The lobby has none of its own (the client's CustomGameLobbyView, its tiles and the
-// admin's roster manager hold no ready state), so it is a class of ours in the front end's movie (client_ui/lobby,
-// LobbyReady: a READY toggle for every human on the two teams except the admin, a mark on each counted tile, the
-// admin's START held disabled with "n/m ready" above it) that talks to the server over the lobby's own game chat:
+// The custom lobby's ready check. The client's lobby has none of its own (CustomGameLobbyView, its tiles and the
+// admin's roster manager hold no ready state), so it is ours on both sides: readyCheck below holds the state, and a
+// class in the front end's movie (client_ui/lobby/LobbyReady.as) shows it, over the UI channel (package uichannel):
 //
-//	client -> server   ~#rdy hi~      once per lobby entry: the client has the class
-//	                   ~#rdy 1~       its player is ready; ~#rdy 0~ not (the guest's toggle)
-//	server -> client   ~#rdy 1~ / ~#rdy 0~   in the name of the player whose state it is (SRCE, NAME: that player;
-//	                                         the class keys the line by the chat's event:p,<persona id> link)
-//	                   ~#rdy wait~    to the admin, from itself: a start was refused because someone isn't ready
-//	                   ~#rat <n>~     RATINGSHOW3: in the name of a player, the rating players see (Server.ShownRating);
-//	                                  the class shows "Rating <n>" on that player's tile beside the wins
+//	lobby.enter    {}                       the class's lobby is showing: its player takes part in the check
+//	lobby.setReady {"ready":true}           the READY button: the player's state
+//	lobby.state    {"players":[{"name":"x","ready":false,"rating":1612}, ...]}
+//	                                        the whole lobby, to everyone who entered, after a change (lobbyPublishGap)
+//	lobby.startRefused                      to an admin: a start was refused because someone isn't ready
 //
-// A lobby line is a game chat text "~#<kind> <args>~" of a kind in lobbyLineKinds (args separated by blanks); it is
-// never relayed (relay swallows it: no other client, no echo), so a client without the class never sees one, and the
-// server answers only clients that said hi. The server's own kinds (rat) are swallowed too and ignored, so no client
-// can put a line in its own name that another client's class would take for the server's.
+// lobby.state's players are the game's, by the name the lobby's natives know them by. ready is there only for a player
+// whose state counts; rating (RATINGSHOW3) only for one whose rating players see (Server.ShownRating).
 //
-// Who counts: the humans on teams 0 and 1 who said hi, except the admin (who is ready by starting); spectators never;
-// a player who never said hi counts as ready (a client without the class doesn't block). A state goes back to 0 at a
-// team change (swapPlayersTeam), a move to the spectators (then not counted) and a rejoin (the new join says hi
-// again); a kicked or leaving player drops out. The admin's advanceGameState IN_GAME while a counted player isn't
-// ready is refused (GAMEMANAGER_ERR_INVALID_GAME_STATE_ACTION) as a backstop only: the class keeps the admin's START
-// disabled, which sends nothing. Client evidence: the chat's OnGameMessage drops a game message from a user its chat
-// doesn't know (a lobby member always is) and writes the sender's link event:p,<persona id> before the text; a
-// refused advanceGameState leaves the client in its lobby (cBlazeGameManager::ChangeGameStateResult 0x00AC1C70).
+// Who counts: the players on teams 0 and 1 who entered, except the admin (who is ready by starting); spectators never;
+// a player who never entered counts as ready (a client without the class doesn't block). A state goes back to not ready
+// at a team change (swapPlayersTeam) and a rejoin; a player whose channel ends leaves the check. The admin's
+// advanceGameState IN_GAME while a counted player isn't ready is refused (GAMEMANAGER_ERR_INVALID_GAME_STATE_ACTION) as
+// a backstop only: the class keeps the admin's START disabled, which sends nothing. Client evidence: a refused
+// advanceGameState leaves the client in its lobby (cBlazeGameManager::ChangeGameStateResult 0x00AC1C70).
 
+// The UI channel's calls and events of the custom lobby.
 const (
-	// LobbyLineReady is the ready check's kind: "~#rdy <arg>~".
-	LobbyLineReady = "rdy"
-	readyHello     = "hi"
-	readyYes       = "1"
-	readyNo        = "0"
-	readyWait      = "wait"
-	// LobbyLineRating is the tiles' rating (RATINGSHOW3): "~#rat <n>~", sent only by the server.
-	LobbyLineRating = "rat"
+	CallLobbyEnter         = "lobby.enter"
+	CallLobbySetReady      = "lobby.setReady"
+	EventLobbyState        = "lobby.state"
+	EventLobbyStartRefused = "lobby.startRefused"
 )
 
-// lobbyLineKinds are the lobby line kinds: a client's line of one is swallowed (handled by the server, or, for the
-// server's own kinds, ignored).
-var lobbyLineKinds = map[string]bool{LobbyLineReady: true, LobbyLineRating: true}
+// lobbyPublishGap is the least time between two lobby.state broadcasts of a lobby. Every player of it hears each one and
+// redraws, and each player can change its state many times a second, so a burst ends in one broadcast with the last
+// state. The first of a burst goes at once, so a click on READY still shows without a wait.
+const lobbyPublishGap = 200 * time.Millisecond
 
-// LobbyLine is "~#<kind> <args...>~".
-func LobbyLine(kind string, args ...string) string {
-	return "~#" + kind + " " + strings.Join(args, " ") + "~"
+// readyCheck is a lobby's ready state: who takes part, and whether each of them is ready (guarded by the hostedGame's
+// mutex; the zero value is an empty check).
+type readyCheck struct {
+	members map[int64]bool
 }
 
-// parseLobbyLine reads a chat text as a lobby line of a known kind: "~#rdy 1~" -> ("rdy", ["1"]).
-func parseLobbyLine(text string) (kind string, args []string, ok bool) {
-	if !strings.HasPrefix(text, "~#") || !strings.HasSuffix(text, "~") || len(text) < 4 {
-		return "", nil, false
+// Join makes id a member, not ready.
+func (c *readyCheck) Join(id int64) {
+	if c.members == nil {
+		c.members = map[int64]bool{}
 	}
-	f := strings.Fields(text[2 : len(text)-1])
-	if len(f) == 0 || !lobbyLineKinds[f[0]] {
-		return "", nil, false
-	}
-	return f[0], f[1:], true
+	c.members[id] = false
 }
 
-// lobbyLineOf is the lobby line msg carries (its chat text), if any.
-func lobbyLineOf(msg ClientMessage) (kind string, args []string, ok bool) {
-	if msg.TargetType != ObjTypeGame && msg.TargetType != ObjTypePlaygroup {
-		return "", nil, false
-	}
-	text, found := msg.Attr(MsgAttrText)
-	if !found {
-		text, found = msg.Attr(MsgAttrTextUnfiltered)
-	}
-	if !found {
-		return "", nil, false
-	}
-	return parseLobbyLine(text)
+// Leave takes id out.
+func (c *readyCheck) Leave(id int64) { delete(c.members, id) }
+
+// Has reports whether id is a member.
+func (c *readyCheck) Has(id int64) bool {
+	_, ok := c.members[id]
+	return ok
 }
 
-// lobbyLine is a swallowed lobby line: the game it is for (0: not a game's chat), its kind and arguments, and the
-// message as sent (the server's own lines copy its form: attributes, flags, target).
-type lobbyLine struct {
-	game int64
-	kind string
-	args []string
-	msg  ClientMessage
+// Ready reports whether id is a member and ready.
+func (c *readyCheck) Ready(id int64) bool { return c.members[id] }
+
+// Set sets a member's state; false for someone who isn't one.
+func (c *readyCheck) Set(id int64, ready bool) bool {
+	if !c.Has(id) {
+		return false
+	}
+	c.members[id] = ready
+	return true
 }
 
-// lobbyGameOf is the game whose chat target t, id is: the game itself or its chat playgroup GG-<game id>.
-func (s *Server) lobbyGameOf(t tdf.ObjType, id int64) int64 {
-	if t == ObjTypeGame {
-		return id
+// LobbyStatePlayer is one player of EventLobbyState.
+type LobbyStatePlayer struct {
+	Name   string `json:"name"`
+	Ready  *bool  `json:"ready,omitempty"`
+	Rating int64  `json:"rating,omitempty"`
+}
+
+// LobbyState is EventLobbyState's data.
+type LobbyState struct {
+	Players []LobbyStatePlayer `json:"players"`
+}
+
+// AttachUI serves the lobby's calls on ui and identifies its users by their Blaze logins.
+func (s *Server) AttachUI(ui *uichannel.Server) {
+	s.UI = ui
+	s.lobbyGap = lobbyPublishGap
+	ui.Identify = s.identifyUI
+	ui.OnDisconnect = s.uiDisconnected
+	ui.Handle(CallLobbyEnter, func(user int64, _ json.RawMessage) error { return s.lobbyEnter(user) })
+	ui.Handle(CallLobbySetReady, func(user int64, args json.RawMessage) error {
+		var a struct {
+			Ready *bool `json:"ready"`
+		}
+		if err := json.Unmarshal(args, &a); err != nil || a.Ready == nil {
+			return errors.New("no ready in the arguments")
+		}
+		return s.lobbySetReady(user, *a.Ready)
+	})
+}
+
+// identifyUI names the user behind a UI channel connection. Through the tunnel the session says it: one Start-Client,
+// one tunnel session, one login, and what the client calls itself doesn't count. (A session with several logins, as the
+// test lanes' two clients behind one tunnel: the name picks among that session's logins, and only those.) A direct
+// connection (tunnel = off, the developers' path, whose Blaze is unencrypted too) has only its address: name must be
+// logged in from the same one, all loopback addresses counting as one (the movie's socket isn't bound: it comes from
+// 127.0.0.1 whatever the game's own bind address is), and only by a direct login: someone behind a tunnelled player's
+// public address must not pass for that player on a server that also has plain listeners. The store is asked only when
+// there is a choice to make, so a connection without any login costs it nothing.
+func (s *Server) identifyUI(c net.Conn, name string) (int64, bool) {
+	var users []int64
+	if t := tunnel.Local(c); t != nil {
+		users = s.msgs.usersOfTunnelSession(t.Session)
+		if len(users) == 1 {
+			return users[0], true
+		}
+	} else {
+		ap, err := netip.ParseAddrPort(c.RemoteAddr().String())
+		if err != nil {
+			return 0, false
+		}
+		users = s.msgs.usersOfDirectAddr(ap.Addr().Unmap())
 	}
-	s.groups.mu.Lock()
-	pg := s.groups.byID[id]
-	key := ""
-	if pg != nil {
-		key = pg.info.Key
+	if len(users) == 0 || s.Store == nil {
+		return 0, false
 	}
-	s.groups.mu.Unlock()
-	if g, ok := strings.CutPrefix(key, "GG-"); ok {
-		if n, err := strconv.ParseInt(g, 10, 64); err == nil {
-			return n
+	if _, p, named := s.Store.PersonaByName(name); named && slices.Contains(users, p.ID) {
+		return p.ID, true
+	}
+	return 0, false
+}
+
+// usersOfDirectAddr are the personas logged in without the tunnel from address from, all loopback addresses counting
+// as one.
+func (m *messaging) usersOfDirectAddr(from netip.Addr) []int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var users []int64
+	for user, conns := range m.online {
+		for _, c := range conns {
+			if c.TunnelAddr() != nil {
+				continue
+			}
+			if a := c.Addr(); a == from || a.IsLoopback() && from.IsLoopback() {
+				users = append(users, user)
+				break
+			}
 		}
 	}
-	return 0
+	return users
 }
 
-// withText is the lobby chat message m with its text attributes set to text (the form the client sent).
-func withText(m ClientMessage, text string) ClientMessage {
-	out := m
-	out.Attrs = make([]MsgAttr, len(m.Attrs))
-	for i, a := range m.Attrs {
-		if a.Key == MsgAttrText || a.Key == MsgAttrTextUnfiltered {
-			a.Value = text
-		}
-		out.Attrs[i] = a
-	}
-	return out
-}
-
-// readySend is one server line: to a class holder, in the name of the player about, with arg.
-type readySend struct {
-	to, about *hostedPlayer
-	arg       string
-}
-
-// readyCountedLocked reports whether hp's state counts for the start: a class holder on team 0 or 1, not an admin
-// (hg.mu held).
-func (hg *hostedGame) readyCountedLocked(hp *hostedPlayer) bool {
-	return !hp.removed && hp.readyClass && (hp.p.Team == 0 || hp.p.Team == 1) && !hg.isAdminLocked(hp.p.ID)
-}
-
-// readyHoldersLocked are the players who get the lines: in the game, said hi (hg.mu held).
-func (hg *hostedGame) readyHoldersLocked() []*hostedPlayer {
-	var out []*hostedPlayer
-	for _, hp := range hg.players {
-		if !hp.removed && hp.readyClass && hp.conn != nil {
-			out = append(out, hp)
+// usersOfTunnelSession are the personas logged in through tunnel session id.
+func (m *messaging) usersOfTunnelSession(id uint64) []int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var users []int64
+	for user, conns := range m.online {
+		for _, c := range conns {
+			if t := c.TunnelAddr(); t != nil && t.Session == id {
+				users = append(users, user)
+				break
+			}
 		}
 	}
-	return out
+	return users
 }
 
-// readyTellLocked are the lines that tell every class holder (but skip) about's state arg (hg.mu held).
-func (hg *hostedGame) readyTellLocked(about *hostedPlayer, arg string, skip *hostedPlayer) []readySend {
-	var out []readySend
-	for _, h := range hg.readyHoldersLocked() {
-		if h != skip {
-			out = append(out, readySend{h, about, arg})
+// lobbyOf is the custom lobby user is in (nil: none, or its game started).
+func (s *Server) lobbyOf(user int64) *hostedGame {
+	s.hosted.mu.Lock()
+	games := make([]*hostedGame, 0, len(s.hosted.byID))
+	for _, g := range s.hosted.byID {
+		games = append(games, g)
+	}
+	s.hosted.mu.Unlock()
+	for _, g := range games {
+		g.mu.Lock()
+		hp := g.playerLocked(user)
+		in := g.custom != nil && !g.custom.started && !g.ended && hp != nil && !hp.removed
+		g.mu.Unlock()
+		if in {
+			return g
 		}
 	}
-	return out
+	return nil
 }
 
-// readyClearLocked puts hp's state back to 0 (a team change, a rejoin) and tells the holders (hg.mu held). Nothing
-// for a player without the class.
-func (hg *hostedGame) readyClearLocked(hp *hostedPlayer, skip *hostedPlayer) []readySend {
-	if !hp.readyClass || hg.custom == nil || hg.custom.started {
+// lobbyEnter: user's lobby is showing, so its client has the class and takes part in the check.
+func (s *Server) lobbyEnter(user int64) error {
+	hg := s.lobbyOf(user)
+	if hg == nil {
+		return fmt.Errorf("not in a lobby")
+	}
+	hg.mu.Lock()
+	same := hg.custom.check.Has(user) && !hg.custom.check.Ready(user)
+	hg.custom.check.Join(user)
+	counted := hg.readyCountedLocked()
+	hg.mu.Unlock()
+	if same { // a new connection of a member, or a repeated call: nothing for the others to hear
+		hg.sendLobbyState(user)
 		return nil
 	}
-	hp.ready = false
-	return hg.readyTellLocked(hp, readyNo, skip)
+	s.Log.Logf("blaze", "   game %d: ready check: %d entered; %d counted now", hg.game.ID, user, len(counted))
+	hg.publishLobby()
+	return nil
 }
 
-// readyWaitingLocked are the counted players who aren't ready (hg.mu held).
-func (hg *hostedGame) readyWaitingLocked() []int64 {
+// lobbySetReady is the READY button: user's state. It changes nothing for someone who doesn't count (the admin, a
+// spectator, a player who hasn't entered), and the same state again tells nobody anything.
+func (s *Server) lobbySetReady(user int64, ready bool) error {
+	hg := s.lobbyOf(user)
+	if hg == nil {
+		return fmt.Errorf("not in a lobby")
+	}
+	hg.mu.Lock()
+	counted := false
+	if hp := hg.playerLocked(user); hp != nil {
+		counted = hg.readyCountsLocked(hp)
+	}
+	if !counted {
+		hg.mu.Unlock()
+		return fmt.Errorf("not counted (the admin or a spectator); ignored")
+	}
+	if hg.custom.check.Ready(user) == ready {
+		hg.mu.Unlock()
+		return nil
+	}
+	hg.custom.check.Set(user, ready)
+	waiting := hg.readyWaitingLocked()
+	hg.mu.Unlock()
+	s.Log.Logf("blaze", "   game %d: ready check: %d is ready %v; waiting for %v", hg.game.ID, user, ready, waiting)
+	hg.publishLobby()
+	return nil
+}
+
+// uiDisconnected: user's channel ended, so its client can't say it is ready any more: it leaves the check, as a client
+// without the class.
+func (s *Server) uiDisconnected(user int64) {
+	hg := s.lobbyOf(user)
+	if hg == nil {
+		return
+	}
+	hg.mu.Lock()
+	hg.custom.check.Leave(user)
+	hg.mu.Unlock()
+	s.Log.Logf("blaze", "   game %d: ready check: %d's UI channel ended; it doesn't count any more", hg.game.ID, user)
+	hg.publishLobby()
+}
+
+// readyCountsLocked reports whether hp's state counts for the start (hg.mu held).
+func (hg *hostedGame) readyCountsLocked(hp *hostedPlayer) bool {
+	return !hp.removed && hg.custom.check.Has(hp.p.ID) && (hp.p.Team == 0 || hp.p.Team == 1) && !hg.isAdminLocked(hp.p.ID)
+}
+
+// readyCountedLocked are the players whose state counts (hg.mu held).
+func (hg *hostedGame) readyCountedLocked() []int64 {
 	var out []int64
 	for _, hp := range hg.players {
-		if hg.readyCountedLocked(hp) && !hp.ready {
+		if hg.readyCountsLocked(hp) {
 			out = append(out, hp.p.ID)
 		}
 	}
 	return out
 }
 
-// sendReady sends the ready check's lines (outside hg.mu).
-func (hg *hostedGame) sendReady(lines []readySend) {
-	hg.sendLines(LobbyLineReady, lines, true)
-}
-
-// sendLines sends lobby lines of kind (outside hg.mu) as NotifyMessage in the name of each line's player, in the lobby
-// chat message's form the game's class holders sent (customLobby.readyForm); logged one by one, or all in one line.
-func (hg *hostedGame) sendLines(kind string, lines []readySend, logEach bool) {
-	if len(lines) == 0 {
-		return
-	}
-	hg.mu.Lock()
-	form := hg.custom.readyForm
-	hg.mu.Unlock()
-	if form == nil {
-		return
-	}
-	s := hg.s
-	var sent []string
-	for _, l := range lines {
-		text := LobbyLine(kind, l.arg)
-		note := MessageNotification(ServerMessage{ID: s.msgs.newID(), Name: l.about.p.Name,
-			Payload: withText(*form, text), Source: l.about.p.ID, Time: s.Now().Unix()})
-		if logEach {
-			s.Log.Logf("blaze", "   game %d: ready check: %q from %d to %d", hg.game.ID, text, l.about.p.ID, l.to.p.ID)
-		} else {
-			sent = append(sent, fmt.Sprintf("%d %s to %d", l.about.p.ID, l.arg, l.to.p.ID))
+// readyWaitingLocked are the players the start waits for (hg.mu held).
+func (hg *hostedGame) readyWaitingLocked() []int64 {
+	var out []int64
+	for _, id := range hg.readyCountedLocked() {
+		if !hg.custom.check.Ready(id) {
+			out = append(out, id)
 		}
-		l.to.conn.Push(s, ComponentMessaging, NotifyMessageID, "NotifyMessage", note)
 	}
-	if len(sent) > 0 {
-		s.Log.Logf("blaze", "   game %d: the tiles' ratings (~#%s <n>~): %s", hg.game.ID, kind, strings.Join(sent, ", "))
-	}
+	return out
 }
 
-// sendRatings tells class holders the rating each player of the game shows (RATINGSHOW3): one "~#rat <n>~" per
-// player with a shown rating (Server.ShownRating: show_rating on and enough rated games; with the switch off nothing
-// is sent and the tiles stay as they were), in that player's name; the spectators too (a spectator can join a team;
-// the class draws a rating on the team tiles only, as EA's spectator tile has no wins either). to nil: every holder
-// (after a roster change, for a newcomer's rating: the admin's TeamRostersKey follows every join, and by then every
-// member's chat knows the newcomer); else that holder only (its hi: everyone's). The lines are sent again at every
-// roster change rather than remembered per holder, so a line a client dropped comes again.
-func (hg *hostedGame) sendRatings(to *hostedPlayer) {
+// lobbyRosterChanged: someone joined, left or moved. The host's roster and the lobby's classes follow.
+func (hg *hostedGame) lobbyRosterChanged() {
+	hg.syncHostRoster()
+	hg.publishLobby()
+}
+
+// publishLobby tells everyone who entered the lobby's whole state (outside hg.mu), at most once per Server.lobbyGap: a
+// change inside the gap goes out at its end, with whatever came after it. The state is sent again rather than as
+// differences, so there is no state on the client to get out of step.
+func (hg *hostedGame) publishLobby() {
+	s := hg.s
+	if s.UI == nil {
+		return
+	}
 	hg.mu.Lock()
 	if hg.custom == nil || hg.custom.started || hg.ended {
 		hg.mu.Unlock()
 		return
 	}
-	var holders, about []*hostedPlayer
-	for _, h := range hg.readyHoldersLocked() {
-		if to == nil || h == to {
-			holders = append(holders, h)
+	now := time.Now()
+	if wait := hg.custom.lastPublish.Add(s.lobbyGap).Sub(now); wait > 0 {
+		if !hg.custom.publishDue {
+			hg.custom.publishDue = true
+			time.AfterFunc(wait, hg.publishWaiting)
 		}
-	}
-	for _, hp := range hg.players {
-		if !hp.removed {
-			about = append(about, hp)
-		}
-	}
-	hg.mu.Unlock()
-	if len(holders) == 0 {
+		hg.mu.Unlock()
 		return
 	}
-	var lines []readySend
-	for _, a := range about {
-		acct, _, ok := hg.s.Store.PersonaByID(a.p.ID)
-		if !ok {
-			continue
-		}
-		v, shown := hg.s.ShownRating(acct.History)
-		if !shown {
-			continue
-		}
-		for _, h := range holders {
-			lines = append(lines, readySend{h, a, strconv.FormatInt(v, 10)})
-		}
-	}
-	hg.sendLines(LobbyLineRating, lines, false)
+	hg.custom.lastPublish = now
+	hg.mu.Unlock()
+	hg.sendLobbyState(0)
 }
 
-// readyLine handles a swallowed ~#rdy line from sender (after sendMessage's reply).
-func (s *Server) readyLine(sender int64, line lobbyLine) {
-	arg := ""
-	if len(line.args) > 0 {
-		arg = line.args[0]
+// publishWaiting is a publish whose turn has come.
+func (hg *hostedGame) publishWaiting() {
+	hg.mu.Lock()
+	if hg.custom != nil {
+		hg.custom.publishDue = false
 	}
-	hg := s.hosted.get(line.game)
-	if hg == nil || hg.custom == nil {
-		s.Log.Logf("blaze", "   ready check: %q from %d for game %d: no custom game; ignored", arg, sender, line.game)
+	hg.mu.Unlock()
+	hg.publishLobby()
+}
+
+// sendLobbyState sends the lobby's state to only, or (0) to everyone who entered.
+func (hg *hostedGame) sendLobbyState(only int64) {
+	s := hg.s
+	if s.UI == nil {
 		return
 	}
 	hg.mu.Lock()
-	hp := hg.playerLocked(sender)
-	if hp == nil || hp.removed || hg.custom.started || hg.ended {
+	if hg.custom == nil || hg.custom.started || hg.ended {
 		hg.mu.Unlock()
-		s.Log.Logf("blaze", "   game %d: ready check: %q from %d: not in the lobby (or it started); ignored", line.game, arg, sender)
 		return
 	}
-	form := line.msg
-	hg.custom.readyForm = &form
-	var out []readySend
-	why := ""
-	switch arg {
-	case readyHello:
-		hp.readyClass, hp.ready = true, false
-		for _, q := range hg.players {
-			if hg.readyCountedLocked(q) {
-				state := readyNo
-				if q.ready {
-					state = readyYes
-				}
-				out = append(out, readySend{hp, q, state})
-			}
+	var to []int64
+	var state LobbyState
+	unread := map[int]*hostedPlayer{} // state.Players' index -> a player whose rating hasn't been read yet
+	for _, hp := range hg.players {
+		if hp.removed {
+			continue
 		}
-		if hg.readyCountedLocked(hp) {
-			out = append(out, hg.readyTellLocked(hp, readyNo, hp)...)
+		p := LobbyStatePlayer{Name: hp.p.Name, Rating: hp.rating}
+		if hg.readyCountsLocked(hp) {
+			ready := hg.custom.check.Ready(hp.p.ID)
+			p.Ready = &ready
 		}
-		why = fmt.Sprintf("has the class; %d counted now", len(hg.readyCountedOfLocked()))
-	case readyYes, readyNo:
-		hp.readyClass = true
-		if !hg.readyCountedLocked(hp) {
-			why = "not counted (the admin or a spectator); ignored"
-			break
+		if !hp.ratingRead {
+			unread[len(state.Players)] = hp
 		}
-		hp.ready = arg == readyYes
-		out = hg.readyTellLocked(hp, arg, nil)
-		why = fmt.Sprintf("ready %v; waiting for %v", hp.ready, hg.readyWaitingLocked())
-	default:
-		why = "unknown; ignored"
+		state.Players = append(state.Players, p)
+		if hg.custom.check.Has(hp.p.ID) && (only == 0 || hp.p.ID == only) {
+			to = append(to, hp.p.ID)
+		}
 	}
 	hg.mu.Unlock()
-	s.Log.Logf("blaze", "   game %d: ready check: %q from %d: %s", line.game, arg, sender, why)
-	hg.sendReady(out)
-	if arg == readyHello {
-		hg.sendRatings(hp) // RATINGSHOW3: the newcomer's tiles get every player's rating
+	if len(to) == 0 {
+		return
+	}
+	for i, hp := range unread {
+		v := s.lobbyRating(hp.p.ID)
+		state.Players[i].Rating = v
+		hg.mu.Lock()
+		hp.rating, hp.ratingRead = v, true
+		hg.mu.Unlock()
+	}
+	for _, id := range to {
+		s.UI.Send(id, EventLobbyState, state)
 	}
 }
 
-// readyCountedOfLocked are the counted players (hg.mu held).
-func (hg *hostedGame) readyCountedOfLocked() []int64 {
-	var out []int64
-	for _, hp := range hg.players {
-		if hg.readyCountedLocked(hp) {
-			out = append(out, hp.p.ID)
+// lobbyRating is the rating lobby.state shows for persona id; 0: none.
+func (s *Server) lobbyRating(id int64) int64 {
+	if s.Store == nil {
+		return 0
+	}
+	if acct, _, ok := s.Store.PersonaByID(id); ok {
+		if v, shown := s.ShownRating(acct.History); shown {
+			return v
 		}
 	}
-	return out
+	return 0
+}
+
+// uiLoginEnded: one of user's logins ended, and the channel connections that came by it with it.
+func (s *Server) uiLoginEnded(user int64) {
+	if s.UI != nil {
+		s.UI.Recheck(user)
+	}
 }
 
 // refuseUnreadyStart refuses the admin's advanceGameState IN_GAME while counted players aren't ready (hg.mu held; it
@@ -334,7 +404,7 @@ func (hg *hostedGame) readyCountedOfLocked() []int64 {
 // 0x00684D70: no dialog, the lobby stays), but its START had locked the roster (RosterLockedKey "1"), which nothing of
 // the client's unlocks again; so the server sets RosterLockedKey "0" for every player (the roster manager's
 // onGameAttributeUpdated 0x006A2670 takes "0"/"1" into its lock, 0x0069FBE0), and tells an admin with the class why
-// (~#rdy wait~ in its own name).
+// (EventLobbyStartRefused).
 //
 // READY2b: the unlock alone leaves the admin's join buttons and kick X hidden. 0x0069FBE0 tells the roster listeners
 // (0x0069F4C0 -> 0x0069F1E0, slot 5), the lobby's slot 5 (0x00427E30 -> 0x00427800) sets the view's rosterLocked,
@@ -348,7 +418,6 @@ func (s *Server) refuseUnreadyStart(r *Request, hg *hostedGame, waiting []int64,
 	gid := hg.game.ID
 	unlock := []tdf.Pair{tdf.KV(AttrRosterLocked, "0")}
 	hg.game.Attrs = mergeAttrs(hg.game.Attrs, unlock)
-	var lines []readySend
 	var admins []*hostedPlayer
 	for _, a := range hg.custom.admins {
 		hp := hg.playerLocked(a)
@@ -356,9 +425,6 @@ func (s *Server) refuseUnreadyStart(r *Request, hg *hostedGame, waiting []int64,
 			continue
 		}
 		admins = append(admins, hp)
-		if hp.readyClass {
-			lines = append(lines, readySend{hp, hp, readyWait})
-		}
 	}
 	hg.mu.Unlock()
 	s.Log.Logf("blaze", "   game %d: advanceGameState IN_GAME refused: not ready %v (the ready check)%s; RosterLockedKey \"0\" to every player, the admin its extended data (its lobby's redraw)",
@@ -371,7 +437,9 @@ func (s *Server) refuseUnreadyStart(r *Request, hg *hostedGame, waiting []int64,
 			if own := s.OwnExtendedData(a.p.ID); own != nil {
 				a.conn.Push(s, ComponentUserSessions, NotifyUserSessionExtendedDataUpdate, "UserSessionExtendedDataUpdate", own)
 			}
+			if s.UI != nil {
+				s.UI.Send(a.p.ID, EventLobbyStartRefused, nil)
+			}
 		}
-		hg.sendReady(lines)
 	})
 }

@@ -80,6 +80,11 @@ func limitGameStart(next func(*Request) []byte) func(*Request) []byte {
 			return next(r)
 		}
 		user := sess.Account.UserID
+		if n, addr := lim.Config().GamesPerAddr, r.Conn.remoteIP(); n > 0 && addr != "" && r.Server.hosted.runningFromAddr(addr) >= n {
+			r.Server.Log.Logf("blaze", "   limits: game start of account %d refused: %d games running from its address", user, n)
+			r.Fail(ErrNoHostCapacity)
+			return nil
+		}
 		if err := lim.StartGame(user, r.Server.hosted.runningFor(user)); err != nil {
 			r.Server.Log.Logf("blaze", "   limits: game start of account %d refused: %v", user, err)
 			r.Fail(ErrNoHostCapacity)
@@ -105,6 +110,25 @@ func limitQueue(next func(*Request) []byte) func(*Request) []byte {
 		}
 		return next(r)
 	}
+}
+
+// runningFromAddr counts the hosted games whose first player's connection comes from addr (not ended).
+func (h *hostedGames) runningFromAddr(addr string) int {
+	h.mu.Lock()
+	games := make([]*hostedGame, 0, len(h.byID))
+	for _, g := range h.byID {
+		games = append(games, g)
+	}
+	h.mu.Unlock()
+	n := 0
+	for _, g := range games {
+		g.mu.Lock()
+		if !g.ended && len(g.players) > 0 && g.players[0].conn != nil && g.players[0].conn.remoteIP() == addr {
+			n++
+		}
+		g.mu.Unlock()
+	}
+	return n
 }
 
 // runningFor counts the hosted games the account is in (not ended, not removed).

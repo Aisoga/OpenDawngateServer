@@ -17,6 +17,7 @@ import (
 
 	"dawngate/server/internal/accounts"
 	"dawngate/server/internal/gms"
+	"dawngate/server/internal/gmshost"
 	"dawngate/server/internal/redirector"
 	"dawngate/server/internal/tdf"
 	"dawngate/server/internal/tunnel"
@@ -38,13 +39,13 @@ func TestTunnelWanted(t *testing.T) {
 	if _, err := tunnelWanted("yes", "127.0.0.1"); err == nil {
 		t.Error("--tunnel yes accepted")
 	}
-	c := config{redirectorPort: 1, blazePort: 2, qosPort: 3, httpPort: 4, telemetryPort: 5, gmsControlPort: 6, gatewayPort: 7,
+	c := config{redirectorPort: 1, blazePort: 2, qosPort: 3, httpPort: 4, telemetryPort: 5, uiPort: 8, gmsControlPort: 6, gatewayPort: 7,
 		tunnel: TunnelOn, gmsDir: "x"}
-	if got := fmt.Sprint(c.printPorts()); got != "[1 2 3 4 5 6 7]" {
+	if got := fmt.Sprint(c.printPorts()); got != "[1 2 3 4 5 8 6 7]" {
 		t.Errorf("--print-ports with the tunnel: %s", got)
 	}
 	c.tunnelClient = "127.0.0.9:42128"
-	if got := fmt.Sprint(c.printPorts()); got != "[1 2 3 4 5]" {
+	if got := fmt.Sprint(c.printPorts()); got != "[1 2 3 4 5 8]" {
 		t.Errorf("--print-ports of --tunnel-client: %s", got)
 	}
 }
@@ -80,7 +81,7 @@ func tunnelThroughServer(t *testing.T, plainOff bool) {
 		if len(in.listeners) != 0 || in.qosUDP != nil {
 			t.Errorf("--plain off bound listeners: %d, QoS UDP %v", len(in.listeners), in.qosUDP != nil)
 		}
-		if got := fmt.Sprint(in.ports); got != "[42127 10041 17502 18080 9988]" {
+		if got := fmt.Sprint(in.ports); got != "[42127 10041 17502 18080 9988 10039]" {
 			t.Errorf("the gateway's service ports: %s", got)
 		}
 		if held := heldOn(srvIP, in.ports); len(held) > 0 {
@@ -257,6 +258,44 @@ func heldOn(address string, ps []int) []string {
 
 // --plain off needs the tunnel, and --plain and --gms-bind take only what they should; --print-ports leaves the
 // services' ports out without plain listeners.
+// SEATAUTH: with match hosts a session reaches a GMS port only after Blaze routed it; B8's logger and an external GMS
+// keep the gateway's fallback (TestTunnelThroughServer sends a datagram to the logger).
+func TestGatewayForwardOnlyWithoutHosts(t *testing.T) {
+	prepareHosts = func() error { return nil }
+	t.Cleanup(func() { prepareHosts = gmshost.LauncherEvent })
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := start(config{bind: "127.0.9.33", certs: testCerts(t), logDir: t.TempDir(), tunnel: TunnelOn, gmsDir: exe,
+		gmsArgs: "-multipleInstances", gmsPorts: "20058-20059"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.stop()
+	if in.gateway == nil || in.gateway.Forward != nil {
+		t.Errorf("with match hosts: gateway %v, a Forward fallback set", in.gateway)
+	}
+	if got := fmt.Sprint(in.gateway.Describe()); !strings.Contains(got, "20058") {
+		t.Errorf("the GMS ports aren't among the gateway's: %s", got)
+	}
+	logger, err := start(config{bind: "127.0.9.34", certs: testCerts(t), logDir: t.TempDir(), tunnel: TunnelOn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logger.stop()
+	if logger.gateway == nil || logger.gateway.Forward == nil {
+		t.Errorf("B8's logger: no Forward")
+	}
+}
+
+// --gms-hello-check takes on and off only.
+func TestHelloCheckFlag(t *testing.T) {
+	if code := Main([]string{"--gms-hello-check", "maybe", "--print-ports"}); code != 2 {
+		t.Errorf("--gms-hello-check maybe: exit %d", code)
+	}
+}
+
 func TestPlainOff(t *testing.T) {
 	if _, err := start(config{bind: "127.0.9.33", certs: testCerts(t), logDir: t.TempDir(), plain: PlainOff, tunnel: TunnelOff}); err == nil ||
 		!strings.Contains(err.Error(), "--plain off needs the tunnel") {

@@ -190,8 +190,10 @@ type hostedPlayer struct {
 	// RATING1: the player was in the game (not removed) when it went IN_GAME; a custom game's player who left its lobby
 	// before then has no seat in the match (matchLocked), so it isn't one of the humans the rating's rule counts
 	atStart bool
-	// READY2, the custom lobby's ready check (ready.go): the player's client said hi (it has the class), and its state
-	readyClass, ready bool
+	// the rating lobby.state shows for this player (0: none), read from the store once (ready.go): it can't change
+	// during a lobby, and a rejoin is a new hostedPlayer
+	rating     int64
+	ratingRead bool
 }
 
 // startHostedGame is resetDedicatedServer with a match host: reply now, announce the game once the
@@ -402,6 +404,7 @@ func (hg *hostedGame) setState(state int64) {
 func (hg *hostedGame) events() gmshost.Events {
 	s, gid := hg.s, hg.game.ID
 	return gmshost.Events{
+		VerifyHello: s.verifyHello,
 		Ready: func(mt *gmshost.Match, port int) {
 			<-hg.replied // NotifyGameSetup must not overtake the reply
 			hg.mu.Lock()

@@ -28,6 +28,7 @@ std::string g_abortedWhy;  // G3b: EndAborted's reason; Poll exits
 std::int64_t g_postGameCapMs = 105000;
 bool g_warm;  // H1-live: started by dgserver's warm pool (DGGMS_WARM)
 const dggms::control::CreateGame kNoGame{};
+std::vector<Kick> g_kicks;  // SEATAUTH: until the next GmsHostPoll
 
 // H5: the engine thread uses the channel; the watchdog's thread may too (GiveUp), so everything that polls or sends
 // holds this lock (recursive on one thread: Poll may call Exit)
@@ -114,8 +115,11 @@ void Poll() {
     HostMark("control channel: createGame");
   }
   for (const auto& r : g_ctl->TakeRemoved())
+  {
     Log("control: removePlayer: user %lld left on the Blaze side (%s)", static_cast<long long>(r.user),
         r.reason.c_str());
+    if (r.reason.find("KICKED") != std::string::npos) g_kicks.push_back(Kick{r.user, r.reason, !g_ctl->InLobby()});
+  }
   if (g_ctl->AbortRequested()) Exit(0, ("abortGame: " + g_ctl->AbortReason()).c_str());
   if (g_ctl->Lost()) Exit(4, "the control connection ended");
   if (!g_abortedWhy.empty()) Exit(0, ("the game was aborted before its pre-game (G3b): " + g_abortedWhy).c_str());
@@ -134,6 +138,24 @@ const dggms::control::CreateGame& Game() { return g_ctl ? g_ctl->Game() : kNoGam
 const dggms::control::RosterEntry* FindUser(std::int64_t user) { return g_ctl ? g_ctl->FindUser(user) : nullptr; }
 
 bool InLobby() { return g_ctl && g_ctl->InLobby(); }
+
+void VerifyHello(const std::string& addr, std::int64_t user) {
+  if (!g_ctl) return;
+  Locked lock;
+  g_ctl->SendVerifyHello(addr, user);
+}
+
+std::vector<dggms::control::HelloVerdict> TakeVerdicts() {
+  if (!g_ctl) return std::vector<dggms::control::HelloVerdict>();
+  Locked lock;
+  return g_ctl->TakeVerdicts();
+}
+
+std::vector<Kick> TakeKicks() {
+  std::vector<Kick> out;
+  out.swap(g_kicks);
+  return out;
+}
 
 void Ready(int port) {
   if (!g_ctl) return;

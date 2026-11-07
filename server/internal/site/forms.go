@@ -205,6 +205,9 @@ func (s *Site) change(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	noteFor(w, "%s", res.Note)
+	if cred, found, err := s.cfg.Store.Credentials(v.Name); err == nil && found {
+		s.endSessions(cred.UserID, "its password changed")
+	}
 	s.render(w, r, http.StatusOK, "message", &view{Title: "Password changed",
 		Done: "Your password is changed. Log in with the new one from now on."})
 }

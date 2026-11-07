@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,56 +35,62 @@ var reference = []struct {
 	o       Options
 	sha256  string
 	summary string
-	desc    string // redirector bind appdata documents raknet_loopback ca_sha256 ca_flag laa preload maptable rating
+	desc    string // redirector bind appdata documents raknet_loopback ca_sha256 ca_flag laa preload maptable rating heaplocks numfmt averages
 }{
-	{"local", modA, Options{}, "75974aeadff4f99f2a5f028126d5257f993e06953d661021c7f8a42addbe61be",
-		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170)",
-		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all on on"},
-	{"local_laa_off", modA, Options{NoLAA: true}, "c0d16e858f4eb99e782ec5fa24b4aadff0d01fb9be41ebeadcbd8b3f4e7e7834",
-		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170)",
-		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 off all on on"},
-	{"local_modb", modB, Options{Profile: ProfileLocal, ServerHost: "127.0.0.1"}, "64de3fe39569d88fd8448c55aa745082565a1f0b636257c90a81571a3ab9dc7f",
-		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170)",
-		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 471fb943aa23c511 0 on all on on"},
-	{"local_localhost", modA, Options{ServerHost: "localhost"}, "b52587ba4e1f1c22f79ebacd52dec48e387ccedfbebd64192eb5983df2c5ff5d",
-		"redirector host -> localhost; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170)",
-		"localhost 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all on on"},
-	{"lan", modA, Options{Profile: ProfileLAN, ServerHost: "192.168.1.20"}, "59afd7a134afac500b28925799376237795a358593f6528e900d11e9bb0c481f",
-		"redirector host -> 192.168.1.20; UPnP off (-noupnp forced, discovery refused); sockets as shipped (wildcard binds; loopback patch left out); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170)",
-		"192.168.1.20 as-shipped DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all on on"},
-	{"lan_bind", modA, Options{Profile: ProfileLAN, ServerHost: "192.168.1.20", ClientBind: "192.168.1.30"}, "1ab116ba94e1dcdd067503e48e90ad92026e4d5ee382327df849f51b04e33b2d",
-		"redirector host -> 192.168.1.20; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 192.168.1.30 (bind cave at 0x011ab100, 6 sites), RakNet's own-socket test to 192.168.1.30; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170)",
-		"192.168.1.20 192.168.1.30 DawngateData Dawngate 192.168.1.30 349d65e9ba1de7b0 0 on all on on"},
-	{"lan_bind_same", modB, Options{Profile: ProfileLAN, ServerHost: "192.168.20.40", ClientBind: "192.168.20.40"}, "573d8f011155e76279c5385217e8a3d1f883ebdc3a5db920f7d9d16233cfcd7f",
-		"redirector host -> 192.168.20.40; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 192.168.20.40 (bind cave at 0x011ab100, 6 sites), RakNet's own-socket test to 192.168.20.40; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170)",
-		"192.168.20.40 192.168.20.40 DawngateData Dawngate 192.168.20.40 471fb943aa23c511 0 on all on on"},
-	{"lan_cgnat", modA, Options{Profile: ProfileLAN, ServerHost: "100.64.1.2"}, "ce6541277b01ed64e13be57d70884f34d411c26f01e183cd2d1f603661a46fc4",
-		"redirector host -> 100.64.1.2; UPnP off (-noupnp forced, discovery refused); sockets as shipped (wildcard binds; loopback patch left out); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170)",
-		"100.64.1.2 as-shipped DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all on on"},
-	{"lane_b", modA, Options{ServerHost: "127.0.0.2", DataSuffix: "B"}, "704650764d0040b795e605030d07d4f62b4e73e63f763f9af35fa06b32ea2825",
-		`redirector host -> 127.0.0.2; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 127.0.0.2 (bind cave at 0x011ab100, 6 sites), RakNet loopback 127.0.0.2; data folders %APPDATA%\DawngateDataB, Documents\DawngateB; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170)`,
-		"127.0.0.2 127.0.0.2 DawngateDataB DawngateB 127.0.0.2 349d65e9ba1de7b0 0 on all on on"},
-	{"lane_e", modA, Options{ServerHost: "127.0.0.4", ClientBind: "127.0.4.2", DataSuffix: "E"}, "175e7662c3229a61b09044f216e2e0b1ba7a9a6894f3c426200177bb13431242",
-		`redirector host -> 127.0.0.4; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 127.0.4.2 (bind cave at 0x011ab100, 6 sites), RakNet loopback 127.0.4.2; data folders %APPDATA%\DawngateDataE, Documents\DawngateE; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170)`,
-		"127.0.0.4 127.0.4.2 DawngateDataE DawngateE 127.0.4.2 349d65e9ba1de7b0 0 on all on on"},
-	{"lan_test_l", modA, Options{Profile: ProfileLAN, ServerHost: "10.0.0.5", ClientBind: "10.0.0.5", DataSuffix: "L"}, "9f0cfdce580e3d4f4639d4a86ba13a9cd00e8c4c524781b7f379122bf83cdb59",
-		`redirector host -> 10.0.0.5; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 10.0.0.5 (bind cave at 0x011ab100, 6 sites), RakNet's own-socket test to 10.0.0.5; data folders %APPDATA%\DawngateDataL, Documents\DawngateL; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170)`,
-		"10.0.0.5 10.0.0.5 DawngateDataL DawngateL 10.0.0.5 349d65e9ba1de7b0 0 on all on on"},
-	{"maptable", modA, Options{NoRating: true}, "d81339e8e44cc4a6781c92db73488f20897e24ead406c7622a683dd9768a4543",
+	{"local", modA, Options{}, "73feaac8ca6b72ce79cbfe07205530f94ee583389c2e5ae991f1075f72b05a20",
+		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170); the UI's memory heaps take their locks (a movie's socket reads on a thread); the UI's numbers print with 15 digits (8.2, not 8.199999999999999); the profile's averages at full precision (8.7, not 8.6)",
+		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all on on on on on"},
+	{"local_laa_off", modA, Options{NoLAA: true}, "212e587c31743fe978ed931926ab04fb42a14734535ba66df7527f123561b83e",
+		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170); the UI's memory heaps take their locks (a movie's socket reads on a thread); the UI's numbers print with 15 digits (8.2, not 8.199999999999999); the profile's averages at full precision (8.7, not 8.6)",
+		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 off all on on on on on"},
+	{"local_modb", modB, Options{Profile: ProfileLocal, ServerHost: "127.0.0.1"}, "c7cf94bdc210e10bdec2528df6b4bb6dd2dd2c34c1583273e739899090420368",
+		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170); the UI's memory heaps take their locks (a movie's socket reads on a thread); the UI's numbers print with 15 digits (8.2, not 8.199999999999999); the profile's averages at full precision (8.7, not 8.6)",
+		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 471fb943aa23c511 0 on all on on on on on"},
+	{"local_localhost", modA, Options{ServerHost: "localhost"}, "3c79311cf864a832676b529b38fc9835365ecf6900ead4cc7a6d140cf72a109c",
+		"redirector host -> localhost; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170); the UI's memory heaps take their locks (a movie's socket reads on a thread); the UI's numbers print with 15 digits (8.2, not 8.199999999999999); the profile's averages at full precision (8.7, not 8.6)",
+		"localhost 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all on on on on on"},
+	{"lan", modA, Options{Profile: ProfileLAN, ServerHost: "192.168.1.20"}, "dba010fcf75107a36acf84a2b3012e823151d57e37b15732b46e8a63eb71b275",
+		"redirector host -> 192.168.1.20; UPnP off (-noupnp forced, discovery refused); sockets as shipped (wildcard binds; loopback patch left out); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170); the UI's memory heaps take their locks (a movie's socket reads on a thread); the UI's numbers print with 15 digits (8.2, not 8.199999999999999); the profile's averages at full precision (8.7, not 8.6)",
+		"192.168.1.20 as-shipped DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all on on on on on"},
+	{"lan_bind", modA, Options{Profile: ProfileLAN, ServerHost: "192.168.1.20", ClientBind: "192.168.1.30"}, "07ae51e8b1ca08f1bf01ab34b962e85f5c544bebba9197aad379b51311dc215e",
+		"redirector host -> 192.168.1.20; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 192.168.1.30 (bind cave at 0x011ab100, 6 sites), RakNet's own-socket test to 192.168.1.30; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170); the UI's memory heaps take their locks (a movie's socket reads on a thread); the UI's numbers print with 15 digits (8.2, not 8.199999999999999); the profile's averages at full precision (8.7, not 8.6)",
+		"192.168.1.20 192.168.1.30 DawngateData Dawngate 192.168.1.30 349d65e9ba1de7b0 0 on all on on on on on"},
+	{"lan_bind_same", modB, Options{Profile: ProfileLAN, ServerHost: "192.168.20.40", ClientBind: "192.168.20.40"}, "67f70b4570aef4fb4e360a664f7de7b6bf2508516e7b4ae3892bb5d36de491bb",
+		"redirector host -> 192.168.20.40; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 192.168.20.40 (bind cave at 0x011ab100, 6 sites), RakNet's own-socket test to 192.168.20.40; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170); the UI's memory heaps take their locks (a movie's socket reads on a thread); the UI's numbers print with 15 digits (8.2, not 8.199999999999999); the profile's averages at full precision (8.7, not 8.6)",
+		"192.168.20.40 192.168.20.40 DawngateData Dawngate 192.168.20.40 471fb943aa23c511 0 on all on on on on on"},
+	{"lan_cgnat", modA, Options{Profile: ProfileLAN, ServerHost: "100.64.1.2"}, "b1923bf62b51591bb7728e3e46e1e7686ae2b5844325746168824fdc744d1d7e",
+		"redirector host -> 100.64.1.2; UPnP off (-noupnp forced, discovery refused); sockets as shipped (wildcard binds; loopback patch left out); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170); the UI's memory heaps take their locks (a movie's socket reads on a thread); the UI's numbers print with 15 digits (8.2, not 8.199999999999999); the profile's averages at full precision (8.7, not 8.6)",
+		"100.64.1.2 as-shipped DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all on on on on on"},
+	{"lane_b", modA, Options{ServerHost: "127.0.0.2", DataSuffix: "B"}, "decc85b28f5b863673506860f7bf79fac72ffb3d0bf0cd517ab801b1cdad5365",
+		`redirector host -> 127.0.0.2; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 127.0.0.2 (bind cave at 0x011ab100, 6 sites), RakNet loopback 127.0.0.2; data folders %APPDATA%\DawngateDataB, Documents\DawngateB; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170); the UI's memory heaps take their locks (a movie's socket reads on a thread); the UI's numbers print with 15 digits (8.2, not 8.199999999999999); the profile's averages at full precision (8.7, not 8.6)`,
+		"127.0.0.2 127.0.0.2 DawngateDataB DawngateB 127.0.0.2 349d65e9ba1de7b0 0 on all on on on on on"},
+	{"lane_e", modA, Options{ServerHost: "127.0.0.4", ClientBind: "127.0.4.2", DataSuffix: "E"}, "fb54100cff2134d206de04ae2bcec5df168c3b61dce9c0557909d9dc0b9a5ee5",
+		`redirector host -> 127.0.0.4; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 127.0.4.2 (bind cave at 0x011ab100, 6 sites), RakNet loopback 127.0.4.2; data folders %APPDATA%\DawngateDataE, Documents\DawngateE; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170); the UI's memory heaps take their locks (a movie's socket reads on a thread); the UI's numbers print with 15 digits (8.2, not 8.199999999999999); the profile's averages at full precision (8.7, not 8.6)`,
+		"127.0.0.4 127.0.4.2 DawngateDataE DawngateE 127.0.4.2 349d65e9ba1de7b0 0 on all on on on on on"},
+	{"lan_test_l", modA, Options{Profile: ProfileLAN, ServerHost: "10.0.0.5", ClientBind: "10.0.0.5", DataSuffix: "L"}, "8f402042e3da4b11d28f091bf3ee2659f198703b0dd96d51d3ac2895be7b06cd",
+		`redirector host -> 10.0.0.5; UPnP off (-noupnp forced, discovery refused); sockets narrowed to 10.0.0.5 (bind cave at 0x011ab100, 6 sites), RakNet's own-socket test to 10.0.0.5; data folders %APPDATA%\DawngateDataL, Documents\DawngateL; LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170); the UI's memory heaps take their locks (a movie's socket reads on a thread); the UI's numbers print with 15 digits (8.2, not 8.199999999999999); the profile's averages at full precision (8.7, not 8.6)`,
+		"10.0.0.5 10.0.0.5 DawngateDataL DawngateL 10.0.0.5 349d65e9ba1de7b0 0 on all on on on on on"},
+	{"numfmt", modA, Options{NoAverages: true}, "1ec27470fb246a4d81820a96929a670f8cf27476fdca2f2417c5848d59e1255d",
+		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170); the UI's memory heaps take their locks (a movie's socket reads on a thread); the UI's numbers print with 15 digits (8.2, not 8.199999999999999)",
+		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all on on on on as-shipped"},
+	{"heaplocks", modA, Options{NoNumberFormat: true, NoAverages: true}, "b7254e054218a1e7a44be37a9e32c714317413c01853f15c93fd888952e7eeaf",
+		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140); the profile box shows the rating the server sends (rating cave at 0x011ab170); the UI's memory heaps take their locks (a movie's socket reads on a thread)",
+		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all on on on as-shipped as-shipped"},
+	{"maptable", modA, Options{NoRating: true, NoHeapLocks: true, NoNumberFormat: true, NoAverages: true}, "d81339e8e44cc4a6781c92db73488f20897e24ead406c7622a683dd9768a4543",
 		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14); every map named by its LevelId's line in FE_CustomGameLobby (map-name cave at 0x011ab140)",
-		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all on as-shipped"},
-	{"q3b", modA, Options{NoPreload: true, NoMapTable: true, NoRating: true}, "237512dc68b4135e220b410d92a6579cd602188079bd093b365871e38d214613",
+		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all on as-shipped as-shipped as-shipped as-shipped"},
+	{"q3b", modA, Options{NoPreload: true, NoMapTable: true, NoRating: true, NoHeapLocks: true, NoNumberFormat: true, NoAverages: true}, "237512dc68b4135e220b410d92a6579cd602188079bd093b365871e38d214613",
 		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space)",
-		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on as-shipped as-shipped as-shipped"},
-	{"a4", modA, Options{NoLAA: true, NoPreload: true, NoMapTable: true, NoRating: true}, "a15dd7ad91326f3114a054fd72ef20248a833a253e0c86a7d63fc13a0ecef027",
+		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on as-shipped as-shipped as-shipped as-shipped as-shipped as-shipped"},
+	{"a4", modA, Options{NoLAA: true, NoPreload: true, NoMapTable: true, NoRating: true, NoHeapLocks: true, NoNumberFormat: true, NoAverages: true}, "a15dd7ad91326f3114a054fd72ef20248a833a253e0c86a7d63fc13a0ecef027",
 		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites)",
-		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 off as-shipped as-shipped as-shipped"},
-	{"sndbank", modA, Options{NoMapTable: true, NoRating: true}, "a6ca0ae63b8815bf38aeb4575f61a951e4c92f5a159f0c1465f4a47cfe57267e",
+		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 off as-shipped as-shipped as-shipped as-shipped as-shipped as-shipped"},
+	{"sndbank", modA, Options{NoMapTable: true, NoRating: true, NoHeapLocks: true, NoNumberFormat: true, NoAverages: true}, "a6ca0ae63b8815bf38aeb4575f61a951e4c92f5a159f0c1465f4a47cfe57267e",
 		"redirector host -> 127.0.0.1; UPnP off (-noupnp forced, discovery refused); sockets loopback-only (bind cave at 0x011ab100, 6 sites); LARGE_ADDRESS_AWARE (4 GB of address space); every player's shaper preloaded (player indexes 0-14)",
-		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all as-shipped as-shipped"},
+		"127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 349d65e9ba1de7b0 0 on all as-shipped as-shipped as-shipped as-shipped as-shipped"},
 }
 
-const origDescription = "gosredirector.ea.com as-shipped DawngateData Dawngate 127.0.0.1 e96f07ca645d1661 1 off as-shipped as-shipped as-shipped"
+const origDescription = "gosredirector.ea.com as-shipped DawngateData Dawngate 127.0.0.1 e96f07ca645d1661 1 off as-shipped as-shipped as-shipped as-shipped as-shipped as-shipped"
 
 func descLine(d Description) string {
 	var parts []string
@@ -195,7 +202,7 @@ func diffRanges(a, b []byte) [][2]int {
 func TestSyntheticLocal(t *testing.T) {
 	orig := syntheticExe()
 	d, err := Describe(orig)
-	if err != nil || descLine(d) != "gosredirector.ea.com as-shipped DawngateData Dawngate 127.0.0.1 "+sha256Hex(orig[synthOffset(otg3Modulus) : synthOffset(otg3Modulus)+128])[:16]+" 1 off as-shipped as-shipped as-shipped" {
+	if err != nil || descLine(d) != "gosredirector.ea.com as-shipped DawngateData Dawngate 127.0.0.1 "+sha256Hex(orig[synthOffset(otg3Modulus) : synthOffset(otg3Modulus)+128])[:16]+" 1 off as-shipped as-shipped as-shipped as-shipped as-shipped as-shipped" {
 		t.Fatalf("untouched synthetic: %q %v", descLine(d), err)
 	}
 	got, summary, err := Patch(orig, modB, Options{})
@@ -206,7 +213,7 @@ func TestSyntheticLocal(t *testing.T) {
 		t.Errorf("summary %q", summary)
 	}
 	d, _ = Describe(got)
-	if want := "127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 471fb943aa23c511 0 on all on on"; descLine(d) != want {
+	if want := "127.0.0.1 127.0.0.1 DawngateData Dawngate 127.0.0.1 471fb943aa23c511 0 on all on on on on on"; descLine(d) != want {
 		t.Errorf("describe %q, want %q", descLine(d), want)
 	}
 	// the changes, all where patch_client.py makes them
@@ -221,9 +228,14 @@ func TestSyntheticLocal(t *testing.T) {
 		{tlsVSizeAt, 4},
 		{synthOffset(ratingSite1), len(ratingSite1New)}, {synthOffset(ratingSite2), len(ratingSite2New)},
 		{synthOffset(ratingCave), len(ratingCaveCode())}, {synthOffset(ratingLabelVA), ratingLabelRoom},
+		{synthOffset(numFmtFormat), len(numFmtFormatNew)}, {synthOffset(numFmtStep), len(numFmtStepNew)},
+		{synthOffset(averagesBlock), len(averagesNew)},
 	}
 	for _, va := range bindCalls {
 		allowed = append(allowed, [2]int{synthOffset(va), 6})
+	}
+	for _, va := range heapLockSites {
+		allowed = append(allowed, [2]int{synthOffset(va), len(heapLocksNew)})
 	}
 	for _, r := range diffRanges(orig, got) {
 		ok := false
@@ -233,6 +245,23 @@ func TestSyntheticLocal(t *testing.T) {
 		if !ok {
 			t.Errorf("unexpected change at %#x..%#x", r[0], r[1])
 		}
+	}
+	// NUMFMT: 15 digits, and the step to more digits reads the 1e15 constant, whose bytes the patch leaves as they are
+	if o := synthOffset(numFmtFormat); string(got[o:o+6]) != "%.15g\x00" {
+		t.Errorf("number format %q", got[o:o+6])
+	}
+	if o := synthOffset(numFmtStep); !bytes.Equal(got[o:o+2], []byte{0xDD, 0x05}) || binary.LittleEndian.Uint32(got[o+2:]) != numFmt1e15 {
+		t.Errorf("number step: % x", got[o:o+6])
+	}
+	if o := synthOffset(numFmt1e15); math.Float64frombits(binary.LittleEndian.Uint64(got[o:])) != 1e15 {
+		t.Errorf("the 1e15 constant: % x", got[o:o+8])
+	}
+	// AVGPREC: the block keeps its size, and the x87's control word is kept and put back
+	if len(averagesNew) != len(averagesOrig) {
+		t.Errorf("the averages' block: %d bytes, shipped %d", len(averagesNew), len(averagesOrig))
+	}
+	if o := synthOffset(averagesBlock); !bytes.Equal(got[o:o+len(averagesNew)], averagesNew) {
+		t.Errorf("the averages' block: % x", got[o:o+len(averagesNew)])
 	}
 	if v := binary.LittleEndian.Uint32(got[vsizeAt:]); v != 0xDAA200 {
 		t.Errorf(".text VirtualSize %#x", v)

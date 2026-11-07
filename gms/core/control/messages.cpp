@@ -157,6 +157,10 @@ struct Encoder {
     o.Set("user", Json::Int(m.user)).Set("reason", Json::Str(m.reason));
   }
   void operator()(const AbortGame& m) { o.Set("reason", Json::Str(m.reason)); }
+  void operator()(const VerifyHello& m) { o.Set("addr", Json::Str(m.addr)).Set("user", Json::Int(m.user)); }  // SEATAUTH
+  void operator()(const HelloVerdict& m) {
+    o.Set("addr", Json::Str(m.addr)).Set("user", Json::Int(m.user)).Set("ok", Json::Bool(m.ok));
+  }
   void operator()(const UpdateRoster& m) { o.Set("roster", RosterJson(m.roster)); }  // B15
   void operator()(const StartGame& m) { o.Set("roster", RosterJson(m.roster)); }     // B15
   // M18: gmshost.SeatStats' fields in order; stats and sources only when not empty, slot only when set (omitempty)
@@ -236,6 +240,8 @@ struct Namer {
   const char* operator()(const StartGame&) { return "startGame"; }
   const char* operator()(const SeatStats&) { return "seatStats"; }
   const char* operator()(const MatchTimeline&) { return "matchTimeline"; }
+  const char* operator()(const VerifyHello&) { return "verifyHello"; }
+  const char* operator()(const HelloVerdict&) { return "helloVerdict"; }
 };
 
 // ------------------------------------------------------------------------------------- decoding
@@ -641,6 +647,14 @@ bool Decode(std::string_view line, Message& out, std::string* err) {
   } else if (type == "abortGame") {
     AbortGame m;
     f.Str("reason", m.reason);
+    out = std::move(m);
+  } else if (type == "verifyHello") {  // SEATAUTH
+    VerifyHello m;
+    f.Str("addr", m.addr); f.Int("user", m.user);
+    out = std::move(m);
+  } else if (type == "helloVerdict") {
+    HelloVerdict m;
+    f.Str("addr", m.addr); f.Int("user", m.user); f.Bool("ok", m.ok);
     out = std::move(m);
   } else if (type == "playerRewards") {
     PlayerRewards m;

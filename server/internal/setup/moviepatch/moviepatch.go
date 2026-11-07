@@ -114,6 +114,8 @@ type Spec struct {
 	// WebRoot: the archive also holds the web root of the server WebHost (WebRootPath; DefaultWebHost when empty)
 	WebRoot bool
 	WebHost string
+	// Channel: the archive also holds where the server WebHost has its UI channel (ChannelPath)
+	Channel bool
 	// Extra are more files of the archive, after the movie (the shop refund's default settings, RefundSettings)
 	Extra []snap.File
 	// Items: the archive also holds the Collection's item list (ItemsPath), ItemList's bytes, which the setup sets
@@ -494,6 +496,17 @@ func (sp Spec) BuildMaps(source []byte, maps []Map) ([]byte, error) {
 				return nil, fmt.Errorf("%s: no item list", sp.What)
 			}
 			files = append(files, snap.File{Name: ItemsPath, Data: sp.ItemList})
+		}
+		if sp.Channel {
+			host := sp.WebHost
+			if host == "" {
+				host = DefaultWebHost
+			}
+			channel, err := ChannelFile(host, ChannelPort)
+			if err != nil {
+				return nil, err
+			}
+			files = append(files, snap.File{Name: ChannelPath, Data: channel})
 		}
 		files = append(files, sp.Extra...)
 		return snap.Pack(files), nil

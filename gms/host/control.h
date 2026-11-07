@@ -47,6 +47,18 @@ const dggms::control::RosterEntry* FindUser(std::int64_t user);
 // and startGame replace the roster FindUser reads.
 bool InLobby();
 
+// SEATAUTH: verifyHello {addr, user}; the verdicts since the last call, for the session (GmsHostPoll).
+void VerifyHello(const std::string& addr, std::int64_t user);
+std::vector<dggms::control::HelloVerdict> TakeVerdicts();
+// SEATAUTH: removePlayer with a kick's reason (PLAYER_KICKED): the session closes the user's connections, and in a started
+// game refuses its later HelloReqs (`bar`; in a custom game's lobby a kicked player may be let in again by a later roster).
+struct Kick {
+  std::int64_t user = 0;
+  std::string reason;
+  bool bar = false;
+};
+std::vector<Kick> TakeKicks();
+
 void Ready(int port);
 void PlayerAdded(std::int64_t user, int index);
 void PlayerGone(std::int64_t user, const char* reason);

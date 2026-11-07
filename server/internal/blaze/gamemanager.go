@@ -274,7 +274,11 @@ func registerGameManager(s *Server) {
 		}
 		g := gameFromRequest(r.Body, r.Server.gameIDs.Add(1), gms)
 		p := Player{ID: r.Conn.Session.Persona.ID, Name: r.Conn.Session.Persona.Name, JoinTime: r.Server.Now().UnixMicro()}
-		p.Team, _ = r.Body.Int("TIDX")
+		// a client's number: the roster and getGameDataFromId size lists by it, so a huge one could end the server
+		if p.Team, _ = r.Body.Int("TIDX"); p.Team < 0 || p.Team > SpectatorTeam {
+			p.Team = 0
+		}
+		practiceFlags(&g) // access.go
 		ext, in := requestHostAddress(r.Body)
 		p.Ext, p.Int = r.Server.ClientAddr(ext), r.Server.ClientAddr(in)
 		if IsLobbyGame(int64(g.descriptors())) { // B15: CREATE GAME's custom game (or a practice group): a lobby first

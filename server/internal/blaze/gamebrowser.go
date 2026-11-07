@@ -26,6 +26,7 @@ package blaze
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 
@@ -236,6 +237,16 @@ func registerGameBrowser(s *Server) {
 			if subscribe {
 				if b.lists == nil {
 					b.lists = map[int64]*browserList{}
+				}
+				// the client holds one; a connection's oldest goes rather than the lists adding up to every game's pushes
+				var mine []int64
+				for id, o := range b.lists {
+					if o.conn == r.Conn {
+						mine = append(mine, id)
+					}
+				}
+				if len(mine) >= maxGameListsPerConn {
+					delete(b.lists, slices.Min(mine))
 				}
 				b.lists[l.id] = l
 			}

@@ -108,7 +108,7 @@ Start-Client.exe [<server address or tag>] [options]
 | Option | Effect |
 |---|---|
 | `<server>` or `--server <server>` | The server to play on: an address, or the tag or name of a server in the server list. It is added to the list if it's missing, and preselected on the login screen. Without it the login screen preselects the server used last, This PC when none was used yet. |
-| `--picker auto\|on\|off` | The server list on the login screen. `auto` (the default) and `on` show it whenever the tunnel is used, which is for every server unless `--tunnel off`. `off` never: the game plays on one server through its tunnel. |
+| `--picker auto\|on\|off` | The server list on the login screen. `auto` (the default) and `on` show it whenever the tunnel is used, which is for every server unless `--tunnel off`. `off` never: the game plays on one server through its tunnel, and that server has to use the game's own TCP ports (one with another `--blaze-port` or `--qos-port` is refused; the server list handles those). |
 | `--tunnel auto\|on\|off` | The encrypted tunnel. `auto` (the default) and `on` use it for every server. `off` (for a server with `tunnel = off`, an option for developers) plays on one server directly; a `Start-Server.ini` with `tunnel = off` in the same folder makes it the default. |
 | `--gateway-pin <64 hex digits>` | The server's key, if the operator handed it out (the server's window shows it): it is trusted without the confirmation, and the server list checks it. |
 | `--gateway-port <port>` | The server's tunnel port, if it's not 42128. |
@@ -127,6 +127,8 @@ Start-Client.exe [<server address or tag>] [options]
 | `--editor-addr <address:port>` | With `--editor`: where the page is served, `127.0.0.1:17890` by default. Only an address of this PC (`127.x.x.x`) is taken, since the page writes into your `maps` folder. |
 | `--editor-pages <folder>` | With `--editor`: the editor's page folder, `editor` beside `Start-Client.exe` by default (a relative path is taken from that folder). A page made for another version of the editor's interface is refused with both versions named. |
 | `--mapc <command> ...` | Runs the map compiler instead of the client, with the compiler's own commands and arguments (`version`, `check`, `build`, `preview`, `bake`, `import`, and the listings and exports of the game's props, models and textures; most take `--json` for programs) and its exit code (0 done, 1 failed, 2 wrong arguments): for the map editor and for scripts that build or check map packages without Go. It must be the first argument. `Start-Client.exe --mapc version --json` prints the release, the map format and the version of the compiler's command line. |
+
+**The server list also protects you from a server you try.** With it (`picker` `auto` or `on`) the game's web pages and files come from your own `Start-Client.exe`, only the game's programs on your PC can use its ports, your network card's address stays with you, and a server can't send the game outside the tunnel. With `--picker off` or `--tunnel off` the game talks to that one server directly, so use them only for a server you trust.
 
 `Start-Client.ini` has the keys `server` (empty: the server list), `folder`, `tunnel`, `gateway_port`, `picker` (`auto`, `on`, `off`), `local_trust` (`on`, `off`), `update_check` (`on`, `off`), `discord` (`on`, `off`), `discord_join` (`on`, `off`), `discord_app_id`, `map_download` (`on`, `off`) and `map_download_max_mb` (the largest map package taken, in MB; empty: 512). An older `Start-Client.ini` keeps working: its `server` becomes the first server of a new list, and its comments are updated. The option on the command line wins over the key.
 
@@ -147,7 +149,7 @@ Start-Client.exe [<server address or tag>] [options]
 
 With `--picker off` or `--tunnel off` (one server, without the server list) the status is only *In the game* with the time since the game started. It changes at most once every 4 seconds (Discord's limit), clears when the game ends, and comes back by itself when Discord starts after the game or restarts while it runs. `discord = off` (or `--discord off`) turns it off. `discord_app_id` is the Discord application the status is shown as (its numeric id); empty, the project's own (*OpenDawngate*).
 
-**Join from Discord.** While you are in a party, a practice group's lobby or a custom game's lobby that has a free seat and no password, your Discord profile gets a *Join* button for your Discord friends, and the status shows the seats (*In a party (2 of 5)*, *Open to join (3 of 10)*). It goes away when the party or lobby is full, while your party is in the queue, when the match starts (a started custom game has no Join; friends can still watch it through the custom games list) and outside these screens. A friend who clicks *Join*:
+**Join from Discord** adds the server to your list, but doesn't trust its key by itself: a server new to you stops at the usual new-key message at your first login, and your second login confirms it. While you are in a party, a practice group's lobby or a custom game's lobby that has a free seat and no password, your Discord profile gets a *Join* button for your Discord friends, and the status shows the seats (*In a party (2 of 5)*, *Open to join (3 of 10)*). It goes away when the party or lobby is full, while your party is in the queue, when the match starts (a started custom game has no Join; friends can still watch it through the custom games list) and outside these screens. A friend who clicks *Join*:
 
 - needs `Start-Client.exe` with the Discord app on the friend's own PC. If the game isn't running, Discord starts `Start-Client.exe` (it works after the friend started `Start-Client.exe` once, which registers it with Discord).
 - gets the server added to the server list with its key (no fingerprint to confirm) and preselected, when it isn't in the list yet. Logged in on that server, the friend gets the game's usual invite pop-up in your name (the party's leader's, the lobby's owner's) right after the login (after the game's news panel, when it shows, is closed), and *YES* joins; when the game doesn't answer it, the invite comes again after half a minute (three times at most). Not logged in yet: the invite comes after the login there.
@@ -245,6 +247,7 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 
 | Option | Default | Effect |
 |---|---|---|
+| `--gms-hello-check on\|off` | `on` | Whether a match host seats a connection only after the server confirmed it may claim that player. Turn it off only when a NAT sits between your server and a machine that runs match hosts: with it off, whoever reaches a host's port can take a seat in that match. |
 | `--owned all\|starter` | `all` | What new accounts own: everything, or only the starter items (the always-owned items, a few shapers, a perk page, and the Spiritstones and Sparks of the filled starter page). |
 | `--ftue-required` | off | Bring back the original's first-time screen, where new accounts can only play practice. |
 | `--free-rotation <names>` | none | Shapers everyone can pick in shaper select, comma-separated (for example `Fenmore`). |
@@ -274,7 +277,7 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 | `--maps <folder>` | none | A folder of map packages (a sub-folder with `map.json` each) whose maps `--map` and `--custom-maps` may name. `Start-Server.exe` passes its `maps` folder when there is one; the release's comes empty (no map package comes with the release or the code), and a checkout's `maps` folder keeps only its README in git. A package that doesn't read is left out with a warning in the log. |
 | `--trust-maps none\|all\|<addresses>` | `none` | Which players connecting without the tunnel count as having the files of the maps beside `SM_Map_v5`: `all`, or comma-separated addresses and networks (`192.168.1.20,10.0.0.0/8`). The others can't join or queue for a game on `MM_Map_v3`, and their own games play on `SM_Map_v5`. Through the tunnel a player counts when their `Start-Client.exe` is the server's release. |
 | `--online-count on\|off`, `--online-count-every <time>` | `on`, `30s` | The players-online count in the status line, as the keys `online_count` and `online_count_every`. |
-| `--gms-ports <from>-<to>` | `10042-10051` | The match hosts' UDP ports, one per running match. A port that something else holds, or that a match host can't bind, is left out for a while (5 minutes, longer if it keeps failing; the server log says when it's back), and the game starts on the next free port. |
+| `--gms-ports <from>-<to>` | `10042-10051` | The match hosts' UDP ports, one per running match. A port that something else holds, or that a match host can't bind, is left out for a while (5 minutes, longer if it keeps failing; the server log says when it's back), and the game starts on the next free port. With the tunnel these and the QoS port must be 1024 or higher and at most 64 in all, or the server doesn't start (Start-Client would refuse it). |
 | `--gms-warm N` | `0` | Keep N idle match hosts ready, so a match starts instantly. Each holds a port and about 90 MB of memory. |
 | `--gms-runner auto\|none\|<command>` | `auto` | What starts the match hosts' `Dawngate.exe`: `auto` starts it directly on Windows and through `wine` on other systems, `none` always directly, or a command such as `/opt/wine-stable/bin/wine`. |
 | `--limits auto\|on\|off` | `auto` | The limits: `auto` turns them on for a public address. |
@@ -311,9 +314,9 @@ With the tunnel (the default) the server listens for players on one port, on its
 | 10040 | TCP | The server's control channel to its match hosts | **Nobody. Never forward it.** It stays on 127.0.0.1 (on a server on a loopback address, that address). |
 | 10042–10051 | UDP | Matches, one port per running match, on a loopback address of their own: `127.0.N.10` for a server on `127.0.0.N`, else `127.0.1.10` | Nobody: the tunnel reaches them inside the PC. |
 
-Nothing else listens, so a `Start-Client.exe` on the same PC uses the game's own ports on `127.0.0.1` (TCP 42127, 10041, 17502, 18080 and 9988, UDP 17502 and 10042–10051) without a collision. The server `Start-Client.exe` runs for This PC listens on `127.0.1.11` only: TCP and UDP 42128, TCP 10040 and its matches' UDP 10042–10051. The map editor (`Start-Client.exe --editor`) serves its page on TCP 17890 on `127.0.0.1` (`--editor-addr`), never on the network.
+Nothing else listens, so a `Start-Client.exe` on the same PC uses the game's own ports on `127.0.0.1` (TCP 42127, 10041, 10039, 17502, 18080 and 9988, UDP 17502 and 10042–10051) without a collision. The server `Start-Client.exe` runs for This PC listens on `127.0.1.11` only: TCP and UDP 42128, TCP 10040 and its matches' UDP 10042–10051. The map editor (`Start-Client.exe --editor`) serves its page on TCP 17890 on `127.0.0.1` (`--editor-addr`), never on the network.
 
-With `tunnel = off` (an option for developers) the server listens on its address on TCP 42127 (the redirector, the client's first contact), 10041 (logins, menus, matchmaking and chat), 17502 (the connection-quality test, also UDP), 18080 (web content and the login screen's links) and 9988 (game telemetry), and the matches on UDP 10042–10051 there too.
+With `tunnel = off` (an option for developers) the server listens on its address on TCP 42127 (the redirector, the client's first contact), 10041 (logins, menus, matchmaking and chat), 17502 (the connection-quality test, also UDP), 18080 (web content and the login screen's links), 9988 (game telemetry) and 10039 (the game UI's own channel: the custom lobby's ready check and the rating on its tiles), and the matches on UDP 10042–10051 there too.
 
 On Linux the matches listen on `127.0.0.1` (see [Linux](#linux)).
 
@@ -343,10 +346,11 @@ These limits apply on public servers, or with `--limits on`.
 | Tunnel sessions per address | 16 |
 | Tunnel traffic per address | 400 datagrams a second (bursts of 1,200), 256 KB/s |
 | Login attempts per address | 10 a minute |
-| Failed logins | per account: 5 free, then a wait from 30 seconds doubling up to 15 minutes; per address: 20 free, then 1 minute doubling up to 30 minutes |
-| Games a player starts | 3 a minute, at most 2 running at once |
+| Failed logins | per account from one address: 5 free, then a wait from 30 seconds doubling up to 15 minutes; per address: 20 free, then 1 minute doubling up to 30 minutes. Wrong passwords from elsewhere don't lock you out of your own account |
+| Games a player starts | 3 a minute, at most 2 running at once, and at most 4 running from one internet address |
 | Queue joins per player | 6 a minute |
 | Match traffic per connection | 200 game messages a second (bursts of 600); a connection that keeps exceeding it is closed |
+| The server's log | at most 64 KB a message and 4 MB a second; a new file every 256 MB, the oldest deleted beyond 8 GB in all |
 
 A player who hits a limit sees a *LOGIN ERROR* or "no game server" message and can try again shortly. A household fits within the limits easily. A LAN party of ten players behind one internet address may not.
 
@@ -357,6 +361,12 @@ These apply always, on every server:
 | Request body on the game's HTTP port | 32 MiB for the game's crash and error reports, 1 MiB for everything else; a larger one is answered `413 Content Too Large` and the connection closed, a malformed request `400 Bad Request` |
 | Request head on the game's HTTP port | 64 KiB |
 | A lobby message before login | 4 KB; the game's own messages before login take a few hundred bytes, so only a login name or password thousands of characters long makes a bigger one, and the server then drops the connection instead of refusing the login |
+| What works before login | logging in, and a few requests the game makes around a logout, which give nothing away. Everything else is refused |
+| A client that stops reading | loses its connection after 15 seconds or 4 MB waiting; nobody else waits for it |
+| A custom game's lobby | ends after an hour without a start |
+| An account's settings | 512 keys, 4 KB a value, 48 KB in all |
+| Parties and practice groups | take the players their members invited, or who hold a join code |
+| A private custom game | takes the players its owner's client gave its token, who enter the password as usual. A player the admin removed stays out |
 
 An error while the server serves one connection closes only that connection; the server logs it with the details and goes on.
 

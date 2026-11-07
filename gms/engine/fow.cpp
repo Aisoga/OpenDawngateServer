@@ -488,6 +488,7 @@ bool Read(void* sim, const std::vector<repl::NetObject>& objs, const Options& op
     }
     e.owner = r.owner;
     e.grassId = r.grassId;
+    e.revealEarly = o.playerControlled;  // FOGEDGE
     entities->push_back(e);
     ObjectInfo& in = (*info)[i];
     in.tracked = r.tracked;

@@ -76,8 +76,8 @@ func FakeSessionAddr(ip net.IP, port int, release string, same bool) *Addr {
 func (a *Addr) IPPort() (net.IP, int) { return a.IP, a.Port }
 
 // Route tells the gateway where the session's datagrams to port go (a match host's GMS address, e.g. an agent
-// machine's, H2): Blaze calls it when it hands the client the tunnel address with that port in HNET. Without a route
-// the gateway forwards a port of its UDP list to the server's own bind address.
+// machine's, H2): Blaze calls it when a client joins a game (Conn.ForClient), and only then: a session without a route
+// reaches no match host's port.
 func (a *Addr) Route(port int, target *net.UDPAddr) {
 	if a.sess != nil && target != nil {
 		a.sess.route(port, target)

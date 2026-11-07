@@ -81,6 +81,9 @@ class HostControl {
   std::vector<RemovePlayer> TakeRemoved();
   // D8-live: playerRewards messages since the last call (what dgserver decided and stored, for the post-game's C1 04).
   std::vector<PlayerRewards> TakeRewards();
+  // SEATAUTH: asks dgserver who is behind a GMS connection (verifyHello); the answers, since the last call.
+  void SendVerifyHello(const std::string& addr, int64_t user);
+  std::vector<HelloVerdict> TakeVerdicts();
 
   void Ready(int64_t port);
   void PlayerAdded(int64_t user, int64_t index);
@@ -127,6 +130,7 @@ class HostControl {
   bool loggedOut_ = false;
   std::vector<RemovePlayer> removed_;
   std::vector<PlayerRewards> rewards_;
+  std::vector<HelloVerdict> verdicts_;
   std::string phase_ = kPhaseLoading;
   std::vector<int64_t> players_;
   int sent_ = 0, received_ = 0, badLines_ = 0, errors_ = 0;

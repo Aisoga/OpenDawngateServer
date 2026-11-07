@@ -331,14 +331,21 @@ func TestFrontDiscordJoin(t *testing.T) {
 	if !ok || b.Address != joinServerAddr || b.GatewayPort != port {
 		t.Fatalf("B's list: %+v (%v)\n%s", b, ok, readLogs(t, logB))
 	}
-	if pin, ok := fb.trustedPin(b); !ok || pin != sec.Pin {
-		t.Error("B doesn't trust the secret's key")
+	if _, ok := fb.trustedPin(b); ok {
+		t.Error("a Join trusted the secret's key by itself: a secret can name any key")
 	}
 	if raw, _ := os.ReadFile(BookmarksPath(lb)); !strings.Contains(string(raw), joinServerAddr) {
 		t.Error("B's bookmarks file lacks the server")
 	}
 	gb := newJoinGame(t, joinFrontB)
-	gb.login("bravo") // no tag: the preselected server, its key trusted: no confirmation
+	// no tag: the preselected server, whose key isn't trusted yet: confirm once, as for any new server
+	if rep := gb.call(1, 0x28, loginBody("bravo")); rep.Type != fire.ErrorReply || rep.Error != FrontErrNewKey {
+		t.Fatalf("a Join's first login: %v error %#x, want error %#x", rep.Type, rep.Error, FrontErrNewKey)
+	}
+	gb.login("bravo")
+	if pin, ok := fb.trustedPin(b); !ok || pin != sec.Pin {
+		t.Error("B doesn't trust the key after the confirmation")
+	}
 	// a new account: the game shows its news overlay, and the invite waits until the game closes it
 	waitLog(t, logB, "the game shows its news overlay", 0)
 	time.Sleep(700 * time.Millisecond)
@@ -415,7 +422,10 @@ func TestFrontDiscordJoin(t *testing.T) {
 	if b, ok := fb.Bookmarks.Find(fb.preselected()); !ok || b.Address != "127.0.9.83" {
 		t.Errorf("the other server isn't preselected: %+v", b)
 	}
-	// a Join naming a known server with another key: refused, nothing changes
+	// a Join naming a server whose key is trusted, with another key: refused, nothing changes
+	if _, err := TrustGateway(other.Address, other.Pin, TrustOptions{Store: TrustedGateway(lb, other.Address), Accept: true}); err != nil {
+		t.Fatal(err)
+	}
 	other.Pin[1] ^= 1
 	fb.DiscordJoinSecret(other.String())
 	gb.wait("the 'another key' line", func(fire.Frame) bool {

@@ -38,9 +38,9 @@ ITEMSHOP_SYNTH_SHA = "5094c226d16433e5616eaede8b29ea86fb503aa34bb508d9b2a017b9cc
 # the item list of the made-up content (server/testdata/collection/content.json), and a made-up code.snap (the synth
 # movie) with the tags b"OURTAGS" and that list through the collection spec, as collection_test.go pins them
 COLLECTION_LIST_SHA = "60ed944ce678df5c0caea1bf3ff28d8f8f6ebce6f392082d3158fd1c78a5f9ea"
-COLLECTION_SYNTH_SHA = "7cd32e2fbe63535ccd17a171b07a8b48227f2bbf3eab90e9cd8762fc5969dc5d"
+COLLECTION_SYNTH_SHA = "21d215ab94977f7f988ded0ba1e566179c6cecd0a2009ec1b22b3ef4d27b658f"
 # the same with a second class's tags b"MORETAGS" after them (the lobby's ready check's Part), as collection_test.go
-COLLECTION_SYNTH_TWO_SHA = "9bf00c1c4f43663f79946de51969323b200af876f2a6842c383660a841bb3459"
+COLLECTION_SYNTH_TWO_SHA = "2f3800a7868beb2ae38f53cea46f4b64d3024eda71cad46f80d985cfd668ef14"
 
 
 def sha(b):
@@ -382,6 +382,8 @@ def main(argv):
               f"a made-up two-class archive as collection_test.go pins it ({len(two)} bytes)")
     # the custom lobby's ready check: the collection spec's second class (character and depth 2001)
     parts = cs.parts()
+    check(plm.channel_file("127.0.0.2") == b"dawngate-channel\t1\nhost\t127.0.0.2\nport\t10039\nend\n",
+          "the channel file for a copy's server (moviepatch.ChannelFile)")
     check([(p.class_name, p.char_id, p.depth) for p in parts] == [("CollectionItems", 2000, 2000), ("LobbyReady", 2001, 2001),
                                                                   ("LeaderboardRating", 2002, 2002)],
           "the collection spec's classes: CollectionItems 2000/2000, LobbyReady 2001/2001, LeaderboardRating 2002/2002")
@@ -390,7 +392,8 @@ def main(argv):
     check([c for c, *_ in lt] == [39, 82, 76, 70] and lt[-1][3] == len(ltags) and
           plm._pairs(ltags, lt[2][2], lt[2][3]) == [(2001, "LobbyReady")] and
           ltags[lt[3][2]:lt[3][3]] == bytes([0x06, 0]) + struct.pack("<HH", 2001, 2001) + b"\0" and
-          b"~#rdy " in ltags and b"customMatchLobby" in ltags,
+          b"lobby.setReady" in ltags and b"customMatchLobby" in ltags and b"Channel/dgchannel.json" in ltags and
+          b"~#" not in ltags and b"ChatManager" not in ltags,
           "lobby_tags.hex: DefineSprite, DoABC, SymbolClass 2001 -> LobbyReady, PlaceObject3 at 2001")
     # the Leaderboard's Rating column: the third class (character and depth 2002)
     rtags = plm.read_tags(parts[2].tags)

@@ -65,10 +65,11 @@ func (s *Setup) stepItemShop(step, copy string) bool {
 
 // stepCollection installs the Collection's Items category, game\Data\zz_CollectionItems.snap: the copy's own front-end
 // movie (UIRuntime.gfx from code.snap, which must be the build's) with the class added (moviepatch.Collection) and the
-// item list of the copy's own game data (gamecontent.Build, the content the server's setup writes; moviepatch.ItemList).
+// item list of the copy's own game data (gamecontent.Build, the content the server's setup writes; moviepatch.ItemList),
+// and where the server host the copy is set up for has its UI channel (moviepatch.ChannelFile).
 // Every player copy gets it: the Collection's menu shows a category Items whose options show the match items as the
 // Collection's own cards.
-func (s *Setup) stepCollection(step, copy string) bool {
+func (s *Setup) stepCollection(step, copy, host string) bool {
 	c, err := gamecontent.Build(copy)
 	if err != nil {
 		if s.Check {
@@ -78,6 +79,7 @@ func (s *Setup) stepCollection(step, copy string) bool {
 	}
 	sp := moviepatch.Collection
 	sp.ItemList = moviepatch.ItemList(c, false)
+	sp.WebHost = host
 	return s.stepMovie(step, copy, sp, "the Collection's items", "an older Collection class or item list")
 }
 

@@ -334,13 +334,14 @@ func (s *Server) messagingOnline(conn *Conn, p store.Persona) {
 	m.mu.Unlock()
 	conn.OnSessionEnd(func() {
 		m.mu.Lock()
-		defer m.mu.Unlock()
 		cs := slices.DeleteFunc(m.online[p.ID], func(c *Conn) bool { return c == conn })
 		if len(cs) == 0 {
 			delete(m.online, p.ID)
 		} else {
 			m.online[p.ID] = cs
 		}
+		m.mu.Unlock()
+		s.uiLoginEnded(p.ID)
 	})
 }
 
@@ -365,11 +366,10 @@ func (m *messaging) allowLocked(blazeID int64, now time.Time) bool {
 // relayResult is what sendMessage did.
 type relayResult struct {
 	note      ServerMessage
-	conns     []*Conn    // connections that get NotifyMessage (each once)
-	delivered []int64    // users whose connections get it
-	stored    []int64    // users whose inboxes keep it
-	blocked   []int64    // users who don't get it because they blocked the sender (B13b)
-	lobby     *lobbyLine // READY2: a lobby line (ready.go), swallowed: nobody gets it, the server handles it
+	conns     []*Conn // connections that get NotifyMessage (each once)
+	delivered []int64 // users whose connections get it
+	stored    []int64 // users whose inboxes keep it
+	blocked   []int64 // users who don't get it because they blocked the sender (B13b)
 	err       uint16
 	why       string
 }
@@ -419,6 +419,7 @@ func (s *Server) relay(sender store.Persona, msg ClientMessage) relayResult {
 	case len(msg.Attrs) > lim.MaxAttrs:
 		return relayResult{err: ErrMessagingMaxAttrExceeded, why: fmt.Sprintf("%d attributes", len(msg.Attrs))}
 	}
+	s.noteInvite(sender, msg) // access.go
 	for _, a := range msg.Attrs {
 		if len(a.Value) > lim.MaxAttrBytes {
 			return relayResult{err: ErrMessagingInvalidParam, why: fmt.Sprintf("attribute %#x: %d bytes", a.Key, len(a.Value))}
@@ -457,12 +458,6 @@ func (s *Server) relay(sender store.Persona, msg ClientMessage) relayResult {
 				}
 			}
 		}
-	}
-	// READY2: a lobby line ("~#rdy 1~", ready.go) in a game's chat is never relayed (no echo either): the server
-	// handles it, and only the clients with our lobby class get the server's lines
-	if kind, args, ok := lobbyLineOf(msg); ok {
-		return relayResult{note: ServerMessage{ID: m.newID()}, lobby: &lobbyLine{game: s.lobbyGameOf(msg.TargetType, msg.Targets[0]),
-			kind: kind, args: args, msg: msg}}
 	}
 	// B13b: a user who blocked the sender gets none of its messages, nor a stored copy. The client drops them too
 	// (the receivers' block checks, e.g. the friend messages' 0x00AC07B0 and SporeOnlinePlatform_IsUserBlocked
@@ -636,17 +631,6 @@ func registerMessaging(s *Server) {
 			r.Server.Log.Logf("blaze", "   message from %d (%s): error %#04x (%s)", sess.Persona.ID, desc, res.err, res.why)
 			r.Fail(res.err)
 			return nil
-		}
-		if l := res.lobby; l != nil {
-			r.Server.Log.Logf("blaze", "   message %d from %d %q (%s): a lobby line %q for game %d; not relayed", res.note.ID,
-				sess.Persona.ID, sess.Persona.Name, desc, LobbyLine(l.kind, l.args...), l.game)
-			if l.kind == LobbyLineReady {
-				me := sess.Persona.ID
-				r.After(func() { r.Server.readyLine(me, *l) })
-			} else {
-				r.Server.Log.Logf("blaze", "   a lobby line only the server sends (%s); ignored", l.kind)
-			}
-			return SendMessageReply(res.note.ID, nil)
 		}
 		dropped := ""
 		if len(res.blocked) > 0 {

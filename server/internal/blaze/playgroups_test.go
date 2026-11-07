@@ -79,6 +79,7 @@ func payloadOf(t *testing.T, class string, f fire.Frame) *tdf.Struct {
 func TestChatPlaygroup(t *testing.T) {
 	ps := newPipeSessionWith(t, seatFirst(2)) // both players in game 1 (SEC6: only they may join GG-1)
 	ps.send(6, 1, 0, ps.request("createplaygroup_request"))
+	ps.expectError(6, 1, 0, ErrAuthenticationRequired)
 	tdfcheck.Require(t, "Blaze::Playgroups::CreatePlaygroupRequest", ps.request("createplaygroup_request"))
 	ps.loginAs("player@example.com", 1)
 	ps.send(6, 1, 3, ps.request("createplaygroup_request"))
@@ -126,7 +127,6 @@ func TestChatPlaygroup(t *testing.T) {
 		t.Errorf("%d playgroups left", n)
 	}
 	for _, want := range []string{
-		"(createPlaygroup before login; not answered)",
 		"[blaze]    playgroup 1 \"GG-1\" created by 2000000001 (1 members)\n",
 		"[blaze] -> createPlaygroup reply, 112 bytes:\n",
 		"[blaze] -> Playgroups::NotifyJoinPlaygroup notification, 191 bytes:\n",

@@ -263,7 +263,7 @@ func TestPerkPagesAndPurchases(t *testing.T) {
 func TestPurchaseNeedsLoginAndContent(t *testing.T) {
 	ps := newPipeSession(t)
 	ps.send(0x820, CmdBGEPurchaseWithEC, 0, purchaseRequest("268435462", 0x10000006, 0, "1", 1))
-	ps.expectError(0x820, CmdBGEPurchaseWithEC, 0, ErrBGENotAuthorized)
+	ps.expectError(0x820, CmdBGEPurchaseWithEC, 0, ErrAuthenticationRequired)
 	ps.login(1, "extendeddataupdate_notification")
 	ps.send(0x820, CmdBGEPurchaseWithPC, 3, purchaseRequest("268435462", 0x10000006, 0, "1", 1))
 	ps.expectError(0x820, CmdBGEPurchaseWithPC, 3, ErrBGENoCatalog)

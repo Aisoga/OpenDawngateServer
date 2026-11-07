@@ -16,6 +16,7 @@ import (
 	"dawngate/server/internal/redirector"
 	"dawngate/server/internal/telemetry"
 	"dawngate/server/internal/tunnel"
+	"dawngate/server/internal/uichannel"
 	"dawngate/server/internal/web"
 )
 
@@ -54,6 +55,7 @@ type services struct {
 	qos *web.QoS
 	web *web.HTTP
 	tel *telemetry.Sink
+	ui  *uichannel.Server
 }
 
 // startGateway runs the tunnel's gateway (--tunnel on): TCP and UDP on --bind:--gateway-port, its key in
@@ -83,13 +85,18 @@ func startGateway(cfg config, log *logging.Log, in *instance, sv services, gmsPo
 	} else if gmsPort > 0 {
 		gmsPorts[gmsPort] = true // B8's logger or an external GMS (--gms-external)
 	}
-	g := &tunnel.Gateway{Log: log, Identity: id, BindIP: bind, AllowAnyClient: cfg.allowAnyClient,
-		Forward: func(port int) *net.UDPAddr {
+	g := &tunnel.Gateway{Log: log, Identity: id, BindIP: bind, AllowAnyClient: cfg.allowAnyClient}
+	if !cfg.hostsOn() {
+		// B8's logger or an external GMS have no game behind them for Blaze to route to. With match hosts there is no such
+		// fallback: a session reaches a GMS port only after it joined a game there (blaze.Conn.ForClient)
+		g.Forward = func(port int) *net.UDPAddr {
 			if gmsPorts[port] {
 				return &net.UDPAddr{IP: bind, Port: port}
 			}
 			return nil
-		}}
+		}
+	}
+	sv.bz.TunnelFlow = g.FlowSession // who is behind a GMS connection (verifyHello)
 	// the facts an info hello answers with besides the version: the sign-up mode as it is now (the admin page may
 	// change it), which Start-Client's server list shows; and the maps a custom game may pick besides The Dawngate
 	// (--map, --custom-maps), which Start-Client lists in the CREATE GAME dialog, with the host copy's version of each
@@ -113,6 +120,7 @@ func startGateway(cfg config, log *logging.Log, in *instance, sv services, gmsPo
 	go sv.qos.Serve(g.Listener(qp))
 	go sv.web.Serve(g.Listener(hp))
 	go sv.tel.Serve(g.Listener(tp))
+	go sv.ui.Serve(g.Listener(in.ports[uiListener]))
 	g.HandleUDP(qp, sv.qos.TunnelPacket)
 	for p := range gmsPorts {
 		g.ForwardUDP(p)

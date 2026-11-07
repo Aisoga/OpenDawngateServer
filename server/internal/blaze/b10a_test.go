@@ -188,6 +188,7 @@ func TestPartyMatchmakingGolden(t *testing.T) {
 	two.loginAs("second@example.com", 0)
 	two.send(0x7802, 0x14, 2, ps.request("updatenetworkinfo_request"))
 	two.expect(0x7802, 0x14, fire.Reply, 2, "")
+	ps.srv.groups.inviteByServer(1, store.FirstPersonaID+1) // a party takes those its members invited
 	two.send(6, 3, 3, ps.request("joinplaygroup_request"))
 	two.expect(6, 3, fire.Reply, 3, "createplaygroup_party_reply")
 	// B14: the guest learns the leader as a user (with its extended data) before the member list, the leader the

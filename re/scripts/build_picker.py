@@ -16,7 +16,8 @@ as it is; re/scripts/patch_login_movie.py and its Go port, server/internal/setup
     collection    client_ui/collection/CollectionItems.as, the Collection's Items category (the match items as the
                   Collection's own cards), in the front end's UI/Scaleform/CDN/swf/code/UIRuntime.gfx
     lobby         client_ui/lobby/LobbyReady.as, the custom game lobby's ready check (the READY toggle, the tiles'
-                  marks, the host's START held until all are ready), in the same movie as collection, after its tags
+                  marks, the host's START held until all are ready; it talks to the server over the UI channel,
+                  client_ui/common/opendawngate/ServerChannel.as), in the same movie as collection, after its tags
                   (character and depth 2001)
     leaderboard   client_ui/leaderboard/LeaderboardRating.as, the Leaderboard's Rating column, in the same movie
                   as collection, after lobby's tags (character and depth 2002)
@@ -55,6 +56,7 @@ import zlib
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 MOVIEPATCH = os.path.join(REPO, "server", "internal", "setup", "moviepatch")
+COMMON_SOURCE = os.path.join(REPO, "client_ui", "common")  # what our classes share (opendawngate.ServerChannel)
 CHAR_ID = 2000
 DEPTH = 2000
 
@@ -114,6 +116,7 @@ def compile_swf(out_swf, source=SOURCE):
     cmd = [java, "-Xmx512m", "-Dsun.io.useCanonCaches=false", "-Djava.util.Arrays.useLegacyMergeSort=true",
            "-jar", os.path.join(flex, "lib", "mxmlc.jar"), "+flexlib=" + os.path.join(flex, "frameworks"),
            "-load-config=", "-external-library-path=" + pg, "-source-path=" + os.path.dirname(os.path.abspath(source)),
+           "-source-path+=" + COMMON_SOURCE,
            "-target-player=11.1", "-swf-version=13", "-debug=false", "-optimize=true", "-default-size=1,1",
            "-output=" + out_swf, source]
     r = subprocess.run(cmd, capture_output=True, text=True)

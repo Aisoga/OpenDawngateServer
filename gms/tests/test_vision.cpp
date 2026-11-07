@@ -857,3 +857,101 @@ GMS_TEST(PursuitLastSeenNewAndReusedRecords) {
   CHECK_EQ(book.Teams(10, 0x1000, kBitNpc), kAllTeams);
   book.End();
 }
+
+// FOGEDGE: a shaper reaches a client a margin before its team sees it; Bits (mVisibleToTeam) doesn't change.
+GMS_TEST(VisionRevealMargin) {
+  VisionModel m;
+  Params p;
+  p.revealMargin = 3.f;
+  Entity early = Target(0x202, kSpirit, 38.2f, 0.f);
+  early.revealEarly = true;
+  std::vector<Entity> es = {Shaper(0x101, kMortal, 0.f, 0.f), early, Target(0x303, kSpirit, 38.2f, 0.f)};
+  m.Update(es, p);
+  CHECK_EQ(m.Bits(1), kBitSpirit);                     // its team doesn't see it yet
+  CHECK_EQ(m.RevealBits(1), kBitSpirit | kBitMortal);  // within 35.3 + 3
+  CHECK_EQ(m.RevealBits(2), kBitSpirit);               // only what asks for it: not a ward, a minion or a projectile
+  es[1].x = 39.2f;
+  m.Update(es, p);
+  CHECK_EQ(m.RevealBits(1), kBitSpirit | kBitMortal);  // leaving: one unit past 35.3 + 3
+  es[1].x = 39.4f;
+  m.Update(es, p);
+  CHECK_EQ(m.RevealBits(1), kBitSpirit);
+  es[1].x = 38.4f;
+  m.Update(es, p);
+  CHECK_EQ(m.RevealBits(1), kBitSpirit);  // coming back needs 35.3 + 3 again
+  m.Update(es, Params());
+  CHECK_EQ(m.RevealBits(1), m.Bits(1));  // no margin, no hold: the two answers are one
+}
+
+// FOGEDGE: a shaper stays with a client for a moment after its team lost sight, so a short gap doesn't flicker.
+GMS_TEST(VisionRevealHold) {
+  VisionModel m;
+  Params p;
+  p.revealHoldMs = 750.0;
+  Entity early = Target(0x202, kSpirit, 30.f, 0.f);
+  early.revealEarly = true;
+  std::vector<Entity> es = {Shaper(0x101, kMortal, 0.f, 0.f), early};
+  p.nowMs = 1000.0;
+  m.Update(es, p);
+  CHECK_EQ(m.Bits(1), kBitSpirit | kBitMortal);
+  es[1].x = 39.f;
+  p.nowMs = 1500.0;
+  m.Update(es, p);
+  CHECK_EQ(m.Bits(1), kBitSpirit);
+  CHECK_EQ(m.RevealBits(1), kBitSpirit | kBitMortal);  // 500 ms after the last sight
+  p.nowMs = 1750.0;
+  m.Update(es, p);
+  CHECK_EQ(m.RevealBits(1), kBitSpirit | kBitMortal);  // the limit counts
+  p.nowMs = 1751.0;
+  m.Update(es, p);
+  CHECK_EQ(m.RevealBits(1), kBitSpirit);
+  // seen again: the clock starts over
+  es[1].x = 30.f;
+  p.nowMs = 5000.0;
+  m.Update(es, p);
+  es[1].x = 39.f;
+  p.nowMs = 5100.0;
+  m.Update(es, p);
+  CHECK_EQ(m.RevealBits(1), kBitSpirit | kBitMortal);
+  // never seen by a team: nothing to hold
+  VisionModel fresh;
+  p.nowMs = 100.0;
+  fresh.Update(es, p);
+  CHECK_EQ(fresh.RevealBits(1), kBitSpirit);
+}
+
+// FOGEDGE: grass and stealth stay immediate: neither the margin nor the hold shows what they hide.
+GMS_TEST(VisionRevealNotThroughGrassOrStealth) {
+  Params p;
+  p.grass = true;
+  p.stealth = true;
+  p.revealMargin = 3.f;
+  p.revealHoldMs = 750.0;
+  {
+    VisionModel m;
+    Entity early = Target(0x202, kSpirit, 20.f, 0.f);
+    early.revealEarly = true;
+    std::vector<Entity> es = {Shaper(0x101, kMortal, 0.f, 0.f), early};
+    p.nowMs = 1000.0;
+    m.Update(es, p);
+    CHECK_EQ(m.RevealBits(1), kBitSpirit | kBitMortal);
+    es[1].grassId = 0x486A198D;  // steps into a patch
+    p.nowMs = 1100.0;
+    m.Update(es, p);
+    CHECK_EQ(m.Bits(1), kBitSpirit);
+    CHECK_EQ(m.RevealBits(1), kBitSpirit);
+  }
+  {
+    VisionModel m;
+    Entity early = Target(0x202, kSpirit, 20.f, 0.f);
+    early.revealEarly = true;
+    std::vector<Entity> es = {Shaper(0x101, kMortal, 0.f, 0.f), early};
+    p.nowMs = 1000.0;
+    m.Update(es, p);
+    es[1].stealthed = true;
+    p.nowMs = 1100.0;
+    m.Update(es, p);
+    CHECK_EQ(m.Bits(1), kBitSpirit);
+    CHECK_EQ(m.RevealBits(1), kBitSpirit);
+  }
+}

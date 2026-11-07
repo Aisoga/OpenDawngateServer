@@ -14,6 +14,7 @@
 #include "core/replication/create_order.h"
 #include "core/replication/outgoing.h"
 #include "core/replication/resource_wire.h"
+#include "core/replication/team_private.h"
 #include "game.h"
 #include "log.h"
 #include "passives.h"
@@ -125,12 +126,13 @@ bool Chosen(const unsigned char* rec, const unsigned char* data, unsigned mode, 
 }
 
 // Whether any member the analyzer would choose in `mode` differs from the field state (cheap: no engine call).
-bool AnyDelta(void* data, void* type, void* fieldState, unsigned mode) {
+bool AnyDelta(void* data, void* type, void* fieldState, unsigned mode, int skipMember = -1) {
   __try {
     const unsigned char* d = static_cast<const unsigned char*>(data);
     const unsigned char* records = Field<unsigned char*>(type, 8);
     const int n = Field<int>(type, 0xC);
     for (int i = 0; i < n; ++i) {
+      if (i == skipMember) continue;
       const unsigned char* rec = records + i * kMemberRecordSize;
       const std::uint32_t h = MemberHash(rec, d);
       if (Chosen(rec, d, mode, h) && U32At(fieldState, i * 8) != h) return true;
@@ -767,9 +769,12 @@ bool BuildCreate(const NetObject& o, bool withFieldState, const Bytes& modifierR
   std::vector<WorldMessage> msgs;
   WorldMessage begin{IdMessage(gms::kGmsObjectCreateBegin, o.id), std::string("create ") + o.name};
   void* objectState = withFieldState ? SehFieldState(o, kPartObject) : nullptr;
-  if (!AppendFull(begin.msg, cd, kCreate, nullptr, o.id, o.name) ||
-      !AppendFull(begin.msg, o.object, kObject, objectState, o.id, o.name))
-    return false;
+  if (!AppendFull(begin.msg, cd, kCreate, nullptr, o.id, o.name)) return false;
+  const std::size_t objectBodyAt = begin.msg.size();
+  if (!AppendFull(begin.msg, o.object, kObject, objectState, o.id, o.name)) return false;
+  // mVisibleToTeam's byte, which the host rewrites per audience (core/replication/team_private.h)
+  const int visibleIn = gms::ReflectedMember0At(begin.msg.data() + objectBodyAt, begin.msg.size() - objectBodyAt);
+  if (visibleIn >= 0) begin.visibleAt = static_cast<int>(objectBodyAt) + visibleIn;
   msgs.push_back(begin);
   char parts[96] = "";
   alignas(8) unsigned char combatantCopy[combatant::kSize];
@@ -827,7 +832,10 @@ bool BuildFullState(const NetObject& o, std::vector<WorldMessage>* out, std::vec
   if (!g_ready) return false;
   std::vector<WorldMessage> msgs, post;
   WorldMessage obj{IdMessage(gms::kGmsObjectUpdate, o.id), std::string("fog exit: object of ") + o.name};
+  const std::size_t objectBodyAt = obj.msg.size();
   if (!AppendFull(obj.msg, o.object, kObject, nullptr, o.id, o.name)) return false;
+  const int visibleIn = gms::ReflectedMember0At(obj.msg.data() + objectBodyAt, obj.msg.size() - objectBodyAt);
+  if (visibleIn >= 0) obj.visibleAt = static_cast<int>(objectBodyAt) + visibleIn;
   msgs.push_back(obj);
   alignas(8) unsigned char combatantCopy[combatant::kSize];
   for (int p = kPartProjectile; p < kNumParts; ++p) {
@@ -959,7 +967,7 @@ int AnimationOverrideDelta(const NetObject& o, std::uint32_t* shadow, bool* seed
   return written;
 }
 
-int BuildDelta(const NetObject& o, int p, Bytes* out) {
+int BuildDelta(const NetObject& o, int p, Bytes* out, bool withoutVisible) {
   out->clear();
   if (!g_ready || p < 0 || p >= kNumParts || p == kPartProjectile || !o.data[p]) return 0;
   void* fs = SehFieldState(o, p);
@@ -967,10 +975,16 @@ int BuildDelta(const NetObject& o, int p, Bytes* out) {
   void* type = g_types[kParts[p].type];
   alignas(8) unsigned char combatantCopy[combatant::kSize];
   void* data = WireData(o, p, combatantCopy, "delta");
-  if (!AnyDelta(data, type, fs, kModeIncremental)) return 0;
+  // mVisibleToTeam goes per audience (gms::BuildVisibleUpdate): out of the shared delta; its field state stays unused
+  const bool skipVisible = withoutVisible && p == kPartObject;
+  if (!AnyDelta(data, type, fs, kModeIncremental, skipVisible ? 0 : -1)) return 0;
   static unsigned char buf[2048];
   int written = 0;
-  const int n = WriteBody(data, type, kModeIncremental, nullptr, fs, true, buf, sizeof buf, &written);
+  bool keep[128];
+  std::memset(keep, 1, sizeof keep);
+  keep[0] = false;
+  const int n =
+      WriteBody(data, type, kModeIncremental, skipVisible ? keep : nullptr, fs, true, buf, sizeof buf, &written);
   if (n < 0) {
     Log("replication: delta %s of %08X (%s) not written (%d: %s)", kParts[p].name, o.id, o.name, n, WriteError(n));
     return n;
@@ -979,6 +993,15 @@ int BuildDelta(const NetObject& o, int p, Bytes* out) {
   *out = IdMessage(kParts[p].wire, o.id);
   out->insert(out->end(), buf, buf + n);
   return written;
+}
+
+bool VisibleBits(const NetObject& o, std::uint8_t* bits) {
+  __try {
+    *bits = Field<std::uint8_t>(o.object, kObjectVisibleToTeam);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "VisibleBits")) {
+    return false;
+  }
 }
 
 bool AddPlayerBits(void* object, std::uint16_t known, std::uint16_t visible) {

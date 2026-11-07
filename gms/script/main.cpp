@@ -214,11 +214,16 @@ int RunHost(const dggms::control::HostEnv& env, gms::SessionOptions so, gms::Scr
       control.Ready(ep.BoundPort());
       ready = true;
     }
+    for (const HelloVerdict& v : control.TakeVerdicts())  // SEATAUTH
+      session.OnHelloVerdict(v.addr, static_cast<uint64_t>(v.user), v.ok);
     gms::PumpEndpoint(ep, session, start);
     session.Tick();
-    for (const RemovePlayer& r : control.TakeRemoved())
+    for (const RemovePlayer& r : control.TakeRemoved()) {
       gms::Logf("%s host: removePlayer: user %lld left on the Blaze side (%s)", gms::Clock().c_str(),
                 static_cast<long long>(r.user), r.reason.c_str());
+      if (r.reason.find("KICKED") != std::string::npos)
+        session.KickUser(static_cast<uint64_t>(r.user), r.reason, !control.InLobby());
+    }
     if (control.AbortRequested()) {
       gms::Logf("%s host: abortGame (%s); logoutGMS and exit", gms::Clock().c_str(), control.AbortReason().c_str());
       code = 0;

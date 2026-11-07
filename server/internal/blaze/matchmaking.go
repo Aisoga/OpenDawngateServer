@@ -3,6 +3,7 @@ package blaze
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -250,7 +251,15 @@ func registerMatchmaking(s *Server) {
 	// client waits for to end the session and reset its UI.
 	s.Register(ComponentGameManager, CmdGameManagerCancelMatchmaking, "cancelMatchmaking", func(r *Request) []byte {
 		id, _ := r.Body.Int("MSID")
-		t, ok := r.Server.MM.Remove(id)
+		sess := r.Conn.Session
+		if sess == nil {
+			r.Drop("cancelMatchmaking before login")
+			return nil
+		}
+		// MSIDs count from 1: a session is cancelled by one of its own players only
+		t, ok := r.Server.MM.RemoveIf(id, func(t *matchmaker.Ticket) bool {
+			return slices.ContainsFunc(t.Players, func(p matchmaker.Player) bool { return p.ID == sess.Persona.ID })
+		})
 		if !ok {
 			r.Server.Log.Logf("blaze", "   matchmaking session %d: cancel, but it isn't queued (any more)", id)
 			return nil

@@ -83,7 +83,7 @@ class FogPlanner {
   // One tick, after the delta pass (step 5 of the replication step). For every object and every player in
   // `players` that knows it: seen now (its team in teamBits) vs. shown (its bit in `visible`):
   //   shown, not seen -> kEnter; not shown, seen -> kExit; neither, maintainPos and moved >= 0.75 units since the
-  //   last A3 -> kDisabledPos (not to a player that enters fog in this tick: it got this tick's position delta).
+  //   last A3 -> kDisabledPos (not to a player that enters fog in this tick: its client holds the last tick's position).
   // Actions come in object order, then player order. `visibleAfter` (optional) gets every object's +0x10 after the
   // actions (bits of players outside `players` are kept). Objects not in this call are forgotten.
   std::vector<FogAction> Plan(const std::vector<FogObject>& objects, const std::vector<FogPlayer>& players,

@@ -34,7 +34,7 @@
   line has the maxima (soak.py report prints them per match minute).
 
   The ports come from dgserver.exe --print-ports, so new server ports are covered automatically;
-  currently 42127, 10041, 17502, 18080, 9988.
+  currently 42127, 10041, 17502, 18080, 9988, 10039.
 
   -GmsProbe silent|connected (B9) serves the GMS port (UDP 10042) with RakNet 4.081 instead of
   dgserver's logger: dgserver gets --gms-external (announces the port, doesn't bind it), and
@@ -412,7 +412,7 @@ function Say([string]$m, [string]$color = 'Gray') {
 function Short([string]$s, [int]$n = 120) { if ($s.Length -gt $n) { $s.Substring(0, $n) + '...' } else { $s } }
 function In-Session([string]$file) { Join-Path $SessionDir $file }
 
-$Ports = @(42127, 10041, 17502, 18080, 9988)  # the A1 set, until the freshly built server names its ports
+$Ports = @(42127, 10041, 17502, 18080, 9988, 10039)  # the A1 set, until the freshly built server names its ports
 $GmsHostPath = $null; $GmsHostKind = $null  # -GmsHost (C1b): the resolved host and 'dawngate', 'script' or 'file'
 function Get-MapsFlags {
     # MAPED2b: dgserver's --maps for this checkout's maps folder (setup_lane.py compiles its packages into the lane's
@@ -1283,7 +1283,7 @@ try {
             Say "tunnel client extra flags (-TunnelClientArgs): $TunnelClientArgs"
         }
         $tun = Start-Logged $ServerExe $tunArgs 'tunnel'
-        $want = @($Ports | Where-Object { $_ -in @(42127, 10041, 17502, 18080, 9988) })
+        $want = @($Ports | Where-Object { $_ -in @(42127, 10041, 17502, 18080, 9988, 10039) })
         $deadline = (Get-Date).AddSeconds(15)
         while ($true) {
             Start-Sleep -Milliseconds 300

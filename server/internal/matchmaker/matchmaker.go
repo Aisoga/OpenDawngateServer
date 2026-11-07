@@ -160,6 +160,24 @@ func (m *Matchmaker) Add(t *Ticket) error {
 }
 
 // Remove takes ticket id out of the queue (cancel, disconnect); false if it isn't queued (any more).
+// RemoveIf is Remove for a ticket that allow says yes to; a refused ticket stays queued and counts as not found.
+func (m *Matchmaker) RemoveIf(id int64, allow func(*Ticket) bool) (*Ticket, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, t := range m.queue {
+		if t.ID == id {
+			if !allow(t) {
+				return nil, false
+			}
+			m.queue = append(m.queue[:i], m.queue[i+1:]...)
+			return t, true
+		}
+	}
+	return nil, false
+}
+
+// Remove takes a ticket out of the queue.
+
 func (m *Matchmaker) Remove(id int64) (*Ticket, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

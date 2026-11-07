@@ -41,13 +41,18 @@ type Limits struct {
 	File  int64 // one PNG's bytes
 	Total int64 // the whole bundle's bytes
 	Side  int   // a PNG's largest width or height
+	// What map delivery may keep in the maps folder, from one server and from all (0: no limit). Without them a server could
+	// hand out a new map at every login, each within Total, until the player's disk is full; a player's own maps don't count.
+	ServerPackages, FolderPackages int
+	ServerBytes, FolderBytes       int64
 }
 
 // DefaultLimits are Start-Client's and dgserver's defaults: 64 files, map.json up to 4 MB, a PNG up to
 // mapc.MaxPictureTileBytes and mapc.MaxPicture pixels a side, 512 MB a package (a 2 x 2 x 4096 painted ground is
-// about 70 MB).
+// about 70 MB); 16 packages and 2 GB from one server, 64 and 8 GB in all.
 func DefaultLimits() Limits {
-	return Limits{Files: 64, JSON: 4 << 20, File: mapc.MaxPictureTileBytes, Total: 512 << 20, Side: mapc.MaxPicture}
+	return Limits{Files: 64, JSON: 4 << 20, File: mapc.MaxPictureTileBytes, Total: 512 << 20, Side: mapc.MaxPicture,
+		ServerPackages: 16, ServerBytes: 2 << 30, FolderPackages: 64, FolderBytes: 8 << 30}
 }
 
 // MaxNameLen and MaxNameParts bound a file's name in a bundle.

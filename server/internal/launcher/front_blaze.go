@@ -374,7 +374,11 @@ func (bc *blazeConn) setUp(up net.Conn, s *frontSession) {
 			bc.watchLogin(fr)
 			bc.seenInvite(fr)
 			bc.f.Presence.fromServer(fr) // the Discord status: reads the frame only
-			if bc.write(raw) != nil {
+			out, why := scrubFromServer(raw, fr, bc.f.TunnelIP)
+			if why != "" {
+				bc.f.logf("Blaze %s: %s said what the game isn't given (%s): corrected", bc.peer, s.b.Tag, why)
+			}
+			if bc.write(out) != nil {
 				break
 			}
 		}
@@ -467,7 +471,11 @@ func (bc *blazeConn) openBlaze(s *frontSession, replay bool) (net.Conn, error) {
 			continue
 		}
 		reqFrame, _ := fire.NewReader(bytes.NewReader(req)).Next()
-		if _, err := up.Write(req); err != nil {
+		out := req
+		if reqFrame.Command == blaze.CmdUtilPreAuth {
+			out = scrubPreAuth(req)
+		}
+		if _, err := up.Write(out); err != nil {
 			up.Close()
 			return nil, frontErr(FrontErrServer, "%s's Blaze: %v", s.b.Tag, err)
 		}

@@ -30,6 +30,7 @@ import (
 	"dawngate/server/internal/store"
 	"dawngate/server/internal/tdf"
 	"dawngate/server/internal/tunnel"
+	"dawngate/server/internal/uichannel"
 )
 
 // Server holds the handler table and what handlers need to know about this server.
@@ -54,6 +55,10 @@ type Server struct {
 	Content *content.Content
 	// Policy is what new accounts get and which account flags the server forces (B7a).
 	Policy Policy
+	// TunnelFlow names the tunnel session behind a match host's GMS connection (tunnel.Gateway.FlowSession; nil without
+	// the tunnel); NoHelloCheck answers every verifyHello with yes (--gms-hello-check off). tunnel.go's verifyHello.
+	TunnelFlow   func(netip.AddrPort) (uint64, bool)
+	NoHelloCheck bool
 	// Hosts starts a match host per game (C1, dgserver --gms-dir; since H2 also on the host machines of
 	// registered agents, --agent-key; gamehost.go). nil = B8's behaviour: NotifyGameSetup names GMSPort
 	// at once and something else serves it.
@@ -134,6 +139,10 @@ type Server struct {
 	// admin without players on the teams, so a bots-only match (5 bots a team, with CustomBots) for tests and head-to-head
 	// bot comparisons couldn't start. The start is the admin's advanceGameState IN_GAME's.
 	CustomAutoStart time.Duration
+	// UI is the game UI's own channel (AttachUI; nil: none, so nobody takes part in the ready check).
+	UI *uichannel.Server
+	// lobbyGap is the least time between two lobby.state broadcasts of a lobby (AttachUI: lobbyPublishGap).
+	lobbyGap time.Duration
 	// TestRefuseStart refuses each custom game's first advanceGameState IN_GAME as the ready check's backstop does
 	// (dgserver --test-refuse-start, a test aid): the lobby after a refused start can be seen without a race.
 	TestRefuseStart bool
@@ -233,6 +242,14 @@ type Conn struct {
 	kmu      sync.Mutex
 	known    map[int64]bool
 	statusOf int64
+
+	// Frames wait here for the connection's own writer (writer.go): a write can block for as long as the client doesn't read,
+	// and a push comes from another player's goroutine. nil: written at once (a test's connection without ServeConn).
+	out     chan []byte
+	outDone chan struct{}
+	outSize atomic.Int64
+	stopped bool        // no more frames (wmu)
+	failed  atomic.Bool // a write failed or the queue overflowed: the connection is being closed
 
 	// the tunnel address of a client that came through the tunnel (tunnel.go), nil for a direct one
 	tun *tunnel.Addr
@@ -426,6 +443,8 @@ func (s *Server) ServeConn(c net.Conn) {
 	defer s.Log.Recover(who, logging.Peer(c.RemoteAddr()), c) // a panic ends this connection only
 	s.Log.Log(who, "connection from "+logging.Peer(c.RemoteAddr()))
 	conn := &Conn{nc: c, tun: tunnel.Local(c), gone: make(chan struct{})}
+	conn.startWriter(s)
+	defer conn.stopWriter()
 	defer close(conn.gone)
 	defer s.forgetMapNotes(conn)
 	defer conn.endSession(true)
@@ -452,6 +471,12 @@ func (s *Server) ServeConn(c net.Conn) {
 		h, ok := s.handlers[key{f.Component, f.Command}]
 		if !ok {
 			if !s.sendUnhandled(conn, f, s.noHandlerError(f.Component), "no handler") {
+				break
+			}
+			continue
+		}
+		if conn.Session == nil && !noLoginNeeded[key{f.Component, f.Command}] { // access.go
+			if !s.sendUnhandled(conn, f, ErrAuthenticationRequired, "before a login") {
 				break
 			}
 			continue
@@ -508,9 +533,7 @@ func (s *Server) send(c *Conn, f fire.Frame, what string) bool {
 		s.Log.Logf(who, "   (%s not sent: %v)", what, err)
 		return true
 	}
-	c.wmu.Lock()
-	defer c.wmu.Unlock()
-	if _, err := c.nc.Write(out); err != nil {
+	if err := c.write(s, out); err != nil {
 		s.Log.Logf(who, "write error: %s: %v", logging.ErrName(err), err)
 		return false
 	}

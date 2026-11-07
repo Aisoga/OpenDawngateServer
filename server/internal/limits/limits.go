@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"sort"
 	"strings"
 	"sync"
@@ -125,6 +126,7 @@ type Config struct {
 	RequestHeld                time.Duration // ... and closed when every request has had to wait for this long
 	Games                      Rate          // games a user starts (resetDedicatedServer: practice, custom)
 	GamesAtOnce                int           // running hosted games a user is in
+	GamesPerAddr               int           // running hosted games started from one address (0: no limit)
 	Queues                     Rate          // matchmaking queues a user joins (startMatchmaking)
 	// TunnelSessions caps the tunnel sessions one real address holds at the gateway (live ones and those in
 	// their 60-s grace; 0 = no cap)
@@ -148,7 +150,9 @@ func Default() Config {
 		RequestHeld: 10 * time.Second,
 		Games:       Rate{PerSec: 1.0 / 20, Burst: 4},
 		GamesAtOnce: 2,
-		Queues:      Rate{PerSec: 1.0 / 10, Burst: 6},
+		// a server has few match hosts (10 ports by default): a household's players fit, a few accounts can't take them all
+		GamesPerAddr: 4,
+		Queues:       Rate{PerSec: 1.0 / 10, Burst: 6},
 		// a client in a match sends at most about 35 datagrams and 280 bytes a second (a test run), its QoS
 		// check at the start about 20 datagrams of up to 1,200 bytes: the match host's own per-address rule (400/s)
 		// leaves room for a household's players behind one address [assumed]
@@ -499,6 +503,7 @@ func (l *Limiter) Login(addr, account string) (wait time.Duration, why string) {
 	if l == nil {
 		return 0, ""
 	}
+	addr = AddrKey(addr)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
@@ -508,9 +513,13 @@ func (l *Limiter) Login(addr, account string) (wait time.Duration, why string) {
 		l.refuse(KindLogin, addr)
 		return d, fmt.Sprintf("%d failed logins from %s in a row; locked for %s more", l.addrFails[addr].n, addr, round(d))
 	}
-	if d := locked(l.acctFails[account], l.cfg.AccountFail, now); d > 0 && account != "" {
-		l.refuse(KindLogin, addr)
-		return d, fmt.Sprintf("%d failed logins for %q in a row; locked for %s more", l.acctFails[account].n, account, round(d))
+	// per account and address: with the account alone, anyone who knows a login name could keep its owner out with wrong
+	// passwords. A guess from many addresses is slowed by each address's own count, and by the password hash.
+	if k := pairKey(account, addr); account != "" {
+		if d := locked(l.acctFails[k], l.cfg.AccountFail, now); d > 0 {
+			l.refuse(KindLogin, addr)
+			return d, fmt.Sprintf("%d failed logins for %q from %s in a row; locked for %s more", l.acctFails[k].n, account, addr, round(d))
+		}
 	}
 	if l.cfg.Logins.PerSec > 0 && !exempt {
 		b := getBucket(l.logins, addr)
@@ -521,6 +530,23 @@ func (l *Limiter) Login(addr, account string) (wait time.Duration, why string) {
 		}
 	}
 	return 0, ""
+}
+
+// pairKey keys a login name's failures from one address.
+func pairKey(account, addr string) string { return account + "\x00" + addr }
+
+// AddrKey is an address as a limit counts it: an IPv4 address, or an IPv6 address's /64, since one customer holds a whole
+// /64 and could otherwise take a new address for every try.
+func AddrKey(addr string) string {
+	a, err := netip.ParseAddr(addr)
+	if err != nil || !a.Is6() || a.Is4In6() {
+		return addr
+	}
+	p, err := a.Prefix(64)
+	if err != nil {
+		return addr
+	}
+	return p.String()
 }
 
 // locked is the time left of f's lockout.
@@ -542,19 +568,20 @@ func (l *Limiter) LoginDone(addr, account string, ok bool) {
 	if l == nil {
 		return
 	}
+	addr = AddrKey(addr)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
 	if ok {
 		delete(l.addrFails, addr)
-		delete(l.acctFails, account)
+		delete(l.acctFails, pairKey(account, addr))
 		return
 	}
 	if !l.exempt[addr] {
 		addFailure(l.addrFails, addr, l.cfg.AddrFail, now)
 	}
 	if account != "" {
-		addFailure(l.acctFails, account, l.cfg.AccountFail, now)
+		addFailure(l.acctFails, pairKey(account, addr), l.cfg.AccountFail, now)
 	}
 }
 

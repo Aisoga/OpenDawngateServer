@@ -89,13 +89,14 @@ class Spec:
     classes of the same movie in `more` (Parts, their tags after the spec's own, each with its own id and depth)."""
 
     def __init__(self, what, source, rel, movie_path, tags, class_name, char_id=2000, depth=2000, map_list=False,
-                 web_root=False, extra=(), items=False, more=()):
+                 web_root=False, extra=(), items=False, more=(), channel=False):
         self.what, self.source, self.rel, self.movie_path = what, source, rel, movie_path
         self.tags, self.class_name, self.char_id, self.depth = tags, class_name, char_id, depth
         self.map_list = map_list  # the archive also holds the create dialog's map list (MAP_LIST_PATH)
         self.web_root = web_root  # the archive also holds the server's web root (WEB_ROOT_PATH)
         self.extra = tuple(extra)  # more files of the archive, after the movie: (path, bytes)
         self.items = items  # the archive also holds the Collection's item list (ITEMS_PATH, from a content.json)
+        self.channel = channel  # the archive also holds where the UI channel is (CHANNEL_PATH)
         self.more = tuple(more)
 
     def parts(self):
@@ -120,7 +121,7 @@ SPECS = {
                      extra=(("UI/Scaleform/HUD/dgrefund.json", b"dawngate-refund\t1\nend\n"),)),
     "collection": Spec("the Collection's items", "game/Data/code.snap", "game/Data/zz_CollectionItems.snap",
                        "UI/Scaleform/CDN/swf/code/UIRuntime.gfx", os.path.join(MOVIEPATCH, "collection_tags.hex"),
-                       "CollectionItems", items=True,
+                       "CollectionItems", items=True, channel=True,
                        # the front end's movie carries more classes of ours: one Part each (the next free character
                        # id and depth; moviepatch.Collection's More, in the same order)
                        more=(Part("LobbyReady", 2001, 2001, os.path.join(MOVIEPATCH, "lobby_tags.hex")),
@@ -179,6 +180,10 @@ DEFAULT_HOST = "127.0.0.1"
 # without an item whose own fields hold a tab or a line end; in the details a tab or CR is a space. debug=True adds
 # "debug<TAB>1" (the class's Assert lines; research only).
 ITEMS_PATH = "UI/Scaleform/Collection/dgitems.json"
+# where the UI channel is for our classes (client_ui/common/opendawngate/ServerChannel.as reads it as
+# Channel/dgchannel.json; moviepatch.ChannelPath, ChannelPort; server/internal/uichannel's port)
+CHANNEL_PATH = "UI/Scaleform/Channel/dgchannel.json"
+CHANNEL_PORT = 10039
 ITEMS_MAGIC = "dawngate-collitems\t2"
 ITEM_KIND_ORDER = {"basic": 0, "advanced": 1, "legendary": 2, "consumable": 3, "spell": 4}
 
@@ -307,6 +312,15 @@ def item_list(content, debug=False):
         out.append("item\t" + "\t".join(r[3]))
         out += _details(r[4], listed)
     return ("\n".join(out + ["end"]) + "\n").encode("utf-8")
+
+
+def channel_file(host=DEFAULT_HOST, port=CHANNEL_PORT):
+    """dgchannel.json's bytes for the copy's server `host` (moviepatch.ChannelFile)."""
+    if not host or any(c <= " " or c >= "\x7f" or c in "\"'<>" for c in host):
+        raise ValueError(f"UI channel: host {host!r}: only printable ASCII without spaces, quotes or angle brackets")
+    if not 1 <= port <= 65535:
+        raise ValueError(f"UI channel: port {port}: must be 1..65535")
+    return f"dawngate-channel\t1\nhost\t{host}\nport\t{port}\nend\n".encode("ascii")
 
 
 def web_root_file(host=DEFAULT_HOST, port=WEB_PORT):
@@ -609,6 +623,8 @@ def build(snap_path, tags=None, spec=PICKER, maps=None, host=None, content=None,
         files.append((WEB_ROOT_PATH, web_root_file(host or DEFAULT_HOST)))
     if spec.items:
         files.append((ITEMS_PATH, item_list(content, debug)))
+    if spec.channel:
+        files.append((CHANNEL_PATH, channel_file(host or DEFAULT_HOST)))
     files.extend(spec.extra)
     return pack_bytes(files)
 
@@ -672,8 +688,8 @@ def main(argv):
     host = None
     if "--host" in args:
         i = args.index("--host")
-        if i + 1 >= len(args) or not spec.web_root:
-            sys.exit("--host takes the copy's server address (only with --spec aftaction)")
+        if i + 1 >= len(args) or not (spec.web_root or spec.channel):
+            sys.exit("--host takes the copy's server address (with --spec aftaction or collection)")
         host = args[i + 1]
         del args[i:i + 2]
     content = None

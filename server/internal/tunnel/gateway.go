@@ -31,6 +31,7 @@ const (
 	DefaultFlowIdle         = 120 * time.Second
 	DefaultHandshakeTimeout = 10 * time.Second
 	DefaultMaxFlows         = 64
+	DefaultMaxFlowsTotal    = 4096
 	DefaultStatsEvery       = time.Minute
 )
 
@@ -61,11 +62,14 @@ type Gateway struct {
 	// BindIP is the address forwarded datagrams leave from (the server's --bind; nil = the system's choice).
 	BindIP net.IP
 	// Forward is where a forwarded port's datagrams go when the session has no route for it (Addr.Route); nil
-	// result = dropped. dgserver: the server's bind address with the same port (its match hosts).
+	// result, or nil = dropped. dgserver sets it only for B8's logger and an external GMS: with match hosts a session
+	// reaches a GMS port only after Blaze routed it, so an unknown session reaches none of them.
 	Forward func(port int) *net.UDPAddr
 
 	HeartbeatEvery, HeartbeatTimeout, Grace, FlowIdle, HandshakeTimeout time.Duration
 	MaxFlows                                                            int // per session
+	// MaxFlowsTotal caps the flows of all sessions together: each holds a socket, a goroutine and a buffer
+	MaxFlowsTotal int
 	// StatsEvery logs each live session's counts this often (0: DefaultStatsEvery; negative: never)
 	StatsEvery time.Duration
 	// Limits (nil = none) limit connections and datagrams by the sender's real address; MaxSessionsPerPeer
@@ -100,9 +104,15 @@ type Gateway struct {
 	sessions map[uint64]*session
 	closed   bool
 
+	// flowAddrs names the session behind each flow's own socket: its address is what a match host sees as the
+	// connection's source (FlowSession). A leaf lock: taken under session.mu, nothing is locked under it.
+	flowMu    sync.RWMutex
+	flowAddrs map[netip.AddrPort]uint64
+
 	unknown, junk atomic.Uint64 // datagrams of no session, datagrams that are no tunnel datagram
 	limited       atomic.Uint64 // datagrams refused by Limits
 	sessionsCut   atomic.Uint64 // sessions refused by MaxSessionsPerPeer
+	flowsCut      atomic.Uint64 // flows refused by MaxFlowsTotal
 }
 
 // Listener returns the virtual listener of a server port: the streams clients open to it. The service serves it
@@ -156,6 +166,9 @@ func (g *Gateway) defaults() {
 	if g.MaxFlows == 0 {
 		g.MaxFlows = DefaultMaxFlows
 	}
+	if g.MaxFlowsTotal == 0 {
+		g.MaxFlowsTotal = DefaultMaxFlowsTotal
+	}
 	if g.StatsEvery == 0 {
 		g.StatsEvery = DefaultStatsEvery
 	}
@@ -171,6 +184,10 @@ func (g *Gateway) Start(addr string) error {
 		return errors.New("tunnel: the gateway has no key")
 	}
 	g.defaults()
+	_, listed := g.ports()
+	if err := checkUDPPorts(listed); err != nil { // the operator hears it here, not from each player's refusal
+		return fmt.Errorf("the QoS and match host ports (--qos-port, --gms-ports): %w; Start-Client would refuse this server", err)
+	}
 	ta, err := net.ResolveTCPAddr("tcp4", addr)
 	if err != nil {
 		return err
@@ -653,6 +670,36 @@ func (g *Gateway) janitor() {
 	}
 }
 
+// FlowSession returns the tunnel session a forwarded datagram from addr belongs to: every flow has its own socket toward
+// the match host, so the source address the host sees names the session behind it, whatever the client claims. False:
+// no live flow has that address. A NAT between the gateway and the host changes the address, and then nothing matches.
+func (g *Gateway) FlowSession(addr netip.AddrPort) (uint64, bool) {
+	g.flowMu.RLock()
+	defer g.flowMu.RUnlock()
+	id, ok := g.flowAddrs[netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port())]
+	return id, ok
+}
+
+// addFlowAddr names addr's session, false when the gateway holds MaxFlowsTotal flows already.
+func (g *Gateway) addFlowAddr(addr netip.AddrPort, id uint64) bool {
+	g.flowMu.Lock()
+	defer g.flowMu.Unlock()
+	if len(g.flowAddrs) >= g.MaxFlowsTotal {
+		return false
+	}
+	if g.flowAddrs == nil {
+		g.flowAddrs = map[netip.AddrPort]uint64{}
+	}
+	g.flowAddrs[addr] = id
+	return true
+}
+
+func (g *Gateway) dropFlowAddr(addr netip.AddrPort) {
+	g.flowMu.Lock()
+	defer g.flowMu.Unlock()
+	delete(g.flowAddrs, addr)
+}
+
 // session is one client's tunnel on the gateway.
 type session struct {
 	g       *Gateway
@@ -694,7 +741,8 @@ type flow struct {
 	key    flowKey
 	target *net.UDPAddr
 	conn   *net.UDPConn
-	last   atomic.Int64 // unix nanoseconds of the last datagram either way
+	local  netip.AddrPort // the socket's own address (Gateway.FlowSession)
+	last   atomic.Int64   // unix nanoseconds of the last datagram either way
 }
 
 // The release named in the hello and whether it is the gateway's own (a resumed session takes the new hello's: the
@@ -759,7 +807,7 @@ func (s *session) end(reason string) {
 		ctrl.Close()
 	}
 	for _, f := range flows {
-		f.conn.Close()
+		f.close(s.g)
 	}
 	s.g.logf("session %d ended (%s) after %s: %s", s.id, reason, time.Since(s.created).Round(time.Second), s.counts())
 }
@@ -843,7 +891,7 @@ func (s *session) flowFor(key flowKey) *flow {
 		if f.target.IP.Equal(target.IP) && f.target.Port == target.Port {
 			return f
 		}
-		f.conn.Close() // the port's match moved (a new route)
+		f.close(s.g) // the port's match moved (a new route)
 		delete(s.flows, key)
 	}
 	if len(s.flows) >= s.g.MaxFlows {
@@ -858,15 +906,28 @@ func (s *session) flowFor(key flowKey) *flow {
 		s.g.logf("session %d: no socket to %s: %v", s.id, target, err)
 		return nil
 	}
-	f := &flow{key: key, target: target, conn: conn}
+	// after the dial, so a wildcard --gms-bind names the address the datagrams really leave from
+	la := conn.LocalAddr().(*net.UDPAddr).AddrPort()
+	f := &flow{key: key, target: target, conn: conn, local: netip.AddrPortFrom(la.Addr().Unmap(), la.Port())}
+	if !s.g.addFlowAddr(f.local, s.id) {
+		conn.Close()
+		s.g.flowsCut.Add(1)
+		return nil
+	}
 	f.last.Store(time.Now().UnixNano())
 	s.flows[key] = f
 	go s.readFlow(f)
 	return f
 }
 
+// close ends the flow and its name in FlowSession.
+func (f *flow) close(g *Gateway) {
+	g.dropFlowAddr(f.local)
+	f.conn.Close()
+}
+
 func (s *session) readFlow(f *flow) {
-	buf := make([]byte, 65536)
+	buf := make([]byte, MaxPayload+1) // one more than a sealed datagram may carry: Seal refuses what fills it
 	for {
 		n, err := f.conn.Read(buf)
 		if err != nil {
@@ -885,7 +946,7 @@ func (s *session) closeIdleFlows(now time.Time) {
 	defer s.mu.Unlock()
 	for k, f := range s.flows {
 		if now.Sub(time.Unix(0, f.last.Load())) > s.g.FlowIdle {
-			f.conn.Close()
+			f.close(s.g)
 			delete(s.flows, k)
 		}
 	}
@@ -929,6 +990,9 @@ func (g *Gateway) Report() []string {
 	}
 	if n, j := g.unknown.Load(), g.junk.Load(); n+j > 0 {
 		out = append(out, fmt.Sprintf("datagrams of no session %d, not tunnel datagrams %d", n, j))
+	}
+	if n := g.flowsCut.Load(); n > 0 {
+		out = append(out, fmt.Sprintf("flows refused by the cap of %d: %d", g.MaxFlowsTotal, n))
 	}
 	if l, c := g.limited.Load(), g.sessionsCut.Load(); l+c > 0 {
 		out = append(out, fmt.Sprintf("refused by the limits (PH6b): datagrams %d, sessions %d (connections: the limits line)", l, c))

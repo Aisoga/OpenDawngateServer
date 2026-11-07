@@ -101,7 +101,7 @@ if ($Live) {
     $laneLock = Join-Path $MainRoot "re\logs\session_$Lane.lock"
     $srvDir = Join-Path $MainRoot "re\logs\${Name}_server"
     $sessDir = Join-Path $MainRoot "re\logs\$Name"
-    $tcpPorts = @(42127, 10041, 17502, 18080, 9988)
+    $tcpPorts = @(42127, 10041, 17502, 18080, 9988, 10039)
     $udpPorts = @(17502, 10042)
     $stubSeconds = 2 * $Seconds + 600
     $bad = New-Object System.Collections.Generic.List[string]

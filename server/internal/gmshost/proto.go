@@ -57,6 +57,8 @@ const (
 	TPlayerKarma      = "playerKarma"
 	TUpdateRoster     = "updateRoster" // B15
 	TStartGame        = "startGame"    // B15
+	TVerifyHello      = "verifyHello"  // SEATAUTH
+	THelloVerdict     = "helloVerdict" // SEATAUTH
 
 	// M18: the match's statistics, before the playerFinish lines
 	TSeatStats     = "seatStats"
@@ -435,6 +437,20 @@ type AbortGame struct {
 	Reason string `json:"reason"`
 }
 
+// VerifyHello is the host asking who is behind a GMS connection: Addr is the connection's address as the host sees it
+// ("ip:port"), User the id its HelloReq claims. The host holds the HelloReq until the verdict.
+type VerifyHello struct {
+	Addr string `json:"addr"`
+	User int64  `json:"user"`
+}
+
+// HelloVerdict answers VerifyHello, echoing its Addr and User.
+type HelloVerdict struct {
+	Addr string `json:"addr"`
+	User int64  `json:"user"`
+	OK   bool   `json:"ok"`
+}
+
 // AgentHello is an agent's first line (H2). Name identifies the host machine in the logs and in
 // Match.Site; Nonce (32 hex digits, fresh per connection) is the agent's challenge to the server.
 type AgentHello struct {
@@ -520,6 +536,8 @@ func (UpdateRoster) Type() string     { return TUpdateRoster }
 func (StartGame) Type() string        { return TStartGame }
 func (SeatStats) Type() string        { return TSeatStats }
 func (MatchTimeline) Type() string    { return TMatchTimeline }
+func (VerifyHello) Type() string      { return TVerifyHello }
+func (HelloVerdict) Type() string     { return THelloVerdict }
 func (AgentHello) Type() string       { return TAgentHello }
 func (AgentChallenge) Type() string   { return TAgentChallenge }
 func (AgentAuth) Type() string        { return TAgentAuth }
@@ -564,7 +582,7 @@ var messageTypes = func() map[string]Message {
 	out := map[string]Message{}
 	for _, m := range []Message{Hello{}, CreateGame{}, GameReady{}, AddPlayer{}, DisconnectPlayer{}, GMSUpdate{},
 		PlayerFinish{}, FinishGame{}, GMSError{}, LogoutGMS{}, RemovePlayer{}, AbortGame{}, PlayerRewards{},
-		PlayerKarma{}, UpdateRoster{}, StartGame{}, SeatStats{}, MatchTimeline{}, AgentHello{}, AgentChallenge{}, AgentAuth{}, AgentReady{}, AgentStatus{}, LaunchHost{}, HostStarted{},
+		PlayerKarma{}, UpdateRoster{}, StartGame{}, SeatStats{}, MatchTimeline{}, VerifyHello{}, HelloVerdict{}, AgentHello{}, AgentChallenge{}, AgentAuth{}, AgentReady{}, AgentStatus{}, LaunchHost{}, HostStarted{},
 		HostFailed{}, KillHost{}, HostExited{}} {
 		out[m.Type()] = m
 	}

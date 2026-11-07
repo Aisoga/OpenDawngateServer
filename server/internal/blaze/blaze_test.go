@@ -293,6 +293,7 @@ func TestPracticeGame(t *testing.T) {
 	ps.send(9, 0x19, 0, nil) // wrong component: no handler, an error reply
 	ps.expectError(9, 0x19, 0, ErrCommandNotFound)
 	ps.send(4, 0x19, 1, ps.request("creategame_request"))
+	ps.expectError(4, 0x19, 1, ErrAuthenticationRequired) // before a login
 	ps.send(1, 0x28, 2, ps.request("login_request"))
 	ps.expect(1, 0x28, fire.Reply, 2, "login_reply")
 	ps.send(1, 0x6E, 3, ps.request("loginpersona_request"))
@@ -312,7 +313,6 @@ func TestPracticeGame(t *testing.T) {
 	ps.expect(4, 0x0B, fire.Reply, 6, "")
 	log := ps.close()
 	for _, want := range []string{
-		"(resetDedicatedServer before login; not answered)",
 		"[blaze]    game 1 \"player's Game\": GMS 127.0.0.1:10042 (HNET), player 2000000001\n",
 		"      - ('union', 2, {'EXIP': {'IP': 2130706433, 'PORT': 3659}, 'INIP': {'IP': 167772162, 'PORT': 3659}})\n",
 		"[blaze] -> GameManager::NotifyGameSetup notification, ",
@@ -324,13 +324,12 @@ func TestPracticeGame(t *testing.T) {
 	}
 }
 
-// getCompleteData without a login stays unanswered (logged).
+// getCompleteData without a login is refused.
 func TestCompleteDataNeedsLogin(t *testing.T) {
 	ps := newPipeSession(t)
 	ps.send(0x81F, 0x76, 0, nil)
-	if log := ps.close(); !strings.Contains(log, "(getCompleteData before login; not answered)") {
-		t.Errorf("log:\n%s", log)
-	}
+	ps.expectError(0x81F, 0x76, 0, ErrAuthenticationRequired)
+	ps.close()
 }
 
 // loginPersona without a login on the connection stays unanswered (logged).

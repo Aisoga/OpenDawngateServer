@@ -18,6 +18,7 @@ import (
 	"dawngate/server/internal/setup/localepatch"
 	"dawngate/server/internal/sitelinks"
 	"dawngate/server/internal/tunnel"
+	"dawngate/server/internal/web"
 )
 
 // The login screen's links on the front. A player copy for the tunnel opens its Sign up now!, Forgot Password? and
@@ -161,10 +162,21 @@ func (f *Front) pageHost() string {
 	return net.JoinHostPort(f.TunnelIP.String(), strconv.Itoa(f.Ports.HTTP))
 }
 
-// samePage reports whether a request comes from the front's own pages: its Host, and its Origin and Sec-Fetch-Site
-// where the browser sends them.
+// samePage reports whether a request comes from the front's own pages or the game's link: its Host, and its Origin and
+// Sec-Fetch-Site where the browser sends them. A link from the game opens with Sec-Fetch-Site none. Another site's request
+// is refused for a GET too: a GET of a server's page starts a probe and a tunnel session, which count against the player's
+// limits at that server.
 func (f *Front) samePage(r *http.Request, post bool) bool {
 	if !strings.EqualFold(r.Host, f.pageHost()) {
+		return false
+	}
+	site := r.Header.Get("Sec-Fetch-Site")
+	switch site {
+	case "", "same-origin", "none":
+	default:
+		return false
+	}
+	if r.Header.Get("Service-Worker") != "" { // a worker would outlive the page and stand between the browser and every page here
 		return false
 	}
 	if !post {
@@ -172,15 +184,39 @@ func (f *Front) samePage(r *http.Request, post bool) bool {
 	}
 	// The pages send Referrer-Policy same-origin, so a browser names the page's origin; under no-referrer Chrome and
 	// Edge sent "Origin: null" with the form (seen live), which counts only beside Sec-Fetch-Site same-origin.
-	site := r.Header.Get("Sec-Fetch-Site")
 	if o := r.Header.Get("Origin"); o != "" && !strings.EqualFold(o, "http://"+f.pageHost()) && !(o == "null" && site == "same-origin") {
 		return false
 	}
-	switch site {
-	case "", "same-origin", "none":
-		return true
+	return true
+}
+
+// serveBrowser answers a program other than the game on the HTTP port, outside the login screen's pages. The one thing it
+// gets is a person's click on a server page's Download link (the same site, GET); everything else is refused here, before
+// any stream to the server.
+func (f *Front) serveBrowser(c net.Conn, br *bufio.Reader, who string) {
+	req, err := http.ReadRequest(br)
+	if err != nil {
+		return
 	}
-	return false
+	c.SetReadDeadline(time.Time{})
+	path := pathOf(req.RequestURI)
+	if s := f.current(); s != nil && s.c.Up() && isDownloadPath(path) && (req.Method == http.MethodGet || req.Method == http.MethodHead) &&
+		strings.EqualFold(req.Host, f.pageHost()) && req.Header.Get("Sec-Fetch-Site") == "same-origin" {
+		c.SetWriteDeadline(time.Now().Add(downloadLimit))
+		f.forward(c, req, s.b, path, downloadLimit, f.sessionStream(s, c))
+		return
+	}
+	f.Guard.logRefused(f.Ports.HTTP, who)
+	writePage(c, http.StatusForbidden, "Refused", "<p>This port of Start-Client on this PC serves the game. Its pages open from the game's login screen.</p>")
+}
+
+// downloadLimit bounds a client package's download through the front.
+const downloadLimit = 30 * time.Minute
+
+// isDownloadPath: the server's client package and its page (web.Download), and nothing that could walk away from them.
+func isDownloadPath(path string) bool {
+	root := "/" + web.DownloadPagePath
+	return (path == root || strings.HasPrefix(path, root+"/")) && !strings.Contains(path, "..") && !strings.Contains(path, "%")
 }
 
 // servePage answers one request for the login screen's pages.
@@ -191,6 +227,16 @@ func (f *Front) servePage(c net.Conn, br *bufio.Reader) {
 	}
 	c.SetReadDeadline(time.Time{})
 	c.SetWriteDeadline(time.Now().Add(2 * time.Minute))
+	rest := strings.TrimPrefix(pathOf(req.RequestURI), "/"+sitelinks.FallbackPrefix)
+	if !f.samePage(req, req.Method == http.MethodPost) {
+		// a web page can ask hundreds of times a second, so the log holds only the first ones
+		if n := f.pagesRefused.Add(1); n <= maxGuardLines {
+			f.logf("page %s %q from %s refused: Host %q, Origin %q, Sec-Fetch-Site %q", req.Method, req.RequestURI, c.RemoteAddr(), req.Host,
+				req.Header.Get("Origin"), req.Header.Get("Sec-Fetch-Site"))
+		}
+		writePage(c, http.StatusForbidden, "Refused", "<p>This page belongs to Start-Client on this PC and opens only from the game's login screen.</p>")
+		return
+	}
 	// one line per request, so the log tells how often a link opened a page (a browser sends Sec-Fetch-Site; the
 	// User-Agent's last word tells browsers apart)
 	agent := strings.Fields(req.UserAgent())
@@ -200,12 +246,6 @@ func (f *Front) servePage(c net.Conn, br *bufio.Reader) {
 	}
 	f.logf("page request %s %s from %s (Sec-Fetch-Site %q, agent %q)", req.Method, req.RequestURI, c.RemoteAddr(),
 		req.Header.Get("Sec-Fetch-Site"), last)
-	rest := strings.TrimPrefix(pathOf(req.RequestURI), "/"+sitelinks.FallbackPrefix)
-	if !f.samePage(req, req.Method == http.MethodPost) {
-		f.logf("page %s %s from %s refused: Host %q, Origin %q", req.Method, req.RequestURI, c.RemoteAddr(), req.Host, req.Header.Get("Origin"))
-		writePage(c, http.StatusForbidden, "Refused", "<p>This page belongs to Start-Client on this PC and opens only from the game's login screen.</p>")
-		return
-	}
 	if strings.HasPrefix(rest, "pick/") {
 		slot, page, ok := parsePick(rest)
 		if !ok {
@@ -355,8 +395,51 @@ func (f *Front) sessionStream(s *frontSession, c net.Conn) func() (net.Conn, fun
 	}
 }
 
+// A server's pages open in the player's browser under the front's address, which they share with the front's own pages
+// and, for cookies, with every other program on 127.0.0.1. So a page may look however its server likes, but it runs no
+// script and sets nothing in the browser, and a request carries only what describes the page wanted. Without this a
+// hostile server's page could read the confirm form's token and the list of the player's servers from this same origin,
+// and every cookie the browser holds for 127.0.0.1 would reach that server.
+var (
+	// pageRequestHeaders are the only headers a browser's request keeps on its way to a server.
+	pageRequestHeaders = []string{"Accept", "Accept-Language", "Range", "User-Agent"}
+	// pageReplyHeaders are the only headers of a server's answer the browser gets.
+	pageReplyHeaders = []string{"Accept-Ranges", "Cache-Control", "Content-Disposition", "Content-Language", "Content-Range", "Content-Type",
+		"Date", "ETag", "Expires", "Last-Modified", "Location"}
+)
+
+const pagePolicy = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'none'; frame-ancestors 'none'; base-uri 'none'"
+
+// keepHeaders is h with only the names given.
+func keepHeaders(h http.Header, names []string) http.Header {
+	out := http.Header{}
+	for _, n := range names {
+		if v := h.Values(n); len(v) > 0 {
+			out[n] = v
+		}
+	}
+	return out
+}
+
+// countWriter counts what passes through it.
+type countWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
+}
+
 // forwardPage passes one page request to a server (as /dawngate/<page>, Connection: close) and its answer back.
 func (f *Front) forwardPage(c net.Conn, req *http.Request, b Bookmark, page string, open func() (net.Conn, func(), error)) {
+	f.forward(c, req, b, "/"+sitelinks.FallbackPrefix+page, time.Minute, open)
+}
+
+// forward passes a browser's request to a server's path and its answer back, within limit.
+func (f *Front) forward(c net.Conn, req *http.Request, b Bookmark, path string, limit time.Duration, open func() (net.Conn, func(), error)) {
 	start := time.Now()
 	up, done, err := open()
 	if err != nil {
@@ -367,18 +450,35 @@ func (f *Front) forwardPage(c net.Conn, req *http.Request, b Bookmark, page stri
 	defer done()
 	defer up.Close()
 	out := req.Clone(req.Context())
-	out.URL.Path, out.URL.RawPath, out.URL.RawQuery = "/"+sitelinks.FallbackPrefix+page, "", ""
+	out.URL.Path, out.URL.RawPath, out.URL.RawQuery = path, "", ""
 	out.RequestURI = ""
 	out.Close = true
-	out.Header.Del("Keep-Alive")
-	up.SetDeadline(time.Now().Add(time.Minute))
+	out.Header = keepHeaders(req.Header, pageRequestHeaders)
+	up.SetDeadline(time.Now().Add(limit))
 	if err := out.Write(up); err != nil {
 		f.logf("page %s for %s: %v", req.RequestURI, b.Tag, err)
 		return
 	}
-	n, _ := io.Copy(c, up)
-	f.logf("page %s: %s's /%s%s (%d bytes, %s)", req.RequestURI, b.Tag, sitelinks.FallbackPrefix, page, n,
-		time.Since(start).Round(time.Millisecond))
+	head := &headLimit{r: up, left: maxResponseHead}
+	resp, err := http.ReadResponse(bufio.NewReader(head), out)
+	head.off = true
+	if err != nil {
+		f.logf("page %s for %s: %v", req.RequestURI, b.Tag, err)
+		writePage(c, http.StatusBadGateway, "No answer", fmt.Sprintf("<p>%s didn't answer the page: try again in a moment.</p>", html.EscapeString(displayName(b))))
+		return
+	}
+	defer resp.Body.Close()
+	resp.Header = keepHeaders(resp.Header, pageReplyHeaders)
+	resp.Header.Set("Content-Security-Policy", pagePolicy)
+	resp.Header.Set("X-Content-Type-Options", "nosniff")
+	resp.Header.Set("X-Frame-Options", "DENY")
+	resp.Header.Set("Referrer-Policy", "same-origin")
+	resp.Close = true
+	w := &countWriter{w: c}
+	if err := resp.Write(w); err != nil {
+		f.logf("page %s for %s: %v", req.RequestURI, b.Tag, err)
+	}
+	f.logf("page %s: %s's %s (%d bytes, %s)", req.RequestURI, b.Tag, path, w.n, time.Since(start).Round(time.Millisecond))
 }
 
 func displayName(b Bookmark) string {

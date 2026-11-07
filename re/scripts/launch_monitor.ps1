@@ -20,6 +20,8 @@
     '<t>:r<fx>,<fy>'  right click there (WM_RBUTTONDOWN/UP; D7-live: the in-game move and attack button)
     '<t>:d<fx1>,<fy1>,<fx2>,<fy2>' drag with the left button from point 1 to point 2 (WM_LBUTTONDOWN at 1, 12
                       WM_MOUSEMOVEs with MK_LBUTTON over 0.6 s, WM_LBUTTONUP at 2; B7b: a perk shape onto the perk page)
+    '<t>:press<fx>,<fy>', '<t>:moveto<fx>,<fy>', '<t>:release<fx>,<fy>' (READYUI) a drag held across screenshots: the
+                      button down, moves with MK_LBUTTON from the last point, the button up, each at its own t
     '<t>:h<fx>,<fy>'  hover there: 6 WM_MOUSEMOVEs (no button) over 0.6 s, then after 1 s a screenshot h<t>.png
                       (D3-perks: a tooltip, e.g. the shaper panel's perk icon in game)
     '<t>:key=<vk>'    key press (WM_KEYDOWN/WM_KEYUP, virtual-key code in decimal, e.g. 27 = Escape)
@@ -260,6 +262,31 @@ function DragFromTo($h, $fx1, $fy1, $fx2, $fy2) {
     Start-Sleep -Milliseconds 300
     return "($x1,$y1) -> ($x2,$y2)"
 }
+function HeldMouse($h, $how, $fx, $fy) {
+    # READYUI: a drag held across screenshots, in posted messages only: press, then moveto (any number, with MK_LBUTTON,
+    # stepping from the last point), then release, each at its own t
+    $r = New-Object W+RECT
+    [void][W]::GetClientRect($h, [ref]$r)
+    $x = [int](($r.R - $r.L) * $fx); $y = [int](($r.B - $r.T) * $fy)
+    $lp = [IntPtr](($y -shl 16) -bor ($x -band 0xFFFF))
+    if ($how -eq 'press') {
+        [void][W]::PostMessage($h, 0x0200, [IntPtr]0, $lp)   # WM_MOUSEMOVE
+        Start-Sleep -Milliseconds 150
+        [void][W]::PostMessage($h, 0x0201, [IntPtr]1, $lp)   # WM_LBUTTONDOWN (MK_LBUTTON)
+    } elseif ($how -eq 'moveto') {
+        if ($null -eq $script:HeldFrom) { $script:HeldFrom = @($x, $y) }
+        $steps = 12
+        for ($i = 1; $i -le $steps; $i++) {
+            $xi = [int]($script:HeldFrom[0] + ($x - $script:HeldFrom[0]) * $i / $steps); $yi = [int]($script:HeldFrom[1] + ($y - $script:HeldFrom[1]) * $i / $steps)
+            [void][W]::PostMessage($h, 0x0200, [IntPtr]1, [IntPtr](($yi -shl 16) -bor ($xi -band 0xFFFF)))   # WM_MOUSEMOVE, MK_LBUTTON
+            Start-Sleep -Milliseconds 30
+        }
+    } else {
+        [void][W]::PostMessage($h, 0x0202, [IntPtr]0, $lp)   # WM_LBUTTONUP
+    }
+    $script:HeldFrom = @($x, $y)
+    return "($x,$y)"
+}
 function HoverAt($h, $fx, $fy) {
     # D3-perks: posted mouse moves only (no button), as Scaleform takes the clicks' points from the messages
     $r = New-Object W+RECT
@@ -323,7 +350,7 @@ if ($Actions) {
         if ($a -notmatch '^(\d+):(.+)$') { throw "bad -Actions item '$a'" }
         $at = [int]$Matches[1]; $what = $Matches[2].Trim()
         if ($at % 2) { throw "-Actions time $at must be even" }
-        if ($what -notmatch '^(([rh]|dbl)?\d*\.?\d+,\d*\.?\d+|d\d*\.?\d+,\d*\.?\d+,\d*\.?\d+,\d*\.?\d+|key=\d+(\+\d+)?|keydown=\d+|keyup=\d+|wheel=-?\d+(x\d+)?(@\d*\.?\d+,\d*\.?\d+)?|text=[A-Za-z0-9_@./#+~-]+|login=[A-Za-z0-9_@.#+-]+\|[^|]+|shot|fshot|pshot|pburst=\d+(x\d+)?|lockfg=\d+|front|back|close)$') { throw "bad -Actions item '$($a -replace '\|.*$', '|...')'" }
+        if ($what -notmatch '^(([rh]|dbl|press|moveto|release)?\d*\.?\d+,\d*\.?\d+|d\d*\.?\d+,\d*\.?\d+,\d*\.?\d+,\d*\.?\d+|key=\d+(\+\d+)?|keydown=\d+|keyup=\d+|wheel=-?\d+(x\d+)?(@\d*\.?\d+,\d*\.?\d+)?|text=[A-Za-z0-9_@./#+~-]+|login=[A-Za-z0-9_@.#+-]+\|[^|]+|shot|fshot|pshot|pburst=\d+(x\d+)?|lockfg=\d+|front|back|close)$') { throw "bad -Actions item '$($a -replace '\|.*$', '|...')'" }
         if (-not $ActionsAt.ContainsKey($at)) { $ActionsAt[$at] = @() }
         $ActionsAt[$at] += $what
     }
@@ -379,6 +406,11 @@ function DoActions($p, $at) {
         if ($what -match '^key=(\d+)\+(\d+)$') {
             $how = [W]::PressWithModifier($h, [int]$Matches[1], [int]$Matches[2])
             Log "action t=${at}: key $($Matches[2]) with modifier $($Matches[1]) (key state $how)"; continue
+        }
+        if ($what -match '^(press|moveto|release)(.+),(.+)$') {
+            $ic = [Globalization.CultureInfo]::InvariantCulture
+            $pos = HeldMouse $h $Matches[1] ([double]::Parse($Matches[2], $ic)) ([double]::Parse($Matches[3], $ic))
+            Log "action t=${at}: $($what) $pos"; continue
         }
         if ($what -match '^d(.+),(.+),(.+),(.+)$') {
             $ic = [Globalization.CultureInfo]::InvariantCulture

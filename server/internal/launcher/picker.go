@@ -360,6 +360,7 @@ func startFront(o IO, l setup.Layout, bm *Bookmarks, tunnelIP string, tlsCfg *tl
 	front := &Front{Log: log, Layout: l, Bookmarks: bm, TunnelIP: net.ParseIP(tunnelIP), RedirectorTLS: tlsCfg, Default: preselect,
 		ThisPC: pc, Presence: tracker, DiscordJoin: dc.join && tracker != nil, JoinLoopback: dc.hook != "",
 		Maps: folderDialogMaps(o.ExeDir), MapDownload: md}
+	front.Guard = newGameGuard(l.ClientCopy(), front.logf)
 	if err := front.Start(); err != nil {
 		if f != nil {
 			f.Close()

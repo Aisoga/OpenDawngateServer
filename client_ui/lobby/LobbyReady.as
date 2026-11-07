@@ -1,38 +1,44 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 the OpenDawngateServer contributors.
 //
-// The custom game lobby's ready check. In a custom game's lobby every human on the two teams except the host gets a
-// READY toggle at START's place (a second instance of START's own button class, its own label field written); every
-// tile of a player whose client has this class shows whether that player is ready (the Collection's check box,
-// MSCCheckBox001 from the shared library, clipped to its box, and "READY" / "NOT READY" before the kick button); the
-// host's START stays disabled with "n/m ready" above it until every such player is ready. Spectators never need to be,
-// the host is ready by starting, and a lobby with only the host starts at once.
+// The custom game lobby's ready check. Every human on the two teams except the host gets a READY toggle at START's
+// place; every tile of a player whose client has this class shows whether that player is ready; the host's START stays
+// disabled, with "n/m ready" beside it, until every such player is ready. Spectators never need to be, the host is ready
+// by starting, and a lobby with only the host starts at once.
 //
-// The class sits on the root timeline of the front end's movie (UIRuntime.gfx) beside the Collection's class, placed
-// there by four added tags; the game's bytecode stays as it is, and the class uses only public members of the game's
-// classes, by name. Its clip is on no stage, so it keeps a static strong reference to itself and a strong ENTER_FRAME
-// listener. The lobby is the view of the component "customMatchLobby" (GComponent.find, the id in the game's screen
-// manifest) while it is shown; the roster comes from the lobby's own natives (comp.viewController.nativeBridge), whose
-// arguments must be Scaleform UInts (u()).
+// The state lives on the server (server/internal/blaze/ready.go), and this class only shows it. It talks to the server
+// over the UI channel (opendawngate.ServerChannel): the lobby's entry and the button are calls, and every change comes
+// back as the whole lobby in one event, which is simply drawn:
+//     lobby.enter, lobby.setReady {ready}                  -> the server
+//     lobby.state {players: [{name, ready?, rating?}]},
+//     lobby.startRefused                                   <- the server
 //
-// The channel is the lobby's game chat. The class sends "~#rdy hi~" once per lobby entry and "~#rdy 1~" / "~#rdy 0~"
-// from the toggle (ChatManager.SendMessageToGame, the lobby input's own call); the server never relays them and answers
-// only clients that said hi, with lines in the name of the player whose state it is ("~#rdy 1~", "~#rdy 0~"; "~#rdy
-// wait~" to the host after a refused start). The chat writes them into the lobby window's text field
-// (customGameChatWindow.m_chatText) as a paragraph with the sender's link "event:p,<persona id>" and "[<name>]:"; the
-// class reads every such paragraph, takes it out of the field and scrolls back to the end, every frame and again right
-// after the view's drawing. A lobby line is "~#<kind> <args>~": onLine dispatches by kind (KINDS), so another kind
-// is one more case there and one more part per tile (tile()). Without the server's answer (an older server) the class
-// shows and holds nothing.
+// The class sits on the root timeline of the front end's movie (UIRuntime.gfx), placed there by four added tags; the
+// game's bytecode stays as it is, and the class uses only public members of the game's classes, by name. Its clip is on
+// no stage, so it keeps a static strong reference to itself. It runs on the game's own events: the framework says when
+// the lobby's component comes and goes (GComponent.componentTreeChangeHandlers: its screen is created on demand), when its
+// view exists (signalViewCreated), when the view shows and hides (showComplete, hideComplete), when it has drawn
+// (drawSignal) and when C++ takes its natives away (nativeBridgeDestroyedSignal). After a draw the tiles' own layouts follow in the next frames, so a redraw is repeated for a few frames
+// (SETTLE_FRAMES); then nothing of this class runs until the next event.
 //
-// The tiles' ratings: the server also sends "~#rat <n>~" in the name of each player whose rating players see (the
-// server's show_rating switch and the Leaderboard's rated games decide; nothing with the switch off), at the hi and
-// after every roster change. Each team tile of such a player shows "Rating <n>" (the profile box's word) after its
-// wins, in the wins label's own format (EA's Label009: its font, size and grey), on the same line; spectators' tiles
-// have no wins row (EA's spectator layout), so no rating either.
+// What it draws on a tile belongs to that tile. The lobby builds its 15 tiles one by one and fills them only when all are
+// ready, seconds after the natives and the server know the players, and a tile being dragged leaves its cell for the
+// stage. So a mark and a rating go by the tile (a "card" here: the view's playerTileAdded hands them out), not by the
+// natives' roster: they show on a cell while its card sits there, shown, drawn with its player's name and with its avatar
+// loaded, and they name the player that card shows. The card's own signals say when to look again (its draw, its show,
+// the drag's start and end, its avatar), as does the cell's draw. The guest's button and the host's count wait for the
+// local player's own card the first time. Marks stay on the overlay, not in the tile: they hide during a drag rather than
+// travel with it, and the game's tiles get no children of ours.
 //
-// Listeners on the game's objects (the late pass on the view's displayContainer) exist only while the lobby is on the
-// stage: a listener left behind its screen crashes the client's quit.
+// The roster comes from the lobby's own natives (comp.viewController.nativeBridge), whose arguments must be Scaleform
+// UInts (u()). The host's START uses the view's own startButtonEnabled, which C++ sets too ("a player on team 0 or 1"):
+// C++ setting it invalidates the view, whose draw brings the class back here to set it again.
+//
+// A tile of a player whose rating players see (the server's show_rating and the Leaderboard's rated games decide) shows
+// "Rating <n>" after its wins, in the wins label's own format (EA's Label009: its font, size and grey), on the same
+// line; spectators' tiles have no wins row (EA's spectator layout), so no rating either.
+//
+// Without the server's answer (no channel) the class shows and holds nothing.
 package {
     import flash.display.DisplayObject;
     import flash.display.DisplayObjectContainer;
@@ -40,23 +46,20 @@ package {
     import flash.display.Sprite;
     import flash.events.Event;
     import flash.events.MouseEvent;
+    import flash.events.TimerEvent;
     import flash.external.ExternalInterface;
     import flash.geom.Rectangle;
     import flash.text.TextField;
     import flash.text.TextFormat;
+    import flash.utils.Timer;
     import flash.utils.getDefinitionByName;
-    import flash.utils.getQualifiedClassName;
-    import flash.utils.getTimer;
+
+    import opendawngate.ServerChannel;
 
     public class LobbyReady extends MovieClip {
         private static const COMPONENT_CLASS:String = "com.gravity.framework.component.GComponent";
-        private static const CHAT_CLASS:String = "maxis.chat.manager.ChatManager";
         private static const COMPONENT_ID:String = "customMatchLobby";
-        private static const VIEW_CLASS:String = "CustomGameLobbyView";
         private static const CHECK_CLASS:String = "MSCCheckBox001";
-        // the lobby line kinds the class reads (each "~#<kind> ...~" paragraph is taken out of the chat)
-        private static const KINDS:Array = ["rdy", "rat"];
-        private static const HELLO_DELAY_MS:int = 3000;
         // the texts (English: the game ships en-us only, and the class needs no locale line of its own)
         private static const BTN_READY:String = "ready";          // the button's own field draws small capitals
         private static const BTN_NOT_READY:String = "not ready";
@@ -74,42 +77,52 @@ package {
         // lie further left; above START is the other team's Join button)
         private static const COUNT_WIDTH:int = 120;
         private static const COUNT_GAP:int = 10;
+        private static const SETTLE_FRAMES:int = 12;
+        private static const AVATAR_WAIT_MS:int = 3000; // an avatar that never loads doesn't keep a mark away for good
         private static const MAX_ASSERTS:int = 3;
         private static var self:LobbyReady = null; // a strong reference besides the timeline's
 
-        private var tick:int = 0;
-        private var asserts:int = 0;
+        private var channel:ServerChannel = new ServerChannel();
+        private var comp:Object = null;
         private var view:Object = null;
         private var nb:Object = null;
-        private var box:DisplayObjectContainer = null; // the view's displayContainer
-        private var lateBox:DisplayObjectContainer = null;
+        private var box:DisplayObjectContainer = null; // the view's displayContainer, while it shows
         private var overlay:Sprite = null;
-        private var enteredAt:int = 0;
-        private var helloSent:Boolean = false;
+        private var settle:int = 0;
+        private var waitTimer:Timer = null;
+        private var channelOpened:Boolean = false;
 
         private var slots:Array = [];    // {t, s, name, owner, local}
         private var myName:String = "";
         private var myTeam:int = -1;
         private var isAdmin:Boolean = false;
-        private var state:Object = {};   // a player's name -> "1" / "0", as the server said
-        private var ratings:Object = {}; // a player's name -> the rating to show ("1532"), as the server said
-        private var waitUntil:int = 0;   // the host's hint after a refused start shows until then
+        private var players:Object = {}; // a player's name -> {ready: Boolean or undefined, rating: int or undefined}
+        private var held:Boolean = false;
+        private var waiting:Boolean = false; // the host's hint after a refused start
 
         private var readyBtn:Object = null;
-        private var tiles:Object = {};   // "<team>_<slot>" -> Tile parts {check, text}
+        private var tiles:Object = {};   // "<team>_<slot>" -> Tile parts {check, text, rating, wins, shown}
+        private var cards:Array = [];    // the lobby's tiles, as {view, drawn: the name it last drew, hooked, icon}
+        private var cardsOff:Boolean = true; // no listeners on the game's objects: the lobby isn't there, or it went
+        private var cardsUp:Boolean = false; // the local player's card has shown since the lobby opened
+        private var hookedCells:Array = [];  // the team cells whose draw this class hears
+        private var avatarTimer:Timer = null;
+        private var avatarsOverdue:Boolean = false;
         private var countTf:TextField = null;
-        private var held:Boolean = false;
+        private var asserts:int = 0;
+        private var said:Object = {};
 
         public function LobbyReady() {
             self = this;
             mouseEnabled = false;
             mouseChildren = false;
-            addEventListener(Event.ENTER_FRAME, onFrame, false, 0, false);
+            channel.on("hello", onChannelOpen);
+            channel.on("lobby.state", onState);
+            channel.on("lobby.startRefused", onStartRefused);
+            addEventListener(Event.ENTER_FRAME, onFirstFrame, false, 0, false);
         }
 
         // an error once per message, as an Assert line (a handful at most: the log thins repeated ones anyway)
-        private var said:Object = {};
-
         private function say(s:String):void {
             if (said[s] || asserts >= MAX_ASSERTS) {
                 return;
@@ -122,78 +135,196 @@ package {
             }
         }
 
-        private function onFrame(e:Event):void {
-            tick++;
+        // ---- when the lobby exists, shows and hides: the framework's events ----
+
+        // the framework's classes are there from the movie's first frame on. (Not waitForComponentAdd: it goes by a
+        // component's name, here "Custom Game Match Lobby UI Screen", and serves only once, while this screen comes and
+        // goes.)
+        private function onFirstFrame(e:Event):void {
+            removeEventListener(Event.ENTER_FRAME, onFirstFrame);
             try {
-                step();
+                getDefinitionByName(COMPONENT_CLASS).componentTreeChangeHandlers.push(onTreeChange);
             } catch (err:Error) {
-                say("step: " + err.message);
+                say("componentTreeChangeHandlers: " + err.message);
+            }
+            onTreeChange();
+        }
+
+        // a component came or went somewhere: is it ours? (This runs inside the framework's own work: nothing may escape.)
+        private function onTreeChange():void {
+            try {
+                var c:Object = getDefinitionByName(COMPONENT_CLASS).find(COMPONENT_ID);
+                if (c == comp) {
+                    return;
+                }
+                if (comp != null) {
+                    if (view != null) {
+                        onHidden(view);
+                        forgetCards(view);
+                        view = null;
+                    }
+                    comp.signalViewCreated.remove(onViewCreated);
+                    comp.nativeBridgeDestroyedSignal.remove(onBridgeGone);
+                }
+                comp = c;
+                if (c != null) {
+                    c.signalViewCreated.add(onViewCreated);
+                    c.nativeBridgeDestroyedSignal.add(onBridgeGone);
+                    if (c.view != null) {
+                        onViewCreated(c, c.view);
+                    }
+                }
+            } catch (err:Error) {
+                say("the component tree: " + err.message);
             }
         }
 
-        // a native's arguments must be Scaleform UInts (CustomMatchLobbyUI.cpp asserts "params.pArgs[0].IsUInt()"): a
-        // literal or an incremented loop variable arrives as an int and the call answers false
-        private static function u(i:uint):uint {
-            var x:uint = i;
-            return x;
+        // C++ unbinds the screen's natives first when it goes, before the view hides, and a call into them then crashes the
+        // client, so this is where the class stops
+        private function onBridgeGone(c:Object):void {
+            if (view != null) {
+                onHidden(view);
+            }
         }
 
-        private function lobbyView():Object {
-            try {
-                var comp:Object = getDefinitionByName(COMPONENT_CLASS).find(COMPONENT_ID);
-                if (comp == null) {
-                    return null;
-                }
-                var v:Object = comp.view;
-                if (v == null || getQualifiedClassName(v).indexOf(VIEW_CLASS) < 0) {
-                    return null;
-                }
-                nb = null;
-                try {
-                    nb = comp.viewController.nativeBridge;
-                } catch (e1:Error) {
-                }
-                if (nb == null) {
-                    nb = comp.nativeBridge;
-                }
-                return v;
-            } catch (err:Error) {
+        private function onViewCreated(c:Object, v:Object):void {
+            if (view != null && view != v) {
+                onHidden(view);
+                forgetCards(view);
             }
-            return null;
+            view = v;
+            cardsOff = false;
+            try { // before the lobby builds them: they come a frame or more after the view
+                v.playerTileAdded.add(onCardAdded);
+                v.playerTileRemoved.add(onCardRemoved);
+            } catch (err:Error) {
+                say("the cards: " + err.message);
+            }
+            v.showComplete.add(onShown);
+            v.hideComplete.add(onHidden);
+            if (v.isShown) {
+                onShown(v);
+            }
         }
 
-        private function step():void {
-            var v:Object = (view != null || tick % 5 == 0) ? lobbyView() : null;
-            var shown:Boolean = false;
-            try {
-                shown = v != null && v.isShown && v.displayContainer != null && v.displayContainer.stage != null;
-            } catch (err:Error) {
-            }
-            if (!shown) {
-                // the chat manager only while the lobby shows: GetChatManager at the front end's start (before the
-                // chat is set up) logged "Scaleform: Error: null" and crashed a second client at its boot
-                if (view != null) {
-                    leave();
-                }
+        private function onShown(v:Object):void {
+            if (box != null) {
                 return;
             }
-            if (v != view) {
-                if (view != null) {
-                    leave();
-                }
-                enter(v);
+            box = v.displayContainer as DisplayObjectContainer;
+            if (box == null) {
+                return;
             }
-            strip();
-            if (tick % 10 == 0 || slots.length == 0) {
-                roster();
+            nb = null;
+            try {
+                nb = comp.viewController.nativeBridge;
+            } catch (e1:Error) {
             }
-            if (!helloSent && myName != "" && getTimer() - enteredAt > HELLO_DELAY_MS) {
-                helloSent = true;
-                send("hi");
+            if (nb == null) {
+                nb = comp.nativeBridge;
+            }
+            overlay = new Sprite();
+            overlay.mouseEnabled = false;
+            overlay.mouseChildren = true;
+            countTf = text(16, DIM_COLOR);
+            countTf.defaultTextFormat = new TextFormat("$Body", 16, DIM_COLOR, null, null, null, null, null, "right");
+            countTf.width = COUNT_WIDTH;
+            countTf.height = 24;
+            countTf.visible = false;
+            overlay.addChild(countTf);
+            box.addChild(overlay);
+            box.addEventListener(Event.REMOVED_FROM_STAGE, onBoxGone, false, 0, false);
+            v.drawSignal.add(onDraw);
+            hookCards();
+            redraw();
+        }
+
+        private function onBoxGone(e:Event):void {
+            if (e.target == box) {
+                onHidden(view);
+            }
+        }
+
+        // the lobby closed (left, or the match started): everything of ours goes, the state with it
+        private function onHidden(v:Object):void {
+            if (box == null) {
+                return;
+            }
+            channel.close();
+            channelOpened = false;
+            removeEventListener(Event.ENTER_FRAME, onSettle);
+            settle = 0;
+            if (waitTimer != null) {
+                waitTimer.stop();
+            }
+            try {
+                v.drawSignal.remove(onDraw);
+            } catch (err:Error) {
+            }
+            box.removeEventListener(Event.REMOVED_FROM_STAGE, onBoxGone);
+            unhookCards();
+            if (readyBtn != null) {
+                readyBtn.removeEventListener(MouseEvent.CLICK, onReadyClick);
+                readyBtn.removeEventListener(Event.ENTER_FRAME, onButtonFrame);
+                readyBtn.removeEventListener(Event.EXIT_FRAME, onButtonFrame);
+            }
+            if (overlay.parent != null) {
+                overlay.parent.removeChild(overlay);
+            }
+            overlay = null;
+            box = null;
+            readyBtn = null;
+            countTf = null;
+            tiles = {};
+            nb = null;
+            slots = [];
+            myName = "";
+            players = {};
+            held = false;
+            waiting = false;
+            cardsUp = false;
+        }
+
+        // Not drawn here but from the next frame on: this runs inside the view's draw, whose end drops an invalidation made
+        // meanwhile, so START held here would stay lit (C++ enables it at a team change, and taking it back here is in vain).
+        private function onDraw(v:Object):void {
+            settleNext();
+        }
+
+        // draws now and for the next frames, while the tiles' own layouts follow the view's
+        private function redraw():void {
+            draw();
+            settleNext();
+        }
+
+        private function settleNext():void {
+            if (settle == 0) {
+                addEventListener(Event.ENTER_FRAME, onSettle, false, 0, false);
+            }
+            settle = SETTLE_FRAMES;
+        }
+
+        private function onSettle(e:Event):void {
+            draw();
+            if (--settle <= 0) {
+                settle = 0;
+                removeEventListener(Event.ENTER_FRAME, onSettle);
+            }
+        }
+
+        private function draw():void {
+            if (box == null) {
+                return;
+            }
+            roster();
+            if (myName != "" && !channelOpened) {
+                channelOpened = true; // once per lobby entry: it stays up (and reconnects) until the lobby closes
+                channel.open(myName);
             }
             if (overlay.parent != box || box.getChildIndex(overlay) != box.numChildren - 1) {
                 box.addChild(overlay);
             }
+            part("cards", checkCardsUp);
             part("button", drawButton);
             part("tiles", drawTiles);
             part("start", drawStart);
@@ -207,284 +338,281 @@ package {
             }
         }
 
-        private function enter(v:Object):void {
-            view = v;
-            box = v.displayContainer as DisplayObjectContainer;
-            enteredAt = getTimer();
-            helloSent = false;
-            state = {};
-            ratings = {};
-            waitUntil = 0;
-            slots = [];
-            readyBtn = null;
-            tiles = {};
-            held = false;
-            overlay = new Sprite();
-            overlay.mouseEnabled = false;
-            overlay.mouseChildren = true;
-            countTf = text(16, DIM_COLOR);
-            countTf.defaultTextFormat = new TextFormat("$Body", 16, DIM_COLOR, null, null, null, null, null, "right");
-            countTf.width = COUNT_WIDTH;
-            countTf.height = 24;
-            countTf.visible = false;
-            overlay.addChild(countTf);
-            box.addChild(overlay);
-            // the late pass: right after the view's own drawing (BaseView's ENTER_FRAME on the same container); off
-            // again when the container leaves the stage
-            lateBox = box;
-            box.addEventListener(Event.ENTER_FRAME, onLate, false, -1000, false);
-            box.addEventListener(Event.REMOVED_FROM_STAGE, onBoxGone, false, 0, false);
-        }
+        // ---- the lobby's tiles ("cards"), and when they are there ----
 
-        private function dropLate():void {
-            if (lateBox != null) {
-                lateBox.removeEventListener(Event.ENTER_FRAME, onLate);
-                lateBox.removeEventListener(Event.REMOVED_FROM_STAGE, onBoxGone);
-                lateBox = null;
+        private function onCardAdded(tv:Object):void {
+            var c:Object = {view: tv, drawn: "", hooked: false, icon: null};
+            cards.push(c);
+            if (!cardsOff) {
+                try { // inside the lobby's own work: nothing may escape
+                    hookCard(c);
+                } catch (err:Error) {
+                    say("a card: " + err.message);
+                }
             }
         }
 
-        private function onBoxGone(e:Event):void {
-            if (e.target == lateBox) {
-                leave();
-            }
-        }
-
-        // the lobby closed (left, or the match started): everything of ours goes, the state resets
-        private function leave():void {
-            dropLate();
-            if (readyBtn != null) {
-                readyBtn.removeEventListener(MouseEvent.CLICK, onReadyClick);
-            }
-            if (overlay != null && overlay.parent != null) {
-                overlay.parent.removeChild(overlay);
-            }
-            overlay = null;
-            readyBtn = null;
-            tiles = {};
-            view = null;
-            box = null;
-            nb = null;
-            slots = [];
-            state = {};
-            ratings = {};
-            held = false;
-        }
-
-        private function onLate(e:Event):void {
-            try {
-                if (view == null || box == null || box.stage == null) {
+        private function onCardRemoved(tv:Object):void {
+            for (var i:int = 0; i < cards.length; i++) {
+                if (cards[i].view == tv) {
+                    unhookCard(cards[i]);
+                    cards.splice(i, 1);
                     return;
                 }
-                strip();
-                holdStart();
-                label();
+            }
+        }
+
+        private function hookCard(c:Object):void {
+            if (c.hooked) {
+                return;
+            }
+            c.hooked = true;
+            c.view.drawSignal.add(onCardDraw);
+            c.view.showComplete.add(onCardChange);
+            c.view.hideComplete.add(onCardChange);
+            c.view.dragStart.add(onCardDragStart);
+            c.view.dragComplete.add(onCardChange);
+        }
+
+        private function unhookCard(c:Object):void {
+            if (!c.hooked) {
+                return;
+            }
+            c.hooked = false;
+            c.drawn = "";
+            try {
+                c.view.drawSignal.remove(onCardDraw);
+                c.view.showComplete.remove(onCardChange);
+                c.view.hideComplete.remove(onCardChange);
+                c.view.dragStart.remove(onCardDragStart);
+                c.view.dragComplete.remove(onCardChange);
+                if (c.icon != null) {
+                    c.icon.loadCompleteSignal.remove(onCardChange);
+                    c.icon = null;
+                }
             } catch (err:Error) {
             }
         }
 
-        private static function text(size:int, color:uint):TextField {
-            var t:TextField = new TextField();
-            t.embedFonts = true;
-            t.selectable = false;
-            t.mouseEnabled = false;
-            t.multiline = false;
-            t.wordWrap = false;
-            t.defaultTextFormat = new TextFormat("$Body", size, color);
-            return t;
-        }
-
-        private static function firstText(d:DisplayObject):TextField {
-            if (d is TextField) {
-                return d as TextField;
+        // with the lobby's cells: they exist once the view shows, the cards may be older
+        private function hookCards():void {
+            cardsOff = false;
+            for each (var c:Object in cards) {
+                hookCard(c);
             }
-            var c:DisplayObjectContainer = d as DisplayObjectContainer;
-            if (c != null) {
-                for (var i:int = 0; i < c.numChildren; i++) {
-                    var t:TextField = firstText(c.getChildAt(i));
-                    if (t != null) {
-                        return t;
+            for (var t:int = 0; t < 2; t++) {
+                for (var s:int = 0; s < 5; s++) {
+                    var cell:Object = view["box" + t + "_" + s];
+                    if (cell != null && cell.drawSignal != null) {
+                        cell.drawSignal.add(onCellDraw);
+                        hookedCells.push(cell);
                     }
                 }
             }
-            return null;
         }
 
-        // ---- the channel ----
+        private function unhookCards():void {
+            cardsOff = true;
+            for each (var c:Object in cards) {
+                unhookCard(c);
+            }
+            for each (var cell:Object in hookedCells) {
+                try {
+                    cell.drawSignal.remove(onCellDraw);
+                } catch (err:Error) {
+                }
+            }
+            hookedCells = [];
+            if (avatarTimer != null) {
+                avatarTimer.stop();
+            }
+            avatarsOverdue = false;
+        }
 
-        private function send(arg:String):void {
+        private function forgetCards(v:Object):void {
+            unhookCards();
+            cards = [];
             try {
-                getDefinitionByName(CHAT_CLASS).GetChatManager().SendMessageToGame("~#rdy " + arg + "~");
-            } catch (err:Error) {
-                say("send: " + err.message);
-            }
-        }
-
-        private function chatField():TextField {
-            try {
-                var w:Object = getDefinitionByName(CHAT_CLASS).GetChatManager().customGameChatWindow;
-                return w == null ? null : w.m_chatText as TextField;
-            } catch (err:Error) {
-            }
-            return null;
-        }
-
-        // the paragraph's lobby line kind, or "" (no RegExp: Scaleform's split by one cuts at the wrong places)
-        private static function kindOf(p:String):String {
-            for each (var k:String in KINDS) {
-                if (p.indexOf("~#" + k + " ") >= 0 || p.indexOf("~#" + k + "~") >= 0) {
-                    return k;
-                }
-            }
-            return "";
-        }
-
-        private static function unescapeHtml(s:String):String {
-            return s.split("&lt;").join("<").split("&gt;").join(">").split("&quot;").join("\"").split("&apos;").join("'")
-                .split("&#39;").join("'").split("&amp;").join("&");
-        }
-
-        // the paragraphs of an htmlText ("<P ...>...</P>", as Scaleform writes them; lower case too)
-        private static function paragraphs(html:String):Array {
-            var out:Array = [];
-            var pos:int = 0;
-            while (pos < html.length) {
-                var a:int = html.indexOf("<P", pos);
-                var a2:int = html.indexOf("<p", pos);
-                if (a < 0 || (a2 >= 0 && a2 < a)) {
-                    a = a2;
-                }
-                if (a < 0) {
-                    break;
-                }
-                var e:int = html.indexOf("</P>", a);
-                var e2:int = html.indexOf("</p>", a);
-                if (e < 0 || (e2 >= 0 && e2 < e)) {
-                    e = e2;
-                }
-                if (e < 0) {
-                    break;
-                }
-                if (a > pos) {
-                    out.push(html.substring(pos, a)); // anything between paragraphs, kept as it is
-                }
-                out.push(html.substring(a, e + 4));
-                pos = e + 4;
-            }
-            if (pos < html.length) {
-                out.push(html.substring(pos));
-            }
-            return out;
-        }
-
-        // reads and removes the lobby lines from the chat field
-        private function strip():void {
-            var tf:TextField = chatField();
-            if (tf == null || tf.text.indexOf("~#") < 0) {
-                return;
-            }
-            var kept:Array = [];
-            var found:Boolean = false;
-            for each (var p:String in paragraphs(tf.htmlText)) {
-                var k:String = kindOf(p);
-                if (k == "") {
-                    kept.push(p);
-                    continue;
-                }
-                found = true;
-                read(k, p);
-            }
-            if (!found) {
-                return;
-            }
-            tf.htmlText = kept.join("");
-            tf.scrollV = tf.maxScrollV;
-            try {
-                var w:Object = getDefinitionByName(CHAT_CLASS).GetChatManager().customGameChatWindow;
-                if (w.m_scrollBar != null) {
-                    w.m_scrollBar.setScrollProperties(tf.maxScrollV, 0, tf.maxScrollV, 2);
-                    w.m_scrollBar.position = tf.scrollV;
-                }
+                v.playerTileAdded.remove(onCardAdded);
+                v.playerTileRemoved.remove(onCardRemoved);
             } catch (err:Error) {
             }
         }
 
-        // one lobby line's paragraph: <A HREF="event:p,<persona id>">[<name>]:</A> ~#<kind> <args>~
-        private function read(kind:String, p:String):void {
-            var id:String = "";
-            var name:String = "";
-            var at:int = p.indexOf("event:p,");
-            if (at >= 0) {
-                var i:int = at + 8;
-                while (i < p.length && p.charAt(i) >= "0" && p.charAt(i) <= "9") {
-                    i++;
-                }
-                id = p.substring(at + 8, i);
-                var open:int = p.indexOf(">[", i);
-                var close:int = open < 0 ? -1 : p.indexOf("]:", open);
-                if (close > open) {
-                    name = unescapeHtml(p.substring(open + 2, close));
-                }
-            }
-            var m:int = p.indexOf("~#" + kind);
-            var end:int = p.indexOf("~", m + 2);
-            if (m < 0 || end < 0) {
-                return;
-            }
-            var args:Array = [];
-            for each (var a:String in unescapeHtml(p.substring(m + 2 + kind.length, end)).split(" ")) {
-                if (a != "") {
-                    args.push(a);
-                }
-            }
-            if (name != "") {
-                onLine(kind, args, id, name);
-            }
-        }
-
-        // a lobby line from the server, in the name of the player it is about
-        private function onLine(kind:String, args:Array, id:String, name:String):void {
-            var arg:String = args.length > 0 ? String(args[0]) : "";
-            switch (kind) {
-                case "rdy":
-                    if (arg == "1" || arg == "0") {
-                        state[name] = arg;
-                    } else if (arg == "wait" && name == myName) {
-                        // a refused start: the server unlocked the roster (RosterLockedKey "0": the roster manager
-                        // tells the view's rosterLocked) and sends the admin its extended data (the lobby's roster
-                        // redraw: the join buttons and the kick X come back only with drawRoster); the same here,
-                        // in case that redraw came before the unlock reached the view
-                        waitUntil = getTimer() + WAIT_MS;
-                        try {
-                            view.invalidateIsRosterLocked();
-                            view.invalidateRoster();
-                        } catch (err:Error) {
+        // a card has drawn: its data, and with it its name, is on the screen now (the view fills a card's data and its
+        // draw follows a frame later, so the data alone says too early)
+        private function onCardDraw(tv:Object):void {
+            try { // inside the card's own draw: nothing may escape
+                for each (var c:Object in cards) {
+                    if (c.view == tv) {
+                        c.drawn = tv.playerViewData != null ? String(tv.playerViewData.playerName) : "";
+                        if (c.icon == null && tv.playerAvatarIcon != null) {
+                            c.icon = tv.playerAvatarIcon;
+                            c.icon.loadCompleteSignal.add(onCardChange);
                         }
                     }
-                    break;
-                case "rat":
-                    if (digits(arg) && int(arg) > 0) {
-                        ratings[name] = String(int(arg));
-                    } else {
-                        delete ratings[name];
-                    }
-                    break;
+                }
+            } catch (err:Error) {
+                say("a card's draw: " + err.message);
+            }
+            onCardChange(tv);
+        }
+
+        private function onCardChange(o:Object):void {
+            if (box != null) {
+                settleNext();
             }
         }
 
-        private static function digits(s:String):Boolean {
-            if (s == null || s.length == 0 || s.length > 9) {
+        private function onCellDraw(cell:Object):void {
+            onCardChange(cell);
+        }
+
+        // The drag has begun: the card has left its cell for the stage, and what we drew there must go with this very
+        // event. (At its end, dragComplete, the card still calls itself dragging: that is looked at from the next frame.)
+        private function onCardDragStart(tv:Object):void {
+            if (box != null) {
+                redraw();
+            }
+        }
+
+        private function onAvatarsOverdue(e:TimerEvent):void {
+            avatarsOverdue = true;
+            if (box != null) {
+                redraw();
+            }
+        }
+
+        // the card that sits in this cell and looks finished, or null
+        private function cardIn(cell:DisplayObject):Object {
+            for each (var c:Object in cards) {
+                if (c.view.parentContainer == cell) {
+                    return cardFinished(c, cell) ? c.view : null;
+                }
+            }
+            return null;
+        }
+
+        private function cardFinished(c:Object, cell:DisplayObject):Boolean {
+            var tv:Object = c.view;
+            var d:Object = tv.playerViewData;
+            if (d == null || !tv.isShown || tv.isDragging) {
                 return false;
             }
-            for (var i:int = 0; i < s.length; i++) {
-                if (s.charAt(i) < "0" || s.charAt(i) > "9") {
-                    return false;
+            var name:String = String(d.playerName);
+            if (name == "" || c.drawn != name || !showsText(cell)) {
+                return false;
+            }
+            var icon:Object = tv.playerAvatarIcon; // the card hides it while it loads
+            if (icon != null && !icon.visible && !avatarsOverdue && icon.url != null && icon.url != "") {
+                if (avatarTimer == null) {
+                    avatarTimer = new Timer(AVATAR_WAIT_MS, 1);
+                    avatarTimer.addEventListener(TimerEvent.TIMER_COMPLETE, onAvatarsOverdue);
                 }
+                if (!avatarTimer.running) {
+                    avatarTimer.reset();
+                    avatarTimer.start();
+                }
+                return false;
             }
             return true;
         }
 
+        // is any text of this display object on the screen (visible all the way down from it)?
+        private static function showsText(d:DisplayObject):Boolean {
+            if (d == null || !d.visible) {
+                return false;
+            }
+            var tf:TextField = d as TextField;
+            if (tf != null) {
+                return tf.text != "";
+            }
+            var c:DisplayObjectContainer = d as DisplayObjectContainer;
+            if (c != null) {
+                for (var i:int = 0; i < c.numChildren; i++) {
+                    if (showsText(c.getChildAt(i))) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        // the guest's button and the host's count wait for the first sight of the local player's card
+        private function checkCardsUp():void {
+            if (cardsUp) {
+                return;
+            }
+            for each (var c:Object in cards) {
+                var d:Object = c.view.playerViewData;
+                var cell:DisplayObject = c.view.parentContainer as DisplayObject;
+                if (cell != null && d != null && d.isLocalPlayer && cardFinished(c, cell)) {
+                    cardsUp = true;
+                    return;
+                }
+            }
+        }
+
+        // ---- the server ----
+
+        private function onChannelOpen(data:Object):void {
+            channel.call("lobby.enter");
+        }
+
+        private function onState(data:Object):void {
+            var next:Object = {};
+            for each (var p:Object in data.players) {
+                next[String(p.name)] = p;
+            }
+            players = next;
+            if (box != null) {
+                redraw();
+            }
+        }
+
+        // a refused start: the server unlocked the roster (RosterLockedKey "0": the roster manager tells the view's
+        // rosterLocked) and sends the admin its extended data (the lobby's roster redraw: the join buttons and the kick
+        // X come back only with drawRoster); the same here, in case that redraw came before the unlock reached the view
+        private function onStartRefused(data:Object):void {
+            if (box == null) {
+                return;
+            }
+            waiting = true;
+            if (waitTimer == null) {
+                waitTimer = new Timer(WAIT_MS, 1);
+                waitTimer.addEventListener(TimerEvent.TIMER_COMPLETE, onWaitOver);
+            }
+            waitTimer.reset();
+            waitTimer.start();
+            try {
+                view.invalidateIsRosterLocked();
+                view.invalidateRoster();
+            } catch (err:Error) {
+            }
+            redraw();
+        }
+
+        private function onWaitOver(e:TimerEvent):void {
+            waiting = false;
+            if (box != null) {
+                redraw();
+            }
+        }
+
+        // a player's ready state as the server said it: true, false, or undefined when it doesn't count
+        private function readyOf(name:String):* {
+            var p:Object = players[name];
+            return p == null ? undefined : p.ready;
+        }
+
         // ---- the roster (the lobby's natives) ----
+
+        // a native's arguments must be Scaleform UInts (CustomMatchLobbyUI.cpp asserts "params.pArgs[0].IsUInt()"): a
+        // literal or an incremented loop variable arrives as an int and the call answers false
+        private static function u(i:uint):uint {
+            var x:uint = i;
+            return x;
+        }
 
         private function roster():void {
             var out:Array = [];
@@ -516,11 +644,11 @@ package {
             }
         }
 
-        // the tiles that count: a player on a team, not the host, whose client has the class (the server said its state)
+        // the tiles that count: a player on a team, not the host, whose state the server tells
         private function counted():Array {
             var a:Array = [];
             for each (var o:Object in slots) {
-                if (o.t < 2 && !o.owner && state[o.name] != null) {
+                if (o.t < 2 && !o.owner && readyOf(o.name) !== undefined) {
                     a.push(o);
                 }
             }
@@ -530,17 +658,56 @@ package {
         private function readyCount(c:Array):int {
             var n:int = 0;
             for each (var o:Object in c) {
-                if (state[o.name] == "1") {
+                if (readyOf(o.name) === true) {
                     n++;
                 }
             }
             return n;
         }
 
+        private static function digits(s:String):Boolean {
+            if (s == null || s.length == 0 || s.length > 9) {
+                return false;
+            }
+            for (var i:int = 0; i < s.length; i++) {
+                if (s.charAt(i) < "0" || s.charAt(i) > "9") {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static function text(size:int, color:uint):TextField {
+            var t:TextField = new TextField();
+            t.embedFonts = true;
+            t.selectable = false;
+            t.mouseEnabled = false;
+            t.multiline = false;
+            t.wordWrap = false;
+            t.defaultTextFormat = new TextFormat("$Body", size, color);
+            return t;
+        }
+
+        private static function firstText(d:DisplayObject):TextField {
+            if (d is TextField) {
+                return d as TextField;
+            }
+            var c:DisplayObjectContainer = d as DisplayObjectContainer;
+            if (c != null) {
+                for (var i:int = 0; i < c.numChildren; i++) {
+                    var t:TextField = firstText(c.getChildAt(i));
+                    if (t != null) {
+                        return t;
+                    }
+                }
+            }
+            return null;
+        }
+
         // ---- the guest's READY button: START's own class at START's place ----
 
         private function wantButton():Boolean {
-            return !isAdmin && myName != "" && (myTeam == 0 || myTeam == 1) && state[myName] != null;
+            return !isAdmin && myName != "" && (myTeam == 0 || myTeam == 1) && readyOf(myName) !== undefined;
         }
 
         private function drawButton():void {
@@ -554,11 +721,22 @@ package {
             if (sb == null) {
                 return;
             }
+            if (sb.visible) {
+                sb.visible = false; // EA's START (a guest's is never enabled) under ours
+            }
+            if (!cardsUp) {
+                return;
+            }
             if (readyBtn == null) {
                 var cls:Class = Object(sb).constructor as Class;
                 readyBtn = new cls();
                 overlay.addChild(readyBtn as DisplayObject);
                 readyBtn.addEventListener(MouseEvent.CLICK, onReadyClick, false, 0, false);
+                // the button's own text field (the symbol draws its text there, not in CLIK's textField: label changes
+                // nothing); its timeline puts the symbol's text back at a state change (a hover, a press), so the text
+                // is set again each frame while the button exists
+                readyBtn.addEventListener(Event.ENTER_FRAME, onButtonFrame, false, 0, false);
+                readyBtn.addEventListener(Event.EXIT_FRAME, onButtonFrame, false, 0, false);
             }
             readyBtn.visible = true;
             var r:Rectangle = sb.getBounds(overlay);
@@ -572,45 +750,47 @@ package {
                     readyBtn.height = r.height;
                 }
             }
-            if (sb.visible) {
-                sb.visible = false; // EA's START (a guest's is never enabled) under ours
-            }
             label();
         }
 
-        // the button's own text field (the symbol draws its text there, not in CLIK's textField: label changes
-        // nothing); its timeline puts the symbol's text back at a state change, so this runs every frame and late
+        private function onButtonFrame(e:Event):void {
+            label();
+        }
+
         private function label():void {
             if (readyBtn == null || !readyBtn.visible) {
                 return;
             }
-            var want:String = state[myName] == "1" ? BTN_NOT_READY : BTN_READY;
+            var want:String = readyOf(myName) === true ? BTN_NOT_READY : BTN_READY;
             var tf:TextField = firstText(readyBtn as DisplayObject);
             if (tf != null && tf.text != want) {
                 tf.text = want;
             }
         }
 
+        // The click just sets the ready state. It shows at once; the server's lobby.state then confirms it (or, had the
+        // server refused, puts it back).
         private function onReadyClick(e:MouseEvent):void {
-            try {
-                if (wantButton()) {
-                    send(state[myName] == "1" ? "0" : "1"); // the server's own copy sets the state
-                }
-            } catch (err:Error) {
-                say("click: " + err.message);
+            if (!wantButton()) {
+                return;
+            }
+            var ready:Boolean = readyOf(myName) !== true;
+            if (channel.call("lobby.setReady", {ready: ready})) {
+                players[myName].ready = ready;
+                redraw();
             }
         }
 
         // ---- the tiles: a check box and READY / NOT READY on each counted tile, the rating after the wins ----
 
-        // Tile parts for the tile in cell key: the ready mark (check, text) and the rating (rating; wins: EA's wins
-        // field it follows, found again every 30 frames)
+        // Tile parts for the tile in cell key: the ready mark (check, text) and the rating (rating; wins: EA's wins field
+        // it follows)
         private function tile(key:String):Object {
             var tl:Object = tiles[key];
             if (tl != null) {
                 return tl;
             }
-            tl = {check: null, text: null, rating: null, wins: null, winsAt: -1000, shown: ""};
+            tl = {check: null, text: null, rating: null, shown: ""};
             try {
                 var ck:Object = new (getDefinitionByName(CHECK_CLASS) as Class)();
                 ck.mouseEnabled = false;
@@ -633,21 +813,24 @@ package {
         private function drawTiles():void {
             var marked:Object = {};
             var rated:Object = {};
-            for each (var o:Object in slots) {
-                if (o.t >= 2) {
-                    continue; // the spectators: no mark, no rating
-                }
-                var key:String = o.t + "_" + o.s;
-                var cell:DisplayObject = view["box" + key] as DisplayObject;
-                if (cell == null) {
-                    continue;
-                }
-                if (!o.owner && state[o.name] != null) { // counted()
-                    marked[key] = true;
-                    drawTile(tile(key), cell.getBounds(overlay), state[o.name] == "1");
-                }
-                if (ratings[o.name] != null && drawRating(tile(key), cell, String(ratings[o.name]))) {
-                    rated[key] = true;
+            for (var t:int = 0; t < 2; t++) { // the spectators: no mark, no rating
+                for (var i:int = 0; i < 5; i++) {
+                    var key:String = t + "_" + i;
+                    var cell:DisplayObject = view["box" + key] as DisplayObject;
+                    var card:Object = cell != null ? cardIn(cell) : null;
+                    if (card == null) {
+                        continue;
+                    }
+                    var name:String = String(card.playerViewData.playerName);
+                    var state:* = readyOf(name);
+                    if (!card.playerViewData.isOwner && state !== undefined) { // as counted()
+                        marked[key] = true;
+                        drawTile(tile(key), cell.getBounds(overlay), state === true);
+                    }
+                    var p:Object = players[name];
+                    if (p != null && int(p.rating) > 0 && drawRating(tile(key), cell, String(int(p.rating)))) {
+                        rated[key] = true;
+                    }
                 }
             }
             for (var k:String in tiles) {
@@ -664,8 +847,8 @@ package {
             }
         }
 
-        // the tile's wins field (EA's Label009 in the tile's lower row): the lowest visible text field in the cell
-        // whose text is a number (the name is above it, the ready mark and the rating are ours, on the overlay)
+        // the tile's wins field (EA's Label009 in the tile's lower row): the lowest visible text field in the cell whose
+        // text is a number (the name is above it, the ready mark and the rating are ours, on the overlay)
         private static function winsField(cell:DisplayObject):TextField {
             var best:TextField = null;
             var bestY:Number = 0;
@@ -699,12 +882,7 @@ package {
         // "Rating <n>" after the wins, in the wins field's own format and scale, on its line; false when the tile shows
         // no wins (then no rating either)
         private function drawRating(tl:Object, cell:DisplayObject, value:String):Boolean {
-            var w:TextField = tl.wins as TextField;
-            if (w == null || w.stage == null || tick - tl.winsAt >= 30) {
-                w = winsField(cell);
-                tl.wins = w;
-                tl.winsAt = tick;
-            }
+            var w:TextField = winsField(cell);
             if (w == null || w.stage == null) {
                 return false;
             }
@@ -766,7 +944,7 @@ package {
             }
         }
 
-        // ---- the host's START: held disabled until every counted player is ready, the count above it ----
+        // ---- the host's START: held disabled until every counted player is ready, the count beside it ----
 
         private function drawStart():void {
             if (!isAdmin) {
@@ -776,43 +954,29 @@ package {
             var c:Array = counted();
             var n:int = readyCount(c);
             var sb:DisplayObject = view.startButton as DisplayObject;
-            var waiting:Boolean = getTimer() < waitUntil && n < c.length;
-            countTf.visible = c.length > 0 && sb != null && sb.visible;
+            var showWait:Boolean = waiting && n < c.length;
+            countTf.visible = cardsUp && c.length > 0 && sb != null && sb.visible;
             if (countTf.visible) {
-                var want:String = waiting ? WAIT_TEXT : n + "/" + c.length + " ready";
+                var want:String = showWait ? WAIT_TEXT : n + "/" + c.length + " ready";
                 if (countTf.text != want) {
                     countTf.text = want;
                 }
-                countTf.textColor = waiting ? WAIT_COLOR : DIM_COLOR;
+                countTf.textColor = showWait ? WAIT_COLOR : DIM_COLOR;
                 var r:Rectangle = sb.getBounds(overlay);
-                countTf.x = r.x - COUNT_GAP - COUNT_WIDTH; // left of START, before the footer's icons
+                countTf.x = r.x - COUNT_WIDTH - COUNT_GAP; // left of START, before the footer's icons
                 countTf.y = r.y + (r.height - 22) / 2;
             }
-            holdStart();
-        }
-
-        // C++ sets startButtonEnabled ("a player on team 0 or 1") whenever the roster changes and the view redraws its
-        // buttons, so the hold runs every frame and after the view's drawing; a disabled CLIK button sends no click.
-        // EA's own state comes back through invalidateIsRosterLocked (its updateButtonState).
-        private function holdStart():void {
-            if (!isAdmin || view == null) {
-                return;
-            }
-            var c:Array = counted();
-            if (readyCount(c) < c.length) {
-                if (view.startButton.enabled) {
-                    view.startButton.enabled = false;
-                }
-                try {
-                    if (view.startButtonProxy.enabled) {
-                        view.startButtonProxy.enabled = false;
-                    }
-                } catch (err:Error) {
-                }
+            // the view's own switch: its setter does nothing when the value is the same, and its draw enables the button
+            if (n < c.length) {
+                view.startButtonEnabled = false;
                 held = true;
             } else if (held) {
                 held = false;
-                view.invalidateIsRosterLocked();
+                var anyOnTeam:Boolean = false;
+                for each (var o:Object in slots) {
+                    anyOnTeam = anyOnTeam || o.t < 2;
+                }
+                view.startButtonEnabled = anyOnTeam; // C++'s own rule
             }
         }
     }

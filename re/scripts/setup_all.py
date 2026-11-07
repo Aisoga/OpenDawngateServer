@@ -878,17 +878,18 @@ class Setup:
         moviepatch.ItemShop, the same bytes). Every client copy."""
         return self.step_movie(step, copy, "itemshop", "the shop's inline refund", "an older refund class")
 
-    def step_collection(self, step, copy):
+    def step_collection(self, step, copy, host):
         """a client copy's added archive game/Data/zz_CollectionItems.snap (patch_login_movie.py --spec collection
         --content <server/data/content.json>: the front end's movie UIRuntime.gfx from the copy's own code.snap with
         our class for the Collection's Items category, and the item list from the content file, which the content step
-        writes before this one; the Go setup's moviepatch.Collection with the same game's content, the same bytes).
+        writes before this one, and where the copy's server has its UI channel; the Go setup's moviepatch.Collection
+        with the same game's content, the same bytes).
         Every client copy; without the content file it waits for the content step."""
         content = os.path.join(self.data, "content.json")
         if not os.path.isfile(content):
             return self.needs(step, content=False)
         return self.step_movie(step, copy, "collection", "the Collection's items", "an older Collection class or item list",
-                               content=content)
+                               host=host, content=content)
 
     def step_movie(self, step, copy, name, what, older, host=None, content=None):
         """one of patch_login_movie.py's added archives (spec `name`; `host` the copy's server for a spec with the web
@@ -921,7 +922,7 @@ class Setup:
         if self.check:
             return self.report(MISSING if have is None else STALE, step, f"{self.show(added)}: {why}")
         self.never_pristine(added)
-        host_args = (("--host", host) if host and spec.web_root else ()) + (("--content", content) if content else ())
+        host_args = (("--host", host) if host and (spec.web_root or spec.channel) else ()) + (("--content", content) if content else ())
         if self.script("patch_login_movie.py", "--spec", name, *host_args, src, added) or not os.path.isfile(added) or \
                 read(added) != want:
             return self.report(FAILED, step, f"patch_login_movie.py didn't write the expected {self.show(added)} "
@@ -1254,7 +1255,7 @@ class Setup:
             if self.a.no_content:
                 self.report(SKIP, "collection items", "--no-content: the Collection's Items need the content file")
             else:
-                self.step_collection("collection items", self.client)
+                self.step_collection("collection items", self.client, LOCAL)
         if self.a.probe:
             self.step_probe(raknet)
         for name in self.a.lanes:
@@ -1284,7 +1285,7 @@ class Setup:
             self.step_after_action("after action review", self.client, host)
             self.step_item_shop("shop refund", self.client)
             if os.path.isfile(os.path.join(self.data, "content.json")):
-                self.step_collection("collection items", self.client)
+                self.step_collection("collection items", self.client, host)
             else:
                 self.report(SKIP, "collection items", f"no {self.show(os.path.join(self.data, 'content.json'))} on "
                                                       "this machine (Start-Client's setup makes the list from the "

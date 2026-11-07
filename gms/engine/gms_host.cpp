@@ -32,6 +32,7 @@
 #include "core/protocol/messages.h"
 #include "core/protocol/wire.h"
 #include "core/replication/create_hold.h"
+#include "core/replication/team_private.h"
 #include "core/replication/create_order.h"
 #include "core/replication/fow_data.h"
 #include "core/replication/modifiers.h"
@@ -496,6 +497,15 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   }
 
   void OnConnected(gms::ConnId conn, const std::string& addr) override { inject_.OnConnected(conn, addr); }
+
+  // SEATAUTH: RakNet has no password and HelloReq only claims a
+  // user id, so with a control channel the server says whether this connection may claim it (Rejoining moves a player
+  // to whoever passes). Without one (the research harnesses) nothing is asked.
+  bool AskHelloVerdict(gms::ConnId, const std::string& addr, const gms::HelloReq& req) override {
+    if (!hostctl::Active()) return false;
+    hostctl::VerifyHello(addr, static_cast<std::int64_t>(req.userId));
+    return true;
+  }
 
   // B15: a custom game (createGame's mode custom) waits in the client's custom lobby until dgserver's startGame: every
   // HelloReq is held, so a player may still change teams or become a spectator; at the start the roster has the final
@@ -1268,6 +1278,29 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     evLogLimit_ = logLimit;
   }
 
+  // SEC4B: what one team may not learn through shared sends (core/replication/team_private.h):
+  // [host] visible_by_team (1): each recipient gets mVisibleToTeam masked to its audience;
+  // deltas_by_vision (1): the deltas, 9E and AD of the tick in which a team loses sight don't reach it;
+  // server_events_by_object (1): a kind-1 A4 by its object (a stop to those that know it, a draw box to those that see it);
+  // modifier_casters_by_known (1): a modifier record's caster is 0 for a recipient that doesn't know it;
+  // fow_gold_team_only (1): AA's mAvailableGold only to the player's team and the spectators.
+  // FOGEDGE ([host] fog_reveal_margin 300, hundredths of a unit; fog_reveal_hold_ms 750; both 0 = the behaviour before): a
+  // player's creature reaches a client a margin before its team sees it and stays a moment after, by RevealBits (the fog
+  // step, the deltas and the kind-2 messages); mVisibleToTeam and everything that reads it stay the truth.
+  void SetFogRevealMargin(float units, double holdMs) {
+    fogRevealMargin_ = units;
+    fogRevealHoldMs_ = holdMs;
+  }
+  void SetTeamPrivate(bool visibleByTeam, bool deltasByVision, bool serverEventsByObject, bool castersByKnown,
+                      bool goldTeamOnly, int logLimit) {
+    visibleByTeam_ = visibleByTeam;
+    deltasByVision_ = deltasByVision;
+    serverEventsByObject_ = serverEventsByObject;
+    castersByKnown_ = castersByKnown;
+    goldTeamOnly_ = goldTeamOnly;
+    visibleLogLimit_ = logLimit;
+  }
+
   // SEC5 ([host] fog_creates_by_vision 1, fog_creates_log_limit 200): with fog of war, a new
   // object is created only for the players whose team sees it, the others get its create at first sight
   // (core/replication/create_hold.h); 0 = every new object to every player, fogged in the same tick (FOGSOUND's rule).
@@ -1592,6 +1625,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     bool rejoined = false;  // G3: a rejoin; its catch-up also carries its own A9 3-7 and AA (its kills, gold, items)
     bool spectator = false;  // B15b: a spectator (gameplay index 10-14): no creature, no team, no input
     int campAudience = -1;   // SEC4: the camp audience (gms::flow::CampAudience) of its last full 8D (-1: none yet)
+    int visibleAudience = -1;  // SEC4B: the audience (gms::VisibleAudienceOf) of the mVisibleToTeam bytes it holds
   };
 
   // B15b: the spectators that have the world (bit = gameplay index 10-14).
@@ -1947,10 +1981,15 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     repl::BuildWorld(sim_, static_cast<unsigned>(pl.index), allTypes_, &ServerMatch::RecordsOf, this, &world,
                      &pl.counts, holding ? &hold : nullptr);
     std::vector<std::string> lines;
+    // SEC4B: its audience's mVisibleToTeam and only the casters it knows
+    std::uint8_t worldTeam = 0xFF;
+    if (!pl.spectator) repl::PlayerTeam(sim_, static_cast<unsigned>(pl.index), &worldTeam);
+    pl.visibleAudience = gms::VisibleAudienceOf(pl.spectator, worldTeam);
     for (const auto& m : world) {
-      out.Send(conn, m.msg, "world: " + m.what);
-      counts_.Add(m.msg[0], m.msg.size());
-      lines.push_back("loaded:" + gms::Hex(m.msg, m.msg.size()));
+      const gms::Bytes msg = ViewForPlayer(m, pl);
+      out.Send(conn, msg, "world: " + m.what);
+      counts_.Add(msg[0], msg.size());
+      lines.push_back("loaded:" + gms::Hex(msg, msg.size()));
     }
     pl.world = true;
     pl.catchUp = true;  // G3: the other players' state after this tick's delta pass (CatchUpStep)
@@ -1971,6 +2010,137 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       ++pl.playerUpdates;
     }
     WriteWorldFile(pl.index, lines);
+  }
+
+  // SEC4B: the players with the world per mVisibleToTeam audience, this step's; a player whose audience changed (its
+  // team known only now) gets its new audience's byte of every object it sees (VisibleDelta).
+  void RefreshVisibleAudiences() {
+    for (uint16_t& m : visibleMask_) m = 0;
+    visibleResend_ = 0;
+    if (!visibleByTeam_) return;
+    for (auto& kv : players_) {
+      Player& pl = kv.second;
+      if (!pl.world || pl.index < 0) continue;
+      std::uint8_t team = 0xFF;
+      if (!pl.spectator) repl::PlayerTeam(sim_, static_cast<unsigned>(pl.index), &team);
+      const int a = gms::VisibleAudienceOf(pl.spectator, team);
+      const uint16_t bit = static_cast<uint16_t>(1u << pl.index);
+      visibleMask_[a] = static_cast<uint16_t>(visibleMask_[a] | bit);
+      if (pl.visibleAudience != a) {
+        if (pl.visibleAudience >= 0) {
+          visibleResend_ = static_cast<uint16_t>(visibleResend_ | bit);
+          Log("replication: player %d's mVisibleToTeam audience %d -> %d: its byte of every object it sees again",
+              pl.index, pl.visibleAudience, a);
+        }
+        pl.visibleAudience = a;
+      }
+    }
+  }
+
+  // SEC4B: the players that know object `id` (0 if it is gone: a client maps an id it doesn't have to 0 anyway).
+  static uint16_t KnownPlayers(uint32_t id) {
+    uint16_t known = 0, visible = 0;
+    return repl::ObjectMasks(id, &known, &visible) ? known : static_cast<uint16_t>(0);
+  }
+
+  // SEC4B: a message with modifier records (AB, 8F, 95) to `to`, each record's caster 0 for the recipients that don't
+  // know it. `recordsAt`: where the records start. The number of sends.
+  int SendWithRecords(gms::ISender& out, uint16_t to, const gms::Bytes& m, size_t recordsAt, const char* what) {
+    if (castersByKnown_) {
+      const std::vector<gms::CasterView> views = gms::SplitModifierCasters(m, recordsAt, to, KnownPlayers);
+      if (!views.empty()) {
+        int n = 0;
+        for (const gms::CasterView& v : views) n += SendTo(out, v.players, v.msg, what);
+        ++casterSplits_;
+        return n;
+      }
+    }
+    return SendTo(out, to, m, what);
+  }
+
+  // SEC4B: a part of an object's state to `to`: mVisibleToTeam's byte per audience, a create's 8F by its casters.
+  void SendObjectMessage(gms::ISender& out, uint16_t to, const repl::WorldMessage& m) {
+    if (m.msg.empty()) return;
+    if (m.msg[0] == gms::kGmsObjectCreateComplete) {
+      SendWithRecords(out, to, m.msg, 5, nullptr);
+      return;
+    }
+    if (!visibleByTeam_ || m.visibleAt < 0 || static_cast<size_t>(m.visibleAt) >= m.msg.size()) {
+      SendTo(out, to, m.msg, nullptr);
+      return;
+    }
+    const uint8_t bits = m.msg[static_cast<size_t>(m.visibleAt)];
+    gms::Bytes copy = m.msg;
+    uint16_t left = to;
+    for (int a = 0; a < gms::kVisibleAudiences; ++a) {
+      const uint16_t players = static_cast<uint16_t>(left & visibleMask_[a]);
+      if (!players) continue;
+      copy[static_cast<size_t>(m.visibleAt)] = gms::VisibleAudienceBits(a, bits);
+      SendTo(out, players, copy, nullptr);
+      left = static_cast<uint16_t>(left & ~players);
+    }
+    if (left) {  // not sorted into an audience this step: no team
+      copy[static_cast<size_t>(m.visibleAt)] = gms::VisibleAudienceBits(gms::kVisibleAudienceNoTeam, bits);
+      SendTo(out, left, copy, nullptr);
+    }
+  }
+
+  // SEC4B: one world message as the player `pl` gets it (the world goes connection by connection).
+  gms::Bytes ViewForPlayer(const repl::WorldMessage& m, const Player& pl) const {
+    gms::Bytes msg = m.msg;
+    if (visibleByTeam_ && m.visibleAt >= 0 && static_cast<size_t>(m.visibleAt) < msg.size())
+      msg[static_cast<size_t>(m.visibleAt)] =
+          gms::VisibleAudienceBits(pl.visibleAudience, msg[static_cast<size_t>(m.visibleAt)]);
+    if (castersByKnown_ && !msg.empty() && msg[0] == gms::kGmsObjectCreateComplete) {
+      const std::vector<gms::CasterView> views =
+          gms::SplitModifierCasters(msg, 5, static_cast<uint16_t>(1u << pl.index), KnownPlayers);
+      if (!views.empty()) return views[0].msg;
+    }
+    return msg;
+  }
+
+  // SEC4B: mVisibleToTeam of one replicated object: each audience whose masked byte changed gets it, those of its
+  // players that knew and saw the object until now (a team losing sight gets its bit cleared with the 93 of this tick; a
+  // fog exit's full state carries the bit it gains), never another team's change.
+  void VisibleDelta(gms::ISender& out, const repl::NetObject& o, uint16_t knownHere) {
+    std::uint8_t bits = 0;
+    if (!repl::VisibleBits(o, &bits)) return;
+    const unsigned changed = visibleShadow_[o.id].Step(bits);
+    const uint16_t to = static_cast<uint16_t>(knownHere & o.visible);
+    if (!to || (!changed && !visibleResend_)) return;
+    for (int a = 0; a < gms::kVisibleAudiences; ++a) {
+      uint16_t players = static_cast<uint16_t>(to & visibleMask_[a]);
+      if (!((changed >> a) & 1u)) players = static_cast<uint16_t>(players & visibleResend_);
+      if (!players) continue;
+      const uint8_t value = gms::VisibleAudienceBits(a, bits);
+      SendTo(out, players, gms::BuildVisibleUpdate(o.id, value), nullptr);
+      ++visibleUpdates_[a];
+      if (++visibleLogged_[a] <= visibleLogLimit_)
+        Log("replication: mVisibleToTeam of %08X %s (team bits 0x%02X) -> audience %d, players 0x%04x: 0x%02X", o.id,
+            o.name, bits, a, players, value);
+    }
+  }
+
+  // SEC4B: the players that may still get this tick's deltas of an object: known & visible, and (FOGSOUND's window for
+  // kind 2 closed for the deltas too) those whose team sees it now: `o.visible` is the previous fog step's.
+  uint16_t VisibleThisTick(uint32_t id, uint16_t visible) const {
+    if (!deltasByVision_ || !eventsVisionNow_) return visible;
+    const auto it = seeNow_.find(id);
+    return it != seeNow_.end() ? static_cast<uint16_t>(visible & it->second.players) : visible;
+  }
+
+  // SEC4B: an AA to `to`, `team` = the player's team and the spectators: the other team's copy without mAvailableGold.
+  void SendFowData(gms::ISender& out, uint16_t to, uint16_t team, const gms::Bytes& m) {
+    const uint16_t others = static_cast<uint16_t>(to & ~team);
+    if (!goldTeamOnly_ || !others) {
+      SendTo(out, to, m, nullptr);
+      return;
+    }
+    const uint16_t own = static_cast<uint16_t>(to & team);
+    if (own) SendTo(out, own, m, nullptr);
+    gms::Bytes stripped = m;
+    if (gms::StripFowAvailableGold(&stripped)) SendTo(out, others, stripped, nullptr);
+    ++goldStripped_;
   }
 
   // The players that have the world (bit i = gameplay index i).
@@ -2112,7 +2282,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       gms::Bytes m;
       if (repl::PlayerFowDelta(sim_, index, &m) > 0) {  // always: it advances the field state
         if (s.delta) {
-          SendTo(out, s.delta, m, nullptr);
+          SendFowData(out, s.delta, team, m);
           ++fowDataDeltas_;
           if (s.delta & ~team) ++fowDataDeltasEnemy_;
         }
@@ -2123,7 +2293,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       if (s.full) {
         gms::Bytes f;
         if (repl::PlayerFowUpdate(sim_, index, kAll, &f)) {
-          SendTo(out, s.full, f, nullptr);
+          SendFowData(out, s.full, team, f);
           ++fowDataFull_;
           if (s.full & ~team) {
             ++fowDataFullEnemy_;
@@ -2261,6 +2431,30 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
         const auto it = lastVisible_.find(m.object);
         if (it != lastVisible_.end()) r.lastVisible = it->second;
       }
+      // SEC4B: a kind-1 A4 by its object: a stop to the players that know the object, a draw box's events as a message
+      // about the object (those that see it). Unreadable ones keep their mask
+      if (serverEventsByObject_ && m.kind == 1 && r.wire == gms::kGmsServerEvent && m.msg.size() > 1) {
+        std::uint8_t type = 0;
+        uint32_t id = 0;
+        if (gms::ParseServerEventHead(m.msg.data() + 1, m.msg.size() - 1, &type, &id) && id) {
+          uint16_t known = 0, visible = 0;
+          r.object = id;
+          r.objectAlive = repl::ObjectMasks(id, &known, &visible);
+          if (type == gms::kServerEventDetach) {
+            r.toKnown = true;
+            r.known = known;
+            ++a4Stops_;
+          } else if (type == gms::kServerEventAttach || type == gms::kServerEventUpdate) {
+            r.kind = 2;
+            r.seers = static_cast<uint16_t>(known & visible);
+            if (eventsVisionNow_) {
+              const auto it = seeNow_.find(id);
+              if (it != seeNow_.end()) r.seeNow = it->second.players;
+            }
+            ++a4DrawBoxes_;
+          }
+        }
+      }
       // D2g-live step 2: with fog a positional message goes to the players whose team sees the point (its line-of-sight
       // record: position, team, radius), handed to the router as kind 1 with that mask
       if (fog_ && fogReady_ && m.kind == 3 && m.hasPoint) {
@@ -2305,10 +2499,13 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       const gms::OutgoingRoute& r = routes[i];
       const uint16_t to = static_cast<uint16_t>(r.players & world);
       if (traced[i]) TraceModifier(m.msg, to, r.players);
+      if (r.toKnown && (to & ~r.known)) ++a4StopsViaDeletion_;
+      if (r.toKnown) a4StopsWithheld_ += Popcount(static_cast<uint16_t>(world & ~to));
       if (r.unseen & world) AuditUnseen(m, r, to);  // FOGSOUND
       if (!evTrace_.empty() && evTrace_.count(r.wire)) TraceEvent(m, r, to);
       if (m.kind == 0) {
         animShadow_.erase(m.object);
+        visibleShadow_.erase(m.object);  // SEC4B
         matchstats::cc::OnCarrierDeleted(m.object);  // MSTATS4
         const int recs = mods_.RemoveCarrier(m.object);
         ++deletes_;
@@ -2344,7 +2541,9 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       char what[96];
       std::snprintf(what, sizeof what, "from the simulator (kind %d%s)", m.kind,
                     m.kind == 0 || m.kind == 2 ? (", object " + Hex8(m.object)).c_str() : "");
-      const int n = SendTo(out, to, m.msg, lines || m.kind == 0 ? what : nullptr);
+      const char* const quiet = lines || m.kind == 0 ? what : nullptr;
+      const int n = r.wire == gms::kGmsModifierCreated ? SendWithRecords(out, to, m.msg, 1, quiet)  // SEC4B: the caster
+                                                       : SendTo(out, to, m.msg, quiet);
       if (lines)
         for (int k = 0; k < n; ++k) lines->push_back("loaded:" + gms::Hex(m.msg, m.msg.size()));
       for (auto& kv : players_)
@@ -2368,8 +2567,9 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   //   2. the outgoing vector (DrainStep), after the creates, so a new object's own messages follow its 8F; with fog,
   //      positional messages (kind 3) go to the players whose team sees the point;
   //   3. updates: per known object and struct the changed members (mode 8 against the field state) to the players
-  //      that know and see it (not those that just got its create); with nobody seeing it the field state still
-  //      advances (a fog exit sends the full state); A9 to every player, AA to the player's team;
+  //      that know and see it now (not those that just got its create); with nobody seeing it the field state still
+  //      advances (a fog exit sends the full state); mVisibleToTeam on its own, per audience (SEC4B); A9 to every
+  //      player, AA to the player's team;
   //   4. modifier ends: ModifierDeleted for every registered instance the server no longer has;
   //   5. fog of war: the per-player transitions (FogStep: 93; 94 + full state + 95; A3) and the visible masks (+0x10).
   // Without fog every object is visible to everyone who knows it (+0x10 = +0xE).
@@ -2405,7 +2605,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
         failedCreates_.insert(o.id);
         continue;
       }
-      for (auto& m : msgs) shortCreates_.push_back({to, std::move(m.msg)});
+      for (auto& m : msgs) shortCreates_.push_back({to, std::move(m)});
       shortHeld_.insert(o.id);
       ++shortEffectsSent_;
       if (++shortEffectsLogged_ <= 40)
@@ -2419,9 +2619,10 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     BoundTo b(sim_);
     if (!repl::Init()) return;
     const uint16_t world = WorldMask();
+    RefreshVisibleAudiences();  // SEC4B
     // ABILVFX: the creates of the effects BeforeDelete caught, before everything else of this step (their deletes come
     // with the outgoing vector)
-    for (const auto& c : shortCreates_) SendTo(out, static_cast<uint16_t>(c.first & world), c.second, nullptr);
+    for (const auto& c : shortCreates_) SendObjectMessage(out, static_cast<uint16_t>(c.first & world), c.second);
     shortCreates_.clear();
     if (!heldDeletes_.empty()) {
       const auto now = gms::SteadyClock::now();
@@ -2503,11 +2704,14 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     for (size_t i = 0; i < objs.size(); ++i) {
       const repl::NetObject& o = objs[i];
       const uint16_t knownHere = static_cast<uint16_t>(o.known & world & ~createdNow[i]);
-      const uint16_t to = static_cast<uint16_t>(knownHere & o.visible);
-      if (!knownHere || !repl::Replicated(o, allTypes_)) continue;
+      // SEC4B: this tick's seers, so the tick in which a team loses sight carries nothing but its 93 (and the bit below)
+      const uint16_t to = static_cast<uint16_t>(knownHere & VisibleThisTick(o.id, o.visible));
+      if (!repl::Replicated(o, allTypes_)) continue;
+      if (visibleByTeam_) VisibleDelta(out, o, knownHere);  // SEC4B: also seeds an object nobody knows yet
+      if (!knownHere) continue;
       for (int p = 0; p < repl::kNumParts; ++p) {
         gms::Bytes m;
-        if (repl::BuildDelta(o, p, &m) > 0) {
+        if (repl::BuildDelta(o, p, &m, visibleByTeam_) > 0) {
           if (to) {
             SendTo(out, to, m, nullptr);
             ++updates_;
@@ -2526,7 +2730,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       AnimShadow& sh = animShadow_[o.id];
       gms::Bytes m;
       if (repl::AnimationOverrideDelta(o, sh.overrides, &sh.seeded, &m) > 0) {
-        const uint16_t to = static_cast<uint16_t>(knownAll & o.visible & ~createdNow[i]);
+        const uint16_t to = static_cast<uint16_t>(knownAll & VisibleThisTick(o.id, o.visible) & ~createdNow[i]);
         if (to) SendTo(out, to, m, nullptr);
         ++animDeltas_;
       }
@@ -2554,7 +2758,8 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       mods_.Remove(inst, &ad);
       uint16_t seers = 0;
       const bool alive = repl::ObjectSeers(carrier, &seers);
-      const uint16_t to = static_cast<uint16_t>(alive ? seers & world : 0);
+      // SEC4B: this tick's seers; a fog exit's 95 replaces the whole set of a client that missed this
+      const uint16_t to = static_cast<uint16_t>(alive ? VisibleThisTick(carrier, seers) & world : 0);
       if (to) SendTo(out, to, ad, nullptr);
       ++modEnds_;
       Log("replication: modifier %08X on %08X ended -> ModifierDeleted to players 0x%04x%s; registry %zu", inst, carrier,
@@ -2612,6 +2817,9 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     p.grass = fowOpt_.grass;
     p.grassMap = fowOpt_.grass ? fow::Grass() : nullptr;
     p.stealth = fowOpt_.stealth;
+    p.revealMargin = fogRevealMargin_;
+    p.revealHoldMs = fogRevealHoldMs_;
+    p.nowMs = gms::timing::NowMs();
     model_.Update(*ents, p);
     std::vector<uint8_t> bits(objs.size(), 0);
     for (size_t i = 0; i < objs.size(); ++i) bits[i] = model_.Bits(i);
@@ -2794,7 +3002,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       f.id = o.id;
       f.known = known;
       f.visible = static_cast<uint16_t>(o.visible | createdNow[i]);
-      f.teamBits = model_.Bits(i);
+      f.teamBits = model_.RevealBits(i);  // FOGEDGE: a shaper's client gets it a margin early; mVisibleToTeam stays Bits
       f.maintainPos = info[i].maintain;
       f.x = info[i].pos[0];
       f.y = info[i].pos[1];
@@ -2835,11 +3043,11 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
         }
         int bytes = 0;
         for (const auto& m : it->second.state) {
-          SendTo(out, bit, m.msg, nullptr);
+          SendObjectMessage(out, bit, m);  // SEC4B: its audience's mVisibleToTeam
           bytes += static_cast<int>(m.msg.size());
         }
         const gms::Bytes recs = mods_.RecordsFor(o.id);
-        SendTo(out, bit, gms::vision::BuildObjectExitFoW(o.id, recs), nullptr);
+        SendWithRecords(out, bit, gms::vision::BuildObjectExitFoW(o.id, recs), 5, nullptr);  // SEC4B: the casters
         for (const auto& m : it->second.after) {
           SendTo(out, bit, m.msg, nullptr);
           bytes += static_cast<int>(m.msg.size());
@@ -2875,7 +3083,9 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     holdTeams_.clear();  // SEC5: the teams that see each object, kept for a world built between two steps
     for (size_t i = 0; i < objs.size() && i < ents.size(); ++i)
       if (ents[i].id) {
-        seeNow_[objs[i].id] = {gms::vision::PlayersForTeams(model_.Bits(i), players), objs[i].name, ents[i].team};
+        // FOGEDGE: RevealBits: a client that has a shaper enabled gets all its messages, as no fog exit would make up for
+        // a modifier or an effect it missed
+        seeNow_[objs[i].id] = {gms::vision::PlayersForTeams(model_.RevealBits(i), players), objs[i].name, ents[i].team};
         holdTeams_[objs[i].id] = model_.Bits(i);
       }
   }
@@ -3026,7 +3236,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
         SendTo(out, static_cast<uint16_t>(missing & ~hidden), m.msg, nullptr);
         ++evFoggedCreateSkips_;
       } else {
-        SendTo(out, missing, m.msg, nullptr);
+        SendObjectMessage(out, missing, m);  // SEC4B
       }
     }
     if (hidden & WorldMask()) ++evFoggedCreates_;
@@ -3059,6 +3269,17 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
           terrainHidden_.size(), fogTerrainHidden_, fogLast_.inGrass, fogLast_.revealed, fogRevealTicks_,
           fogTerrainMaskWrites_, fogLastSeenWrites_, fogLastSeenFresh_, pursuits_.size(), pursuitTicks_,
           pursuitHiddenTicks_, pursuitOriginTicks_, grassEnterEvents_, grassExitEvents_, grassEventFails_);
+    // SEC4B, when they changed
+    const int privateNow = visibleUpdates_[0] + visibleUpdates_[1] + visibleUpdates_[2] + visibleUpdates_[3] +
+                           casterSplits_ + a4Stops_ + a4DrawBoxes_ + goldStripped_;
+    if (privateNow != privateReported_) {
+      privateReported_ = privateNow;
+      Log("team private (SEC4B): mVisibleToTeam updates no team %d, team 1 %d, team 2 %d, spectators %d; %d record "
+          "message(s) split by caster; A4: %d stops by known (%d player sends withheld, %d by their deletion), %d draw "
+          "box events by sight; %d AA sends without mAvailableGold",
+          visibleUpdates_[0], visibleUpdates_[1], visibleUpdates_[2], visibleUpdates_[3], casterSplits_, a4Stops_,
+          a4StopsWithheld_, a4StopsViaDeletion_, a4DrawBoxes_, goldStripped_);
+    }
     // FOGSOUND: the messages about objects their recipients don't see, when they changed
     const int evNow = evUnseenMessages_ + evFoggedCreates_;
     if (fog_ && evNow != evUnseenReported_) {
@@ -3720,7 +3941,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   bool shortEffects_ = true;        // ABILVFX
   // ABILVFX: the creates BeforeDelete built for effects made and destroyed in one tick, sent first by the next
   // ReplicationStep (their ObjectDelete follows in its DrainStep), and their counts for the stats line
-  std::vector<std::pair<uint16_t, gms::Bytes>> shortCreates_;
+  std::vector<std::pair<uint16_t, repl::WorldMessage>> shortCreates_;
   int shortEffectsSent_ = 0, shortEffectsLogged_ = 0;
   // ABILVFX: their ObjectDeletes, held back [host] short_effect_hold_ms (in due order: one fixed hold)
   struct HeldDelete {
@@ -3764,6 +3985,8 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   std::vector<TimedLua> testLua_;
   // D2g-live step 2: fog of war
   bool fog_ = false, fogReady_ = false, fogUnavailableLogged_ = false;
+  float fogRevealMargin_ = 0.f;  // FOGEDGE ([host] fog_reveal_margin, in hundredths of a unit)
+  double fogRevealHoldMs_ = 0.0;  // FOGEDGE ([host] fog_reveal_hold_ms)
   fow::Options fowOpt_;
   int fogLogLimit_ = 200, fogLogged_ = 0, fogFailLogged_ = 0;
   gms::vision::VisionModel model_;
@@ -3784,7 +4007,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   bool eventsByVision_ = true;
   bool eventsVisionNow_ = false;                       // this tick's drain has the model's answer (seeNow_)
   struct SeeNow {
-    uint16_t players;  // the players whose team sees the object this tick
+    uint16_t players;  // the players whose team sees the object this tick (FOGEDGE: or whose client has the shaper early)
     const char* name;  // its noun's name (the scan's, valid during the replication step)
     uint8_t team;
   };
@@ -3795,6 +4018,18 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   int evUnseenMessages_ = 0, evUnseenSends_ = 0, evUnseenLogged_ = 0, evUnseenReported_ = -1;
   int evFoggedCreates_ = 0, evFoggedCreateSkips_ = 0;  // creates for players that don't see the new object
   int evLogLimit_ = 200;
+  // SEC4B: SetTeamPrivate's switches, the audiences of the players with the world (RefreshVisibleAudiences), what each
+  // audience holds of each object, and the counts of the stats line
+  bool visibleByTeam_ = true, deltasByVision_ = true, serverEventsByObject_ = true, castersByKnown_ = true,
+       goldTeamOnly_ = true;
+  uint16_t visibleMask_[gms::kVisibleAudiences] = {};
+  uint16_t visibleResend_ = 0;
+  std::unordered_map<uint32_t, gms::VisibleShadow> visibleShadow_;
+  int visibleUpdates_[gms::kVisibleAudiences] = {};
+  int visibleLogged_[gms::kVisibleAudiences] = {};
+  int visibleLogLimit_ = 200;
+  int casterSplits_ = 0, a4Stops_ = 0, a4StopsWithheld_ = 0, a4StopsViaDeletion_ = 0, a4DrawBoxes_ = 0;
+  int goldStripped_ = 0, privateReported_ = 0;
   // SEC5 ([host] fog_creates_by_vision, 1): a new object's create held from the players whose team doesn't see it
   bool holdCreates_ = true;
   int holdLogLimit_ = 200, holdLogged_ = 0;
@@ -4106,6 +4341,13 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   so.echoStatus = HostOptionInt("echo_status", 1) != 0;
   so.playerUpdate = true;
   so.stepMs = HostOptionInt("step_ms", so.stepMs);
+  // SEATAUTH, HOSTHARD
+  so.verifyTimeoutMs = HostOptionInt("hello_verify_ms", so.verifyTimeoutMs);
+  so.helloTimeoutMs = HostOptionInt("hello_timeout_ms", so.helloTimeoutMs);
+  so.progressEchoMs = HostOptionInt("progress_echo_ms", so.progressEchoMs);
+  so.commRate.on = HostOptionInt("comm_rate", 1) != 0;
+  LogSetCap(static_cast<unsigned long long>(HostOptionInt("log_cap_mb", static_cast<int>(kLogCapBytes / (1024 * 1024)))) * 1024 *
+            1024);
   so.loadTimeoutMs = HostOptionInt("load_timeout_ms", so.loadTimeoutMs);
   so.helloIpv4 = ipv4;
   so.helloPort = static_cast<uint16_t>(port);
@@ -4328,6 +4570,11 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   fo.grassEvents = HostOptionInt("grass_events", 1) != 0;  // D3c: OnEnterGrass/OnExitGrass (fow.h FireGrassEvent)
   fo.terrainMods = HostOptionInt("fog_terrain_mods", 1) != 0;  // ABILVFX: Kensu's trail opens walls, never blocks
   g->match->SetFog(fog && replicate, fo, HostOptionInt("fog_log_limit", 200));
+  const int fogMargin = HostOptionInt("fog_reveal_margin", 300);  // FOGEDGE: hundredths of a unit
+  const int fogHoldMs = HostOptionInt("fog_reveal_hold_ms", 750);
+  g->match->SetFogRevealMargin(fogMargin > 0 ? fogMargin * 0.01f : 0.f, fogHoldMs > 0 ? fogHoldMs : 0.0);
+  Log("host: fog: a shaper reaches a client %.2f units early and stays %d ms after sight is lost (FOGEDGE, [host] "
+      "fog_reveal_margin, fog_reveal_hold_ms)", fogMargin * 0.01f, fogHoldMs);
   Log("host: fog of war (D2g-live step 2): fog %d%s, terrain %d, grass %d, stealth %d, render %d; grass events %d (D3c); "
       "terrain modifiers open walls %d (ABILVFX)",
       fog, fog && !replicate ? " (needs replicate: off)" : "", fo.terrain, fo.grass, fo.stealth, fo.render,
@@ -4348,6 +4595,11 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   // FOGSOUND: the simulator's messages about an object only to the players that see it now
   const bool eventsByVision = HostOptionInt("fog_events_by_vision", 1) != 0;
   g->match->SetEventRouting(eventsByVision, HostOptionInt("fog_events_log_limit", 200));
+  // SEC4B: what one team may not learn through shared sends
+  g->match->SetTeamPrivate(HostOptionInt("visible_by_team", 1) != 0, HostOptionInt("deltas_by_vision", 1) != 0,
+                           HostOptionInt("server_events_by_object", 1) != 0,
+                           HostOptionInt("modifier_casters_by_known", 1) != 0,
+                           HostOptionInt("fow_gold_team_only", 1) != 0, HostOptionInt("visible_log_limit", 200));
   // SEC5: a new object's create only to the players whose team sees it, the others at first sight
   const bool createsByVision = HostOptionInt("fog_creates_by_vision", 1) != 0;
   g->match->SetCreateHold(createsByVision, HostOptionInt("fog_creates_log_limit", 200));
@@ -4500,6 +4752,10 @@ void GmsHostPoll() {
   {
     KindScope traffic(gms::timing::kTrafficSession);  // Q3c: what the session sends while it handles the poll
     gms::PumpTiming* timing = perf::Enabled() ? &g->pump : nullptr;
+    // SEATAUTH: what the control channel brought since the last poll (hostctl::Poll runs outside the tick)
+    for (const auto& v : hostctl::TakeVerdicts())
+      g->session->OnHelloVerdict(v.addr, static_cast<std::uint64_t>(v.user), v.ok);
+    for (const auto& k : hostctl::TakeKicks()) g->session->KickUser(static_cast<std::uint64_t>(k.user), k.reason, k.bar);
     g->packets += static_cast<unsigned>(gms::PumpEndpoint(g->ep, *g->session, g->start, timing));
     g->session->Tick();
   }

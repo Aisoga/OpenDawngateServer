@@ -50,7 +50,7 @@ func TestServeCA(t *testing.T) {
 	if status != "HTTP/1.1 200 OK" || !bytes.Equal(body, modulus) {
 		t.Errorf("--serve-ca: %q, %d bytes", status, len(body))
 	}
-	if info.CAFingerprint != web.Fingerprint(modulus) || len(info.TCPPorts) != 5 {
+	if info.CAFingerprint != web.Fingerprint(modulus) || len(info.TCPPorts) != 6 {
 		t.Errorf("info %+v", info)
 	}
 

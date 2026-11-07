@@ -287,8 +287,8 @@ func TestAgentModeConfig(t *testing.T) {
 			t.Errorf("agent %+v: %v, want %q", cfg, err, c.want)
 		}
 	}
-	c := config{redirectorPort: 1, blazePort: 2, qosPort: 3, httpPort: 4, telemetryPort: 5, gmsControlPort: 6, agentKey: key}
-	if got := fmt.Sprint(c.printPorts()); got != "[1 2 3 4 5 6]" {
+	c := config{redirectorPort: 1, blazePort: 2, qosPort: 3, httpPort: 4, telemetryPort: 5, uiPort: 8, gmsControlPort: 6, agentKey: key}
+	if got := fmt.Sprint(c.printPorts()); got != "[1 2 3 4 5 8 6]" {
 		t.Errorf("print ports with --agent-key: %s", got)
 	}
 	c.agent = "127.0.0.1:10040"

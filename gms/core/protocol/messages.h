@@ -29,6 +29,7 @@ constexpr uint32_t kStatusGone = 0x4;                // G3a: the GMS's bit for a
 constexpr uint32_t kStatusSkipShaperSelect = 0x10;   // the GMS's own bit: PreDungeon loads the level at once
 constexpr uint32_t kStatusShaperSelectDone = 0x100;
 constexpr uint32_t kStatusLevelLoaded = 0x400;       // the client reports 0x401 once the level is loaded
+constexpr uint32_t kStatusLoadedPart = 0x1;          // the 1 of that 0x401 (meaning unknown; only ever with 0x400)
 constexpr uint32_t kStatusMatchAccepted = 0x10000;   // the match-found accept; the GMS gives it to scripted players
 constexpr uint32_t kStatusMatchDeclined = 0x20000;   // the match-found decline (MatchFoundUI's callback 0x005456F0)
 constexpr uint32_t kStatusLeftGame = 0x40000;        // G3b: the client's answer to GameAborted (LobbyState's handler)

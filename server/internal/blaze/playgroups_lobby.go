@@ -280,7 +280,7 @@ func mergeAttrs(old, set []tdf.Pair) []tdf.Pair {
 		out = append(out, p)
 	}
 	slices.SortFunc(out, func(a, b tdf.Pair) int { return StricmpCompare(a.Key.(string), b.Key.(string)) })
-	return out
+	return capAttrs(out)
 }
 
 // stringMap reads a map<string,string> member of a request.
@@ -382,6 +382,10 @@ func (p *playgroups) join(id int64, key string, m PlaygroupMember, conn *Conn) j
 		return joinResult{err: ErrPlaygroupNotFound}
 	case pg.info.JoinControl == PlaygroupClosed && pg.indexOf(m.BlazeID) < 0:
 		return joinResult{err: ErrPlaygroupClosed}
+	case pg.info.Key == "" && pg.indexOf(m.BlazeID) < 0 && !pg.invited[m.BlazeID]:
+		return joinResult{err: ErrPlaygroupNotAuthorized} // a party takes those its members invited (access.go)
+	case p.groupsOfLocked(m.BlazeID) >= maxPlaygroupsPerUse && pg.indexOf(m.BlazeID) < 0:
+		return joinResult{err: ErrPlaygroupFull}
 	}
 	return pg.addLocked(m, conn)
 }

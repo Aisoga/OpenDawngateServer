@@ -17,15 +17,18 @@ func TestAdminConfig(t *testing.T) {
 		l.LoginDone("10.0.0.1", "boss", false)
 		c.add(31 * time.Second)
 	}
-	if wait, _ := l.Login("10.0.0.2", "boss"); wait <= 0 || wait > time.Minute {
+	if wait, _ := l.Login("10.0.0.1", "boss"); wait <= 0 || wait > time.Minute {
 		t.Errorf("after 4 failures: wait %v, want up to 1 min", wait)
 	}
+	if wait, _ := l.Login("10.0.0.2", "boss"); wait != 0 { // someone's wrong passwords don't lock the admin out
+		t.Errorf("from another address: wait %v", wait)
+	}
 	c.add(time.Minute)
-	if wait, _ := l.Login("10.0.0.2", "boss"); wait != 0 {
+	if wait, _ := l.Login("10.0.0.1", "boss"); wait != 0 {
 		t.Errorf("after the lockout: wait %v", wait)
 	}
-	l.LoginDone("10.0.0.2", "boss", false)
-	if wait, _ := l.Login("10.0.0.2", "boss"); wait <= time.Minute {
+	l.LoginDone("10.0.0.1", "boss", false)
+	if wait, _ := l.Login("10.0.0.1", "boss"); wait <= time.Minute {
 		t.Errorf("the 5th failure: wait %v, want 2 min", wait)
 	}
 	// the address's rate: 5 at once (other names), then refused until 30 s passed

@@ -181,6 +181,7 @@ type playgroup struct {
 	info    PlaygroupInfo
 	members []pgMember
 	nextSID int64
+	invited map[int64]bool // who may join a party (access.go)
 }
 
 type pgMember struct {
@@ -239,6 +240,9 @@ func (p *playgroups) createOrJoin(req PlaygroupInfo, join bool, m PlaygroupMembe
 	}
 	var res joinResult
 	pg := p.byKey[req.Key]
+	if p.groupsOfLocked(m.BlazeID) >= maxPlaygroupsPerUse && (pg == nil || pg.indexOf(m.BlazeID) < 0 || req.Key == "") {
+		return joinResult{err: ErrPlaygroupFull}
+	}
 	switch {
 	case pg == nil || req.Key == "":
 		p.nextID++

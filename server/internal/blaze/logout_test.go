@@ -77,8 +77,9 @@ func TestHostedGameLogout(t *testing.T) {
 	if hs.s.hosted.get(1) != nil {
 		t.Error("game 1 still hosted after the logout")
 	}
-	// a request that needs a login is refused now (left unanswered, logged)
+	// a request that needs a login is refused now
 	hs.send(0x81F, 0x76, 72, nil)
+	hs.expectError(0x81F, 0x76, 72, ErrAuthenticationRequired)
 
 	// a fresh login on the same connection, and a new practice game
 	hs.send(1, 0x28, 73, hs.request("login_request"))
@@ -113,7 +114,6 @@ func TestHostedGameLogout(t *testing.T) {
 		"[blaze]    account 1000000001 (persona 2000000001) logged out; its session ends\n",
 		"[blaze]    game 1: player 2000000001 left (BLAZESERVER_CONN_LOST); 0 still in the game\n",
 		"[host] match 1: ended after ",
-		"(getCompleteData before login; not answered)",
 		"[blaze]    game 2: player 2000000001 left (BLAZESERVER_CONN_LOST); 0 still in the game\n",
 	} {
 		if !strings.Contains(log, want) {

@@ -29,16 +29,49 @@ const (
 
 // WebRootFile returns dgweb.json's bytes for the server host (an IPv4 address or a host name) and port.
 func WebRootFile(host string, port int) ([]byte, error) {
+	if err := checkHostPort("web root", host, port); err != nil {
+		return nil, err
+	}
+	return fmt.Appendf(nil, "dawngate-web\t1\ncommon\thttp://%s:%d/%s\nend\n", host, port, WebContentRoot), nil
+}
+
+// checkHostPort checks a host and port a file for a movie names.
+func checkHostPort(what, host string, port int) error {
 	if host == "" {
-		return nil, fmt.Errorf("web root: no host")
+		return fmt.Errorf("%s: no host", what)
 	}
 	for _, r := range host {
 		if r <= ' ' || r >= 0x7F || r == '"' || r == '\'' || r == '<' || r == '>' {
-			return nil, fmt.Errorf("web root: host %q: only printable ASCII without spaces, quotes or angle brackets", host)
+			return fmt.Errorf("%s: host %q: only printable ASCII without spaces, quotes or angle brackets", what, host)
 		}
 	}
 	if port < 1 || port > 65535 {
-		return nil, fmt.Errorf("web root: port %d: must be 1..65535", port)
+		return fmt.Errorf("%s: port %d: must be 1..65535", what, port)
 	}
-	return fmt.Appendf(nil, "dawngate-web\t1\ncommon\thttp://%s:%d/%s\nend\n", host, port, WebContentRoot), nil
+	return nil
+}
+
+// Where the UI channel is: client_ui/common/opendawngate/ServerChannel.as connects to the server the copy is set up for
+// (for a tunnelled copy its tunnel address, where Start-Client listens on the channel's port too), and reads that from
+// Channel/dgchannel.json (ASCII, LF, tab-separated):
+//
+//	dawngate-channel	1
+//	host	<host>
+//	port	<port>
+//	end
+//
+// re/scripts/patch_login_movie.py's channel_file writes the same bytes.
+const (
+	// ChannelPath is the file's path in the added archive.
+	ChannelPath = "UI/Scaleform/Channel/dgchannel.json"
+	// ChannelPort is the channel's port (uichannel.Port; a test checks they agree).
+	ChannelPort = 10039
+)
+
+// ChannelFile returns dgchannel.json's bytes for the server host and port.
+func ChannelFile(host string, port int) ([]byte, error) {
+	if err := checkHostPort("UI channel", host, port); err != nil {
+		return nil, err
+	}
+	return fmt.Appendf(nil, "dawngate-channel\t1\nhost\t%s\nport\t%d\nend\n", host, port), nil
 }

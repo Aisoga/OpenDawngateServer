@@ -265,12 +265,12 @@ func TestGMSHosts(t *testing.T) {
 			t.Errorf("no error for %+v", bad)
 		}
 	}
-	c := config{redirectorPort: 1, blazePort: 2, qosPort: 3, httpPort: 4, telemetryPort: 5, gmsControlPort: 6}
-	if got := fmt.Sprint(c.printPorts()); got != "[1 2 3 4 5]" {
+	c := config{redirectorPort: 1, blazePort: 2, qosPort: 3, httpPort: 4, telemetryPort: 5, uiPort: 8, gmsControlPort: 6}
+	if got := fmt.Sprint(c.printPorts()); got != "[1 2 3 4 5 8]" {
 		t.Errorf("print ports without --gms-dir: %s", got)
 	}
 	c.gmsDir = dir
-	if got := fmt.Sprint(c.printPorts()); got != "[1 2 3 4 5 6]" {
+	if got := fmt.Sprint(c.printPorts()); got != "[1 2 3 4 5 8 6]" {
 		t.Errorf("print ports with --gms-dir: %s", got)
 	}
 }

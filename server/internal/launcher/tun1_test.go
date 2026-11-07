@@ -1,7 +1,9 @@
 package launcher
 
 import (
+	"bufio"
 	"bytes"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -15,6 +17,8 @@ import (
 	"dawngate/server/internal/logging"
 	"dawngate/server/internal/setup"
 	"dawngate/server/internal/setup/certs"
+	"dawngate/server/internal/store"
+	"dawngate/server/internal/tdf"
 	"dawngate/server/internal/tunnel"
 )
 
@@ -69,7 +73,7 @@ func TestSamePCServerAndFront(t *testing.T) {
 	}
 	// every game port of the address is free for the front
 	gamePorts := []Port{{42127, false, ""}, {10041, false, ""}, {17502, false, ""}, {17502, true, ""}, {18080, false, ""},
-		{9988, false, ""}, {10042, true, ""}}
+		{9988, false, ""}, {10039, false, ""}, {10042, true, ""}}
 	if held := HeldPorts(samePC, gamePorts); len(held) > 0 {
 		t.Fatalf("the server holds game ports of %s: %v", samePC, held)
 	}
@@ -103,6 +107,15 @@ func TestSamePCServerAndFront(t *testing.T) {
 	c := g.dial(DefaultFrontPorts.Blaze)
 	defer c.Close()
 	g.start(c)
+	// the UI channel before a login: nobody to talk to, the front closes it
+	early := g.dial(DefaultFrontPorts.UI)
+	defer early.Close()
+	early.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, err := early.Read(make([]byte, 1)); err == nil {
+		t.Error("the front's UI channel answered before a login")
+	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		t.Error("the front kept the UI channel open before a login")
+	}
 	// confirm once: the first login shows the key, the second trusts it and goes through
 	if rep := g.call(c, 1, 0x28, 2, loginBody("tun1#a")); rep.Type != fire.ErrorReply || rep.Error != FrontErrNewKey {
 		t.Fatalf("the first login: %v error %#x, want %#x\n%s", rep.Type, rep.Error, FrontErrNewKey, readLogs(t, logFront))
@@ -111,6 +124,22 @@ func TestSamePCServerAndFront(t *testing.T) {
 		t.Fatalf("the second login: %v error %#x\n%s", rep.Type, rep.Error, readLogs(t, logFront))
 	}
 	waitLog(t, logSrv, "    MAIL: 'tun1'\n", 1)
+	// the UI channel after the login: the front passes it to the server of that login, whose tunnel session says who it
+	// is, whatever name the hello gives
+	if rep := g.call(c, 1, 0x6E, 4, tdf.NewWriter().String("PNAM", store.PersonaName("tun1")).Bytes()); rep.Type != fire.Reply {
+		t.Fatalf("the persona login: %v error %#x\n%s", rep.Type, rep.Error, readLogs(t, logFront))
+	}
+	ui := g.dial(DefaultFrontPorts.UI)
+	defer ui.Close()
+	fmt.Fprintf(ui, `{"call":"hello","args":{"protocol":1,"name":"somebody else"}}`+"\n")
+	ui.SetReadDeadline(time.Now().Add(5 * time.Second))
+	line, err := bufio.NewReader(ui).ReadString('\n')
+	if err != nil {
+		t.Fatalf("the UI channel's hello: %v\nserver:\n%s\nfront:\n%s", err, readLogs(t, logSrv), readLogs(t, logFront))
+	}
+	if want := `{"event":"hello","data":{"protocol":1}}` + "\n"; line != want {
+		t.Errorf("the UI channel's hello: %q, want %q", line, want)
+	}
 	// a GMS datagram from the game to the front's port 10042 on the same address reaches the hosts' address
 	game, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(samePC)})
 	if err != nil {

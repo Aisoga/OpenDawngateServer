@@ -14,6 +14,9 @@
 {"t":"reportGMSError","code":7,"text":"line1\nline2\ttab \\ \u0001","fatal":true}
 {"t":"logoutGMS"}
 {"t":"removePlayer","user":2000000001,"reason":"PLAYER_LEFT"}
+{"t":"verifyHello","addr":"127.0.1.10:50123","user":2000000001}
+{"t":"helloVerdict","addr":"127.0.1.10:50123","user":2000000001,"ok":true}
+{"t":"helloVerdict","addr":"127.0.1.10:50123","user":2000000002,"ok":false}
 {"t":"abortGame","reason":"no players left"}
 # D8-live: createGame's descriptors (the game's GameFlags), playerFinish with the host's own rewards (B7c), and
 # dgserver's answer playerRewards (B7c; the C++ side since D8-live). An empty item list is [] (Go writes null for none).

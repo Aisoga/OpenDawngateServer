@@ -77,6 +77,8 @@ constexpr float kPlayerVisionRadius = 35.3f;
 constexpr float kPlayerVisionHysteresis = 3.0f;
 // Record +0x1F as LineOfSight_AllocTracked leaves it: concealed in grass from both player teams.
 constexpr uint8_t kDefaultGrassConceal = 0x06;
+// FOGEDGE: how far past the margin a revealed shaper may go before its client loses it
+constexpr float kRevealLeaveBand = 1.f;
 
 // One object (or one anonymous vision source) per tick.
 struct Entity {
@@ -100,6 +102,7 @@ struct Entity {
   uint32_t grassId = 0;             // the grass patch it stands in (0 = none)
   bool stealthed = false;           // cAgentBlackboard +0x1E74 (nGameObject.SetStealthType)
   bool detectsStealth = false;      // as a source: attribute 47 StealthDetection > 0
+  bool revealEarly = false;         // FOGEDGE: a player's creature: its client may have it before its team sees it
 };
 
 // The level's line-of-sight map as the manager holds it (LineOfSight_InitMaps 0x00917C90): +4 the bytes (row-major,
@@ -172,8 +175,17 @@ struct Params {
   // hides it); must stay valid until the next Update
   const GrassMap* grassMap = nullptr;
   bool stealth = false;
+  // FOGEDGE: how far beyond a source's reach a revealEarly entity already counts in RevealBits (0: never)
+  float revealMargin = 0.f;
+  // FOGEDGE: how long after a team last saw a revealEarly entity it still counts in RevealBits (0: not at all), by the
+  // clock nowMs; not while grass or stealth hides it from that team, which stays immediate
+  double revealHoldMs = 0.0;
+  double nowMs = 0.0;
 };
 
+// FOGEDGE: Bits is the truth of who sees what. RevealBits is who may already have a player's creature on its client: the
+// client never hides an enabled enemy creature (opacity floor 0.25, GameGraphics_UpdateCreatureOpacity 0x0056E400: a pale
+// ghost, solid above fade 0.5), so it is drawn from here on.
 class VisionModel {
  public:
   // One tick: every entity's team bits (rule above). Entities with id 0 only give vision. An id that isn't in this
@@ -183,6 +195,9 @@ class VisionModel {
   // The answer for the i-th entity of the last Update (mVisibleToTeam), and by object id (0 if not in it).
   uint8_t Bits(size_t i) const { return i < bits_.size() ? bits_[i] : 0; }
   uint8_t BitsOf(uint32_t id) const;
+  // FOGEDGE: the teams whose clients may have the i-th entity enabled: Bits, plus for a revealEarly entity the teams with
+  // a source within the margin (the same terrain, grass and stealth tests). mVisibleToTeam stays Bits.
+  uint8_t RevealBits(size_t i) const { return i < reveal_.size() ? reveal_[i] : Bits(i); }
   size_t Size() const { return bits_.size(); }
   int Sources() const { return static_cast<int>(sources_.size()); }
 
@@ -198,7 +213,7 @@ class VisionModel {
     bool ignoreTerrain, ignoreGrass, detectsStealth;
     uint32_t grassId, id;
   };
-  bool SeenBy(int team, const Entity& target, bool wasVisible) const;
+  bool SeenBy(int team, const Entity& target, bool wasVisible, float extra = 0.f, bool useHysteresis = true) const;
   uint8_t Resolve(size_t i, std::vector<uint8_t>* state);
 
   const std::vector<Entity>* entities_ = nullptr;  // during Update only
@@ -207,6 +222,10 @@ class VisionModel {
   std::vector<uint8_t> bits_;
   std::unordered_map<uint32_t, size_t> index_;     // id -> entity index (this tick)
   std::unordered_map<uint32_t, uint8_t> last_;     // id -> last tick's bits
+  std::vector<uint8_t> reveal_;                    // FOGEDGE: RevealBits
+  std::unordered_map<uint32_t, uint8_t> lastReveal_;  // id -> last tick's RevealBits
+  struct SeenAt { double ms[kNumTeams] = {-1.0, -1.0, -1.0}; };
+  std::unordered_map<uint32_t, SeenAt> seenAt_;       // id -> when each team last saw it (revealEarly entities)
 };
 
 }  // namespace gms::vision

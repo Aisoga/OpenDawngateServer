@@ -1,7 +1,6 @@
 package blaze
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -9,10 +8,9 @@ import (
 	"dawngate/server/internal/store"
 )
 
-// The custom lobby tiles' ratings (RATINGSHOW3, ready.go's sendRatings): a class holder hears "~#rat <n>~" in the name
-// of every player of the game with a shown rating (Server.ShownRating) at its hi and again after every roster change
-// (the admin's TeamRostersKey); a player below the Leaderboard's rated games gets none; a client's own rat line is
-// swallowed and ignored; with show_rating off nothing is sent.
+// The custom lobby tiles' ratings (RATINGSHOW3): lobby.state names the rating of every player of the game whose rating
+// players see (Server.ShownRating), spectators too, at every publish, so a newcomer's rating reaches everyone at the
+// roster change; a player below the Leaderboard's rated games has none; with show_rating off there are none.
 func TestLobbyRatings(t *testing.T) {
 	for _, show := range []bool{true, false} {
 		ratings := map[string]store.Rating{
@@ -33,6 +31,7 @@ func TestLobbyRatings(t *testing.T) {
 				}
 			}
 		})
+		addr := attachUI(t, ts)
 		g := golden.Load(t)
 		a, b, c, d := ts.client("alpha@example.com"), ts.client("bravo@example.com"), ts.client("charlie@example.com"),
 			ts.client("delta@example.com")
@@ -42,57 +41,38 @@ func TestLobbyRatings(t *testing.T) {
 		wantReply(t, "B joins", b.gm(CmdGameManagerJoinGame, join))
 		wantReply(t, "C joins", c.gm(CmdGameManagerJoinGame, join))
 		wantReply(t, "D spectates", d.gm(CmdGameManagerJoinGame, golden.Bytes(t, decodeCase(t, g, "joingame_spectate_request"))))
-		gg := joinGG(t, a, b, c, d)
-		line := func(text string) []byte {
-			return msg(MessageTypeChat, MessageFlagEcho|MessageFlagFilter, ObjTypePlaygroup, chatLine(text), gg)
-		}
-		quiet := func(cs ...*tcpClient) {
-			t.Helper()
-			for _, x := range cs {
-				x.none(ComponentMessaging, NotifyMessageID, 60*time.Millisecond)
-			}
-		}
-		ratingsTo := func(x *tcpClient) {
-			t.Helper()
+		ua, ub := uiConnect(t, addr, a), uiConnect(t, addr, b)
+
+		// state is the lobby as everyone who entered hears it; bState is B's ready mark
+		state := func(bState string) string {
 			if show {
-				x.readyFrom(a, "~#rat 1612~")
-				x.readyFrom(b, "~#rat 1388~")
-				x.readyFrom(d, "~#rat 2000~") // a spectator too; C (9 rated games) none
+				return lobbyStateLine(a.name+" - 1612", b.name+" "+bState+" 1388", c.name, d.name+" - 2000")
 			}
+			return lobbyStateLine(a.name, b.name+" "+bState, c.name, d.name)
 		}
 
-		// the admin's hi: every shown rating, its own too
-		wantOK(t, "A hi", a.sendMsg(line("~#rdy hi~")))
-		ratingsTo(a)
-		quiet(a, b, c, d)
-		// B's hi: its ready state first (as READY2), then the ratings; to B only
-		wantOK(t, "B hi", b.sendMsg(line("~#rdy hi~")))
-		b.readyFrom(b, "~#rdy 0~")
-		a.readyFrom(b, "~#rdy 0~")
-		ratingsTo(b)
-		quiet(a, b, c, d)
-		// a client's own rat line: swallowed and ignored (no client could show a number in its own name)
-		wantOK(t, "C's own rating line", c.sendMsg(line("~#rat 3000~")))
-		quiet(a, b, c, d)
-		// a roster change (the admin's TeamRostersKey): every holder again; C has no class, so it hears nothing
+		// the admin enters: every shown rating, its own too (B isn't in the check yet)
+		ua.call(CallLobbyEnter, "")
+		if show {
+			ua.want(lobbyStateLine(a.name+" - 1612", b.name+" - 1388", c.name, d.name+" - 2000"))
+		} else {
+			ua.want(lobbyStateLine(a.name, b.name, c.name, d.name))
+		}
+		// B enters: both hear the lobby
+		ub.call(CallLobbyEnter, "")
+		ua.want(state("0"))
+		ub.want(state("0"))
+		// a roster change (the admin's TeamRostersKey): everyone who entered again; C and D have no class and hear nothing
 		wantReply(t, "attributes", a.gm(CmdGameManagerSetGameAttributes, golden.Bytes(t, decodeCase(t, g, "setgameattributes_request"))))
-		ratingsTo(a)
-		ratingsTo(b)
-		quiet(a, b, c, d)
+		ua.want(state("0"))
+		ub.want(state("0"))
 		// after the start: none
-		wantOK(t, "B ready", b.sendMsg(line("~#rdy 1~")))
-		a.readyFrom(b, "~#rdy 1~")
-		b.readyFrom(b, "~#rdy 1~")
+		ub.call(CallLobbySetReady, `{"ready":true}`)
+		ua.want(state("1"))
+		ub.want(state("1"))
 		wantReply(t, "A starts", a.gm(CmdGameManagerAdvanceGameState, golden.Bytes(t, decodeCase(t, g, "advancegamestate_request"))))
 		wantReply(t, "attributes after the start", a.gm(CmdGameManagerSetGameAttributes, golden.Bytes(t, decodeCase(t, g, "setgameattributes_request"))))
-		quiet(a, b, c, d)
-
-		log := ts.log.String()
-		if !strings.Contains(log, "a lobby line only the server sends (rat); ignored") {
-			t.Errorf("show %v: log without the ignored rat line", show)
-		}
-		if got := strings.Contains(log, "the tiles' ratings"); got != show {
-			t.Errorf("show %v: ratings logged %v", show, got)
-		}
+		ua.quiet()
+		ub.quiet()
 	}
 }

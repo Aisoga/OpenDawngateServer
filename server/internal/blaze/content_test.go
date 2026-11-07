@@ -282,21 +282,17 @@ func TestStarterPolicyAndFTUEGate(t *testing.T) {
 	ps.close()
 }
 
-// Requests that change the account do nothing without a login (logged).
+// Requests that change the account are refused without a login. The balance is on the short list a real client uses around a
+// logout, and gives nothing away: it is an empty account's.
 func TestContentChangesNeedLogin(t *testing.T) {
 	ps := newPipeSession(t)
 	ps.send(0x81F, 0x8B, 0, ps.request("saveusersettings_request"))
-	ps.expect(0x81F, 0x8B, fire.Reply, 0, "")
+	ps.expectError(0x81F, 0x8B, 0, ErrAuthenticationRequired)
 	ps.send(0x81F, 0x7F, 1, tdf.NewWriter().Int("AVTR", 1).Bytes())
-	ps.expect(0x81F, 0x7F, fire.Reply, 1, "")
+	ps.expectError(0x81F, 0x7F, 1, ErrAuthenticationRequired)
 	ps.send(0x820, 0x08, 2, nil)
 	ps.expect(0x820, 0x08, fire.Reply, 2, "getbalance_reply")
-	log := ps.close()
-	for _, want := range []string{"(saveUserSettings before login; nothing stored)", "(setAvatar before login; nothing stored)"} {
-		if !strings.Contains(log, want) {
-			t.Errorf("log lacks %q:\n%s", want, log)
-		}
-	}
+	ps.close()
 }
 
 func TestUserInfoAttribute(t *testing.T) {

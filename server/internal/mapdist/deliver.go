@@ -129,6 +129,48 @@ func (d *Delivery) manifest() (map[string]Entry, error) {
 	return ParseManifest(string(b))
 }
 
+// roomFor checks a new package against what map delivery may keep in the maps folder (Limits). The packages it replaces
+// don't count.
+func (d *Delivery) roomFor(pkgs []mapc.Package, replace []string, e Entry) error {
+	var fromServer, all int
+	var serverBytes, allBytes int64
+	for _, p := range pkgs {
+		from, ok := DeliveredFrom(p.Dir)
+		if !ok || containsFold(replace, p.Dir) {
+			continue
+		}
+		size := folderSize(p.Dir)
+		all++
+		allBytes += size
+		if strings.EqualFold(from, d.Server) {
+			fromServer++
+			serverBytes += size
+		}
+	}
+	l := d.Limits
+	switch {
+	case l.ServerPackages > 0 && fromServer >= l.ServerPackages, l.ServerBytes > 0 && serverBytes+e.Size > l.ServerBytes:
+		return fmt.Errorf("the maps folder already has %d maps (%s) from %s, as many as one server may leave there", fromServer, Bytes(serverBytes), d.Server)
+	case l.FolderPackages > 0 && all >= l.FolderPackages, l.FolderBytes > 0 && allBytes+e.Size > l.FolderBytes:
+		return fmt.Errorf("the maps folder already has %d downloaded maps (%s), as many as it may keep: remove some to get more", all, Bytes(allBytes))
+	}
+	return nil
+}
+
+// folderSize is the bytes of the files under dir.
+func folderSize(dir string) int64 {
+	var n int64
+	filepath.WalkDir(dir, func(_ string, de fs.DirEntry, err error) error {
+		if err == nil && de.Type().IsRegular() {
+			if st, err := de.Info(); err == nil {
+				n += st.Size()
+			}
+		}
+		return nil
+	})
+	return n
+}
+
 // one delivers one map of the manifest.
 func (d *Delivery) one(e Entry, w Want) (r Result) {
 	r = Result{Tag: e.Tag, Name: e.Name, Package: e.SHA256}
@@ -169,6 +211,9 @@ func (d *Delivery) one(e Entry, w Want) (r Result) {
 				"folder out of the maps folder to get this server's (Start-Client replaces only maps it downloaded)", what, p.Dir)
 		}
 		replace = append(replace, p.Dir)
+	}
+	if err := d.roomFor(pkgs, replace, e); err != nil {
+		return fail(Refused, "%v", err)
 	}
 	target := filepath.Join(d.MapsDir, e.Name)
 	if _, err := os.Stat(target); err == nil && !containsFold(replace, target) {

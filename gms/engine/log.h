@@ -8,7 +8,12 @@
 
 constexpr int kLogTailLines = 64;
 
+// HOSTHARD: the file stops at this size, with one line saying so (the ring below goes on). Far above a long match's log;
+// [host] log_cap_mb sets another (0 = no cap).
+constexpr unsigned long long kLogCapBytes = 512ull * 1024 * 1024;
+
 void LogOpen(const char* path);
+void LogSetCap(unsigned long long bytes);
 void Log(const char* fmt, ...);
 unsigned LogMs();
 // Log, but gives up after timeoutMs when another thread holds the log (false then: the line is lost).

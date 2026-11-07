@@ -193,6 +193,16 @@ func (e errTooLarge) Error() string {
 	return fmt.Sprintf("body over the limit of %d bytes (%s)", e.limit, e.what)
 }
 
+// oneLine makes a client's text one line of the log: a head is split at CR LF only, so a bare LF could forge a log line.
+func oneLine(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' {
+			return '?'
+		}
+		return r
+	}, s)
+}
+
 // Serve accepts connections until the listener is closed.
 func (h *HTTP) Serve(ln net.Listener) error {
 	for {
@@ -270,9 +280,9 @@ func (h *HTTP) ServeConn(c net.Conn) {
 	}
 	var hdrs []string
 	for _, hd := range req.headers {
-		hdrs = append(hdrs, "    "+hd.name+": "+hd.value)
+		hdrs = append(hdrs, "    "+oneLine(hd.name)+": "+oneLine(hd.value))
 	}
-	msg := peer + " " + req.line + "\n" + strings.Join(hdrs, "\n")
+	msg := peer + " " + oneLine(req.line) + "\n" + strings.Join(hdrs, "\n")
 	if req.size > 0 {
 		more := ""
 		if req.size > int64(len(req.body)) {

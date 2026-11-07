@@ -35,11 +35,20 @@ func registerBattlegroundsAccounts(s *Server) {
 		var list []BasicData
 		if l, ok := r.Body.Get("BZID"); ok {
 			if ids, ok := l.Value.(*tdf.List); ok {
+				// each id is a dozen statements under the store's lock: the same one asked a thousand times is one answer
+				seen := map[int64]bool{}
 				for _, v := range ids.Items {
-					if id, ok := v.(int64); ok {
-						if acct, _, known := r.Server.Store.PersonaByID(id); known {
-							list = append(list, r.Server.basicDataOf(acct, id))
-						}
+					id, ok := v.(int64)
+					if !ok || seen[id] {
+						continue
+					}
+					if len(seen) == maxBasicDataIDs {
+						r.Server.Log.Logf("blaze", "   getBasicData: more than %d ids; the rest aren't answered", maxBasicDataIDs)
+						break
+					}
+					seen[id] = true
+					if acct, _, known := r.Server.Store.PersonaByID(id); known {
+						list = append(list, r.Server.basicDataOf(acct, id))
 					}
 				}
 			}
@@ -68,6 +77,13 @@ func registerBattlegroundsAccounts(s *Server) {
 						settings[k] = v
 					}
 				}
+			}
+		}
+		if acct, ok := r.account(); ok {
+			if fit, why := settingsFit(acct.Settings, settings); !fit { // access.go
+				r.Server.Log.Logf("blaze", "   saveUserSettings of account %d refused: %s", acct.UserID, why)
+				r.Fail(ErrSystem)
+				return nil
 			}
 		}
 		r.update("saveUserSettings", func(a *store.Account) {

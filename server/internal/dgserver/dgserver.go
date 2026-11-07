@@ -41,6 +41,7 @@ import (
 	"dawngate/server/internal/store"
 	"dawngate/server/internal/telemetry"
 	"dawngate/server/internal/tunnel"
+	"dawngate/server/internal/uichannel"
 	"dawngate/server/internal/version"
 	"dawngate/server/internal/web"
 )
@@ -53,10 +54,10 @@ type config struct {
 	// plain is --plain: on (the default) binds the services' own listeners on --bind; off serves them only through
 	// the tunnel gateway's in-process listeners (needs --tunnel on). gmsBind is --gms-bind: where the match hosts' GMS
 	// ports bind and the gateway's flows go ("" = --bind; when set, also the address HNET names).
-	plain, gmsBind                                              string
-	redirectorPort, blazePort, qosPort, httpPort, telemetryPort int
-	gmsPort                                                     int  // UDP only
-	gmsExternal                                                 bool // announce gmsPort without binding it (B9)
+	plain, gmsBind                                                      string
+	redirectorPort, blazePort, qosPort, httpPort, telemetryPort, uiPort int
+	gmsPort                                                             int  // UDP only
+	gmsExternal                                                         bool // announce gmsPort without binding it (B9)
 	// C1: a match host per game (gmshost) when gmsDir is set; otherwise gmsPort is announced (B8/B9).
 	gmsDir, gmsArgs, gmsPorts string
 	// C1b: the hosts' data folders (--gms-data: <dir>\<match>, DGGMS_DATA) and DGGMS_OPTIONS (--gms-options)
@@ -87,6 +88,7 @@ type config struct {
 	ratingLeaderboard    bool               // RATING1: the Leaderboard ranks by skill rating (--rating-leaderboard, on by default)
 	showRating           bool               // RATINGSHOW1: players see their rating in the profile box (--show-rating, on by default)
 	customBots           bool               // B15: bots in a custom game's open seats (--custom-bots)
+	noHelloCheck         bool               // --gms-hello-check off: every match host's verifyHello answered ok
 	customAutoStart      time.Duration      // BOTS2c: a custom game whose humans all spectate starts by itself
 	testRefuseStart      bool               // READY2b: each custom game's first start refused (--test-refuse-start, a test aid)
 	level                string             // MAPLEVEL1: the level hosted games load (--map, --level; "" = blaze.HostedLevel)
@@ -235,12 +237,12 @@ func makeContent(dir, file string) error {
 }
 
 func (c config) ports() []int {
-	return []int{c.redirectorPort, c.blazePort, c.qosPort, c.httpPort, c.telemetryPort}
+	return []int{c.redirectorPort, c.blazePort, c.qosPort, c.httpPort, c.telemetryPort, c.uiPort}
 }
 
 // defaultServicePorts are ports()' defaults: a service reached only through the tunnel (--plain off) takes them for a
 // port given as 0, since its listener is the gateway's and binds nothing.
-var defaultServicePorts = []int{redirector.Port, 10041, 17502, 18080, 9988}
+var defaultServicePorts = []int{redirector.Port, 10041, 17502, 18080, 9988, uichannel.Port}
 
 // plainOn says whether the services bind their own listeners (--plain on, the default).
 func (c config) plainOn() bool { return c.plain != PlainOff }
@@ -459,6 +461,7 @@ type instance struct {
 	ports     []int            // actual ports, in config order
 	// B14: stops the broadcast file's watcher (nil without --broadcast-file)
 	stopWatch func()
+	ui        *uichannel.Server // the game UI's own channel
 	// ONLINECOUNT: stops the players-online count (nil with --online-count off)
 	stopCount func()
 	// the served CA modulus's fingerprint (--serve-ca; "" without)
@@ -569,6 +572,7 @@ func start(cfg config) (*instance, error) {
 		return nil, fmt.Errorf("the sign-up mode's setting: %w", err)
 	}
 	cfg.accounts.Live = accounts.NewModeSetting(mode)
+	cfg.accounts.NoClaims = true
 	// the log last, so a setup error leaves no open log file behind (the listener errors below close it)
 	log, err := logging.Open(cfg.logDir)
 	if err != nil {
@@ -630,6 +634,9 @@ func start(cfg config) (*instance, error) {
 		go rd.Serve(tls.NewListener(in.listeners[0], tlsCfg))
 	}
 	bz := blaze.NewServer(log, public, qp)
+	ui := &uichannel.Server{Log: log}
+	bz.AttachUI(ui)
+	in.ui = ui
 	bz.TelemetryPort = tp
 	bz.GMSPort = gp
 	bz.GMSHost = cfg.gmsBind // "" = the public host
@@ -645,6 +652,7 @@ func start(cfg config) (*instance, error) {
 	bz.RatingLeaderboard = cfg.ratingLeaderboard
 	bz.ShowRating = cfg.showRating
 	bz.CustomBots = cfg.customBots
+	bz.NoHelloCheck = cfg.noHelloCheck
 	bz.CustomAutoStart = cfg.customAutoStart
 	bz.TestRefuseStart = cfg.testRefuseStart
 	if cfg.testRefuseStart {
@@ -683,6 +691,7 @@ func start(cfg config) (*instance, error) {
 	qos.Limits = in.limits
 	if in.plain {
 		go bz.Serve(in.listeners[1])
+		go ui.Serve(in.listeners[uiListener])
 		go qos.Serve(in.listeners[2])
 		go qos.ServeUDP()
 	}
@@ -751,7 +760,7 @@ func start(cfg config) (*instance, error) {
 	}
 	tunnelNote := ""
 	if tunnelOn {
-		if in.gateway, tunnelNote, err = startGateway(cfg, log, in, services{rd: rd, bz: bz, qos: qos, web: httpSrv, tel: tel}, gp); err != nil {
+		if in.gateway, tunnelNote, err = startGateway(cfg, log, in, services{rd: rd, bz: bz, qos: qos, web: httpSrv, tel: tel, ui: ui}, gp); err != nil {
 			in.close()
 			log.Close()
 			return nil, err
@@ -950,10 +959,13 @@ func startPruning(cfg config, in *instance) string {
 }
 
 // listenerNames are cfg.ports()'s listeners in order (the log tags of their limits lines).
-var listenerNames = []string{"redirector", "blaze", "qos", "http", "telemetry"}
+var listenerNames = []string{"redirector", "blaze", "qos", "http", "telemetry", "uichannel"}
 
 // qosListener is QoS's index in config.ports and listenerNames.
 const qosListener = 2
+
+// uiListener is the UI channel's index in config.ports and listenerNames.
+const uiListener = 5
 
 // listenTCPAndUDP binds TCP and UDP on one port of bind (an IPv4 address; with port 0, tests: past Windows' excluded
 // port ranges, tunnel.ListenTCPAndUDP).
@@ -983,6 +995,9 @@ func startLimits(cfg *config, in *instance, public string) string {
 		lc = *cfg.limitsCfg
 	}
 	in.limits = limits.New(lc, nil)
+	if in.log != nil {
+		in.log.SetLimits(logging.PublicLimits())
+	}
 	// no address of dgserver's own is exempt (an earlier build had exempted --bind as the tunnel gateway's source). A
 	// tunnelled player's streams and datagrams reach the services in process with the player's real address
 	// (tunnel.Addr.Peer, Blaze's Conn.Addr), and the gateway limits them by it before the TLS handshake and before a
@@ -1069,6 +1084,9 @@ func (in *instance) close() {
 	if in.gateway != nil {
 		in.gateway.Close()
 	}
+	if in.ui != nil {
+		in.ui.Close()
+	}
 	if in.website != nil {
 		in.website.close()
 	}
@@ -1128,6 +1146,7 @@ func Run(args []string, h Hooks) int {
 	fs.IntVar(&cfg.blazePort, "blaze-port", 10041, "Blaze port (plain TCP)")
 	fs.IntVar(&cfg.qosPort, "qos-port", 17502, "QoS ping-site port announced in preAuth")
 	fs.IntVar(&cfg.httpPort, "http-port", 18080, "HTTP port; must match patch_config.py --http-port")
+	fs.IntVar(&cfg.uiPort, "ui-port", uichannel.Port, "the game UI's own channel, TCP (package uichannel); the movies' dgchannel.json names it")
 	fs.IntVar(&cfg.telemetryPort, "telemetry-port", 9988, "telemetry port; must match patch_config.py --telemetry-port")
 	fs.IntVar(&cfg.gmsPort, "gms-port", blaze.GMSPort, "UDP port of the GMS address announced in NotifyGameSetup (logged only)")
 	fs.BoolVar(&cfg.gmsExternal, "gms-external", false, "announce --gms-port without binding it; another process serves the GMS")
@@ -1187,6 +1206,7 @@ func Run(args []string, h Hooks) int {
 	fs.StringVar(&cfg.tunnelMaps, "tunnel-maps", "", "--tunnel-client: the player copy (the folder with game\\Data) whose installed maps (MM_Map_v3's and --maps' archives, with their SHA-256) the session hello names, as Start-Client names its copy's; default none named (the server then goes by the release)")
 	fs.StringVar(&cfg.tunnelRelease, "tunnel-release", "", "--tunnel-client test aid: the release name its session hello gives instead of this build's (a server with --allow-any-client lets it in as another release)")
 	customMaps := fs.String("custom-maps", "", `the maps a custom game's creator may pick with a tag at the end of the game's name ("~#mm" MM_Map_v3, "~#sm" SM_Map_v5), comma-separated, besides SM_Map_v5 and --map; "" or "none" = only those`)
+	helloCheck := fs.String("gms-hello-check", "on", "whether a match host may seat a connection only after the server confirmed it may claim that player: on, or off for a NAT between the tunnel gateway and an agent's hosts, where the source address names no flow (off: whoever reaches a host's port can take a seat)")
 	fs.BoolVar(&cfg.customBots, "custom-bots", false, "custom games with match hosts: bots fill the open seats when the game starts (B15; off: only the lobby's players)")
 	fs.BoolVar(&cfg.testRefuseStart, "test-refuse-start", false, "test aid: each custom game's first start (its admin's advanceGameState IN_GAME) is refused, as the ready check refuses a start while a player isn't ready")
 	fs.DurationVar(&cfg.customAutoStart, "custom-autostart", 0, "a custom game whose humans all moved to the spectators starts by itself after this (e.g. 5s; 0 = off): a game of bots alone with --custom-bots, for tests")
@@ -1292,6 +1312,14 @@ func Run(args []string, h Hooks) int {
 		return 2
 	} else if !strings.EqualFold(lv, blaze.HostedLevel) {
 		cfg.level = lv
+	}
+	switch *helloCheck {
+	case "on":
+	case "off":
+		cfg.noHelloCheck = true
+	default:
+		fmt.Fprintf(os.Stderr, "dgserver: --gms-hello-check must be on or off, not %q\n", *helloCheck)
+		return 2
 	}
 	if cl, err := blaze.ParseLevels(*customMaps); err != nil {
 		fmt.Fprintln(os.Stderr, "dgserver:", strings.Replace(err.Error(), "--map", "--custom-maps", 1))

@@ -69,6 +69,16 @@ var ShippedLevels = []string{"DGTut_Map_v1", "LootBagPresentation_Map_Defeat", "
 	"MM_Map_v3", "SM_Map_v4", "SM_Map_v5", "SS_Map_v1", "Shaper_Gallery", "TA_Map_v1", "showroomCharacters",
 	"showroomObjects", "test_VFX_arena"}
 
+// ReservedNames are the names whose archive (File) the setup writes itself: a map called so would overwrite that archive or
+// be overwritten by it. A map a server delivers goes through this check too.
+var ReservedNames = []string{"AfterActionReview", "BotProfiles", "Chat", "CollectionItems", "Halloween", "ItemShop", "MatchOptions",
+	"ServerList", "ServerPicker"}
+
+// hasControl says whether a text holds a control character.
+func hasControl(s string) bool {
+	return strings.IndexFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7F }) >= 0
+}
+
 // ReservedTags are the map tags the server's own maps use (SM_Map_v5's and MM_Map_v3's).
 var ReservedTags = []string{"sm", "mm"}
 
@@ -201,6 +211,8 @@ func (c *checker) structure(others []Other) {
 		c.errorf("names.name", "name", nil, "name: %d characters, at most %d", len(m.Name), MaxNameLen)
 	case inList(m.Name, ShippedLevels, true):
 		c.errorf("names.shipped", "name", nil, "name %q is a shipped level's", m.Name)
+	case inList(m.Name, ReservedNames, true):
+		c.errorf("names.reserved", "name", nil, "name %q would take the place of the setup's own archive %s", m.Name, File(m.Name))
 	}
 	if !tagRe.MatchString(m.Tag) {
 		c.errorf("names.tag", "tag", nil, "tag %q: only a-z and 0-9, at least one", m.Tag)
@@ -218,8 +230,14 @@ func (c *checker) structure(others []Other) {
 	if n := utf8.RuneCountInString(m.Display); n == 0 || n > MaxDisplayLen {
 		c.errorf("names.display", "display", nil, "display %q: %d characters, 1 to %d", m.Display, n, MaxDisplayLen)
 	}
+	if hasControl(m.Display) { // a line end would add a line to the dialog's list and to the locale table
+		c.errorf("names.display", "display", nil, "display %q: no control characters", m.Display)
+	}
 	if n := utf8.RuneCountInString(m.Prefix); n > MaxPrefixLen {
 		c.errorf("names.prefix", "prefix", nil, "prefix: %d characters, at most %d", n, MaxPrefixLen)
+	}
+	if hasControl(m.Prefix) {
+		c.errorf("names.prefix", "prefix", nil, "prefix %q: no control characters", m.Prefix)
 	}
 	// size, references, symmetry kind, ground
 	if !(m.Size > 0 && m.Size <= MaxSize) {

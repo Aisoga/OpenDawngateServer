@@ -32,6 +32,11 @@ class HostedMatch final : public IMatch {
   }
   void OnConnected(ConnId conn, const std::string& addr) override { inner_.OnConnected(conn, addr); }
   bool OnHelloReq(ConnId conn, const HelloReq& req, PlayerSlot* slot) override;
+  // SEATAUTH: the server says who may claim which user (the host DLL's ServerMatch does the same)
+  bool AskHelloVerdict(ConnId, const std::string& addr, const HelloReq& req) override {
+    control_.SendVerifyHello(addr, static_cast<int64_t>(req.userId));
+    return true;
+  }
   // B15: a custom game (createGame's mode custom) holds every HelloReq until dgserver's startGame
   bool HoldHello(ConnId conn, const HelloReq& req) override {
     (void)conn, (void)req;

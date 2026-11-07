@@ -26,6 +26,7 @@ Usage:
 import hashlib
 import os
 import shutil
+import struct
 import sys
 import tempfile
 import unittest
@@ -55,6 +56,12 @@ MAPTABLE_SUMMARY = (SNDBANK_SUMMARY + "; every map named by its LevelId's line i
 # RATINGSHOW1: the default since then, the MAPTABLE output plus the rating cave (0x004DE1C9 and 0x004E0661 call
 # 0x011AB170, the cave, the label L"Rating " in .tls's slack)
 RATING_OUTPUT_SHA256 = "75974aeadff4f99f2a5f028126d5257f993e06953d661021c7f8a42addbe61be"
+# UICHAN: RATING_OUTPUT with every Scaleform heap taking its lock (two sites)
+HEAPLOCKS_OUTPUT_SHA256 = "b7254e054218a1e7a44be37a9e32c714317413c01853f15c93fd888952e7eeaf"
+# NUMFMT: HEAPLOCKS_OUTPUT with the UI's numbers at 15 digits (two sites)
+NUMFMT_OUTPUT_SHA256 = "1ec27470fb246a4d81820a96929a670f8cf27476fdca2f2417c5848d59e1255d"
+# AVGPREC: the default output, NUMFMT_OUTPUT with the profile's averages at full precision (one block)
+AVERAGES_OUTPUT_SHA256 = "73feaac8ca6b72ce79cbfe07205530f94ee583389c2e5ae991f1075f72b05a20"
 RATING_SUMMARY = MAPTABLE_SUMMARY + "; the profile box shows the rating the server sends (rating cave at 0x011ab170)"
 EXE = None  # set in __main__
 
@@ -104,10 +111,16 @@ class PatchClientTest(unittest.TestCase):
         cls.vsize_at = pe.sections[0].get_file_offset() + 8
         cls.local, cls.local_summary = pc.patch_bytes(cls.orig, MODULUS)
         cls.a4, cls.a4_summary = pc.patch_bytes(cls.orig, MODULUS, laa=False, preload=False, maptable=False,
-                                                rating=False)
-        cls.q3b, cls.q3b_summary = pc.patch_bytes(cls.orig, MODULUS, preload=False, maptable=False, rating=False)
-        cls.sndbank, cls.sndbank_summary = pc.patch_bytes(cls.orig, MODULUS, maptable=False, rating=False)
-        cls.maptable, cls.maptable_summary = pc.patch_bytes(cls.orig, MODULUS, rating=False)
+                                                rating=False, heaplocks=False, numfmt=False, averages=False)
+        cls.q3b, cls.q3b_summary = pc.patch_bytes(cls.orig, MODULUS, preload=False, maptable=False, rating=False,
+                                                  heaplocks=False, numfmt=False, averages=False)
+        cls.sndbank, cls.sndbank_summary = pc.patch_bytes(cls.orig, MODULUS, maptable=False, rating=False,
+                                                          heaplocks=False, numfmt=False, averages=False)
+        cls.maptable, cls.maptable_summary = pc.patch_bytes(cls.orig, MODULUS, rating=False, heaplocks=False,
+                                                            numfmt=False, averages=False)
+        cls.rating, cls.rating_summary = pc.patch_bytes(cls.orig, MODULUS, heaplocks=False, numfmt=False, averages=False)
+        cls.heaplocks, cls.heaplocks_summary = pc.patch_bytes(cls.orig, MODULUS, numfmt=False, averages=False)
+        cls.numfmt, cls.numfmt_summary = pc.patch_bytes(cls.orig, MODULUS, averages=False)
 
     def at(self, data, va, n):
         return data[self.off(va):self.off(va) + n]
@@ -149,12 +162,68 @@ class PatchClientTest(unittest.TestCase):
         self.assertEqual([pc.describe(d)["maptable"] for d in (self.orig, self.sndbank, self.maptable)],
                          ["as-shipped", "as-shipped", "on"])
 
-    def test_local_default_is_maptable_output_plus_rating_cave(self):
-        self.assertEqual(sha256(self.local), RATING_OUTPUT_SHA256)
-        self.assertEqual(self.local_summary, RATING_SUMMARY)
+    def test_local_default_is_number_format_output_plus_averages(self):
+        self.assertEqual(sha256(self.local), AVERAGES_OUTPUT_SHA256)
+        at_block = self.off(pc.AVERAGES_BLOCK)
+        for start, end in diff_ranges(self.numfmt, self.local):
+            self.assertTrue(at_block <= start and end <= at_block + len(pc.AVERAGES_NEW), hex(start))
+        self.assertEqual(len(pc.AVERAGES_NEW), len(pc.AVERAGES_ORIG))
+        self.assertEqual(self.at(self.orig, pc.AVERAGES_BLOCK, len(pc.AVERAGES_ORIG)), pc.AVERAGES_ORIG)
+        self.assertEqual(self.at(self.local, pc.AVERAGES_BLOCK, len(pc.AVERAGES_NEW)), pc.AVERAGES_NEW)
+        # what the block's code does: the instructions, the stack, and that what the code after it reads is kept
+        import capstone
+        md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+        ins = list(md.disasm(pc.AVERAGES_NEW, pc.AVERAGES_BLOCK))
+        self.assertEqual(ins[-1].address + ins[-1].size, pc.AVERAGES_BLOCK + len(pc.AVERAGES_NEW))
+        code = [(x.mnemonic, x.op_str) for x in ins if x.mnemonic != "nop"]
+        self.assertEqual(sum({"push": 1, "pop": -1}.get(m, 0) for m, _ in code), 0)
+        self.assertEqual([m for m, _ in code if m.startswith("f")],
+                         ["fnstcw", "fldcw", "fld", "fdiv", "fstp", "fstp", "fldcw"])
+        self.assertEqual(code[-9:], [
+            ("mov", "eax, dword ptr [esp + 0x90]"), ("xor", "edx, edx"), ("div", "ecx"),
+            ("mov", "dword ptr [esp + 0x90], eax"), ("mov", "ebx, dword ptr [esp + 0x14]"), ("add", "ebx, 0x78"),
+            ("mov", "eax, dword ptr [ebx]"), ("mov", "esi, eax"), ("mov", "dword ptr [esp + 0x10], esi")])
+        self.assertEqual([pc.describe(d)["averages"] for d in (self.orig, self.numfmt, self.local)],
+                         ["as-shipped", "as-shipped", "on"])
+        self.assertEqual(self.local_summary, self.numfmt_summary + "; the profile's averages at full precision "
+                         "(8.7, not 8.6)")
+
+    def test_number_format_output_is_heap_locks_output_plus_number_format(self):
+        self.assertEqual(sha256(self.numfmt), NUMFMT_OUTPUT_SHA256)
+        at_format, at_step = self.off(pc.NUMFMT_FORMAT), self.off(pc.NUMFMT_STEP)
+        self.assertEqual(sorted(diff_ranges(self.heaplocks, self.numfmt)),
+                         sorted([(at_format + 3, at_format + 4), (at_step + 2, at_step + 5)]))
+        self.assertEqual(self.at(self.orig, pc.NUMFMT_FORMAT, 6), b"%.16g\0")
+        self.assertEqual(self.at(self.numfmt, pc.NUMFMT_FORMAT, 6), b"%.15g\0")
+        self.assertEqual(self.at(self.orig, pc.NUMFMT_STEP, 6), bytes.fromhex("dd05d87b3001"))  # fld [0x01307BD8]
+        self.assertEqual(self.at(self.numfmt, pc.NUMFMT_STEP, 6), bytes.fromhex("dd0540d13501"))  # fld [0x0135D140]
+        self.assertEqual(self.at(self.orig, 0x01307BD8, 8), struct.pack("<d", 1e16))
+        self.assertEqual(self.at(self.numfmt, pc.NUMFMT_1E15, 8), struct.pack("<d", 1e15))
+        self.assertEqual([pc.describe(d)["numfmt"] for d in (self.orig, self.heaplocks, self.numfmt)],
+                         ["as-shipped", "as-shipped", "on"])
+        self.assertEqual(self.numfmt_summary, self.heaplocks_summary + "; the UI's numbers print with 15 digits "
+                         "(8.2, not 8.199999999999999)")
+
+    def test_heap_locks_output_is_rating_output_plus_heap_locks(self):
+        self.assertEqual(sha256(self.heaplocks), HEAPLOCKS_OUTPUT_SHA256)
+        allowed = [(self.off(va), len(pc.HEAP_LOCKS_NEW)) for va in pc.HEAP_LOCKS]
+        ranges = list(diff_ranges(self.rating, self.heaplocks))
+        self.assertTrue(ranges)
+        for start, end in ranges:
+            self.assertTrue(any(s <= start and end <= s + n for s, n in allowed), hex(start))
+        for va in pc.HEAP_LOCKS:
+            self.assertEqual(self.at(self.orig, va, 5), bytes.fromhex("f6d280e201"))  # not dl; and dl,1
+            self.assertEqual(self.at(self.heaplocks, va, 5), bytes.fromhex("b201909090"))  # mov dl,1; nops
+            self.assertEqual(self.at(self.orig, va + 5, 3), bytes.fromhex("885364"))  # mov [ebx+0x64],dl: UseLocks
+        self.assertEqual([pc.describe(d)["heaplocks"] for d in (self.orig, self.rating, self.heaplocks)],
+                         ["as-shipped", "as-shipped", "on"])
+
+    def test_rating_output_is_maptable_output_plus_rating_cave(self):
+        self.assertEqual(sha256(self.rating), RATING_OUTPUT_SHA256)
+        self.assertEqual(self.rating_summary, RATING_SUMMARY)
         allowed = [(self.off(pc.RATING_SITE1), 16), (self.off(pc.RATING_SITE2), 5),
                    (self.off(pc.RATING_CAVE), len(pc.RATING_CAVE_CODE)), (self.off(pc.RATING_LABEL_VA), 14)]
-        for start, end in diff_ranges(self.maptable, self.local):
+        for start, end in diff_ranges(self.maptable, self.rating):
             self.assertTrue(any(s <= start and end <= s + n for s, n in allowed), hex(start))
         # the first site calls the text routine (cave + 5) and stores ebx and type 7; the second calls mov ebp,7
         self.assertEqual(self.at(self.local, pc.RATING_SITE1, 16), bytes.fromhex("e8a7cfcc00895c245c6a0759894c2458"))
@@ -199,6 +268,9 @@ class PatchClientTest(unittest.TestCase):
                    (self.off(pc.REDIRECTOR_HOST), 21), (self.off(pc.NOUPNP_JNZ), 1),
                    (self.off(pc.UPNP_DISC), len(pc.UPNP_DISC_NEW)), (chars, 2),
                    (self.off(pc.PRELOAD_COUNT), len(pc.PRELOAD_COUNT_NEW))}
+        changed |= {(self.off(va), len(pc.HEAP_LOCKS_NEW)) for va in pc.HEAP_LOCKS}  # since UICHAN the heap locks
+        changed |= {(self.off(pc.NUMFMT_FORMAT), 6), (self.off(pc.NUMFMT_STEP), 6)}  # since NUMFMT the number format
+        changed |= {(self.off(pc.AVERAGES_BLOCK), len(pc.AVERAGES_NEW))}  # since AVGPREC the averages
         for start, end in diff_ranges(self.orig, lan):
             self.assertTrue(any(s <= start and end <= s + n for s, n in changed), hex(start))
         self.assertIn("sockets as shipped", summary)
@@ -259,7 +331,7 @@ class PatchClientTest(unittest.TestCase):
 
     def test_wrong_build_is_refused_in_every_profile(self):
         for va in (pc.BIND_CALLS[0], pc.BIND_THUNK, pc.REDIRECTOR_HOST, pc.NOUPNP_JNZ, pc.PRELOAD_COUNT, pc.MAP_MISS,
-                   pc.MAP_RESUME):
+                   pc.MAP_RESUME, pc.NUMFMT_FORMAT, pc.NUMFMT_STEP, pc.NUMFMT_1E15, pc.AVERAGES_BLOCK):
             bad = bytearray(self.orig)
             bad[self.off(va)] ^= 0xFF
             for profile, kw in [("local", {}), ("lan", {"server_host": "192.168.1.20"})]:
@@ -274,14 +346,23 @@ class PatchClientTest(unittest.TestCase):
             with open(mod, "wb") as f:
                 f.write(MODULUS)
             pc.main(["patch_client.py", exe, mod])
+            self.assertEqual(sha256(read(exe)), AVERAGES_OUTPUT_SHA256)
+            pc.main(["patch_client.py", exe, mod, "--averages", "off"])
+            self.assertEqual(sha256(read(exe)), NUMFMT_OUTPUT_SHA256)
+            pc.main(["patch_client.py", exe, mod, "--averages", "off", "--number-format", "off"])
+            self.assertEqual(sha256(read(exe)), HEAPLOCKS_OUTPUT_SHA256)
+            pc.main(["patch_client.py", exe, mod, "--averages", "off", "--number-format", "off", "--heap-locks", "off"])
             self.assertEqual(sha256(read(exe)), RATING_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--rating", "off"])
+            pc.main(["patch_client.py", exe, mod, "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--rating", "off"])
             self.assertEqual(sha256(read(exe)), MAPTABLE_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--maptable", "off", "--rating", "off"])
+            pc.main(["patch_client.py", exe, mod, "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--maptable", "off",
+                     "--rating", "off"])
             self.assertEqual(sha256(read(exe)), SNDBANK_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--preload", "off", "--maptable", "off", "--rating", "off"])
+            pc.main(["patch_client.py", exe, mod, "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--preload", "off",
+                     "--maptable", "off", "--rating", "off"])
             self.assertEqual(sha256(read(exe)), Q3B_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--laa", "off", "--preload", "off", "--maptable", "off",
+            pc.main(["patch_client.py", exe, mod, "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--laa", "off", "--preload",
+                     "off", "--maptable", "off",
                      "--rating", "off"])
             self.assertEqual(sha256(read(exe)), A4_OUTPUT_SHA256)
             pc.main(["patch_client.py", exe, mod, "--profile", "lan", "--server-host", "192.168.1.20"])
@@ -290,10 +371,10 @@ class PatchClientTest(unittest.TestCase):
             self.assertEqual(self.at(lan, pc.BIND_THUNK, 6), pc.JMP_BIND)
             self.assertEqual(sha256(read(exe + ".orig")), BUILD_854_SHA256)
             pc.main(["patch_client.py", exe, mod, "127.0.0.1"])  # the A4 command line, back to local
-            self.assertEqual(sha256(read(exe)), RATING_OUTPUT_SHA256)
+            self.assertEqual(sha256(read(exe)), AVERAGES_OUTPUT_SHA256)
             with self.assertRaises(SystemExit):  # refused before anything is written
                 pc.main(["patch_client.py", exe, mod, "--profile", "lan"])
-            self.assertEqual(sha256(read(exe)), RATING_OUTPUT_SHA256)
+            self.assertEqual(sha256(read(exe)), AVERAGES_OUTPUT_SHA256)
 
 
 class RefusalWithoutExeTest(unittest.TestCase):

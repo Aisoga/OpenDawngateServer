@@ -180,6 +180,7 @@ func TestMapCheckVersionQueue(t *testing.T) {
 	if f := a.reply(6, 1, a.send(6, 1, golden.Bytes(t, decodeCase(t, g, "createplaygroup_party_request")))); f.Error != 0 {
 		t.Fatalf("party: %#x", f.Error)
 	}
+	ts.s.groups.inviteByServer(1, b.id)
 	if f := b.reply(6, 3, b.send(6, 3, golden.Bytes(t, decodeCase(t, g, "joinplaygroup_request")))); f.Error != 0 {
 		t.Fatalf("join party: %#x", f.Error)
 	}

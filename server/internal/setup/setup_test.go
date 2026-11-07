@@ -291,11 +291,15 @@ func TestClientForAnotherServer(t *testing.T) {
 			t.Errorf("%s: %v, %v", sp.What, err, err2)
 		}
 	}
-	// the Collection's items: the movie and the item list of the copy's own game data
+	// the Collection's items: the movie, the item list of the copy's own game data, and where this copy's server has its
+	// UI channel (the copy's own server, not the default: a class dialling the default would reach nobody)
 	if b, err := os.ReadFile(filepath.Join(s.ClientCopy(), filepath.FromSlash(moviepatch.Collection.Rel))); err != nil {
 		t.Errorf("%s: %v", moviepatch.Collection.What, err)
-	} else if a, err := snap.Parse(b); err != nil || len(a.Entries) != 2 || a.Entries[1].Name != moviepatch.ItemsPath {
-		t.Errorf("%s: %v, %+v", moviepatch.Collection.What, err, a)
+	} else if a, err := snap.Parse(b); err != nil || len(a.Entries) != 3 || a.Entries[1].Name != moviepatch.ItemsPath ||
+		a.Entries[2].Name != moviepatch.ChannelPath {
+		t.Errorf("%s: %v, %d entries", moviepatch.Collection.What, err, len(a.Entries))
+	} else if c, err := a.Read(a.Entries[2]); err != nil || string(c) != "dawngate-channel\t1\nhost\t192.168.1.20\nport\t10039\nend\n" {
+		t.Errorf("the channel file: %q, %v", c, err)
 	}
 	if b, _ := os.ReadFile(filepath.Join(s.ClientCopy(), filepath.FromSlash(localepatch.Rel))); !bytes.Contains(b,
 		[]byte("0x00000003 http://192.168.1.20:18080/dawngate/password\r\n")) {
@@ -303,7 +307,8 @@ func TestClientForAnotherServer(t *testing.T) {
 	}
 	exe, _ := os.ReadFile(filepath.Join(s.ClientCopy(), "game", "Dawngate.exe"))
 	d, _ := exepatch.Describe(exe)
-	if d["redirector"] != "192.168.1.20" || d["bind"] != "as-shipped" || d["ca_sha256"] != certs.Fingerprint(set.CAModulus) {
+	if d["redirector"] != "192.168.1.20" || d["bind"] != "as-shipped" || d["ca_sha256"] != certs.Fingerprint(set.CAModulus) ||
+		d["heaplocks"] != "on" || d["numfmt"] != "on" || d["averages"] != "on" {
 		t.Errorf("client exe %v", d)
 	}
 	cfg, _ := os.ReadFile(filepath.Join(s.ClientCopy(), "game", "Data", "Config_Ship.package"))

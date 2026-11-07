@@ -216,6 +216,9 @@ func (hg *hostedGame) browserGame() (BrowserGame, bool) {
 			b.Admin = hp.p.ID
 		}
 		t := int(hp.p.Team)
+		if t < 0 || t > SpectatorTeam {
+			continue
+		}
 		for len(b.Teams) <= t {
 			b.Teams = append(b.Teams, []int64{})
 		}
@@ -273,7 +276,7 @@ func registerReconnect(s *Server) {
 		for _, id := range ids {
 			if hg := r.Server.hosted.get(id); hg != nil {
 				if b, ok := hg.browserGame(); ok {
-					b.Game = r.Conn.ForClient(b.Game) // a tunnelled client sees its tunnel address
+					b.Game = r.Conn.addressedForClient(b.Game) // a tunnelled client sees its tunnel address; a lookup joins nothing
 					games = append(games, b)
 					r.Server.Log.Logf("blaze", "   getGameDataFromId: game %d, state %#x, %d players in it, teams %v", id,
 						b.State, b.Players, b.Teams)

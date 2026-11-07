@@ -472,7 +472,8 @@ func (s *Site) adminResetPassword(w http.ResponseWriter, r *http.Request, sess *
 	}
 	s.audit(w, r, actor(sess, r), "reset password", accounts.AccountTarget(id, cred.Name), "a new random password")
 	v.Admin.Secret, v.Admin.SecretWhat = pw, fmt.Sprintf("The new password of account %d %s", id, cred.Name)
-	v.Done = "The old password no longer works. Give the player the new one; it is shown only now."
+	v.Done = "The old password no longer works. Give the player the new one; it is shown only now." +
+		s.endSessions(id, "its password was reset")
 	show(http.StatusOK)
 }
 

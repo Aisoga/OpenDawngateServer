@@ -56,13 +56,20 @@ struct GmsSession::Conn {
   bool loading = false;                     // in the pre-game's loading sub-state (C0 01 sent, or B6 with 0x10)
   bool loadImplicit = false;                // loading started by B6 with status 0x10 (no C0 01)
   bool allLoaded = false;                   // the client sent C0 04 while loading
-  bool helloRefused = false;                // the match refused the HelloReq
+  bool earlyLoadLogged = false;             // HOSTHARD: a 0x400 before the load, logged once
+  bool helloRefused = false;                // the HelloReq was refused (the connection closes: closeDue)
+  bool closeDue = false;                    // SEATAUTH: Tick closes it
+  bool verifying = false;                   // SEATAUTH: the HelloReq waits for its verdict (heldHello)
+  std::string verifyAddr;                   // the address the question named
+  SteadyClock::time_point verifyDeadline{};
   bool helloHeld = false;                   // B15: the match holds the HelloReq (a custom game's lobby)
   HelloReq heldHello;                       // B15: that HelloReq
   uint64_t userId = 0;                      // from HelloReq
   PlayerSlot slot;                          // from the match, at HelloReq
   uint32_t status = 0;                      // the GMS's copy of the player's mStatus (echoStatus)
   float progress = 0.0f;                    // and mStatusProgress
+  SteadyClock::time_point nextProgressEcho{};  // HOSTHARD: the throttle of progress-only echoes
+  int progressEchoes = 0;                   // HOSTHARD: those so far (the first few are logged)
   bool skip = false;                        // status 0x10: no shaper select (script A)
   bool shaperSelect = false;                // D3-core: this connection goes through the match's ShaperSelect
   bool revealed = false;                    // the reveal's player updates went to it
@@ -88,7 +95,8 @@ struct GmsSession::Conn {
 
 GmsSession::GmsSession(ITransport& net, IMatch& match, const SessionOptions& options,
                        SteadyClock::time_point serverStart)
-    : net_(net), match_(match), o_(Normalized(options)), serverStart_(serverStart), guard_(o_.check) {}
+    : net_(net), match_(match), o_(Normalized(options)), serverStart_(serverStart), commRate_(o_.commRate),
+      guard_(o_.check) {}
 
 GmsSession::~GmsSession() = default;
 
@@ -150,16 +158,23 @@ void GmsSession::OnMessage(ConnId conn, const uint8_t* data, size_t n) {
   if (b == kGmsHelloReq) {
     HelloReq req;
     if (!ParseHelloReq(body, nb, &req)) return;
-    c.userId = req.userId;
-    if (c.sent != kStepConnected || o_.stopAfter < kStepHello || c.helloHeld) return;
-    if (match_.HoldHello(c.id, req)) {  // B15: a custom game's lobby; Tick answers it once the match starts
-      c.helloHeld = true;
-      c.heldHello = req;
-      Logf("%s %8.3f    HelloReq from user %llu held: the match waits in its lobby", Clock().c_str(), c.Secs(),
-           static_cast<unsigned long long>(req.userId));
+    // SEATAUTH: only a connection's first HelloReq counts; a seated, held or refused one can't rename itself
+    if (c.sent != kStepConnected || o_.stopAfter < kStepHello || c.helloHeld || c.verifying || c.helloRefused) return;
+    c.heldHello = req;
+    if (barred_.count(req.userId)) {
+      RefuseHello(c, "kicked from this match");
       return;
     }
-    HandleHello(c, req, now);
+    c.verifyAddr = c.addr;  // RakNet writes "ip|port", the control channel "ip:port"
+    std::replace(c.verifyAddr.begin(), c.verifyAddr.end(), '|', ':');
+    if (match_.AskHelloVerdict(c.id, c.verifyAddr, req)) {
+      c.verifying = true;
+      c.verifyDeadline = now + std::chrono::milliseconds(o_.verifyTimeoutMs);
+      Logf("%s %8.3f    HelloReq from user %llu held: asking the server who is behind %s", Clock().c_str(), c.Secs(),
+           static_cast<unsigned long long>(req.userId), c.verifyAddr.c_str());
+      return;
+    }
+    AdmitHello(c, req, now);
     return;
   }
 
@@ -209,8 +224,9 @@ void GmsSession::OnMessage(ConnId conn, const uint8_t* data, size_t n) {
   if (b == kGmsBattlegroundsPreGameMsgs && nb >= 1 && body[0] == kPreGameAllLoaded && c.loading && !c.allLoaded) {
     // C0 04 while loading: every player's echoed status has 0x400 (PreDungeonState_Update 0x006AB070)
     c.allLoaded = true;
-    Logf("%s %8.3f    client reports all players loaded (C0 04)", Clock().c_str(), c.Secs());
-    if (o_.echoStatus && c.sent == kStepLoad && o_.stopAfter >= kStepDone) c.due = now + step;
+    // HOSTHARD: Tick goes on once the server's own statuses agree (AllLoaded), or at the load's deadline
+    Logf("%s %8.3f    client reports all players loaded (C0 04)%s", Clock().c_str(), c.Secs(),
+         !o_.echoStatus || AllLoaded(c) ? "" : "; the server's statuses don't say so yet");
     return;
   }
 
@@ -237,18 +253,41 @@ void GmsSession::OnMessage(ConnId conn, const uint8_t* data, size_t n) {
       c.leftGame = true;  // G3b: the answer to GameAborted (LobbyState_HandleMessage 0x00546A40)
       Logf("%s %8.3f    client left the aborted game (status 0x%x)", Clock().c_str(), c.Secs(), r.flags);
     }
+    // HOSTHARD: the client reports 0x401 only in the pre-game's loading sub-state (PreDungeonState_Update 0x006AB070, while
+    // its status lacks 0x400, every frame), which C0 01 or B6 with status 0x10 opens. Earlier it would deploy the creature
+    // and the bots (the match's kLoaded) during shaper select, so it doesn't count; a real client can't send it then, and
+    // one that loads later keeps sending it.
+    if ((r.flags & kStatusLevelLoaded) && !c.loading) {
+      r.flags &= ~(kStatusLevelLoaded | kStatusLoadedPart);
+      if (!c.earlyLoadLogged) {
+        c.earlyLoadLogged = true;
+        Logf("%s %8.3f    client reports the level loaded before its load; not counted", Clock().c_str(), c.Secs());
+      }
+    }
     if (o_.echoStatus) {
-      // D2c's status model: OR in what the client reports, echo the whole word when it (or the progress) changed.
+      // D2c's status model: OR in what the client reports, echo the whole word when it changed. HOSTHARD: a change of the
+      // progress alone (ever new ones are all a hostile client needs: one flushed log line per connection each) at most
+      // every progressEchoMs, and only the first statusEchoLogs of those are logged.
       const uint32_t status = c.status | r.flags;
-      if (status != c.status || r.progress != c.progress) {
+      const bool word = status != c.status;
+      if (word || (r.progress != c.progress && now >= c.nextProgressEcho)) {
+        bool quiet = false;
+        if (!word) {
+          c.nextProgressEcho = now + std::chrono::milliseconds(o_.progressEchoMs);
+          quiet = ++c.progressEchoes > o_.statusEchoLogs;
+          if (c.progressEchoes == o_.statusEchoLogs + 1)
+            Logf("%s %8.3f    further echoes of this client's progress aren't logged", Clock().c_str(), c.Secs());
+        }
         c.status = status;
         c.progress = r.progress;
         char what[80];
         std::snprintf(what, sizeof what, "status echo 0x%x, progress %.3f", c.status, c.progress);
         match_.OnPlayerStatus(c.id, c.status, c.progress);  // first, so the match's own echo has the new status
         const Bytes echo = BuildPlayerStatusEcho(c.slot.gameplayIndex, c.status, c.progress);
+        quietSends_ = quiet;
         SendPlayerUpdate(c, echo, PlayerStatusEchoMembers(), what);
         if (o_.nameHumans) SendStatusToOthers(c, echo, what);  // G3: the other clients' gates and accept counts
+        quietSends_ = false;
       }
     }
     if ((r.flags & kStatusLevelLoaded) && !c.loaded) {
@@ -261,6 +300,101 @@ void GmsSession::OnMessage(ConnId conn, const uint8_t* data, size_t n) {
   }
 
   match_.OnClientMessage(c.id, b, body, nb);
+}
+
+// SEATAUTH: a HelloReq that needs no verdict, or got its ok: its user id counts from here on, and it goes to the match
+// or waits in its lobby.
+void GmsSession::AdmitHello(Conn& c, const HelloReq& req, SteadyClock::time_point now) {
+  c.userId = req.userId;
+  if (match_.HoldHello(c.id, req)) {  // B15: a custom game's lobby; Tick answers it once the match starts
+    // one held connection per user, the newest: the older one's client reconnected, and no user holds many slots
+    for (auto& kv : conns_) {
+      Conn& o = *kv.second;
+      if (&o != &c && o.helloHeld && o.heldHello.userId == req.userId && !o.closeDue) {
+        Logf("%s %8.3f    user %llu connected again while held in the lobby; its earlier connection %s closes",
+             Clock().c_str(), o.Secs(), static_cast<unsigned long long>(req.userId), o.addr.c_str());
+        o.closeDue = true;
+      }
+    }
+    c.helloHeld = true;
+    c.heldHello = req;
+    Logf("%s %8.3f    HelloReq from user %llu held: the match waits in its lobby", Clock().c_str(), c.Secs(),
+         static_cast<unsigned long long>(req.userId));
+    return;
+  }
+  HandleHello(c, req, now);
+}
+
+// SEATAUTH: no HelloPlayer, ever, on this connection, and it closes at the next Tick: a refused connection must not
+// keep one of the host's slots.
+void GmsSession::RefuseHello(Conn& c, const std::string& why) {
+  c.verifying = false;
+  c.helloHeld = false;
+  c.helloRefused = true;
+  c.closeDue = true;
+  Logf("%s %8.3f    HelloReq from user %llu on %s refused: %s; the connection closes", Clock().c_str(), c.Secs(),
+       static_cast<unsigned long long>(c.heldHello.userId), c.addr.c_str(), why.c_str());
+}
+
+void GmsSession::OnHelloVerdict(const std::string& addr, uint64_t user, bool ok) {
+  for (auto& kv : conns_) {
+    Conn& c = *kv.second;
+    if (!c.verifying || c.verifyAddr != addr || c.heldHello.userId != user) continue;
+    c.verifying = false;
+    if (!ok) {
+      RefuseHello(c, "the server says this connection may not claim that user");
+    } else if (barred_.count(user)) {
+      RefuseHello(c, "kicked from this match");
+    } else {
+      Logf("%s %8.3f    HelloReq from user %llu verified by the server", Clock().c_str(), c.Secs(),
+           static_cast<unsigned long long>(user));
+      AdmitHello(c, c.heldHello, SteadyClock::now());
+    }
+    return;
+  }
+  Logf("%s    a verdict for user %llu at %s, whose connection has gone; dropped", Clock().c_str(),
+       static_cast<unsigned long long>(user), addr.c_str());
+}
+
+void GmsSession::CloseConn(ConnId conn) {
+  net_.Close(conn);
+  guard_.Forget(conn);
+  OnDisconnected(conn);  // RakNet reports no disconnection for a connection closed on this side
+}
+
+int GmsSession::KickUser(uint64_t user, const std::string& why, bool bar) {
+  if (bar && user) barred_.insert(user);
+  std::vector<ConnId> ids;
+  for (auto& kv : conns_) {
+    const Conn& c = *kv.second;
+    if (c.userId == user || ((c.verifying || c.helloHeld) && c.heldHello.userId == user)) ids.push_back(c.id);
+  }
+  for (ConnId id : ids) {
+    auto it = conns_.find(id);
+    Logf("%s %8.3f    user %llu kicked (%s): connection %s closes", Clock().c_str(), it->second->Secs(),
+         static_cast<unsigned long long>(user), why.c_str(), it->second->addr.c_str());
+    CloseConn(id);
+  }
+  if (bar) Logf("%s    user %llu may not come back into this match", Clock().c_str(), static_cast<unsigned long long>(user));
+  return static_cast<int>(ids.size());
+}
+
+// SEATAUTH: what Tick closes (never during the loops over conns_): refused connections, HelloReqs without a verdict in
+// time, connections that never said who they are.
+void GmsSession::CloseDue(SteadyClock::time_point now) {
+  std::vector<ConnId> closing;
+  for (auto& kv : conns_) {
+    Conn& c = *kv.second;
+    if (c.verifying && now >= c.verifyDeadline) RefuseHello(c, "no verdict from the server in time");
+    if (o_.helloTimeoutMs > 0 && o_.stopAfter >= kStepHello && c.sent == kStepConnected && !c.helloHeld && !c.verifying &&
+        !c.closeDue && now - c.start >= std::chrono::milliseconds(o_.helloTimeoutMs)) {
+      Logf("%s %8.3f    connection %s sent no HelloReq within %d ms; it closes", Clock().c_str(), c.Secs(), c.addr.c_str(),
+           o_.helloTimeoutMs);
+      c.closeDue = true;
+    }
+    if (c.closeDue) closing.push_back(c.id);
+  }
+  for (ConnId id : closing) CloseConn(id);
 }
 
 // A HelloReq the match takes now (OnMessage's, or B15's held one once the match leaves its lobby): the match's slot,
@@ -278,10 +412,13 @@ void GmsSession::HandleHello(Conn& c, const HelloReq& req, SteadyClock::time_poi
       slot = PlayerSlot();
     }
   }
+  c.heldHello = req;
+  if (barred_.count(req.userId)) {
+    RefuseHello(c, "kicked from this match");
+    return;
+  }
   if (!match_.OnHelloReq(c.id, req, &slot)) {
-    c.helloRefused = true;
-    Logf("%s %8.3f    HelloReq from user %llu refused by the match; no HelloPlayer", Clock().c_str(), c.Secs(),
-         static_cast<unsigned long long>(req.userId));
+    RefuseHello(c, "refused by the match; no HelloPlayer");
     return;
   }
   const RejoinMap::Admission seat = seats_.Admit(req.userId, c.id, slot);
@@ -454,6 +591,7 @@ void GmsSession::Rejoined(Conn& c, const RejoinMap::Admission& a) {
   if (old) {
     old->superseded = true;
     old->due = {};
+    old->closeDue = true;  // SEATAUTH: its RakNet connection must not keep a slot of the host's
   }
   Logf("%s %8.3f    user %llu rejoins as player %u (team %u); its earlier connection %s", Clock().c_str(), c.Secs(),
        static_cast<unsigned long long>(c.userId), a.slot.gameplayIndex, a.slot.team,
@@ -776,6 +914,20 @@ bool GmsSession::PreGameGateOpen(std::string* missing) {
   return m.empty();
 }
 
+// HOSTHARD: whether the server's own statuses say what a client's C0 04 claims: it is loaded, and so is every connected
+// player it has that is in the pre-game's gates. A real client's C0 04 comes only after it saw those 0x400s, which the
+// session echoed; a player that came later (not in the gates yet, or not named to this client) holds nobody up. The bots
+// (MarkOthersLoaded) and the departed (0x4) don't count, as in the client's list.
+bool GmsSession::AllLoaded(const Conn& c) const {
+  if (!c.loaded) return false;
+  for (const auto& kv : conns_) {
+    const Conn& o = *kv.second;
+    if (&o == &c || o.superseded || !InGates(o) || !c.known.count(o.slot.gameplayIndex)) continue;
+    if (!(o.status & kStatusLevelLoaded)) return false;
+  }
+  return true;
+}
+
 // G3: B6 for every connection that waits for it, now.
 void GmsSession::OpenPreGameGate(SteadyClock::time_point now, const char* why) {
   int n = 0;
@@ -930,6 +1082,7 @@ void GmsSession::Tick() {
   const auto now = SteadyClock::now();
   const auto step = std::chrono::milliseconds(o_.stepMs);
   const auto loadTimeout = std::chrono::milliseconds(o_.loadTimeoutMs);
+  CloseDue(now);  // SEATAUTH
   match_.Tick(now, *this);
   if (ss_) {
     ss_->Tick(ServerMs(), *this);
@@ -968,7 +1121,11 @@ void GmsSession::Tick() {
            c.Secs(), o_.loadTimeoutMs);
       c.sent = kStepShaperSelect;
     }
-    if (c.sent == kStepLoad && !(o_.echoStatus ? c.allLoaded : c.loaded) && IsSet(c.loadDeadline) &&
+    // HOSTHARD: a client's C0 04 starts its way to EnterGame (and so the match's clock) only once the server's own
+    // statuses agree that it and every player it has are loaded, else at the load's deadline
+    const bool reported = o_.echoStatus ? c.allLoaded && AllLoaded(c) : c.loaded;
+    if (o_.echoStatus && reported && c.sent == kStepLoad && !IsSet(c.due) && o_.stopAfter >= kStepDone) c.due = now + step;
+    if (c.sent == kStepLoad && !reported && IsSet(c.loadDeadline) &&
         now >= c.loadDeadline && !IsSet(c.due) && o_.stopAfter >= kStepDone) {
       Logf("%s %8.3f    no %s from the client within %d ms of the load; continuing", Clock().c_str(), c.Secs(),
            o_.echoStatus ? "C0 04" : "status 0x401", o_.loadTimeoutMs);
@@ -1066,6 +1223,15 @@ bool GmsSession::Screen(Conn& c, uint8_t b, const uint8_t* body, size_t nb) {
     if (check::IWorld* w = match_.CheckWorld()) r = check::CheckWorld(b, body, nb, c.id, *w);
   }
   const double nowMs = std::chrono::duration<double, std::milli>(SteadyClock::now() - serverStart_).count();
+  if (r.ok() && b == kGmsActionCommandMsgs && c.sent >= kStepHello) {
+    // HOSTHARD: pings and emotes have a rate; over it they are answered like a stale command (no kick: not a bad message)
+    ActionCommand cmd;
+    std::string error;
+    if (ParseActionCommand(body, nb, &cmd, &error) && !commRate_.Allow(c.slot.gameplayIndex, cmd.type, nowMs)) {
+      r.verdict = check::Verdict::kStale;
+      r.reason = std::string(ActionCommandName(cmd.type)) + " over the player's rate";
+    }
+  }
   const bool kick = guard_.Note(c.id, b, r.verdict, nowMs);
   if (r.ok()) return false;
   const bool drop = o_.check.mode == 1;
@@ -1155,6 +1321,7 @@ void GmsSession::SendStep(Conn& c, int step, const Bytes& m) {
 
 bool GmsSession::SendRaw(Conn& c, const Bytes& m, const std::string& what) {
   const bool ok = net_.Send(c.id, m);
+  if (quietSends_) return ok;
   Logf("%s %8.3f    -> %02x %s (%zu B) %s: %s", Clock().c_str(), c.Secs(), m[0], GmsName(m[0]), m.size(),
        Hex(m, 64).c_str(), ok ? what.c_str() : (what + " SEND FAILED").c_str());
   return ok;
@@ -1213,7 +1380,8 @@ std::string GmsSession::StateOf(const Conn& c) const {
     if (i == kStepShaperSelect && !c.shaperSelect) continue;
     steps += std::string(i ? ">" : "") + kStepNames[i] + (i == kStepLoad && c.loadImplicit ? "(implicit)" : "");
   }
-  if (c.helloRefused) steps += "; HelloReq refused by the match";
+  if (c.helloRefused) steps += "; HelloReq refused";
+  if (c.verifying) steps += "; HelloReq being verified";
   if (c.helloHeld) steps += "; HelloReq held (the match waits in its lobby)";
   if (c.spectator) steps += "; spectator";  // B15b
   if (c.superseded) steps += "; superseded by its user's new connection";

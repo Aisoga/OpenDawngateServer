@@ -60,6 +60,11 @@ func (s joinSecret) String() string {
 }
 
 // parseJoinSecret reads a join secret; anything else is refused with the reason.
+// publicIP says whether an address is a server's on the internet, and not one inside the player's own network.
+func publicIP(ip net.IP) bool {
+	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified())
+}
+
 func parseJoinSecret(v string) (joinSecret, error) {
 	parts := strings.Split(v, "/")
 	if len(parts) != 4 || parts[0] != JoinSecretVersion {
@@ -264,6 +269,12 @@ func (f *Front) DiscordJoinSecret(secret string) {
 		f.wakeJoin()
 		return
 	}
+	if ip := net.ParseIP(s.Address); ip != nil && !f.JoinLoopback && !publicIP(ip) {
+		f.logf("discord join: a Join naming the address %s, which isn't a public one: refused", s.Address)
+		f.queueNote("This Join from Discord can't be used (it names an address that isn't a public server's).")
+		f.wakeJoin()
+		return
+	}
 	f.logf("discord join: a Join from Discord for %s (key %s)", net.JoinHostPort(s.Address, strconv.Itoa(s.Port)), s.Pin.Fingerprint())
 	f.join.mu.Lock()
 	f.join.pending = &pendingJoin{s: s, at: f.Now()}
@@ -452,8 +463,10 @@ func (f *Front) joinRefresh() time.Duration {
 	return JoinRefresh
 }
 
-// placeJoin finds or adds the secret's server in the list and trusts its key when none is trusted for it: the list's
-// tag. A server in the list with another trusted key, or another gateway port, is refused.
+// placeJoin finds or adds the secret's server in the list: the list's tag. A server in the list with another trusted key, or
+// another gateway port, is refused. A key not trusted yet stays that way: anyone can publish a Discord activity with a
+// secret, so a Join is no reason to trust a server, and the next login stops at the same confirm once as any new server's
+// (trustKey), before a password goes anywhere. A wrong key in a secret therefore can't pin itself over the real one.
 func (f *Front) placeJoin(s joinSecret) (string, error) {
 	b, ok := f.Bookmarks.Find(s.Address)
 	if !ok || !strings.EqualFold(b.Address, s.Address) {
@@ -472,10 +485,7 @@ func (f *Front) placeJoin(s joinSecret) (string, error) {
 		return "", fmt.Errorf("the Join names another key for %s (%s) than the one you trust (%s)", b.Address,
 			s.Pin.Fingerprint(), known.Fingerprint())
 	case !ok:
-		if _, err := TrustGateway(b.Address, s.Pin, TrustOptions{Store: TrustedGateway(f.Layout, b.Address), Accept: true}); err != nil {
-			return "", fmt.Errorf("storing %s's key: %v", b.Address, err)
-		}
-		f.logf("discord join: trusting %s's tunnel key %s (from a Join)", b.Address, s.Pin.Fingerprint())
+		f.logf("discord join: %s's key isn't trusted yet: the next login confirms it", b.Address)
 	}
 	return b.Tag, nil
 }
@@ -544,6 +554,13 @@ func (f *Front) joinGuest() {
 		return
 	}
 	if !ready {
+		return
+	}
+	// the key the player confirmed at the login must be the one the friend's secret names: the code belongs to that server
+	if known, ok := f.trustedPin(b); !ok || !tunnel.SamePin(known, p.s.Pin) {
+		f.logf("discord join: the Join names the key %s, %s is trusted with another: refused", p.s.Pin.Fingerprint(), p.tag)
+		drop()
+		f.note(bc, "This Join from Discord names another key for this server than the one you trust: it wasn't used.")
 		return
 	}
 	if p.tries > 0 { // invited: the game's answer ends it; none within answerWait: invited again

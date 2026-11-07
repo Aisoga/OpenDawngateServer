@@ -128,11 +128,11 @@ uint8_t VisionModel::BitsOf(uint32_t id) const {
   return it != index_.end() && it->second < bits_.size() ? bits_[it->second] : 0;
 }
 
-bool VisionModel::SeenBy(int team, const Entity& t, bool wasVisible) const {
+bool VisionModel::SeenBy(int team, const Entity& t, bool wasVisible, float extra, bool useHysteresis) const {
   for (const Source& s : sources_) {
     if (s.team != team || (s.id != 0 && s.id == t.id)) continue;
     const float dx = s.x - t.x, dy = s.y - t.y;
-    const float reach = s.radius + (t.areaRadius > 0.f ? t.areaRadius : 0.f) + (wasVisible ? s.hysteresis : 0.f);
+    const float reach = s.radius + (t.areaRadius > 0.f ? t.areaRadius : 0.f) + (wasVisible && useHysteresis ? s.hysteresis : 0.f) + extra;
     if (dx * dx + dy * dy > reach * reach) continue;
     if (params_.terrain && !s.ignoreTerrain && params_.terrain->Blocked(s.x, s.y, t.x, t.y)) continue;
     if (params_.grass && !s.ignoreGrass) {
@@ -200,9 +200,50 @@ void VisionModel::Update(const std::vector<Entity>& entities, const Params& para
   std::vector<uint8_t> state(entities.size(), 0);
   for (size_t i = 0; i < entities.size(); ++i)
     if (entities[i].id) Resolve(i, &state);
+  // FOGEDGE: the second answer, from this tick's sources
+  reveal_ = bits_;
+  if (params_.revealMargin > 0.f || params_.revealHoldMs > 0.0) {
+    std::unordered_map<uint32_t, SeenAt> seenAt;
+    for (size_t i = 0; i < entities.size(); ++i) {
+      const Entity& e = entities[i];
+      if (!e.id || !e.revealEarly || !e.tracked || e.neverFogged || !e.controlsVisibility) continue;
+      const auto last = lastReveal_.find(e.id);
+      const uint8_t was = last != lastReveal_.end() ? last->second : 0;
+      if (!e.alive) {  // a corpse stays as it was, like its Bits
+        reveal_[i] = static_cast<uint8_t>(reveal_[i] | was);
+        continue;
+      }
+      const auto seenIt = seenAt_.find(e.id);
+      SeenAt seen = seenIt != seenAt_.end() ? seenIt->second : SeenAt();
+      for (int team = 0; team < kNumTeams; ++team) {
+        const uint8_t bit = TeamBit(team);
+        if (bits_[i] & bit) {
+          seen.ms[team] = params_.nowMs;
+          continue;
+        }
+        // leaving: one unit past the margin, against flicker, so the ghost doesn't linger in the dark as far as the
+        // source's own hysteresis would keep it
+        if (params_.revealMargin > 0.f &&
+            SeenBy(team, e, false, params_.revealMargin + ((was & bit) ? kRevealLeaveBand : 0.f), false)) {
+          reveal_[i] = static_cast<uint8_t>(reveal_[i] | bit);
+          continue;
+        }
+        const bool concealed = (params_.grass && e.grassId != 0 && (e.grassConceal & bit)) || (params_.stealth && e.stealthed);
+        if (params_.revealHoldMs > 0.0 && !concealed && seen.ms[team] >= 0.0 &&
+            params_.nowMs - seen.ms[team] <= params_.revealHoldMs)
+          reveal_[i] = static_cast<uint8_t>(reveal_[i] | bit);
+      }
+      seenAt[e.id] = seen;
+    }
+    seenAt_.swap(seenAt);
+  }
   last_.clear();
+  lastReveal_.clear();
   for (size_t i = 0; i < entities.size(); ++i)
-    if (entities[i].id) last_[entities[i].id] = bits_[i];
+    if (entities[i].id) {
+      last_[entities[i].id] = bits_[i];
+      lastReveal_[entities[i].id] = reveal_[i];
+    }
   entities_ = nullptr;
 }
 

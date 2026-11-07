@@ -16,8 +16,19 @@ void RouteOutgoing(std::vector<OutgoingRoute>* entries, uint16_t everyone, bool 
     e.unseen = 0;
     switch (e.kind) {
       case 0:
+        e.players = e.recipients;
+        break;
       case 1:
         e.players = e.recipients;
+        if (e.toKnown) {
+          if (e.objectAlive) {
+            e.players = e.known;
+          } else {
+            auto it = deleted.find(e.object);
+            e.players = it != deleted.end() ? it->second.first : 0;
+            e.fromDeletion = it != deleted.end();
+          }
+        }
         break;
       case 2: {
         uint16_t sees = kRouteUnknown;

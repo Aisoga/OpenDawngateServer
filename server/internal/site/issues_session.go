@@ -31,6 +31,7 @@ type playerSession struct {
 	userID        int64
 	name          string // the login name (the store's, re-read at every request)
 	persona       string // the display name other players see
+	hash          string // the password's hash at the login
 	created, seen time.Time
 }
 
@@ -70,7 +71,8 @@ func (s *Site) playerSession(r *http.Request) *playerSession {
 		return nil
 	}
 	cred, found, err := s.cfg.Store.CredentialsByID(cp.userID)
-	if err != nil || !found || cred.Status != store.StatusActive {
+	// a session lasts as long as the password it logged in with: someone who once had the password loses it at a change
+	if err != nil || !found || cred.Status != store.StatusActive || (cp.hash != "" && cred.Hash != cp.hash) {
 		p.mu.Lock()
 		delete(p.sessions, c.Value)
 		p.mu.Unlock()
@@ -92,7 +94,7 @@ func (s *Site) newPlayerSession(w http.ResponseWriter, cred store.Credentials) *
 	}
 	p := s.players
 	now := s.cfg.Now()
-	sess := &playerSession{userID: cred.UserID, name: cred.Name, persona: persona, created: now, seen: now}
+	sess := &playerSession{userID: cred.UserID, name: cred.Name, persona: persona, hash: cred.Hash, created: now, seen: now}
 	p.mu.Lock()
 	for k, v := range p.sessions { // expired ones go; then the least recently used beyond the cap
 		if now.Sub(v.seen) > p.idle || now.Sub(v.created) > p.max {

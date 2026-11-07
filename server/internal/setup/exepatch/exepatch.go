@@ -30,6 +30,16 @@
 //     local user's DMAP[0x00070037] and passes L"Rating <n>" when it is above 0 (the text built in .tls's slack after
 //     the map key), else the empty string as shipped. The server sends the key only for a rating players are to see
 //     (blaze.ShownRating). On unless NoRating.
+//   - heaplocks: every Scaleform heap takes its lock. A movie's heap is created thread-unsafe, and flash.net.Socket's
+//     thread allocates from it, so a movie's socket corrupts the heap within a second without this (the UI channel,
+//     docs/development/ui-channel.md). On unless NoHeapLocks.
+//   - numfmt: the UI prints a number with 15 significant digits. Scaleform's AS3 number-to-string prints with 16, which
+//     shows the double nearest 8.2 as 8.199999999999999 (the profile's averages); 15 digits print every such value as it
+//     was meant. Its step up to more digits, which keeps large whole
+//     numbers exact, starts at 1e15 instead of 1e16, so 16-digit whole numbers stay as they were. On unless NoNumberFormat.
+//   - averages: the profile's averages are real divisions at full precision. The shipped total * (1 / games) ran on an x87
+//     at 24 bits, so an average that is an exact tenth could land just under it and show a tenth low (87 over 10 games as
+//     8.6). The block is rewritten in place: no cave. On unless NoAverages.
 //
 // Profiles: "local" (the default; the server on a loopback address, every wildcard bind narrowed to it) and "lan" (a
 // server elsewhere on our own network: ServerHost required, the binds as shipped unless ClientBind names this
@@ -77,6 +87,12 @@ const (
 	charBuild         = 0x0103     // IMAGE_FILE_HEADER.Characteristics of build 854
 	charLAA           = 0x0020     // IMAGE_FILE_LARGE_ADDRESS_AWARE
 	preloadCount      = 0x0066BD1F // GameClient_PreloadPlayerCharacters' call to GameSimulator_CountPlayers (its loop bound)
+	heapLocksPT       = 0x00D294E1 // a heap constructor's UseLocks (heap +0x64)
+	heapLocksMH       = 0x00D727B5 // the other kind of heap's
+	numFmtFormat      = 0x01329B88 // "%.16g": Scaleform's number-to-string (0x00EA69F0) copies it to its stack, its only reader
+	numFmtStep        = 0x00EA6B3C // its fld of the value from which it raises the digits (1e16)
+	numFmt1e15        = 0x0135D140 // a 1e15 double in .rdata, which the step reads instead
+	averagesBlock     = 0x00AA63C8 // StatsManager_OnShaperHistoryStatsResult, with the games in st(0): the averages
 
 	// The map-name method (0x00684380): its loop over the one-entry map table, the not-found exit, the found path
 	// and where the found path checks and looks up its key.
@@ -122,6 +138,13 @@ var (
 	callBind           = append([]byte{0xFF, 0x15}, le32(bindIAT)...)
 	jmpBind            = append([]byte{0xFF, 0x25}, le32(bindIAT)...)
 	raknetLoopbackOrig = []byte("127.0.0.1\x00\x00\x00::1\x00")
+	heapLocksOrig      = mustHex("f6d280e201") // not dl; and dl,1: UseLocks = !(flags & Heap_ThreadUnsafe)
+	heapLocksNew       = mustHex("b201909090") // mov dl,1; nop; nop; nop
+	numFmtFormatOrig   = []byte("%.16g\x00")
+	numFmtFormatNew    = []byte("%.15g\x00")
+	numFmtStepOrig     = mustHex("dd05d87b3001")                                                // fld qword ptr [0x01307BD8]: 1e16
+	numFmtStepNew      = mustHex("dd0540d13501")                                                // fld qword ptr [0x0135D140]: 1e15
+	numFmt1e15Value    = mustHex("00003426f56b0c43")                                            // 1e15, little endian
 	preloadCountOrig   = mustHex("e8ec532800")                                                  // call 0x008F1110
 	preloadCountNew    = mustHex("b80f000000")                                                  // mov eax,15: every player index 0-14 (the caller's add esp,0x10 stays)
 	mapLoopOrig        = mustHex("33c9" + "3904cd7c3a3f01" + "741b" + "41" + "83f901" + "72f1") // the loop, kNumPlayableMaps 1
@@ -239,6 +262,45 @@ func ratingCaveCode() []byte {
 // mapKeyText is the key as the patch writes it (the cave fills in the digits).
 const mapKeyText = mapKeyPrefix + "00000000"
 
+// heapLockSites are the heap constructors' UseLocks computations.
+var heapLockSites = []uint32{heapLocksPT, heapLocksMH}
+
+// The averages' block as shipped: 1 / games, the seconds' integer division and the list's head, then each total times
+// the reciprocal.
+var averagesOrig = mustHex("d9e8" + "8b842490000000" + "def1" + "33d2" + "f7f1" + "8b5c2414" + "83c378" + "dd442468" + "d8c9" +
+	"89842490000000" + "8b03" + "dd5c2468" + "8bf0" + "dd442470" + "89742410" + "d8c9" + "dd5c2470" + "dd442478" + "d8c9" +
+	"dd5c2478" + "dd842480000000" + "d8c9" + "dd9c2480000000" + "dc8c2488000000" + "dd9c2488000000")
+
+// averagesNew is the same block with real divisions on an x87 at 53 bits, its padding the rest of the 97 bytes.
+var averagesNew = append(mustHex(
+	"50"+ // push eax: a slot for the x87's control word
+		"d93c24"+ // fnstcw word ptr [esp]: the game's
+		"687f020000"+ // push 0x27f: 53-bit precision, round to nearest, exceptions masked
+		"d92c24"+ // fldcw word ptr [esp]
+		"58"+ // pop eax
+		"8d54246c"+ // lea edx,[esp+0x6c]: the first total ([esp+0x68] before the push)
+		"6a05"+ // push 5: kills, deaths, assists, CS, vim, five doubles in a row
+		"58"+ // pop eax
+		"dd02"+ // loop: fld qword ptr [edx]; st(1) is the games
+		"d8f1"+ // fdiv st(0),st(1)
+		"dd1a"+ // fstp qword ptr [edx]
+		"83c208"+ // add edx,8
+		"48"+ // dec eax
+		"75f4"+ // jne loop
+		"ddd8"+ // fstp st(0): the games
+		"d92c24"+ // fldcw word ptr [esp]: the game's again
+		"58"+ // pop eax
+		"8b842490000000"+ // from here as shipped: mov eax,[esp+0x90], the seconds
+		"33d2"+ // xor edx,edx
+		"f7f1"+ // div ecx
+		"89842490000000"+ // mov [esp+0x90],eax
+		"8b5c2414"+ // mov ebx,[esp+0x14]
+		"83c378"+ // add ebx,0x78
+		"8b03"+ // mov eax,[ebx]
+		"8bf0"+ // mov esi,eax
+		"89742410"), // mov [esp+0x10],esi
+	bytes.Repeat([]byte{0x90}, 26)...)
+
 // Profiles.
 const (
 	ProfileLocal = "local"
@@ -255,6 +317,12 @@ type Options struct {
 	NoPreload  bool   // leave out the preload of every player index's shaper (patch_client.py --preload off)
 	NoMapTable bool   // leave out the map-name cave (patch_client.py --maptable off)
 	NoRating   bool   // leave out the profile box's rating text (patch_client.py --rating off)
+	// NoHeapLocks leaves out the UI heaps' locks (patch_client.py --heap-locks off)
+	NoHeapLocks bool
+	// NoNumberFormat leaves out the UI numbers' 15 digits (patch_client.py --number-format off)
+	NoNumberFormat bool
+	// NoAverages leaves out the profile averages' full precision (patch_client.py --averages off)
+	NoAverages bool
 }
 
 // Error is a refusal: the exe isn't the expected build, or the options don't fit the profile (patch_client.py's
@@ -640,16 +708,52 @@ func Patch(orig, modulus []byte, o Options) ([]byte, string, error) {
 		write(ratingSite2, ratingSite2New)
 		summary += fmt.Sprintf("; the profile box shows the rating the server sends (rating cave at 0x%08x)", ratingCave)
 	}
+
+	// --- every Scaleform heap takes its lock, as the movies' sockets need
+	for _, va := range heapLockSites {
+		if err := expect(va, heapLocksOrig, "a heap constructor's UseLocks"); err != nil {
+			return nil, "", err
+		}
+	}
+	if !o.NoHeapLocks {
+		for _, va := range heapLockSites {
+			write(va, heapLocksNew)
+		}
+		summary += "; the UI's memory heaps take their locks (a movie's socket reads on a thread)"
+	}
+	// --- the UI's numbers print with 15 digits: 8.2, not 8.199999999999999
+	if err := expect(numFmtFormat, numFmtFormatOrig, "the number-to-string's format"); err != nil {
+		return nil, "", err
+	}
+	if err := expect(numFmtStep, numFmtStepOrig, "the number-to-string's step to more digits"); err != nil {
+		return nil, "", err
+	}
+	if err := expect(numFmt1e15, numFmt1e15Value, "the 1e15 constant"); err != nil {
+		return nil, "", err
+	}
+	if !o.NoNumberFormat {
+		write(numFmtFormat, numFmtFormatNew)
+		write(numFmtStep, numFmtStepNew)
+		summary += "; the UI's numbers print with 15 digits (8.2, not 8.199999999999999)"
+	}
+	// --- the profile's averages are real divisions at full precision: 8.7, not 8.6
+	if err := expect(averagesBlock, averagesOrig, "the profile averages' block"); err != nil {
+		return nil, "", err
+	}
+	if !o.NoAverages {
+		write(averagesBlock, averagesNew)
+		summary += "; the profile's averages at full precision (8.7, not 8.6)"
+	}
 	return data, summary, nil
 }
 
 // Description is what an exe carries (patch_client.py's describe, --show), by key: redirector, bind, appdata,
-// documents, raknet_loopback, ca_sha256, ca_flag, laa, preload, maptable, rating (DescriptionKeys, in --show's
-// order).
+// documents, raknet_loopback, ca_sha256, ca_flag, laa, preload, maptable, rating, heaplocks, numfmt, averages
+// (DescriptionKeys, in --show's order).
 type Description map[string]string
 
 // DescriptionKeys are Description's keys in patch_client.py --show's order.
-var DescriptionKeys = []string{"redirector", "bind", "appdata", "documents", "raknet_loopback", "ca_sha256", "ca_flag", "laa", "preload", "maptable", "rating"}
+var DescriptionKeys = []string{"redirector", "bind", "appdata", "documents", "raknet_loopback", "ca_sha256", "ca_flag", "laa", "preload", "maptable", "rating", "heaplocks", "numfmt", "averages"}
 
 // HostKeys are what a match host's copy must carry (setup_all.py's HOST_KEYS): its sockets are the harness's.
 var HostKeys = []string{"redirector", "appdata", "documents"}
@@ -726,6 +830,30 @@ func Describe(data []byte) (Description, error) {
 	out["laa"] = "off"
 	if img.characteristics&charLAA != 0 {
 		out["laa"] = "on"
+	}
+	out["heaplocks"] = "unknown"
+	if l0 := at(heapLockSites[0], len(heapLocksNew)); bytes.Equal(l0, at(heapLockSites[1], len(heapLocksNew))) {
+		switch {
+		case bytes.Equal(l0, heapLocksNew):
+			out["heaplocks"] = "on"
+		case bytes.Equal(l0, heapLocksOrig):
+			out["heaplocks"] = "as-shipped"
+		}
+	}
+	out["numfmt"] = "unknown"
+	nf, ns := at(numFmtFormat, len(numFmtFormatNew)), at(numFmtStep, len(numFmtStepNew))
+	switch {
+	case bytes.Equal(nf, numFmtFormatNew) && bytes.Equal(ns, numFmtStepNew):
+		out["numfmt"] = "on"
+	case bytes.Equal(nf, numFmtFormatOrig) && bytes.Equal(ns, numFmtStepOrig):
+		out["numfmt"] = "as-shipped"
+	}
+	out["averages"] = "unknown"
+	switch block := at(averagesBlock, len(averagesOrig)); {
+	case bytes.Equal(block, averagesNew):
+		out["averages"] = "on"
+	case bytes.Equal(block, averagesOrig):
+		out["averages"] = "as-shipped"
 	}
 	switch {
 	case bytes.Equal(count, preloadCountNew):

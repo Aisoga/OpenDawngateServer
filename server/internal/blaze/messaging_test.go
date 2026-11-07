@@ -280,6 +280,7 @@ func TestMessagingChat(t *testing.T) {
 	info, _ := decode(t, f).Sub("INFO")
 	party, _ := info.Int("PGID")
 	a.note(ComponentPlaygroups, NotifyJoinPlaygroupID)
+	ts.s.groups.inviteByServer(party, b.id)
 	wantOK(t, "join", b.pgCall(CmdPlaygroupsJoinPlaygroup, tdf.NewWriter().Int("PGID", party).Bytes()))
 	b.note(ComponentPlaygroups, NotifyJoinPlaygroupID)
 	a.note(ComponentPlaygroups, NotifyMemberJoinedPlaygroupID)

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"dawngate/server/internal/logging"
@@ -20,6 +21,7 @@ import (
 	"dawngate/server/internal/setup/moviepatch"
 	"dawngate/server/internal/telemetry"
 	"dawngate/server/internal/tunnel"
+	"dawngate/server/internal/uichannel"
 	"dawngate/server/internal/version"
 	"dawngate/server/internal/web"
 )
@@ -37,11 +39,17 @@ import (
 
 // FrontPorts are the ports the front serves for the game on the tunnel address. The redirector's port is compiled
 // into the client, Blaze's is what the front's redirector names and QoS's what its preAuth names, HTTP's and
-// telemetry's are the config packages' (the player copy's patch): the game's own ports, whatever the servers use.
-type FrontPorts struct{ Redirector, Blaze, QoS, HTTP, Telemetry int }
+// telemetry's are the config packages' (the player copy's patch), UI's the movies' dgchannel.json: the game's own
+// ports, whatever the servers use.
+type FrontPorts struct{ Redirector, Blaze, QoS, HTTP, Telemetry, UI int }
+
+// TCP are the ports as a list: the only TCP ports Start-Client listens on, whatever a server names.
+func (p FrontPorts) TCP() []int {
+	return []int{p.Redirector, p.Blaze, p.QoS, p.HTTP, p.Telemetry, p.UI}
+}
 
 // DefaultFrontPorts are the game's ports in a player copy.
-var DefaultFrontPorts = FrontPorts{Redirector: RedirectorPort, Blaze: 10041, QoS: 17502, HTTP: HTTPPort, Telemetry: 9988}
+var DefaultFrontPorts = FrontPorts{Redirector: RedirectorPort, Blaze: 10041, QoS: 17502, HTTP: HTTPPort, Telemetry: 9988, UI: uichannel.Port}
 
 // The front's login errors: the Fire error codes of its error reply to Authentication::login. The client shows
 // the BlazeErrors line of (code << 16) | 1 in its LOGIN ERROR panel (the texts: setup/localepatch's ErrorLines,
@@ -165,6 +173,10 @@ type Front struct {
 	slots     map[string]int // the servers' link slots by tag (slotOf), kept for the run
 	slotTags  []string       // the tags by slot
 	lastSts   []serverStatus // the statuses of the list written last (the pages' server list)
+
+	// Guard limits the local ports to the player copy's programs (gameguard.go; nil: no limit, a lane's front and the tests).
+	Guard        *gameGuard
+	pagesRefused atomic.Int64 // the page requests refused in this run (servePage logs the first ones)
 
 	// Maps are the create dialog's entries of the maps folder beside the programs (folderDialogMaps): the dialog's list
 	// per server (writeMapList) offers them too when the copy has their archives. Set before Start; SetMaps later
@@ -295,7 +307,7 @@ func (f *Front) Start() error {
 	f.wg.Add(1)
 	go f.udpLoop(f.Ports.QoS, qosUDP)
 	f.mu.Unlock()
-	for _, p := range []int{f.Ports.Redirector, f.Ports.Blaze, f.Ports.QoS, f.Ports.HTTP, f.Ports.Telemetry} {
+	for _, p := range f.Ports.TCP() {
 		if err := f.listenTCP(p); err != nil {
 			f.Close()
 			return err
@@ -311,8 +323,8 @@ func (f *Front) Start() error {
 		f.wg.Add(1)
 		go f.joinLoop()
 	}
-	f.logf("the server picker's front on %s: redirector %d, Blaze %d, QoS %d (TCP and UDP), HTTP %d, telemetry %d; %d server(s) in %s",
-		f.TunnelIP, f.Ports.Redirector, f.Ports.Blaze, f.Ports.QoS, f.Ports.HTTP, f.Ports.Telemetry, len(f.Bookmarks.List()), f.Bookmarks.path)
+	f.logf("the server picker's front on %s: redirector %d, Blaze %d, QoS %d (TCP and UDP), HTTP %d, telemetry %d, UI channel %d; %d server(s) in %s",
+		f.TunnelIP, f.Ports.Redirector, f.Ports.Blaze, f.Ports.QoS, f.Ports.HTTP, f.Ports.Telemetry, f.Ports.UI, len(f.Bookmarks.List()), f.Bookmarks.path)
 	return nil
 }
 
@@ -440,6 +452,10 @@ func (f *Front) acceptLoop(port int, ln net.Listener) {
 			defer f.track(c, false)
 			defer c.Close()
 			defer f.Log.Recover(frontWho, logging.Peer(c.RemoteAddr()), c) // a panic ends this connection only
+			// the HTTP port also serves the player's browser (serveHTTP), the others only the game
+			if port != f.Ports.HTTP && !f.Guard.allows(port, c) {
+				return
+			}
 			f.serveTCP(port, c)
 		}()
 	}
@@ -461,7 +477,7 @@ func (f *Front) serveTCP(port int, c net.Conn) {
 	case f.Ports.Telemetry:
 		f.serveTelemetry(c)
 	default:
-		f.servePiped(port, c, nil) // a port only a session named
+		f.servePiped(port, c, nil) // the UI channel (only the current session's server has one)
 	}
 }
 
@@ -503,8 +519,9 @@ func (c *replayConn) CloseWrite() error {
 }
 
 // serveHTTP serves the game's HTTP port: the login screen's pages (/dawngate/<page>, the picker's
-// /dawngate/pick/<slot>/<page>) are the front's (front_pages.go); the rest goes through the current session, and
-// before a login to dgserver's built-in answers (the telemetry rules), else 404.
+// /dawngate/pick/<slot>/<page>) are the front's (front_pages.go). The game's own requests get the web content from the
+// built-in answers, also the ones a server has (front_scrub.go), and the pages' JSON through the current session (with no
+// session the built-in answers again: 404).
 func (f *Front) serveHTTP(c net.Conn) {
 	c.SetReadDeadline(time.Now().Add(30 * time.Second))
 	br := bufio.NewReaderSize(c, 8192)
@@ -518,9 +535,14 @@ func (f *Front) serveHTTP(c net.Conn) {
 		f.servePage(c, bufio.NewReader(rest))
 		return
 	}
+	if ok, who := f.Guard.isGame(c); !ok {
+		f.serveBrowser(c, bufio.NewReader(rest), who)
+		return
+	}
 	// the game's crash and error reports (CrashRpt: a memory dump, the game's log and preferences, pictures of every
-	// screen) stay on this PC: the front answers them itself and never passes them to the server
-	if isCrashReportPath(first) {
+	// screen) stay on this PC, and its web content is this Start-Client's own copy (front_scrub.go): the front answers them
+	// itself and passes only the pages' JSON to the server
+	if fields := strings.Fields(string(first)); len(fields) < 2 || isCrashReportPath(first) || !isServerData(pathOf(fields[1])) {
 		f.httpLocal.ServeConn(&replayConn{Conn: c, r: rest})
 		return
 	}
@@ -579,7 +601,7 @@ func (f *Front) serveTelemetry(c net.Conn) {
 			}
 			upSess = s
 			go io.Copy(io.Discard, up) // the sink never answers
-			if first != nil && !isFirst {
+			if len(first) > 0 && !isFirst {
 				if _, err := up.Write(first); err != nil {
 					up.Close()
 					up, upSess = nil, nil
@@ -613,6 +635,12 @@ func (f *Front) serveTelemetry(c net.Conn) {
 				pkt := append([]byte(nil), pending[:p.Size()]...)
 				pending = rest
 				isFirst := first == nil
+				if isFirst && telemetryToken(p.Body) { // holds the player's MAC address, which stays on this PC (front_scrub.go)
+					first = []byte{}
+					f.sink.LogPacket(peer, p)
+					dropped++
+					continue
+				}
 				if isFirst {
 					first = pkt
 				}
@@ -669,20 +697,30 @@ func (f *Front) deliverFor(s *frontSession) func(port int, dst *net.UDPAddr, pay
 	}
 }
 
-// ensureListeners listens on every port a session's server names that the front doesn't serve yet (the match
-// hosts' UDP ports; a server's own port numbers where they differ from the game's).
+// ensureListeners listens on every UDP port a session's server names that the front doesn't serve yet: the match hosts',
+// and its own QoS port where it differs from the game's, which its QoS replies name to the game (so this runs before the
+// session's ports are known, when localPort still gives that number). TCP stays at the front's fixed ports: nothing tells
+// the game another one (a server's other Blaze and QoS ports are mapped, serverPort), and a listener on a port a server
+// picks would catch another program's connections on this PC.
+//
+// A port the new session doesn't name closes: a server's list stays with that server, so the listeners of a session add
+// up to tunnel.MaxUDPPorts at most, however many servers the player tried in this run.
 func (f *Front) ensureListeners(s *frontSession) {
-	tcp, udp := s.c.Ports()
-	for _, p := range tcp {
-		if lp := s.localPort(f, p); lp != f.Ports.Redirector {
-			if err := f.listenTCP(lp); err != nil {
-				f.logf("%v", err)
-			}
+	_, udp := s.c.Ports()
+	keep := map[int]bool{f.Ports.QoS: true}
+	for _, p := range udp {
+		local := s.localPort(f, p)
+		keep[local] = true
+		if err := f.listenUDP(local); err != nil {
+			f.logf("%v", err)
 		}
 	}
-	for _, p := range udp {
-		if err := f.listenUDP(s.localPort(f, p)); err != nil {
-			f.logf("%v", err)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for port, ln := range f.udpLns {
+		if !keep[port] {
+			ln.Close()
+			delete(f.udpLns, port)
 		}
 	}
 }

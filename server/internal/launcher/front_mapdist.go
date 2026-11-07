@@ -178,7 +178,9 @@ func (f *Front) tunnelGetter(s *frontSession) mapdist.Getter {
 			c.Close()
 			return nil, 0, 0, err
 		}
-		resp, err := http.ReadResponse(bufio.NewReader(dc), req)
+		head := &headLimit{r: dc, left: maxResponseHead}
+		resp, err := http.ReadResponse(bufio.NewReader(head), req)
+		head.off = true
 		if err != nil {
 			c.Close()
 			return nil, 0, 0, err

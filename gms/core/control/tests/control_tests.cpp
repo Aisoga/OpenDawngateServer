@@ -971,6 +971,61 @@ static void TestWithSpectatorsOf() {
 // ends the lobby with the final roster (the joiner now a spectator at index 10). Another startGame after the start is
 // ignored; B15b: an updateRoster after it (a spectator of the running game, delta at 11) changes only the spectators.
 // The four lines are the shared examples (blaze's TestCustomGameHosted sends them).
+// SEATAUTH: the host's question goes out as verifyHello, the verdicts come back through TakeVerdicts.
+static void TestHostControlVerifyHello() {
+  Message m;
+  std::string err;
+  CHECK(Decode("{\"t\":\"verifyHello\",\"addr\":\"127.0.1.10:50123\",\"user\":2000000001}", m, &err));
+  CHECK(std::holds_alternative<VerifyHello>(m) && std::get<VerifyHello>(m).addr == "127.0.1.10:50123" &&
+        std::get<VerifyHello>(m).user == 2000000001);
+  CHECK_STR(Encode(VerifyHello{"127.0.1.10:50123", 2000000001}),
+            "{\"t\":\"verifyHello\",\"addr\":\"127.0.1.10:50123\",\"user\":2000000001}\n");
+  CHECK_STR(Encode(HelloVerdict{"127.0.1.10:50123", 2000000002, false}),
+            "{\"t\":\"helloVerdict\",\"addr\":\"127.0.1.10:50123\",\"user\":2000000002,\"ok\":false}\n");
+
+  WSADATA wsa;
+  WSAStartup(MAKEWORD(2, 2), &wsa);
+  {
+    TestServer srv;
+    CHECK(srv.Start());
+    HostEnv env;
+    env.control = "127.0.0.1:" + std::to_string(srv.port);
+    env.match = 5;
+    env.token = "tok";
+    env.bind = "127.0.0.1:10045";
+    std::vector<std::string> lines;
+    std::thread server([&] {
+      SOCKET c = accept(srv.listener, nullptr, nullptr);
+      lines.push_back(RecvLine(c));  // hello
+      lines.push_back(RecvLine(c));  // verifyHello
+      SendRaw(c, "{\"t\":\"helloVerdict\",\"addr\":\"127.0.1.10:50123\",\"user\":2000000001,\"ok\":true}\n");
+      lines.push_back(RecvLine(c));  // logoutGMS
+      closesocket(c);
+    });
+    HostControl h;
+    CHECK(h.Start(env, 1, "test", 0, &err));
+    h.SendVerifyHello("127.0.1.10:50123", 2000000001);
+    std::vector<HelloVerdict> got;
+    int64_t now = 0;
+    for (int i = 0; i < 300 && got.empty(); ++i) {
+      h.Poll(now += 10);
+      got = h.TakeVerdicts();
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    CHECK_EQ(got.size(), size_t(1));
+    if (!got.empty()) {
+      CHECK_STR(got[0].addr, "127.0.1.10:50123");
+      CHECK(got[0].user == 2000000001 && got[0].ok);
+    }
+    CHECK(h.TakeVerdicts().empty());
+    h.Logout();
+    server.join();
+    CHECK_EQ(lines.size(), size_t(3));
+    if (lines.size() == 3) CHECK_STR(lines[1], "{\"t\":\"verifyHello\",\"addr\":\"127.0.1.10:50123\",\"user\":2000000001}");
+  }
+  WSACleanup();
+}
+
 static void TestHostControlCustomLobby(const std::string& examplesPath) {
   std::string createLine, updateLine, startLine, lateLine;
   for (const std::string& l : ReadExamples(examplesPath)) {
@@ -1051,6 +1106,7 @@ int main(int argc, char** argv) {
   TestHostControl();
   TestHostControlMatchmadeKarma(examples);
   TestHostControlErrors(examples);
+  TestHostControlVerifyHello();
   TestHostControlCustomLobby(examples);  // B15
   TestWithSpectatorsOf();                // B15b
   std::printf("%d checks, %d failed\n", g_checks, g_failed);

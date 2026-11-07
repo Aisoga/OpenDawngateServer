@@ -708,10 +708,25 @@ GMS_TEST(SessionStopAfterAndRefusedHelloAndDisconnect) {
   CheckSequence(client.Sequence(), {"84"});  // no HelloPlayer for a refused user
   CHECK_EQ(match.connected, 1);
   CHECK(match.points.empty());
-  CHECK_EQ(rig.session->State(rig.client.Guid()),
-           std::string("steps sent connected; HelloReq refused by the match; client loaded (0x401) no; client sent: "
-                       "HelloReq x1;"));
-  CHECK(log.Has("HelloReq from user 2000000011 refused by the match"));
+  CHECK(log.Has("HelloReq from user 2000000011 on") && log.Has("refused: refused by the match"));
+
+  // SEATAUTH: a refused connection closes at once: the session forgets it, the match hears of it, and no slot stays taken
+  CHECK(rig.RunUntil([&] { return match.disconnected == 1; }, 5000));
+  CHECK_EQ(rig.session->NumConnections(), size_t{0});
+  CHECK(rig.session->State(rig.client.Guid()).empty());
+}
+
+GMS_TEST(SessionClientDisconnect) {
+  LogCapture log;
+  RecordingMatch match;
+  gms::SessionOptions so;
+  so.stepMs = 50;
+  LoopbackRig rig;
+  CHECK(rig.Start(match, so));
+  LiveClientModel client;
+  client.send = [&rig](const Bytes& m) { rig.client.Send(m); };
+  rig.model = &client;
+  CHECK(rig.RunUntil([&] { return match.hellos == 1; }, 5000));
 
   // the client leaves: the session reports the connection and forgets it, the match hears of it
   rig.client.Disconnect();
@@ -1544,7 +1559,8 @@ GMS_TEST(SessionShaperSelectRecordsOnlyForPlayersAtB6) {
 }
 
 // A rejoin before the old connection's loss was noticed: the old connection is superseded (nothing more to it, its
-// messages dropped), and its end, when it comes, is no departure (no 0x4 for the player, shaper select keeps the new).
+// messages dropped), and it closes (SEATAUTH: it must not keep a slot), which is no departure (no 0x4 for the player,
+// shaper select keeps the new).
 GMS_TEST(SessionRejoinSupersedesALiveConnection) {
   LogCapture log;
   MultiRig rig(300);
@@ -1554,13 +1570,13 @@ GMS_TEST(SessionRejoinSupersedesALiveConnection) {
   Human& b2 = rig.Connect(kUserB);  // b is still up
   CHECK(rig.RunUntil([&] { return b2.model.inShaperSelect && !b2.model.phases.empty(); }, 2000));
   const size_t oldGot = b.model.received.size();
-  CHECK(rig.session->State(b.conn).find("; superseded by its user's new connection") != std::string::npos);
+  CHECK(rig.session->State(b.conn).empty());  // closed
   CHECK(log.Has("its earlier connection (fake|" + std::to_string(b.conn) + ") is superseded"));
   // the old client's role lock is dropped; the new one's counts
   b.model.SendShaper(gms::kShaperLockRole, 0, 3);
   rig.Step();
   CHECK(!(rig.session->Shapers()->Record(1)->flags & gms::kRecordRoleLocked));
-  rig.End(b);  // now its loss is noticed
+  rig.End(b);  // the transport's own report of it, if one comes, changes nothing
   CHECK(rig.RunUntil([&] { return a.Entered() && b2.Entered(); }, 5000));
   CHECK_EQ(b.model.received.size(), oldGot);  // nothing went to it after the rejoin
   CHECK(!log.Has("player 1's connection ended"));

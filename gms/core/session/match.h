@@ -83,6 +83,15 @@ class IMatch {
   // that gameplay index and team whatever the match writes (RejoinMap; then OnRejoin).
   virtual bool OnHelloReq(ConnId conn, const HelloReq& req, PlayerSlot* slot) = 0;
 
+  // SEATAUTH: asked at a connection's first HelloReq, before anything else looks at it: true = the match has asked who
+  // is really behind `addr` ("ip:port": the control channel's verifyHello), and the session keeps the HelloReq unanswered
+  // until GmsSession::OnHelloVerdict or SessionOptions::verifyTimeoutMs (no verdict: refused). False (the default; a
+  // host without a control channel) = no such check: the HelloReq goes on at once.
+  virtual bool AskHelloVerdict(ConnId conn, const std::string& addr, const HelloReq& req) {
+    (void)conn, (void)addr, (void)req;
+    return false;
+  }
+
   // B15: true while the match waits in a custom game's lobby (the client's custom lobby; dgserver's startGame ends it):
   // the session keeps the HelloReq without an answer (no HelloPlayer yet, so a player may still change teams or become
   // a spectator) and asks again every Tick; once false it handles the HelloReq as if it had just come (OnHelloReq with

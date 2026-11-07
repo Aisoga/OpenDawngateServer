@@ -16,8 +16,13 @@
 // (a projectile, a ward, a minion in its base) sent its first tick's ServerEvents, animation states and combat events
 // to every player, and an object entering fog its last tick's. A message about an object deleted in the same tick
 // goes to its deletion's known mask & the visible mask the host last left on it (lastVisible). The deletion (91)
-// itself still goes to everyone that knew the object, kind 1 keeps its own mask (the kill announcement's 0x7FFF, an
-// attached effect's stop) and kind 3 is routed by its point by the caller.
+// itself still goes to everyone that knew the object, kind 1 keeps its own mask (the kill announcement's 0x7FFF) and
+// kind 3 is routed by its point by the caller.
+//
+// SEC4B: the game queues a kind-1 A4 (0x7FFF) from three places only: GameObject_DestroyAttachedEffect's stop, and
+// nEffect_CreateDrawBox and _UpdateDrawBox. The caller routes a draw box's events as kind 2 (those that see its object)
+// and a stop with toKnown: whoever knows the object, seeing it or not, because a client that saw the effect start must
+// get its stop or the effect stays on screen.
 #pragma once
 
 #include <cstddef>
@@ -39,6 +44,10 @@ struct OutgoingRoute {
   uint16_t seers = 0;          // kind 2: the live object's known & visible masks
   uint16_t seeNow = kRouteUnknown;       // kind 2: the players whose team sees the object this tick (FOGSOUND)
   uint16_t lastVisible = kRouteUnknown;  // kind 0: the object's visible mask as the host last left it (FOGSOUND)
+  // SEC4B: a kind-1 entry for the players that know `object` (an attached effect's stop, A4 type 2): its known mask
+  // while `objectAlive`, else its deletion's in this drain, else nobody (a client without the object has no effect on it)
+  bool toKnown = false;
+  uint16_t known = 0;
   uint16_t players = 0;        // out: who gets it
   uint16_t unseen = 0;         // out: kind 2, the players it would reach (or reaches, byVision off) without seeing it
   bool fromDeletion = false;   // out: kind 2 routed by the object's kind-0 entry

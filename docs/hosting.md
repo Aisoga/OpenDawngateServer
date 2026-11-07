@@ -213,6 +213,8 @@ Start-Server.exe --remove-admin <name>
 ```
 
 - A disabled, banned or deleted player can no longer log in. If they are playing, they are taken out of the game within a few seconds.
+- A changed or reset password ends the account's game session, and its logins on the website, at once.
+- An account with no password at all (one made by a release from before passwords existed) can't log in until you give it one with `--reset-password`. Earlier it took the first password anyone tried, which let anyone claim it.
 - An invite code is shown only once. The server keeps only its hash.
 - Every change made by a command or on the admin page goes into an audit log, which the admin page shows.
 
@@ -551,6 +553,7 @@ Accounts live in one database, `Dawngate-Data\data\accounts.db`, with `accounts.
 - They contain login names and players' addresses, never passwords. Keep them private.
 - With `match_record = on` each match folder also holds the match's recording ([Recording matches](#recording-matches)).
 - `log_days` in `Start-Server.ini` (30 by default) deletes logs older than that.
+- On a public server a log file starts anew at 256 MB, and the oldest files go beyond 8 GB in all, so nobody can fill your disk through the log. A very busy moment may drop lines; the log then says how many.
 
 ## Security: what is protected and what isn't
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
@@ -103,6 +104,23 @@ func newUDPEcho(t *testing.T, ip string) *udpEcho {
 	}()
 	t.Cleanup(func() { conn.Close() })
 	return e
+}
+
+// saw says whether a datagram came from the address; sources lists them.
+func (e *udpEcho) saw(addr string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.from[addr]
+}
+
+func (e *udpEcho) sources() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var out []string
+	for a := range e.from {
+		out = append(out, a)
+	}
+	return out
 }
 
 func (e *udpEcho) addr() *net.UDPAddr { return e.conn.LocalAddr().(*net.UDPAddr) }
@@ -731,6 +749,71 @@ func TestTunnelRoute(t *testing.T) {
 	if d, _ := other.counts(); d != 1 {
 		t.Errorf("the routed host got %d datagrams", d)
 	}
+}
+
+// SEATAUTH: without Forward a port leads nowhere until the session has a route; each flow's own socket names its session
+// (what a match host sees as the connection's source), and the name goes with the flow.
+func TestFlowSession(t *testing.T) {
+	buf := &syncBuf{}
+	g, echo := startGatewayWith(t, buf, func(g *Gateway) {
+		g.Forward = nil
+		g.FlowIdle = 100 * time.Millisecond
+		g.MaxFlowsTotal = 2
+	})
+	c, err := startClient(t, g.Addr(), g.Identity.Pin, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := c.session(time.Second)
+	game := gameUDP(t)
+	if b, _, err := roundTrip(t, game, portHost, []byte("no route"), 300*time.Millisecond); err == nil {
+		t.Fatalf("a datagram without a route came back: %q", b)
+	}
+	g.mu.Lock()
+	gs := g.sessions[s.id]
+	g.mu.Unlock()
+	if !strings.Contains(gs.counts(), "no route ") || strings.Contains(gs.counts(), "no route 0") {
+		t.Errorf("the session's counts: %s", gs.counts())
+	}
+	(&Addr{sess: gs}).Route(portHost, echo.addr())
+	if b, _, err := roundTrip(t, game, portHost, []byte("routed"), 2*time.Second); err != nil || string(b) != "routed" {
+		t.Fatalf("%q %v", b, err)
+	}
+	gs.mu.Lock()
+	var local netip.AddrPort
+	for _, f := range gs.flows {
+		local = f.local
+	}
+	gs.mu.Unlock()
+	if local.Addr().String() != gwIP {
+		t.Errorf("the flow's address %v isn't on the gateway's BindIP %s", local, gwIP)
+	}
+	if !echo.saw(local.String()) {
+		t.Errorf("the host saw another source than the flow's own address %v: %v", local, echo.sources())
+	}
+	if id, ok := g.FlowSession(local); !ok || id != s.id {
+		t.Errorf("FlowSession(%v) = %d, %v; want %d", local, id, ok, s.id)
+	}
+	if _, ok := g.FlowSession(netip.AddrPortFrom(local.Addr(), local.Port()+1)); ok {
+		t.Errorf("another port has a session")
+	}
+	// the cap over all sessions
+	other := gameUDP(t)
+	roundTrip(t, other, portHost, []byte("second"), 2*time.Second)
+	third := gameUDP(t)
+	if b, _, err := roundTrip(t, third, portHost, []byte("third"), 300*time.Millisecond); err == nil {
+		t.Errorf("a flow beyond MaxFlowsTotal: %q", b)
+	}
+	if !strings.Contains(strings.Join(g.Report(), "\n"), "flows refused by the cap of 2: ") {
+		t.Errorf("the report lacks the cap: %v", g.Report())
+	}
+	// the name goes with the flow
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if _, ok := g.FlowSession(local); !ok {
+			return
+		}
+	}
+	t.Errorf("FlowSession(%v) still answers after the flow went", local)
 }
 
 func median(d []time.Duration) time.Duration {

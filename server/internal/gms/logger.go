@@ -15,6 +15,9 @@ import (
 
 const who = "gms"
 
+// maxSeen bounds Logger's memory of what it has dumped; past it the dumps start over.
+const maxSeen = 4096
+
 // OfflineMagic is RakNet's OFFLINE_MESSAGE_DATA_ID, the 16 bytes every unconnected message carries.
 var OfflineMagic = []byte{0x00, 0xFF, 0xFF, 0x00, 0xFE, 0xFE, 0xFE, 0xFE, 0xFD, 0xFD, 0xFD, 0xFD, 0x12, 0x34, 0x56, 0x78}
 
@@ -62,7 +65,7 @@ func (l *Logger) Packet(p []byte, from net.Addr) {
 	l.Log.Logf(who, "udp %s %d bytes: %s", peer, len(p), Describe(p))
 	key := fmt.Sprintf("%s/%d/%d", peer, firstByte(p), len(p))
 	l.mu.Lock()
-	if l.seen == nil {
+	if l.seen == nil || len(l.seen) >= maxSeen { // a key per source address: a spoofed flood must not grow it for ever
 		l.seen = map[string]bool{}
 	}
 	first := !l.seen[key]

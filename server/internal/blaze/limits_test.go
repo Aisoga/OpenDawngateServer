@@ -92,7 +92,7 @@ func TestLimitsLoginBackoff(t *testing.T) {
 	if f := loginFrame(a, "victim"); f.Type != fire.Reply {
 		t.Fatalf("an hour later: %s %#x", f.Type, f.Error)
 	}
-	if !strings.Contains(ts.log.String(), `limits: login refused (3 failed logins for "victim" in a row; locked for 1h0m0s more`) {
+	if !strings.Contains(ts.log.String(), `limits: login refused (3 failed logins for "victim" from `) {
 		t.Errorf("log:\n%s", ts.log.String())
 	}
 }

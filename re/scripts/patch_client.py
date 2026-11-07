@@ -82,6 +82,28 @@ Patches (each checks the original bytes first):
            LevelId in the lobby's own table, which the setup writes into AA_Server.package (patch_locale.py) for every
            installed map; a LevelId without a line gives an empty name (SPStringManager's empty string), no assert.
            SM_Map_v5 keeps its own entry.
+  heaplocks  Since UICHAN, in every profile (--heap-locks off leaves it out): Scaleform's memory heaps take their lock only
+           when created without Heap_ThreadUnsafe, and the movies' heaps are created with it (UseLocks, heap +0x64: the
+           constructors at 0x00D294DF and 0x00D727B3 compute it as !(flags & 1)). flash.net.Socket's thread allocates
+           from the movie's heap (0x00EB1DE0 -> AllocAutoHeap 0x00CF8520), so with a connection open the main thread and
+           the socket's race on the heap: crashes at random places within a second (docs/development/ui-channel.md).
+           Both constructors' not dl; and dl,1 (F6 D2 80 E2 01) become mov dl,1 (B2 01 90 90 90): every heap
+           locks. An uncontended lock per allocation of the UI.
+  numfmt   Since NUMFMT, in every profile (--number-format off leaves it out): Scaleform's AS3 number-to-string
+           (0x00EA69F0, called from the AS3 value conversions) prints a double that isn't a whole number with
+           "%.16g" (0x01329B88, which only it reads), and 16 digits show the double nearest 8.2 as 8.199999999999999: the
+           profile's averages overran their panel. Its clean-up only
+           cuts a "000...1" tail, so 8.3 was fine and 8.2 wasn't. The format becomes "%.15g", which prints every
+           one-decimal value as it was meant. From 1e16 up the function raises the digits so that whole numbers print
+           exactly; that step (fld [1e16] at 0x00EA6B3C) now reads a 1e15 already in .rdata (0x0135D140), so 16-digit whole
+           numbers stay exact instead of turning into 1.23456789012346e+15.
+  averages Since AVGPREC, in every profile (--averages off leaves it out): StatsManager_OnShaperHistoryStatsResult
+           (0x00AA5E90) made the profile's averages as total * (1 / games) on an x87 at 24 bits, so an average that is an
+           exact tenth could land just under it, and the UI's formatNumber cuts: 87 over 10 games showed 8.6, 41 over 5
+           showed 8.1. The 97 bytes at 0x00AA63C8 are rewritten in place (.text's slack is nearly used up): with the games
+           in st(0), the x87 goes to 53 bits, each of the five doubles in a row is divided by the games, and the control
+           word goes back. Real divisions because the reciprocal stays wrong at any precision (7 over 35). The exe has no
+           SSE2 doubles, so this stays on the x87. The seconds' integer division and the list's head as shipped.
   rating   Since RATINGSHOW1, in every profile (--rating off leaves it out): the main menu's profile box has EA's field
            mcProfile.m_glickoText (MainMenuUI.gfx; shown when SetExtendedData's second argument isn't null), and both
            C++ callers (MainMenuUI_OnUserExtendedDataChanged 0x004DE0D0, MainMenuUI_BindExtFunctions 0x004DFFC0) pass
@@ -266,6 +288,54 @@ PLATFORM_PTR = 0x01BB6154                 # SporeOnline_GetPlatform (0x00AD3800)
 FIND_USER = 0x00C8AFD0                    # UserManager_FindUserByBlazeId (ecx = user manager; id lo, hi), ret 8
 GET_EXT_VALUE = 0x00C8B560                # BlazeUser_GetExtendedDataValue (ecx = user; component, key, &int64), ret 0xC
 RATING_KEY = 0x37                         # DMAP[0x00070037] (component 7 << 16 | 0x37): the rating to show
+# UICHAN: the two heap constructors' UseLocks (heap +0x64), which the movies' sockets need
+HEAP_LOCKS = (0x00D294E1, 0x00D727B5)
+HEAP_LOCKS_ORIG = bytes.fromhex("f6d280e201")  # not dl; and dl,1: !(flags & Heap_ThreadUnsafe)
+HEAP_LOCKS_NEW = bytes.fromhex("b201909090")   # mov dl,1; nop; nop; nop
+# NUMFMT: Scaleform's number-to-string (0x00EA69F0): its format and the value from which it raises the digits
+NUMFMT_FORMAT = 0x01329B88
+NUMFMT_FORMAT_ORIG = b"%.16g\0"
+NUMFMT_FORMAT_NEW = b"%.15g\0"
+NUMFMT_STEP = 0x00EA6B3C
+NUMFMT_STEP_ORIG = bytes.fromhex("dd05d87b3001")  # fld qword ptr [0x01307BD8]: 1e16
+NUMFMT_STEP_NEW = bytes.fromhex("dd0540d13501")   # fld qword ptr [0x0135D140]: 1e15
+NUMFMT_1E15 = 0x0135D140                          # a 1e15 double in .rdata
+NUMFMT_1E15_VALUE = bytes.fromhex("00003426f56b0c43")
+# AVGPREC: the profile's averages, in StatsManager_OnShaperHistoryStatsResult with the games in st(0)
+AVERAGES_BLOCK = 0x00AA63C8
+# as shipped: 1 / games, the seconds' integer division and the list's head, then each total times the reciprocal
+AVERAGES_ORIG = bytes.fromhex(
+    "d9e8" "8b842490000000" "def1" "33d2" "f7f1" "8b5c2414" "83c378" "dd442468" "d8c9" "89842490000000" "8b03" "dd5c2468"
+    "8bf0" "dd442470" "89742410" "d8c9" "dd5c2470" "dd442478" "d8c9" "dd5c2478" "dd842480000000" "d8c9" "dd9c2480000000"
+    "dc8c2488000000" "dd9c2488000000")
+AVERAGES_NEW = bytes.fromhex(
+    "50"              # push eax: a slot for the x87's control word
+    "d93c24"          # fnstcw word ptr [esp]: the game's
+    "687f020000"      # push 0x27f: 53-bit precision, round to nearest, exceptions masked
+    "d92c24"          # fldcw word ptr [esp]
+    "58"              # pop eax
+    "8d54246c"        # lea edx,[esp+0x6c]: the first total ([esp+0x68] before the push)
+    "6a05"            # push 5: kills, deaths, assists, CS, vim, five doubles in a row
+    "58"              # pop eax
+    "dd02"            # loop: fld qword ptr [edx]; st(1) is the games
+    "d8f1"            # fdiv st(0),st(1)
+    "dd1a"            # fstp qword ptr [edx]
+    "83c208"          # add edx,8
+    "48"              # dec eax
+    "75f4"            # jne loop
+    "ddd8"            # fstp st(0): the games
+    "d92c24"          # fldcw word ptr [esp]: the game's again
+    "58"              # pop eax
+    "8b842490000000"  # from here as shipped: mov eax,[esp+0x90], the seconds
+    "33d2"            # xor edx,edx
+    "f7f1"            # div ecx
+    "89842490000000"  # mov [esp+0x90],eax
+    "8b5c2414"        # mov ebx,[esp+0x14]
+    "83c378"          # add ebx,0x78
+    "8b03"            # mov eax,[ebx]
+    "8bf0"            # mov esi,eax
+    "89742410"        # mov [esp+0x10],esi
+) + b"\x90" * 26
 RATING_CAVE = 0x011AB170                  # in .text's slack after the map-name cave (0x011AB140, 45 bytes)
 RATING_LABEL = "Rating "                  # before the number
 RATING_LABEL_VA = 0x01C00080              # in .tls's slack after the map key (0x01C00040-0x01C0007F)
@@ -402,7 +472,7 @@ def check_data_suffix(suffix):
 
 
 def patch_bytes(orig, modulus, profile="local", host=None, server_host=None, client_bind=None, data_suffix=None,
-                laa=True, preload=True, maptable=True, rating=True):
+                laa=True, preload=True, maptable=True, rating=True, heaplocks=True, numfmt=True, averages=True):
     """Patch a copy of the untouched exe's bytes; returns (patched bytes, summary text)."""
     server, cave_address = resolve_profile(profile, host, server_host, client_bind)
     check_data_suffix(data_suffix)
@@ -565,6 +635,26 @@ def patch_bytes(orig, modulus, profile="local", host=None, server_host=None, cli
         data[off(RATING_SITE1):off(RATING_SITE1) + len(RATING_SITE1_NEW)] = RATING_SITE1_NEW
         data[off(RATING_SITE2):off(RATING_SITE2) + len(RATING_SITE2_NEW)] = RATING_SITE2_NEW
         summary += f"; the profile box shows the rating the server sends (rating cave at {RATING_CAVE:#010x})"
+    # --- UICHAN: every Scaleform heap takes its lock, as the movies' sockets need
+    for va in HEAP_LOCKS:
+        expect(va, HEAP_LOCKS_ORIG, "a heap constructor's UseLocks")
+    if heaplocks:
+        for va in HEAP_LOCKS:
+            data[off(va):off(va) + len(HEAP_LOCKS_NEW)] = HEAP_LOCKS_NEW
+        summary += "; the UI's memory heaps take their locks (a movie's socket reads on a thread)"
+    # --- NUMFMT: the UI's numbers print with 15 digits: 8.2, not 8.199999999999999
+    expect(NUMFMT_FORMAT, NUMFMT_FORMAT_ORIG, "the number-to-string's format")
+    expect(NUMFMT_STEP, NUMFMT_STEP_ORIG, "the number-to-string's step to more digits")
+    expect(NUMFMT_1E15, NUMFMT_1E15_VALUE, "the 1e15 constant")
+    if numfmt:
+        data[off(NUMFMT_FORMAT):off(NUMFMT_FORMAT) + len(NUMFMT_FORMAT_NEW)] = NUMFMT_FORMAT_NEW
+        data[off(NUMFMT_STEP):off(NUMFMT_STEP) + len(NUMFMT_STEP_NEW)] = NUMFMT_STEP_NEW
+        summary += "; the UI's numbers print with 15 digits (8.2, not 8.199999999999999)"
+    # --- AVGPREC: the profile's averages are real divisions at full precision: 8.7, not 8.6
+    expect(AVERAGES_BLOCK, AVERAGES_ORIG, "the profile averages' block")
+    if averages:
+        data[off(AVERAGES_BLOCK):off(AVERAGES_BLOCK) + len(AVERAGES_NEW)] = AVERAGES_NEW
+        summary += "; the profile's averages at full precision (8.7, not 8.6)"
     return bytes(data), summary
 
 
@@ -617,6 +707,11 @@ def describe(data):
         out["rating"] = "on"
     else:
         out["rating"] = "unknown"
+    locks = {at(va, len(HEAP_LOCKS_NEW)) for va in HEAP_LOCKS}
+    out["heaplocks"] = {frozenset({HEAP_LOCKS_NEW}): "on", frozenset({HEAP_LOCKS_ORIG}): "as-shipped"}.get(frozenset(locks), "unknown")
+    numfmt = (at(NUMFMT_FORMAT, len(NUMFMT_FORMAT_NEW)), at(NUMFMT_STEP, len(NUMFMT_STEP_NEW)))
+    out["numfmt"] = {(NUMFMT_FORMAT_NEW, NUMFMT_STEP_NEW): "on", (NUMFMT_FORMAT_ORIG, NUMFMT_STEP_ORIG): "as-shipped"}.get(numfmt, "unknown")
+    out["averages"] = {AVERAGES_NEW: "on", AVERAGES_ORIG: "as-shipped"}.get(at(AVERAGES_BLOCK, len(AVERAGES_ORIG)), "unknown")
     return out
 
 
@@ -643,6 +738,12 @@ def main(argv):
                     help="SNDBANK: preload every player index's shaper (and its sound banks); on by default")
     ap.add_argument("--maptable", choices=("on", "off"), default="on",
                     help="MAPTABLE: name every map by its LevelId's line in FE_CustomGameLobby; on by default")
+    ap.add_argument("--heap-locks", choices=("on", "off"), default="on",
+                    help="UICHAN: every Scaleform heap takes its lock, as the movies' sockets need; on by default")
+    ap.add_argument("--number-format", choices=("on", "off"), default="on",
+                    help="NUMFMT: the UI's numbers print with 15 digits (8.2, not 8.199999999999999); on by default")
+    ap.add_argument("--averages", choices=("on", "off"), default="on",
+                    help="AVGPREC: the profile's averages are real divisions at full precision (8.7, not 8.6); on by default")
     ap.add_argument("--rating", choices=("on", "off"), default="on",
                     help="RATINGSHOW1: the main menu's profile box shows the rating the server sends; on by default")
     args = ap.parse_args(argv[1:])
@@ -667,7 +768,9 @@ def main(argv):
     try:
         data, summary = patch_bytes(untouched, modulus, args.profile, args.host, args.server_host, args.client_bind,
                                     args.data_suffix, laa=args.laa == "on", preload=args.preload == "on",
-                                    maptable=args.maptable == "on", rating=args.rating == "on")
+                                    maptable=args.maptable == "on", rating=args.rating == "on",
+                                    heaplocks=args.heap_locks == "on", numfmt=args.number_format == "on",
+                                    averages=args.averages == "on")
     except PatchError as e:
         sys.exit(str(e))
     with open(exe, "wb") as f:

@@ -69,6 +69,10 @@ type Policy struct {
 	// only this PC reaches): any login name logs in with any password, none is checked or stored. A new name makes its
 	// account without a password (store.LocalTrustHash) whatever the sign-up mode; the account's status still counts.
 	LocalTrust bool
+	// NoClaims refuses a login to an account with no password yet (made by an earlier build), whatever the sign-up mode: with
+	// open sign-up it would take the first password anyone tries. dgserver sets it; its operator sets such an account's
+	// password (--reset-password).
+	NoClaims bool
 	// ThisMachine reports whether a login's source address is this machine's own (nil: loopback addresses only). A
 	// server that checks passwords lets such a login give an account that This PC made without a password its first
 	// password; from anywhere else that account is refused, so nobody else can take it over.
@@ -247,8 +251,11 @@ func (p Policy) Login(st *store.Store, name, password string, from netip.Addr, n
 		}
 	case cred.Status != store.StatusActive:
 		// no password to check: the status below says no anyway
-	case p.CurrentMode() != Open:
-		return refuse(p.badCredentials(), "account %d has no password yet (made by an earlier build); under sign-up %s the operator sets one (--reset-password)", cred.UserID, p.CurrentMode())
+	case p.CurrentMode() != Open || p.NoClaims:
+		// made by an earlier build: anyone could claim such an account with the first password they tried, so its operator
+		// sets one
+		Verify(dummyHash(), password)
+		return refuse(p.badCredentials(), "account %d has no password yet (made by an earlier build): its operator sets one (--reset-password)", cred.UserID)
 	default:
 		if code := CheckPassword(password); code != 0 {
 			return refuse(code, "account %d has no password yet and this one breaks the rules (%d characters)", cred.UserID, len([]rune(password)))

@@ -1284,9 +1284,11 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   // server_events_by_object (1): a kind-1 A4 by its object (a stop to those that know it, a draw box to those that see it);
   // modifier_casters_by_known (1): a modifier record's caster is 0 for a recipient that doesn't know it;
   // fow_gold_team_only (1): AA's mAvailableGold only to the player's team and the spectators.
-  // FOGEDGE ([host] fog_reveal_margin 300, hundredths of a unit; fog_reveal_hold_ms 750; both 0 = the behaviour before): a
-  // player's creature reaches a client a margin before its team sees it and stays a moment after, by RevealBits (the fog
-  // step, the deltas and the kind-2 messages); mVisibleToTeam and everything that reads it stay the truth.
+  // FOGEDGE ([host] fog_reveal_margin, hundredths of a unit; fog_reveal_hold_ms): a player's creature reaches a client a
+  // margin before its team sees it and stays a moment after, by RevealBits (the fog step, the deltas and the kind-2
+  // messages); mVisibleToTeam and everything that reads it stay the truth. Both 0 by default (the behaviour before): the
+  // game's client draws every enemy creature it has, as a ghost in the fog, so the head start shows as extra sight until a
+  // client draws by mVisibleToTeam. fog_reveal_margin=300;fog_reveal_hold_ms=750 turns it on (3 units, 0.75 s).
   void SetFogRevealMargin(float units, double holdMs) {
     fogRevealMargin_ = units;
     fogRevealHoldMs_ = holdMs;
@@ -4570,8 +4572,8 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   fo.grassEvents = HostOptionInt("grass_events", 1) != 0;  // D3c: OnEnterGrass/OnExitGrass (fow.h FireGrassEvent)
   fo.terrainMods = HostOptionInt("fog_terrain_mods", 1) != 0;  // ABILVFX: Kensu's trail opens walls, never blocks
   g->match->SetFog(fog && replicate, fo, HostOptionInt("fog_log_limit", 200));
-  const int fogMargin = HostOptionInt("fog_reveal_margin", 300);  // FOGEDGE: hundredths of a unit
-  const int fogHoldMs = HostOptionInt("fog_reveal_hold_ms", 750);
+  const int fogMargin = HostOptionInt("fog_reveal_margin", 0);  // FOGEDGE: hundredths of a unit; off by default (above)
+  const int fogHoldMs = HostOptionInt("fog_reveal_hold_ms", 0);
   g->match->SetFogRevealMargin(fogMargin > 0 ? fogMargin * 0.01f : 0.f, fogHoldMs > 0 ? fogHoldMs : 0.0);
   Log("host: fog: a shaper reaches a client %.2f units early and stays %d ms after sight is lost (FOGEDGE, [host] "
       "fog_reveal_margin, fog_reveal_hold_ms)", fogMargin * 0.01f, fogHoldMs);

@@ -153,6 +153,9 @@ func TestReadyCheck(t *testing.T) {
 	wantReply(t, "B joins", b.gm(CmdGameManagerJoinGame, join))
 	wantReply(t, "C joins", c.gm(CmdGameManagerJoinGame, join))
 	wantReply(t, "D spectates", d.gm(CmdGameManagerJoinGame, golden.Bytes(t, decodeCase(t, g, "joingame_spectate_request"))))
+	for _, x := range []*tcpClient{b, c, d} {
+		x.settle() // the joins' broadcasts went out before anyone entered, so none reaches the admin later
+	}
 	start := golden.Bytes(t, decodeCase(t, g, "advancegamestate_request"))
 	state := func(bState string) string {
 		return lobbyStateLine(a.name, strings.TrimSpace(b.name+" "+bState), c.name, d.name)
@@ -293,6 +296,7 @@ func TestReadyChannelEnds(t *testing.T) {
 	wantReply(t, "create", a.gm(CmdGameManagerResetDedicatedServer, golden.Bytes(t, decodeCase(t, g, "resetdedicatedserver_custom_request"))))
 	a.note(ComponentGameManager, NotifyGameSetupID)
 	wantReply(t, "B joins", b.gm(CmdGameManagerJoinGame, golden.Bytes(t, decodeCase(t, g, "joingame_browser_request"))))
+	b.settle() // B's join has done its broadcasts before anyone enters
 	ua, ub := uiConnect(t, addr, a), uiConnect(t, addr, b)
 	ua.call(CallLobbyEnter, "")
 	ua.want(lobbyStateLine(a.name, b.name))
@@ -500,6 +504,7 @@ func TestLobbyNoChangeNoBroadcast(t *testing.T) {
 	wantReply(t, "create", a.gm(CmdGameManagerResetDedicatedServer, golden.Bytes(t, decodeCase(t, g, "resetdedicatedserver_custom_request"))))
 	a.note(ComponentGameManager, NotifyGameSetupID)
 	wantReply(t, "B joins", b.gm(CmdGameManagerJoinGame, golden.Bytes(t, decodeCase(t, g, "joingame_browser_request"))))
+	b.settle() // B's join has done its broadcasts before anyone enters
 	ua, ub := uiConnect(t, addr, a), uiConnect(t, addr, b)
 	ua.call(CallLobbyEnter, "")
 	ua.want(lobbyStateLine(a.name, b.name))
@@ -527,6 +532,7 @@ func TestLobbyPublishGap(t *testing.T) {
 	wantReply(t, "create", a.gm(CmdGameManagerResetDedicatedServer, golden.Bytes(t, decodeCase(t, g, "resetdedicatedserver_custom_request"))))
 	a.note(ComponentGameManager, NotifyGameSetupID)
 	wantReply(t, "B joins", b.gm(CmdGameManagerJoinGame, golden.Bytes(t, decodeCase(t, g, "joingame_browser_request"))))
+	b.settle() // B's join has done its broadcasts before anyone enters
 	ua, ub := uiConnect(t, addr, a), uiConnect(t, addr, b)
 	ua.call(CallLobbyEnter, "")
 	ua.want(lobbyStateLine(a.name, b.name))

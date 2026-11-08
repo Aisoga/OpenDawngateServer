@@ -141,6 +141,11 @@ type hostedGame struct {
 	// matchmaking setup context, matchmaking.go).
 	setup func(g Game, hp *hostedPlayer) []byte
 
+	// lobbySend makes a lobby.state's snapshot and its sends one step (sendLobbyState), so everyone hears the
+	// states in the order they were taken; without it a slower send (the ratings' read) could deliver an older
+	// state after a newer one, and a lobby would show it until the next change.
+	lobbySend sync.Mutex
+
 	mu       sync.Mutex
 	match    *gmshost.Match
 	players  []*hostedPlayer

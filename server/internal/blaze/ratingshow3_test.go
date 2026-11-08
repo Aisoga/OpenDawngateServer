@@ -41,6 +41,9 @@ func TestLobbyRatings(t *testing.T) {
 		wantReply(t, "B joins", b.gm(CmdGameManagerJoinGame, join))
 		wantReply(t, "C joins", c.gm(CmdGameManagerJoinGame, join))
 		wantReply(t, "D spectates", d.gm(CmdGameManagerJoinGame, golden.Bytes(t, decodeCase(t, g, "joingame_spectate_request"))))
+		for _, x := range []*tcpClient{b, c, d} {
+			x.settle() // the joins' broadcasts went out before anyone entered, so none reaches the admin later
+		}
 		ua, ub := uiConnect(t, addr, a), uiConnect(t, addr, b)
 
 		// state is the lobby as everyone who entered hears it; bState is B's ready mark

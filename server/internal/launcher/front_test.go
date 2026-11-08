@@ -169,8 +169,21 @@ func (g fakeGame) send(c net.Conn, comp, cmd uint16, id uint32, payload []byte) 
 	}
 }
 
-// call sends a request and returns its reply or error reply (notifications are skipped).
+// call sends a request and returns its reply or error reply (notifications are skipped). Nothing may follow the reply
+// in the same read, as the next call reads the connection anew.
 func (g fakeGame) call(c net.Conn, comp, cmd uint16, id uint32, payload []byte) fire.Frame {
+	g.t.Helper()
+	return g.callOn(c, comp, cmd, id, payload, true)
+}
+
+// lastCall is call for a connection's last request: what follows the reply in the same read (the notifications a
+// persona login sends right after it) is left unread, since nothing reads the connection again.
+func (g fakeGame) lastCall(c net.Conn, comp, cmd uint16, id uint32, payload []byte) fire.Frame {
+	g.t.Helper()
+	return g.callOn(c, comp, cmd, id, payload, false)
+}
+
+func (g fakeGame) callOn(c net.Conn, comp, cmd uint16, id uint32, payload []byte, alone bool) fire.Frame {
 	g.t.Helper()
 	g.send(c, comp, cmd, id, payload)
 	c.SetReadDeadline(time.Now().Add(15 * time.Second))
@@ -182,7 +195,7 @@ func (g fakeGame) call(c net.Conn, comp, cmd uint16, id uint32, payload []byte) 
 			g.t.Fatalf("waiting for the reply to %d/%#x id %d: %v", comp, cmd, id, err)
 		}
 		if f.ID == id && f.Component == comp && f.Command == cmd && (f.Type == fire.Reply || f.Type == fire.ErrorReply) {
-			if r.Buffered() > 0 {
+			if alone && r.Buffered() > 0 {
 				g.t.Fatalf("frames after the reply to %d/%#x were read too: %d bytes", comp, cmd, r.Buffered())
 			}
 			return f

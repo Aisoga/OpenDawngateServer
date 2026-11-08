@@ -126,7 +126,8 @@ func TestSamePCServerAndFront(t *testing.T) {
 	waitLog(t, logSrv, "    MAIL: 'tun1'\n", 1)
 	// the UI channel after the login: the front passes it to the server of that login, whose tunnel session says who it
 	// is, whatever name the hello gives
-	if rep := g.call(c, 1, 0x6E, 4, tdf.NewWriter().String("PNAM", store.PersonaName("tun1")).Bytes()); rep.Type != fire.Reply {
+	// the connection's last request: the server's notifications follow the reply at once, maybe in the same read
+	if rep := g.lastCall(c, 1, 0x6E, 4, tdf.NewWriter().String("PNAM", store.PersonaName("tun1")).Bytes()); rep.Type != fire.Reply {
 		t.Fatalf("the persona login: %v error %#x\n%s", rep.Type, rep.Error, readLogs(t, logFront))
 	}
 	ui := g.dial(DefaultFrontPorts.UI)

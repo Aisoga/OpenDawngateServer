@@ -331,12 +331,15 @@ func (hg *hostedGame) publishWaiting() {
 	hg.publishLobby()
 }
 
-// sendLobbyState sends the lobby's state to only, or (0) to everyone who entered.
+// sendLobbyState sends the lobby's state to only, or (0) to everyone who entered. Its snapshot and its sends are one
+// step (hg.lobbySend), so no one hears an older state after a newer one.
 func (hg *hostedGame) sendLobbyState(only int64) {
 	s := hg.s
 	if s.UI == nil {
 		return
 	}
+	hg.lobbySend.Lock()
+	defer hg.lobbySend.Unlock()
 	hg.mu.Lock()
 	if hg.custom == nil || hg.custom.started || hg.ended {
 		hg.mu.Unlock()

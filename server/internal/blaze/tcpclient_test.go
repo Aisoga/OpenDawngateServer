@@ -166,6 +166,13 @@ func (tc *tcpClient) reply(comp, cmd uint16, id uint32) fire.Frame {
 	})
 }
 
+// settle is a ping round trip. The server runs a request's After work (Request.After) before it reads the
+// connection's next request, so once the ping's reply is here, everything this connection asked for before has run.
+func (tc *tcpClient) settle() {
+	tc.t.Helper()
+	tc.reply(ComponentUtil, CmdUtilPing, tc.send(ComponentUtil, CmdUtilPing, nil))
+}
+
 // note waits for a notification.
 func (tc *tcpClient) note(comp, id uint16) fire.Frame {
 	tc.t.Helper()

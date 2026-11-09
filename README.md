@@ -1,6 +1,6 @@
 # OpenDawngateServer
 
-[![build](https://github.com/Aisoga/OpenDawngateServer/actions/workflows/build.yml/badge.svg)](https://github.com/Aisoga/OpenDawngateServer/actions/workflows/build.yml)
+[![build](https://github.com/Aisoga/OpenDawngateServer/actions/workflows/build.yml/badge.svg)](https://github.com/Aisoga/OpenDawngateServer/actions/workflows/build.yml) [![Support the servers on Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20the%20servers-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/aisoga)
 
 Play **Dawngate** again. Dawngate was a MOBA by Waystone Games and Electronic Arts. It was in beta in 2014 and shut down in 2015. This project is a replacement server: it lets the original 2014 game client log in, open its menus and play full matches again, on your own PC, on your home network or on a server on the internet.
 

@@ -308,7 +308,7 @@ func TestClientForAnotherServer(t *testing.T) {
 	exe, _ := os.ReadFile(filepath.Join(s.ClientCopy(), "game", "Dawngate.exe"))
 	d, _ := exepatch.Describe(exe)
 	if d["redirector"] != "192.168.1.20" || d["bind"] != "as-shipped" || d["ca_sha256"] != certs.Fingerprint(set.CAModulus) ||
-		d["heaplocks"] != "on" || d["numfmt"] != "on" || d["averages"] != "on" {
+		d["heaplocks"] != "on" || d["numfmt"] != "on" || d["averages"] != "on" || d["fade"] != "on" {
 		t.Errorf("client exe %v", d)
 	}
 	cfg, _ := os.ReadFile(filepath.Join(s.ClientCopy(), "game", "Data", "Config_Ship.package"))

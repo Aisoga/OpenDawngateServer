@@ -133,6 +133,7 @@ The match runs as in the original game. The server uses the game's own data and 
 - Walls block vision.
 - Tall grass hides whoever stands in it from anyone outside it, until they use an ability. This holds for the bots too: a bot doesn't attack, chase or run from a shaper it can't see in grass or in the fog of war; it walks to where it last saw you.
 - Stealthed enemies stay hidden even right next to you.
+- An enemy fades in over a quarter of a second when your team starts to see it, and fades out when your team loses sight of it.
 - An enemy's level and items show while your team can see that enemy.
 
 **Death and respawn.** When you die the screen turns grey and your portrait counts down to your respawn. **View Death Recap** shows who hurt you. While you are dead your items' auras and heals stop (no ally gets Purity's heal or a Legendary aura from your body); they start again at once when you respawn. Effects that keep a count, such as Might's, carry on through a death.

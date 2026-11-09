@@ -172,7 +172,7 @@ def expected_exe(lane, root):
     ca = os.path.join(root, cfg["certs"], "ca_modulus.bin")
     want = {"redirector": cfg["address"], "bind": cfg["address"], "appdata": "DawngateData" + cfg["suffix"],
             "documents": "Dawngate" + cfg["suffix"], "raknet_loopback": cfg["address"], "ca_flag": "0",
-            "laa": "on", "preload": "all", "maptable": "on", "rating": "on", "heaplocks": "on", "numfmt": "on", "averages": "on"}
+            "laa": "on", "preload": "all", "maptable": "on", "rating": "on", "heaplocks": "on", "numfmt": "on", "averages": "on", "fade": "on"}
     if os.path.exists(ca):
         with open(ca, "rb") as f:
             want["ca_sha256"] = hashlib.sha256(f.read()).hexdigest()[:16]
@@ -482,7 +482,7 @@ def expected_extra(name, root):
     lane = LANES[cfg["lane"]]
     want = {"redirector": lane["address"], "bind": cfg["bind"], "appdata": "DawngateData" + cfg["suffix"],
             "documents": "Dawngate" + cfg["suffix"], "raknet_loopback": cfg["bind"], "ca_flag": "0",
-            "laa": "on", "preload": "all", "maptable": "on", "rating": "on", "heaplocks": "on", "numfmt": "on", "averages": "on"}
+            "laa": "on", "preload": "all", "maptable": "on", "rating": "on", "heaplocks": "on", "numfmt": "on", "averages": "on", "fade": "on"}
     sha = ca_sha(os.path.join(root, *lane["certs"].split("/")))
     if sha:
         want["ca_sha256"] = sha
@@ -494,7 +494,7 @@ def expected_lan(address, root):
     sockets narrowed to it, RakNet's start-up send test to it, its own data folders."""
     want = {"redirector": address, "bind": address, "appdata": "DawngateData" + LAN["suffix"],
             "documents": "Dawngate" + LAN["suffix"], "raknet_loopback": address, "ca_flag": "0",
-            "laa": "on", "preload": "all", "maptable": "on", "rating": "on", "heaplocks": "on", "numfmt": "on", "averages": "on"}
+            "laa": "on", "preload": "all", "maptable": "on", "rating": "on", "heaplocks": "on", "numfmt": "on", "averages": "on", "fade": "on"}
     sha = ca_sha(os.path.join(root, *LAN["certs"].split("/")))
     if sha:
         want["ca_sha256"] = sha

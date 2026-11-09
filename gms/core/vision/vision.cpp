@@ -123,19 +123,28 @@ bool UpdateGrassId(const GrassMap& map, float x, float y, uint32_t* id, uint32_t
   return true;
 }
 
+int VisionModel::ClientBitsOf(uint32_t id) const {
+  auto it = index_.find(id);
+  return it != index_.end() && it->second < client_.size() ? client_[it->second] : -1;
+}
+
 uint8_t VisionModel::BitsOf(uint32_t id) const {
   auto it = index_.find(id);
   return it != index_.end() && it->second < bits_.size() ? bits_[it->second] : 0;
 }
 
-bool VisionModel::SeenBy(int team, const Entity& t, bool wasVisible, float extra, bool useHysteresis) const {
+bool VisionModel::SeenBy(int team, const Entity& t, bool wasVisible, float extra, bool useHysteresis,
+                         uint8_t skip, float hystCap) const {
   for (const Source& s : sources_) {
     if (s.team != team || (s.id != 0 && s.id == t.id)) continue;
     const float dx = s.x - t.x, dy = s.y - t.y;
-    const float reach = s.radius + (t.areaRadius > 0.f ? t.areaRadius : 0.f) + (wasVisible && useHysteresis ? s.hysteresis : 0.f) + extra;
+    const float hyst = hystCap >= 0.f && hystCap < s.hysteresis ? hystCap : s.hysteresis;
+    const float reach = s.radius + (t.areaRadius > 0.f ? t.areaRadius : 0.f) + (wasVisible && useHysteresis ? hyst : 0.f) + extra;
     if (dx * dx + dy * dy > reach * reach) continue;
-    if (params_.terrain && !s.ignoreTerrain && params_.terrain->Blocked(s.x, s.y, t.x, t.y)) continue;
-    if (params_.grass && !s.ignoreGrass) {
+    if (params_.terrain && !s.ignoreTerrain && !(skip & kRevealThroughWalls) &&
+        params_.terrain->Blocked(s.x, s.y, t.x, t.y))
+      continue;
+    if (params_.grass && !s.ignoreGrass && !(skip & kRevealThroughGrass)) {
       if (t.grassId != 0 && (t.grassConceal & TeamBit(team)) && s.grassId != t.grassId) continue;
       if (params_.grassMap && params_.grassMap->BlockedBetween(s.x, s.y, t.x, t.y, s.grassId, t.grassId)) continue;
     }
@@ -151,6 +160,7 @@ uint8_t VisionModel::Resolve(size_t i, std::vector<uint8_t>* state) {
   const Entity& e = (*entities_)[i];
   const uint8_t own = TeamBit(e.team);
   uint8_t bits = own;
+  uint8_t client = 0xFF;  // FADE1c: 0xFF until a rule sets it: the same as bits
   (*state)[i] = 1;
   if (!e.tracked || e.neverFogged || !e.controlsVisibility) {
     bits = kAllTeams;
@@ -160,24 +170,34 @@ uint8_t VisionModel::Resolve(size_t i, std::vector<uint8_t>* state) {
       auto it = index_.find(e.owner);
       if (it != index_.end() && (*state)[it->second] != 1) {
         bits = static_cast<uint8_t>(Resolve(it->second, state) | own);
+        client = static_cast<uint8_t>(client_[it->second] | own);
         done = true;
       }
     }
     auto last = e.id ? last_.find(e.id) : last_.end();
     if (!done && !e.alive && last != last_.end()) {
       bits = static_cast<uint8_t>(last->second | own);
+      const auto lc = lastClient_.find(e.id);
+      if (lc != lastClient_.end()) client = static_cast<uint8_t>(lc->second | own);
       done = true;
     }
     if (!done) {
       const uint8_t was = last != last_.end() ? last->second : 0;
+      const auto lc = e.id ? lastClient_.find(e.id) : lastClient_.end();
+      const uint8_t wasClient = lc != lastClient_.end() ? lc->second : was;
+      if (params_.clientHysteresis >= 0.f) client = own;
       for (int team = 0; team < kNumTeams; ++team) {
         const uint8_t bit = TeamBit(team);
         if (bit == own) continue;
         if (SeenBy(team, e, (was & bit) != 0)) bits = static_cast<uint8_t>(bits | bit);
+        if (params_.clientHysteresis >= 0.f &&
+            SeenBy(team, e, (wasClient & bit) != 0, 0.f, true, 0, params_.clientHysteresis))
+          client = static_cast<uint8_t>(client | bit);
       }
     }
   }
   bits_[i] = bits;
+  client_[i] = client == 0xFF ? bits : client;
   (*state)[i] = 2;
   return bits;
 }
@@ -190,6 +210,7 @@ void VisionModel::Update(const std::vector<Entity>& entities, const Params& para
   sources_.clear();
   index_.clear();
   bits_.assign(entities.size(), 0);
+  client_.assign(entities.size(), 0);
   for (size_t i = 0; i < entities.size(); ++i) {
     const Entity& e = entities[i];
     if (e.id) index_[e.id] = i;
@@ -224,11 +245,14 @@ void VisionModel::Update(const std::vector<Entity>& entities, const Params& para
         // leaving: one unit past the margin, against flicker, so the ghost doesn't linger in the dark as far as the
         // source's own hysteresis would keep it
         if (params_.revealMargin > 0.f &&
-            SeenBy(team, e, false, params_.revealMargin + ((was & bit) ? kRevealLeaveBand : 0.f), false)) {
+            SeenBy(team, e, false, params_.revealMargin + ((was & bit) ? kRevealLeaveBand : 0.f), false,
+                   params_.revealThrough)) {
           reveal_[i] = static_cast<uint8_t>(reveal_[i] | bit);
           continue;
         }
-        const bool concealed = (params_.grass && e.grassId != 0 && (e.grassConceal & bit)) || (params_.stealth && e.stealthed);
+        const bool concealed = (params_.grass && !(params_.revealThrough & kRevealThroughGrass) && e.grassId != 0 &&
+                                (e.grassConceal & bit)) ||
+                               (params_.stealth && e.stealthed);
         if (params_.revealHoldMs > 0.0 && !concealed && seen.ms[team] >= 0.0 &&
             params_.nowMs - seen.ms[team] <= params_.revealHoldMs)
           reveal_[i] = static_cast<uint8_t>(reveal_[i] | bit);
@@ -239,10 +263,12 @@ void VisionModel::Update(const std::vector<Entity>& entities, const Params& para
   }
   last_.clear();
   lastReveal_.clear();
+  lastClient_.clear();
   for (size_t i = 0; i < entities.size(); ++i)
     if (entities[i].id) {
       last_[entities[i].id] = bits_[i];
       lastReveal_[entities[i].id] = reveal_[i];
+      lastClient_[entities[i].id] = client_[i];
     }
   entities_ = nullptr;
 }

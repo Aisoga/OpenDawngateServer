@@ -212,8 +212,8 @@ function Update-ExePatches([string]$copy, [string]$fix) {
     # rating); a copy patched before them is patched again (patch_client.py always starts from Dawngate.exe.orig)
     $exe = Join-Path $copy 'game\Dawngate.exe'
     $patcher = Join-Path $PSScriptRoot 'patch_client.py'
-    $label = 'client exe patches (map names, the profile box''s rating, the UI heaps'' locks, the UI''s numbers, the profile''s averages)'
-    $want = @('preload=all', 'maptable=on', 'rating=on', 'heaplocks=on', 'numfmt=on', 'averages=on')
+    $label = 'client exe patches (map names, the profile box''s rating, the UI heaps'' locks, the UI''s numbers, the profile''s averages, the fade at the fog''s edge)'
+    $want = @('preload=all', 'maptable=on', 'rating=on', 'heaplocks=on', 'numfmt=on', 'averages=on', 'fade=on')
     $show = @(& $Python -I $patcher --show $exe)
     if (-not @($want | Where-Object { $show -notcontains $_ }).Count) { Ok $label; return }
     Write-Host "  install  $label (an older patch)" -ForegroundColor Yellow

@@ -60,8 +60,10 @@ RATING_OUTPUT_SHA256 = "75974aeadff4f99f2a5f028126d5257f993e06953d661021c7f8a42a
 HEAPLOCKS_OUTPUT_SHA256 = "b7254e054218a1e7a44be37a9e32c714317413c01853f15c93fd888952e7eeaf"
 # NUMFMT: HEAPLOCKS_OUTPUT with the UI's numbers at 15 digits (two sites)
 NUMFMT_OUTPUT_SHA256 = "1ec27470fb246a4d81820a96929a670f8cf27476fdca2f2417c5848d59e1255d"
-# AVGPREC: the default output, NUMFMT_OUTPUT with the profile's averages at full precision (one block)
+# AVGPREC: NUMFMT_OUTPUT with the profile's averages at full precision (one block)
 AVERAGES_OUTPUT_SHA256 = "73feaac8ca6b72ce79cbfe07205530f94ee583389c2e5ae991f1075f72b05a20"
+# FADE1 (FADE1b, FADE1c): the default output, AVERAGES_OUTPUT with the fade at the fog's edge (five sites, in place)
+FADE_OUTPUT_SHA256 = "1554a60850b11880dbe1519b13cadeb4dd0f5a5a5d836c9f18ab3da3194c5135"
 RATING_SUMMARY = MAPTABLE_SUMMARY + "; the profile box shows the rating the server sends (rating cave at 0x011ab170)"
 EXE = None  # set in __main__
 
@@ -111,16 +113,18 @@ class PatchClientTest(unittest.TestCase):
         cls.vsize_at = pe.sections[0].get_file_offset() + 8
         cls.local, cls.local_summary = pc.patch_bytes(cls.orig, MODULUS)
         cls.a4, cls.a4_summary = pc.patch_bytes(cls.orig, MODULUS, laa=False, preload=False, maptable=False,
-                                                rating=False, heaplocks=False, numfmt=False, averages=False)
+                                                rating=False, heaplocks=False, numfmt=False, averages=False, fade=False)
         cls.q3b, cls.q3b_summary = pc.patch_bytes(cls.orig, MODULUS, preload=False, maptable=False, rating=False,
-                                                  heaplocks=False, numfmt=False, averages=False)
+                                                  heaplocks=False, numfmt=False, averages=False, fade=False)
         cls.sndbank, cls.sndbank_summary = pc.patch_bytes(cls.orig, MODULUS, maptable=False, rating=False,
-                                                          heaplocks=False, numfmt=False, averages=False)
+                                                          heaplocks=False, numfmt=False, averages=False, fade=False)
         cls.maptable, cls.maptable_summary = pc.patch_bytes(cls.orig, MODULUS, rating=False, heaplocks=False,
-                                                            numfmt=False, averages=False)
-        cls.rating, cls.rating_summary = pc.patch_bytes(cls.orig, MODULUS, heaplocks=False, numfmt=False, averages=False)
-        cls.heaplocks, cls.heaplocks_summary = pc.patch_bytes(cls.orig, MODULUS, numfmt=False, averages=False)
-        cls.numfmt, cls.numfmt_summary = pc.patch_bytes(cls.orig, MODULUS, averages=False)
+                                                            numfmt=False, averages=False, fade=False)
+        cls.rating, cls.rating_summary = pc.patch_bytes(cls.orig, MODULUS, heaplocks=False, numfmt=False, averages=False,
+                                                        fade=False)
+        cls.heaplocks, cls.heaplocks_summary = pc.patch_bytes(cls.orig, MODULUS, numfmt=False, averages=False, fade=False)
+        cls.numfmt, cls.numfmt_summary = pc.patch_bytes(cls.orig, MODULUS, averages=False, fade=False)
+        cls.averages, cls.averages_summary = pc.patch_bytes(cls.orig, MODULUS, fade=False)
 
     def at(self, data, va, n):
         return data[self.off(va):self.off(va) + n]
@@ -162,14 +166,14 @@ class PatchClientTest(unittest.TestCase):
         self.assertEqual([pc.describe(d)["maptable"] for d in (self.orig, self.sndbank, self.maptable)],
                          ["as-shipped", "as-shipped", "on"])
 
-    def test_local_default_is_number_format_output_plus_averages(self):
-        self.assertEqual(sha256(self.local), AVERAGES_OUTPUT_SHA256)
+    def test_averages_output_is_number_format_output_plus_averages(self):
+        self.assertEqual(sha256(self.averages), AVERAGES_OUTPUT_SHA256)
         at_block = self.off(pc.AVERAGES_BLOCK)
-        for start, end in diff_ranges(self.numfmt, self.local):
+        for start, end in diff_ranges(self.numfmt, self.averages):
             self.assertTrue(at_block <= start and end <= at_block + len(pc.AVERAGES_NEW), hex(start))
         self.assertEqual(len(pc.AVERAGES_NEW), len(pc.AVERAGES_ORIG))
         self.assertEqual(self.at(self.orig, pc.AVERAGES_BLOCK, len(pc.AVERAGES_ORIG)), pc.AVERAGES_ORIG)
-        self.assertEqual(self.at(self.local, pc.AVERAGES_BLOCK, len(pc.AVERAGES_NEW)), pc.AVERAGES_NEW)
+        self.assertEqual(self.at(self.averages, pc.AVERAGES_BLOCK, len(pc.AVERAGES_NEW)), pc.AVERAGES_NEW)
         # what the block's code does: the instructions, the stack, and that what the code after it reads is kept
         import capstone
         md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
@@ -183,10 +187,75 @@ class PatchClientTest(unittest.TestCase):
             ("mov", "eax, dword ptr [esp + 0x90]"), ("xor", "edx, edx"), ("div", "ecx"),
             ("mov", "dword ptr [esp + 0x90], eax"), ("mov", "ebx, dword ptr [esp + 0x14]"), ("add", "ebx, 0x78"),
             ("mov", "eax, dword ptr [ebx]"), ("mov", "esi, eax"), ("mov", "dword ptr [esp + 0x10], esi")])
-        self.assertEqual([pc.describe(d)["averages"] for d in (self.orig, self.numfmt, self.local)],
+        self.assertEqual([pc.describe(d)["averages"] for d in (self.orig, self.numfmt, self.averages)],
                          ["as-shipped", "as-shipped", "on"])
-        self.assertEqual(self.local_summary, self.numfmt_summary + "; the profile's averages at full precision "
+        self.assertEqual(self.averages_summary, self.numfmt_summary + "; the profile's averages at full precision "
                          "(8.7, not 8.6)")
+
+    def test_local_default_is_averages_output_plus_fade(self):
+        self.assertEqual(sha256(self.local), FADE_OUTPUT_SHA256)
+        sites = [(va, orig, new) for va, orig, new, _what in pc.FADE_SITES]
+        for start, end in diff_ranges(self.averages, self.local):
+            self.assertTrue(any(self.off(va) <= start and end <= self.off(va) + len(n) for va, _, n in sites), hex(start))
+        for va, orig, new in sites:
+            self.assertEqual(len(new), len(orig), hex(va))
+            self.assertEqual(self.at(self.orig, va, len(orig)), orig, hex(va))
+            self.assertEqual(self.at(self.local, va, len(new)), new, hex(va))
+        # the room: ApplyCreatureOpacity's body and padding up to the next function, which nothing else jumps into
+        self.assertEqual(pc.FADE_APPLY + len(pc.FADE_APPLY_ORIG), 0x0056E830)
+        self.assertEqual(pc.FADE_APPLY_ORIG[-9:], b"\xcc" * 9)
+        # FadeTarget's room: the first assert block, whose only lasting effect is the store the new code keeps
+        self.assertEqual(pc.FADE_TARGET_ORIG[:7], bytes.fromhex("33c085f60f95c0"))
+        import capstone
+        md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+        md.detail = True
+        step, target = 0x0056E76A, 0x0056E453
+        code = {va: new.rstrip(b"\xcc") for va, _orig, new in sites}  # the int3 padding left as shipped
+        blocks = {va: va + len(c) for va, c in code.items()}
+        calls, targets, reads = [], set(), set()
+        for base, data in code.items():
+            ins = list(md.disasm(data, base))
+            self.assertEqual(ins[-1].address + ins[-1].size, blocks[base], hex(base))  # decodes to the block's end
+            for x in ins:
+                if x.mnemonic == "call":
+                    calls.append(int(x.op_str, 16))
+                elif x.mnemonic.startswith("j"):
+                    targets.add(int(x.op_str, 16))
+                for op in x.operands:
+                    if op.type == capstone.x86.X86_OP_MEM and op.mem.base == 0 and op.mem.index == 0:
+                        reads.add(op.mem.disp)
+        # the functions called: the observer test, the local team mask, FadeTarget, the simulator, the frame's seconds;
+        # FadeStep
+        self.assertEqual(calls, [0x0066D010, 0x0066CE20, target, 0x008EF090, 0x008F99C0, step])
+        # every jump stays in its block or goes to the shipped paths: not drawn (0x0057634E), the normal and the glass
+        # materials (0x0056E568, 0x0056E5C6), and the second assert after FadeTarget's room (0x0056E48B)
+        for t in targets:
+            self.assertTrue(any(b <= t < e for b, e in blocks.items()) or
+                            t in (0x0057634E, 0x0056E568, 0x0056E5C6, 0x0056E48B),
+                            hex(t))
+        # the constants read: 1.0, -1.0, 4.0, 0.5, 0.25, 0.375 in .rdata, and the GameGraphics pointer
+        floats = {va: struct.unpack("<f", self.at(self.orig, va, 4))[0] for va in reads if va != 0x0159A038}
+        self.assertEqual(sorted(set(floats.values())), [-1.0, 0.25, 0.375, 0.5, 1.0, 4.0])
+        self.assertEqual(set(reads) - set(floats), {0x0159A038})
+        # FadeStep's stack: each path to a ret pops what it pushed (push ecx, push esi; the delta's argument)
+        ins = list(md.disasm(code[pc.FADE_APPLY][step - pc.FADE_APPLY:], step))
+        self.assertEqual([x.mnemonic for x in ins if x.mnemonic in ("push", "pop")],
+                         ["pop", "pop", "push", "push", "push", "pop", "push", "pop", "pop", "pop"])
+        self.assertEqual(sum(1 for x in ins if x.mnemonic == "ret"), 3)
+        # FadeTarget: the bit, then the fog query's value against 160 (clearly lit, FADE1c), no stack use
+        ins = list(md.disasm(code[pc.FADE_TARGET], pc.FADE_TARGET))
+        self.assertEqual([(x.mnemonic, x.op_str) for x in ins][2:], [
+            ("and", "al, byte ptr [edi + 0x888]"), ("movzx", "esi, al"), ("mov", "ecx, dword ptr [edi + 0x860]"),
+            ("jecxz", hex(target + 0x1C)), ("cmp", "dword ptr [ecx + 0x5c], 0xa0"), ("cmc", ""), ("adc", "esi, 0"),
+            ("ret", "")])
+        self.assertEqual(ins[1].op_str, "0x56e48b")
+        # UpdateCreatureOpacity's front: one push edi on both ways to the materials, as shipped
+        ins = list(md.disasm(pc.FADE_FRONT_NEW, pc.FADE_FRONT))
+        self.assertEqual([x.op_str for x in ins if x.mnemonic == "push"], ["edi", "edi"])
+        self.assertEqual([pc.describe(d)["fade"] for d in (self.orig, self.averages, self.local)],
+                         ["as-shipped", "as-shipped", "on"])
+        self.assertEqual(self.local_summary, self.averages_summary + "; enemy creatures fade in and out by their "
+                         "team's sight and the fog (0.25 s)")
 
     def test_number_format_output_is_heap_locks_output_plus_number_format(self):
         self.assertEqual(sha256(self.numfmt), NUMFMT_OUTPUT_SHA256)
@@ -271,6 +340,7 @@ class PatchClientTest(unittest.TestCase):
         changed |= {(self.off(va), len(pc.HEAP_LOCKS_NEW)) for va in pc.HEAP_LOCKS}  # since UICHAN the heap locks
         changed |= {(self.off(pc.NUMFMT_FORMAT), 6), (self.off(pc.NUMFMT_STEP), 6)}  # since NUMFMT the number format
         changed |= {(self.off(pc.AVERAGES_BLOCK), len(pc.AVERAGES_NEW))}  # since AVGPREC the averages
+        changed |= {(self.off(va), len(n)) for va, _o, n, _w in pc.FADE_SITES}  # since FADE1 the fade
         for start, end in diff_ranges(self.orig, lan):
             self.assertTrue(any(s <= start and end <= s + n for s, n in changed), hex(start))
         self.assertIn("sockets as shipped", summary)
@@ -331,7 +401,9 @@ class PatchClientTest(unittest.TestCase):
 
     def test_wrong_build_is_refused_in_every_profile(self):
         for va in (pc.BIND_CALLS[0], pc.BIND_THUNK, pc.REDIRECTOR_HOST, pc.NOUPNP_JNZ, pc.PRELOAD_COUNT, pc.MAP_MISS,
-                   pc.MAP_RESUME, pc.NUMFMT_FORMAT, pc.NUMFMT_STEP, pc.NUMFMT_1E15, pc.AVERAGES_BLOCK):
+                   pc.MAP_RESUME, pc.NUMFMT_FORMAT, pc.NUMFMT_STEP, pc.NUMFMT_1E15, pc.AVERAGES_BLOCK,
+                   pc.FADE_APPLY + 0xDF, pc.FADE_TARGET + 0x3D, pc.FADE_HOOK, pc.FADE_FRONT + 0x8C,
+                   pc.FADE_PARAM):
             bad = bytearray(self.orig)
             bad[self.off(va)] ^= 0xFF
             for profile, kw in [("local", {}), ("lan", {"server_host": "192.168.1.20"})]:
@@ -346,22 +418,24 @@ class PatchClientTest(unittest.TestCase):
             with open(mod, "wb") as f:
                 f.write(MODULUS)
             pc.main(["patch_client.py", exe, mod])
+            self.assertEqual(sha256(read(exe)), FADE_OUTPUT_SHA256)
+            pc.main(["patch_client.py", exe, mod, "--fade", "off"])
             self.assertEqual(sha256(read(exe)), AVERAGES_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--averages", "off"])
+            pc.main(["patch_client.py", exe, mod, "--fade", "off", "--averages", "off"])
             self.assertEqual(sha256(read(exe)), NUMFMT_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--averages", "off", "--number-format", "off"])
+            pc.main(["patch_client.py", exe, mod, "--fade", "off", "--averages", "off", "--number-format", "off"])
             self.assertEqual(sha256(read(exe)), HEAPLOCKS_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--averages", "off", "--number-format", "off", "--heap-locks", "off"])
+            pc.main(["patch_client.py", exe, mod, "--fade", "off", "--averages", "off", "--number-format", "off", "--heap-locks", "off"])
             self.assertEqual(sha256(read(exe)), RATING_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--rating", "off"])
+            pc.main(["patch_client.py", exe, mod, "--fade", "off", "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--rating", "off"])
             self.assertEqual(sha256(read(exe)), MAPTABLE_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--maptable", "off",
+            pc.main(["patch_client.py", exe, mod, "--fade", "off", "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--maptable", "off",
                      "--rating", "off"])
             self.assertEqual(sha256(read(exe)), SNDBANK_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--preload", "off",
+            pc.main(["patch_client.py", exe, mod, "--fade", "off", "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--preload", "off",
                      "--maptable", "off", "--rating", "off"])
             self.assertEqual(sha256(read(exe)), Q3B_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--laa", "off", "--preload",
+            pc.main(["patch_client.py", exe, mod, "--fade", "off", "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--laa", "off", "--preload",
                      "off", "--maptable", "off",
                      "--rating", "off"])
             self.assertEqual(sha256(read(exe)), A4_OUTPUT_SHA256)
@@ -371,10 +445,10 @@ class PatchClientTest(unittest.TestCase):
             self.assertEqual(self.at(lan, pc.BIND_THUNK, 6), pc.JMP_BIND)
             self.assertEqual(sha256(read(exe + ".orig")), BUILD_854_SHA256)
             pc.main(["patch_client.py", exe, mod, "127.0.0.1"])  # the A4 command line, back to local
-            self.assertEqual(sha256(read(exe)), AVERAGES_OUTPUT_SHA256)
+            self.assertEqual(sha256(read(exe)), FADE_OUTPUT_SHA256)
             with self.assertRaises(SystemExit):  # refused before anything is written
                 pc.main(["patch_client.py", exe, mod, "--profile", "lan"])
-            self.assertEqual(sha256(read(exe)), AVERAGES_OUTPUT_SHA256)
+            self.assertEqual(sha256(read(exe)), FADE_OUTPUT_SHA256)
 
 
 class RefusalWithoutExeTest(unittest.TestCase):

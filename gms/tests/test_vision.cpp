@@ -858,7 +858,7 @@ GMS_TEST(PursuitLastSeenNewAndReusedRecords) {
   book.End();
 }
 
-// FOGEDGE: a shaper reaches a client a margin before its team sees it; Bits (mVisibleToTeam) doesn't change.
+// FOGEDGE: a creature reaches a client a margin before its team sees it; Bits (mVisibleToTeam) doesn't change.
 GMS_TEST(VisionRevealMargin) {
   VisionModel m;
   Params p;
@@ -954,4 +954,114 @@ GMS_TEST(VisionRevealNotThroughGrassOrStealth) {
     CHECK_EQ(m.Bits(1), kBitSpirit);
     CHECK_EQ(m.RevealBits(1), kBitSpirit);
   }
+}
+
+// FADE1b: with revealThrough the margin and the hold look past walls and grass (the client's fade hides what its own fog
+// map hides), never past stealth; Bits stays the truth.
+GMS_TEST(VisionRevealThroughWallsAndGrass) {
+  std::vector<uint8_t> cells(64 * 64, 0);
+  for (int y = 0; y < 64; ++y) cells[static_cast<size_t>(y) * 64 + 40] = 128;  // a wall at x = 16..18
+  const LosMap map = LosMap::ForLevel(cells.data(), 64, 64, 128.f, 128.f);
+  Params p;
+  p.terrain = &map;
+  p.grass = true;
+  p.stealth = true;
+  p.revealMargin = 3.f;
+  p.revealHoldMs = 750.0;
+  Entity early = Target(0x202, kSpirit, 30.f, 0.f);  // behind the wall, within the radius
+  early.revealEarly = true;
+  std::vector<Entity> es = {Shaper(0x101, kMortal, 0.f, 0.f), early};
+  {
+    VisionModel m;  // FOGEDGE's rule: the wall hides it from the margin too
+    m.Update(es, p);
+    CHECK_EQ(m.Bits(1), kBitSpirit);
+    CHECK_EQ(m.RevealBits(1), kBitSpirit);
+  }
+  p.revealThrough = kRevealThroughWalls;
+  {
+    VisionModel m;
+    m.Update(es, p);
+    CHECK_EQ(m.Bits(1), kBitSpirit);                     // the truth: behind the wall
+    CHECK_EQ(m.RevealBits(1), kBitSpirit | kBitMortal);  // the client has it, its fog map keeps it dark
+    es[1].x = 40.f;  // beyond the margin and its leaving band: no
+    m.Update(es, p);
+    CHECK_EQ(m.RevealBits(1), kBitSpirit);
+    es[1].x = 30.f;
+    es[1].grassId = 0x486A198D;  // in a patch: grass still hides it from the margin without the grass bit
+    m.Update(es, p);
+    CHECK_EQ(m.RevealBits(1), kBitSpirit);
+  }
+  p.revealThrough = kRevealThroughWalls | kRevealThroughGrass;
+  {
+    VisionModel m;
+    es[1].x = 10.f;  // in the open side of the wall, in a patch the source isn't in
+    p.nowMs = 1000.0;
+    m.Update(es, p);
+    CHECK_EQ(m.Bits(1), kBitSpirit);
+    CHECK_EQ(m.RevealBits(1), kBitSpirit | kBitMortal);  // into the grass early
+    es[1].grassId = 0;  // out of it: seen; then into it again: the hold keeps it too
+    p.nowMs = 1100.0;
+    m.Update(es, p);
+    CHECK_EQ(m.Bits(1), kBitSpirit | kBitMortal);
+    es[1].grassId = 0x486A198D;
+    es[1].x = 40.f;  // beyond the margin: only the hold, which grass no longer ends
+    p.nowMs = 1500.0;
+    m.Update(es, p);
+    CHECK_EQ(m.RevealBits(1), kBitSpirit | kBitMortal);
+    es[1].stealthed = true;  // stealth stays immediate
+    p.nowMs = 1600.0;
+    m.Update(es, p);
+    CHECK_EQ(m.RevealBits(1), kBitSpirit);
+    es[1].stealthed = false;
+    es[1].x = 10.f;
+    p.nowMs = 1700.0;
+    m.Update(es, p);
+    es[1].stealthed = true;  // stealthed within the margin's reach too
+    p.nowMs = 1800.0;
+    m.Update(es, p);
+    CHECK_EQ(m.RevealBits(1), kBitSpirit);
+  }
+}
+
+// FADE1c: the players' byte (ClientBits) has the client rule's small hysteresis; Bits keeps the game's 3.0.
+GMS_TEST(VisionClientHysteresis) {
+  Params p;
+  p.clientHysteresis = 0.5f;
+  VisionModel m;
+  std::vector<Entity> es = {Shaper(0x101, kMortal, 0.f, 0.f), Target(0x202, kSpirit, 35.f, 0.f)};
+  m.Update(es, p);
+  CHECK_EQ(m.Bits(1), kBitSpirit | kBitMortal);
+  CHECK_EQ(m.ClientBits(1), kBitSpirit | kBitMortal);
+  CHECK_EQ(m.ClientBitsOf(0x202), kBitSpirit | kBitMortal);
+  es[1].x = 35.7f;  // within both bands
+  m.Update(es, p);
+  CHECK_EQ(m.ClientBits(1), kBitSpirit | kBitMortal);
+  es[1].x = 36.f;  // past 35.3 + 0.5: the players' byte clears, the truth keeps it to 38.3
+  m.Update(es, p);
+  CHECK_EQ(m.Bits(1), kBitSpirit | kBitMortal);
+  CHECK_EQ(m.ClientBits(1), kBitSpirit);
+  es[1].x = 35.6f;  // back in: the client rule needs 35.3 again
+  m.Update(es, p);
+  CHECK_EQ(m.ClientBits(1), kBitSpirit);
+  es[1].x = 35.2f;
+  m.Update(es, p);
+  CHECK_EQ(m.ClientBits(1), kBitSpirit | kBitMortal);
+  es[1].x = 38.f;
+  m.Update(es, p);
+  CHECK_EQ(m.Bits(1), kBitSpirit | kBitMortal);
+  CHECK_EQ(m.ClientBits(1), kBitSpirit);
+  CHECK_EQ(m.ClientBitsOf(0x999), -1);
+  // never fogged objects and the owner's vision follow the same rule as Bits
+  es.push_back(Target(0x303, kSpirit, 37.f, 0.f));
+  es[2].useOwnerVision = true;
+  es[2].owner = 0x202;
+  m.Update(es, p);
+  CHECK_EQ(m.ClientBits(2), kBitSpirit);
+  CHECK_EQ(m.Bits(2), kBitSpirit | kBitMortal);
+  // off: the players get the truth
+  Params off;
+  VisionModel m2;
+  m2.Update(es, off);
+  CHECK_EQ(m2.ClientBits(1), m2.Bits(1));
+  CHECK_EQ(m2.ClientBitsOf(0x202), m2.Bits(1));
 }

@@ -92,6 +92,9 @@ func SyntheticExe() []byte {
 	put(numFmtStep, numFmtStepOrig)
 	put(numFmt1e15, numFmt1e15Value)
 	put(averagesBlock, averagesOrig)
+	for _, f := range fadeSites {
+		put(f.va, f.orig)
+	}
 	put(ratingSite1, ratingSite1Orig)
 	put(ratingSite2, append(bytes.Clone(ratingSite2Orig), ratingNext2...))
 	return b

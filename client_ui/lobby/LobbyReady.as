@@ -68,6 +68,7 @@ package {
         private static const WAIT_TEXT:String = "Not all ready";
         private static const RATING_LABEL:String = "Rating "; // as the profile box's "Rating 1532"
         private static const RATING_GAP:int = 14;              // after the wins, in the wins label's own units
+        private static const MARK_PAD:int = 10;                // the ready mark's end before the tile's right edge
         // the colours: the lobby's own (a ready mark green as the client's online state, the rest the tile's wins grey)
         private static const READY_COLOR:uint = 0x7ED957;
         private static const DIM_COLOR:uint = 0xA9A9A9;
@@ -825,7 +826,7 @@ package {
                     var state:* = readyOf(name);
                     if (!card.playerViewData.isOwner && state !== undefined) { // as counted()
                         marked[key] = true;
-                        drawTile(tile(key), cell.getBounds(overlay), state === true);
+                        drawTile(tile(key), cell, state === true);
                     }
                     var p:Object = players[name];
                     if (p != null && int(p.rating) > 0 && drawRating(tile(key), cell, String(int(p.rating)))) {
@@ -923,23 +924,34 @@ package {
             return true;
         }
 
-        // at the tile's right, before its kick button (32 wide)
-        private function drawTile(tl:Object, r:Rectangle, on:Boolean):void {
+        // at the tile's bottom right, on the wins row, the text ending MARK_PAD before the tile's edge: the name's row above
+        // stays free for a long name (in the middle the mark covered it), where only EA's kick button and crown sit
+        private function drawTile(tl:Object, cell:DisplayObject, on:Boolean):void {
+            var r:Rectangle = cell.getBounds(overlay);
             var tf:TextField = tl.text as TextField;
             var want:String = on ? MARK_READY : MARK_NOT_READY;
             if (tf.text != want) {
                 tf.text = want;
             }
             tf.textColor = on ? READY_COLOR : DIM_COLOR;
-            tf.x = r.right - 36 - 100;
-            tf.y = r.y + r.height / 2 - 10;
+            // the row's middle: the wins text's own (its field's gutter and scale, as drawRating), else 3/4 down the tile
+            var mid:Number = r.y + r.height * 0.75;
+            var w:TextField = winsField(cell);
+            if (w != null && w.stage != null) {
+                var wr:Rectangle = w.getBounds(overlay);
+                var localH:Number = w.scaleY != 0 ? w.height / w.scaleY : w.height;
+                var sc:Number = localH > 0 ? wr.height / localH : 1;
+                mid = wr.y + (2 + w.textHeight / 2) * sc;
+            }
+            tf.x = r.right - MARK_PAD - (tf.textWidth + 4);
+            tf.y = mid - 2 - tf.textHeight / 2;
             tf.visible = true;
             if (tl.check != null) {
                 if (tl.check.selected != on) {
                     tl.check.selected = on;
                 }
-                tl.check.x = r.right - 36 - 130;
-                tl.check.y = r.y + r.height / 2 - 12;
+                tl.check.x = tf.x - 30;
+                tl.check.y = mid - 13;
                 tl.check.visible = true;
             }
         }

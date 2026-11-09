@@ -488,7 +488,8 @@ bool Read(void* sim, const std::vector<repl::NetObject>& objs, const Options& op
     }
     e.owner = r.owner;
     e.grassId = r.grassId;
-    e.revealEarly = o.playerControlled;  // FOGEDGE
+    // FOGEDGE: a player's creature; FADE1b: every creature (shapers, minions, creeps), as the client's fade gates each
+    e.revealEarly = o.playerControlled || o.nounType == noun::kTypeCreature;
     entities->push_back(e);
     ObjectInfo& in = (*info)[i];
     in.tracked = r.tracked;

@@ -40,6 +40,11 @@
 //   - averages: the profile's averages are real divisions at full precision. The shipped total * (1 / games) ran on an x87
 //     at 24 bits, so an average that is an exact tenth could land just under it and show a tenth low (87 over 10 games as
 //     8.6). The block is rewritten in place: no cave. On unless NoAverages.
+//   - fade: an enemy creature is drawn while its team sees it (mVisibleToTeam) or the client's own fog texture at its
+//     feet is lit, and fades in and out over 0.25 s, instead of a pale ghost that turns solid at once; so a creature the
+//     server sends a little early stays hidden until it is in sight, and shows without waiting for the server.
+//     Observers as shipped. In place: a function only the fog exit called and an assert block (fade.go). On unless
+//     NoFade.
 //
 // Profiles: "local" (the default; the server on a loopback address, every wildcard bind narrowed to it) and "lan" (a
 // server elsewhere on our own network: ServerHost required, the binds as shipped unless ClientBind names this
@@ -323,6 +328,8 @@ type Options struct {
 	NoNumberFormat bool
 	// NoAverages leaves out the profile averages' full precision (patch_client.py --averages off)
 	NoAverages bool
+	// NoFade leaves out the fade at the fog's edge: enemy creatures drawn as shipped
+	NoFade bool
 }
 
 // Error is a refusal: the exe isn't the expected build, or the options don't fit the profile (patch_client.py's
@@ -744,16 +751,28 @@ func Patch(orig, modulus []byte, o Options) ([]byte, string, error) {
 		write(averagesBlock, averagesNew)
 		summary += "; the profile's averages at full precision (8.7, not 8.6)"
 	}
+	// --- an enemy creature is drawn by its team bit and fades in and out at the fog's edge
+	for _, f := range fadeSites {
+		if err := expect(f.va, f.orig, f.what); err != nil {
+			return nil, "", err
+		}
+	}
+	if !o.NoFade {
+		for _, f := range fadeSites {
+			write(f.va, f.new)
+		}
+		summary += "; enemy creatures fade in and out by their team's sight and the fog (0.25 s)"
+	}
 	return data, summary, nil
 }
 
 // Description is what an exe carries (patch_client.py's describe, --show), by key: redirector, bind, appdata,
-// documents, raknet_loopback, ca_sha256, ca_flag, laa, preload, maptable, rating, heaplocks, numfmt, averages
+// documents, raknet_loopback, ca_sha256, ca_flag, laa, preload, maptable, rating, heaplocks, numfmt, averages, fade
 // (DescriptionKeys, in --show's order).
 type Description map[string]string
 
 // DescriptionKeys are Description's keys in patch_client.py --show's order.
-var DescriptionKeys = []string{"redirector", "bind", "appdata", "documents", "raknet_loopback", "ca_sha256", "ca_flag", "laa", "preload", "maptable", "rating", "heaplocks", "numfmt", "averages"}
+var DescriptionKeys = []string{"redirector", "bind", "appdata", "documents", "raknet_loopback", "ca_sha256", "ca_flag", "laa", "preload", "maptable", "rating", "heaplocks", "numfmt", "averages", "fade"}
 
 // HostKeys are what a match host's copy must carry (setup_all.py's HOST_KEYS): its sockets are the harness's.
 var HostKeys = []string{"redirector", "appdata", "documents"}
@@ -854,6 +873,20 @@ func Describe(data []byte) (Description, error) {
 		out["averages"] = "on"
 	case bytes.Equal(block, averagesOrig):
 		out["averages"] = "as-shipped"
+	}
+	fadeOn, fadeShipped := true, true
+	for _, f := range fadeSites {
+		got := at(f.va, len(f.orig))
+		fadeOn = fadeOn && bytes.Equal(got, f.new)
+		fadeShipped = fadeShipped && bytes.Equal(got, f.orig)
+	}
+	switch {
+	case fadeOn:
+		out["fade"] = "on"
+	case fadeShipped:
+		out["fade"] = "as-shipped"
+	default:
+		out["fade"] = "unknown"
 	}
 	switch {
 	case bytes.Equal(count, preloadCountNew):

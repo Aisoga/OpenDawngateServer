@@ -1286,12 +1286,17 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   // fow_gold_team_only (1): AA's mAvailableGold only to the player's team and the spectators.
   // FOGEDGE ([host] fog_reveal_margin, hundredths of a unit; fog_reveal_hold_ms): a player's creature reaches a client a
   // margin before its team sees it and stays a moment after, by RevealBits (the fog step, the deltas and the kind-2
-  // messages); mVisibleToTeam and everything that reads it stay the truth. Both 0 by default (the behaviour before): the
-  // game's client draws every enemy creature it has, as a ghost in the fog, so the head start shows as extra sight until a
-  // client draws by mVisibleToTeam. fog_reveal_margin=300;fog_reveal_hold_ms=750 turns it on (3 units, 0.75 s).
-  void SetFogRevealMargin(float units, double holdMs) {
+  // messages); mVisibleToTeam and everything that reads it stay the truth. On by default since FADE2 (500 and 750: 5 units,
+  // 0.75 s, the user's try fadetry_3b): the game's client draws every enemy creature it has, as a ghost in the fog, so the
+  // head start needs the exe patch fade (FADE1), which every Start-Client installs and which draws by mVisibleToTeam;
+  // a server plays only with clients of its own version. fog_reveal_margin=0;fog_reveal_hold_ms=0: the behaviour before.
+  // FADE1b ([host] fog_reveal_through, 3): what the margin and the hold look past, for clients with the exe patch fade,
+  // whose own fog map keeps a creature behind a wall or in a bush undrawn: 1 walls, 2 grass (vision::Params)
+  void SetFogClientHysteresis(float units) { fogClientHysteresis_ = units; }
+  void SetFogRevealMargin(float units, double holdMs, int through) {
     fogRevealMargin_ = units;
     fogRevealHoldMs_ = holdMs;
+    fogRevealThrough_ = static_cast<uint8_t>(through & 3);
   }
   void SetTeamPrivate(bool visibleByTeam, bool deltasByVision, bool serverEventsByObject, bool castersByKnown,
                       bool goldTeamOnly, int logLimit) {
@@ -2072,12 +2077,13 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       return;
     }
     const uint8_t bits = m.msg[static_cast<size_t>(m.visibleAt)];
+    const uint32_t id = MessageObjectId(m.msg);
     gms::Bytes copy = m.msg;
     uint16_t left = to;
     for (int a = 0; a < gms::kVisibleAudiences; ++a) {
       const uint16_t players = static_cast<uint16_t>(left & visibleMask_[a]);
       if (!players) continue;
-      copy[static_cast<size_t>(m.visibleAt)] = gms::VisibleAudienceBits(a, bits);
+      copy[static_cast<size_t>(m.visibleAt)] = AudienceByte(a, bits, id);
       SendTo(out, players, copy, nullptr);
       left = static_cast<uint16_t>(left & ~players);
     }
@@ -2087,12 +2093,30 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     }
   }
 
+  // FADE1c ([host] fog_client_hysteresis): a team's players get the object's ClientBits, the truth with a smaller
+  // hysteresis, so the patched client stops drawing an enemy about where it began to (its own fog map ends at the
+  // radius); the spectators and the players without a team the truth, as SEC4B. The bits in `bits` otherwise.
+  uint8_t AudienceByte(int a, uint8_t bits, uint32_t id) const {
+    if (fogClientHysteresis_ >= 0.f && (a == gms::kVisibleAudienceTeam1 || a == gms::kVisibleAudienceTeam2) && fog_ &&
+        fogReady_ && id) {
+      const int c = model_.ClientBitsOf(id);
+      if (c >= 0) return gms::VisibleAudienceBits(a, static_cast<uint8_t>(c));
+    }
+    return gms::VisibleAudienceBits(a, bits);
+  }
+  // A create's 8E and an object update's 90 start with the object's id
+  static uint32_t MessageObjectId(const gms::Bytes& msg) {
+    return msg.size() >= 5 ? static_cast<uint32_t>(msg[1]) | static_cast<uint32_t>(msg[2]) << 8 |
+                                 static_cast<uint32_t>(msg[3]) << 16 | static_cast<uint32_t>(msg[4]) << 24
+                           : 0u;
+  }
+
   // SEC4B: one world message as the player `pl` gets it (the world goes connection by connection).
   gms::Bytes ViewForPlayer(const repl::WorldMessage& m, const Player& pl) const {
     gms::Bytes msg = m.msg;
     if (visibleByTeam_ && m.visibleAt >= 0 && static_cast<size_t>(m.visibleAt) < msg.size())
       msg[static_cast<size_t>(m.visibleAt)] =
-          gms::VisibleAudienceBits(pl.visibleAudience, msg[static_cast<size_t>(m.visibleAt)]);
+          AudienceByte(pl.visibleAudience, msg[static_cast<size_t>(m.visibleAt)], MessageObjectId(msg));
     if (castersByKnown_ && !msg.empty() && msg[0] == gms::kGmsObjectCreateComplete) {
       const std::vector<gms::CasterView> views =
           gms::SplitModifierCasters(msg, 5, static_cast<uint16_t>(1u << pl.index), KnownPlayers);
@@ -2107,14 +2131,16 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   void VisibleDelta(gms::ISender& out, const repl::NetObject& o, uint16_t knownHere) {
     std::uint8_t bits = 0;
     if (!repl::VisibleBits(o, &bits)) return;
-    const unsigned changed = visibleShadow_[o.id].Step(bits);
+    uint8_t values[gms::kVisibleAudiences];
+    for (int a = 0; a < gms::kVisibleAudiences; ++a) values[a] = AudienceByte(a, bits, o.id);
+    const unsigned changed = visibleShadow_[o.id].StepValues(values);
     const uint16_t to = static_cast<uint16_t>(knownHere & o.visible);
     if (!to || (!changed && !visibleResend_)) return;
     for (int a = 0; a < gms::kVisibleAudiences; ++a) {
       uint16_t players = static_cast<uint16_t>(to & visibleMask_[a]);
       if (!((changed >> a) & 1u)) players = static_cast<uint16_t>(players & visibleResend_);
       if (!players) continue;
-      const uint8_t value = gms::VisibleAudienceBits(a, bits);
+      const uint8_t value = values[a];
       SendTo(out, players, gms::BuildVisibleUpdate(o.id, value), nullptr);
       ++visibleUpdates_[a];
       if (++visibleLogged_[a] <= visibleLogLimit_)
@@ -2821,6 +2847,8 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     p.stealth = fowOpt_.stealth;
     p.revealMargin = fogRevealMargin_;
     p.revealHoldMs = fogRevealHoldMs_;
+    p.revealThrough = fogRevealThrough_;
+    p.clientHysteresis = fogClientHysteresis_;
     p.nowMs = gms::timing::NowMs();
     model_.Update(*ents, p);
     std::vector<uint8_t> bits(objs.size(), 0);
@@ -3989,6 +4017,8 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   bool fog_ = false, fogReady_ = false, fogUnavailableLogged_ = false;
   float fogRevealMargin_ = 0.f;  // FOGEDGE ([host] fog_reveal_margin, in hundredths of a unit)
   double fogRevealHoldMs_ = 0.0;  // FOGEDGE ([host] fog_reveal_hold_ms)
+  uint8_t fogRevealThrough_ = 0;  // FADE1b ([host] fog_reveal_through)
+  float fogClientHysteresis_ = -1.f;  // FADE1c ([host] fog_client_hysteresis, hundredths; negative: off)
   fow::Options fowOpt_;
   int fogLogLimit_ = 200, fogLogged_ = 0, fogFailLogged_ = 0;
   gms::vision::VisionModel model_;
@@ -4572,11 +4602,18 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   fo.grassEvents = HostOptionInt("grass_events", 1) != 0;  // D3c: OnEnterGrass/OnExitGrass (fow.h FireGrassEvent)
   fo.terrainMods = HostOptionInt("fog_terrain_mods", 1) != 0;  // ABILVFX: Kensu's trail opens walls, never blocks
   g->match->SetFog(fog && replicate, fo, HostOptionInt("fog_log_limit", 200));
-  const int fogMargin = HostOptionInt("fog_reveal_margin", 0);  // FOGEDGE: hundredths of a unit; off by default (above)
-  const int fogHoldMs = HostOptionInt("fog_reveal_hold_ms", 0);
-  g->match->SetFogRevealMargin(fogMargin > 0 ? fogMargin * 0.01f : 0.f, fogHoldMs > 0 ? fogHoldMs : 0.0);
-  Log("host: fog: a shaper reaches a client %.2f units early and stays %d ms after sight is lost (FOGEDGE, [host] "
-      "fog_reveal_margin, fog_reveal_hold_ms)", fogMargin * 0.01f, fogHoldMs);
+  const int fogMargin = HostOptionInt("fog_reveal_margin", 500);  // FOGEDGE: hundredths of a unit; FADE2's default (above)
+  const int fogHoldMs = HostOptionInt("fog_reveal_hold_ms", 750);
+  const int fogThrough = HostOptionInt("fog_reveal_through", 3);  // FADE1b: 1 walls, 2 grass
+  g->match->SetFogRevealMargin(fogMargin > 0 ? fogMargin * 0.01f : 0.f, fogHoldMs > 0 ? fogHoldMs : 0.0, fogThrough);
+  // FADE1c: the hysteresis of the mVisibleToTeam byte a team's players get (hundredths; negative: the game's own)
+  const int clientHyst = HostOptionInt("fog_client_hysteresis", 150);
+  g->match->SetFogClientHysteresis(clientHyst >= 0 ? clientHyst * 0.01f : -1.f);
+  Log("host: fog: players' mVisibleToTeam with a hysteresis of %.2f units (FADE1c, [host] fog_client_hysteresis%s)",
+      clientHyst >= 0 ? clientHyst * 0.01f : -1.f, clientHyst < 0 ? "; off: the game's own" : "");
+  Log("host: fog: a creature reaches a client %.2f units early and stays %d ms after sight is lost, through walls %d, "
+      "grass %d (FOGEDGE, FADE1b, [host] fog_reveal_margin, fog_reveal_hold_ms, fog_reveal_through)",
+      fogMargin * 0.01f, fogHoldMs, fogThrough & 1, (fogThrough >> 1) & 1);
   Log("host: fog of war (D2g-live step 2): fog %d%s, terrain %d, grass %d, stealth %d, render %d; grass events %d (D3c); "
       "terrain modifiers open walls %d (ABILVFX)",
       fog, fog && !replicate ? " (needs replicate: off)" : "", fo.terrain, fo.grass, fo.stealth, fo.render,

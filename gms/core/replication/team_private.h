@@ -83,11 +83,16 @@ inline Bytes BuildVisibleUpdate(uint32_t id, uint8_t value) {
 class VisibleShadow {
  public:
   unsigned Step(uint8_t bits) {
+    uint8_t v[kVisibleAudiences];
+    for (int a = 0; a < kVisibleAudiences; ++a) v[a] = VisibleAudienceBits(a, bits);
+    return StepValues(v);
+  }
+  // FADE1c: the byte each audience gets, when it isn't the same byte masked (the players' client rule)
+  unsigned StepValues(const uint8_t (&v)[kVisibleAudiences]) {
     unsigned changed = 0;
     for (int a = 0; a < kVisibleAudiences; ++a) {
-      const uint8_t v = VisibleAudienceBits(a, bits);
-      if (seeded_ && v != sent_[a]) changed |= 1u << a;
-      sent_[a] = v;
+      if (seeded_ && v[a] != sent_[a]) changed |= 1u << a;
+      sent_[a] = v[a];
     }
     seeded_ = true;
     return changed;

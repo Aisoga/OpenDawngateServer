@@ -115,6 +115,28 @@ Patches (each checks the original bytes first):
            their rating (dgserver --show-rating), so the switch stays the server's. Sites: 0x004DE1C9 (16 bytes: the
            value's type 7 and pointer stores) and 0x004E0661 (mov ebp,7, whose ebp/ebx the caller stores as type and
            pointer); the cave keeps every register but ebx (the text) and ebp (7 at the second site).
+  fade     Since FADE1, in every profile (--fade off leaves it out): the shipped client draws every enemy creature it has,
+           by the fog texture's value at its feet (GameGraphics_UpdateCreatureFrame 0x00570140): a pale ghost under 0.5,
+           solid above, at once. So a shaper the server hands over early (the host's fog_reveal_margin and _hold_ms)
+           showed early. Now an enemy creature (noun creature 0x06C27D00 with fowControlsObjectVisibility, another
+           team than GameClient_GetLocalTeamMask's, not for an observer) is drawn while mVisibleToTeam & the local mask
+           (+0x888) is set or (FADE1b) its own fog query (+0x860 -> +0x5C, the fog texture at its feet, 0-255, without
+           UpdateCreatureFrame's nearness boost) is at least 160, clearly lit (FADE1c: the texture fades out over about a
+           second where the viewer was, so at 50, the radius's rim, an enemy stayed drawn out to 45 units behind a viewer
+           walking away; 160 is about 32 units and drops before the bit); hidden otherwise, and its own opacity
+           (+0x868) follows that target by the frame's seconds over 0.25 s. The target's test, FadeTarget, sits in
+           UpdateCreatureOpacity's first assert block (0x0056E44D, 62 bytes, which only logged; its one store kept).
+           FadeStep runs from GameGraphics_UpdateVisibleObject's fogged test (0x00576256, 18 bytes: call, test,
+           jnz to its not-drawn exit), so at opacity 0 the creature is skipped as a fogged one is: no model, health bar or
+           name. It stamps the frame (+0x86C; not stepped the frame before means off screen or new: straight to the
+           target) and marks the object (+0x870 = "FADE"). Room, in place (.text's slack is used up):
+           GameGraphics_ApplyCreatureOpacity (0x0056E750, only called by the fog exit's reader with 0) becomes the
+           exit's reset (opacity 0, stamped now, so an exit fades in) followed by FadeStep, and
+           GameGraphics_UpdateCreatureOpacity's front (0x0056E4DB, 141 bytes) draws a marked creature at opacity 1 with
+           the normal materials, else with labsHeroStealth at opacity squared (0 is invisible, 1 nearly solid; grass
+           and stealth at most the shipped 0.375), and any other creature as shipped; the glass parameter's load
+           (0x0056E706) takes the stored value. +0x864..+0x870 are written only by GameObjectManager_CreateObject and
+           these. Sounds are not muted in the window (only the fog step's Set_FOW_Invisible does).
 
 Profiles (roadmap A5, docs/RUNNING_THE_CLIENT.md "Playing across machines (A5)"):
   local    (default) everything above; redirector host 127.0.0.1 (or a loopback address given as [host]
@@ -336,6 +358,156 @@ AVERAGES_NEW = bytes.fromhex(
     "8bf0"            # mov esi,eax
     "89742410"        # mov [esp+0x10],esi
 ) + b"\x90" * 26
+# FADE1: the fade at the fog's edge. An enemy creature is drawn while its team sees it (mVisibleToTeam & the local mask)
+# or (FADE1b) the client's own fog texture at its feet is lit, fading in and out over 0.25 s. Observers as shipped.
+FADE_APPLY = 0x0056E750       # GameGraphics_ApplyCreatureOpacity: called only by the fog exit (95's reader, 0x006BBAF0)
+FADE_APPLY_ORIG = bytes.fromhex(  # its 215 bytes and the 9 bytes of int3 padding before 0x0056E830
+    "53568b74240c33c039869008000068391d00000f95c06860f41d0150e84f83320083c40c85c0741c6a005068391d0000"
+    "6860f41d016884061e016a00e84f7e320083c4188b9e9008000085db0f8482000000578b7b7c2b7b78c1ff024f787490"
+    "8b4b788b14b98d04b96a0052e85f2bffff8bf033c085f60f95c068441d00006860f41d0150e8e682320083c41485c074"
+    "1c6a005068441d00006860f41d01687c061e016a00e8e67d320083c41885f67406837e040174074f79a65f5e5bc3d944"
+    "2414518b4e08d91c245651e8e0fbffff83c40c5f5e5bc3cccccccccccccccccc"
+)
+# the fog exit: the fade starts hidden and stamped now, so the next frame fades in; then FadeStep (0x0056E76A), called
+# by GameGraphics_UpdateVisibleObject for each object on screen: al = 1 when the object is not drawn
+FADE_APPLY_NEW = bytes.fromhex(
+    "8b442404"                  # 0056e750 mov eax, dword ptr [esp + 4]: the object
+    "83a06808000000"            # 0056e754 and dword ptr [eax + 0x868], 0: the fade's opacity: 0
+    "8b0d38a05901"              # 0056e75b mov ecx, dword ptr [0x159a038]: GameGraphics
+    "8b09"                      # 0056e761 mov ecx, dword ptr [ecx]: its frame number
+    "89886c080000"              # 0056e763 mov dword ptr [eax + 0x86c], ecx: the stamp: stepped this frame
+    "c3"                        # 0056e769 ret
+    "f6c101"                    # 0056e76a test cl, 1: FadeStep (edi object, eax noun, cl flags, ebx the visitor): fogged?
+    "7411"                      # 0056e76d je 0x56e780
+    "80b8cd02000000"            # 0056e76f cmp byte ptr [eax + 0x2cd], 0: fowControlsObjectVisibility
+    "7408"                      # 0056e776 je 0x56e780
+    "b001"                      # 0056e778 mov al, 1: fogged, as shipped: not drawn
+    "c3"                        # 0056e77a ret
+    "5e"                        # 0056e77b pop esi
+    "59"                        # 0056e77c pop ecx
+    "31c0"                      # 0056e77d xor eax, eax
+    "c3"                        # 0056e77f ret
+    "85c0"                      # 0056e780 test eax, eax: no noun
+    "74f9"                      # 0056e782 je 0x56e77d
+    "80b8cd02000000"            # 0056e784 cmp byte ptr [eax + 0x2cd], 0: fowControlsObjectVisibility
+    "74f0"                      # 0056e78b je 0x56e77d
+    "8138007dc206"              # 0056e78d cmp dword ptr [eax], 0x6c27d00: not a creature
+    "75e8"                      # 0056e793 jne 0x56e77d
+    "51"                        # 0056e795 push ecx: the flags, which the caller reads again
+    "56"                        # 0056e796 push esi
+    "e874e80f00"                # 0056e797 call 0x66d010: GameClient_IsLocalPlayerObserver: observers as shipped
+    "84c0"                      # 0056e79c test al, al: as shipped from here: grass or stealth 0.5
+    "75db"                      # 0056e79e jne 0x56e77b
+    "6a00"                      # 0056e7a0 push 0
+    "e879e60f00"                # 0056e7a2 call 0x66ce20: GameClient_GetLocalTeamMask(0)
+    "59"                        # 0056e7a7 pop ecx
+    "0fb6574d"                  # 0056e7a8 movzx edx, byte ptr [edi + 0x4d]
+    "0fa3d0"                    # 0056e7ac bt eax, edx: the object's team (+0x4D) in the mask: drawn as shipped
+    "72ca"                      # 0056e7af jb 0x56e77b
+    "e89dfcffff"                # 0056e7b1 call 0x56e453: FadeTarget (0x0056E453): esi = the target
+    "e8d5083800"                # 0056e7b6 call 0x8ef090: GameSimulator_GetCurrent
+    "50"                        # 0056e7bb push eax
+    "e8ffb13800"                # 0056e7bc call 0x8f99c0: GameTimeManager_GetDeltaSeconds: the frame's seconds
+    "d91c24"                    # 0056e7c1 fstp dword ptr [esp]
+    "f30f100424"                # 0056e7c4 movss xmm0, dword ptr [esp]
+    "59"                        # 0056e7c9 pop ecx
+    "f30f59056cf81b01"          # 0056e7ca mulss xmm0, dword ptr [0x11bf86c]: * 4.0: a whole fade in 0.25 s
+    "8b4304"                    # 0056e7d2 mov eax, dword ptr [ebx + 4]: the visitor's frame number
+    "87876c080000"              # 0056e7d5 xchg dword ptr [edi + 0x86c], eax: the stamp
+    "2b4304"                    # 0056e7db sub eax, dword ptr [ebx + 4]
+    "f7d8"                      # 0056e7de neg eax
+    "83f801"                    # 0056e7e0 cmp eax, 1: stepped this frame or the last one?
+    "7608"                      # 0056e7e3 jbe 0x56e7ed
+    "f30f1005d4a31b01"          # 0056e7e5 movss xmm0, dword ptr [0x11ba3d4]: else (off screen, fogged, new) the target
+    "85f6"                      # 0056e7ed test esi, esi
+    "7508"                      # 0056e7ef jne 0x56e7f9
+    "f30f590568f81b01"          # 0056e7f1 mulss xmm0, dword ptr [0x11bf868]: * -1.0: fading out
+    "f30f588768080000"          # 0056e7f9 addss xmm0, dword ptr [edi + 0x868]: the fade's opacity
+    "0f57c9"                    # 0056e801 xorps xmm1, xmm1
+    "f30f5fc1"                  # 0056e804 maxss xmm0, xmm1
+    "f30f5d05d4a31b01"          # 0056e808 minss xmm0, dword ptr [0x11ba3d4]: clamped to 0..1
+    "f30f118768080000"          # 0056e810 movss dword ptr [edi + 0x868], xmm0
+    "c7877008000046414445"      # 0056e818 mov dword ptr [edi + 0x870], 0x45444146: "FADE", drawn by +0x868
+    "0f2fc1"                    # 0056e822 comiss xmm0, xmm1
+    "5e"                        # 0056e825 pop esi
+    "59"                        # 0056e826 pop ecx
+    "0f96c0"                    # 0056e827 setbe al: 0: not drawn
+    "c3"                        # 0056e82a ret
+) + b"\xcc" * 5
+FADE_TARGET = 0x0056E44D      # GameGraphics_UpdateCreatureOpacity's first assert (only logs): room for FadeTarget
+FADE_TARGET_ORIG = bytes.fromhex(
+    "33c085f60f95c068b01c00006860f41d018974241050e85886320083c40c85c0741c6a005068b01c00006860f41d0168"
+    "04f51d016a00e85881320083c418"
+)
+FADE_TARGET_NEW = bytes.fromhex(
+    "89742408"                  # 0056e44d mov dword ptr [esp + 8], esi: what the assert block stored for later
+    "eb38"                      # 0056e451 jmp 0x56e48b: over FadeTarget to the second assert
+    "228788080000"              # 0056e453 and al, byte ptr [edi + 0x888]: mVisibleToTeam & the mask
+    "0fb6f0"                    # 0056e459 movzx esi, al: the target: 0 hidden, else shown
+    "8b8f60080000"              # 0056e45c mov ecx, dword ptr [edi + 0x860]: the object's fog query
+    "e30b"                      # 0056e462 jecxz 0x56e46f
+    "81795ca0000000"            # 0056e464 cmp dword ptr [ecx + 0x5c], 0xa0: the texture (0-255) against 160
+    "f5"                        # 0056e46b cmc
+    "83d600"                    # 0056e46c adc esi, 0: lit: shown too
+    "c3"                        # 0056e46f ret
+) + b"\xcc" * 27
+FADE_HOOK = 0x00576256        # GameGraphics_UpdateVisibleObject: the fogged test (flag 1 and fowControlsObjectVisibility)
+FADE_HOOK_ORIG = bytes.fromhex("f6c101740d80b8cd020000000f85e6000000")
+FADE_HOOK_NEW = bytes.fromhex(
+    "e80f85ffff"                # 00576256 call 0x56e76a: FadeStep
+    "84c0"                      # 0057625b test al, al: as shipped from here: grass or stealth 0.5
+    "0f85eb000000"              # 0057625d jne 0x57634e: not drawn
+    "90"                        # 00576263 nop
+    "90"                        # 00576264 nop
+    "90"                        # 00576265 nop
+    "90"                        # 00576266 nop
+    "90"                        # 00576267 nop
+)
+FADE_FRONT = 0x0056E4DB       # GameGraphics_UpdateCreatureOpacity after its asserts, up to the normal materials (0x0056E568)
+FADE_FRONT_ORIG = bytes.fromhex(
+    "e8b00b380050e8dab43800ddd88b86c408000083c40485c0741680b8741e000000750980b8751e0000007404b001eb02"
+    "32c0d9866c080000f30f10442444f30f10155c5b3901d99e70080000d98664080000f30f11866c080000d99e68080000"
+    "84c074030f28c2f30f100d64061e010f2fc8f30f11866408000076030f28c10f2fc257f30f118664080000765e"
+)
+FADE_FRONT_NEW = bytes.fromhex(
+    "8b86c4080000"              # 0056e4db mov eax, dword ptr [esi + 0x8c4]: the blackboard
+    "85c0"                      # 0056e4e1 test eax, eax: no noun
+    "740b"                      # 0056e4e3 je 0x56e4f0
+    "6683b8741e000000"          # 0056e4e5 cmp word ptr [eax + 0x1e74], 0: mStealthed or mbInGrass
+    "0f95c0"                    # 0056e4ed setne al
+    "f30f10442444"              # 0056e4f0 movss xmm0, dword ptr [esp + 0x44]: the fade as given (the fog texture)
+    "f30f10155c5b3901"          # 0056e4f6 movss xmm2, dword ptr [0x1395b5c]: 0.5
+    "81be7008000046414445"      # 0056e4fe cmp dword ptr [esi + 0x870], 0x45444146: an enemy creature FadeStep owns?
+    "7528"                      # 0056e508 jne 0x56e532
+    "f30f108668080000"          # 0056e50a movss xmm0, dword ptr [esi + 0x868]: its fade's opacity
+    "f30f59c0"                  # 0056e512 mulss xmm0, xmm0: squared: the glass grows in evenly to the eye
+    "57"                        # 0056e516 push edi
+    "84c0"                      # 0056e517 test al, al: as shipped from here: grass or stealth 0.5
+    "7408"                      # 0056e519 je 0x56e523
+    "f30f5d05ec103401"          # 0056e51b minss xmm0, dword ptr [0x13410ec]: grass or stealth: at most the shipped 0.375
+    "0f2f05d4a31b01"            # 0056e523 comiss xmm0, dword ptr [0x11ba3d4]: whole:
+    "0f8338000000"              # 0056e52a jae 0x56e568: the normal materials
+    "eb29"                      # 0056e530 jmp 0x56e55b
+    "84c0"                      # 0056e532 test al, al: as shipped from here: grass or stealth 0.5
+    "7403"                      # 0056e534 je 0x56e539
+    "0f28c2"                    # 0056e536 movaps xmm0, xmm2
+    "f30f5f0564061e01"          # 0056e539 maxss xmm0, dword ptr [0x11e0664]: at least 0.25
+    "57"                        # 0056e541 push edi
+    "0f2fc2"                    # 0056e542 comiss xmm0, xmm2
+    "0f871d000000"              # 0056e545 ja 0x56e568: above 0.5: the normal materials
+    "f30f590564061e01"          # 0056e54b mulss xmm0, dword ptr [0x11e0664]: 0.25 * opacity + 0.25
+    "f30f580564061e01"          # 0056e553 addss xmm0, dword ptr [0x11e0664]
+    "f30f118664080000"          # 0056e55b movss dword ptr [esi + 0x864], xmm0: the glass material's parameter
+    "e95e000000"                # 0056e563 jmp 0x56e5c6: labsHeroStealth
+)
+FADE_PARAM = 0x0056E706       # the glass material's parameter: as shipped 0.25 * [+0x864] + 0.25, now [+0x864] itself
+FADE_PARAM_ORIG = bytes.fromhex("f30f108e64080000f30f590d64061e01f30f580d64061e01")
+FADE_PARAM_NEW = bytes.fromhex("f30f108e64080000") + b"\x90" * 16  # movss xmm1,[esi+0x864]
+FADE_SITES = ((FADE_APPLY, FADE_APPLY_ORIG, FADE_APPLY_NEW, "ApplyCreatureOpacity and its padding"),
+              (FADE_TARGET, FADE_TARGET_ORIG, FADE_TARGET_NEW, "UpdateCreatureOpacity's first assert"),
+              (FADE_HOOK, FADE_HOOK_ORIG, FADE_HOOK_NEW, "UpdateVisibleObject's fogged test"),
+              (FADE_FRONT, FADE_FRONT_ORIG, FADE_FRONT_NEW, "UpdateCreatureOpacity's fade"),
+              (FADE_PARAM, FADE_PARAM_ORIG, FADE_PARAM_NEW, "UpdateCreatureOpacity's glass parameter"))
 RATING_CAVE = 0x011AB170                  # in .text's slack after the map-name cave (0x011AB140, 45 bytes)
 RATING_LABEL = "Rating "                  # before the number
 RATING_LABEL_VA = 0x01C00080              # in .tls's slack after the map key (0x01C00040-0x01C0007F)
@@ -472,7 +644,8 @@ def check_data_suffix(suffix):
 
 
 def patch_bytes(orig, modulus, profile="local", host=None, server_host=None, client_bind=None, data_suffix=None,
-                laa=True, preload=True, maptable=True, rating=True, heaplocks=True, numfmt=True, averages=True):
+                laa=True, preload=True, maptable=True, rating=True, heaplocks=True, numfmt=True, averages=True,
+                fade=True):
     """Patch a copy of the untouched exe's bytes; returns (patched bytes, summary text)."""
     server, cave_address = resolve_profile(profile, host, server_host, client_bind)
     check_data_suffix(data_suffix)
@@ -655,6 +828,13 @@ def patch_bytes(orig, modulus, profile="local", host=None, server_host=None, cli
     if averages:
         data[off(AVERAGES_BLOCK):off(AVERAGES_BLOCK) + len(AVERAGES_NEW)] = AVERAGES_NEW
         summary += "; the profile's averages at full precision (8.7, not 8.6)"
+    # --- FADE1: an enemy creature is drawn by its team bit and fades in and out at the fog's edge
+    for va, want, _new, what in FADE_SITES:
+        expect(va, want, what)
+    if fade:
+        for va, _orig, new, _what in FADE_SITES:
+            data[off(va):off(va) + len(new)] = new
+        summary += "; enemy creatures fade in and out by their team's sight and the fog (0.25 s)"
     return bytes(data), summary
 
 
@@ -712,6 +892,9 @@ def describe(data):
     numfmt = (at(NUMFMT_FORMAT, len(NUMFMT_FORMAT_NEW)), at(NUMFMT_STEP, len(NUMFMT_STEP_NEW)))
     out["numfmt"] = {(NUMFMT_FORMAT_NEW, NUMFMT_STEP_NEW): "on", (NUMFMT_FORMAT_ORIG, NUMFMT_STEP_ORIG): "as-shipped"}.get(numfmt, "unknown")
     out["averages"] = {AVERAGES_NEW: "on", AVERAGES_ORIG: "as-shipped"}.get(at(AVERAGES_BLOCK, len(AVERAGES_ORIG)), "unknown")
+    fade = tuple(at(va, len(o)) for va, o, _n, _w in FADE_SITES)
+    out["fade"] = {tuple(n for _v, _o, n, _w in FADE_SITES): "on",
+                   tuple(o for _v, o, _n, _w in FADE_SITES): "as-shipped"}.get(fade, "unknown")
     return out
 
 
@@ -744,6 +927,8 @@ def main(argv):
                     help="NUMFMT: the UI's numbers print with 15 digits (8.2, not 8.199999999999999); on by default")
     ap.add_argument("--averages", choices=("on", "off"), default="on",
                     help="AVGPREC: the profile's averages are real divisions at full precision (8.7, not 8.6); on by default")
+    ap.add_argument("--fade", choices=("on", "off"), default="on",
+                    help="FADE1: enemy creatures are drawn by their team's sight and fade in and out; on by default")
     ap.add_argument("--rating", choices=("on", "off"), default="on",
                     help="RATINGSHOW1: the main menu's profile box shows the rating the server sends; on by default")
     args = ap.parse_args(argv[1:])
@@ -770,7 +955,7 @@ def main(argv):
                                     args.data_suffix, laa=args.laa == "on", preload=args.preload == "on",
                                     maptable=args.maptable == "on", rating=args.rating == "on",
                                     heaplocks=args.heap_locks == "on", numfmt=args.number_format == "on",
-                                    averages=args.averages == "on")
+                                    averages=args.averages == "on", fade=args.fade == "on")
     except PatchError as e:
         sys.exit(str(e))
     with open(exe, "wb") as f:

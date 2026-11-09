@@ -100,6 +100,15 @@ void SetIconSpawnPoints(const std::vector<std::uint32_t>& markerIds);
 // exit) as gms::kResourceWireFloor, so the client's bar shows "0" and the maximum instead of its placeholder "9999"
 // (core/replication/resource_wire.h). The server's value is not changed. Off: the exact value.
 void SetResourceWireFloor(bool on);
+// FOGSLIDE ([host] fresh_sample, 1): a create's and a fog exit's locomotion data carry a fresh position sample (the
+// jump's landing point while the object jumps, its position when the server's sample is stale), so a client that
+// didn't see a slide start doesn't walk the shaper back to where it was before (core/replication/fresh_sample.h).
+void SetFreshSample(bool on);
+// FOGSLIDE ([host] landing_sample, 1): the locomotion data's jump state (+0xF0; 0 = none, -1 = no locomotion data),
+// and, for an object whose jump just ended, its position sample marked for this tick's delta (the jump's end writes the
+// landing into it without marking it; set to the object's position when stale): true if it was marked.
+int JumpState(const NetObject& o);
+bool LandingSample(const NetObject& o);
 // ABILVFX-WALLS ([host] effects_before_complete, 1): where a create puts the attached effects (92): 0 after 8F (D2g-live
 // step 3), 1 before 8F for an object with a draw box in a slot (Kensu's R path: the client makes draw boxes only when
 // 8F creates the model from the slots it already holds), 2 before 8F for every object.

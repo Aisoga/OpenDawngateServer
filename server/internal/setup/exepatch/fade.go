@@ -4,7 +4,7 @@ import "bytes"
 
 // The fade at the fog's edge (Options.NoFade leaves it out). The shipped client draws every enemy creature it holds by
 // the fog texture's value at its feet: a pale ghost under 0.5, solid above, at once, so a creature the server sends a
-// little before its team sees it (the match host's fog_reveal_margin) showed early. With the patch an enemy creature
+// little before its team sees it (the match host's head start, FOGEDGE, removed by FOGEDGE-RM) showed early. With the patch an enemy creature
 // (noun creature with fowControlsObjectVisibility, of a team not in GameClient_GetLocalTeamMask, unless the local
 // player observes) is drawn while mVisibleToTeam & the local mask (+0x888) is set or its own fog query (+0x860 ->
 // +0x5C, the fog texture at its feet, 0-255) is at least 160, clearly lit (the texture fades out over about a second

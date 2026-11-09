@@ -1284,20 +1284,9 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   // server_events_by_object (1): a kind-1 A4 by its object (a stop to those that know it, a draw box to those that see it);
   // modifier_casters_by_known (1): a modifier record's caster is 0 for a recipient that doesn't know it;
   // fow_gold_team_only (1): AA's mAvailableGold only to the player's team and the spectators.
-  // FOGEDGE ([host] fog_reveal_margin, hundredths of a unit; fog_reveal_hold_ms): a player's creature reaches a client a
-  // margin before its team sees it and stays a moment after, by RevealBits (the fog step, the deltas and the kind-2
-  // messages); mVisibleToTeam and everything that reads it stay the truth. On by default since FADE2 (500 and 750: 5 units,
-  // 0.75 s, the user's try fadetry_3b): the game's client draws every enemy creature it has, as a ghost in the fog, so the
-  // head start needs the exe patch fade (FADE1), which every Start-Client installs and which draws by mVisibleToTeam;
-  // a server plays only with clients of its own version. fog_reveal_margin=0;fog_reveal_hold_ms=0: the behaviour before.
-  // FADE1b ([host] fog_reveal_through, 3): what the margin and the hold look past, for clients with the exe patch fade,
-  // whose own fog map keeps a creature behind a wall or in a bush undrawn: 1 walls, 2 grass (vision::Params)
+  // FADE1c ([host] fog_client_hysteresis): see AudienceByte.
   void SetFogClientHysteresis(float units) { fogClientHysteresis_ = units; }
-  void SetFogRevealMargin(float units, double holdMs, int through) {
-    fogRevealMargin_ = units;
-    fogRevealHoldMs_ = holdMs;
-    fogRevealThrough_ = static_cast<uint8_t>(through & 3);
-  }
+  void SetLandingSample(bool on) { landingSample_ = on; }  // FOGSLIDE: see LandingStep
   void SetTeamPrivate(bool visibleByTeam, bool deltasByVision, bool serverEventsByObject, bool castersByKnown,
                       bool goldTeamOnly, int logLimit) {
     visibleByTeam_ = visibleByTeam;
@@ -2552,6 +2541,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
         }
       }
       if (r.fromDeletion) ++viaDeletion;
+      if (m.kind == 2 && r.wire == gms::kGmsObjectJump && m.object) jumping_.insert(m.object);  // FOGSLIDE
       if (!to) {
         ++dropped;
         if (++droppedLogged_ <= 50)
@@ -2728,6 +2718,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       for (auto it = heldNames_.begin(); it != heldNames_.end();)
         it = heldCreates_.HeldFrom(it->first) ? std::next(it) : heldNames_.erase(it);
     }
+    LandingStep(objs);  // FOGSLIDE: before the deltas, which carry a landing's sample
     perf::SetKind(gms::timing::kTrafficDeltas);
     for (size_t i = 0; i < objs.size(); ++i) {
       const repl::NetObject& o = objs[i];
@@ -2820,6 +2811,26 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     return v;
   }
 
+  // FOGSLIDE ([host] landing_sample, 1; core/replication/fresh_sample.h): the engine takes no position sample during a
+  // jump, and at its end writes the landing into the sample without marking it for sending, so a client that didn't
+  // see the jump's 96 (its team didn't see the object then) kept the sample from before it. An object is watched from
+  // its 96 (this tick's drain) or a jump state != 0; when its jump state is 0 again its sample (set to where it landed
+  // when stale) is marked, so this tick's delta sends it to every player who sees it and lacks it.
+  void LandingStep(const std::vector<repl::NetObject>& objs) {
+    if (!landingSample_) return;
+    std::unordered_set<uint32_t> seen;
+    for (const repl::NetObject& o : objs) {
+      const int js = repl::JumpState(o);
+      if (js > 0) {
+        jumping_.insert(o.id);
+      } else if (js == 0 && jumping_.erase(o.id)) {
+        if (repl::LandingSample(o)) ++landingSamples_;
+      }
+      if (!jumping_.empty()) seen.insert(o.id);
+    }
+    for (auto it = jumping_.begin(); it != jumping_.end();) it = seen.count(*it) ? std::next(it) : jumping_.erase(it);
+  }
+
   // Step 0 (fog): the inputs from the server simulator (fow::Read: objects, records, proxies, the maps), the vision
   // model's update, its answer into every scanned object's mVisibleToTeam.
   void VisionStep(const std::vector<repl::NetObject>& objs, std::vector<gms::vision::Entity>* ents,
@@ -2845,11 +2856,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     p.grass = fowOpt_.grass;
     p.grassMap = fowOpt_.grass ? fow::Grass() : nullptr;
     p.stealth = fowOpt_.stealth;
-    p.revealMargin = fogRevealMargin_;
-    p.revealHoldMs = fogRevealHoldMs_;
-    p.revealThrough = fogRevealThrough_;
     p.clientHysteresis = fogClientHysteresis_;
-    p.nowMs = gms::timing::NowMs();
     model_.Update(*ents, p);
     std::vector<uint8_t> bits(objs.size(), 0);
     for (size_t i = 0; i < objs.size(); ++i) bits[i] = model_.Bits(i);
@@ -3032,7 +3039,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       f.id = o.id;
       f.known = known;
       f.visible = static_cast<uint16_t>(o.visible | createdNow[i]);
-      f.teamBits = model_.RevealBits(i);  // FOGEDGE: a shaper's client gets it a margin early; mVisibleToTeam stays Bits
+      f.teamBits = model_.Bits(i);
       f.maintainPos = info[i].maintain;
       f.x = info[i].pos[0];
       f.y = info[i].pos[1];
@@ -3113,9 +3120,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     holdTeams_.clear();  // SEC5: the teams that see each object, kept for a world built between two steps
     for (size_t i = 0; i < objs.size() && i < ents.size(); ++i)
       if (ents[i].id) {
-        // FOGEDGE: RevealBits: a client that has a shaper enabled gets all its messages, as no fog exit would make up for
-        // a modifier or an effect it missed
-        seeNow_[objs[i].id] = {gms::vision::PlayersForTeams(model_.RevealBits(i), players), objs[i].name, ents[i].team};
+        seeNow_[objs[i].id] = {gms::vision::PlayersForTeams(model_.Bits(i), players), objs[i].name, ents[i].team};
         holdTeams_[objs[i].id] = model_.Bits(i);
       }
   }
@@ -4015,10 +4020,10 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   std::vector<TimedLua> testLua_;
   // D2g-live step 2: fog of war
   bool fog_ = false, fogReady_ = false, fogUnavailableLogged_ = false;
-  float fogRevealMargin_ = 0.f;  // FOGEDGE ([host] fog_reveal_margin, in hundredths of a unit)
-  double fogRevealHoldMs_ = 0.0;  // FOGEDGE ([host] fog_reveal_hold_ms)
-  uint8_t fogRevealThrough_ = 0;  // FADE1b ([host] fog_reveal_through)
   float fogClientHysteresis_ = -1.f;  // FADE1c ([host] fog_client_hysteresis, hundredths; negative: off)
+  bool landingSample_ = true;           // FOGSLIDE ([host] landing_sample)
+  std::unordered_set<uint32_t> jumping_;  // FOGSLIDE: objects in a jump (their 96 or jump state), until it ends
+  int landingSamples_ = 0;
   fow::Options fowOpt_;
   int fogLogLimit_ = 200, fogLogged_ = 0, fogFailLogged_ = 0;
   gms::vision::VisionModel model_;
@@ -4039,7 +4044,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   bool eventsByVision_ = true;
   bool eventsVisionNow_ = false;                       // this tick's drain has the model's answer (seeNow_)
   struct SeeNow {
-    uint16_t players;  // the players whose team sees the object this tick (FOGEDGE: or whose client has the shaper early)
+    uint16_t players;  // the players whose team sees the object this tick
     const char* name;  // its noun's name (the scan's, valid during the replication step)
     uint8_t team;
   };
@@ -4544,6 +4549,16 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   Log("host: a pool's resource of exactly 0 goes out %s", resourceFloor
           ? "as 0.001 ([host] resource_wire_floor 1, RENZO9999: the HUD bar shows 0 of its maximum, not 9999)"
           : "as 0 ([host] resource_wire_floor 0: a pool that starts empty shows 9999 until it changes)");
+  const bool freshSample = HostOptionInt("fresh_sample", 1) != 0, landingSample = HostOptionInt("landing_sample", 1) != 0;
+  repl::SetFreshSample(freshSample);
+  g->match->SetLandingSample(landingSample);
+  Log("host: a jump's end %s", landingSample
+          ? "marks the position sample (where it landed) for the deltas ([host] landing_sample 1, FOGSLIDE)"
+          : "leaves the position sample unsent, as the engine does ([host] landing_sample 0)");
+  Log("host: a create's and a fog exit's position sample %s", freshSample
+          ? "is the jump's landing point or the object's position when the server's is stale ([host] fresh_sample 1, "
+            "FOGSLIDE)"
+          : "is the server's own ([host] fresh_sample 0: a shaper that slid out of the fog walks back on the client)");
   const bool createOrderTargets = HostOptionInt("create_order_targets", 1) != 0,
              shortEffects = HostOptionInt("short_effects", 1) != 0;
   g->match->SetCreateOrderTargets(createOrderTargets);
@@ -4602,18 +4617,11 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   fo.grassEvents = HostOptionInt("grass_events", 1) != 0;  // D3c: OnEnterGrass/OnExitGrass (fow.h FireGrassEvent)
   fo.terrainMods = HostOptionInt("fog_terrain_mods", 1) != 0;  // ABILVFX: Kensu's trail opens walls, never blocks
   g->match->SetFog(fog && replicate, fo, HostOptionInt("fog_log_limit", 200));
-  const int fogMargin = HostOptionInt("fog_reveal_margin", 500);  // FOGEDGE: hundredths of a unit; FADE2's default (above)
-  const int fogHoldMs = HostOptionInt("fog_reveal_hold_ms", 750);
-  const int fogThrough = HostOptionInt("fog_reveal_through", 3);  // FADE1b: 1 walls, 2 grass
-  g->match->SetFogRevealMargin(fogMargin > 0 ? fogMargin * 0.01f : 0.f, fogHoldMs > 0 ? fogHoldMs : 0.0, fogThrough);
   // FADE1c: the hysteresis of the mVisibleToTeam byte a team's players get (hundredths; negative: the game's own)
   const int clientHyst = HostOptionInt("fog_client_hysteresis", 150);
   g->match->SetFogClientHysteresis(clientHyst >= 0 ? clientHyst * 0.01f : -1.f);
   Log("host: fog: players' mVisibleToTeam with a hysteresis of %.2f units (FADE1c, [host] fog_client_hysteresis%s)",
       clientHyst >= 0 ? clientHyst * 0.01f : -1.f, clientHyst < 0 ? "; off: the game's own" : "");
-  Log("host: fog: a creature reaches a client %.2f units early and stays %d ms after sight is lost, through walls %d, "
-      "grass %d (FOGEDGE, FADE1b, [host] fog_reveal_margin, fog_reveal_hold_ms, fog_reveal_through)",
-      fogMargin * 0.01f, fogHoldMs, fogThrough & 1, (fogThrough >> 1) & 1);
   Log("host: fog of war (D2g-live step 2): fog %d%s, terrain %d, grass %d, stealth %d, render %d; grass events %d (D3c); "
       "terrain modifiers open walls %d (ABILVFX)",
       fog, fog && !replicate ? " (needs replicate: off)" : "", fo.terrain, fo.grass, fo.stealth, fo.render,

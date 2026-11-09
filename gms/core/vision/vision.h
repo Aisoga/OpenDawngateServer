@@ -77,8 +77,6 @@ constexpr float kPlayerVisionRadius = 35.3f;
 constexpr float kPlayerVisionHysteresis = 3.0f;
 // Record +0x1F as LineOfSight_AllocTracked leaves it: concealed in grass from both player teams.
 constexpr uint8_t kDefaultGrassConceal = 0x06;
-// FOGEDGE: how far past the margin a revealed shaper may go before its client loses it
-constexpr float kRevealLeaveBand = 1.f;
 
 // One object (or one anonymous vision source) per tick.
 struct Entity {
@@ -102,7 +100,6 @@ struct Entity {
   uint32_t grassId = 0;             // the grass patch it stands in (0 = none)
   bool stealthed = false;           // cAgentBlackboard +0x1E74 (nGameObject.SetStealthType)
   bool detectsStealth = false;      // as a source: attribute 47 StealthDetection > 0
-  bool revealEarly = false;         // FOGEDGE: its client may have it before its team sees it (FADE1b: every creature)
 };
 
 // The level's line-of-sight map as the manager holds it (LineOfSight_InitMaps 0x00917C90): +4 the bytes (row-major,
@@ -175,30 +172,15 @@ struct Params {
   // hides it); must stay valid until the next Update
   const GrassMap* grassMap = nullptr;
   bool stealth = false;
-  // FOGEDGE: how far beyond a source's reach a revealEarly entity already counts in RevealBits (0: never)
-  float revealMargin = 0.f;
-  // FOGEDGE: how long after a team last saw a revealEarly entity it still counts in RevealBits (0: not at all), by the
-  // clock nowMs; not while grass or stealth hides it from that team, which stays immediate
-  double revealHoldMs = 0.0;
-  // FADE1b: what the margin and the hold look past, for a client that gates the drawing with its own fog map (the exe
-  // patch fade): kRevealThroughWalls skips the terrain test, kRevealThroughGrass the grass tests and the hold's grass
-  // exception. Stealth always stays immediate. 0: FOGEDGE's rule (the same tests as Bits)
-  uint8_t revealThrough = 0;
   // FADE1c: the hysteresis of ClientBits, the byte players' clients get (at most each source's own; negative: none,
   // ClientBits is Bits). The patched client draws by that byte or its own fog map, which ends at the radius, so the
   // game's 3.0 kept an enemy drawn up to 3 units past where it appeared
   float clientHysteresis = -1.f;
-  double nowMs = 0.0;
 };
 
-// FADE1b: Params::revealThrough's bits
-constexpr uint8_t kRevealThroughWalls = 1;
-constexpr uint8_t kRevealThroughGrass = 2;
-
-// FOGEDGE: Bits is the truth of who sees what. RevealBits is who may already have a player's creature on its client: the
-// shipped client never hides an enabled enemy creature (opacity floor 0.25, GameGraphics_UpdateCreatureOpacity 0x0056E400:
-// a pale ghost, solid above fade 0.5), so it is drawn from here on; a client with the exe patch fade draws it only while
-// its team bit is set or its own fog map is lit at the creature's feet (FADE1, FADE1b).
+// Bits is the truth of who sees what: mVisibleToTeam, the fog step and the events go by it (FOGEDGE's head start, a
+// second answer that handed creatures to a client a margin early and held them after sight was lost, is gone since
+// FOGEDGE-RM).
 class VisionModel {
  public:
   // One tick: every entity's team bits (rule above). Entities with id 0 only give vision. An id that isn't in this
@@ -208,9 +190,6 @@ class VisionModel {
   // The answer for the i-th entity of the last Update (mVisibleToTeam), and by object id (0 if not in it).
   uint8_t Bits(size_t i) const { return i < bits_.size() ? bits_[i] : 0; }
   uint8_t BitsOf(uint32_t id) const;
-  // FOGEDGE: the teams whose clients may have the i-th entity enabled: Bits, plus for a revealEarly entity the teams with
-  // a source within the margin (the same terrain, grass and stealth tests). mVisibleToTeam stays Bits.
-  uint8_t RevealBits(size_t i) const { return i < reveal_.size() ? reveal_[i] : Bits(i); }
   // FADE1c: Bits by the same rule with Params::clientHysteresis instead of the sources' own: what a team's players get as
   // mVisibleToTeam. By object id: -1 if the id wasn't in the last Update.
   uint8_t ClientBits(size_t i) const { return i < client_.size() ? client_[i] : Bits(i); }
@@ -230,10 +209,8 @@ class VisionModel {
     bool ignoreTerrain, ignoreGrass, detectsStealth;
     uint32_t grassId, id;
   };
-  // skip: kRevealThroughWalls / kRevealThroughGrass leave out the terrain / grass tests (the margin's check)
   // hystCap >= 0: at most that hysteresis (FADE1c's client rule)
-  bool SeenBy(int team, const Entity& target, bool wasVisible, float extra = 0.f, bool useHysteresis = true,
-              uint8_t skip = 0, float hystCap = -1.f) const;
+  bool SeenBy(int team, const Entity& target, bool wasVisible, float hystCap = -1.f) const;
   uint8_t Resolve(size_t i, std::vector<uint8_t>* state);
 
   const std::vector<Entity>* entities_ = nullptr;  // during Update only
@@ -242,12 +219,8 @@ class VisionModel {
   std::vector<uint8_t> bits_;
   std::unordered_map<uint32_t, size_t> index_;     // id -> entity index (this tick)
   std::unordered_map<uint32_t, uint8_t> last_;     // id -> last tick's bits
-  std::vector<uint8_t> reveal_;                    // FOGEDGE: RevealBits
   std::vector<uint8_t> client_;                    // FADE1c: ClientBits
   std::unordered_map<uint32_t, uint8_t> lastClient_;  // id -> last tick's ClientBits
-  std::unordered_map<uint32_t, uint8_t> lastReveal_;  // id -> last tick's RevealBits
-  struct SeenAt { double ms[kNumTeams] = {-1.0, -1.0, -1.0}; };
-  std::unordered_map<uint32_t, SeenAt> seenAt_;       // id -> when each team last saw it (revealEarly entities)
 };
 
 }  // namespace gms::vision

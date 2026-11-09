@@ -241,6 +241,7 @@ if(RAKNET_FOUND)
     tests/test_refund.cpp       # REFUND1: the undo history per slot, its clearing, the undo plan (core/commands/refund.h)
     tests/test_itempassives.cpp # ITEMDEATH: item passives while dead and at the respawn (core/damage/itempassives.h)
     tests/test_fogstacks.cpp    # FOGSTACKS: the attached effects an ended modifier leaves (core/replication/effect_ledger.h)
+    tests/test_fresh_sample.cpp # FOGSLIDE: a full state's position sample after a jump (core/replication/fresh_sample.h)
     tests/test_fuzz.cpp         # fuzzing the parsers, the session and RakNet's receive path (GMS_FUZZ_SECONDS)
     tests/test_hardening.cpp    # RakNet's handshake cookies, no IP ban, short REQUEST_1, the ordered-ahead limit
     tests/test_bots2.cpp        # BOTS2: the second bot brain (core/bots2: states, team plan, never idle, census)

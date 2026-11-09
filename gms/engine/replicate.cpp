@@ -12,6 +12,7 @@
 #include "core/matchflow/camps.h"
 #include "core/protocol/wire.h"
 #include "core/replication/create_order.h"
+#include "core/replication/fresh_sample.h"
 #include "core/replication/outgoing.h"
 #include "core/replication/resource_wire.h"
 #include "core/replication/team_private.h"
@@ -373,6 +374,53 @@ void* WireData(const NetObject& o, int p, unsigned char* combatantCopy, const ch
   return p == kPartCombatant ? SehCombatantWire(o, o.data[p], combatantCopy, what) : o.data[p];
 }
 
+// FOGSLIDE (core/replication/fresh_sample.h): a full state's locomotion data carries a fresh position sample, the
+// jump's landing point while the object jumps or its position when the server's sample is stale, so a client that
+// didn't see a slide start doesn't walk the shaper back to where it was before it ([host] fresh_sample, 1). The
+// server's data and its field state keep their own; a create writing the field state stores what the client got.
+bool g_freshSample = true;
+unsigned g_freshSamples = 0;
+
+void* SehLocomotionWire(const NetObject& o, void* data, unsigned char* copy, const char* what) {
+  if (!g_freshSample || !data || !o.object) return data;
+  __try {
+    gms::SampleInput in;
+    in.jumping = Field<std::uint32_t>(data, loco::kJumpState) != 0;
+    in.pos[0] = Field<float>(o.object, gobj::kPosition);
+    in.pos[1] = Field<float>(o.object, gobj::kPosition + 4);
+    in.jumpGoal[0] = Field<float>(data, loco::kJumpGoal);
+    in.jumpGoal[1] = Field<float>(data, loco::kJumpGoal + 4);
+    in.block = Field<std::uint16_t>(data, loco::kClientPathBlock);
+    in.xy = Field<std::uint16_t>(data, loco::kClientPathXY);
+    in.velocity[0] = Field<float>(o.object, gobj::kVelocity);
+    in.velocity[1] = Field<float>(o.object, gobj::kVelocity + 4);
+    std::uint16_t block = 0, xy = 0;
+    float at[2] = {0.f, 0.f};
+    if (!gms::FreshSample(in, &block, &xy, at)) return data;
+    std::memcpy(copy, data, loco::kWireSize);
+    Field<std::uint16_t>(copy, loco::kClientPathBlock) = block;
+    Field<std::uint16_t>(copy, loco::kClientPathXY) = xy;
+    ++g_freshSamples;
+    if (g_freshSamples <= 50 || g_freshSamples % 100 == 0) {
+      float sx = 0.f, sy = 0.f;
+      gms::DequantizeSamplePosition(in.block, in.xy, &sx, &sy);
+      Log("replication: %08X %s: %s: position sample (%.2f, %.2f) -> (%.2f, %.2f), %s at (%.2f, %.2f) "
+          "([host] fresh_sample 1, FOGSLIDE; %u so far)",
+          o.id, o.name, what, sx, sy, at[0], at[1], in.jumping ? "the landing point of its jump" : "stale: its position",
+          in.pos[0], in.pos[1], g_freshSamples);
+    }
+    return copy;
+  } __except (SehNote(GetExceptionInformation(), "locomotion wire sample")) {
+    return data;
+  }
+}
+
+// A full state's (create, fog exit): also the locomotion data's sample (FOGSLIDE); never a delta's.
+void* FullWireData(const NetObject& o, int p, unsigned char* combatantCopy, unsigned char* locoCopy, const char* what) {
+  return p == kPartLocomotion ? SehLocomotionWire(o, o.data[p], locoCopy, what)
+                              : WireData(o, p, combatantCopy, what);
+}
+
 // Euler angles in degrees from the object's quaternion (x, y, z, w), the inverse of the reader's q = Rz * Ry * Rx
 // (Math_EulerToQuaternion 0x00673A90).
 void EulerDegrees(const float q[4], float* rx, float* ry, float* rz) {
@@ -719,6 +767,57 @@ std::vector<std::uint32_t> g_iconSpawnPoints;  // PARAMAP: the camp markers whos
 void SetIconSpawnPoints(const std::vector<std::uint32_t>& markerIds) { g_iconSpawnPoints = markerIds; }
 
 void SetResourceWireFloor(bool on) { g_resourceFloor = on; }
+void SetFreshSample(bool on) { g_freshSample = on; }
+
+int JumpState(const NetObject& o) {
+  void* l = o.data[kPartLocomotion];
+  if (!l) return -1;
+  __try {
+    return static_cast<int>(Field<std::uint32_t>(l, loco::kJumpState));
+  } __except (SehNote(GetExceptionInformation(), "jump state")) {
+    return -1;
+  }
+}
+
+static unsigned g_landingSamples = 0;
+
+bool LandingSample(const NetObject& o) {
+  void* l = o.data[kPartLocomotion];
+  if (!l || !o.object) return false;
+  __try {
+    gms::SampleInput in;
+    in.pos[0] = Field<float>(o.object, gobj::kPosition);
+    in.pos[1] = Field<float>(o.object, gobj::kPosition + 4);
+    in.block = Field<std::uint16_t>(l, loco::kClientPathBlock);
+    in.xy = Field<std::uint16_t>(l, loco::kClientPathXY);
+    in.velocity[0] = Field<float>(o.object, gobj::kVelocity);
+    in.velocity[1] = Field<float>(o.object, gobj::kVelocity + 4);
+    std::uint16_t block = 0, xy = 0;
+    float at[2] = {0.f, 0.f};
+    float old[2] = {0.f, 0.f};
+    gms::DequantizeSamplePosition(in.block, in.xy, &old[0], &old[1]);
+    // The jump's end writes the landing into the sample without marking it (seen live: +0x8E/+0x8F 0, the landing
+    // tick's 9C without mClientPathXY); set it too in case it is stale
+    const bool set = gms::FreshSample(in, &block, &xy, at);
+    if (set) {
+      std::memcpy(static_cast<char*>(l) + loco::kSamplePos, static_cast<char*>(o.object) + gobj::kPosition, 12);
+      Field<std::uint16_t>(l, loco::kClientPathBlock) = block;
+      Field<std::uint16_t>(l, loco::kClientPathXY) = xy;
+    }
+    // the members' conditions for this tick's delta (TickMovers resets them next frame): it sends the sample to the
+    // players whose field state lacks it, i.e. that didn't have this position yet
+    Field<std::uint8_t>(l, loco::kSampleSent) = 1;
+    Field<std::uint8_t>(l, loco::kSampleSent + 1) = 1;
+    ++g_landingSamples;
+    if (g_landingSamples <= 30 || g_landingSamples % 100 == 0)
+      Log("replication: %08X %s: jump ended at (%.2f, %.2f); position sample (%.2f, %.2f)%s marked for the deltas "
+          "([host] landing_sample 1, FOGSLIDE; %u so far)",
+          o.id, o.name, in.pos[0], in.pos[1], old[0], old[1], set ? ", stale: set to it and" : "", g_landingSamples);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "landing sample")) {
+    return false;
+  }
+}
 void SetEffectsBeforeComplete(int mode) { g_effectsBeforeComplete = mode; }
 
 bool Replicated(const NetObject& o, bool all) {
@@ -778,10 +877,11 @@ bool BuildCreate(const NetObject& o, bool withFieldState, const Bytes& modifierR
   msgs.push_back(begin);
   char parts[96] = "";
   alignas(8) unsigned char combatantCopy[combatant::kSize];
+  alignas(8) unsigned char locoCopy[loco::kWireSize];
   for (int p = kPartProjectile; p < kNumParts; ++p) {
     if (!o.data[p]) continue;
     WorldMessage m{IdMessage(kParts[p].wire, o.id), std::string(kParts[p].name) + " of " + o.name};
-    if (!AppendFull(m.msg, WireData(o, p, combatantCopy, "create"), kParts[p].type,
+    if (!AppendFull(m.msg, FullWireData(o, p, combatantCopy, locoCopy, "create"), kParts[p].type,
                     withFieldState ? SehFieldState(o, p) : nullptr, o.id, o.name))
       return false;
     msgs.push_back(m);
@@ -838,10 +938,12 @@ bool BuildFullState(const NetObject& o, std::vector<WorldMessage>* out, std::vec
   if (visibleIn >= 0) obj.visibleAt = static_cast<int>(objectBodyAt) + visibleIn;
   msgs.push_back(obj);
   alignas(8) unsigned char combatantCopy[combatant::kSize];
+  alignas(8) unsigned char locoCopy[loco::kWireSize];
   for (int p = kPartProjectile; p < kNumParts; ++p) {
     if (!o.data[p]) continue;
     WorldMessage m{IdMessage(kParts[p].wire, o.id), std::string("fog exit: ") + kParts[p].name + " of " + o.name};
-    if (!AppendFull(m.msg, WireData(o, p, combatantCopy, "fog exit"), kParts[p].type, nullptr, o.id, o.name))
+    if (!AppendFull(m.msg, FullWireData(o, p, combatantCopy, locoCopy, "fog exit"), kParts[p].type, nullptr, o.id,
+                    o.name))
       return false;
     msgs.push_back(m);
   }

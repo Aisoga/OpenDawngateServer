@@ -117,8 +117,8 @@ Patches (each checks the original bytes first):
            pointer); the cave keeps every register but ebx (the text) and ebp (7 at the second site).
   fade     Since FADE1, in every profile (--fade off leaves it out): the shipped client draws every enemy creature it has,
            by the fog texture's value at its feet (GameGraphics_UpdateCreatureFrame 0x00570140): a pale ghost under 0.5,
-           solid above, at once. So a shaper the server hands over early (the host's fog_reveal_margin and _hold_ms)
-           showed early. Now an enemy creature (noun creature 0x06C27D00 with fowControlsObjectVisibility, another
+           solid above, at once. So a shaper the server handed over early (the host's head start, FOGEDGE, removed by
+           FOGEDGE-RM) showed early. Now an enemy creature (noun creature 0x06C27D00 with fowControlsObjectVisibility, another
            team than GameClient_GetLocalTeamMask's, not for an observer) is drawn while mVisibleToTeam & the local mask
            (+0x888) is set or (FADE1b) its own fog query (+0x860 -> +0x5C, the fog texture at its feet, 0-255, without
            UpdateCreatureFrame's nearness boost) is at least 160, clearly lit (FADE1c: the texture fades out over about a

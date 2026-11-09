@@ -356,6 +356,7 @@ constexpr std::uintptr_t kNoun = 0x04;              // Noun asset: +0 name, +0x6
 constexpr std::uintptr_t kScale = 0x08;             // mScale
 constexpr std::uintptr_t kPosition = 0x10;          // f32 x 3
 constexpr std::uintptr_t kOrientation = 0x1C;       // quaternion x, y, z, w (Math_EulerToQuaternion 0x00673A90's order)
+constexpr std::uintptr_t kVelocity = 0x30;          // f32 x 3, the mover's (Locomotion_TickMovers 0x008A6CA0)
 constexpr std::uintptr_t kOwner = 0x48;             // mOwnerID
 constexpr std::uintptr_t kPlayerIndex = 0x4C;       // mPlayerIdx (0xFF none)
 constexpr std::uintptr_t kTeam = 0x4D;              // mTeam
@@ -623,6 +624,14 @@ constexpr std::uintptr_t kGoalFlags = 0xB8;
 constexpr std::uintptr_t kGoal = 0xC8;
 constexpr std::uintptr_t kClientPathBlock = 0xE0;
 constexpr std::uintptr_t kClientPathXY = 0xE2;
+// FOGSLIDE: u32 the jump state (SetJumpState 0x0088F130: 0 none, 1-4 a jump; Locomotion_StartJump 0x00890C40 starts
+// one), f32 x 3 the jump's landing point (StartJump's computed goal; ObjectJump's m_jumpGoal)
+constexpr std::uintptr_t kSampleSent = 0x8E;   // u8 x 2: +0x8E/+0x8F, the conditions of mClientPathXY/Block
+constexpr std::uintptr_t kSamplePos = 0xD4;    // f32 x 3, the last sample unquantized (Locomotion_UpdateClientPathPosition)
+constexpr std::uintptr_t kJumpState = 0xF0;
+constexpr std::uintptr_t kJumpGoal = 0x150;
+// the reflected members all lie before the field state at +0x228 (LocomotionData_Create 0x00893090): a wire copy's size
+constexpr std::uintptr_t kWireSize = 0x228;
 }  // namespace loco
 
 // cProjectileData (cGameObject +0x8A4, 9D, the reflected type's member 10): mTargetObjectId, a tObjID the

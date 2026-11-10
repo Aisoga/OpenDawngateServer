@@ -10,8 +10,18 @@
 // over the UI channel (opendawngate.ServerChannel): the lobby's entry and the button are calls, and every change comes
 // back as the whole lobby in one event, which is simply drawn:
 //     lobby.enter, lobby.setReady {ready}                  -> the server
-//     lobby.state {players: [{name, ready?, rating?}]},
-//     lobby.startRefused                                   <- the server
+//     lobby.state {players: [{name, ready?, rating?}], rules?,
+//                  region?: {want, got, why}},
+//     lobby.startRefused {findings?}, lobby.rulesCatalog   <- the server
+// The match rules (the state's rules, the catalog, the admin's lobby.setRules) are RulesPanel's, which this class draws
+// on its overlay and whose findings hold START as an unready player does. A draft (the rules' pick "draft": the
+// server's draft.state, the calls draft.ban and draft.pick) is DraftBoard's, drawn on the same overlay above the rest;
+// while it runs the guest's READY button stays away.
+//
+// lobby.state's region says that the game runs in another region than its creator chose (want "na", got "eu": the
+// region's machine was down, full, of another release, without the map, or failed to start it: why). The class draws one
+// line for it, at the top of the lobby, worded here by why; a region or reason it doesn't know draws nothing of the
+// server's text.
 //
 // The class sits on the root timeline of the front end's movie (UIRuntime.gfx), placed there by four added tags; the
 // game's bytecode stays as it is, and the class uses only public members of the game's classes, by name. Its clip is on
@@ -66,9 +76,17 @@ package {
         private static const MARK_READY:String = "READY";
         private static const MARK_NOT_READY:String = "NOT READY";
         private static const WAIT_TEXT:String = "Not all ready";
+        private static const RULES_TEXT:String = "See the rules";  // START held for the rules' findings
+        private static const DRAFT_TEXT:String = "Drafting...";    // START held while the draft runs
         private static const RATING_LABEL:String = "Rating "; // as the profile box's "Rating 1532"
         private static const RATING_GAP:int = 14;              // after the wins, in the wins label's own units
         private static const MARK_PAD:int = 10;                // the ready mark's end before the tile's right edge
+        // the region notice: the regions by their aliases (the play screen's names), and its line (centred at the top of
+        // the lobby [assumed: the place is not seen yet])
+        private static const REGION_NAMES:Object = {na: "North America", eu: "Europe"};
+        private static const NOTICE_COLOR:uint = 0xE8B04A;
+        private static const NOTICE_WIDTH:int = 760;
+        private static const NOTICE_TOP:int = 142; // below the menu bar, above the game's name (REGION5: at 6 it covered the window title's "N players online")
         // the colours: the lobby's own (a ready mark green as the client's online state, the rest the tile's wins grey)
         private static const READY_COLOR:uint = 0x7ED957;
         private static const DIM_COLOR:uint = 0xA9A9A9;
@@ -110,16 +128,26 @@ package {
         private var avatarTimer:Timer = null;
         private var avatarsOverdue:Boolean = false;
         private var countTf:TextField = null;
+        private var noticeTf:TextField = null;
+        private var notice:Object = null;    // lobby.state's region: {want, got, why} as strings, or null
         private var asserts:int = 0;
         private var said:Object = {};
+        private var rules:RulesPanel = null; // the match rules' summary and the admin's editor (RulesPanel.as)
+        private var draft:DraftBoard = null; // the draft's board (DraftBoard.as)
 
         public function LobbyReady() {
             self = this;
             mouseEnabled = false;
             mouseChildren = false;
+            rules = new RulesPanel(channel, say);
+            rules.redraw = redraw;
             channel.on("hello", onChannelOpen);
             channel.on("lobby.state", onState);
             channel.on("lobby.startRefused", onStartRefused);
+            channel.on("lobby.rulesCatalog", rules.setCatalog);
+            draft = new DraftBoard(channel, say);
+            draft.redraw = redraw;
+            channel.on("draft.state", onDraft);
             addEventListener(Event.ENTER_FRAME, onFirstFrame, false, 0, false);
         }
 
@@ -233,6 +261,12 @@ package {
             countTf.height = 24;
             countTf.visible = false;
             overlay.addChild(countTf);
+            noticeTf = text(15, NOTICE_COLOR);
+            noticeTf.defaultTextFormat = new TextFormat("$Body", 15, NOTICE_COLOR, null, null, null, null, null, "center");
+            noticeTf.width = NOTICE_WIDTH;
+            noticeTf.height = 24;
+            noticeTf.visible = false;
+            overlay.addChild(noticeTf);
             box.addChild(overlay);
             box.addEventListener(Event.REMOVED_FROM_STAGE, onBoxGone, false, 0, false);
             v.drawSignal.add(onDraw);
@@ -269,6 +303,8 @@ package {
                 readyBtn.removeEventListener(Event.ENTER_FRAME, onButtonFrame);
                 readyBtn.removeEventListener(Event.EXIT_FRAME, onButtonFrame);
             }
+            rules.detach();
+            draft.detach();
             if (overlay.parent != null) {
                 overlay.parent.removeChild(overlay);
             }
@@ -276,6 +312,8 @@ package {
             box = null;
             readyBtn = null;
             countTf = null;
+            noticeTf = null;
+            notice = null;
             tiles = {};
             nb = null;
             slots = [];
@@ -329,6 +367,20 @@ package {
             part("button", drawButton);
             part("tiles", drawTiles);
             part("start", drawStart);
+            part("notice", drawNotice); // between the menu bar and the rules' summary: nothing of the others there
+            part("draft", drawDraft); // before the rules: they go right below the board
+            part("rules", drawRules);
+        }
+
+        // the rules' summary for everyone and the admin's editor, once the local player's card is up (as the button)
+        private function drawRules():void {
+            rules.above = draft.top;
+            rules.draw(overlay, view, cardsUp);
+        }
+
+        // the draft's board, while a draft runs (the server's draft.state says so)
+        private function drawDraft():void {
+            draft.draw(overlay, view);
         }
 
         private function part(name:String, f:Function):void {
@@ -560,12 +612,23 @@ package {
             channel.call("lobby.enter");
         }
 
+        // the draft's board as the server has it now (each turn, its end or cancel; a late entry's one)
+        private function onDraft(data:Object):void {
+            draft.setState(data);
+            if (box != null) {
+                redraw();
+            }
+        }
+
         private function onState(data:Object):void {
             var next:Object = {};
             for each (var p:Object in data.players) {
                 next[String(p.name)] = p;
             }
             players = next;
+            var r:Object = data.region;
+            notice = (r != null && typeof r == "object") ? {want: String(r.want), got: String(r.got), why: String(r.why)} : null;
+            rules.setState(data.rules); // none for a game without rules (a practice group's, no match host)
             if (box != null) {
                 redraw();
             }
@@ -578,6 +641,7 @@ package {
             if (box == null) {
                 return;
             }
+            rules.startRefused(data != null ? data.findings : null);
             waiting = true;
             if (waitTimer == null) {
                 waitTimer = new Timer(WAIT_MS, 1);
@@ -708,7 +772,8 @@ package {
         // ---- the guest's READY button: START's own class at START's place ----
 
         private function wantButton():Boolean {
-            return !isAdmin && myName != "" && (myTeam == 0 || myTeam == 1) && readyOf(myName) !== undefined;
+            return !isAdmin && myName != "" && (myTeam == 0 || myTeam == 1) && readyOf(myName) !== undefined &&
+                !draft.running;
         }
 
         private function drawButton():void {
@@ -966,20 +1031,23 @@ package {
             var c:Array = counted();
             var n:int = readyCount(c);
             var sb:DisplayObject = view.startButton as DisplayObject;
+            var refused:Boolean = rules.blocked; // the rules' findings (RulesPanel says why)
+            var drafting:Boolean = draft.running; // the server refuses a START while it runs anyway
             var showWait:Boolean = waiting && n < c.length;
-            countTf.visible = cardsUp && c.length > 0 && sb != null && sb.visible;
+            countTf.visible = cardsUp && (c.length > 0 || refused || drafting) && sb != null && sb.visible;
             if (countTf.visible) {
-                var want:String = showWait ? WAIT_TEXT : n + "/" + c.length + " ready";
+                var want:String = drafting ? DRAFT_TEXT : (refused ? RULES_TEXT :
+                    (showWait ? WAIT_TEXT : n + "/" + c.length + " ready"));
                 if (countTf.text != want) {
                     countTf.text = want;
                 }
-                countTf.textColor = showWait ? WAIT_COLOR : DIM_COLOR;
+                countTf.textColor = !drafting && (refused || showWait) ? WAIT_COLOR : DIM_COLOR;
                 var r:Rectangle = sb.getBounds(overlay);
                 countTf.x = r.x - COUNT_WIDTH - COUNT_GAP; // left of START, before the footer's icons
                 countTf.y = r.y + (r.height - 22) / 2;
             }
             // the view's own switch: its setter does nothing when the value is the same, and its draw enables the button
-            if (n < c.length) {
+            if (n < c.length || refused || drafting) {
                 view.startButtonEnabled = false;
                 held = true;
             } else if (held) {
@@ -990,6 +1058,51 @@ package {
                 }
                 view.startButtonEnabled = anyOnTeam; // C++'s own rule
             }
+        }
+
+        // ---- the region notice: the game runs elsewhere than its creator chose (lobby.state's region) ----
+
+        private static function regionName(alias:String):String {
+            return REGION_NAMES.hasOwnProperty(alias) ? String(REGION_NAMES[alias]) : null;
+        }
+
+        // the line for a notice, worded here (none for a region or a reason this class doesn't know)
+        private static function noticeText(n:Object):String {
+            if (n == null) {
+                return null;
+            }
+            var want:String = regionName(n.want);
+            var got:String = regionName(n.got);
+            if (want == null || got == null || want == got) {
+                return null;
+            }
+            switch (n.why) {
+                case "down":
+                    return want + "'s server isn't available right now, so this game runs in " + got + ".";
+                case "full":
+                    return want + "'s server is full right now, so this game runs in " + got + ".";
+                case "version":
+                    return want + "'s server is being updated, so this game runs in " + got + ".";
+                case "map":
+                    return want + "'s server doesn't have this map, so this game runs in " + got + ".";
+                case "failed":
+                    return want + "'s server couldn't start this game, so it runs in " + got + ".";
+            }
+            return "This game runs in " + got + " instead of " + want + ".";
+        }
+
+        private function drawNotice():void {
+            var line:String = noticeText(notice);
+            noticeTf.visible = line != null && cardsUp;
+            if (!noticeTf.visible) {
+                return;
+            }
+            if (noticeTf.text != line) {
+                noticeTf.text = line;
+            }
+            var b:Rectangle = box.getBounds(overlay);
+            noticeTf.x = b.x + (b.width - NOTICE_WIDTH) / 2;
+            noticeTf.y = b.y + NOTICE_TOP;
         }
     }
 }

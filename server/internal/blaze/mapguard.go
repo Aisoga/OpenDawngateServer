@@ -341,6 +341,7 @@ func MapNoteMessage(text string) ClientMessage {
 func (s *Server) forgetMapNotes(c *Conn) {
 	s.sys.mu.Lock()
 	delete(s.sys.mapNotes, c)
+	delete(s.sys.rulesNotes, c)
 	s.sys.mu.Unlock()
 }
 

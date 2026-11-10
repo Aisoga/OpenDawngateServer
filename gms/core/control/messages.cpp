@@ -111,6 +111,7 @@ struct Encoder {
   void operator()(const Hello& m) {
     o.Set("match", Json::Int(m.match)).Set("token", Json::Str(m.token)).Set("pid", Json::Int(m.pid));
     o.Set("build", Json::Str(m.build));
+    if (!m.features.empty()) o.Set("features", StrList(m.features));  // RULES1 (Go: omitempty)
   }
   void operator()(const CreateGame& m) {
     o.Set("gameId", Json::Int(m.gameId)).Set("level", Json::Str(m.level)).Set("mode", Json::Str(m.mode));
@@ -162,7 +163,17 @@ struct Encoder {
     o.Set("addr", Json::Str(m.addr)).Set("user", Json::Int(m.user)).Set("ok", Json::Bool(m.ok));
   }
   void operator()(const UpdateRoster& m) { o.Set("roster", RosterJson(m.roster)); }  // B15
-  void operator()(const StartGame& m) { o.Set("roster", RosterJson(m.roster)); }     // B15
+  void operator()(const StartGame& m) {  // B15
+    o.Set("roster", RosterJson(m.roster));
+    if (m.rules) {  // RULES1: gmshost.Rules' field order
+      Json r = Json::Object();
+      r.Set("pick", Json::Str(m.rules->pick)).Set("shaperPool", Json::Str(m.rules->shaperPool));
+      r.Set("shop", Json::Str(m.rules->shop)).Set("itemPool", Json::Str(m.rules->itemPool));
+      o.Set("rules", std::move(r));
+    }
+    if (m.fillTeams) o.Set("fillTeams", Json::Int(*m.fillTeams));  // RULES1: 0 is written (no bots)
+    if (!m.poolClasses.empty()) o.Set("poolClasses", StrList(m.poolClasses));  // RULES3 (Go: omitempty)
+  }
   // M18: gmshost.SeatStats' fields in order; stats and sources only when not empty, slot only when set (omitempty)
   void operator()(const SeatStats& m) {
     o.Set("index", Json::Int(m.index)).Set("user", Json::Int(m.user)).Set("bot", Json::Bool(m.bot));
@@ -596,6 +607,7 @@ bool Decode(std::string_view line, Message& out, std::string* err) {
   if (type == "hello") {
     Hello m;
     f.Int("match", m.match); f.Str("token", m.token); f.Int("pid", m.pid); f.Str("build", m.build);
+    if (f.err.empty()) f.StrList("features", m.features);  // RULES1
     out = std::move(m);
   } else if (type == "createGame") {
     CreateGame m;
@@ -669,6 +681,30 @@ bool Decode(std::string_view line, Message& out, std::string* err) {
   } else if (type == "startGame") {  // B15
     StartGame m;
     DecodeRoster(f, m.roster);
+    const Json* rules = o.Find("rules");  // RULES1: the custom game's rules (absent or null: the standard game)
+    if (f.err.empty() && rules && !rules->IsNull()) {
+      if (!rules->IsObject()) {
+        f.Bad("rules", "an object");
+      } else {
+        Fields rf{*rules, {}};
+        StartGame::Rules r;
+        rf.Str("pick", r.pick);
+        rf.Str("shaperPool", r.shaperPool);
+        rf.Str("shop", r.shop);
+        rf.Str("itemPool", r.itemPool);
+        if (!rf.err.empty()) {
+          f.err = "rules: " + rf.err;
+        } else {
+          m.rules = std::move(r);
+        }
+      }
+    }
+    const Json* fill = o.Find("fillTeams");  // RULES1: present (0 too) = the lobby's bots setting
+    if (f.err.empty() && fill && !fill->IsNull()) {
+      int64_t n = 0;
+      if (f.Int("fillTeams", n)) m.fillTeams = n;
+    }
+    if (f.err.empty()) f.StrList("poolClasses", m.poolClasses);  // RULES3: absent or null = no pool
     out = std::move(m);
   } else if (type == "playerKarma") {
     PlayerKarma m;

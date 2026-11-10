@@ -120,7 +120,7 @@ func (hg *hostedGame) storeMatch(rec historyRecord) int64 {
 func (hg *hostedGame) matchLocked(f gmshost.FinishGame, now time.Time) (m store.Match, skipped int) {
 	m = store.Match{GameID: hg.game.ID, Kind: matchKind(hg.mode, hg.game.descriptors()), Mode: hg.mode,
 		Level: hg.s.gameLevel(hg.game), Winner: f.WinnerTeam, Reason: f.Reason, Started: hg.started, Ended: now,
-		DurationMs: f.DurationMs}
+		DurationMs: f.DurationMs, Rules: hg.rulesRecordLocked()} // RULES1: the custom game's rules, "" for the standard game
 	if !hg.inGameAt.IsZero() {
 		m.Started = hg.inGameAt
 	}

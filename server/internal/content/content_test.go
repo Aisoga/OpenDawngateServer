@@ -90,7 +90,9 @@ func TestBuildFromDump(t *testing.T) {
 	}
 	shapers := []Shaper{
 		{Name: "PC_Ember", CatalogID: 0x10000001, Title: "Ember", Archetype: "mage", SubArchetype: "burst mage",
-			Abilities: []string{"ability_Ember_Basic", "ability_Ember_Q", "ability_Ember_W", "ability_Ember_E", "ability_Ember_R", "modifier_Ember_Passive"}},
+			Abilities: []string{"ability_Ember_Basic", "ability_Ember_Q", "ability_Ember_W", "ability_Ember_E", "ability_Ember_R", "modifier_Ember_Passive"},
+			// the pictures of the shaper item's Noun (ember), not its skin's (ember_frost)
+			Portrait: "Heroes/Ember/default/ui/Textures/ember_portrait.dds", Card: "Heroes/Ember/default/ui/Textures/ember_purchase.dds"},
 		{Name: "PC_Ghost", CatalogID: 0x10000003, Archetype: "mage", SubArchetype: "burst mage", TestingOnly: true, Abilities: []string{"ability_Ghost_Basic"}},
 		{Name: "PC_Stone", CatalogID: 0x10000002, Archetype: "tank", SubArchetype: "initiator", Abilities: []string{"ability_Stone_Basic", "ability_Stone_Q"}},
 	}
@@ -263,5 +265,17 @@ func TestPerkAttributeEnums(t *testing.T) {
 	var none *Content
 	if none.HasPerkStats() || (&Content{Perks: []Perk{{Name: "x"}}}).HasPerkStats() {
 		t.Error("HasPerkStats without stats")
+	}
+}
+
+// The draft board's pictures: the fixture has ember's; a file without any (built before them) and no content have none.
+func TestHasPictures(t *testing.T) {
+	if !Fixture(t).HasPictures() {
+		t.Error("the fixture has no pictures")
+	}
+	old := &Content{Shapers: []Shaper{{Name: "PC_Ember", CatalogID: 1}}}
+	var none *Content
+	if old.HasPictures() || none.HasPictures() {
+		t.Error("pictures without any")
 	}
 }

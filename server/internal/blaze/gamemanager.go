@@ -129,6 +129,11 @@ type Game struct {
 	State       int64
 	// Level is the level this game loads when it isn't the server's (a custom game's map tag, level.go; not sent).
 	Level string
+
+	// REGION5 (region_route.go; not sent): the match host's machine (gmshost.Match.Site, "" until gameReady) and the
+	// match's id, so that ForClient can send a tunnelled player to that machine's match gateway.
+	Site  string
+	Match int64
 }
 
 // Player is the game's one player, the client that created it.

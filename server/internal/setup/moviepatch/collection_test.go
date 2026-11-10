@@ -262,6 +262,9 @@ func TestLobbyTags(t *testing.T) {
 		!bytes.Contains(p.Tags, []byte("Channel/dgchannel.json")) {
 		t.Error("the class doesn't set the ready state over the UI channel in the custom lobby")
 	}
+	if !bytes.Contains(p.Tags, []byte("server isn't available right now, so this game runs in ")) { // M27
+		t.Error("the class doesn't word lobby.state's region notice")
+	}
 	if bytes.Contains(p.Tags, []byte("~#")) || bytes.Contains(p.Tags, []byte("ChatManager")) {
 		t.Error("the class still touches the chat")
 	}

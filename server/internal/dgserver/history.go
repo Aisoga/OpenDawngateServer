@@ -19,6 +19,7 @@ import (
 	"dawngate/server/internal/blaze"
 	"dawngate/server/internal/content"
 	"dawngate/server/internal/gmshost"
+	"dawngate/server/internal/rules"
 	"dawngate/server/internal/store"
 	"dawngate/server/internal/web"
 )
@@ -84,6 +85,8 @@ type historyHead struct {
 	Started     int64  `json:"started"`
 	Ended       int64  `json:"ended"` // Unix seconds
 	DurationSec int64  `json:"durationSec"`
+	// Rules is a custom game's match rules as text ("All Random, Shop on Death"), left out for the standard game
+	Rules string `json:"rules,omitempty"`
 }
 
 type historyMatch struct {
@@ -359,6 +362,13 @@ func (h *history) head(m store.Match) historyHead {
 		Level: m.Level, Reason: m.Reason, Started: m.Started.Unix(), Ended: m.Ended.Unix(), DurationSec: m.DurationMs / 1000}
 	if m.Winner == 1 || m.Winner == 2 {
 		hd.Winner = m.Winner
+	}
+	if m.Rules != "" { // RULES1
+		if c, err := rules.ParseJSON([]byte(m.Rules)); err == nil {
+			hd.Rules = rules.Describe(c)
+		} else {
+			hd.Rules = "Custom rules"
+		}
 	}
 	return hd
 }

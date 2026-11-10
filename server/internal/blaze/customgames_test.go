@@ -175,11 +175,17 @@ type customHost struct {
 }
 
 func newCustomHostServer(t *testing.T, setup func(s *Server)) (*tcpServer, *customHost) {
+	return newCustomHostServerWith(t, nil, setup)
+}
+
+// newCustomHostServerWith is newCustomHostServer whose fake hosts name features in their hello (RULES1: a host that
+// takes rules).
+func newCustomHostServerWith(t *testing.T, features []string, setup func(s *Server)) (*tcpServer, *customHost) {
 	h := &customHost{created: make(chan gmshost.CreateGame, 4), msgs: make(chan gmshost.Message, 64)}
 	var hosts *gmshost.Manager
 	ts := newTCPServer(t, func(s *Server) {
 		l := &gmshost.FakeLauncher{Run: func(env gmshost.Env, p *gmshost.FakeProcess) {
-			gmshost.PlayHost(env, p, func(c *gmshost.HostConn, cg gmshost.CreateGame) error {
+			gmshost.PlayHostWith(env, p, features, func(c *gmshost.HostConn, cg gmshost.CreateGame) error {
 				h.created <- cg
 				for {
 					m, err := c.Recv(0)

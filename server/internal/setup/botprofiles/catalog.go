@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"dawngate/server/internal/setup/assetdata"
+	"dawngate/server/internal/setup/snap"
 )
 
 // The copy's one catalog. The client loads only AssetData/Binary/catalog_153.bin, and of the archives that hold it the
@@ -26,10 +27,13 @@ type CatalogEntry struct {
 	Tags   []string // a new entry's tags (an entry copied from a base takes none)
 }
 
-// CatalogSource is one contributor's entries: the bot profiles or one installed map.
+// CatalogSource is one contributor's entries: the bot profiles, one installed map or the match rules' texts.
 type CatalogSource struct {
 	Name    string
 	Entries []CatalogEntry
+	// Files are the .bin files this archive carries for the source, after the profiles' (a map's are in its own
+	// archive, so a map source has none; the match rules' defs have no archive of their own).
+	Files []snap.File
 }
 
 // ProfilesSource is the name of the bot profiles' source.

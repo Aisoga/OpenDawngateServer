@@ -79,6 +79,7 @@ bool g_draftHidden = false;       // until the reveal: the bots' updates carry n
 bool g_drafted = false;           // the draft ran
 std::set<std::string> g_available;  // the classes the composition may use (EnsurePlayers)
 unsigned g_draftSeed = 1;
+std::vector<std::string> g_draftPool;  // RULES3: startGame's poolClasses (empty: no pool)
 
 // BOTLANESPLIT (core/bots/lanesplit.h): the humans' roles by team the last split counted (the composition's, the
 // draft's intents, the reveal's picks), and the match's single lane changes the rule refused or took
@@ -2166,13 +2167,21 @@ void OnHumanPing(int team, std::uint32_t pinger, std::uint32_t target, const flo
         r.seq, team, pinger, target, static_cast<double>(pos[0]), static_cast<double>(pos[1]), type, r.t);
 }
 
-void SetFillTeams(int seats) {
+void SetFillTeams(int seats, const char* from) {
   g_fillTeams = seats > 0 ? seats : 0;
-  Log("bots: createGame fillTeams %d (B10d: %s)", seats,
-      g_fillTeams ? "bots in the open seats of a matchmade game" : "not asked; the descriptors decide");
+  Log("bots: %s fillTeams %d (B10d: %s)", from, seats,
+      g_fillTeams ? "bots in the open seats" : "not asked; the descriptors decide");
 }
 
 void SetGameMode(const std::string& mode) { g_gameMode = mode; }
+
+void SetDraftPool(const std::vector<std::string>& classes, const char* from) {  // RULES3
+  g_draftPool = classes;
+  std::string list;
+  for (const std::string& c : classes) list += (list.empty() ? "" : ", ") + c;
+  Log("bots: %s shaper pool of %zu classes (RULES3: the BOTDRAFT draw takes only these): %s", from, classes.size(),
+      list.empty() ? "none" : list.c_str());
+}
 
 // ---- BOTDRAFT -------------------------------------------------------------------------------------------------------
 
@@ -2274,7 +2283,8 @@ std::vector<DraftOut> Draft(void* sim, const std::vector<DraftHumanIn>& humans) 
   o.gladiators = gb::ParseGladiatorList(g_opt.gladiators);
   o.jungle = HunterSeat();  // MAPHOST
   o.laneSplit = g_opt.laneSplit;  // BOTLANESPLIT
-  const std::map<int, std::vector<gb::ComposedSeat>> drawn = gb::DraftMatch(teams, hs, g_available, o);
+  const std::map<int, std::vector<gb::ComposedSeat>> drawn =
+      gb::DraftMatch(teams, hs, gb::PoolFilter(g_available, g_draftPool), o);  // RULES3: the pool's classes only
   Log("bots: BOTDRAFT: draw with seed %u: humans%s", g_draftSeed, hdesc.empty() ? " none" : hdesc.c_str());
   g_humanRoles.clear();  // BOTLANESPLIT: the draw counted the humans' intents
   for (const gb::DraftHuman& h : hs) g_humanRoles[h.team].push_back(h.role);

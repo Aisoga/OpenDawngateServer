@@ -25,7 +25,13 @@ struct Hello {
   std::string token;
   int64_t pid = 0;
   std::string build;
+  // RULES1: what the host understands beyond the messages every host reads (written only when not empty, Go's
+  // omitempty); dgserver sends a field a host would ignore only to a host that names it here.
+  std::vector<std::string> features;
 };
+
+// RULES1: the host feature for a custom game's rules (startGame's rules and fillTeams). Go: gmshost.FeatureRules.
+inline constexpr const char* kFeatureRules = "rules";
 
 struct RosterEntry {
   int64_t user = 0;  // Blaze id; HelloReq's user id
@@ -240,6 +246,20 @@ struct UpdateRoster {
 // 1 at gameplay indexes 0-4, team 2 at 5-9, the spectators at 10-14. Go: gmshost.StartGame.
 struct StartGame {
   std::vector<RosterEntry> roster;
+  // RULES1 (only to a host whose hello names kFeatureRules): the custom game's rules, checked by the server (absent for
+  // the standard game), and the lobby's bots setting: the seats a team the host fills with bots, 0 = none (absent:
+  // createGame's fillTeams stays). Go: gmshost.StartGame.Rules, FillTeams.
+  struct Rules {
+    std::string pick;
+    std::string shaperPool;
+    std::string shop;
+    std::string itemPool;
+  };
+  std::optional<Rules> rules;
+  std::optional<int64_t> fillTeams;
+  // RULES3: the shaper pool's PlayerClasses ("PC_Guardian"; empty: no pool), from which the bots draw. The humans' lists
+  // in the roster hold only the pool already (or, with All Random, the rolled shaper). Go: gmshost.StartGame.PoolClasses.
+  std::vector<std::string> poolClasses;
 };
 
 // createGame's mode of a custom game (B15; Go: gmshost.ModeCustom): its players gather in the client's custom lobby

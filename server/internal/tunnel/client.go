@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -87,6 +88,17 @@ type Client struct {
 	// helloVer is the session hello's version this client writes: sessionVersion, or releaseVersion after a gateway
 	// of an earlier release refused the maps' version (connect)
 	helloVer atomic.Uint32
+
+	// Ticket, when set, opens a session to a match gateway (a host machine's; Start-Client's away session, front_away.go):
+	// it rides in the session hello, so the client never steps down to a hello without it.
+	Ticket []byte
+	// Context, when set, ends Start's and AddTicket's dials (the TCP connect, the TLS handshake and the hello) as soon as
+	// it is done: the front cancels an away session's connect that a later message for its port replaced.
+	Context context.Context
+	// OnAway and OnHome take the control connection's away and home messages (away.go): the main server sends a match
+	// port's datagrams to a host machine's gateway, and back. They run on the control connection's reader: keep them short.
+	OnAway func(port int, a Away)
+	OnHome func(port int)
 
 	HeartbeatEvery, HeartbeatTimeout, Keepalive, DialTimeout time.Duration
 
@@ -274,8 +286,11 @@ func (c *Client) checkPorts(rep sessionReply) error {
 
 // mapsNamed words the maps the session hello named, for the log.
 func (c *Client) mapsNamed() string {
-	if c.Maps == nil || c.helloVer.Load() == releaseVersion {
+	if c.helloVer.Load() == releaseVersion {
 		return "none (session hello version 2)"
+	}
+	if c.Maps == nil {
+		return "none"
 	}
 	return MapsWords(c.Maps)
 }
@@ -316,7 +331,23 @@ func (c *Client) dial(network, addr string) (*tls.Conn, error) {
 	if c.DialIP != nil {
 		d.LocalAddr = &net.TCPAddr{IP: c.DialIP}
 	}
-	return tls.DialWithDialer(d, network, addr, c.tlsCfg)
+	if c.Context == nil {
+		return tls.DialWithDialer(d, network, addr, c.tlsCfg)
+	}
+	td := &tls.Dialer{NetDialer: d, Config: c.tlsCfg}
+	conn, err := td.DialContext(c.Context, network, addr)
+	if err != nil {
+		return nil, err
+	}
+	return conn.(*tls.Conn), nil
+}
+
+// whileContext closes conn when Context is done before the returned stop is called (the exchange after a dial).
+func (c *Client) whileContext(conn net.Conn) (stop func() bool) {
+	if c.Context == nil {
+		return func() bool { return true }
+	}
+	return context.AfterFunc(c.Context, func() { conn.Close() })
 }
 
 // connect opens a control session (resume: the last one's id and token).
@@ -327,15 +358,16 @@ func (c *Client) connect(resumeID uint64, resumeToken [16]byte) (*clientSession,
 		return nil, rep, fmt.Errorf("the tunnel gateway at %s: %w", c.Gateway, err)
 	}
 	conn.SetDeadline(time.Now().Add(c.DialTimeout))
+	defer c.whileContext(conn)()
 	ver := byte(c.helloVer.Load())
 	if ver == 0 {
 		ver = sessionVersion
 	}
-	if c.Maps == nil {
+	if c.Maps == nil && ver == mapsVersion {
 		ver = releaseVersion
 	}
 	h := sessionHello{ver: ver, tunnelIP: ip4(c.TunnelIP), resumeID: resumeID, resumeToken: resumeToken, release: c.Release,
-		maps: c.Maps}
+		maps: c.Maps, ticket: c.Ticket}
 	if _, err := conn.Write(h.encode()); err != nil {
 		conn.Close()
 		return nil, rep, err
@@ -344,9 +376,15 @@ func (c *Client) connect(resumeID uint64, resumeToken [16]byte) (*clientSession,
 		conn.Close()
 		return nil, rep, fmt.Errorf("the tunnel gateway at %s: %w", c.Gateway, err)
 	}
-	if rep.status == StatusVersion && ver > releaseVersion {
-		// a gateway of a release before the map list: say hello again without it (it then checks the release alone)
+	if rep.status == StatusVersion && ver > releaseVersion && len(c.Ticket) == 0 {
 		conn.Close()
+		if ver > mapsVersion && c.Maps != nil {
+			// a gateway of a release before the away messages: say hello again with the maps' version
+			c.helloVer.Store(mapsVersion)
+			c.logf("the gateway at %s takes no away messages (a release before them): session hello version %d", c.Gateway, mapsVersion)
+			return c.connect(resumeID, resumeToken)
+		}
+		// a gateway of a release before the map list: say hello again without it (it then checks the release alone)
 		c.helloVer.Store(releaseVersion)
 		c.logf("the gateway at %s takes no map list (a release before it): session hello version %d", c.Gateway, releaseVersion)
 		return c.connect(resumeID, resumeToken)
@@ -484,7 +522,7 @@ func (c *Client) Counts() string {
 func (c *Client) controlLoop(s *clientSession) {
 	defer c.wg.Done()
 	for {
-		err := heartbeat(s.ctrl, c.HeartbeatEvery, c.HeartbeatTimeout, c.done)
+		err := heartbeat(&controlConn{Conn: s.ctrl, c: c}, c.HeartbeatEvery, c.HeartbeatTimeout, c.done) // away, home: away.go
 		s.ctrl.Close()
 		select {
 		case <-c.done:

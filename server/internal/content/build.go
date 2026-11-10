@@ -96,6 +96,7 @@ func BuildFrom(src Source) (*Content, error) {
 		return ""
 	}
 	shaperItem := map[string]uint32{}
+	shaperNoun := map[string]string{} // a shaper's item's Noun (its default skin): the pictures
 	for _, name := range sortedNames(items) {
 		ci := items[name]
 		it := Item{CatalogID: ci.CatalogID, Name: name, Type: ci.Type, ItemType: itemTypes[ci.Type],
@@ -108,6 +109,7 @@ func BuildFrom(src Source) (*Content, error) {
 			}
 			if ci.Type == "shaper" && it.Shaper != "" {
 				shaperItem[it.Shaper] = it.CatalogID
+				shaperNoun[it.Shaper] = assetName(ci.ParentAsset)
 			}
 		case "perk":
 			if ps, ok := perkShapes[assetName(ci.ParentAsset)]; ok {
@@ -131,6 +133,9 @@ func BuildFrom(src Source) (*Content, error) {
 		pc := classes[name]
 		s := Shaper{Name: name, CatalogID: shaperItem[name], Title: pc.NameLocaleKey.Text, Archetype: pc.CharacterArchetype,
 			SubArchetype: pc.CharacterSubArchetype, TestingOnly: pc.TestingOnly}
+		if n, ok := nouns[shaperNoun[name]]; ok && n.IconData != nil {
+			s.Portrait, s.Card = n.IconData.LargeIcon, n.IconData.PurchaseIcon
+		}
 		for _, a := range []string{pc.BasicAbility, pc.SpecialAbility1, pc.SpecialAbility2, pc.SpecialAbility3,
 			pc.SpecialAbility4, pc.PassiveAbility} {
 			if a != "" {
@@ -253,6 +258,10 @@ type dumpPlayerClass struct {
 
 type dumpNoun struct {
 	PlayerClassData string `json:"playerClassData"`
+	IconData        *struct {
+		LargeIcon    string `json:"largeIcon"`
+		PurchaseIcon string `json:"purchaseIcon"`
+	} `json:"iconData"`
 }
 
 type dumpPerkShape struct {

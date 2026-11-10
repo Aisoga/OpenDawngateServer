@@ -21,6 +21,11 @@ type Env struct {
 	// Warm (H1-live): DGGMS_WARM=1, a host of the warm pool (Config.Warm): it waits for createGame
 	// without the create timeout ([host] create_timeout_s), since its game may come much later.
 	Warm bool
+
+	// REGION1, an agent's hosts on the TLS link: DataName names the host's folder under the launcher's
+	// DataDir ("" = the match id); Options, when set, replaces the launcher's Options (DGGMS_OPTIONS)
+	DataName string
+	Options  string
 }
 
 // Vars returns the environment entries ("NAME=value").
@@ -109,7 +114,11 @@ func (l *ExecLauncher) Launch(env Env) (Process, error) {
 	cmd.Stdout, cmd.Stderr = l.Out, l.Out
 	var out *os.File
 	if l.DataDir != "" {
-		dir, err := filepath.Abs(filepath.Join(l.DataDir, strconv.FormatInt(env.Match, 10)))
+		name := strconv.FormatInt(env.Match, 10)
+		if env.DataName != "" {
+			name = env.DataName
+		}
+		dir, err := filepath.Abs(filepath.Join(l.DataDir, name))
 		if err == nil {
 			err = os.MkdirAll(dir, 0o755)
 		}
@@ -122,8 +131,11 @@ func (l *ExecLauncher) Launch(env Env) (Process, error) {
 		vars = append(vars, "DGGMS_DATA="+dir)
 		cmd.Stdout, cmd.Stderr = out, out
 	}
-	if l.Options != "" {
-		vars = append(vars, "DGGMS_OPTIONS="+l.Options)
+	if opts := l.Options; opts != "" || env.Options != "" {
+		if env.Options != "" {
+			opts = env.Options
+		}
+		vars = append(vars, "DGGMS_OPTIONS="+opts)
 	}
 	vars = l.hostVars(vars)                 // under Wine: the data folder as a Wine path, Wine's defaults
 	cmd.Env = append(os.Environ(), vars...) // later entries win (exec dedups the environment)

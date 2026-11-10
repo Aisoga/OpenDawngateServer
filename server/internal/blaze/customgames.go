@@ -55,6 +55,7 @@ import (
 	"time"
 
 	"dawngate/server/internal/gmshost"
+	"dawngate/server/internal/rules"
 	"dawngate/server/internal/tdf"
 )
 
@@ -133,6 +134,28 @@ type customLobby struct {
 	publishDue  bool
 	// READY2b: the first start was refused for Server.TestRefuseStart
 	testRefused bool
+
+	// M27 (regions.go): the region its creator wanted ("" = none: a practice group's game, or regions off), and from
+	// gameReady lobby.state's notice when it runs elsewhere
+	want   string
+	notice *LobbyRegion
+
+	// RULES1 (lobbyrules.go): the lobby's match rules and bots setting, the bots createGame asked for (a host without
+	// rules keeps them), when the rules last changed, whether the match's rules line went out; the parts of the
+	// browser's name (lobbyName)
+	rules        rules.Combination
+	bots         bool
+	botsAtCreate bool
+	rulesSetAt   time.Time
+	announced    bool
+	announceDue  bool // the rules line's timer runs (announceRulesLater)
+	baseName     string
+	label        string
+
+	// RULES5b (draft.go): the running draft (nil: none), and the last one, running or ended (its board for a late
+	// lobby.enter and a refused call)
+	draft     *draftRun
+	lastDraft *draftRun
 }
 
 // LobbyPlayer is a custom game's player as NotifyGameSetup's PROS, NotifyPlayerJoining's PDAT and the game browser's
@@ -467,6 +490,8 @@ func (s *Server) startCustomGame(r *Request, g Game, p Player) []byte {
 	hp := &hostedPlayer{p: p, userID: r.Conn.Session.Account.UserID, conn: r.Conn, setupCtx: SetupContextCreateGame}
 	lobby := &customLobby{admins: []int64{p.ID}, browsable: flags&GameFlagBotsFillTeams == 0,
 		region: lobbyRegion(r.Conn.Net.PingSites), nextSlot: 1}
+	// M27: where its creator wants it (regions.go)
+	lobby.want = s.customWant(r, lobby.browsable)
 	defer func() { // a lobby nobody starts doesn't hold its host for ever (access.go)
 		if hg := s.hosted.get(g.ID); hg != nil {
 			time.AfterFunc(LobbyMaxAge, hg.expireLobby)
@@ -484,11 +509,11 @@ func (s *Server) startCustomGame(r *Request, g Game, p Player) []byte {
 			g.Name = p.Name + "'s Game"
 		}
 	}
+	lobby.baseName = g.Name
 	if marked && lobby.browsable && s.Hosts != nil {
 		// the create dialog's bot checkbox; a practice group gets its bots anyway and a lobby without a match host
 		// has none to fill, so there only the marker goes
 		bots = true
-		g.Name = BotFillPrefix + g.Name
 	}
 	// the map: the server's, or the one the name's tag picks if this server offers it (level.go)
 	level, why := s.hostedLevel(), "the server's map"
@@ -510,20 +535,32 @@ func (s *Server) startCustomGame(r *Request, g Game, p Player) []byte {
 		g.Level = level
 	}
 	g.Attrs = mergeAttrs(g.Attrs, levelAttrs(level)) // the game's level, not the dialog's
-	if l, ok := FindLevel(level); ok && l.Label != "" {
-		g.Name = l.Label + g.Name // the browser's Map column shows only SM_Map_v5's name
+	if l, ok := FindLevel(level); ok {
+		lobby.label = l.Label // the browser's Map column shows only SM_Map_v5's name
 	}
+	// RULES1: the lobby's starting bots and rules (lobbyrules.go); the name shows both
+	withHost := lobby.browsable && s.Hosts != nil
+	lobby.bots = (s.CustomBots || bots) && withHost
+	lobby.botsAtCreate = lobby.bots
+	lobby.rules = rules.Standard()
+	if s.TestRules != nil && withHost {
+		lobby.rules = s.TestRules.Normal()
+	}
+	g.Name = lobbyName(lobby.label, lobby.bots, lobby.rules, lobby.baseName)
 	s.Log.Logf("blaze", "   game %d %q: a %s (GameFlags %#x, %d teams of %d, private %v); admin %d", g.ID, g.Name, kind,
 		flags, len(g.TeamIDs), g.TeamCap, attrValue(g.Attrs, AttrPrivateMatch) == "1", p.ID)
 	if bots {
 		s.Log.Logf("blaze", "   game %d: bots fill the open seats (the creator's checkbox)", g.ID)
+	}
+	if !lobby.rules.IsDefault() {
+		s.Log.Logf("blaze", "   game %d: rules %s (--test-rules, a test aid)", g.ID, rules.Describe(lobby.rules))
 	}
 	if tagged || fellBack || !strings.EqualFold(level, HostedLevel) {
 		s.Log.Logf("blaze", "   game %d: map %s (LevelId %d; %s)", g.ID, level, LevelAssetID(level), why)
 	}
 	if s.Hosts != nil {
 		fill := 0
-		if (s.CustomBots || bots) && lobby.browsable {
+		if lobby.bots {
 			fill = int(g.TeamCap)
 		}
 		hg, err := s.launchHostedGame(g, gmshost.ModeCustom, fill, []*hostedPlayer{hp}, make(chan struct{}), nil, lobby)
@@ -600,6 +637,8 @@ func (s *Server) joinCustomGame(r *Request, hg *hostedGame) []byte {
 		case tidx == SpectatorTeam:
 		case hg.custom.started:
 			return fail(ErrGameInProgress, "started: only a spectator may join")
+		case hg.custom.draft != nil: // RULES5b: the draft's seats are fixed
+			return fail(ErrGameInProgress, "a draft runs: only a spectator may join")
 		case !hg.custom.browsable: // a practice group
 			if tidx != 0 && tidx != 0xFFFF {
 				s.Log.Logf("blaze", "   joinGame: game %d: player %d asked for team %d; a practice group's players join team 0",
@@ -775,6 +814,9 @@ func (hg *hostedGame) lobbyLeft(playerID int64) {
 		}
 	}
 	hg.mu.Unlock()
+	if !ended {
+		hg.draftLeft(playerID) // RULES5b: a drafter's leave cancels the draft
+	}
 	switch {
 	case ended:
 		return
@@ -958,6 +1000,16 @@ func registerCustomGames(s *Server) {
 				return nil
 			}
 		}
+		if hg.custom.draft != nil { // RULES5b: the draft's seats are fixed (the client's roster is locked anyway)
+			for _, hp := range hg.players {
+				if t, ok := teams[hp.p.ID]; ok && !hp.removed && t != hp.p.Team {
+					hg.mu.Unlock()
+					r.Server.Log.Logf("blaze", "   swapPlayersTeam: game %d: a draft runs; no team change; error reply", gid)
+					r.Fail(ErrInvalidGameStateAction)
+					return nil
+				}
+			}
+		}
 		var moved []move
 		for _, hp := range hg.players {
 			if t, ok := teams[hp.p.ID]; ok && !hp.removed && t != hp.p.Team {
@@ -1005,6 +1057,12 @@ func registerCustomGames(s *Server) {
 			r.Fail(ErrInvalidGameStateAction)
 			return nil
 		}
+		if start && hg.custom.draft != nil { // RULES5b: START again during the draft changes nothing
+			hg.mu.Unlock()
+			r.Server.Log.Logf("blaze", "   game %d: advanceGameState IN_GAME refused: a draft runs (the roster stays locked)", gid)
+			r.Fail(ErrInvalidGameStateAction)
+			return nil
+		}
 		if waiting := hg.readyWaitingLocked(); start && len(waiting) > 0 {
 			r.Server.refuseUnreadyStart(r, hg, waiting, "") // READY2's backstop (ready.go); unlocks hg.mu
 			return nil
@@ -1014,7 +1072,28 @@ func registerCustomGames(s *Server) {
 			r.Server.refuseUnreadyStart(r, hg, nil, " (--test-refuse-start: the first start, a test aid)")
 			return nil
 		}
+		var sg gmshost.StartGame
 		if start {
+			// RULES1: the rules are checked again at the start, so a change raced against START can't slip through
+			fs, rl, fill := hg.startRulesLocked()
+			if len(fs) > 0 {
+				r.Server.refuseStart(r, hg, "the rules' findings ("+rules.DescribeFindings(fs)+")", fs) // unlocks hg.mu
+				return nil
+			}
+			if rl != nil && hg.isDraftLocked() { // RULES5b: the draft holds the start; its end starts the game (draft.go)
+				tell, err := hg.beginDraftLocked()
+				if err != nil {
+					r.Server.refuseStart(r, hg, "the draft can't begin: "+err.Error(), nil) // unlocks hg.mu
+					return nil
+				}
+				hg.mu.Unlock()
+				r.Server.Log.Logf("blaze", "   game %d: advanceGameState IN_GAME refused: the draft runs first (the client stays "+
+					"in its lobby; the draft's end starts the game)", gid)
+				r.Fail(ErrInvalidGameStateAction)
+				r.After(tell)
+				return nil
+			}
+			sg.Rules, sg.FillTeams = rl, fill
 			hg.custom.started = true
 		}
 		roster := lobbyRoster(hg.players, hg.game.Attrs)
@@ -1022,10 +1101,13 @@ func registerCustomGames(s *Server) {
 		mt := hg.match
 		hg.mu.Unlock()
 		if start {
-			r.Server.Log.Logf("blaze", "   game %d starts (its admin's advanceGameState IN_GAME): roster %s", gid, describeRoster(roster))
+			r.Server.Log.Logf("blaze", "   game %d starts (its admin's advanceGameState IN_GAME): roster %s%s", gid,
+				describeRoster(roster), describeStartRules(sg.Rules, sg.FillTeams))
 			if mt != nil {
 				r.Server.lobbyContent(roster, players)
-				mt.StartGame(roster)
+				sg.Roster = roster
+				r.Server.applyPickRules(gid, &sg, nil) // RULES3: All Random's rolls and the pool's lists
+				mt.StartGameWith(sg)
 			}
 		} else {
 			r.Server.Log.Logf("blaze", "   game %d: advanceGameState %#x", gid, state)
@@ -1079,15 +1161,24 @@ func (s *Server) autoStartCustom(hg *hostedGame) {
 		s.Log.Logf("blaze", "   game %d: no start by itself (a human is on a team, or it started)", hg.game.ID)
 		return
 	}
+	fs, rl, fill := hg.startRulesLocked() // RULES1: as the admin's start
+	if len(fs) > 0 {
+		hg.mu.Unlock()
+		s.Log.Logf("blaze", "   game %d: no start by itself: the rules' findings (%s)", hg.game.ID, rules.DescribeFindings(fs))
+		return
+	}
 	hg.custom.started = true
 	roster := lobbyRoster(hg.players, hg.game.Attrs)
 	players := append([]*hostedPlayer(nil), hg.players...)
 	mt := hg.match
 	hg.mu.Unlock()
-	s.Log.Logf("blaze", "   game %d starts (--custom-autostart: every human spectates): roster %s", hg.game.ID, describeRoster(roster))
+	s.Log.Logf("blaze", "   game %d starts (--custom-autostart: every human spectates): roster %s%s", hg.game.ID,
+		describeRoster(roster), describeStartRules(rl, fill))
 	if mt != nil {
 		s.lobbyContent(roster, players)
-		mt.StartGame(roster)
+		sg := gmshost.StartGame{Roster: roster, Rules: rl, FillTeams: fill}
+		s.applyPickRules(hg.game.ID, &sg, nil) // RULES3
+		mt.StartGameWith(sg)
 	}
 	hg.setState(GameStateInGame)
 }

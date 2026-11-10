@@ -75,6 +75,27 @@ func TestEncodeValues(t *testing.T) {
 			{User: 2000000002, Name: "second", Index: 10, Spectator: true}}},
 			`{"t":"startGame","roster":[{"user":2000000001,"name":"player","index":0,"team":1,"noun":"","bot":false},` +
 				`{"user":2000000002,"name":"second","index":10,"team":0,"noun":"","bot":false,"spectator":true}]}`},
+		// RULES1: a host that takes rules says so in its hello; startGame then carries the rules (omitted for the
+		// standard game) and the lobby's bots setting (fillTeams, 0 written: no bots)
+		{Hello{Match: 1, Token: "t", PID: 4242, Build: "dgsim", Features: []string{FeatureRules}},
+			`{"t":"hello","match":1,"token":"t","pid":4242,"build":"dgsim","features":["rules"]}`},
+		{Hello{Match: 1, Token: "t", PID: 4242, Build: "dgsim"}, `{"t":"hello","match":1,"token":"t","pid":4242,"build":"dgsim"}`},
+		{StartGame{Roster: []RosterEntry{{User: 2000000001, Name: "player", Team: 1}},
+			Rules:     &Rules{Pick: "random", ShaperPool: "all", Shop: "onDeath", ItemPool: "all"},
+			FillTeams: new(int)},
+			`{"t":"startGame","roster":[{"user":2000000001,"name":"player","index":0,"team":1,"noun":"","bot":false}],` +
+				`"rules":{"pick":"random","shaperPool":"all","shop":"onDeath","itemPool":"all"},"fillTeams":0}`},
+		{StartGame{Roster: []RosterEntry{{User: 2000000001, Name: "player", Team: 1}}, FillTeams: func() *int { n := 5; return &n }()},
+			`{"t":"startGame","roster":[{"user":2000000001,"name":"player","index":0,"team":1,"noun":"","bot":false}],"fillTeams":5}`},
+		// RULES3: a pool's classes for the bots, after fillTeams
+		{StartGame{Roster: []RosterEntry{{User: 2000000001, Name: "player", Team: 1,
+			Shapers: []ShaperOffer{{Noun: "tidalqueen.Noun", Flags: ShaperAvailable}}}},
+			Rules:     &Rules{Pick: "random", ShaperPool: "ranged", Shop: "normal", ItemPool: "all"},
+			FillTeams: func() *int { n := 5; return &n }(), PoolClasses: []string{"PC_Artist", "PC_TidalQueen"}},
+			`{"t":"startGame","roster":[{"user":2000000001,"name":"player","index":0,"team":1,"noun":"","bot":false,` +
+				`"shapers":[{"noun":"tidalqueen.Noun","flags":32}]}],` +
+				`"rules":{"pick":"random","shaperPool":"ranged","shop":"normal","itemPool":"all"},"fillTeams":5,` +
+				`"poolClasses":["PC_Artist","PC_TidalQueen"]}`},
 		{GameReady{Port: 10042}, `{"t":"gameReady","port":10042}`},
 		{CreateGame{GameID: 1, Level: "SM_Map_v5", Mode: ModePractice, Seed: 7919,
 			Roster: []RosterEntry{{User: 2000000001, Name: "player", Team: 1}}},

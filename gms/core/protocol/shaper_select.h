@@ -72,8 +72,9 @@ constexpr uint8_t kVanityWard = 0;
 constexpr uint8_t kVanityAnnouncer = 1;
 
 // AssetData ShaperSelectTuning, in ms: the GMS keeps them, the client only counts down to the end it is sent.
+// The pick is ours: 92 s instead of the game's 62 s (90 s on the client's countdown, with the game's 2 s to spare).
 struct ShaperSelectTimers {
-  uint32_t pickMs = 62000;      // phase 1, ShaperSelectionTime
+  uint32_t pickMs = 92000;      // phase 1, ShaperSelectionTime (the game's: 62000)
   uint32_t rolePerkMs = 45500;  // phase 2, RolePerkSelectTime
   uint32_t skinMs = 15500;      // phase 3, SkinSelectTime
   uint32_t revealMs = 16;       // phase 4, RevealTime
@@ -81,7 +82,7 @@ struct ShaperSelectTimers {
     return phase == 1 ? pickMs : phase == 2 ? rolePerkMs : phase == 3 ? skinMs : revealMs;
   }
 };
-ShaperSelectTimers ShaperTimersNormal();    // 62000, 45500, 15500, 16
+ShaperSelectTimers ShaperTimersNormal();    // 92000, 45500, 15500, 16
 ShaperSelectTimers ShaperTimersPractice();  // 300000, 300000, 15500, 16
 
 struct ShaperListEntry {

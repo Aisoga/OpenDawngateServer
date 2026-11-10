@@ -3,8 +3,8 @@
  "count": 6,
  "errors": {},
  "instances": {
-  "ember": {"nounType": "creature", "playerClassData": "PC_Ember.PlayerClass", "collectionItem": "ember.CollectionItem"},
-  "ember_frost": {"nounType": "creature", "playerClassData": "PC_Ember.PlayerClass", "collectionItem": "ember_frost.CollectionItem"},
+  "ember": {"nounType": "creature", "playerClassData": "PC_Ember.PlayerClass", "collectionItem": "ember.CollectionItem", "iconData": {"largeIcon": "Heroes/Ember/default/ui/Textures/ember_portrait.dds", "minimapIcon": null, "purchaseIcon": "Heroes/Ember/default/ui/Textures/ember_purchase.dds"}},
+  "ember_frost": {"nounType": "creature", "playerClassData": "PC_Ember.PlayerClass", "collectionItem": "ember_frost.CollectionItem", "iconData": {"largeIcon": "Heroes/Ember/frost/ui/Textures/frost_portrait.dds", "purchaseIcon": null}},
   "stone": {"nounType": "creature", "playerClassData": "PC_Stone.PlayerClass", "collectionItem": "stone.CollectionItem"},
   "ghost": {"nounType": "creature", "playerClassData": "PC_Ghost.PlayerClass", "collectionItem": "ghost.CollectionItem"},
   "ghost_mist": {"nounType": "creature", "playerClassData": "PC_Ghost.PlayerClass", "collectionItem": "ghost_mist.CollectionItem"},

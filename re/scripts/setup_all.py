@@ -1107,6 +1107,8 @@ class Setup:
                 return "the stat lines (built before ITEMSHOP)"
             if not any(it.get("activeInfo") for it in items):
                 return "the spells' and consumables' texts (built before ITEMSHOP round 2)"
+            if not any(s.get("card") for s in c.get("shapers") or []):
+                return "the shapers' pictures (the lobby's draft board shows them; built before the board)"
             return ""
         shop, missing_fields = False, "unreadable"
         if got == want:

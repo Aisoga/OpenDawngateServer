@@ -278,6 +278,9 @@ type ServerOptions struct {
 	NoClient bool
 	// NoClientNote is the report's reason for the skipped player copy (default: Start-Client makes it).
 	NoClientNote string
+
+	// NoContentNote is the report's reason for a left-out content file (default: new accounts own no items).
+	NoContentNote string
 }
 
 // Server sets up (or checks) everything Start-Server.exe runs: the certificates for the address, the player copy for
@@ -335,7 +338,11 @@ func (s *Setup) Server(o ServerOptions) error {
 		s.needs("host DLL", "a patched host copy")
 	}
 	if o.NoContent {
-		s.report(Skipped, "content", "left out: new accounts own no items")
+		note := o.NoContentNote
+		if note == "" {
+			note = "left out: new accounts own no items"
+		}
+		s.report(Skipped, "content", note)
 	} else if o.NoClient { // the copy this setup checked; a player copy Start-Client keeps here stays untouched
 		s.stepContent(s.HostCopy(), "the match-host copy")
 	} else {

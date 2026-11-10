@@ -354,4 +354,15 @@ inline std::map<int, std::vector<ComposedSeat>> DraftMatch(const std::vector<Dra
   return out;
 }
 
+// RULES3 (a custom game's shaper pool, startGame's poolClasses): the classes of `available` whose base class (a profile
+// counts as its base class) is one of `pool`'s PlayerClasses, for DraftMatch's `available`; an empty pool keeps every
+// class. The server's check makes sure the pool holds a bot class for every seat of a team with bots.
+inline std::set<std::string> PoolFilter(const std::set<std::string>& available, const std::vector<std::string>& pool) {
+  if (pool.empty()) return available;
+  std::set<std::string> out;
+  for (const std::string& c : available)
+    if (std::find(pool.begin(), pool.end(), BaseClass(c)) != pool.end()) out.insert(c);
+  return out;
+}
+
 }  // namespace gms::bots

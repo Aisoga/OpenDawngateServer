@@ -31,7 +31,7 @@
 //                        2 free rotation, 0x10 hidden, 0x20 available; nouns as asset names (alpha, artificer.Noun)
 //                        or numbers
 //   --skins <shaper>:<skin>[:<skin>...],...      a shaper's owned skins (C8 0B: the shaper first, then these)
-//   --shaper-timers <pick>,<role/perk>,<skin>,<reveal>   in ms (default 62000,45500,15500,16; host mode: createGame's
+//   --shaper-timers <pick>,<role/perk>,<skin>,<reveal>   in ms (default 92000,45500,15500,16; host mode: createGame's
 //                        timers keys over the mode's values, a practice createGame 300000,300000,15500,16)
 //   --ally <index>:<team>:<noun>[:<pick ms>:<lock ms>:<role>]   a GMS-scripted player (repeatable): in HelloPlayer,
 //                        online id n for the n-th ("BOT n"), bot; with --shaper-select it picks and locks its noun

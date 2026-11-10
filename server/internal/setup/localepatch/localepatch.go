@@ -1,6 +1,6 @@
 // Package localepatch makes a player copy's added locale package game\Data\Locale\en-us\AA_Server.package:
-// changed copies of seven of the copy's own string tables with the server's login texts and links, the
-// Leaderboard's rule, the custom lobby's map line and the item shop's refund lines, byte for byte
+// changed copies of eight of the copy's own string tables with the server's login texts and links, the
+// Leaderboard's rule, the custom lobby's map line, the item shop's refund lines and the match rules' alert lines, byte for byte
 // what re/scripts/patch_locale.py makes (that script's docstring has the rule). The client mounts every *.package of Locale\en-us and the one whose name
 // sorts first wins, so AA_Server.package overrides the shipped Locale.package, which stays untouched. The game's
 // text can't ship, so the package is made at setup time from the copy's own Locale.package.
@@ -28,8 +28,8 @@ const (
 	Comment = "# PH2b: lines the build lacks, added by the server's setup" // before appended lines
 )
 
-// The string tables' key parts and the seven tables (FNV-1 of BlazeErrors, the URL table's id, LoginScreen,
-// FNV-1 of fe_leaderboard, fe_matchtype, fe_customgamelobby and hud).
+// The string tables' key parts and the eight tables (FNV-1 of BlazeErrors, the URL table's id, LoginScreen,
+// FNV-1 of fe_leaderboard, fe_matchtype, fe_customgamelobby, hud and labsalerts).
 const (
 	StringType    = 0x02FAC0B6
 	StringGroup   = 0x02FABF01
@@ -42,6 +42,8 @@ const (
 	FECustomGameLobby = 0x7BE32E1A
 	// HUD is the in-match HUD's table (FNV-1 of hud), which the item shop uses.
 	HUD = 0x268AB804
+	// LabsAlerts is the match's alert-line table (FNV-1 of labsalerts): the ClientFeedbackDefs' text keys.
+	LabsAlerts = 0xB6F72728
 )
 
 // HUDLines are the item shop's inline refund's lines (client_ui/itemshop/ShopRefund.as's LINE_*): the Sell button's
@@ -53,6 +55,14 @@ var HUDLines = map[uint32]string{
 	0x5E70C003: "Refunds for: ~price~",
 	0x5E70C004: "Refund for ~item~ and ~price~ vim?",
 	0x5E70C005: "Refunds for: ~item~ and ~price~",
+}
+
+// LabsAlertsLines are the match rules' refusals in the HUD's alert line: the text keys of the ClientFeedbackDefs
+// Rules_ShopClosed and Rules_ItemNotAllowed (botprofiles' rules feedback source), which the match host sends to the
+// one player concerned. No ~token~: only the client's twelve resolve, any other asserts.
+var LabsAlertsLines = map[uint32]string{
+	0x5E70E001: "You can shop only after dying.",
+	0x5E70E002: "That item is not allowed in this match.",
 }
 
 // LobbyMapLine is the line CustomMatchLobbyUI falls back to (^FE_CustomGameLobby!0x0f2b57c5, after its resultName
@@ -298,7 +308,8 @@ func Tables(o Options) (map[uint32]map[uint32]string, error) {
 		}
 	}
 	return map[uint32]map[uint32]string{BlazeErrors: ErrorLines, URLs: urls, LoginScreen: LoginLines,
-		FELeaderboard: LeaderboardLines, FEMatchType: MatchTypeLines, FECustomGameLobby: lobby, HUD: HUDLines}, nil
+		FELeaderboard: LeaderboardLines, FEMatchType: MatchTypeLines, FECustomGameLobby: lobby, HUD: HUDLines,
+		LabsAlerts: LabsAlertsLines}, nil
 }
 
 var bom = []byte{0xEF, 0xBB, 0xBF}
@@ -396,7 +407,7 @@ func table(p *dbpf.Package, inst uint32) ([]byte, error) {
 	return nil, nil
 }
 
-// Build makes AA_Server.package from the copy's Locale.package (its bytes): the seven tables changed, in instance
+// Build makes AA_Server.package from the copy's Locale.package (its bytes): the eight tables changed, in instance
 // order, stored uncompressed (dbpf.WritePackage). A table missing from it (a synthetic test build) is made of the
 // appended lines alone.
 func Build(locale []byte, o Options) ([]byte, error) {

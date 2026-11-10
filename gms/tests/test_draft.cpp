@@ -1,5 +1,6 @@
 // gms_tests: BOTDRAFT, a custom game's bots draw their shapers and roles after the humans (core/bots/draft.h).
 #include <algorithm>
+#include <cstdio>
 #include <map>
 #include <set>
 #include <string>
@@ -217,4 +218,50 @@ GMS_TEST(DraftOnByModeAndOption) {
   CHECK(!DraftOn(0, "pvp"));
   CHECK(DraftOn(1, ""));
   CHECK(DraftOn(1, "practice"));
+}
+
+// RULES3: a custom game's shaper pool keeps the draw inside it (PoolFilter by base class; the melee pool of the server's
+// table, server/internal/rules/pools.go): every seat of 1 human + 4 bots a team is filled, from the pool, no base twice
+// on a team; an empty pool keeps every class.
+GMS_TEST(DraftStaysInsideTheShaperPool) {
+  const std::vector<std::string> melee = {"PC_Artificer", "PC_DeepOne",    "PC_Desecrator",     "PC_Druid",
+                                          "PC_Enforcer",  "PC_Golem",      "PC_Guardian",       "PC_HuTank",
+                                          "PC_Otter",     "PC_Penitent",   "PC_Raider",         "PC_Sculptor",
+                                          "PC_ShadowAssassin", "PC_Shepherd", "PC_Survivor",    "PC_Warden",
+                                          "PC_WarlockKnight"};
+  CHECK(PoolFilter(Everything(), {}) == Everything());
+  const std::set<std::string> inPool = PoolFilter(Everything(), melee);
+  CHECK(inPool.count("PC_Desecrator_Tactician") == 1 && inPool.count("PC_Survivor_Hunter") == 1);
+  CHECK(inPool.count("PC_HighHuntress") == 0 && inPool.count("PC_MerchantPrincess_Gladiator") == 0);
+  std::set<std::string> bases;
+  for (const std::string& c : inPool) bases.insert(BaseClass(c));
+  CHECK_EQ(bases.size(), size_t{8});
+  for (unsigned seed = 1; seed <= 200; ++seed) {
+    const auto drawn = DraftMatch(
+        TwoTeams(4, 4), {Human(0, 1, "PC_Guardian", kRoleUnknown), Human(5, 2, "PC_Warden", kRoleTactician)}, inPool,
+        Opts(seed));
+    for (const auto& kv : drawn) {
+      CHECK_EQ(kv.second.size(), size_t{4});
+      std::set<std::string> team = {kv.first == 1 ? "PC_Guardian" : "PC_Warden"};
+      for (const ComposedSeat& s : kv.second) {
+        const std::string b = BaseClass(s.botClass);
+        CHECK(std::find(melee.begin(), melee.end(), b) != melee.end());
+        CHECK(team.insert(b).second);
+      }
+    }
+  }
+}
+
+// RULES3: the server's pools table marks the shapers the bots play (server/internal/rules/pools.go ShaperFacts.Bot): the
+// base classes of every class the composition and the draft may use. A new profile or list entry here goes there too.
+GMS_TEST(DraftBotClassesMatchTheServersPoolTable) {
+  std::set<std::string> bases;
+  for (const std::string& c : CatalogCandidates()) bases.insert(BaseClass(c));
+  const std::set<std::string> table = {"PC_Artificer", "PC_Artist",       "PC_Creature",         "PC_Desecrator",
+                                       "PC_Golem",     "PC_Guardian",     "PC_HighHuntress",     "PC_MerchantPrincess",
+                                       "PC_Otter",     "PC_Sculptor",     "PC_Survivor",         "PC_TidalQueen",
+                                       "PC_Warden"};
+  CHECK(bases == table);
+  if (bases != table)
+    for (const std::string& b : bases) std::printf("    base %s%s\n", b.c_str(), table.count(b) ? "" : " (not in the table)");
 }

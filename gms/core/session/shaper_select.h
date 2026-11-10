@@ -117,6 +117,9 @@ struct ShaperSelectPlayer {
   bool scripted = false;  // no connection: picks by `plan`; a human otherwise (bound by index at HelloReq)
   ShaperPickPlan plan;
   ShaperContent content;  // a scripted player with an empty list may take any shaper no teammate holds
+  // RULES3 (All Random): a human whose list is the shaper the server rolled for it: its record is locked to that shaper
+  // as soon as its client's shaper select UI is up (ShaperSelectConfig::lockAtOnceAnswer says how), not at its lock-in.
+  bool lockAtOnce = false;
 };
 
 // IMatch::ShaperSelectSetup fills this in.
@@ -142,7 +145,14 @@ struct ShaperSelectConfig {
   // timer's locks of the humans). Unset: such players pick nothing (the lock takes the first free entry).
   ShaperDraftFn draft;
   int draftGraceMs = 10000;
+  // RULES3: a lockAtOnce human's lock is a lock-in the GMS made for it: the record (C8 03, locked) to its team, its skins
+  // (C8 0B), and with this the lock answer (C8 05 <shaper> 01, which takes its client into phase 2 as its own lock-in
+  // would); false = no answer, the client stays in phase 1 until the match's phase 2. It waits for the client's UI (its
+  // first C8 after C8 02, or lateSkinsHoldMs, at least kLockAtOnceWaitMs, after its C8 02): before the movie has loaded
+  // the client drops a phase change and the skins would crash it (REJOINSS).
+  bool lockAtOnceAnswer = true;
 };
+constexpr int kLockAtOnceWaitMs = 3000;
 
 // A player's result (phase 4), in gameplay-index order.
 struct ShaperPick {
@@ -277,6 +287,7 @@ class ShaperSelect {
     bool uiUp = false;
     int64_t readyAt = 0;
     bool skinsHeld = false;
+    bool lockAtOnce = false;  // RULES3 (ShaperSelectPlayer::lockAtOnce)
     bool Acting() const { return !scripted && bound && !gone; }  // a connected human: acts for itself
     bool Receives() const { return Acting() && ready && open; }
     bool TakesPhase(int phase, bool guard) const {
@@ -325,6 +336,8 @@ class ShaperSelect {
   bool draftPending_ = false;
   int64_t draftAt_ = 0;
   int64_t lastHumanLock_ = 0;
+  bool lockAtOnceAnswer_ = true;  // RULES3
+  void LockAtOnce(int64_t now, ISender& out);
 };
 
 }  // namespace gms

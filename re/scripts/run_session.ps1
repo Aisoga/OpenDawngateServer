@@ -175,6 +175,14 @@
   with blanks), e.g. '--tunnel-front <folder> --front-copy client\run_854_b\Dawngate': Start-Client's server picker
   front instead of one tunnel (its server list and trusted keys in <folder>, the lane's server added and preselected,
   the login screen's list written into the copy before the game starts).
+  -HostMachine (REGION5, with -Tunnel and -GmsHost) adds the lane's host machine of another region: dgserver
+  --region eu --host-machine na1=na:<key> on the server, and a second dgserver (the lane's binary) in agent mode over
+  the TLS link with its match gateway on 127.0.N.20:42128 and its match hosts (the same host copy) and relay on
+  127.0.N.21, ports 10042-10045, logs and key in the session's hostmachine\ folder. A custom game created with North
+  America picked runs there, its players' GMS traffic through a second tunnel session to that gateway (the front's away
+  session: use -TunnelClientArgs '--tunnel-front ...'). -HostMachineSeconds <s> stops it s seconds after its start
+  (just before the game's): the next North American game falls back to Europe with the notice. The summary gets a
+  'hostmach' line; check the capture with tunnel_capture.py --server 127.0.N.20 too.
 
   Usage (from anywhere):
     powershell -ExecutionPolicy Bypass -File re\scripts\run_session.ps1 [-Name a2_run1] [-Seconds 60]
@@ -187,7 +195,7 @@
         [-HostKillAt <s>] [-ServerArgs '<dgserver flags>'] [-FreshData] [-KeepAlive <s>] [-Play [-NoCapture]]
         [-Lane a|b|c|d] [-Lan <IPv4>|auto] [-SecondClient [-SecondAfter <s>] [-Login2 'email|password' [-LoginAt2 <s>]]
         [-Actions2 '...'] [-ShotTimes2 '...'] [-SecondRestartAt <s> [-Actions3 '...'] [-ShotTimes3 '...']]]
-        [-Tunnel [-TunnelClientArgs '...']]
+        [-Tunnel [-TunnelClientArgs '...'] [-HostMachine [-HostMachineSeconds <s>]]]
   With -Lane b the default -GameDir is client\run_854_b\Dawngate and the host copy is client\run_854_server_b (lanes c
   and d likewise: client\run_854_c, client\run_854_server_c, ...).
   -Seconds is launch_monitor's watch time; the whole session takes about 1.15 * Seconds + 60 s.
@@ -252,6 +260,8 @@ param(
     [string]$ShotTimes3,
     [switch]$Tunnel,
     [string]$TunnelClientArgs = '',
+    [switch]$HostMachine,
+    [int]$HostMachineSeconds = 0,
     [string]$StopFile,
     [string]$MapsDir
 )
@@ -313,6 +323,14 @@ if ($Tunnel) {
     if ($GmsProbe -or $HostDir) { Write-Host '-Tunnel takes -GmsHost (or no host), not -GmsProbe or -HostDir' -ForegroundColor Red; exit 2 }
     $TunnelServerAddr = "127.0.$($LaneNumber[$Lane]).9"
     $ServerAddr = $TunnelServerAddr
+}
+# -HostMachine (REGION5): the lane's host machine na1 (region na) beside the server: its match gateway on 127.0.N.20, its
+# hosts and relay on 127.0.N.21
+$HostMachineAddr = $null; $HostMachineHosts = $null
+if ($HostMachine) {
+    if (-not $Tunnel -or -not $GmsHost) { Write-Host '-HostMachine needs -Tunnel and -GmsHost (the host machine registers through the gateway and runs the same host copy)' -ForegroundColor Red; exit 2 }
+    $HostMachineAddr = "127.0.$($LaneNumber[$Lane]).20"
+    $HostMachineHosts = "127.0.$($LaneNumber[$Lane]).21"
 }
 $Second = $null  # -SecondClient: the lane's extra client copy
 if ($SecondClient) {
@@ -501,10 +519,12 @@ function Get-ServerBind([string]$cmd) {
 }
 function Get-BindLane([string]$cmd) {
     # A6: the lane of a dgserver or gms_script by its listen address (Get-ServerBind; default 127.0.0.1, lane a); $null
-    # for an unknown address. 127.0.N.9 is lane N's tunnelled server (-Tunnel: a 1, b 2, c 3, d 4)
+    # for an unknown address. 127.0.N.9 is lane N's tunnelled server (-Tunnel: a 1, b 2, c 3, d 4), 127.0.N.20 its host
+    # machine (-HostMachine, REGION5: region5_na2b's host machine bound .20 only, so the cleanup took it for nobody's and
+    # left it running; the next session's -HostMachine then found 127.0.2.20:42128 taken)
     $bind = Get-ServerBind $cmd
     foreach ($l in $LaneTable.Keys) { if ($LaneTable[$l].Address -eq $bind) { return $l } }
-    foreach ($l in $LaneNumber.Keys) { if ("127.0.$($LaneNumber[$l]).9" -eq $bind) { return $l } }
+    foreach ($l in $LaneNumber.Keys) { if ("127.0.$($LaneNumber[$l]).9" -eq $bind -or "127.0.$($LaneNumber[$l]).20" -eq $bind) { return $l } }
     $null
 }
 function Get-FolderLane([string]$cmd) {
@@ -572,6 +592,7 @@ function Stop-SessionProcesses([string]$why, [scriptblock]$filter = { $true }) {
 $LaneAddrs = @($LaneAddr, '0.0.0.0', '::')  # A6: a listener on these blocks this lane's ports (the other lane's don't)
 if ($LanAddr) { $LaneAddrs = @($LanAddr) + $LaneAddrs }  # A5b: the server's ports on the LAN address, the control port on the lane's
 if ($TunnelServerAddr) { $LaneAddrs = @($TunnelServerAddr) + $LaneAddrs }  # the server's ports behind the tunnel
+if ($HostMachineAddr) { $LaneAddrs = @($HostMachineAddr, $HostMachineHosts) + $LaneAddrs }  # REGION5: the host machine's gateway (42128) and relay (10040)
 function Get-LaneUdp([int]$port) { @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Where-Object { $_.LocalAddress -in $LaneAddrs }) }
 function Get-PortHolders {
     foreach ($c in @(Get-NetTCPConnection -State Listen -LocalPort $Ports -ErrorAction SilentlyContinue | Where-Object { $_.LocalAddress -in $LaneAddrs })) {
@@ -1252,6 +1273,17 @@ try {
         $stubArgs += @('--maps', "`"$($mapsFlags[1])`"")
         Say "maps folder: --maps $($mapsFlags[1])"
     }
+    $hmDir = $null; $hmKey = $null
+    if ($HostMachine) {
+        # REGION5: the host machine's own key, made for this session; the server takes na1 (region na) with it
+        $hmDir = In-Session 'hostmachine'
+        New-Item -ItemType Directory -Force $hmDir | Out-Null
+        $hmKey = Join-Path $hmDir 'na1.key'
+        & $ServerExe --make-agent-key $hmKey | Out-Null
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $hmKey)) { throw "-HostMachine: dgserver --make-agent-key $hmKey failed (exit $LASTEXITCODE)" }
+        $stubArgs += @('--region', 'eu', "`"--host-machine=na1=na:$hmKey`"")
+        Say "host machine: the server takes na1 (region na) with the key $hmKey; its own region eu"
+    }
     if ($ServerArgs) {
         # D8-live test aid: extra dgserver flags (e.g. --owned starter)
         $stubArgs += @($ServerArgs -split '\s+' | Where-Object { $_ })
@@ -1294,6 +1326,27 @@ try {
         }
         $tu = @(Get-NetUDPEndpoint -OwningProcess $tun.Id -ErrorAction SilentlyContinue | Where-Object { $_.LocalAddress -eq $LaneAddr } | ForEach-Object { [int]$_.LocalPort } | Sort-Object -Unique)
         Say "tunnel: $LaneAddr TCP $($tl -join ', '), UDP $($tu -join ', ') -> gateway ${TunnelServerAddr}:$GatewayPort (pid $($tun.Id))"
+    }
+    if ($HostMachine) {
+        # REGION5: dgserver in agent mode over the TLS link (the lane's binary, so the lane's cleanup stops it), its match
+        # gateway on 127.0.N.20, the same host copy's hosts on 127.0.N.21 with folders of their own
+        $hmSeconds = if ($HostMachineSeconds -gt 0) { $HostMachineSeconds } else { $stubSeconds }
+        $hmArgs = @('--agent-tls', "${TunnelServerAddr}:$GatewayPort", '--agent-pin-cert', "`"$(Join-Path (Join-Path $MainRoot $LaneCfg.Certs) 'gateway_cert.pem')`"",
+            '--agent-name', 'na1', '--agent-key', "`"$hmKey`"", '--tunnel', 'on', '--bind', $HostMachineAddr, '--public-host', $HostMachineAddr,
+            '--gms-bind', $HostMachineHosts, '--gms-control-bind', $HostMachineHosts, '--gms-dir', "`"$GmsHostPath`"", "`"--gms-args=$GmsHostArgs`"",
+            '--gms-data', "`"$(Join-Path $hmDir 'host')`"", '--gms-ports', '10042-10045', '--certs', "`"$(Join-Path $hmDir 'certs')`"",
+            '--log', "`"$hmDir`"", '--seconds', $hmSeconds)
+        if ($mapsFlags.Count) { $hmArgs += @('--maps', "`"$($mapsFlags[1])`"") }
+        $hm = Start-Logged $ServerExe $hmArgs 'hostmachine'
+        $deadline = (Get-Date).AddSeconds(20)
+        while ($true) {
+            Start-Sleep -Milliseconds 300
+            $regLine = @(Get-Content (In-Session 'stub.out') -Encoding UTF8 -ErrorAction SilentlyContinue | Where-Object { $_ -match 'host machine "na1" \(region na\) from .* registered' }) | Select-Object -First 1
+            if ($regLine) { break }
+            if ($hm.HasExited) { throw "the host machine's dgserver exited during startup (code $($hm.ExitCode)): $(Short ((Get-Content (In-Session 'hostmachine.err') -Raw) -replace '\s+', ' ') 300)" }
+            if ((Get-Date) -gt $deadline) { throw "the host machine na1 did not register with the server within 20 s (see hostmachine.out and stub.out)" }
+        }
+        Say "host machine: na1 registered (pid $($hm.Id); gateway ${HostMachineAddr}:$GatewayPort, hosts $HostMachineHosts$(if ($HostMachineSeconds -gt 0) { ", stops after $HostMachineSeconds s" }))"
     }
 
     # 5. the game, watched by launch_monitor.ps1 (capture, screenshots, closes the game)
@@ -1591,6 +1644,18 @@ if ($Tunnel) {
     $echo = "$($tunText | Where-Object { $_ -match 'UDP through the gateway|no keepalive echo' } | Select-Object -First 1)" -replace '^.*\[tunnel\] ', ''
     $cl = "$($tunText | Where-Object { $_ -match '\[tunnel\] (stats: |closed after )' } | Select-Object -Last 1)" -replace '^.*\[tunnel\] ', ''
     $sum += "tunnel   : gateway ${TunnelServerAddr}:$GatewayPort, $($sessions.Count) session(s)$(if ($gwStats) { ': ' + ($gwStats -join ' | ') }); client: $echo$(if ($cl) { "; $cl" })"
+}
+if ($HostMachine) {
+    # REGION5: the host machine's registrations, the players sent to its match gateway, its sessions and the fallbacks
+    $mainText = @(Get-Content (In-Session 'stub.log') -Encoding UTF8 -ErrorAction SilentlyContinue)
+    $hmLog = Get-ChildItem (In-Session 'hostmachine') -Filter '*.log' -ErrorAction SilentlyContinue | Select-Object -First 1
+    $hmText = if ($hmLog) { @(Get-Content $hmLog.FullName -Encoding UTF8 -ErrorAction SilentlyContinue) } else { @() }
+    $hmReg = @($mainText | Where-Object { $_ -match 'host machine "na1" \(region na\) from .* registered' }).Count
+    $hmAway = @($mainText | Where-Object { $_ -match "sent to host machine na1's match gateway" }).Count
+    $hmSess = @($hmText | Where-Object { $_ -match '\[tunnel\] session \d+ from' }).Count
+    $hmRefused = @($mainText | Where-Object { $_ -match 'verifyHello: .* refused' }).Count
+    $hmFell = @($mainText | Where-Object { $_ -match 'wanted na, runs on' } | ForEach-Object { ($_ -replace '^.*wanted na, runs on ', '') })
+    $sum += "hostmach : na1 gateway ${HostMachineAddr}:$GatewayPort, hosts ${HostMachineHosts}: registered $hmReg time(s); $hmAway player(s) sent away; $hmSess gateway session(s); verifyHello refused $hmRefused; fell back: $(if ($hmFell) { $hmFell -join ' | ' } else { 'none' })"
 }
 $sum += "client res: $(Get-ClientResSummary)"
 if ($Second) {

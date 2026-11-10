@@ -41,8 +41,11 @@ bool HostControl::Start(const HostEnv& env, int64_t pid, const std::string& buil
     return false;
   }
   ++sent_;
+  std::string feats;
+  for (const std::string& f : client_.Features()) feats += (feats.empty() ? "" : " ") + f;
   Log("control: connected to " + env.control + "; -> hello {match " + std::to_string(env.match) + ", pid " +
-      std::to_string(pid) + ", build \"" + build + "\"} (token not logged)");
+      std::to_string(pid) + ", build \"" + build + "\"" + (feats.empty() ? "" : ", features [" + feats + "]") +
+      "} (token not logged)");
   return true;
 }
 
@@ -90,6 +93,10 @@ void HostControl::Poll(int64_t nowMs) {
       }
       game_.roster = sg->roster;
       started_ = true;
+      startRules_ = sg->rules;  // RULES1
+      startFill_ = sg->fillTeams;
+      startPool_ = sg->poolClasses;  // RULES3
+      if (sg->fillTeams) game_.fillTeams = *sg->fillTeams;  // the lobby's bots setting replaces createGame's
     } else if (auto* rp = std::get_if<RemovePlayer>(&m)) {
       removed_.push_back(*rp);
     } else if (auto* pr = std::get_if<PlayerRewards>(&m)) {

@@ -57,7 +57,7 @@ func registerBattlegroundsAccounts(s *Server) {
 	})
 	s.Register(ComponentBattlegroundsAccounts, CmdBGAGetUserSettings, "getUserSettings", func(r *Request) []byte {
 		acct, _ := r.account()
-		return GetUserSettingsReply(acct.Settings)
+		return GetUserSettingsReply(r.Server.userSettings(acct.Settings)) // M27: the default region (regions.go)
 	})
 	// saveUserSettings (SaveUserSettingsRequest, table 0x012E3414: USET map<string,string>; RPC job
 	// 0x011BBD3C at 0x004106D2, response class SaveUserSettingsResponse without members, so the reply

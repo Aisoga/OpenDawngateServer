@@ -43,6 +43,9 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 | `zip` | empty | Where `Dawngate.zip` is, if it's not next to the program or in your Downloads folder. Only needed for setup and repairs. Set, it turns the download off. |
 | `game_sources` | empty | Mirrors of `Dawngate.zip`, separated by commas: tried in turn after archive.org when the zip is downloaded ([Downloading the game](hosting.md#downloading-the-game)). Every download is checked against build 1.0.903.854; a source with another file is skipped. |
 | `server_flags` | empty | More server options, separated by spaces. See [below](#extra-server-options-server_flags). |
+| `role` | `server` | `server` is a main server, the one players log in to. `host-machine` makes this program a host machine that runs another server's matches in its region ([below](#a-host-machines-start-serverini)). |
+| `region` | empty | This server's own region, 2-8 lower-case letters (for example `eu`): the region of its own matches and of every player who chose none. Empty: no regions. See [Host machines in other regions](hosting.md#host-machines-in-other-regions). |
+| `host_machines` | empty | The host machines that may register with this server, as `name=region` separated by commas (for example `na1=na`). Each needs its key in `Dawngate-Data\agents\<name>.key`, which `--new-host-machine` makes. Needs `region` and the tunnel. Read at the start. |
 | `wine` | empty | Linux only: the Wine program that runs the match hosts, for example `/opt/wine-stable/bin/wine`. Empty: `wine` from the `PATH`. |
 | `discord_webhook` | empty | A Discord webhook address (`https://discord.com/api/webhooks/…`) for the queue message and the match results, unless they have their own. Keep it secret: whoever has it can post to the channel. Empty: no posts. See [Discord channel posts](hosting.md#discord-channel-posts). |
 | `discord_webhook_queue` | empty | The queue message's own webhook (empty: `discord_webhook`). |
@@ -62,6 +65,24 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 | `rating_leaderboard` | `on` | The main menu's Leaderboard ranks the players by skill rating from rated games (PvP and custom games with a winner and as many human players on each team, at least one each). `off`: by wins in every PvP and custom game, as before. The ratings are kept either way. The Leaderboard screen's text describes the rating whatever this key says. See [The Leaderboard](hosting.md#the-leaderboard). |
 | `show_rating` | `on` | Each player sees their own skill rating in the main menu's profile box ("Rating 1532", above their name) once they have as many rated games as the Leaderboard needs (10), and the Leaderboard has a Rating column with the rating of every player listed who has that many, and a custom game's lobby shows each such team player's rating after their wins. `off`: no rating is shown (the Leaderboard keeps its four columns). The ratings are kept, and the custom lobby's team balancing uses them, either way. See [The Leaderboard](hosting.md#the-leaderboard). |
 
+### A host machine's Start-Server.ini
+
+With `role = host-machine` the program runs match hosts for a main server and nothing else. `Start-Server.exe --new-host-machine` on the main server writes this file. It takes these keys; a main server's other keys are ignored.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `role` | | `host-machine`. |
+| `main_server` | | The main server's address or domain name and its `gateway_port`, for example `203.0.113.7:42128` (without a port: 42128). The host machine connects to it there over TCP. |
+| `main_pin` | | The main server's tunnel key pin, 64 hex digits. The host machine refuses a server with another key. |
+| `machine_name` | | This machine's name in the main server's `host_machines`: 1-32 of `a-z`, `0-9` and `-`. |
+| `machine_key` | | This machine's own key, 64 hex digits, or a file that holds it. It registers only this name. Keep it private. |
+| `address` | | This machine's public IPv4 address. Players' games connect to its match gateway there. |
+| `bind` | empty | Only behind a router or a cloud's NAT: the address of this machine the match gateway listens on. Empty: `address`. |
+| `gateway_port` | `42128` | The match gateway's port, TCP and UDP. |
+| `gms_ports` | `10042-10051` | The match hosts' UDP ports, one per running match, on `127.0.0.1`. They must lie inside the main server's. |
+| `log_days` | `30` | Delete the matches' logs and recordings older than this many days. `0` keeps them. |
+| `folder`, `zip`, `game_sources`, `server_flags`, `wine` | | As on a main server. |
+
 ## Start-Server.exe options
 
 | Option | Effect |
@@ -76,6 +97,7 @@ Settings, commands, ports and limits of the release's two programs. For explanat
 | `--i-accept-the-risk` | Accept the risk notice for a public address. |
 | `--non-interactive` | Never ask anything (for scripts). |
 | `--version` | Print the release's version and exit. Players need a `Start-Client.exe` of the same version. |
+| `--new-host-machine <name> <region>` | On a main server: make the host machine's key `Dawngate-Data\agents\<name>.key` (an existing key is kept), add `<name>=<region>` to `host_machines`, and write the host machine's `Start-Server.ini` to `Dawngate-Data\agents\<name>-Start-Server.ini`; it prints the lines too, without the key. Restart the server to take the machine. |
 
 **Account commands** (they work while the server runs, print their result and exit):
 
@@ -260,6 +282,9 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 | `--mm-bots=false` | on | Leave the empty seats of a queue match empty instead of filling them with bots. |
 | `--custom-bots` | off | Fill a custom game's empty seats with bots. In shaper select the bots pick their shapers and roles after the players have chosen, as in every game with bots. |
 | `--custom-autostart` | 0 (off) | Start a custom game by itself this long (e.g. `5s`) after every human in it has moved to the spectators. The lobby offers no Start Game without players on the teams, so this is how a game of bots alone (with `--custom-bots`) starts, for example to watch two bot teams play each other. |
+| `--draft-turn` | `30s` | The time of one turn of a custom game's draft (the match rule Draft): each team's first player bans two shapers, alternating with the other team, then the teams pick in the order 1-2-2-1-1-2-2-1-1-2. A ban whose time runs out is skipped; a pick whose time runs out takes a random free shaper of the game's shaper pool. |
+| `--test-draft` | 0 (off) | A test aid: in every draft the server bans and picks for the player on turn this long (e.g. `2s`) after the turn began, so a draft runs without anyone choosing. |
+| `--test-rules` | none | A test aid: every new custom game starts with these match rules, a preset (`standard`, `aram`, `allRandom`), a JSON object of categories to options such as `{"pick":"random"}`, or its short form `pick=random,shaperPool=melee`. A game with rules is never rated and shows them in the game browser, the match history and a System line at the match start. All Random and the shaper pools (`melee`, `ranged`, `tank`, `bruiser`, `carry`, `mage`, `support`) work in shaper select (they need `--shaper-select`); Shop on Death and the item pools don't change the match yet. |
 | `--leaderboard-min-games N` | `10` | The fewest games a player needs to appear on the Leaderboard: rated games (with `--rating-leaderboard off`: PvP and custom games). Practice games never count. The same number of rated games shows a player's rating in their profile box (`--show-rating`). The Leaderboard screen's text says 10 whatever this flag is (the number is written into the players' game copies by their setup), so a server that changes it makes the screen's number wrong. |
 | `--rating-leaderboard on\|off` | `on` | The Leaderboard by skill rating (`on`) or by wins (`off`); Start-Server.ini's `rating_leaderboard`. The screen's text describes the rating either way (it is written into the players' game copies by their setup). |
 | `--show-rating on\|off` | `on` | Players see their own skill rating in the main menu's profile box and every listed player's in the Leaderboard's Rating column and on a custom lobby's team tiles (`on`, from `--leaderboard-min-games` rated games) or none (`off`); Start-Server.ini's `show_rating`. Needs the players' game copies set up by this release (an older copy shows no rating). |
@@ -297,6 +322,7 @@ These go into `server_flags` in `Start-Server.ini`, separated by spaces, for exa
 | `client\` | The game copy for playing, patched for the tunnel on this PC (with `--tunnel off`, for one server). `Start-Client.exe` makes it; `Start-Server.exe` only with `tunnel = off` and `dedicated = no`. |
 | `servers\` | `Start-Client.exe`'s server list `bookmarks.json`, and per server `<address>\` the trusted tunnel key `gateway.pin` or the trusted certificate authority. |
 | `host\` | The game copy the match hosts run, with `dgsim.dll`. `Start-Server.exe` makes it, or `Start-Client.exe` at the first login to This PC. |
+| `agents\` | On a main server, each host machine's key `<name>.key` and its `<name>-Start-Server.ini`; on a host machine, its own key. Keep private. |
 | `server.lock` | Which program runs the folder's server (`Start-Server.exe`, or `Start-Client.exe` for This PC), while it runs. |
 | `update\` | An update's download while it is installed; after a failed one, the release zip if it arrived whole. |
 | `editor\` | The map editor's working files: `cache\` (the 3-D view's models and pictures) and `out\` (Build's output, the ground bakes and exports). They are made from your game copy, so never share them; deleting the folder is safe, the editor makes them again. Your maps are in the `maps` folder beside the programs, not here. |
@@ -319,6 +345,8 @@ Nothing else listens, so a `Start-Client.exe` on the same PC uses the game's own
 With `tunnel = off` (an option for developers) the server listens on its address on TCP 42127 (the redirector, the client's first contact), 10041 (logins, menus, matchmaking and chat), 17502 (the connection-quality test, also UDP), 18080 (web content and the login screen's links), 9988 (game telemetry) and 10039 (the game UI's own channel: the custom lobby's ready check and the rating on its tiles), and the matches on UDP 10042–10051 there too.
 
 On Linux the matches listen on `127.0.0.1` (see [Linux](#linux)).
+
+A host machine (`role = host-machine`) listens on its `address` (or `bind`) on TCP and UDP 42128 (its `gateway_port`, the players' match traffic) and nothing else on the network; its control channel (TCP 10040) and its matches (UDP 10042–10051) stay on `127.0.0.1`. It connects out to the main server's TCP 42128. The main server's ports don't change.
 
 ## Linux
 

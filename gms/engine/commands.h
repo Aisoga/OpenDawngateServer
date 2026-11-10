@@ -113,6 +113,15 @@ void FormatStats(char* buf, std::size_t size);
 unsigned SendFeedback(void* sim, const char* defName, std::uint32_t object, unsigned teamBits, unsigned uintValue,
                       std::uint32_t target = 0, unsigned excludePlayers = 0);
 
+// RULES0b: a text line for the player with gameplay index `index` alone: a ClientFeedbackEvent with the def `defName`
+// (an asset name with a text key, e.g. "Rules_ShopClosed.ClientFeedbackDef", which the setup's zz_BotProfiles.snap
+// adds) about the player's own creature, to its team with every other player and the team's spectators left out; the
+// client shows the def's text in its HUD alert line (the def's channel, priority and lifetime; its cooldown drops
+// repeats on the client). A bot's index is skipped. Logs "commands: player <i>: text <def> -> players 0x<mask>" (or
+// "-> FAILED (...)", "-> skipped (a bot)"). Returns the player mask, 0 if nothing was sent. The server simulator must be
+// bound. It doesn't throttle: a caller that may answer often (a refused purchase) keeps its own pace.
+unsigned SendPlayerText(void* sim, unsigned index, const char* defName);
+
 // BOTTEAM: a bot's minimap ping (MiniMapPing C2: `pinger` the bot's creature, `target` an object every recipient knows or
 // 0, `pos` the place, `pingType` 0-4 as the ping wheel's: attention, retreat, danger, on my way, missing [assumed order:
 // MinimapPingData's list]) to the players of `team`, as a human's ping is relayed. Returns the player mask, 0 if nobody.

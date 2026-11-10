@@ -23,7 +23,8 @@ type Verdict struct {
 }
 
 // Judge is the user's rule for a rated game: a PvP or custom game (never practice, never a practice group's) that
-// finished with a winner (team 1 or 2), whose teams had the same number of humans at its start, at least one each.
+// finished with a winner (team 1 or 2), without match rules (store.Match.Rules), whose teams had the same number of
+// humans at its start, at least one each.
 // Bots and spectators aren't humans (a spectator has no seat). The humans at the start are the match's human seats
 // (blaze's matchLocked: the roster's players on teams 1 and 2, a custom game's who were in it when it started); a
 // human who left during the match keeps a seat and its team's result.
@@ -38,6 +39,8 @@ func Judge(m store.Match) Verdict {
 		v.Why = "a practice group's game"
 	case m.Kind != kindPvP && m.Kind != kindCustom:
 		v.Why = "a practice game"
+	case m.Rules != "": // RULES1: a custom game with rules away from the standard game is never rated
+		v.Why = "a custom game with rules"
 	case m.Winner != 1 && m.Winner != 2:
 		v.Why = "no winner"
 	default:

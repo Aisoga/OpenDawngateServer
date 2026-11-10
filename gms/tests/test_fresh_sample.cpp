@@ -2,6 +2,8 @@
 // client's reading of it, and which sample replaces a stale one.
 #include <cmath>
 #include <cstdint>
+#include <cstring>
+#include <vector>
 
 #include "core/replication/fresh_sample.h"
 #include "tests/check.h"
@@ -87,4 +89,44 @@ GMS_TEST(FreshSampleChoice) {
   CHECK(gms::FreshSample(in, &block, &xy, at));
   CHECK_EQ(block, b2);
   CHECK_EQ(xy, x2);
+}
+
+// The jump replay: the engine's ObjectJump with the current landing point and no path; every other byte as sent.
+GMS_TEST(FreshSampleJumpReplay) {
+  std::vector<std::uint8_t> jump(gms::kObjectJumpSize);
+  for (std::size_t i = 0; i < jump.size(); ++i) jump[i] = static_cast<std::uint8_t>(i * 7 + 1);
+  jump[0] = 0x96;
+  const float goal[3] = {62.94f, -68.04f, 1.5f};
+  const float start[2] = {53.98f, -56.64f};
+  std::vector<std::uint8_t> out;
+  CHECK(gms::JumpReplay(jump, start, goal, &out));
+  CHECK_EQ(out.size(), gms::kObjectJumpSize);
+  float got[3];
+  std::memcpy(got, out.data() + gms::kObjectJumpGoalAt, sizeof got);
+  CHECK_EQ(got[0], 62.94f);
+  CHECK_EQ(got[1], -68.04f);
+  CHECK_EQ(got[2], 1.5f);
+  // the start as the client reads it back (the reader's decode), the distance moved and the arc's height zero
+  const std::uint16_t block = static_cast<std::uint16_t>(out[gms::kObjectJumpStartAt] | out[gms::kObjectJumpStartAt + 1] << 8);
+  const std::uint16_t xy = static_cast<std::uint16_t>(out[gms::kObjectJumpStartAt + 2] | out[gms::kObjectJumpStartAt + 3] << 8);
+  float sx = 0.f, sy = 0.f;
+  gms::DequantizeSamplePosition(block, xy, &sx, &sy);
+  CHECK(std::fabs(sx - start[0]) < 0.016f);
+  CHECK(std::fabs(sy - start[1]) < 0.016f);
+  for (std::size_t i = 0; i < out.size(); ++i) {
+    const bool path = i >= gms::kObjectJumpPathAt && i < gms::kObjectJumpPathAt + gms::kObjectJumpPathSize;
+    const bool goalBytes = i >= gms::kObjectJumpGoalAt && i < gms::kObjectJumpGoalAt + 12;
+    const bool startBytes = i >= gms::kObjectJumpStartAt && i < gms::kObjectJumpStartAt + 4;
+    const bool moved = i >= gms::kObjectJumpMovedAt && i < gms::kObjectJumpMovedAt + 8;
+    if (path || moved) {
+      CHECK_EQ(out[i], 0);
+    } else if (!goalBytes && !startBytes) {
+      CHECK_EQ(out[i], jump[i]);
+    }
+  }
+  CHECK_EQ(gms::kObjectJumpMovedAt + 8, gms::kObjectJumpSize);
+  std::vector<std::uint8_t> shortJump(jump.begin(), jump.end() - 1);
+  CHECK(!gms::JumpReplay(shortJump, start, goal, &out));
+  jump[0] = 0x98;
+  CHECK(!gms::JumpReplay(jump, start, goal, &out));
 }

@@ -39,6 +39,9 @@ class ControlClient {
 
   // Connect dials env.control (waiting at most timeoutMs) and sends hello{match, token, pid, build}.
   bool Connect(const HostEnv& env, int64_t pid, const std::string& build, int timeoutMs, std::string* err = nullptr);
+  // RULES1: the features the next Connect's hello names (kFeatureRules, ...); none by default.
+  void SetFeatures(std::vector<std::string> features) { features_ = std::move(features); }
+  const std::vector<std::string>& Features() const { return features_; }
 
   // Send writes one message (whole line). False if the connection failed (it is closed then).
   bool Send(const Message& m, std::string* err = nullptr);
@@ -55,6 +58,7 @@ class ControlClient {
   uintptr_t sock_;
   bool wsa_ = false;
   std::string in_;
+  std::vector<std::string> features_;
 };
 
 }  // namespace dggms::control

@@ -55,6 +55,10 @@ func refusingGateway(t *testing.T, ip, v string, st byte) (addr string, pin tunn
 				case 3: // info: status, the version, no facts
 					c.Write(append(append([]byte{0, byte(len(v))}, v...), 0))
 				case 1: // session: 28 bytes, then (version 2) the release
+					if head[4] > 2 { // a later hello: refused as by a gateway of a release before it
+						c.Write([]byte{tunnel.StatusVersion})
+						return
+					}
 					b := make([]byte, 29)
 					if head[4] != 2 || func() bool { _, err := io.ReadFull(c, b); return err != nil }() {
 						return

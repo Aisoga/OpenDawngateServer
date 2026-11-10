@@ -86,6 +86,7 @@ add_library(dgsim SHARED
   engine/mapfix.cpp            # MAPLUA: MM_Map_v3's script fix-ups (dgsim_mapfix.lua), MM's own base regen (opt-in)
   engine/shop.cpp              # D15c: the shop's purchase effect (onItemPurchased, GetItemFx*)
   engine/refund.cpp            # REFUND1: a sale in the base undoes the purchase (rules: core/commands/refund.h)
+  engine/shoprules.cpp         # RULES4a: Shop on Death and the item pools (rules: core/rules/shop.h)
   engine/volumes.cpp           # D12c: attached trigger volumes follow their objects
   engine/effects.cpp           # FOGSTACKS: an ended modifier's attached effects are destroyed
   engine/components.cpp        # D1j: the ability data containers' release, the server pools' census
@@ -239,6 +240,7 @@ if(RAKNET_FOUND)
     tests/test_stats_gold.cpp   # MSTATS2: gold and XP by source, the role parts (core/stats/gold)
     tests/test_matchrec.cpp     # MATCHREC: the recorder's records, the writer's buffer and size cap, the rate
     tests/test_refund.cpp       # REFUND1: the undo history per slot, its clearing, the undo plan (core/commands/refund.h)
+    tests/test_rules_shop.cpp   # RULES4a: Shop on Death's pass, the item pools, MayTransact (core/rules/shop.h)
     tests/test_itempassives.cpp # ITEMDEATH: item passives while dead and at the respawn (core/damage/itempassives.h)
     tests/test_fogstacks.cpp    # FOGSTACKS: the attached effects an ended modifier leaves (core/replication/effect_ledger.h)
     tests/test_fresh_sample.cpp # FOGSLIDE: a full state's position sample after a jump (core/replication/fresh_sample.h)

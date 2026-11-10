@@ -122,11 +122,15 @@ void OnHumanPing(int team, std::uint32_t pinger, std::uint32_t target, const flo
 void Configure(const Options& o);
 
 // B10d: createGame's fillTeams (the seats a team dgserver asks the host to fill with bots; 0 = not asked), for the
-// `bots` auto rule. Called at createGame, before the first HelloReq plans the bots.
-void SetFillTeams(int seats);
+// `bots` auto rule. Called at createGame, before the first HelloReq plans the bots; RULES1: again with a custom game's
+// startGame fillTeams (`from` "startGame"), which comes before its first HelloReq is answered.
+void SetFillTeams(int seats, const char* from = "createGame");
 // BOTDRAFT: createGame's mode ("custom", "practice", "pvp" turn the draft on with [host] bot_draft -1). Called at
 // createGame.
 void SetGameMode(const std::string& mode);
+// RULES3: a custom game's shaper pool (startGame's poolClasses, PlayerClass names): the BOTDRAFT draw takes only classes
+// whose base class is in it (gms::bots::PoolFilter). Called at startGame, before shaper select; empty = no pool.
+void SetDraftPool(const std::vector<std::string>& classes, const char* from);
 
 // After GameSimulator_Init, before the level (server simulator bound): nBotHost on the shared lua_State.
 void OnSimulatorCreated(void* sim);

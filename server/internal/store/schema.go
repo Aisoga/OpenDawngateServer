@@ -298,6 +298,10 @@ CREATE TABLE api_tokens (
 	revoked    INTEGER NOT NULL DEFAULT 0
 );
 `},
+	// a custom game's match rules (RULES1, internal/rules): the combination as JSON, '' for the standard game
+	{9, "the match rules (RULES1)", `
+ALTER TABLE matches ADD COLUMN rules TEXT NOT NULL DEFAULT '';
+`},
 }
 
 // SchemaVersion is the schema version this build writes (the last migration's).

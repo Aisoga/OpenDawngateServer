@@ -28,6 +28,10 @@ type Match struct {
 	// Timeline is the host's matchTimeline as JSON (its fields without "t"); nil = the host sent none. Read by Match only.
 	Timeline json.RawMessage
 	Seats    []MatchSeat // by seat
+
+	// Rules are a custom game's match rules as JSON (package rules' Combination), "" for the standard game; a match
+	// with rules is never rated.
+	Rules string
 }
 
 // MatchSeat is one seat of a match: a human (PersonaID set) or a bot (PersonaID 0).
@@ -72,9 +76,9 @@ func (s *Store) InsertMatch(m Match) (int64, error) {
 		return 0, err
 	}
 	defer tx.Rollback()
-	res, err := tx.Exec(`INSERT INTO matches (game_id, kind, mode, level, winner, reason, started, ended, duration_ms, timeline)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, m.GameID, m.Kind, m.Mode, m.Level, m.Winner, m.Reason,
-		m.Started.UTC().Format(timeFormat), m.Ended.UTC().Format(timeFormat), m.DurationMs, string(m.Timeline))
+	res, err := tx.Exec(`INSERT INTO matches (game_id, kind, mode, level, winner, reason, started, ended, duration_ms, timeline, rules)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, m.GameID, m.Kind, m.Mode, m.Level, m.Winner, m.Reason,
+		m.Started.UTC().Format(timeFormat), m.Ended.UTC().Format(timeFormat), m.DurationMs, string(m.Timeline), m.Rules)
 	if err != nil {
 		return 0, err
 	}
@@ -169,13 +173,13 @@ func page(before int64, limit int) (int64, int) {
 	return before, min(limit, MaxMatchPage)
 }
 
-const matchColumns = `id, game_id, kind, mode, level, winner, reason, started, ended, duration_ms`
+const matchColumns = `id, game_id, kind, mode, level, winner, reason, started, ended, duration_ms, rules`
 
 // scanMatch reads matchColumns (and the extra columns after them) into m.
 func scanMatch(r interface{ Scan(...any) error }, m *Match, extra ...any) error {
 	var started, ended string
 	if err := r.Scan(append([]any{&m.ID, &m.GameID, &m.Kind, &m.Mode, &m.Level, &m.Winner, &m.Reason, &started, &ended,
-		&m.DurationMs}, extra...)...); err != nil {
+		&m.DurationMs, &m.Rules}, extra...)...); err != nil {
 		return err
 	}
 	m.Started, _ = parseTime(started)

@@ -18,12 +18,17 @@ type HostConn struct {
 
 // DialHost dials env.Control and sends hello with env's match and token.
 func DialHost(env Env, pid int, build string) (*HostConn, error) {
+	return DialHostWith(env, pid, build, nil)
+}
+
+// DialHostWith is DialHost with the hello's features.
+func DialHostWith(env Env, pid int, build string, features []string) (*HostConn, error) {
 	c, err := net.DialTimeout("tcp4", env.Control, 5*time.Second)
 	if err != nil {
 		return nil, err
 	}
 	h := &HostConn{c: c, r: NewLineReader(c)}
-	if err := h.Send(Hello{Match: env.Match, Token: env.Token, PID: pid, Build: build}); err != nil {
+	if err := h.Send(Hello{Match: env.Match, Token: env.Token, PID: pid, Build: build, Features: features}); err != nil {
 		c.Close()
 		return nil, err
 	}
@@ -140,7 +145,12 @@ func (l *FakeLauncher) Envs() []Env {
 // logoutGMS, closes and exits 0. It returns early (exit 1) if the connection fails, and stops when
 // the process is killed.
 func PlayHost(env Env, p *FakeProcess, script func(h *HostConn, cg CreateGame) error) {
-	h, err := DialHost(env, p.Pid(), "fake")
+	PlayHostWith(env, p, nil, script)
+}
+
+// PlayHostWith is PlayHost whose hello names features.
+func PlayHostWith(env Env, p *FakeProcess, features []string, script func(h *HostConn, cg CreateGame) error) {
+	h, err := DialHostWith(env, p.Pid(), "fake", features)
 	if err != nil {
 		p.Exit(1)
 		return

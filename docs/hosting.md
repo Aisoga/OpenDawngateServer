@@ -17,6 +17,7 @@ This guide is for whoever runs the server that other people play on. It uses the
 - [Backups](#backups)
 - [Logs](#logs)
 - [Security: what is protected and what isn't](#security-what-is-protected-and-what-isnt)
+- [Host machines in other regions](#host-machines-in-other-regions)
 - [Linux server](#linux-server)
 
 Every setting, command and port is listed in [reference.md](reference.md).
@@ -576,6 +577,62 @@ Accounts live in one database, `Dawngate-Data\data\accounts.db`, with `accounts.
 - **The control port, TCP 10040, has no login.** Never forward it.
 
 **With `tunnel = off`** (an option for developers), the game's own traffic isn't encrypted, including the password typed at login, and the server's plain ports listen on its address. Keep it to a network you trust.
+
+## Host machines in other regions
+
+A server in Europe plays badly for players in North America: every move crosses the ocean. A **host machine** is a second machine, in another region, that runs matches for your server and nothing else. Players still log in to your server (the **main server**): their accounts, friends, chat, matchmaking, the website and the match history stay there. When a player creates a custom game and picks a region, the match runs on a host machine of that region, and the players' games send their match traffic straight to it.
+
+- The host machine keeps no accounts and has no website, sign-up or game package for players. Results, statistics, experience and ratings go to the main server as for any match.
+- It keeps its matches' logs (and, with `match_record = on` on the main server, their recordings) in its own `Dawngate-Data/logs/hosts`, deleted after its own `log_days`. Fetch them from there if you want them.
+- The matches follow the main server's rules: the host machine takes the main server's match options (recording, limits and the rest).
+- When no host machine of the region is registered, or it can't take the game (it is down, full, lacks the map, or runs another release), the game plays on the main server, and the lobby says why.
+- A host machine is trusted like your main server: it could report wrong results, and it sees its players' addresses. Run host machines only on machines you control.
+
+### Setting up a host machine
+
+On the **main server**:
+
+1. Give it its own region in `Start-Server.ini`, for example `region = eu`. Without a region there are no regions.
+2. Make the host machine's key and its `Start-Server.ini`, giving it a name and its region:
+
+   ```
+   Start-Server.exe --new-host-machine na1 na
+   ```
+
+   (on Linux `sudo -u dawngate ./start-server --new-host-machine na1 na`). This writes the machine's own key to `Dawngate-Data\agents\na1.key`, adds `na1=na` to `host_machines`, and writes the host machine's `Start-Server.ini` to `Dawngate-Data\agents\na1-Start-Server.ini`, with the main server's address and key pin and the machine's name and key. It also prints those lines, except the key, which stays in the files. On Linux it makes the `agents` folder and both files readable by their owner only. Running it again keeps the key and writes the file again. If the server has never started, its key doesn't exist yet: start it once, then run the command again so that the file holds the pin.
+3. If the server's `address` isn't the one the host machine reaches it by (for example you use a domain name), change `main_server` in that file, for example `main_server = play.example.org:42128`.
+4. Restart the main server. It reads `host_machines` at its start and from then on takes the machines named there.
+
+On the **host machine** (Windows or Linux, set up like any server: [Linux server](#linux-server)):
+
+1. Unpack the **same release** as the main server's.
+2. Copy `na1-Start-Server.ini` from the main server next to `Start-Server.exe` (`start-server` on Linux) as `Start-Server.ini`, for example with `scp`. It holds the machine's key: keep it private, and delete the copy you moved it with. On Linux the host machine makes the file readable by its owner only when it starts.
+3. Set `address` in it to the host machine's public IPv4 address. Players' games connect to it there. Behind a cloud's NAT, also set `bind` to the address the machine holds.
+4. Start it (on Linux: once in a terminal, then as a service, as for a server). It sets up only the match hosts' copy (and Wine on Linux), about 1.5 GB (3 GB on Linux), then connects to the main server and says `registered`. It needs `Dawngate.zip` for its first setup, like any server.
+
+If the main server uses maps from its `maps` folder, copy the same map packages into the host machine's `maps` folder. A host machine without a map doesn't get that map's games; they play on the main server.
+
+### Firewalls
+
+- **Host machine:** let in **TCP and UDP 42128** (its `gateway_port`, the players' match traffic) and SSH, nothing else. It needs no port 443. It connects out to the main server's TCP 42128.
+- **Main server:** nothing changes. The host machine connects to its tunnel port, TCP 42128, which is open already.
+
+With ufw on a Linux host machine:
+
+```sh
+sudo ufw default deny incoming
+sudo ufw allow OpenSSH
+sudo ufw allow 42128
+sudo ufw enable
+```
+
+### Updating with host machines
+
+The main server and its host machines must run the same release: the main server refuses a host machine of another release, and the region's games then play on the main server until both match. Update all of them together, in any order: stop, unpack the new release, start. `Start-Server.ini` and `Dawngate-Data` stay on each.
+
+### Removing a host machine
+
+Remove its entry from `host_machines` on the main server and restart the main server: the machine's key no longer registers. Delete `Dawngate-Data\agents\<name>.key` too. To give a machine a new key (for example after it was compromised), delete that file, run `--new-host-machine` again, copy the new `Start-Server.ini` to the machine, and restart both.
 
 ## Linux server
 

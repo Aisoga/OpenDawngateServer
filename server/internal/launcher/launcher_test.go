@@ -38,7 +38,8 @@ func TestConfigFiles(t *testing.T) {
 		"discord_ping_cooldown": "15m", "discord_ping_min_wait": "30s", "discord_queue_edit": "on", "discord_names": "on",
 		"discord_result_modes": "pvp,custom", "online_count": "on", "online_count_every": "30s",
 		"chat_rooms": "General, Looking for group, Matchmaking:queue:open", "match_history_names": "on",
-		"match_record": "off", "rating_leaderboard": "on", "show_rating": "on", ServeMapsKey: "on", "issues": "off"}
+		"match_record": "off", "rating_leaderboard": "on", "show_rating": "on", ServeMapsKey: "on", "issues": "off",
+		RegionKey: "", HostMachinesKey: ""}
 	if !reflect.DeepEqual(c, want) {
 		t.Errorf("defaults %v", c)
 	}

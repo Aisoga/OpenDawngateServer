@@ -781,6 +781,25 @@ int JumpState(const NetObject& o) {
 
 static unsigned g_landingSamples = 0;
 
+static bool SehJumpGoal(const NetObject& o, float start[2], float goal[3]) {
+  void* l = o.data[kPartLocomotion];
+  if (!l || !o.object) return false;
+  __try {
+    if (Field<std::uint32_t>(l, loco::kJumpState) == 0) return false;
+    std::memcpy(goal, static_cast<char*>(l) + loco::kJumpGoal, 12);
+    start[0] = Field<float>(o.object, gobj::kPosition);
+    start[1] = Field<float>(o.object, gobj::kPosition + 4);
+    return true;
+  } __except (SehNote(GetExceptionInformation(), "jump goal")) {
+    return false;
+  }
+}
+
+bool JumpReplay(const NetObject& o, const Bytes& jump, Bytes* out) {
+  float start[2], goal[3];
+  return SehJumpGoal(o, start, goal) && gms::JumpReplay(jump, start, goal, out);
+}
+
 bool LandingSample(const NetObject& o) {
   void* l = o.data[kPartLocomotion];
   if (!l || !o.object) return false;

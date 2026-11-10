@@ -279,6 +279,7 @@ func (f *Front) EndSession(tag string) bool {
 	f.mu.Unlock()
 	f.logf("session to %s (%s) closed: its server stops (the map editor's Test)", s.b.Tag, s.b.Gateway())
 	s.c.Close()
+	s.cancelAwayConnects()
 	return true
 }
 

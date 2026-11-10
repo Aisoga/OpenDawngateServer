@@ -17,8 +17,10 @@ references are computed with the Go setup's own ca_modulus.bin):
   certificates   certs\\<address>: the five files, the CA modulus = the CA certificate's, CN = the address
   client texts   the client copy's game\\Data\\Locale\\en-us\\AA_Server.package = patch_locale.build(its own
                  Locale.package, the address [, --web-domain]); the host copy has none
-  bot profiles   both copies' game\\Data\\zz_BotProfiles.snap = bot_profiles.build(its own AssetData.snap); not
-                 compared when the release's maps folder holds a package (its catalog entries are the Go setup's)
+  bot profiles   both copies' game\\Data\\zz_BotProfiles.snap holds bot_profiles.py's profile files
+                 (bot_profiles.files of its own AssetData.snap) byte for byte, a catalog and the match rules' two
+                 ClientFeedbackDefs (RULES_FEEDBACK_FILES; the catalog and those files are the Go setup's, its tests
+                 check them); not compared when the release's maps folder holds a package
   maps folder    the release has maps\\README.txt; a package in it makes the client texts' lobby line
                  patch_locale.LOBBY_MAP_ANY and the create dialog's map list differ only in the list
   server picker  the client copy's game\\Data\\zz_ServerPicker.snap (Start-Client's picker mode) =
@@ -58,10 +60,14 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)  # -I drops the script folder
 import bot_profiles  # noqa: E402
+import snap  # noqa: E402
 import halloween  # noqa: E402
 
 # the archive the setup makes from build 854's files (server/internal/setup/mapmm's pin)
 MM_ARCHIVE = "zz_MM_Map_v3.snap"
+# RULES0b: the match rules' ClientFeedbackDefs, which the Go setup adds to zz_BotProfiles.snap (botprofiles.RulesFeedback)
+RULES_FEEDBACK_FILES = ("AssetData/Binary/Rules_ShopClosed.ClientFeedbackDef.bin",
+                        "AssetData/Binary/Rules_ItemNotAllowed.ClientFeedbackDef.bin")
 MM_ARCHIVE_SHA256 = "eed1e14c861eb5a68e315410aedc994d99a11079bfdf16ace1c23e0702b98bbf"
 import patch_client  # noqa: E402
 import patch_config  # noqa: E402
@@ -217,11 +223,20 @@ def main(argv):
         if lobby:  # the maps' catalog entries are the Go setup's only (server/internal/setup's TestFolderMapsStep)
             r.line(f"{label} {bot_profiles.ARCHIVE}: not compared (it carries the maps folder's catalog entries)")
             continue
-        want = bot_profiles.build(j(copy, *bot_profiles.SOURCE.split("/")))
+        want = dict(bot_profiles.files(j(copy, *bot_profiles.SOURCE.split("/"))))
         p = j(copy, *bot_profiles.REL.split("/"))
-        got = read(p) if os.path.isfile(p) else b""
-        r.check(got == want, f"{label} {bot_profiles.ARCHIVE} = bot_profiles.py", f"{sha(got)[:16]} vs {sha(want)[:16]}")
-        print(f"{label} {bot_profiles.ARCHIVE}: {sha(got)}  ({'equal' if got == want else 'DIFFERENT'})")
+        got = {}
+        if os.path.isfile(p):
+            arch = snap.Snap(p)
+            got = {e.name: arch.read(e) for e in arch.entries}
+        same = [n for n, b in want.items() if n != bot_profiles.CATALOG and got.get(n) == b]
+        extra = sorted(set(got) - set(want))
+        ok = len(same) == len(want) - 1 and bot_profiles.CATALOG in got and extra == sorted(RULES_FEEDBACK_FILES)
+        r.check(ok, f"{label} {bot_profiles.ARCHIVE} = bot_profiles.py's profiles + the match rules' defs",
+                f"{len(same)} of {len(want) - 1} profile files equal, catalog "
+                f"{'there' if bot_profiles.CATALOG in got else 'MISSING'}, other files {extra}")
+        print(f"{label} {bot_profiles.ARCHIVE}: {sha(read(p)) if os.path.isfile(p) else 'missing'}  "
+              f"({'as expected' if ok else 'DIFFERENT'})")
 
     print("server picker")
     picker = j(client, *patch_login_movie.REL.split("/"))

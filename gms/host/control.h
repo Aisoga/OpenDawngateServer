@@ -46,6 +46,9 @@ const dggms::control::RosterEntry* FindUser(std::int64_t user);
 // B15: a custom game waits in its lobby (createGame's mode custom, no startGame yet): HelloReqs are held. updateRoster
 // and startGame replace the roster FindUser reads.
 bool InLobby();
+// RULES3: startGame's shaper pick rule ("random" = All Random); "" before the start, for the standard game or without a
+// channel.
+std::string StartPick();
 
 // SEATAUTH: verifyHello {addr, user}; the verdicts since the last call, for the session (GmsHostPoll).
 void VerifyHello(const std::string& addr, std::int64_t user);

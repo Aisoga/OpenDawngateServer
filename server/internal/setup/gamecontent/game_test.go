@@ -23,7 +23,8 @@ import (
 // scripts and Locale resolve (TestBuildMatchesDump).
 // COLLTEXT (2026-11-01) changed five item texts on purpose (Harmony, Will, the Vim Flask, Glory, Insight: whole
 // paragraphs no longer dropped; Wisdom's for the holder): passivetext.go.
-const contentSHA = "05cc9b1264f7112fb620a6b1c04e5fb3b4fa7c6ab0f65e1009e7a4e2c54836c8"
+// The draft board (2026-11-09) added each shaper's two pictures (portrait, card: its default Noun's iconData).
+const contentSHA = "e9c0946aae8221805275ef8ac93c955132435eb71272959e9676f43db26b76c6"
 
 func TestBuildMatchesPipeline(t *testing.T) {
 	dir := testgame.Dir(t)

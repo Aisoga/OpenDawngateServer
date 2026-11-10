@@ -1034,7 +1034,7 @@ static void TestHostControlCustomLobby(const std::string& examplesPath) {
       if (l.find("\"spectator\":true") == std::string::npos) updateLine = l;
       else lateLine = l;  // B15b: after the start
     }
-    if (l.find("\"t\":\"startGame\"") != std::string::npos) startLine = l;
+    if (l.find("\"t\":\"startGame\"") != std::string::npos && l.find("\"rules\"") == std::string::npos) startLine = l;
   }
   CHECK(!createLine.empty() && !updateLine.empty() && !startLine.empty() && !lateLine.empty());
   Message m;
@@ -1094,6 +1094,105 @@ static void TestHostControlCustomLobby(const std::string& examplesPath) {
   WSACleanup();
 }
 
+// RULES1: the hello names the host's features (only when it has some); startGame carries a custom game's rules and the
+// lobby's bots setting (fillTeams, 0 written), each absent when not sent; a present fillTeams replaces createGame's at
+// the start. The startGame line is the shared example (blaze's TestCustomGameRulesStartLine sends it).
+static void TestHostControlRules(const std::string& examplesPath) {
+  std::string helloLine, startLine, poolLine;
+  for (const std::string& l : ReadExamples(examplesPath)) {
+    if (l.find("\"t\":\"hello\"") != std::string::npos && l.find("\"features\"") != std::string::npos) helloLine = l;
+    if (l.find("\"t\":\"startGame\"") != std::string::npos && l.find("\"rules\"") != std::string::npos &&
+        startLine.empty())
+      startLine = l;  // RULES1's (the first)
+    if (l.find("\"t\":\"startGame\"") != std::string::npos && l.find("\"poolClasses\"") != std::string::npos)
+      poolLine = l;  // RULES3's
+  }
+  CHECK(!helloLine.empty() && !startLine.empty() && !poolLine.empty());
+  Message m;
+  std::string err;
+  // RULES3: poolClasses (after fillTeams, omitted when empty) both ways
+  CHECK(Decode(poolLine, m, &err));
+  {
+    const StartGame& sg = std::get<StartGame>(m);
+    CHECK(sg.poolClasses.size() == 2 && sg.poolClasses[0] == "PC_Artist" && sg.poolClasses[1] == "PC_TidalQueen");
+    CHECK(sg.rules && sg.rules->shaperPool == "ranged" && sg.roster.size() == 1 && sg.roster[0].shapers.size() == 1 &&
+          sg.roster[0].shapers[0].flags == 0x20);
+    CHECK_STR(Encode(sg), poolLine + "\n");
+  }
+  CHECK(Decode("{\"t\":\"startGame\",\"roster\":[],\"poolClasses\":null}", m, &err) &&
+        std::get<StartGame>(m).poolClasses.empty());
+  CHECK(!Decode("{\"t\":\"startGame\",\"roster\":[],\"poolClasses\":[1]}", m, &err));  // not strings
+  CHECK(Decode(helloLine, m, &err) && std::get<Hello>(m).features.size() == 1 &&
+        std::get<Hello>(m).features[0] == kFeatureRules);
+  Hello plain{1, "t", 4242, "dgsim", {}};
+  CHECK_STR(Encode(plain), "{\"t\":\"hello\",\"match\":1,\"token\":\"t\",\"pid\":4242,\"build\":\"dgsim\"}\n");
+  CHECK(Decode(startLine, m, &err));
+  {
+    const StartGame& sg = std::get<StartGame>(m);
+    CHECK(sg.rules && sg.rules->pick == "random" && sg.rules->shaperPool == "all" && sg.rules->shop == "onDeath" &&
+          sg.rules->itemPool == "all");
+    CHECK(sg.fillTeams && *sg.fillTeams == 0);
+  }
+  StartGame five;
+  five.roster.push_back(RosterEntry{});
+  five.roster[0].user = 2000000001;
+  five.roster[0].name = "player";
+  five.roster[0].team = 1;
+  five.fillTeams = 5;
+  CHECK_STR(Encode(five),
+            "{\"t\":\"startGame\",\"roster\":[{\"user\":2000000001,\"name\":\"player\",\"index\":0,\"team\":1,\"noun\":\"\","
+            "\"bot\":false}],\"fillTeams\":5}\n");
+  CHECK(Decode("{\"t\":\"startGame\",\"roster\":[]}", m, &err));
+  CHECK(!std::get<StartGame>(m).rules && !std::get<StartGame>(m).fillTeams);
+  CHECK(Decode("{\"t\":\"startGame\",\"roster\":[],\"rules\":null,\"fillTeams\":null}", m, &err));
+  CHECK(!std::get<StartGame>(m).rules && !std::get<StartGame>(m).fillTeams);
+  CHECK(!Decode("{\"t\":\"startGame\",\"roster\":[],\"rules\":\"aram\"}", m, &err));            // not an object
+  CHECK(!Decode("{\"t\":\"startGame\",\"roster\":[],\"rules\":{\"pick\":1}}", m, &err));        // not a string
+  CHECK(!Decode("{\"t\":\"startGame\",\"roster\":[],\"fillTeams\":\"5\"}", m, &err));           // not an integer
+  CHECK(Decode("{\"t\":\"startGame\",\"roster\":[],\"rules\":{\"pick\":\"x\",\"speed\":2}}", m, &err));  // unknown: ignored
+
+  WSADATA wsa;
+  WSAStartup(MAKEWORD(2, 2), &wsa);
+  {
+    TestServer srv;
+    CHECK(srv.Start());
+    HostEnv env;
+    env.control = "127.0.0.1:" + std::to_string(srv.port);
+    env.match = 6;
+    env.token = "tok";
+    std::atomic<int> step{0};
+    std::string hello;
+    std::thread server([&] {
+      SOCKET c = accept(srv.listener, nullptr, nullptr);
+      hello = RecvLine(c);
+      SendRaw(c,
+              "{\"t\":\"createGame\",\"gameId\":1,\"level\":\"SM_Map_v5\",\"mode\":\"custom\",\"seed\":7919,\"roster\":[{\"user\":"
+              "2000000001,\"name\":\"alpha\",\"index\":0,\"team\":1,\"noun\":\"\",\"bot\":false}],\"descriptors\":2,\"fillTeams\":5}\n");
+      while (step < 1) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      SendRaw(c, startLine + "\n");
+      SendRaw(c, "{\"t\":\"abortGame\",\"reason\":\"done\"}\n");
+      RecvLine(c);  // logoutGMS
+      closesocket(c);
+    });
+    HostControl::Options o;
+    o.heartbeatMs = 1000000;
+    HostControl h(nullptr, o);
+    h.SetFeatures({kFeatureRules});
+    int64_t now = 0;
+    CHECK(h.Start(env, 4245, "test", now));
+    CHECK(PollUntil(h, now, [&] { return h.HasGame(); }));
+    CHECK(h.InLobby() && h.Game().fillTeams == 5 && !h.StartRules() && !h.StartFillTeams());
+    step = 1;
+    CHECK(PollUntil(h, now, [&] { return h.AbortRequested(); }));
+    CHECK(h.Started() && h.StartRules() && h.StartRules()->shop == "onDeath");
+    CHECK(h.StartFillTeams() && *h.StartFillTeams() == 0 && h.Game().fillTeams == 0);
+    h.Logout();
+    server.join();
+    CHECK(hello.find(",\"features\":[\"rules\"]}") != std::string::npos);
+  }
+  WSACleanup();
+}
+
 int main(int argc, char** argv) {
   std::string examples = argc > 1 ? argv[1] : DG_CONTROL_EXAMPLES;
   TestJsonParse();
@@ -1109,6 +1208,7 @@ int main(int argc, char** argv) {
   TestHostControlVerifyHello();
   TestHostControlCustomLobby(examples);  // B15
   TestWithSpectatorsOf();                // B15b
+  TestHostControlRules(examples);        // RULES1
   std::printf("%d checks, %d failed\n", g_checks, g_failed);
   return g_failed == 0 ? 0 : 1;
 }

@@ -61,6 +61,13 @@ func (l *Log) SetLimits(lim Limits) {
 	l.lim, l.tokens, l.last = lim, lim.Burst, l.now()
 }
 
+// Limits returns the limits set last (none: the zero Limits).
+func (l *Log) Limits() Limits {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.lim
+}
+
 // allowLocked takes n bytes from the rate's bucket.
 func (l *Log) allowLocked(n int, now time.Time) bool {
 	if l.lim.BytesPerS <= 0 {

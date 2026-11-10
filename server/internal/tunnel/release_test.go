@@ -61,8 +61,8 @@ func TestSessionHelloWire(t *testing.T) {
 	if back, _ := readSessionHello(r, ver); back.release != "a-b-c" {
 		t.Errorf("an odd name read as %q", back.release)
 	}
-	if _, _, err := readHello(bytes.NewReader([]byte("DGTN\x04\x01"))); err != errVersion {
-		t.Errorf("version 4: %v", err)
+	if _, _, err := readHello(bytes.NewReader([]byte("DGTN\x05\x01"))); err != errVersion {
+		t.Errorf("version 5: %v", err)
 	}
 }
 

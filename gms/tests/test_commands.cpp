@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "core/commands/testlua.h"
+#include "core/commands/text.h"
 #include "core/common/bytes.h"
 #include "core/protocol/commands.h"
 #include "core/protocol/wire.h"
@@ -305,4 +306,30 @@ GMS_TEST(TestLuaItems) {
   CHECK(!ParseTestLuaItem("20-30:x.lua", &v));
   CHECK(!ParseTestLuaItem("0-100000/1:x.lua", &v));  // more than kMaxTestLuaRepeats
   CHECK(v.empty());
+}
+
+// RULES0b: a text line for one player (cmds::SendPlayerText): the player's team, every other index left out; the
+// commands file's "text <def name>" with or without the class.
+GMS_TEST(PlayerTextMask) {
+  using gms::cmdtext::PlayerTextMask;
+  using gms::cmdtext::TextDefName;
+  using gms::cmdtext::TextMask;
+  TextMask m;
+  CHECK(PlayerTextMask(0, 0, &m));
+  CHECK_EQ(m.teamBits, 1u);
+  CHECK_EQ(m.excludePlayers, 0xFFFFFFFEu);
+  CHECK(PlayerTextMask(6, 1, &m));
+  CHECK_EQ(m.teamBits, 2u);
+  CHECK_EQ(m.excludePlayers, ~0x40u);
+  CHECK(PlayerTextMask(31, 2, &m));
+  CHECK_EQ(m.excludePlayers, 0x7FFFFFFFu);
+  TextMask untouched;
+  CHECK(!PlayerTextMask(32, 0, &untouched));
+  CHECK(!PlayerTextMask(0, 32, &untouched));
+  CHECK_EQ(untouched.teamBits, 0u);
+  CHECK(TextDefName(" Rules_ShopClosed.ClientFeedbackDef\r") == "Rules_ShopClosed.ClientFeedbackDef");
+  CHECK(TextDefName("Rules_ItemNotAllowed") == "Rules_ItemNotAllowed.ClientFeedbackDef");
+  CHECK(TextDefName("OutOfRange.ClientFeedbackDef extra words") == "OutOfRange.ClientFeedbackDef");
+  CHECK(TextDefName("  \t").empty());
+  CHECK(TextDefName("").empty());
 }

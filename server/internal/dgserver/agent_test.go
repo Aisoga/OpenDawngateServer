@@ -87,6 +87,9 @@ func serverProcess() int {
 }
 
 func fakeHost(mode string) int {
+	if mode == "seat" { // REGION5: a host that asks verifyHello for every claim (regions_test.go)
+		return seatHost()
+	}
 	env, ok, err := gmshost.EnvFromLookup(os.LookupEnv)
 	if !ok || err != nil {
 		return 10

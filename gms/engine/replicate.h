@@ -109,6 +109,10 @@ void SetFreshSample(bool on);
 // landing into it without marking it; set to the object's position when stale): true if it was marked.
 int JumpState(const NetObject& o);
 bool LandingSample(const NetObject& o);
+// FOGSLIDE ([host] fog_exit_jump, 1): the ObjectJump `jump` (the engine's, from the jump's start) to re-send at a fog exit
+// while the object still jumps: its landing point the current one, its path cleared (core/replication/fresh_sample.h
+// JumpReplay). False if the object no longer jumps or `jump` isn't an ObjectJump.
+bool JumpReplay(const NetObject& o, const Bytes& jump, Bytes* out);
 // ABILVFX-WALLS ([host] effects_before_complete, 1): where a create puts the attached effects (92): 0 after 8F (D2g-live
 // step 3), 1 before 8F for an object with a draw box in a slot (Kensu's R path: the client makes draw boxes only when
 // 8F creates the model from the slots it already holds), 2 before 8F for every object.

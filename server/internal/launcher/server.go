@@ -231,6 +231,17 @@ discord_queue_edit = on
 discord_names = on
 discord_result_modes = pvp,custom
 
+; Regions for custom games: host machines in other regions run this server's matches near their players (the hosting
+; guide, "Host machines in other regions"). A player picks the region when creating a custom game.
+;   region         this server's own region, 2-8 lower-case letters (e.g. eu): the region of its own matches and of
+;                  every player who chose none. Empty: no regions (the default).
+;   host_machines  the host machines that may register with this server, each as name=region, separated by commas
+;                  (e.g. na1=na). Each has its own key, Dawngate-Data\agents\<name>.key; make it and the host machine's
+;                  Start-Server.ini with  Start-Server.exe --new-host-machine <name> <region>. Needs the tunnel. A
+;                  machine whose line is removed can no longer register.
+region =
+host_machines =
+
 ; More server options, separated by blanks, e.g.  --owned starter  or  --mm-team-size 1 --mm-fill-after 5s
 ; (README.txt lists a few; "dgserver.exe -h" in the developers' build lists all). Empty: the defaults.
 server_flags =
@@ -351,6 +362,7 @@ func RunServer(args []string, o IO) int {
 	dedicatedFlag := fs.Bool("dedicated", false, "a dedicated server: set up and run only the match-host copy, never a player copy (the config file's dedicated = yes)")
 	configure := fs.Bool("configure", false, "ask the first start's questions again (who plays: this PC, a home network, the internet)")
 	showVersion := fs.Bool("version", false, "print this release's version and exit (players need a Start-Client.exe of the same version)")
+	newHostMachine := fs.String(NewHostMachineFlag, "", "NAME REGION: on the main server, make a host machine's key and its Start-Server.ini, and add it to host_machines")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -380,6 +392,15 @@ func RunServer(args []string, o IO) int {
 		} else if changed {
 			fmt.Fprintf(o.Out, "  note: %s: the encrypted tunnel is now on for every server (tunnel = auto; the comment above it updated)\n", path)
 		}
+	}
+	if *newHostMachine != "" { // regions: a host machine's key and ini on the main server (hostmachine.go)
+		return runNewHostMachine(o, path, cfg, *newHostMachine, fs.Args())
+	}
+	if hm, err := isHostMachine(cfg); err != nil {
+		return o.fail("%s: %v", path, err)
+	} else if hm { // role = host-machine: the match hosts for a main server, nothing else (hostmachine.go)
+		return runHostMachine(o, cfg, hostMachineRun{in: in, path: path, check: *check, setupOnly: *setupOnly, seconds: *seconds,
+			hostDir: *hostDir, zip: *zipFlag, src: *gameSourceFlag, accountArgs: accountArgs})
 	}
 	for _, k := range cfg.Unknown(serverKeys...) {
 		fmt.Fprintf(o.Out, "  note: %s: unknown option %q (ignored)\n", path, k)
@@ -488,6 +509,10 @@ func RunServer(args []string, o IO) int {
 	}
 	publicP := publicProfile(profile, address) // the tunnel required, the limits on
 	tunnelOn := tunnelFor(mode, address) || publicP
+	regionFlags, regionNote, err := RegionFlags(cfg, root, tunnelOn) // host machines in other regions (hostmachine.go)
+	if err != nil {
+		return o.fail("%s: %v", path, err)
+	}
 	if clientPackage && !tunnelOn {
 		return o.fail("%s: %s = on needs the tunnel (tunnel = auto or on): the package's Start-Client.ini trusts its key", path, ClientPackageKey)
 	}
@@ -697,6 +722,7 @@ func RunServer(args []string, o IO) int {
 	} else { // tunnel = off (developers): the plain ports, and the CA for Start-Client --tunnel off on other machines
 		flags = append(flags, "--serve-ca")
 	}
+	flags = append(flags, regionFlags...)
 	if *seconds > 0 {
 		flags = append(flags, fmt.Sprintf("--seconds=%d", *seconds))
 	}
@@ -756,6 +782,9 @@ func RunServer(args []string, o IO) int {
 		fmt.Fprintf(o.Out, "  %s\n", loginHint(cfg["signup"]))
 		websiteBanner(o.Out, info, public)
 		packageBanner(o.Out, info)
+		if regionNote != "" {
+			fmt.Fprintf(o.Out, "  %s\n", regionNote)
+		}
 		if hostsUnderWine {
 			fmt.Fprintf(o.Out, "  The match hosts run under %s (%s) on 127.0.0.1, in the Wine prefix %s.\n", wine.Version, wine.Wine, wine.Prefix)
 		}

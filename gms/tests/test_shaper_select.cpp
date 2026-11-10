@@ -1095,7 +1095,7 @@ GMS_TEST(ScriptShaperSelectOptions) {
   CHECK(cfg.humanDefault.list[0].noun == kAlpha && cfg.humanDefault.list[0].flags == gms::kShaperOwned);
   CHECK_EQ(cfg.players.size(), size_t{2});
   CHECK(cfg.players[0].scripted && cfg.players[0].plan.noun == gms::kNounRandom);
-  CHECK_EQ(cfg.timers.pickMs, 62000u);
+  CHECK_EQ(cfg.timers.pickMs, 92000u);
 
   gms::InjectSpec s;
   CHECK(gms::ParseInject("picked+10:c20101", &s, &err));  // the new injection points
@@ -1147,7 +1147,7 @@ GMS_TEST(ShaperSelectContentFromCreateGame) {
   pvp.timers["SkinSelectTime"] = 1000;
   pvp.timers["RevealTime"] = -1;  // ignored
   t = gms::ShaperTimersFromCreateGame(pvp);
-  CHECK(t.pickMs == 62000 && t.rolePerkMs == 45500 && t.skinMs == 1000 && t.revealMs == 16);
+  CHECK(t.pickMs == 92000 && t.rolePerkMs == 45500 && t.skinMs == 1000 && t.revealMs == 16);
   dggms::control::CreateGame practice;
   practice.mode = "practice";
   t = gms::ShaperTimersFromCreateGame(practice);
@@ -1584,4 +1584,93 @@ GMS_TEST(ShaperSelectDraftAtTheTimer) {
   CHECK_EQ(ss.Record(1)->shaper, kGunman);
   CHECK((ss.Record(1)->flags & gms::kRecordShaperLocked) != 0);
   CHECK((ss.Record(2)->flags & gms::kRecordShaperLocked) != 0);
+}
+
+// ---- RULES3: All Random ------------------------------------------------------------------------------------------------
+
+// A lockAtOnce human (its list is the server's roll, flag 0x20) is locked to it once its client's UI is up (variant 2: its
+// first C8 after C8 02) or 3 s after its C8 02 (variants 0, 1): record (locked) to the team, skins, and with
+// lockAtOnceAnswer the lock answer (its client goes into phase 2 by itself; no phase-1 repeat goes to it any more).
+// Nothing before; a click on a shaper outside its list is refused. The bots' draft then sees the rolled shaper.
+GMS_TEST(ShaperSelectAllRandomLocksAtOnce) {
+  for (int variant = 0; variant < 3; ++variant) {
+    QuietLog log;
+    DraftRig rig(4000);
+    gms::ShaperSelectPlayer me;
+    me.gameplayIndex = 0;
+    me.team = 1;
+    me.content.list = {Entry(kGunman, 0x20)};
+    me.lockAtOnce = true;
+    rig.cfg.players.push_back(me);
+    rig.cfg.lockAtOnceAnswer = variant != 1;
+    gms::ShaperSelect ss(rig.cfg);
+    const gms::ConnId human = 78;
+    ss.AddHuman(human, 0, 1);
+    RecordingSender out;
+    const int64_t s = 20000;
+    Msg(ss, human, Req(gms::kShaperHello), s, out);
+    ss.OnReady(human, s, out);
+    const std::vector<std::string> first = out.To(human);
+    CHECK(!first.empty() && first[0] == std::string("c802271e1d7c200000000000"));  // the list: the rolled shaper only
+    const std::string record = "c80300271e1d7c271e1d7c000000000001";
+    const std::string skins = "c80b01271e1d7c00";
+    const std::string answer = "c805271e1d7c01";
+    const std::string refused = "c804ab4a04ef00";
+    int64_t t = s;
+    size_t mark = 0;
+    std::vector<std::string> got;
+    if (variant == 2) {
+      ss.Tick(s + 300, out);
+      CHECK((ss.Record(0)->flags & gms::kRecordShaperLocked) == 0);
+      mark = out.sent.size();
+      // its UI is up (its first C8 after C8 02): the click outside its list is refused, then the lock at once
+      Msg(ss, human, Req(gms::kShaperRequest, kAlpha), t = s + 400, out);
+      got = out.To(human, mark);
+      CHECK_LIST(got, {refused, record, skins, answer});
+    } else {
+      for (t = s + 100; t <= s + 2900; t += 100) ss.Tick(t, out);
+      CHECK((ss.Record(0)->flags & gms::kRecordShaperLocked) == 0);
+      mark = out.sent.size();
+      ss.Tick(t = s + 3000, out);
+      got = out.To(human, mark);
+      if (variant == 1)
+        CHECK_LIST(got, {record, skins});
+      else
+        CHECK_LIST(got, {record, skins, answer});
+    }
+    CHECK((ss.Record(0)->flags & gms::kRecordShaperLocked) != 0);
+    CHECK_EQ(ss.Record(0)->shaper, kGunman);
+    CHECK(log.Has("player 0's shaper is locked at once (RULES3"));
+    // the bots draw after the grace (no role said) and see the rolled shaper; phase 2 once they locked
+    for (t += 100; t <= s + 12000; t += 100) ss.Tick(t, out);
+    CHECK_EQ(rig.calls.size(), size_t{1});
+    if (!rig.calls.empty()) CHECK_EQ(rig.calls[0][0].shaper, kGunman);
+    CHECK_EQ(ss.Phase(), 2);
+    // with the answer the client went ahead into phase 2: the match's phase-1 repeats didn't go to it
+    bool phase1Repeat = false;
+    for (size_t i = mark; i < out.sent.size(); ++i)
+      phase1Repeat = phase1Repeat || (out.sent[i].conn == human && out.sent[i].hex.size() == 28 &&
+                                      out.sent[i].hex.compare(0, 4, "c801") == 0 &&
+                                      out.sent[i].hex.compare(20, 8, "01000000") == 0);
+    CHECK_EQ(phase1Repeat, variant == 1);
+  }
+}
+
+// Without lockAtOnce the same list waits for the player's own lock-in or the phase-1 timer (as before RULES3).
+GMS_TEST(ShaperSelectAllRandomOffKeepsThePick) {
+  QuietLog log;
+  gms::ShaperSelectConfig cfg;
+  cfg.timers = Timers(30000, 30000, 10000, 16);
+  gms::ShaperSelectPlayer me;
+  me.gameplayIndex = 0;
+  me.team = 1;
+  me.content.list = {Entry(kGunman, 0x20)};
+  cfg.players.push_back(me);
+  gms::ShaperSelect ss(cfg);
+  ss.AddHuman(5, 0, 1);
+  RecordingSender out;
+  ss.OnReady(5, 1000, out);
+  for (int64_t t = 1100; t <= 9000; t += 100) ss.Tick(t, out);
+  CHECK((ss.Record(0)->flags & gms::kRecordShaperLocked) == 0);
+  CHECK(!log.Has("locked at once"));
 }

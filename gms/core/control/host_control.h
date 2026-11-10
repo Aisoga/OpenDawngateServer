@@ -58,6 +58,9 @@ class HostControl {
 
   // Dials env.control and sends hello. nowMs is the caller's clock (ms); elapsedMs counts from here.
   bool Start(const HostEnv& env, int64_t pid, const std::string& build, int64_t nowMs, std::string* err = nullptr);
+  // RULES1: the features Start's hello names (call before Start): kFeatureRules for a host that applies startGame's
+  // rules and fillTeams.
+  void SetFeatures(std::vector<std::string> features) { client_.SetFeatures(std::move(features)); }
 
   // One non-blocking poll: messages in, the heartbeat out when due. Does nothing once ended.
   void Poll(int64_t nowMs);
@@ -72,6 +75,12 @@ class HostControl {
   // it an updateRoster changes only the spectators (WithSpectatorsOf).
   bool InLobby() const { return hasGame_ && game_.mode == kModeCustom && !started_; }
   bool Started() const { return started_; }
+  // RULES1: startGame's rules (absent: the standard game) and its fillTeams (absent: createGame's stays). A present
+  // fillTeams also replaces Game().fillTeams at the start, before the first HelloReq is answered.
+  const std::optional<StartGame::Rules>& StartRules() const { return startRules_; }
+  const std::optional<int64_t>& StartFillTeams() const { return startFill_; }
+  // RULES3: startGame's poolClasses (the shaper pool's PlayerClasses; empty: no pool).
+  const std::vector<std::string>& StartPoolClasses() const { return startPool_; }
 
   bool AbortRequested() const { return abort_; }
   const std::string& AbortReason() const { return abortReason_; }
@@ -124,6 +133,9 @@ class HostControl {
   bool hasGame_ = false;
   CreateGame game_;
   bool started_ = false;  // B15: startGame came
+  std::optional<StartGame::Rules> startRules_;  // RULES1
+  std::optional<int64_t> startFill_;
+  std::vector<std::string> startPool_;  // RULES3
   bool abort_ = false;
   std::string abortReason_;
   bool lost_ = false;

@@ -216,6 +216,9 @@ type agentConn struct {
 	procs   map[int64]*remoteProcess    // started, not exited (nil once closed)
 	gone    chan struct{}               // closed when the connection has ended
 	once    sync.Once
+
+	// link is set for an agent on the TLS link (REGION1, link.go); nil = H2's plain link
+	link *linkState
 }
 
 type launchResult struct {
@@ -257,6 +260,9 @@ func (a *agentConn) readLoop() {
 		msg, err := Decode(line)
 		if err != nil {
 			a.m.log.Logf(who, "agent %s: (line ignored: %v)", a.name, err)
+			continue
+		}
+		if a.relayed(msg) { // REGION1: a host's line or close through the TLS link (link.go), not logged here
 			continue
 		}
 		if _, beat := msg.(AgentStatus); !beat {
@@ -330,7 +336,7 @@ func (a *agentConn) Launch(env Env) (Process, error) {
 		}
 		a.mu.Unlock()
 	}
-	if err := a.send(LaunchHost{Match: env.Match, Token: env.Token, Port: port}); err != nil {
+	if err := a.send(LaunchHost{Match: env.Match, Token: env.Token, Port: port, Options: a.hostOptions()}); err != nil {
 		forget()
 		a.close("launchHost not sent: " + err.Error())
 		return nil, fmt.Errorf("agent %s: %v", a.name, err)
@@ -381,6 +387,7 @@ func (a *agentConn) close(reason string) {
 		}
 		m.mu.Unlock()
 		a.c.Close()
+		a.closeRelay() // REGION1: the hosts' channels through the link end with it
 		for _, p := range procs {
 			p.end(-1, a.lost())
 		}

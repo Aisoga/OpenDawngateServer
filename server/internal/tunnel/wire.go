@@ -13,7 +13,7 @@ import (
 
 // The hellos at the start of every TLS connection to the gateway (all integers big-endian):
 //
-//	client -> gateway: "DGTN", version uint8 (3 for a session, 1 for the others), kind uint8, then by kind:
+//	client -> gateway: "DGTN", version uint8 (4 for a session, 1 for the others), kind uint8, then by kind:
 //	  1 session: tunnel address [4] (the loopback address the player copy is patched for), resume id uint64,
 //	             resume token [16] (zeros for a new session; a session that lost its control connection is taken
 //	             up again within Grace, with new UDP keys), then (version 2) the release length uint8 + the
@@ -24,7 +24,11 @@ import (
 //	             session hello (a Start-Client from before the release check) with StatusVersion and one naming
 //	             another release than its own with StatusRelease, unless Gateway.AllowAnyClient; it takes versions 2
 //	             and 3 (a version 2 hello names no maps). A gateway of a release before version 3 answers it
-//	             StatusVersion, and the client says hello again with version 2 (Client.connect)
+//	             StatusVersion, and the client says hello again with version 2 (Client.connect). Version 4
+//	             (awayHelloVersion, away.go) writes the maps' count 0xFF for no list (mapsNotNamed) and then a ticket
+//	             length uint16 + a ticket (0: none; a match gateway's session needs one, admit.go); its client reads the
+//	             control connection's away and home messages. A gateway of an earlier release answers it
+//	             StatusVersion, and the client steps down to 3 (or 2 without maps)
 //	  2 stream:  session id uint64, token [16], port uint16 (the server port it opens), the game socket's
 //	             address [4] and port uint16
 //	  3 info:    nothing more (no session: Start-Client's list and login ask the server's version this way; a gateway
@@ -47,8 +51,10 @@ const (
 	// releaseVersion is the session hello that adds the Start-Client's release name after version 1's 28 bytes (a
 	// gateway of an earlier release answers it StatusVersion).
 	releaseVersion = 2
-	// sessionVersion is the session hello this build writes: 3 adds the installed maps after the release name.
-	sessionVersion = 3
+	// mapsVersion is the session hello that adds the installed maps after the release name.
+	mapsVersion = 3
+	// sessionVersion is the session hello this build writes: 4 (awayHelloVersion) adds the ticket after the maps.
+	sessionVersion = 4
 
 	kindSession byte = 1
 	kindStream  byte = 2
@@ -97,6 +103,9 @@ type sessionHello struct {
 	release string
 	// maps are the player copy's installed map archives (version 3; nil in an earlier hello)
 	maps []InstalledMap
+
+	// ticket lets a session into a match gateway (version 4, admit.go; nil: none)
+	ticket []byte
 }
 
 // version is the hello's version as written.
@@ -140,8 +149,11 @@ func (h sessionHello) encode() []byte {
 		r = r[:build.MaxLen]
 	}
 	b = append(append(b, byte(len(r))), r...)
-	if ver < sessionVersion {
+	if ver < mapsVersion {
 		return b
+	}
+	if ver >= awayHelloVersion && h.maps == nil {
+		return appendTicket(append(b, mapsNotNamed), h.ticket)
 	}
 	maps := h.maps
 	if len(maps) > MaxHelloMaps {
@@ -155,6 +167,9 @@ func (h sessionHello) encode() []byte {
 		}
 		b = append(append(b, byte(len(name))), name...)
 		b = append(b, m.SHA256[:]...)
+	}
+	if ver >= awayHelloVersion {
+		b = appendTicket(b, h.ticket)
 	}
 	return b
 }
@@ -284,11 +299,11 @@ func readHello(r io.Reader) (ver, kind byte, err error) {
 var errVersion = errors.New("unsupported tunnel version")
 
 // readSessionHello reads a session hello after its head: version 1's 28 bytes, from releaseVersion on the release
-// name too (cleaned: version.Clean), and for sessionVersion the maps (names cleaned: CleanArchive; at most
-// MaxHelloMaps).
-func readSessionHello(r io.Reader, ver byte) (sessionHello, error) {
+// name too (cleaned: version.Clean), from mapsVersion the maps (names cleaned: CleanArchive; at most
+// MaxHelloMaps), from awayHelloVersion the ticket.
+func readSessionHello(r io.Reader, ver byte) (h sessionHello, err error) {
 	var b [4 + 8 + 16 + 1]byte
-	h := sessionHello{ver: ver}
+	h = sessionHello{ver: ver}
 	n := len(b) - 1
 	if ver >= releaseVersion {
 		n = len(b)
@@ -307,11 +322,15 @@ func readSessionHello(r io.Reader, ver byte) (sessionHello, error) {
 		return h, err
 	}
 	h.release = build.Clean(string(name))
-	if ver < sessionVersion {
+	if ver < mapsVersion {
 		return h, nil
 	}
 	var count [1]byte
 	if _, err := io.ReadFull(r, count[:]); err != nil {
+		return h, err
+	}
+	if ver >= awayHelloVersion && count[0] == mapsNotNamed {
+		h.ticket, err = readTicket(r)
 		return h, err
 	}
 	if int(count[0]) > MaxHelloMaps {
@@ -331,7 +350,10 @@ func readSessionHello(r io.Reader, ver byte) (sessionHello, error) {
 		copy(m.SHA256[:], name[l[0]:])
 		h.maps = append(h.maps, m)
 	}
-	return h, nil
+	if ver >= awayHelloVersion {
+		h.ticket, err = readTicket(r)
+	}
+	return h, err
 }
 
 func readStreamHello(r io.Reader) (streamHello, error) {

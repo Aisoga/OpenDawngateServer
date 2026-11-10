@@ -1932,6 +1932,14 @@ ROOMS3_CASES = {
 }
 
 
+# REGION3: getUserSettings for an account that never chose a region, on a server whose home region is eu: its stored
+# settings and GameServerRegionId = FNV-1("eu") in decimal (the value the client saves at a click on Europe)
+REGION3_CASES = {
+    "region3_getusersettings_default_reply": lambda: bytes(tdf.Writer().map(
+        "USET", STRING, STRING, {"Audio.Master": "0.5", "GameServerRegionId": str(0x6C77277B)})),
+}
+
+
 WRITER_CASES = {
     "ints": case_ints, "labels": case_labels, "strings": case_strings, "blobs": case_blobs,
     "structs": case_structs, "lists": case_lists, "maps": case_maps, "unions": case_unions,
@@ -1972,6 +1980,7 @@ WRITER_CASES = {
     **DISCORD3A_CASES,
     **ROOMS1_CASES,
     **ROOMS3_CASES,
+    **REGION3_CASES,
 }
 
 

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"time"
 
+	"dawngate/server/internal/rules"
 	"dawngate/server/internal/tdf"
 	"dawngate/server/internal/tunnel"
 	"dawngate/server/internal/uichannel"
@@ -22,7 +23,12 @@ import (
 //	lobby.setReady {"ready":true}           the READY button: the player's state
 //	lobby.state    {"players":[{"name":"x","ready":false,"rating":1612}, ...]}
 //	                                        the whole lobby, to everyone who entered, after a change (lobbyPublishGap)
-//	lobby.startRefused                      to an admin: a start was refused because someone isn't ready
+//	lobby.startRefused                      to an admin: a start was refused because someone isn't ready (RULES1: or
+//	                                        {"findings":[...]}: the rules' findings at the start)
+//	lobby.setRules {"preset":"aram"} / {"rules":{"pick":"random",...}}, and/or {"bots":false}
+//	                                        RULES1: the admin's rules and bots (lobbyrules.go)
+//	lobby.rulesCatalog {"categories":[...],"presets":[...]}
+//	                                        RULES1: at lobby.enter in a game with rules, before its lobby.state
 //
 // lobby.state's players are the game's, by the name the lobby's natives know them by. ready is there only for a player
 // whose state counts; rating (RATINGSHOW3) only for one whose rating players see (Server.ShownRating).
@@ -89,18 +95,34 @@ type LobbyStatePlayer struct {
 	Rating int64  `json:"rating,omitempty"`
 }
 
-// LobbyState is EventLobbyState's data.
+// LobbyState is EventLobbyState's data. Rules (RULES1, lobbyrules.go) only in a game with rules; its CanEdit is the
+// receiver's.
 type LobbyState struct {
 	Players []LobbyStatePlayer `json:"players"`
+	// M27: where the game runs when that isn't where its creator wanted (regions.go); absent otherwise
+	Region *LobbyRegion `json:"region,omitempty"`
+
+	Rules *LobbyRules `json:"rules,omitempty"`
 }
 
 // AttachUI serves the lobby's calls on ui and identifies its users by their Blaze logins.
 func (s *Server) AttachUI(ui *uichannel.Server) {
 	s.UI = ui
 	s.lobbyGap = lobbyPublishGap
+	s.rulesGap = lobbyRulesGap
 	ui.Identify = s.identifyUI
 	ui.OnDisconnect = s.uiDisconnected
 	ui.Handle(CallLobbyEnter, func(user int64, _ json.RawMessage) error { return s.lobbyEnter(user) })
+	ui.Handle(CallLobbySetRules, func(user int64, args json.RawMessage) error { return s.lobbySetRules(user, args) })
+	for call, kind := range map[string]string{CallDraftBan: rules.DraftBan, CallDraftPick: rules.DraftPick} { // RULES5b
+		ui.Handle(call, func(user int64, args json.RawMessage) error {
+			shaper, err := parseDraftArgs(args)
+			if err != nil {
+				return err
+			}
+			return s.draftCall(user, kind, shaper)
+		})
+	}
 	ui.Handle(CallLobbySetReady, func(user int64, args json.RawMessage) error {
 		var a struct {
 			Ready *bool `json:"ready"`
@@ -179,7 +201,11 @@ func (m *messaging) usersOfTunnelSession(id uint64) []int64 {
 	return users
 }
 
-// lobbyOf is the custom lobby user is in (nil: none, or its game started).
+// lobbyOf is the custom lobby user is in (nil: none, its game started, or it isn't announced yet). RULES1: a lobby
+// counts only once its NotifyGameSetup may go out (customLobby.ready: the match host said hello and loaded its level),
+// as the client shows its lobby only then; before it the host's capability isn't known, so a lobby.enter or
+// lobby.setRules in that window (a modified client, a test script) is refused as "not in a lobby" instead of being
+// judged against a host that hasn't spoken yet.
 func (s *Server) lobbyOf(user int64) *hostedGame {
 	s.hosted.mu.Lock()
 	games := make([]*hostedGame, 0, len(s.hosted.byID))
@@ -190,7 +216,7 @@ func (s *Server) lobbyOf(user int64) *hostedGame {
 	for _, g := range games {
 		g.mu.Lock()
 		hp := g.playerLocked(user)
-		in := g.custom != nil && !g.custom.started && !g.ended && hp != nil && !hp.removed
+		in := g.custom != nil && g.custom.ready && !g.custom.started && !g.ended && hp != nil && !hp.removed
 		g.mu.Unlock()
 		if in {
 			return g
@@ -209,13 +235,21 @@ func (s *Server) lobbyEnter(user int64) error {
 	same := hg.custom.check.Has(user) && !hg.custom.check.Ready(user)
 	hg.custom.check.Join(user)
 	counted := hg.readyCountedLocked()
+	rulesOn := hg.rulesOnLocked()
+	drafting := hg.custom.draft != nil
 	hg.mu.Unlock()
+	if rulesOn && s.UI != nil {
+		s.UI.Send(user, EventLobbyRulesCatalog, rules.View()) // RULES1: the panel's catalog, before the state
+	}
 	if same { // a new connection of a member, or a repeated call: nothing for the others to hear
 		hg.sendLobbyState(user)
-		return nil
+	} else {
+		s.Log.Logf("blaze", "   game %d: ready check: %d entered; %d counted now", hg.game.ID, user, len(counted))
+		hg.publishLobby()
 	}
-	s.Log.Logf("blaze", "   game %d: ready check: %d entered; %d counted now", hg.game.ID, user, len(counted))
-	hg.publishLobby()
+	if drafting {
+		hg.sendDraftTo(user) // RULES5b: the board, for a late joiner or a new connection
+	}
 	return nil
 }
 
@@ -365,6 +399,17 @@ func (hg *hostedGame) sendLobbyState(only int64) {
 			to = append(to, hp.p.ID)
 		}
 	}
+	state.Region = hg.custom.notice // M27 (regions.go)
+
+	// RULES1: the rules part, its CanEdit per receiver
+	var own map[int64]*LobbyRules
+	if hg.rulesOnLocked() {
+		fs := hg.rulesFindingsLocked()
+		own = map[int64]*LobbyRules{}
+		for _, id := range to {
+			own[id] = hg.lobbyRulesLocked(id, fs)
+		}
+	}
 	hg.mu.Unlock()
 	if len(to) == 0 {
 		return
@@ -377,7 +422,9 @@ func (hg *hostedGame) sendLobbyState(only int64) {
 		hg.mu.Unlock()
 	}
 	for _, id := range to {
-		s.UI.Send(id, EventLobbyState, state)
+		st := state
+		st.Rules = own[id]
+		s.UI.Send(id, EventLobbyState, st)
 	}
 }
 
@@ -418,7 +465,33 @@ func (s *Server) uiLoginEnded(user int64) {
 // unlock, as RATING2b's redraw after BALANCE: the lobby's UserManager listener (0x004260E0) calls invalidateRoster.
 // why is added to the log line.
 func (s *Server) refuseUnreadyStart(r *Request, hg *hostedGame, waiting []int64, why string) {
+	s.refuseStart(r, hg, fmt.Sprintf("not ready %v (the ready check)%s", waiting, why), nil)
+}
+
+// refuseStart refuses the admin's advanceGameState IN_GAME for reason (hg.mu held; it unlocks it), as
+// refuseUnreadyStart says. findings (RULES1: the rules' findings at the start) go with lobby.startRefused.
+func (s *Server) refuseStart(r *Request, hg *hostedGame, reason string, findings []rules.Finding) {
 	gid := hg.game.ID
+	tell := hg.unlockRosterLocked()
+	hg.mu.Unlock()
+	s.Log.Logf("blaze", "   game %d: advanceGameState IN_GAME refused: %s; RosterLockedKey \"0\" to every player, the admin its extended data (its lobby's redraw)",
+		gid, reason)
+	r.Fail(ErrInvalidGameStateAction)
+	var data any // the ready check's refusal has none
+	if len(findings) > 0 {
+		data = struct {
+			Findings []rules.Finding `json:"findings"`
+		}{findings}
+	}
+	r.After(func() { tell(data) })
+}
+
+// unlockRosterLocked unlocks the lobby's roster (RosterLockedKey "0", hg.mu held) and returns what tells the players,
+// to be called outside hg.mu: NotifyGameAttribChange to everyone, each admin its own extended data (READY2b's redraw)
+// and lobby.startRefused with data, and the lobby's state again in a game with rules (canEdit). The refused start's and
+// the cancelled draft's (RULES5b) unlock.
+func (hg *hostedGame) unlockRosterLocked() func(data any) {
+	s := hg.s
 	unlock := []tdf.Pair{tdf.KV(AttrRosterLocked, "0")}
 	hg.game.Attrs = mergeAttrs(hg.game.Attrs, unlock)
 	var admins []*hostedPlayer
@@ -429,20 +502,20 @@ func (s *Server) refuseUnreadyStart(r *Request, hg *hostedGame, waiting []int64,
 		}
 		admins = append(admins, hp)
 	}
-	hg.mu.Unlock()
-	s.Log.Logf("blaze", "   game %d: advanceGameState IN_GAME refused: not ready %v (the ready check)%s; RosterLockedKey \"0\" to every player, the admin its extended data (its lobby's redraw)",
-		gid, waiting, why)
-	r.Fail(ErrInvalidGameStateAction)
-	note := GameAttribChangeNotification(gid, unlock)
-	r.After(func() {
+	rulesOn := hg.rulesOnLocked()
+	note := GameAttribChangeNotification(hg.game.ID, unlock)
+	return func(data any) {
 		hg.push(NotifyGameAttribChangeID, "NotifyGameAttribChange", func(*hostedPlayer) []byte { return note })
 		for _, a := range admins {
 			if own := s.OwnExtendedData(a.p.ID); own != nil {
 				a.conn.Push(s, ComponentUserSessions, NotifyUserSessionExtendedDataUpdate, "UserSessionExtendedDataUpdate", own)
 			}
 			if s.UI != nil {
-				s.UI.Send(a.p.ID, EventLobbyStartRefused, nil)
+				s.UI.Send(a.p.ID, EventLobbyStartRefused, data)
 			}
 		}
-	})
+		if rulesOn {
+			hg.publishLobby() // the roster unlocked: the admin may change the rules again (canEdit)
+		}
+	}
 }

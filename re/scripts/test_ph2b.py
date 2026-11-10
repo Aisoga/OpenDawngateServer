@@ -27,17 +27,17 @@ import dbpf  # noqa: E402
 import patch_locale as pl  # noqa: E402
 
 MADE_UP_SHA = "97766712cea3cf54c20204922cc472d86ac9d592c40e955f7c1a635e0567f25e"
-MADE_UP_LANE_B = "48adf42d2782fcbf4ebffcf23c5497fe1eb13465b2c9df3ef9906e138c2ae6a1"  # --host 127.0.0.2
-MADE_UP_WEB = "167fe96dce5a000ec6b04d89b40a52ac44c2eb6eac92531ecca7afbe843925f9"  # 192.168.1.20, Play.Example.org:8443
-MADE_UP_LOBBY_ANY = "93415e9102b9915fc4e5a17325c86fc57e1a596ed75e0ad5dc83bd634ae2c8c9"  # 127.0.0.2, LOBBY_MAP_ANY, MAPS
+MADE_UP_LANE_B = "2ff15d6c50c83b5e871a0cac67c46ae67867d8518363f6035282522f31595398"  # --host 127.0.0.2
+MADE_UP_WEB = "b9ae72da71f1474c9d8a0b891e335881f5d0565fc869e8275660b121efff0c20"  # 192.168.1.20, Play.Example.org:8443
+MADE_UP_LOBBY_ANY = "6bd2220ec00f8aeb8d13af9a933505fc779ea71636e1aa00b11952585746c67d"  # 127.0.0.2, LOBBY_MAP_ANY, MAPS
 # a maps folder's packages (localepatch_test.go's maps): CM_Ring, and one named like MM_Map_v3 (its line is the first's)
 MAPS = [("CM_Ring", "Test Ring"), ("mm_map_V3", "Not this")]
 SYNTH_LOCALE_SHA = "528ce9623b3b1542fa600b1036136a3c39e8e68bb586019fb3a6d3c2f6374832"
-SYNTH_LOCAL = "09e70b3d8ae98c467044606da14a39f5c8045d1b5ccef1a8edd43f81125d1bb6"  # the synthetic game, 127.0.0.1
+SYNTH_LOCAL = "bcbe4a4907e8cd62af949b32cf42fbdbd0443dc235689825749774f9e6ee200c"  # the synthetic game, 127.0.0.1
 GAME_854 = {  # build 854's Locale.package
-    ("127.0.0.1", None): "d5dc6938666a43ab80eb2c3000fe474a0c205982fe71e1bc446337f91e68953f",
-    ("127.0.0.2", None): "47b26aed6c9a6c2e4a04c7b20e5447e1051533dc159692034eb09291bfa9c951",
-    ("203.0.113.7", "dawngate.example.org"): "4eece808fe745e3bad7d43d71449458af5a302c2052fd50b5313fc1da54125d2",
+    ("127.0.0.1", None): "66ce1d46f8be1f5d0c6133709752c74bce798e9debf38fd558b085f49eafd3d0",
+    ("127.0.0.2", None): "0abbfbda537ffb40c96fe682463dad997cac461d8ddeef6987c2e38b80995558",
+    ("203.0.113.7", "dawngate.example.org"): "75003a3064fd64f76e90923f6453ee39901c058d949eae761285c7c8c7b8b52e",
 }
 # synthgame.Locale() (server/internal/setup/testgame/synthgame): one RefPack-compressed table, no login table
 SYNTH_LOCALE = bytes.fromhex(
@@ -138,7 +138,14 @@ class SameAsGo(Temp):
                                    b"0x5e70c002 Refund for ~price~ vim?\r\n0x5e70c003 Refunds for: ~price~\r\n"
                                    b"0x5e70c004 Refund for ~item~ and ~price~ vim?\r\n"
                                    b"0x5e70c005 Refunds for: ~item~ and ~price~\r\n"])
-            self.assertEqual(len(pkg.entries), 7)
+            # RULES0b: LabsAlerts is the shipped one (no final line end) plus the match rules' two alert lines
+            shipped = pl.find_table(dbpf.Package(path), pl.LABS_ALERTS)
+            alerts = [pkg.read(e) for e in pkg.entries if e.instance == pl.LABS_ALERTS]
+            self.assertTrue(shipped.endswith(b"Some content may not be available."), shipped[-40:])
+            self.assertEqual(alerts, [shipped + b"\r\n" + pl.ADDED_COMMENT.encode() +
+                                      b"\r\n0x5e70e001 You can shop only after dying.\r\n"
+                                      b"0x5e70e002 That item is not allowed in this match.\r\n"])
+            self.assertEqual(len(pkg.entries), 8)
 
 
 class Rule(unittest.TestCase):

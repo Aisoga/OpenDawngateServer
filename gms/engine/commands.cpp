@@ -13,6 +13,7 @@
 
 #include "core/commands/gold.h"   // D15b: the gold aid in 16-bit steps
 #include "core/commands/queue.h"  // D7c: the queued-move step and the host's takeover
+#include "core/commands/text.h"   // RULES0b: a text line for one player
 #include "core/protocol/commands.h"
 #include "core/protocol/wire.h"
 #include "core/session/pump.h"  // Q3c: the arrival of the message in hand
@@ -28,6 +29,7 @@
 #include "refund.h"
 #include "replicate.h"
 #include "shop.h"
+#include "shoprules.h"
 
 using namespace game;
 
@@ -749,10 +751,50 @@ bool UndoSale(void* sim, unsigned index, const PlayerInfo& pi, const gms::ItemTr
   return true;
 }
 
+// RULES4a: the custom game's shop rules (Shop on Death, the item pool; core/rules/shop.h MayTransact) before the
+// binary's checks and REFUND1's undo. A refusal is answered success 0 to the player only (the shop shows nothing for
+// it), with the rule's text line (RULES0b's defs, at most one every 2 s per player). True: refused here. A bot seat is
+// never checked (RULES4b teaches the bots; the server's checks keep them off with these options).
+bool RulesRefused(void* sim, unsigned index, const PlayerInfo& pi, const gms::ItemTransactionRequest& r,
+                  const char* source) {
+  if (!shoprules::Current().Any() || bots::IsBotIndex(static_cast<int>(index))) return false;
+  if (gms::rules::TransactionOf(r.type) == gms::rules::Transaction::kOther) return false;
+  const ShopReach reach = SehShopReach(sim, pi);
+  const int in = SehInProximity(pi.player);
+  if (in >= 0) shoprules::OnPosition(index, reach.dead, in == 1, reach.distance);
+  const gms::rules::Verdict v = shoprules::Check(index, r.type, r.item);
+  if (v == gms::rules::Verdict::kAllowed) return false;
+  const Wallet w = SehWallet(pi.player);
+  ++g_st.itemsRefused[r.type <= 5 ? r.type : 0];
+  const char* def = gms::rules::FeedbackDef(v);
+  unsigned mask = 0;
+  const bool due = shoprules::TextDue(index);
+  if (due) mask = SendPlayerText(sim, index, def);
+  Log("commands: %s player %u: ItemTransaction %s (%s, %s) -> refused: RULES4a: %s; shop rules %s/%s, pass %d, "
+      "%.2f from the base object%s; answered success 0; text %s",
+      source, index, gms::DescribeItemTransaction(r).c_str(), gms::rules::ItemNameOf(r.item),
+      gms::rules::KindName(gms::rules::KindOf(r.item)), gms::rules::Describe(v),
+      gms::rules::Name(shoprules::Current().shop), gms::rules::Name(shoprules::Current().pool),
+      shoprules::HasPass(index) ? 1 : 0, reach.distance, reach.dead ? ", dead" : "",
+      !due ? "paced (one every 2 s)" : mask ? def : "FAILED (see the text line above)");
+  gms::Bytes m = gms::BuildItemTransactionResult(static_cast<std::uint8_t>(index), r.type, r.item, r.slot, false);
+  Answer a;
+  a.players = static_cast<std::uint16_t>((1u << index) & 0x3FF);
+  a.what = gms::DescribeCommandAnswer(m);
+  a.msg = std::move(m);
+  a.early = true;
+  g_answers.push_back(std::move(a));
+  matchrec::OnItemResult(index, source, r, r.slot, false, false, w.gold, w.gold);  // MATCHREC
+  return true;
+}
+
 bool OnItemTransaction(void* sim, unsigned index, const PlayerInfo& pi, const gms::ItemTransactionRequest& r,
                        const char* source) {
   // REFUND1: a human player's inventory with the build paths around the transaction (the bots never undo)
   const bool human = std::strcmp(source, "bot") != 0;
+  // RULES4a: the match's shop rules come first (an undo is a sale: under Shop on Death it needs the pass, which a
+  // player holds through the whole visit the history lasts)
+  if (human && RulesRefused(sim, index, pi, r, source)) return false;
   if (human && r.type == gms::kItemSell && refund::Any(index)) {
     const float goldBefore = SehWallet(pi.player).gold;
     if (UndoSale(sim, index, pi, r, source)) {
@@ -1401,6 +1443,31 @@ unsigned SendFeedback(void* sim, const char* defName, std::uint32_t object, unsi
   return mask ? mask : 0x10000u;  // queued, but no player on those teams: not a failure
 }
 
+unsigned SendPlayerText(void* sim, unsigned index, const char* defName) {
+  if (!defName || !*defName) return 0;
+  if (bots::IsBotIndex(static_cast<int>(index))) {
+    Log("commands: player %u: text %s -> skipped (a bot)", index, defName);
+    return 0;
+  }
+  PlayerInfo pi;
+  gms::cmdtext::TextMask tm;
+  if (!SehReadPlayer(sim, index, &pi) || !pi.creature || !gms::cmdtext::PlayerTextMask(index, pi.team, &tm)) {
+    ++g_st.feedbackFailed;
+    Log("commands: player %u: text %s -> FAILED (no server player or no creature)", index, defName);
+    return 0;
+  }
+  unsigned mask = 0;
+  if (!SehSendFeedback(sim, defName, pi.creature, tm.teamBits, 0, &mask, 0, tm.excludePlayers)) {
+    ++g_st.feedbackFailed;
+    Log("commands: player %u: text %s -> FAILED (no such asset in this copy, or an exception)", index, defName);
+    return 0;
+  }
+  ++g_st.feedbacks;
+  Log("commands: player %u: text %s -> players 0x%04x (object %08X, team %u)", index, defName, mask, pi.creature,
+      pi.team);
+  return mask;
+}
+
 bool GrantXpNow(void* sim, unsigned index, float amount, const char* source) {
   PlayerInfo before;
   if (!SehReadPlayer(sim, index, &before)) {
@@ -1678,6 +1745,12 @@ void AfterTick(void* sim) {
         const ShopReach r = SehShopReach(sim, pi);
         refund::OnPosition(i, !r.dead, in == 1, r.distance);
       }
+      // RULES4a: Shop on Death's pass follows the same test (a death gives it, alive and out of reach takes it)
+      if (in >= 0 && shoprules::Current().shop == gms::rules::ShopAccess::kOnDeath &&
+          !bots::IsBotIndex(static_cast<int>(i))) {
+        const ShopReach r = SehShopReach(sim, pi);
+        shoprules::OnPosition(i, r.dead, in == 1, r.distance);
+      }
     }
     MoveInfo mv;
     if (!SehReadMove(pi.object, &mv)) continue;
@@ -1754,6 +1827,11 @@ void FormatStats(char* buf, std::size_t size) {
   const std::size_t used = std::strlen(buf);
   if (used + 1 < size)
     std::snprintf(buf + used, size - used, "; sales taken as an undo %u; %s", g_st.itemsUndone, undo);
+  // RULES4a: the shop rules' refusals, texts and passes
+  char rules[256];
+  shoprules::FormatStats(rules, sizeof rules);
+  const std::size_t used2 = std::strlen(buf);
+  if (used2 + 1 < size) std::snprintf(buf + used2, size - used2, "; %s", rules);
 }
 
 }  // namespace cmds

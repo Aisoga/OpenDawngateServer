@@ -9,3 +9,4 @@ Short records of the project's larger design decisions: what was decided and why
 | [3](0003-setup-in-go.md) | The release's setup in Go, so players and operators need no developer tools |
 | [4](0004-outside-go-modules.md) | The few outside Go modules allowed (SQLite, `golang.org/x/crypto`), and how they're pinned |
 | [5](0005-ui-channel.md) | Our UI classes talk to the server over their own connection, not through the game's channels |
+| [7](0007-region-host-machines.md) | Host machines in other regions: an encrypted link to the main server, and players reach their matches directly |

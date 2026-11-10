@@ -138,6 +138,13 @@ type Shaper struct {
 	SubArchetype string   `json:"subArchetype,omitempty"`
 	TestingOnly  bool     `json:"testingOnly,omitempty"`
 	Abilities    []string `json:"abilities,omitempty"` // basic, special 1-4, passive (Lua names)
+
+	// Portrait and Card are the shaper's two pictures as the AssetData names them (the shaper item's default skin
+	// Noun's iconData: largeIcon, the 256 x 256 face, and purchaseIcon, the Collection's 64 x 128 card), e.g.
+	// "Heroes/Alpha/default/ui/Textures/alpha_portrait.dds"; empty without a shaper item or Noun. The lobby's draft
+	// board loads them (blaze.DraftShaper). The game's texture lookup ignores case, so the AssetData's spelling works.
+	Portrait string `json:"portrait,omitempty"`
+	Card     string `json:"card,omitempty"`
 }
 
 // Perk is one PerkShape or Gem.
@@ -218,6 +225,20 @@ func enumName(names []string, i int) string {
 		return ""
 	}
 	return names[i]
+}
+
+// HasPictures reports whether the shapers have their pictures (Shaper.Portrait, Card), which the lobby's draft board
+// shows; a file built before them has none, and the board then shows the shapers' names only.
+func (c *Content) HasPictures() bool {
+	if c == nil {
+		return false
+	}
+	for _, s := range c.Shapers {
+		if s.Card != "" || s.Portrait != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // HasPerkStats reports whether the content knows the perks' stats (a file made since D3-perks): a perk with

@@ -90,7 +90,15 @@ type Hello struct {
 	Token string `json:"token"`
 	PID   int    `json:"pid"`
 	Build string `json:"build"`
+
+	// Features are what the host understands beyond the messages every host reads (omitted when none): a decoder
+	// ignores an unknown field, so a field the host would drop is only sent to a host that names it here. Remote host
+	// machines may run an older build than the server.
+	Features []string `json:"features,omitempty"`
 }
+
+// FeatureRules is the host feature for a custom game's rules: startGame's Rules and FillTeams.
+const FeatureRules = "rules"
 
 // RosterEntry is one player of the match.
 type RosterEntry struct {
@@ -217,6 +225,24 @@ type UpdateRoster struct {
 // answers the held HelloReqs with these slots and runs the pre-game.
 type StartGame struct {
 	Roster []RosterEntry `json:"roster"`
+
+	// Rules are the custom game's match rules (the lobby's, checked by the server; package rules), omitted for the
+	// standard game. FillTeams is the lobby's bots setting: the seats a team the host fills with bots, 0 = none; it
+	// replaces createGame's fillTeams before the host plans its bots (omitted: createGame's stays). Both only to a host
+	// with FeatureRules.
+	Rules     *Rules `json:"rules,omitempty"`
+	FillTeams *int   `json:"fillTeams,omitempty"`
+	// PoolClasses are the shaper pool's PlayerClasses ("PC_Guardian") when the rules have one (RULES3; omitted for the
+	// pool "all"): the host's bots draw only from them. The humans' lists in the roster hold only the pool already.
+	PoolClasses []string `json:"poolClasses,omitempty"`
+}
+
+// Rules is a custom game's rules combination on the wire: one option id per category (rules.Combination's fields).
+type Rules struct {
+	Pick       string `json:"pick"`
+	ShaperPool string `json:"shaperPool"`
+	Shop       string `json:"shop"`
+	ItemPool   string `json:"itemPool"`
 }
 
 // GameReady says the level is loaded and the GMS port is bound.
@@ -442,6 +468,10 @@ type AbortGame struct {
 type VerifyHello struct {
 	Addr string `json:"addr"`
 	User int64  `json:"user"`
+
+	// Flow is a host machine's relay annotation (REGION5, region_link.go): who is behind Addr at its match gateway.
+	// Only the relay adds it (it drops a host's own); the main server reads it only for a match on such a machine.
+	Flow *HelloFlow `json:"flow,omitempty"`
 }
 
 // HelloVerdict answers VerifyHello, echoing its Addr and User.
@@ -474,12 +504,23 @@ type AgentAuth struct {
 	Bind   string `json:"bind"`
 	Public string `json:"public"`
 	Ports  string `json:"ports"`
+
+	// REGION1, the TLS link only (link.go): the host machine's match gateway ("IPv4:port") and its key's
+	// pin (64 hex), and its host copy's map archives (lower-case archive name -> SHA-256 hex)
+	Gateway string            `json:"gateway,omitempty"`
+	Pin     string            `json:"pin,omitempty"`
+	Maps    map[string]string `json:"maps,omitempty"`
 }
 
 // AgentReady says the agent is registered. Addr is the agent's address as the server sees it: the
 // hosts it starts must dial in from that address.
 type AgentReady struct {
 	Addr string `json:"addr"`
+
+	// REGION1, the TLS link only: the main server's clock (Unix ms) and its start ("20061102-150405",
+	// UTC), which names the agent's match folders
+	Now     int64  `json:"now,omitempty"`
+	Started string `json:"started,omitempty"`
 }
 
 // AgentStatus is the agent's heartbeat (every 5 s): the matches whose hosts run there.
@@ -493,6 +534,10 @@ type LaunchHost struct {
 	Match int64  `json:"match"`
 	Token string `json:"token"`
 	Port  int    `json:"port"`
+
+	// REGION1, the TLS link only: the main server's host options (DGGMS_OPTIONS); the agent replaces
+	// only its own net_limit_shared_ips
+	Options string `json:"options,omitempty"`
 }
 
 // HostStarted answers LaunchHost: the process runs (PID on the agent's machine).
@@ -614,7 +659,10 @@ func Decode(line []byte) (Message, error) {
 }
 
 // LineReader reads control lines of at most MaxLine bytes.
-type LineReader struct{ s *bufio.Scanner }
+type LineReader struct {
+	s   *bufio.Scanner
+	max int // 0 = MaxLine (the agent link's reader takes longer lines: newLinkReader)
+}
 
 // NewLineReader reads lines from r.
 func NewLineReader(r io.Reader) *LineReader {
@@ -631,7 +679,7 @@ func (r *LineReader) Next() ([]byte, error) {
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
-		if len(line) > MaxLine {
+		if len(line) > MaxLine && (r.max == 0 || len(line) > r.max) {
 			return nil, bufio.ErrTooLong
 		}
 		return line, nil

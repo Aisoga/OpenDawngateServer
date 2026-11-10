@@ -99,7 +99,9 @@ ID_MAP_BUCKETS, ID_MAP_COUNT = 0x013F5DD4, 0x013F5DD8
 FEEDBACK_NAMES = ['PlayerCommCharge', 'PlayerCommCare', 'PlayerCommNo', 'PlayerCommSorry', 'PlayerCommThankYou',
                   'PlayerCommYes', 'PlayerCommCompliment', 'PlayerCommLaugh', 'PlayerCommTaunt', 'PlayerCommJoke',
                   'PlayerCommFlirt', 'PlayerCommMissing', 'PlayerCommDance',
-                  'MineUnderAttack']  # the wells' alert: D9b the client's own (a worker hit, keyed to its well)
+                  'MineUnderAttack',  # the wells' alert: D9b the client's own (a worker hit, keyed to its well)
+                  'Rules_ShopClosed', 'Rules_ItemNotAllowed',  # RULES0b: the match rules' text lines (zz_BotProfiles)
+                  'OutOfRange']  # the game's own "Out of range." (RULES0b's comparison line)
 
 
 def fnv1(text):

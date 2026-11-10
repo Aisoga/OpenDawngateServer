@@ -249,7 +249,7 @@ func (s *Server) launchHostedGame(g Game, mode string, fillTeams int, players []
 	}
 	s.shaperSelectSpec(&spec, players) // D3-live step 4: with --shaper-select
 	s.hosted.add(hg)
-	mt, err := s.Hosts.Start(spec, hg.events())
+	mt, err := s.startHost(spec, hg.events(), custom) // M27: a custom game in its creator's region (regions.go)
 	if err != nil {
 		s.hosted.remove(g.ID)
 		s.Log.Logf("blaze", "   game %d %q: no match host (%v); error reply", g.ID, g.Name, err)
@@ -412,8 +412,10 @@ func (hg *hostedGame) events() gmshost.Events {
 		VerifyHello: s.verifyHello,
 		Ready: func(mt *gmshost.Match, port int) {
 			<-hg.replied // NotifyGameSetup must not overtake the reply
+			site, _, _, _ := mt.Placement()
 			hg.mu.Lock()
 			hg.game.GMS = hostAddr(hg.game.GMS, mt, port)
+			hg.game.Site, hg.game.Match = site, mt.ID // REGION5: region_route.go
 			g := hg.game
 			hg.mu.Unlock()
 			after := "resetDedicatedServer"
@@ -426,6 +428,7 @@ func (hg *hostedGame) events() gmshost.Events {
 				// B15: joinable from now on, set before the creator hears it so a join right after can't be
 				// refused; the creator's NotifyGameSetup goes to the players of this moment only (a joiner has
 				// its own), then the game browser lists the game
+				hg.regionReady(mt) // M27: PSAS and lobby.state's notice from where it runs (regions.go)
 				hg.mu.Lock()
 				hg.custom.ready = true
 				var to []*hostedPlayer
@@ -463,6 +466,7 @@ func (hg *hostedGame) events() gmshost.Events {
 			switch u.Phase {
 			case gmshost.PhaseInGame:
 				hg.setState(GameStateInGame)
+				hg.announceRulesLater() // RULES1: the players' System line with the rules (lobbyrules.go), once
 			case gmshost.PhasePostGame:
 				hg.setState(GameStatePostGame)
 			}
@@ -588,7 +592,7 @@ func (hg *hostedGame) persist(mt *gmshost.Match, f gmshost.FinishGame) []afterGa
 	}
 	practice := hg.mode == gmshost.ModePractice
 	hg.mu.Lock()
-	ranked := hg.ranked()
+	ranked, withRules := hg.ranked(), hg.unratedRulesLocked()
 	var joined []*hostedPlayer
 	var pushes []afterGamePush
 	for _, hp := range hg.players {
@@ -612,6 +616,7 @@ func (hg *hostedGame) persist(mt *gmshost.Match, f gmshost.FinishGame) []afterGa
 		g := progress.Game{Descriptors: game.descriptors(), Won: won, Seconds: float64(f.DurationMs) / 1000}
 		hold := g.KarmaVote()
 		acct, res, err := s.applyGame(hp.userID, g, pf.Stats, pf.Rewards, practice, ranked, hold)
+		res.Rules = withRules
 		if err != nil {
 			s.Log.Logf("blaze", "   (account %d: game %d not stored: %v)", hp.userID, game.ID, err)
 			if err == store.ErrNoAccount {
@@ -676,9 +681,11 @@ func (hg *hostedGame) pushExtendedData(ps []afterGamePush) {
 // ranked reports whether the game counts for the main menu's Leaderboard (its games and wins, store.History.Ranked;
 // the operator's rule): a PvP game (matchmade, queued solo or as a group) and a custom game do; a practice game
 // doesn't, nor does a practice group's, which the server makes as a custom game with the bots-fill bit in its
-// GameFlags (0x412; customgames.go). The profile's PlayerStats and history count every game. Called with hg.mu held.
+// GameFlags (0x412; customgames.go). The profile's PlayerStats and history count every game. RULES1: a custom game
+// with rules away from the standard game doesn't count either (unratedRulesLocked; nor does the rating, rating.Judge on
+// the history's rules). Called with hg.mu held.
 func (hg *hostedGame) ranked() bool {
-	return Ranked(hg.mode, hg.game.descriptors())
+	return Ranked(hg.mode, hg.game.descriptors()) && !hg.unratedRulesLocked()
 }
 
 // Ranked is hostedGame.ranked's rule by the game's mode (createGame's mode) and GameFlags (createGame's descriptors):

@@ -76,3 +76,12 @@
 {"t":"seatStats","index":9,"user":0,"bot":true,"team":2,"noun":284823512,"role":0}
 {"t":"matchTimeline","stepSec":60,"sec":[60,120,180],"seats":[{"index":0,"gold":[740,1310,1920],"xp":[310,780,1290],"level":[2,4,5],"cs":[6,14,22]}],"teams":[{"team":1,"gold":[3700,6550,9600],"kills":[0,1,3]},{"team":2,"gold":[3650,6400,9100],"kills":[1,1,2]}],"events":[{"ms":95210,"kind":"kill","a":3,"b":7},{"ms":412000,"kind":"structure","a":1,"b":0}]}
 {"t":"matchTimeline","stepSec":60}
+# RULES1: a host that takes a custom game's rules names the feature in its hello ("features", omitted when none);
+# startGame then carries the lobby's rules (omitted for the standard game) and its bots setting ("fillTeams": the seats
+# a team the host fills with bots, 0 = none, replacing createGame's fillTeams). Exactly what blaze's TestCustomGameRules
+# sends.
+{"t":"hello","match":1,"token":"00112233445566778899aabbccddeeff","pid":4242,"build":"dgsim c1","features":["rules"]}
+{"t":"startGame","roster":[{"user":2000000001,"name":"alpha","index":0,"team":1,"noun":"","bot":false}],"rules":{"pick":"random","shaperPool":"all","shop":"onDeath","itemPool":"all"},"fillTeams":0}
+# RULES3: All Random in a pool: each human's list is its rolled shaper (flags 32, available), the host locks it at once;
+# "poolClasses" (omitted for the pool "all") are the pool's PlayerClasses, from which the host's bots draw.
+{"t":"startGame","roster":[{"user":2000000001,"name":"alpha","index":0,"team":1,"noun":"","bot":false,"shapers":[{"noun":"tidalqueen.Noun","flags":32}]}],"rules":{"pick":"random","shaperPool":"ranged","shop":"normal","itemPool":"all"},"fillTeams":5,"poolClasses":["PC_Artist","PC_TidalQueen"]}

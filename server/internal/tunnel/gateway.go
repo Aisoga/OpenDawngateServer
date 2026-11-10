@@ -87,9 +87,21 @@ type Gateway struct {
 	// before the release check, which names none) is answered StatusVersion, another release StatusRelease.
 	AllowAnyClient bool
 
+	// Agents serves a host machine's agent link (hello kind 4, agent.go) until it ends; nil = refused
+	Agents func(c *tls.Conn, peer string)
+
 	// maxSessionHello, when set, answers a session hello of a later version StatusVersion, as a gateway of an earlier
 	// release does (a test's gateway from before the map list)
 	maxSessionHello byte
+
+	// Admit, when set, makes this a match gateway (admit.go): a host machine's, for match datagrams only. A session hello
+	// must carry a ticket that Admit takes (TicketAdmit); the session's one route is the Admission's.
+	Admit     func(ticket []byte, peer netip.Addr) (Admission, error)
+	ticketLog onceAMinute
+	// Running, on a match gateway (needed there), says where a match runs now (TicketAdmit's running): an admitted
+	// session whose match no longer runs at its route (it ended, or a later match took its port) gets no datagram
+	// through, and the janitor ends it (admit.go, matchGone).
+	Running func(match int64) (*net.UDPAddr, bool)
 
 	listeners map[int]*listener
 	handlers  map[int]PacketHandler
@@ -184,6 +196,9 @@ func (g *Gateway) Start(addr string) error {
 		return errors.New("tunnel: the gateway has no key")
 	}
 	g.defaults()
+	if err := g.checkAdmit(); err != nil {
+		return err
+	}
 	_, listed := g.ports()
 	if err := checkUDPPorts(listed); err != nil { // the operator hears it here, not from each player's refusal
 		return fmt.Errorf("the QoS and match host ports (--qos-port, --gms-ports): %w; Start-Client would refuse this server", err)
@@ -353,6 +368,8 @@ func (g *Gateway) serveConn(c *tls.Conn) {
 		g.serveSession(c, peer, ver)
 	case kindStream:
 		g.serveStream(c, peer)
+	case kindTicket: // another login's ticket for a match session (admit.go)
+		g.serveTicket(c, peer)
 	case kindInfo: // the server's version and facts for Start-Client's list and login: no session
 		var facts map[string]string
 		if g.Facts != nil {
@@ -361,6 +378,8 @@ func (g *Gateway) serveConn(c *tls.Conn) {
 		c.Write(infoReply(g.Version, facts))
 		g.logf("%s: version asked (%s; a server list's probe or a login's)", peer, g.Version)
 		c.Close()
+	case kindAgent: // a host machine's agent (REGION1)
+		g.serveAgent(c, peer)
 	default:
 		g.logf("%s: unknown hello kind %d", peer, kind)
 		c.Close()
@@ -418,6 +437,13 @@ func (g *Gateway) serveSession(c *tls.Conn, peer string, ver byte) {
 		g.logf("%s: session refused: tunnel address %s is not a loopback address", peer, ip)
 		return
 	}
+	if !g.mayOpen(c, peer, h) { // before a ticket is spent on a session that would be refused anyway
+		return
+	}
+	adm, ok := g.admitHello(c, peer, h) // a match gateway's ticket (admit.go)
+	if !ok {
+		return
+	}
 	g.mu.Lock()
 	if g.closed {
 		g.mu.Unlock()
@@ -448,6 +474,10 @@ func (g *Gateway) serveSession(c *tls.Conn, peer string, ver byte) {
 		g.sessions[id] = s
 	}
 	g.mu.Unlock()
+	if !g.admitted(s, ver, adm, resumed) {
+		c.Write([]byte{StatusUnavailable})
+		return
+	}
 	keys, err := DeriveKeys(c.ConnectionState(), s.id)
 	if err == nil {
 		err = s.attach(c, keys, ip, h.release, ver >= releaseVersion && build.Same(g.Version, h.release), h.maps)
@@ -485,8 +515,11 @@ func releaseName(ver byte, release string) string {
 
 // mapsName words a session hello's maps for the log.
 func mapsName(ver byte, maps []InstalledMap) string {
-	if ver < sessionVersion {
+	if ver < mapsVersion {
 		return "not named (a Start-Client from before the map check per version)"
+	}
+	if maps == nil {
+		return "not named"
 	}
 	return MapsWords(maps)
 }
@@ -663,6 +696,7 @@ func (g *Gateway) janitor() {
 			for _, s := range ended {
 				s.end(fmt.Sprintf("no control connection for %s", g.Grace))
 			}
+			g.endGoneMatches(all)
 			for _, s := range all {
 				s.closeIdleFlows(now)
 			}
@@ -728,6 +762,12 @@ type session struct {
 
 	upN, upBytes, downN, downBytes, streams       atomic.Uint64
 	dropAuth, dropReplay, dropBig, dropRoute, eps atomic.Uint64
+
+	// helloVer is the session hello's version (awayHelloVersion: its client reads away and home); adm a match gateway's
+	// admission (admit.go); aways the ports sent away (RouteAway), each sent home by its next Route (all under mu)
+	helloVer byte
+	adm      *admission
+	aways    map[int]bool
 }
 
 type flowKey struct {
@@ -884,7 +924,7 @@ func (s *session) flowFor(key flowKey) *flow {
 	if target == nil && s.g.forwarded[port] && s.g.Forward != nil {
 		target = s.g.Forward(port)
 	}
-	if target == nil {
+	if target == nil || s.adm != nil && s.g.matchGone(s.adm) {
 		return nil
 	}
 	if f := s.flows[key]; f != nil {

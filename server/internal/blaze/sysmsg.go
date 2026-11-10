@@ -250,6 +250,8 @@ type systemMessages struct {
 	count onlineCount // ONLINECOUNT: the players-online count (onlinecount.go)
 	// mapNotes counts the map check's messages per connection (MAPGUARD, mapguard.go tellMap)
 	mapNotes map[*Conn]int
+	// rulesNotes is the last rules line per connection (RULES1, lobbyrules.go announceRules)
+	rulesNotes map[*Conn]rulesNote
 }
 
 // SetBroadcasts makes list the current broadcast messages (ids 1, 2, ... in order) and turns broadcasts on: from now

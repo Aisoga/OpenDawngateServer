@@ -29,6 +29,7 @@
     host DLL     the host copy's PhysXLoader.dll is that dgsim.dll                                      -> installs it (setup_server_copy.py)
     no other     Dawngate.exe running from outside client\ (one client at a time: the Global\Dawngate mutex)
     content      server\data\content.json (optional: without it new accounts own no items)              -> prints the commands
+                 one without the shapers' pictures (the draft board)                                     -> builds it again (go run ./cmd/dgserver --make-content)
   The server itself (server\bin\dgserver.exe) is built by run_session.ps1 at every start (a second when nothing changed).
   re\scripts\setup_all.py (H3) makes all of the above from Dawngate.zip in one command; play.ps1 only checks and refreshes.
 
@@ -429,9 +430,30 @@ try {
         }
     }
 
-    # ---- optional: the player content (owned items, store) for new accounts
-    if (Test-Path (Join-Path $RepoRoot 'server\data\content.json')) { Ok 'player content (server\data\content.json)' }
-    else { Info 'no server\data\content.json: new accounts own no items (optional; docs/development/building.md *The setup command*)' }
+    # ---- optional: the player content (owned items, store) for new accounts; a file from before the shapers' pictures
+    # (the custom lobby's draft board shows them) is built again from the client copy's game data (the release's setup
+    # does the same at every start)
+    $contentFile = Join-Path $RepoRoot 'server\data\content.json'
+    if (-not (Test-Path $contentFile)) {
+        Info 'no server\data\content.json: new accounts own no items (optional; docs/development/building.md *The setup command*)'
+    } elseif (Select-String -Path $contentFile -Pattern '"card":' -SimpleMatch -Quiet) {
+        Ok 'player content (server\data\content.json)'
+    } else {
+        $remake = "cd server; go run ./cmd/dgserver --make-content $ClientDir --content $contentFile"
+        $goExe = (Get-Command go.exe -ErrorAction SilentlyContinue).Source
+        if (-not $goExe -and (Test-Path 'C:\Program Files\Go\bin\go.exe')) { $goExe = 'C:\Program Files\Go\bin\go.exe' }
+        if (-not $goExe -or -not (Test-Path (Join-Path $ClientDir 'game\Data\AssetData.snap'))) {
+            Info "server\data\content.json has no shaper pictures (a draft board shows names only); to build it again: $remake"
+        } else {
+            Write-Host '  install  player content (server\data\content.json, with the shapers'' pictures)' -ForegroundColor Yellow
+            $env:GOTOOLCHAIN = 'local'
+            Push-Location (Join-Path $RepoRoot 'server')
+            try { & $goExe run ./cmd/dgserver --make-content $ClientDir --content $contentFile | ForEach-Object { Write-Host "           $_" -ForegroundColor Gray } }
+            finally { Pop-Location }
+            if (Select-String -Path $contentFile -Pattern '"card":' -SimpleMatch -Quiet) { Ok 'player content (server\data\content.json)' }
+            else { Info "building server\data\content.json again failed (a draft board shows names only): $remake" }
+        }
+    }
 
     if ($missing.Count) {
         Write-Host ''

@@ -257,8 +257,9 @@ func BuildBorrowed(base, donor []byte, role uint32, skills []uint32, spells []st
 }
 
 // Build is the archive's bytes, made from a copy's AssetData.snap (the whole file). Its catalog lists the bot profiles
-// and then the entries of every source in maps (the installed maps' assets, whose files their own archives hold),
-// sorted by SortSources; without maps it is the bot profiles' archive alone.
+// and then the entries of every source in maps (the installed maps' assets, whose files their own archives hold; the
+// match rules' texts, RulesFeedback, whose files a source's Files bring into this archive), sorted by SortSources;
+// without maps it is the bot profiles' archive alone (bot_profiles.py's bytes).
 func Build(assetData []byte, maps ...CatalogSource) ([]byte, error) {
 	a, err := snap.Parse(assetData)
 	if err != nil {
@@ -284,7 +285,8 @@ func Build(assetData []byte, maps ...CatalogSource) ([]byte, error) {
 			return nil, fmt.Errorf("botprofiles: a map source can't be named %q", ProfilesSource)
 		}
 	}
-	cat, err = MergeCatalog(cat, SortSources(append([]CatalogSource{ProfileEntries()}, maps...)))
+	sources := SortSources(append([]CatalogSource{ProfileEntries()}, maps...))
+	cat, err = MergeCatalog(cat, sources)
 	if err != nil {
 		return nil, err
 	}
@@ -307,6 +309,20 @@ func Build(assetData []byte, maps ...CatalogSource) ([]byte, error) {
 			return nil, err
 		}
 		files = append(files, snap.File{Name: "AssetData/Binary/" + p.Name + ".BotClass.bin", Data: b})
+	}
+	// the sources' own files after the profiles', source by source (SortSources' order); a path twice is refused
+	seen := map[string]bool{}
+	for _, f := range files {
+		seen[strings.ToLower(f.Name)] = true
+	}
+	for _, s := range sources {
+		for _, f := range s.Files {
+			if seen[strings.ToLower(f.Name)] {
+				return nil, fmt.Errorf("botprofiles: %s: the archive already holds %s", s.Name, f.Name)
+			}
+			seen[strings.ToLower(f.Name)] = true
+			files = append(files, f)
+		}
 	}
 	return snap.Pack(files), nil
 }

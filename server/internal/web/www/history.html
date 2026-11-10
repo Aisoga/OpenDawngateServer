@@ -727,7 +727,7 @@
     setText(title, o.text.toUpperCase());
     title.className = "head " + o.cls;
     var why = reasonText(m.reason), age = (M.data.serverTime - m.ended) + (now() - M.gotAt) / 1000;
-    setText(line, (m.kindName || m.kind) + SEP + m.map + SEP + clock(m.durationSec) +
+    setText(line, (m.kindName || m.kind) + (m.rules ? " (Rules: " + m.rules + ")" : "") + SEP + m.map + SEP + clock(m.durationSec) +
             (m.winner ? SEP + "Team " + m.winner + " won" + (why ? " (" + why + ")" : "") : why ? SEP + why : "") +
             SEP + dateText(m.ended) + " (" + ago(age) + ")");
     var tab = null;

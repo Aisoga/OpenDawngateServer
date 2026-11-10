@@ -133,6 +133,7 @@ bool ControlClient::Connect(const HostEnv& env, int64_t pid, const std::string& 
   hello.token = env.token;
   hello.pid = pid;
   hello.build = build;
+  hello.features = features_;
   return Send(hello, err);
 }
 

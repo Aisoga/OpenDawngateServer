@@ -42,8 +42,10 @@ func (c *Conn) ForClient(g Game) Game {
 	if t == nil || g.GMS.IP == 0 {
 		return g
 	}
-	ip := net.IPv4(byte(g.GMS.IP>>24), byte(g.GMS.IP>>16), byte(g.GMS.IP>>8), byte(g.GMS.IP)).To4()
-	t.Route(int(g.GMS.Port), &net.UDPAddr{IP: ip, Port: int(g.GMS.Port)})
+	if c.away == nil || !c.away(c, t, g) { // REGION5: a host machine's match gateway (region_route.go)
+		ip := net.IPv4(byte(g.GMS.IP>>24), byte(g.GMS.IP>>16), byte(g.GMS.IP>>8), byte(g.GMS.IP)).To4()
+		t.Route(int(g.GMS.Port), &net.UDPAddr{IP: ip, Port: int(g.GMS.Port)})
+	}
 	return c.addressedForClient(g)
 }
 
@@ -73,6 +75,9 @@ func (s *Server) verifyHello(mt *gmshost.Match, v gmshost.VerifyHello) bool {
 	if err != nil {
 		s.Log.Logf("blaze", "   match %d: verifyHello: bad address %q; refused", mt.ID, v.Addr)
 		return false
+	}
+	if ok, away := s.awayHello(mt, v); away { // REGION5: a match on a host machine with a match gateway
+		return ok
 	}
 	var users []int64
 	how := "direct logins"

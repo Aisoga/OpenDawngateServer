@@ -17,7 +17,10 @@
 #pragma once
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <vector>
 
 namespace gms {
 
@@ -75,6 +78,43 @@ inline bool FreshSample(const SampleInput& in, std::uint16_t* block, std::uint16
   }
   QuantizeSamplePosition(at[0], at[1], block, xy);
   return *block != in.block || *xy != in.xy;
+}
+
+// FOGSLIDE (jump replay): a fog exit in the middle of a jump re-sends the jump's ObjectJump (96) to the players who
+// see the object from now on, so their game plays the rest as a slide (Locomotion_TickJump 0x008A2550: a slide moves at
+// its speed, locomotion +0x1C8, from the client's own position for any object but the player's own creature,
+// GameClient_OnGmsObjectJump 0x006B85C0) instead of walking it to its sample. The message as GameSimulator_SendObjectJump
+// (0x008F5D40) writes it: the wire byte, then 153 bytes: u32 id, f32 x 3 the landing point (+0x150), the path's 8
+// waypoints (+0x15C, 96 bytes; zero = straight to the landing point), +0x1BC..+0x1D4, u8 +0x1E9, the quantized start
+// (+0x144: block, xy) and +0x210/+0x20C (the arc's height and the distance moved so far). An enemy shaper's game takes
+// the start and those two from the message (the reader's second branch; seen live: a replay with the start in the fog
+// slid the whole original length from where the shaper appeared, then snapped back to the landing point).
+constexpr std::size_t kObjectJumpSize = 154;
+constexpr std::size_t kObjectJumpGoalAt = 5;
+constexpr std::size_t kObjectJumpPathAt = 17;
+constexpr std::size_t kObjectJumpPathSize = 96;
+constexpr std::size_t kObjectJumpStartAt = 142;  // u16 block, u16 xy
+constexpr std::size_t kObjectJumpMovedAt = 146;  // f32 +0x210, f32 +0x20C
+
+// The replay of `jump` (an ObjectJump as the engine sent it at the jump's start): it starts at `start` (where the late
+// player's game shows the object: the fog exit's pose) with nothing moved yet, its landing point is `goal` (the
+// server's current one: a jump at a moving target re-aims) and its path is cleared (its waypoints lead from the start
+// the late player never saw). False if `jump` isn't an ObjectJump of that size.
+inline bool JumpReplay(const std::vector<std::uint8_t>& jump, const float start[2], const float goal[3],
+                       std::vector<std::uint8_t>* out) {
+  if (jump.size() != kObjectJumpSize || jump[0] != 0x96) return false;
+  *out = jump;
+  std::memcpy(out->data() + kObjectJumpGoalAt, goal, 12);
+  std::memset(out->data() + kObjectJumpPathAt, 0, kObjectJumpPathSize);
+  std::uint16_t block = 0, xy = 0;
+  QuantizeSamplePosition(start[0], start[1], &block, &xy);
+  std::uint8_t* p = out->data() + kObjectJumpStartAt;
+  p[0] = static_cast<std::uint8_t>(block);
+  p[1] = static_cast<std::uint8_t>(block >> 8);
+  p[2] = static_cast<std::uint8_t>(xy);
+  p[3] = static_cast<std::uint8_t>(xy >> 8);
+  std::memset(out->data() + kObjectJumpMovedAt, 0, 8);
+  return true;
 }
 
 }  // namespace gms

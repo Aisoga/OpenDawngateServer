@@ -193,6 +193,9 @@ type Front struct {
 	lastList   []byte        // the list text written last
 	lastStates string        // its servers' states, for the log
 	refresh    chan struct{} // asks refreshLoop for a new list now
+
+	// AwayIdle ends an away session after this long without a datagram (front_away.go; 0: tunnel.DefaultFlowIdle)
+	AwayIdle time.Duration
 }
 
 // frontSession is a tunnel session to one server, with the server's own ports where they differ from the game's.
@@ -204,6 +207,14 @@ type frontSession struct {
 
 	mu         sync.Mutex
 	blaze, qos int // the server's Blaze port (from its redirector) and QoS port (from its preAuth); 0: not known
+
+	// away are the match ports the server sent to a host machine's match gateway (front_away.go), by server port
+	awayMu sync.Mutex
+	away   map[int]*awaySession
+	// awayRate bounds the server's away messages (front_away.go), awayDropped counts those it dropped since the last
+	// line about them (both under awayMu)
+	awayRate    tokenBucket
+	awayDropped int
 }
 
 func (s *frontSession) ports() (blaze, qos int) {
@@ -353,6 +364,7 @@ func (f *Front) Close() {
 	f.mu.Unlock()
 	if s != nil {
 		s.c.Close()
+		s.cancelAwayConnects()
 	}
 	f.wg.Wait()
 }
@@ -676,7 +688,9 @@ func (f *Front) udpLoop(port int, ln *net.UDPConn) {
 			continue
 		}
 		if s := f.current(); s != nil {
-			s.c.SendDatagram(s.serverPort(f, port), src, buf[:n])
+			if !f.sendAway(s, port, src, buf[:n]) { // a match on a host machine elsewhere (front_away.go)
+				s.c.SendDatagram(s.serverPort(f, port), src, buf[:n])
+			}
 			continue
 		}
 		if port == f.Ports.QoS {
@@ -749,6 +763,7 @@ func (f *Front) session(b Bookmark) (*frontSession, error) {
 	if old != nil {
 		f.logf("session to %s (%s) closed: the player picked %s", old.b.Tag, old.b.Gateway(), b.Tag)
 		old.c.Close()
+		old.cancelAwayConnects()
 	}
 	f.ensureListeners(s)
 	return s, nil
@@ -792,6 +807,7 @@ func (f *Front) connect(b Bookmark) (*frontSession, error) {
 	s.c = &tunnel.Client{Log: f.Log, Gateway: gw, Pin: served, TunnelIP: f.TunnelIP, External: true, DialTimeout: f.ConnectTimeout,
 		Release: f.releaseFor(b, r.version), Maps: f.installedMaps()}
 	s.c.Deliver = f.deliverFor(s)
+	f.hookAway(s) // away and home: front_away.go
 	if err := s.c.Start(); err != nil {
 		if errors.Is(err, tunnel.ErrPinMismatch) {
 			return nil, frontErr(FrontErrKeyChanged, "%s's tunnel key changed during the connect: %v", gw, err)

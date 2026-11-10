@@ -81,13 +81,18 @@ type GameResult struct {
 	// and wins after it.
 	Ranked      bool
 	RankedTotal store.GamesWon
+	// Rules: the game had rules away from the standard game (RULES1), which is why it doesn't count
+	Rules bool
 }
 
 // describeRanked is the log text of what a game of this mode added to the Leaderboard's counts.
 func (r GameResult) describeRanked(mode string) string {
 	if !r.Ranked {
 		kind := "a practice game"
-		if mode != gmshost.ModePractice {
+		switch {
+		case r.Rules:
+			kind = "a custom game with rules"
+		case mode != gmshost.ModePractice:
 			kind = "a practice group's game"
 		}
 		return fmt.Sprintf("not counted (%s); %d games, %d wins", kind, r.RankedTotal.Games, r.RankedTotal.Wins)

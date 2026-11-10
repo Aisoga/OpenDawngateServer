@@ -77,11 +77,22 @@ func (a *Addr) IPPort() (net.IP, int) { return a.IP, a.Port }
 
 // Route tells the gateway where the session's datagrams to port go (a match host's GMS address, e.g. an agent
 // machine's, H2): Blaze calls it when a client joins a game (Conn.ForClient), and only then: a session without a route
-// reaches no match host's port.
+// reaches no match host's port. A port the session was sent away for (RouteAway) is sent home.
 func (a *Addr) Route(port int, target *net.UDPAddr) {
 	if a.sess != nil && target != nil {
 		a.sess.route(port, target)
+		a.sess.homeIfAway(port) // a port sent away comes home (away.go)
 	}
+}
+
+// RouteOf is the session's route for port (nil: none; the tests of the services' routes).
+func (a *Addr) RouteOf(port int) *net.UDPAddr {
+	if a == nil || a.sess == nil {
+		return nil
+	}
+	a.sess.mu.Lock()
+	defer a.sess.mu.Unlock()
+	return a.sess.routes[port]
 }
 
 // PeerOf is a TCP or UDP address's IP (IPv4-mapped IPv6 unmapped); the zero Addr for any other address.

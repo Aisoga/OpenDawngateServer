@@ -42,6 +42,12 @@ then the profiles in table order, each a Snappy block from snap.py's encoder, in
 when its archive is byte for byte what this script makes; a changed profile table changes the bytes, so every setup
 rewrites older archives (the table is the version).
 
+The setups (setup_all.py, setup_lane.py, the release) make the archive with the Go setup (server/tools/mapsetup), which
+also lists the maps folder's assets in its catalog and, since RULES0b, lists and carries the match rules' two
+ClientFeedbackDefs (Rules_ShopClosed, Rules_ItemNotAllowed: botprofiles.RulesFeedback). So a set-up copy's archive is
+this script's plus those (--check reports it as not current); this script stays the profiles' reference, which the Go
+twin's pinned hashes follow (test_p3b.py compares the profiles' files, `files`).
+
 Usage:
     .venv/Scripts/python -I re/scripts/bot_profiles.py <working copy game/Data dir> [--check | --remove | --print]
     .venv/Scripts/python -I re/scripts/bot_profiles.py --build <AssetData.snap> <out.snap>
@@ -308,6 +314,11 @@ def build_profile(p, read):
 
 def build(assetdata_snap):
     """The archive's bytes, made from the path of a copy's AssetData.snap (the build's)."""
+    return snap.pack_bytes(files(assetdata_snap))
+
+
+def files(assetdata_snap):
+    """The archive's files [(name, bytes)] in its order: the catalog, then the profiles."""
     s = snap.Snap(assetdata_snap)
     entries = {e.name.lower(): e for e in s.entries}
 
@@ -318,11 +329,11 @@ def build(assetdata_snap):
         return s.read(e)
 
     catalog = build_catalog(read(CATALOG), [(p.name + ".BotClass", p.base + ".BotClass") for p in PROFILES])
-    files = [(CATALOG, catalog)]
+    out = [(CATALOG, catalog)]
     for p in PROFILES:
-        files.append((BINARY.format(p.name + ".BotClass"),
+        out.append((BINARY.format(p.name + ".BotClass"),
                       build_profile(p, lambda n: read(BINARY.format(n + ".BotClass")))))
-    return snap.pack_bytes(files)
+    return out
 
 
 def paths(data_dir):

@@ -74,7 +74,7 @@ func startGateway(cfg config, log *logging.Log, in *instance, sv services, gmsPo
 	// the match hosts' address (--gms-bind, else --bind): the flows to them go there and leave from there
 	bind := net.ParseIP(cfg.hostsBind()).To4()
 	gmsPorts := map[int]bool{}
-	if cfg.gmsDir != "" || cfg.agentKey != "" {
+	if cfg.hostsOn() {
 		first, last, err := gmshost.ParsePorts(cfg.gmsPorts)
 		if err != nil {
 			return nil, "", err
@@ -97,6 +97,8 @@ func startGateway(cfg config, log *logging.Log, in *instance, sv services, gmsPo
 		}
 	}
 	sv.bz.TunnelFlow = g.FlowSession // who is behind a GMS connection (verifyHello)
+	// REGION1: host machines register through the gateway
+	g.Agents = agentsHook(cfg, in.hosts)
 	// the facts an info hello answers with besides the version: the sign-up mode as it is now (the admin page may
 	// change it), which Start-Client's server list shows; and the maps a custom game may pick besides The Dawngate
 	// (--map, --custom-maps), which Start-Client lists in the CREATE GAME dialog, with the host copy's version of each

@@ -10,8 +10,10 @@
 
 #include "control/client.h"
 #include "control/host_control.h"
+#include "engine/bots.h"
 #include "engine/gms_host.h"
 #include "engine/log.h"
+#include "engine/shoprules.h"
 #include "host.h"
 
 namespace hostctl {
@@ -80,6 +82,8 @@ bool Start() {
   }
   Locked lock;
   g_ctl.reset(new HostControl(ControlLog));
+  // RULES1: this host applies startGame's rules (logs them; their behaviour comes with each rule) and its fillTeams
+  g_ctl->SetFeatures({dggms::control::kFeatureRules});
   char build[64];
   std::snprintf(build, sizeof build, "dgsim %s", __DATE__);
   if (!g_ctl->Start(env, static_cast<std::int64_t>(GetCurrentProcessId()), build, NowMs(), &err)) {
@@ -99,7 +103,28 @@ void Poll() {
   Locked lock;
   const std::int64_t now = NowMs();
   const bool hadGame = g_ctl->HasGame();
+  const bool wasStarted = g_ctl->Started();
   g_ctl->Poll(now);
+  if (!wasStarted && g_ctl->Started()) {
+    // RULES1: a custom game's start. Its fillTeams (the lobby's bots setting) goes to the bots now, in the frame that
+    // read it: the session answers the held HelloReqs at its next tick, and the first one plans the bots.
+    const auto& r = g_ctl->StartRules();
+    const auto& fill = g_ctl->StartFillTeams();
+    if (r)
+      Log("control: startGame: rules pick %s, shaperPool %s, shop %s, itemPool %s", r->pick.c_str(),
+          r->shaperPool.c_str(), r->shop.c_str(), r->itemPool.c_str());
+    else
+      Log("control: startGame: no rules (the standard game)");
+    if (fill) {
+      Log("control: startGame: fillTeams %lld (the lobby's bots setting, replacing createGame's)",
+          static_cast<long long>(*fill));
+      bots::SetFillTeams(static_cast<int>(*fill), "startGame");
+    }
+    // RULES4a: the shop rules (Shop on Death, the item pool) for every purchase from now on
+    if (r) shoprules::SetFromStart(r->shop, r->itemPool);
+    // RULES3: the shaper pool's classes go to the bots' draw (it runs in shaper select, after this frame)
+    if (!g_ctl->StartPoolClasses().empty()) bots::SetDraftPool(g_ctl->StartPoolClasses(), "startGame");
+  }
   if (!hadGame && g_ctl->HasGame()) {
     const auto& g = g_ctl->Game();
     Log("control: createGame: game %lld, %s, level %s, seed %lld, descriptors 0x%llX%s, fill teams %lld%s, %zu roster "
@@ -138,6 +163,8 @@ const dggms::control::CreateGame& Game() { return g_ctl ? g_ctl->Game() : kNoGam
 const dggms::control::RosterEntry* FindUser(std::int64_t user) { return g_ctl ? g_ctl->FindUser(user) : nullptr; }
 
 bool InLobby() { return g_ctl && g_ctl->InLobby(); }
+
+std::string StartPick() { return g_ctl && g_ctl->StartRules() ? g_ctl->StartRules()->pick : std::string(); }
 
 void VerifyHello(const std::string& addr, std::int64_t user) {
   if (!g_ctl) return;

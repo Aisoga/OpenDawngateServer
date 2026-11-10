@@ -15,7 +15,9 @@ import (
 // re/scripts/bot_profiles.py): the project's own bot profiles (a Warden with the Predator role), made from the copy's
 // own AssetData.snap, which must be the build's. Current means byte for byte what botprofiles makes now, so a copy set
 // up before a profile was added gets the new archive. Every client and match-host copy: the host gives its bots these
-// profiles, and each client reads a bot's role from the profile its player update names.
+// profiles, and each client reads a bot's role from the profile its player update names. The archive also lists and
+// carries the match rules' two ClientFeedbackDefs (botprofiles.RulesFeedback): the host finds them by name, and the
+// client shows their texts (the locale patch's LabsAlerts lines).
 func (s *Setup) stepBotProfiles(step, copy string) bool {
 	src := filepath.Join(copy, filepath.FromSlash(botprofiles.Source))
 	added := filepath.Join(copy, filepath.FromSlash(botprofiles.Rel))
@@ -31,15 +33,20 @@ func (s *Setup) stepBotProfiles(step, copy string) bool {
 			"delete %s and start again (it is extracted anew)", s.show(src), copy))
 	}
 	maps := s.mapCatalogs()
-	want, err := botprofiles.Build(data, maps...)
+	rules, err := botprofiles.RulesFeedback()
+	if err != nil {
+		return s.report(Failed, step, err.Error())
+	}
+	want, err := botprofiles.Build(data, append(maps, rules)...)
 	if err != nil {
 		return s.report(Failed, step, err.Error())
 	}
 	h := sha256.Sum256(want)
-	line := fmt.Sprintf("%s: %d bot profile(s) (%s)", s.show(added), len(botprofiles.Profiles), hex.EncodeToString(h[:])[:16])
+	line := fmt.Sprintf("%s: %d bot profile(s), %d match rules text(s) (%s)", s.show(added), len(botprofiles.Profiles),
+		len(rules.Entries), hex.EncodeToString(h[:])[:16])
 	if len(maps) > 0 {
-		line = fmt.Sprintf("%s: %d bot profile(s) and the catalog entries of %d map(s) (%s)", s.show(added),
-			len(botprofiles.Profiles), len(maps), hex.EncodeToString(h[:])[:16])
+		line = fmt.Sprintf("%s: %d bot profile(s), %d match rules text(s) and the catalog entries of %d map(s) (%s)",
+			s.show(added), len(botprofiles.Profiles), len(rules.Entries), len(maps), hex.EncodeToString(h[:])[:16])
 	}
 	have, err := os.ReadFile(added)
 	if err == nil && bytes.Equal(have, want) {

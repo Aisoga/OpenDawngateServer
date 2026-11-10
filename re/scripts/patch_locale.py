@@ -2,7 +2,7 @@
 
 The client looks every string table up by {instance = FNV-1 of the table's name, type 0x02FAC0B6, group 0x02FABF01} in
 every *.package of game/Data/Locale/en-us/, and the package whose name sorts first wins (an added
-AA_*.package was seen winning over Locale.package live). So this script writes changed copies of seven of the copy's own tables into an added package
+AA_*.package was seen winning over Locale.package live). So this script writes changed copies of eight of the copy's own tables into an added package
 beside the shipped Locale.package, which stays untouched (the game's text can't ship: the package is made from the
 copy's own file at setup time):
 
@@ -38,6 +38,10 @@ copy's own file at setup time):
   HUD          0x268AB804   the item shop's inline refund (client_ui/itemshop/ShopRefund.as): the button's "Refund"
                             (0x5e70c001), the line above it (0x5e70c002) and the tooltip's line (0x5e70c003), with
                             ~price~ for the price as the shop's own "Sell for ~price~ vim?" (0x0b5a6f63)
+  LabsAlerts   0xB6F72728   the match's alert line (ClientFeedbackDef text keys): the match rules' refusals,
+                            0x5e70e001 "You can shop only after dying." and 0x5e70e002 "That item is not allowed in
+                            this match.", shown by the defs Rules_ShopClosed and Rules_ItemNotAllowed that
+                            bot_profiles.py adds to zz_BotProfiles.snap (the host sends them: cmds::SendPlayerText)
 
 The links (SITE_PAGES): without a website, http://<host>:<http port>/dawngate/<page>, which dgserver's HTTP port
 answers with a short page of its own (server/internal/web/sitepages.go: how sign-up works in its mode, ask the operator
@@ -49,7 +53,7 @@ package's tests pin the same SHA-256s): a table is cut at "\\n"; a line whose te
 line, before a final "\\r") starts with "0x", 8 hex digits and a blank gets the new text after that prefix, the line's
 ends kept; ids the table lacks are appended after the comment line ADDED_COMMENT, each as "0x<id, 8 lower-case hex
 digits> <text>\\r\\n" in id order (a table not ending in "\\n" gets "\\r\\n" first); a table missing from Locale.package
-(only in a synthetic test build) is made of those appended lines alone. The package holds the seven tables in instance
+(only in a synthetic test build) is made of those appended lines alone. The package holds the eight tables in instance
 order, stored uncompressed (dbpf.py write_package).
 
 The lobby's map line names one map; a copy set up with a maps folder that holds map packages (the repository's maps/,
@@ -90,6 +94,7 @@ BLAZE_ERRORS, URLS, LOGIN_SCREEN = 0x1E5BC096, 0x30B0670B, 0x69E51800
 FE_LEADERBOARD, FE_MATCH_TYPE = 0xE3B520DE, 0xFF007FE0  # FNV-1 of fe_leaderboard, fe_matchtype
 FE_CUSTOM_GAME_LOBBY = 0x7BE32E1A  # FNV-1 of fe_customgamelobby
 HUD = 0x268AB804  # FNV-1 of hud
+LABS_ALERTS = 0xB6F72728  # FNV-1 of labsalerts
 LEADERBOARD_MIN_GAMES = 10  # dgserver's --leaderboard-min-games default (blaze.LeaderboardMinGames)
 HTTP_PORT = 18080
 FALLBACK_PREFIX = "dawngate/"  # dgserver's own pages on its HTTP port (web.SitePrefix)
@@ -224,6 +229,12 @@ HUD_LINES = {
     0x5E70C004: "Refund for ~item~ and ~price~ vim?",
     0x5E70C005: "Refunds for: ~item~ and ~price~",
 }
+# the match rules' refusals in the HUD's alert line, the text keys of the ClientFeedbackDefs Rules_ShopClosed and
+# Rules_ItemNotAllowed (bot_profiles.py RULES_FEEDBACK_DEFS); no ~token~ (only the client's twelve resolve)
+LABS_ALERTS_LINES = {
+    0x5E70E001: "You can shop only after dying.",
+    0x5E70E002: "That item is not allowed in this match.",
+}
 
 
 def lobby_map_for(maps_dir):
@@ -338,7 +349,7 @@ def tables(host, http_port=HTTP_PORT, web_domain=None, lobby_map=None, maps=()):
         lobby.setdefault(lid, text)
     return {BLAZE_ERRORS: dict(ERROR_LINES), URLS: urls, LOGIN_SCREEN: dict(LOGIN_LINES),
             FE_LEADERBOARD: dict(LEADERBOARD_LINES), FE_MATCH_TYPE: dict(MATCH_TYPE_LINES),
-            FE_CUSTOM_GAME_LOBBY: lobby, HUD: dict(HUD_LINES)}
+            FE_CUSTOM_GAME_LOBBY: lobby, HUD: dict(HUD_LINES), LABS_ALERTS: dict(LABS_ALERTS_LINES)}
 
 
 def without_lines_of(text, lines):

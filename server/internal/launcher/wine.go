@@ -76,6 +76,7 @@ func serverConfigText() string {
 	t := strings.NewReplacer(
 		`D:\Games\Dawngate-Data`, "/srv/dawngate/Dawngate-Data",
 		`Dawngate-Data\data\site`, "Dawngate-Data/data/site",
+		`Dawngate-Data\agents\<name>.key`, "Dawngate-Data/agents/<name>.key",
 		"this PC only: you play here with Start-Client.exe (the default)", "this machine only: a test, nobody else reaches it (the default)",
 	).Replace(linuxText.Replace(ServerConfigText))
 	return strings.Replace(t, "; More server options", wineConfig+"; More server options", 1)

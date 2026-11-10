@@ -35,6 +35,7 @@ import (
 	"dawngate/server/internal/matchmaker"
 	"dawngate/server/internal/rating"
 	"dawngate/server/internal/redirector"
+	"dawngate/server/internal/rules"
 	"dawngate/server/internal/setup/exepatch"
 	"dawngate/server/internal/setup/gamecontent"
 	"dawngate/server/internal/site"
@@ -91,6 +92,9 @@ type config struct {
 	noHelloCheck         bool               // --gms-hello-check off: every match host's verifyHello answered ok
 	customAutoStart      time.Duration      // BOTS2c: a custom game whose humans all spectate starts by itself
 	testRefuseStart      bool               // READY2b: each custom game's first start refused (--test-refuse-start, a test aid)
+	testRules            *rules.Combination // RULES1: every new custom game's rules (--test-rules, a test aid)
+	draftTurn            time.Duration      // RULES5b: a draft turn's time (--draft-turn; 0 = 30 s)
+	testDraft            time.Duration      // RULES5b: the server acts for the player on turn after this (--test-draft, a test aid)
 	level                string             // MAPLEVEL1: the level hosted games load (--map, --level; "" = blaze.HostedLevel)
 	customLevels         []string           // MAPPICK: the levels a custom game's name tag may pick (--custom-maps)
 	mapsDir              string             // MAPED2b: the maps folder whose packages are playable levels (--maps)
@@ -161,6 +165,9 @@ type config struct {
 	quiet bool
 	// the Discord webhooks (secrets: never logged) and the posts' options (--discord-...)
 	discord discordhook.Settings
+
+	// REGION1: --region, --host-machine, --agent-tls, --agent-pin (hostmachines.go)
+	regions regionFlags
 }
 
 // broadcastEvery is how often the operator's broadcast file is read (B14).
@@ -208,6 +215,8 @@ func openData(cfg config) (*store.Store, *content.Content, string, error) {
 		info += fmt.Sprintf(" (format %s: no gem sockets or loot drops; rebuild it with --make-content)", c.Format)
 	} else if !c.HasPerkStats() { // D3-perks: a file from before it has no perk stats (shaper select's C0 02)
 		info += " (no perk stats: perk pages give no stats in a match; rebuild it with --make-content)"
+	} else if !c.HasPictures() { // a file from before the draft board: the board shows the shapers' names only
+		info += " (no shaper pictures: a custom game's draft board shows names only; rebuild it with --make-content)"
 	}
 	return st, c, info, nil
 }
@@ -257,7 +266,9 @@ func (c config) hostsBind() string {
 }
 
 // hostsOn: this configuration runs the match-host manager (local hosts, agents or both).
-func (c config) hostsOn() bool { return c.gmsDir != "" || c.agentKey != "" }
+func (c config) hostsOn() bool {
+	return c.gmsDir != "" || c.agentKey != "" || len(c.regions.machines) > 0
+}
 
 // printPorts are the TCP ports --print-ports lists: ports(), plus the control port with --gms-dir or
 // --agent-key; none in agent mode (it listens on nothing).
@@ -267,6 +278,11 @@ func (c config) printPorts() []int {
 		ps = nil
 	}
 	switch {
+	case c.regions.agentTLS != "": // REGION1: the relay, the hosts' control port on loopback
+		if c.tunnel == TunnelOn { // REGION5: and its match gateway
+			return []int{c.gmsControlPort, c.gatewayPort}
+		}
+		return []int{c.gmsControlPort}
 	case c.agent != "":
 		return nil
 	case c.tunnelClient != "": // the tunnel's client side listens on the server's ports (as the gateway names them)
@@ -357,6 +373,13 @@ func startHosts(cfg config, log *logging.Log) (*gmshost.Manager, string, error) 
 		mc.AgentKey = key
 		notes = append(notes, "agents with the key in "+cfg.agentKey)
 	}
+	link, linkNote, err := cfg.linkConfig() // REGION1: host machines through the gateway
+	if err != nil {
+		return nil, "", err
+	}
+	if mc.Link = link; linkNote != "" {
+		notes = append(notes, linkNote)
+	}
 	m := gmshost.NewManager(mc)
 	if err := m.Listen(net.JoinHostPort(controlBind, strconv.Itoa(cfg.gmsControlPort))); err != nil {
 		return nil, "", err
@@ -371,6 +394,9 @@ type agentInstance struct {
 	agent  *gmshost.Agent
 	cancel context.CancelFunc
 	done   chan struct{}
+
+	gateway   *tunnel.Gateway // REGION5: the match gateway (--tunnel on), nil without
+	stopPrune func()          // REGION5: --log-days (nil without)
 }
 
 // startAgent starts agent mode (--agent): it registers with the main server's control port and starts
@@ -406,9 +432,12 @@ func startAgent(cfg config) (*agentInstance, error) {
 			return nil, err
 		}
 	}
-	ag := &gmshost.Agent{Server: cfg.agent, Key: key, Name: name, BindHost: cfg.bind, PublicHost: public, Ports: cfg.gmsPorts,
+	ag := &gmshost.Agent{Server: cfg.agent, Key: key, Name: name, BindHost: cfg.hostsBind(), PublicHost: public, Ports: cfg.gmsPorts,
 		Build: "dgserver", Launcher: &gmshost.ExecLauncher{Path: exe, Args: strings.Fields(cfg.gmsArgs), Prepare: prepareHosts,
 			DataDir: cfg.gmsData, Options: cfg.gmsOptions, Runner: gmshost.RunnerFor(cfg.gmsRunner, exe)}}
+	if err := cfg.agentLink(ag); err != nil { // REGION1: --agent-tls
+		return nil, err
+	}
 	if err := ag.Check(); err != nil {
 		return nil, err
 	}
@@ -417,10 +446,26 @@ func startAgent(cfg config) (*agentInstance, error) {
 		return nil, err
 	}
 	ag.Log = log
+	if cfg.limitsMode.Active(exepatch.IsPublic, cfg.bind, public) {
+		// a host machine's match gateway and relay port are public, and each refused connection is a line: the log's
+		// limits as on a main server (startLimits)
+		log.SetLimits(logging.PublicLimits())
+	}
+	gw, gwNote, err := matchGateway(cfg, ag, log, public) // REGION5: regions.go
+	if err != nil {
+		log.Close()
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	in := &agentInstance{log: log, agent: ag, cancel: cancel, done: make(chan struct{})}
-	log.Logf("stub", "agent %q for %s: hosts %s %s, ports %s bound on %s, GMS host %s; log %s", name, cfg.agent, exe,
-		cfg.gmsArgs, cfg.gmsPorts, cfg.bind, public, log.Path)
+	in := &agentInstance{log: log, agent: ag, cancel: cancel, done: make(chan struct{}), gateway: gw}
+	log.Logf("stub", "agent %q for %s: hosts %s %s, ports %s bound on %s, GMS host %s; log %s", name, ag.Server, exe,
+		cfg.gmsArgs, cfg.gmsPorts, cfg.hostsBind(), public, log.Path)
+	if gwNote != "" {
+		log.Logf("stub", "agent %q: %s", name, gwNote)
+	}
+	if note := in.agentPruning(cfg); note != "" { // REGION5: --log-days on a host machine
+		log.Logf("stub", "agent %q: %s", name, note)
+	}
 	go func() {
 		if err := ag.Run(ctx); err != nil {
 			log.Logf("stub", "agent: %v", err)
@@ -434,6 +479,12 @@ func startAgent(cfg config) (*agentInstance, error) {
 func (in *agentInstance) stop() {
 	in.cancel()
 	<-in.done
+	if in.stopPrune != nil {
+		in.stopPrune()
+	}
+	if in.gateway != nil {
+		in.gateway.Close()
+	}
 	in.log.Log("stub", "stopped")
 	in.log.Close()
 }
@@ -641,7 +692,8 @@ func start(cfg config) (*instance, error) {
 	bz.GMSPort = gp
 	bz.GMSHost = cfg.gmsBind // "" = the public host
 	bz.Store, bz.Content, bz.Policy = st, cont, cfg.policy
-	bz.Hosts = in.hosts // nil without --gms-dir: B8's announced GMS port
+	bz.Hosts = in.hosts                 // nil without --gms-dir: B8's announced GMS port
+	wireRegions(cfg, in.hosts, bz, log) // REGION5: regions.go
 	bz.MM = matchmaker.New(cfg.mm)
 	in.matches = func() int { return len(bz.HostedMatches()) }
 	bz.MMRefuse = cfg.mmRefuse
@@ -657,6 +709,14 @@ func start(cfg config) (*instance, error) {
 	bz.TestRefuseStart = cfg.testRefuseStart
 	if cfg.testRefuseStart {
 		log.Logf("stub", "TEST: each custom game's first start is refused (--test-refuse-start, a test aid)")
+	}
+	bz.TestRules = cfg.testRules
+	if cfg.testRules != nil {
+		log.Logf("stub", "TEST: every new custom game starts with the rules %s (--test-rules, a test aid)", rules.Describe(*cfg.testRules))
+	}
+	bz.DraftTurn, bz.TestDraft = cfg.draftTurn, cfg.testDraft
+	if cfg.testDraft > 0 {
+		log.Logf("stub", "TEST: the server bans and picks for the player on turn of every draft after %v (--test-draft, a test aid)", cfg.testDraft)
 	}
 	bz.Level = cfg.level
 	bz.CustomLevels = cfg.customLevels
@@ -1161,6 +1221,7 @@ func Run(args []string, h Hooks) int {
 	fs.StringVar(&cfg.gmsControlBind, "gms-control-bind", "127.0.0.1", "IPv4 address the control port binds; a LAN address only for agents on other machines (needs --agent-key; H2)")
 	fs.StringVar(&cfg.agentKey, "agent-key", "", "agent key file (H2): a main server takes agents that know it; in agent mode, the key to register with")
 	fs.StringVar(&cfg.agent, "agent", "", "agent mode (H2): register with the main server's control port at this address (IP:port) and start match hosts from --gms-dir here")
+	addRegionFlags(fs, &cfg.regions) // REGION1
 	fs.StringVar(&cfg.agentName, "agent-name", "", "agent mode: this host machine's name in the main server's log (default: the computer name)")
 	makeAgentKey := fs.String("make-agent-key", "", "write a new random agent key to this file (not overwritten if it exists), then exit")
 	fs.DurationVar(&cfg.gmsTimeouts[0], "gms-hello-timeout", gmshost.DefaultHelloTimeout, "kill a match host without hello after this")
@@ -1209,6 +1270,9 @@ func Run(args []string, h Hooks) int {
 	helloCheck := fs.String("gms-hello-check", "on", "whether a match host may seat a connection only after the server confirmed it may claim that player: on, or off for a NAT between the tunnel gateway and an agent's hosts, where the source address names no flow (off: whoever reaches a host's port can take a seat)")
 	fs.BoolVar(&cfg.customBots, "custom-bots", false, "custom games with match hosts: bots fill the open seats when the game starts (B15; off: only the lobby's players)")
 	fs.BoolVar(&cfg.testRefuseStart, "test-refuse-start", false, "test aid: each custom game's first start (its admin's advanceGameState IN_GAME) is refused, as the ready check refuses a start while a player isn't ready")
+	testRules := fs.String("test-rules", "", "test aid: every new custom game with a match host starts with these match rules: a preset (standard, aram, allRandom), a JSON object of categories to options, e.g. {\"pick\":\"random\"}, or its short form pick=random,shaperPool=melee; the lobby's admin can still change them")
+	fs.DurationVar(&cfg.draftTurn, "draft-turn", 0, "the time of one turn of a custom game's draft (e.g. 10s; 0 = 30s)")
+	fs.DurationVar(&cfg.testDraft, "test-draft", 0, "test aid: in every draft the server bans and picks for the player on turn this long (e.g. 2s) after the turn began, through the same checks as a player's call; 0 = off")
 	fs.DurationVar(&cfg.customAutoStart, "custom-autostart", 0, "a custom game whose humans all moved to the spectators starts by itself after this (e.g. 5s; 0 = off): a game of bots alone with --custom-bots, for tests")
 	fs.BoolVar(&cfg.shaperSelect.On, "shaper-select", false, "match hosts run shaper select with each player's shapers, skins, wards and announcers from its account (D3-live)")
 	freeRotation := fs.String("free-rotation", "", `shaper select: shapers in the free rotation, comma-separated ("gunman,PC_Otter,Fenmore")`)
@@ -1326,6 +1390,14 @@ func Run(args []string, h Hooks) int {
 		return 2
 	} else {
 		cfg.customLevels = cl
+	}
+	if *testRules != "" {
+		c, err := rules.Parse(*testRules)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "dgserver: --test-rules:", err)
+			return 2
+		}
+		cfg.testRules = &c
 	}
 	if mt, err := blaze.ParseMapTrust(*trustMaps); err != nil {
 		fmt.Fprintln(os.Stderr, "dgserver:", err)
@@ -1505,11 +1577,17 @@ func Run(args []string, h Hooks) int {
 	if cfg.tunnelClient != "" {
 		return runTunnelClient(cfg, *seconds, h)
 	}
-	if cfg.agent != "" {
+	if cfg.agent != "" || cfg.regions.agentTLS != "" {
 		ag, err := startAgent(cfg)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "dgserver:", err)
+			if h.StartFailed != nil {
+				h.StartFailed(err)
+			}
 			return 1
+		}
+		if h.Started != nil { // REGION5: Start-Server's host-machine role waits for it
+			h.Started(ag.info(cfg))
 		}
 		waitForStop(*seconds, h.Stop)
 		ag.stop()

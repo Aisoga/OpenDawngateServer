@@ -21,28 +21,27 @@ func TestSessionHelloMaps(t *testing.T) {
 	for i := range sum {
 		sum[i] = byte(i)
 	}
-	h := sessionHello{tunnelIP: [4]byte{127, 0, 0, 1}, release: "v1", maps: []InstalledMap{{Archive: "zz_A.snap", SHA256: sum}}}
+	h := sessionHello{ver: mapsVersion, tunnelIP: [4]byte{127, 0, 0, 1}, release: "v1", maps: []InstalledMap{{Archive: "zz_A.snap", SHA256: sum}}}
 	want := "DGTN\x03\x01\x7f\x00\x00\x01" + strings.Repeat("\x00", 8+16) + "\x02v1" + "\x01" + "\x09zz_A.snap" + string(sum[:])
 	if got := h.encode(); string(got) != want {
 		t.Errorf("encode = %q\nwant     %q", got, want)
 	}
 	r := bytes.NewReader(h.encode())
 	ver, kind, err := readHello(r)
-	if err != nil || ver != sessionVersion || kind != kindSession {
+	if err != nil || ver != mapsVersion || kind != kindSession {
 		t.Fatalf("readHello = %d, %d, %v", ver, kind, err)
 	}
 	back, err := readSessionHello(r, ver)
-	h.ver = sessionVersion
 	if err != nil || !reflect.DeepEqual(back, h) || r.Len() != 0 {
 		t.Errorf("readSessionHello = %+v, %v; want %+v", back, err, h)
 	}
 	// an empty list is named (not nil); an odd name is cleaned
-	r = bytes.NewReader(sessionHello{maps: []InstalledMap{{Archive: "zz_a b.snap"}}}.encode())
+	r = bytes.NewReader(sessionHello{ver: mapsVersion, maps: []InstalledMap{{Archive: "zz_a b.snap"}}}.encode())
 	ver, _, _ = readHello(r)
 	if back, _ := readSessionHello(r, ver); len(back.maps) != 1 || back.maps[0].Archive != "zz_a-b.snap" {
 		t.Errorf("an odd name: %+v", back.maps)
 	}
-	r = bytes.NewReader(sessionHello{}.encode())
+	r = bytes.NewReader(sessionHello{ver: mapsVersion}.encode())
 	ver, _, _ = readHello(r)
 	if back, _ := readSessionHello(r, ver); back.maps == nil || len(back.maps) != 0 {
 		t.Errorf("no maps: %#v", back.maps)
@@ -54,7 +53,7 @@ func TestSessionHelloMaps(t *testing.T) {
 		t.Errorf("version 2: %+v", back)
 	}
 	many := make([]InstalledMap, MaxHelloMaps+5)
-	if b := (sessionHello{maps: many}).encode(); int(b[6+28+1]) != MaxHelloMaps {
+	if b := (sessionHello{ver: mapsVersion, maps: many}).encode(); int(b[6+28+1]) != MaxHelloMaps {
 		t.Errorf("too many maps written: count %d", b[6+28+1])
 	}
 	raw := sessionHello{}.encode()

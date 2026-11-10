@@ -27,14 +27,17 @@
 #include "core/agents/nullpos.h"
 #include "core/bots/composition.h"
 #include "core/commands/testlua.h"
+#include "core/commands/text.h"  // RULES0b: the commands file's "text <def name>"
 #include "core/matchflow/camps.h"
 #include "core/postgame/postgame.h"
 #include "core/protocol/messages.h"
 #include "core/protocol/wire.h"
+#include "core/rules/pick.h"  // RULES5b: which pick rules lock at once
 #include "core/replication/create_hold.h"
 #include "core/replication/team_private.h"
 #include "core/replication/create_order.h"
 #include "core/replication/fow_data.h"
+#include "core/replication/fresh_sample.h"
 #include "core/replication/modifiers.h"
 #include "core/replication/outgoing.h"
 #include "core/session/gms_session.h"
@@ -63,6 +66,7 @@
 #include "perks.h"
 #include "refund.h"
 #include "replicate.h"
+#include "shoprules.h"
 #include "surrender.h"
 #include "script/roster_shaper.h"
 #include "script/scripted_match.h"
@@ -963,6 +967,17 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       e.flags = gms::kShaperOwned;
       config->humanDefault.list.push_back(e);
     }
+    // RULES3: All Random (startGame's rules pick "random"): each human's list is the shaper dgserver rolled for it, locked
+    // at once ([host] random_lock_answer, 1: with the lock answer, which takes the client into phase 2 by itself; 0: the
+    // client stays in phase 1 until the match's phase 2). RULES5b: the draft ("draft") the same, with the drafted shaper.
+    const std::string pick = hostctl::Active() ? hostctl::StartPick() : std::string();
+    const bool lockAtOnce = gms::rules::PickLocksAtOnce(pick);
+    config->lockAtOnceAnswer = HostOptionInt("random_lock_answer", 1) != 0;
+    if (lockAtOnce)
+      gms::Logf("%s match: shaper select: %s (startGame's rules): every human's shaper is locked at once, %s",
+                gms::Clock().c_str(), gms::rules::PickName(pick),
+                config->lockAtOnceAnswer ? "with the lock answer ([host] random_lock_answer 1)"
+                                         : "without the lock answer ([host] random_lock_answer 0)");
     // step 4: each human's own content from createGame's roster (dgserver --shaper-select)
     std::string humans;
     if (hostctl::Active() && hostctl::HasGame())
@@ -973,6 +988,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
         p.gameplayIndex = static_cast<uint8_t>(e.index);
         p.team = static_cast<uint8_t>(e.team);
         p.content = gms::ShaperContentFromRoster(e);
+        p.lockAtOnce = lockAtOnce;  // RULES3
         config->players.push_back(p);
         char buf[160];
         std::snprintf(buf, sizeof buf,
@@ -1287,6 +1303,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   // FADE1c ([host] fog_client_hysteresis): see AudienceByte.
   void SetFogClientHysteresis(float units) { fogClientHysteresis_ = units; }
   void SetLandingSample(bool on) { landingSample_ = on; }  // FOGSLIDE: see LandingStep
+  void SetFogExitJump(bool on) { fogExitJump_ = on; }      // FOGSLIDE: see FogStep's exit
   void SetTeamPrivate(bool visibleByTeam, bool deltasByVision, bool serverEventsByObject, bool castersByKnown,
                       bool goldTeamOnly, int logLimit) {
     visibleByTeam_ = visibleByTeam;
@@ -1373,6 +1390,8 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   // modifiers (and those of the objects within the radius): cmds::GrantGoldNow, cmds::ItemReportNow. DESECBOT:
   // "botxp <amount>" gives every bot XP then (their skill orders, level by level when below a level's XP);
   // DESECBOT-2: "botgold <amount>" every bot gold (their builds; they spend it at their next visit to the shop).
+  // RULES0b: "text <def name>" sends that ClientFeedbackDef's text line to that player alone (cmds::SendPlayerText;
+  // a name without a class gets ".ClientFeedbackDef").
   bool LoadCommandsFile(const char* path) {
     std::ifstream in(path);
     if (!in) {
@@ -1699,7 +1718,7 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
 
   // D3-live: the shaper select timers: [host] shaper_timers; else createGame's timers keys (ShaperSelectionTime,
   // RolePerkSelectTime, SkinSelectTime, RevealTime, ms; a missing key keeps the mode's value) over the mode's values
-  // (practice: 300000/300000/15500/16, else ShaperSelectTuning's 62000/45500/15500/16).
+  // (practice: 300000/300000/15500/16, else ShaperSelectTuning's with our 92 s pick: 92000/45500/15500/16).
   gms::ShaperSelectTimers ShaperTimers() {
     if (shaperTimersGiven_) {
       timersFrom_ = "[host] shaper_timers";
@@ -1875,6 +1894,15 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
                   pl->index, hex.c_str());
         cmds::GrantGoldNow(sim_, static_cast<unsigned>(pl->index), static_cast<float>(std::atof(hex.c_str() + 5)),
                            "injected");
+        continue;
+      }
+      if (hex.compare(0, 5, "text ") == 0) {  // RULES0b test aid: "text <def name>", the def's text line to this player
+        const std::string def = gms::cmdtext::TextDefName(hex.substr(5));
+        gms::Logf("%s match: injected (test side) %.1f s after EnterGame for player %d: %s", gms::Clock().c_str(), secs,
+                  pl->index, hex.c_str());
+        if (def.empty()) continue;
+        BoundTo b(sim_);
+        cmds::SendPlayerText(sim_, static_cast<unsigned>(pl->index), def.c_str());
         continue;
       }
       if (hex.compare(0, 6, "report") == 0) {  // D15: "report [<label>] [near <radius>]", the item report (commands.h)
@@ -2541,7 +2569,10 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
         }
       }
       if (r.fromDeletion) ++viaDeletion;
-      if (m.kind == 2 && r.wire == gms::kGmsObjectJump && m.object) jumping_.insert(m.object);  // FOGSLIDE
+      if (m.kind == 2 && r.wire == gms::kGmsObjectJump && m.object) {  // FOGSLIDE
+        jumping_.insert(m.object);
+        jumpMsgs_[m.object] = m.msg;  // re-sent at a fog exit during the jump (fog_exit_jump)
+      }
       if (!to) {
         ++dropped;
         if (++droppedLogged_ <= 50)
@@ -2824,11 +2855,14 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
       if (js > 0) {
         jumping_.insert(o.id);
       } else if (js == 0 && jumping_.erase(o.id)) {
+        jumpMsgs_.erase(o.id);
         if (repl::LandingSample(o)) ++landingSamples_;
       }
       if (!jumping_.empty()) seen.insert(o.id);
     }
     for (auto it = jumping_.begin(); it != jumping_.end();) it = seen.count(*it) ? std::next(it) : jumping_.erase(it);
+    for (auto it = jumpMsgs_.begin(); it != jumpMsgs_.end();)
+      it = jumping_.count(it->first) ? std::next(it) : jumpMsgs_.erase(it);
   }
 
   // Step 0 (fog): the inputs from the server simulator (fow::Read: objects, records, proxies, the maps), the vision
@@ -3088,6 +3122,25 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
         for (const auto& m : it->second.after) {
           SendTo(out, bit, m.msg, nullptr);
           bytes += static_cast<int>(m.msg.size());
+        }
+        // FOGSLIDE ([host] fog_exit_jump): in the middle of a jump the player gets its 96 now, so its game slides the
+        // rest from where the object appears instead of walking it there
+        const auto jm = fogExitJump_ && jumping_.count(o.id) ? jumpMsgs_.find(o.id) : jumpMsgs_.end();
+        gms::Bytes replay;
+        if (jm != jumpMsgs_.end() && repl::JumpReplay(o, jm->second, &replay)) {
+          SendTo(out, bit, replay, nullptr);
+          if (++fogJumpReplays_ <= 30 || fogJumpReplays_ % 100 == 0) {
+            const uint8_t* st = jm->second.data() + gms::kObjectJumpStartAt;
+            float sx = 0.f, sy = 0.f;
+            gms::DequantizeSamplePosition(static_cast<uint16_t>(st[0] | st[1] << 8), static_cast<uint16_t>(st[2] | st[3] << 8),
+                                          &sx, &sy);
+            Log("fog: %08X %-30s exits fog for player %d in the middle of a jump: its 96 re-sent from (%.1f, %.1f) "
+                "(the jump began at (%.1f, %.1f)) to the landing point (%.1f, %.1f); [host] fog_exit_jump 1, FOGSLIDE; "
+                "%d so far)",
+                o.id, o.name, a.player, info[i].pos[0], info[i].pos[1], sx, sy,
+                gms::GetF32LE(replay.data() + gms::kObjectJumpGoalAt),
+                gms::GetF32LE(replay.data() + gms::kObjectJumpGoalAt + 4), fogJumpReplays_);
+          }
         }
         ++fogExits_;
         fogExitBytes_ += bytes;
@@ -4024,6 +4077,9 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
   bool landingSample_ = true;           // FOGSLIDE ([host] landing_sample)
   std::unordered_set<uint32_t> jumping_;  // FOGSLIDE: objects in a jump (their 96 or jump state), until it ends
   int landingSamples_ = 0;
+  bool fogExitJump_ = true;  // FOGSLIDE ([host] fog_exit_jump)
+  std::unordered_map<uint32_t, gms::Bytes> jumpMsgs_;  // FOGSLIDE: each jumping object's 96, from the drain
+  int fogJumpReplays_ = 0;
   fow::Options fowOpt_;
   int fogLogLimit_ = 200, fogLogged_ = 0, fogFailLogged_ = 0;
   gms::vision::VisionModel model_;
@@ -4552,6 +4608,11 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   const bool freshSample = HostOptionInt("fresh_sample", 1) != 0, landingSample = HostOptionInt("landing_sample", 1) != 0;
   repl::SetFreshSample(freshSample);
   g->match->SetLandingSample(landingSample);
+  const bool fogExitJump = HostOptionInt("fog_exit_jump", 1) != 0;
+  g->match->SetFogExitJump(fogExitJump);
+  Log("host: a fog exit in the middle of a jump %s", fogExitJump
+          ? "re-sends the jump's 96, so the player's game slides the rest ([host] fog_exit_jump 1, FOGSLIDE)"
+          : "sends no 96: the player's game walks the object to its sample ([host] fog_exit_jump 0)");
   Log("host: a jump's end %s", landingSample
           ? "marks the position sample (where it landed) for the deltas ([host] landing_sample 1, FOGSLIDE)"
           : "leaves the position sample unsent, as the engine does ([host] landing_sample 0)");
@@ -4707,6 +4768,11 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
     // REFUND1: a sale in the base after a purchase undoes it (refund.h)
     refund::Configure(co.itemTransactions && HostOptionInt("item_undo", 1) != 0,
                       HostOptionInt("item_undo_log_limit", 400));
+    // RULES4a: the shop rules' test overrides ("" = startGame's rules)
+    char rulesShop[32], rulesPool[32];
+    HostOptionString("rules_shop", "", rulesShop, sizeof rulesShop);
+    HostOptionString("rules_item_pool", "", rulesPool, sizeof rulesPool);
+    shoprules::Configure(rulesShop, rulesPool);
     cmds::Install(co);
     char commandsFile[MAX_PATH];
     HostOptionString("commands_file", "", commandsFile, sizeof commandsFile);

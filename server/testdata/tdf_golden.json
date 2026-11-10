@@ -860,6 +860,11 @@
    "name": "leaveroom_open_reply",
    "hex": "8f4a6400a80fcada640003",
    "pretty": "    CTID: 1000\n    RMID: 3"
+  },
+  {
+   "name": "region3_getusersettings_default_reply",
+   "hex": "d73974050101020d417564696f2e4d61737465720004302e35001347616d65536572766572526567696f6e4964000b3138313937343832313900",
+   "pretty": "    USET: \n      Audio.Master: '0.5'\n      GameServerRegionId: '1819748219'"
   }
  ],
  "decode": [

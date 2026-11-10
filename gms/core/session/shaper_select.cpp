@@ -87,12 +87,14 @@ ShaperSelect::ShaperSelect(const ShaperSelectConfig& config)
       humanDefault_(config.humanDefault),
       rng_(config.seed),
       draftFn_(config.draft),
-      draftGraceMs_(config.draftGraceMs) {
+      draftGraceMs_(config.draftGraceMs),
+      lockAtOnceAnswer_(config.lockAtOnceAnswer) {
   for (const ShaperSelectPlayer& sp : config.players) {
     Player& p = players_[sp.gameplayIndex];
     p.team = sp.team;
     p.scripted = sp.scripted;
     p.plan = sp.plan;
+    p.lockAtOnce = sp.lockAtOnce && !sp.scripted;  // RULES3
     if (sp.scripted && sp.plan.draft) {
       // BOTDRAFT: nothing of its own until the draft (no pick, role 0: phase 1 draws an unlocked slot without a role)
       p.plan.noun = 0;
@@ -574,6 +576,25 @@ void ShaperSelect::AnnounceDraftRole(uint8_t index, ISender& out) {
   SendRoleToggle(index, p.plan.role, out);
 }
 
+// RULES3 (All Random): a lockAtOnce human is locked to its list's shaper (the server's roll) once its client's shaper
+// select UI is up: its first C8 after its C8 02, or max(lateSkinsHoldMs, kLockAtOnceWaitMs) after it. Lock sends the
+// record to the team, the skins and, with lockAtOnceAnswer, the lock answer that takes the client into phase 2.
+void ShaperSelect::LockAtOnce(int64_t now, ISender& out) {
+  const int wait = std::max(skinsHoldMs_, kLockAtOnceWaitMs);
+  for (auto& kv : players_) {
+    Player& p = kv.second;
+    if (!p.lockAtOnce || (p.rec.flags & kRecordShaperLocked) || !p.Receives() || p.skinsHeld) continue;
+    if (!p.uiUp && now < p.readyAt + wait) continue;
+    Logf("%s    shaper select: player %u's shaper is locked at once (RULES3, All Random or the draft: its list is the "
+         "server's roll or the drafted shaper; %s)%s",
+         Clock().c_str(), kv.first,
+         p.uiUp ? "its client's UI is up" : "its C8 02 came the wait ago, nothing since",
+         lockAtOnceAnswer_ ? ", with the lock answer" : ", no lock answer: its client stays in phase 1");
+    Lock(kv.first, lockAtOnceAnswer_, out);
+    LogClientAhead(p);
+  }
+}
+
 void ShaperSelect::Advance(int64_t now, ISender& out) {
   now_ = now;
   if (phase_ == 0) return;
@@ -584,6 +605,7 @@ void ShaperSelect::Advance(int64_t now, ISender& out) {
   for (bool again = true; again;) {
     again = false;
     if (phase_ == 1) {
+      LockAtOnce(now, out);  // RULES3: All Random's humans, before the draft looks at their locks
       if (draftPending_ && DraftReady(now)) RunDraft(now, out);  // BOTDRAFT
       for (auto& kv : players_) {
         Player& p = kv.second;

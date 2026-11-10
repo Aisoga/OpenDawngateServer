@@ -27,6 +27,7 @@ import (
 	"dawngate/server/internal/logging"
 	"dawngate/server/internal/matchmaker"
 	"dawngate/server/internal/progress"
+	"dawngate/server/internal/rules"
 	"dawngate/server/internal/store"
 	"dawngate/server/internal/tdf"
 	"dawngate/server/internal/tunnel"
@@ -59,6 +60,10 @@ type Server struct {
 	// the tunnel); NoHelloCheck answers every verifyHello with yes (--gms-hello-check off). tunnel.go's verifyHello.
 	TunnelFlow   func(netip.AddrPort) (uint64, bool)
 	NoHelloCheck bool
+
+	// RegionRoute sends a tunnelled player of a game on a host machine with a match gateway there (REGION5,
+	// region_route.go): the gateway, its pin and a ticket for (the game's match, user); false = no such machine.
+	RegionRoute func(g Game, user int64) (tunnel.Away, bool)
 	// Hosts starts a match host per game (C1, dgserver --gms-dir; since H2 also on the host machines of
 	// registered agents, --agent-key; gamehost.go). nil = B8's behaviour: NotifyGameSetup names GMSPort
 	// at once and something else serves it.
@@ -146,6 +151,22 @@ type Server struct {
 	// TestRefuseStart refuses each custom game's first advanceGameState IN_GAME as the ready check's backstop does
 	// (dgserver --test-refuse-start, a test aid): the lobby after a refused start can be seen without a race.
 	TestRefuseStart bool
+	// TestRules are every new custom game's starting rules (dgserver --test-rules, a test aid: rules without the lobby's
+	// panel); nil = the standard game. lobbyrules.go.
+	TestRules *rules.Combination
+	// RulesNoteDelay is how long after the host's first inGame a custom game with rules sends its players the System
+	// line with the rules (RULES1b, lobbyrules.go announceRulesLater); 0 = rulesNoteDelay.
+	RulesNoteDelay time.Duration
+	// RollSeed gives the seed of a custom game's All Random rolls at its start (RULES3, rulespick.go); nil = 8 bytes of
+	// crypto/rand (tests set it).
+	RollSeed func() uint64
+	// DraftTurn is the time of one turn of a draft (RULES5b, draft.go; dgserver --draft-turn; 0 = DraftTurnDefault).
+	DraftTurn time.Duration
+	// TestDraft makes the server act for the player on turn of every draft this long after the turn began (dgserver
+	// --test-draft, a test aid: a draft without the lobby's board; 0 = off). draft.go.
+	TestDraft time.Duration
+	// rulesGap is the least time between two rules changes of one lobby (lobbyRulesGap; tests set 0).
+	rulesGap time.Duration
 	// Halloween shows the map's Halloween decoration in every hosted match (dgserver --halloween, Start-Server.ini
 	// halloween): createGame's levelFlags gets gmshost.LevelFlagHalloween, which the host loads its level with and sends
 	// in GamePrepareForStart; a client whose copy has zz_Halloween.snap then loads the holiday markerset. Off = level
@@ -253,6 +274,8 @@ type Conn struct {
 
 	// the tunnel address of a client that came through the tunnel (tunnel.go), nil for a direct one
 	tun *tunnel.Addr
+	// away is the server's routeAway (REGION5, region_route.go; nil in tests that make a Conn by hand)
+	away func(c *Conn, t *tunnel.Addr, g Game) bool
 
 	// ending is set once EndAccountSessions ends this connection's session (so it is ended once); gone
 	// is closed when ServeConn returns. Requests are answered as usual until the connection closes: the client's own
@@ -442,7 +465,7 @@ func (s *Server) ServeConn(c net.Conn) {
 	const who = "blaze"
 	defer s.Log.Recover(who, logging.Peer(c.RemoteAddr()), c) // a panic ends this connection only
 	s.Log.Log(who, "connection from "+logging.Peer(c.RemoteAddr()))
-	conn := &Conn{nc: c, tun: tunnel.Local(c), gone: make(chan struct{})}
+	conn := &Conn{nc: c, tun: tunnel.Local(c), gone: make(chan struct{}), away: s.routeAway}
 	conn.startWriter(s)
 	defer conn.stopWriter()
 	defer close(conn.gone)

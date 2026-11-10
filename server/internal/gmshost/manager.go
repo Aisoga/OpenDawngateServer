@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -55,6 +56,8 @@ type Config struct {
 	// AgentKey lets agents register (remote host machines, H2: dgserver --agent with the same key; see
 	// remote.go). Empty: agents are refused.
 	AgentKey []byte
+	// Link lets host machines register over the tunnel gateway (REGION1, link.go: ServeAgent)
+	Link LinkConfig
 
 	HelloTimeout, ReadyTimeout, HeartbeatTimeout, ExitTimeout time.Duration
 	// AgentTimeout drops a registered agent that sent nothing for this long; LaunchTimeout is how
@@ -165,6 +168,9 @@ type Manager struct {
 	warmStarting int      // warm hosts started whose hello hasn't come yet
 	warmFails    int      // warm hosts in a row that ended before their hello
 	warmPaused   bool     // warmMaxFails reached: the pool isn't refilled
+
+	// M27: the regions of the machines (region.go)
+	reg regionState
 }
 
 // NewManager returns a manager; zero timeouts get the defaults.
@@ -286,11 +292,16 @@ func (m *Manager) Sites() []SiteInfo {
 var ErrClosed = errors.New("gmshost: manager closed")
 
 // pickSite chooses where the next host runs: the machine with the most free GMS ports, ties going
-// to the earlier one (this machine, then the agents in registration order).
-func (m *Manager) pickSite() (*site, error) {
+// to the earlier one (this machine, then the agents in registration order). region "" = any machine, else
+// only that region's (M27, region.go).
+func (m *Manager) pickSite(region string) (*site, error) {
 	var best *site
-	bestFree, stuck := 0, 0
+	bestFree, stuck, n := 0, 0, 0
 	for _, s := range m.sites {
+		if region != "" && m.siteRegion(s) != region {
+			continue
+		}
+		n++
 		if f := s.pool.Free(); f > bestFree {
 			best, bestFree = s, f
 		}
@@ -299,7 +310,7 @@ func (m *Manager) pickSite() (*site, error) {
 	switch {
 	case best != nil:
 		return best, nil
-	case len(m.sites) == 0:
+	case n == 0:
 		return nil, ErrNoSite
 	case stuck > 0:
 		return nil, fmt.Errorf("%w (%d in quarantine: their hosts could not bind them)", ErrNoPort, stuck)
@@ -307,16 +318,16 @@ func (m *Manager) pickSite() (*site, error) {
 	return nil, ErrNoPort
 }
 
-// takePort picks a machine (pickSite; only: that one) and takes a port there, m.mu held (PORTSTUCK). The
+// takePort picks a machine (pickSite in region; only: that one) and takes a port there, m.mu held (PORTSTUCK). The
 // quarantines that are over end first (logged). With Config.ProbePorts a port of this machine that the
 // server can't bind itself is quarantined (logged) and the next one taken.
-func (m *Manager) takePort(only *site) (*site, int, error) {
+func (m *Manager) takePort(only *site, region string) (*site, int, error) {
 	m.expireQuarantines()
 	for {
 		st := only
 		if st == nil {
 			var err error
-			if st, err = m.pickSite(); err != nil {
+			if st, err = m.pickSite(region); err != nil {
 				return nil, 0, err
 			}
 		}
@@ -384,7 +395,7 @@ func (m *Manager) Start(game CreateGame, ev Events) (*Match, error) {
 	}
 	m.nextID++
 	id := m.nextID
-	st, port, err := m.takePort(nil)
+	st, port, err := m.takePort(nil, m.reg.home) // M27: the home region's machines (StartIn for another region)
 	if err != nil {
 		m.mu.Unlock()
 		m.log.Logf(who, "match %d (game %d): not started: %v", id, game.GameID, err)
@@ -460,7 +471,7 @@ func (m *Manager) FillWarm() {
 			m.mu.Unlock()
 			return
 		}
-		st, port, err := m.takePort(m.sites[0])
+		st, port, err := m.takePort(m.sites[0], "")
 		if err != nil {
 			m.mu.Unlock()
 			m.log.Logf(who, "warm pool: no port for another warm host (%v)", err)
@@ -625,6 +636,8 @@ func (m *Manager) hostHello(c net.Conn, r *LineReader, h Hello, peer string) {
 		why = fmt.Sprintf("unknown match %d or wrong token", h.Match)
 	case mt.helloSeen:
 		why = fmt.Sprintf("match %d's token was used already (a replay, or a second host)", h.Match)
+	case !relayedRight(mt.site, c): // REGION1: an agent's hosts on the TLS link say hello only through it (link.go)
+		why = fmt.Sprintf("hello for match %d not through the link of %s, where its host runs", h.Match, mt.site.name)
 	case !m.helloFrom(mt.site, ip):
 		why = fmt.Sprintf("hello for match %d from %s, but its host runs on %s (%s)", h.Match, ip, mt.site.name, m.siteAddr(mt.site))
 	default:
@@ -749,6 +762,20 @@ type Match struct {
 	cmds      chan Message
 	done      chan struct{}
 	outcome   Outcome
+
+	// M27 (region.go): the region its host runs in, the one its game was wanted in, and why not there (FellBack*);
+	// written under the manager's lock, read with RegionPlacement
+	Region, Wanted, FellBack string
+
+	featMu   sync.Mutex
+	features []string // the host's hello's (Supports)
+}
+
+// Supports reports whether the match's host named feature in its hello (false before the hello).
+func (mt *Match) Supports(feature string) bool {
+	mt.featMu.Lock()
+	defer mt.featMu.Unlock()
+	return slices.Contains(mt.features, feature)
 }
 
 // shutdown is Close's internal command: kill at once.
@@ -782,7 +809,14 @@ func (mt *Match) UpdateRoster(roster []RosterEntry) {
 
 // StartGame starts a custom game on its host with the final roster (B15; the admin's advanceGameState IN_GAME).
 func (mt *Match) StartGame(roster []RosterEntry) {
-	mt.command(StartGame{Roster: append([]RosterEntry(nil), roster...)})
+	mt.StartGameWith(StartGame{Roster: roster})
+}
+
+// StartGameWith is StartGame with the custom game's rules and bots setting (RULES1; only for a host that Supports
+// FeatureRules).
+func (mt *Match) StartGameWith(sg StartGame) {
+	sg.Roster = append([]RosterEntry(nil), sg.Roster...)
+	mt.command(sg)
 }
 
 func (mt *Match) command(msg Message) {
@@ -1004,8 +1038,15 @@ func (mt *Match) run() {
 					continue
 				}
 				conn, msgs, gone = cc, cc.msgs, cc.gone
-				m.log.Logf(who, "match %d: hello from pid %d (%s), %.1f s after the start", mt.ID, cc.hello.PID,
-					cc.hello.Build, time.Since(launched).Seconds())
+				mt.featMu.Lock()
+				mt.features = append([]string(nil), cc.hello.Features...)
+				mt.featMu.Unlock()
+				feats := ""
+				if len(cc.hello.Features) > 0 {
+					feats = fmt.Sprintf(", features %v", cc.hello.Features)
+				}
+				m.log.Logf(who, "match %d: hello from pid %d (%s%s), %.1f s after the start", mt.ID, cc.hello.PID,
+					cc.hello.Build, feats, time.Since(launched).Seconds())
 				if cc.hello.PID != 0 && cc.hello.PID != mt.proc.Pid() {
 					m.log.Logf(who, "match %d: hello names pid %d, the process we started is %d", mt.ID, cc.hello.PID, mt.proc.Pid())
 				}
@@ -1106,6 +1147,15 @@ func (mt *Match) run() {
 		dropConn()
 		// H1-live: a warm host that ended without a game has no events (computed once: leaveWarm takes it out)
 		noGame = unassignedWarm || m.leaveWarm(mt)
+		// M27 (region.go): a host in another region that ended before gameReady: its game starts once more at home
+		if !noGame && m.awayFault(mt, o, exit, stopped, since) {
+			o = Outcome{ExitCode: -1, Retries: o.Retries + 1}
+			phase, ending, killed, abortCause, exit, portNote = waitHello, false, false, "", exitInfo{}, ""
+			launched = time.Now()
+			setTimer(cfg.HelloTimeout, fmt.Sprintf("no hello within %v", cfg.HelloTimeout))
+			exited = waitExit(mt.proc)
+			continue
+		}
 		// PORTSTUCK: a host that could not bind its port: the port goes into quarantine, and the game (if it
 		// has one) is started once more on another port while the client still waits
 		why, fault := portFault(o, exit, stopped)
@@ -1232,7 +1282,7 @@ func (m *Manager) restart(mt *Match) error {
 		m.mu.Unlock()
 		return ErrClosed
 	}
-	st, port, err := m.takePort(nil)
+	st, port, err := m.takePort(nil, m.reg.home) // M27: a game starts again at home (region.go)
 	if err != nil {
 		m.mu.Unlock()
 		return err

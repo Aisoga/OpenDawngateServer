@@ -35,12 +35,18 @@ type Agent struct {
 	Retry      time.Duration // between connection attempts (0 = 5 s)
 	Heartbeat  time.Duration // agentStatus interval (0 = 5 s)
 
+	// The TLS link (REGION1, agent_link.go and relay.go); used when Link is set.
+	Link AgentLink
+
 	mu      sync.Mutex
 	running map[int64]*agentHost
+	linked  linkedState
+	relay   *relay // REGION1: the hosts' control port (relay.go); nil on H2's plain link
 }
 
 type agentHost struct {
 	port   int
+	token  string  // the relay checks a host's hello against it (REGION1)
 	proc   Process // nil while launching
 	exited chan struct{}
 }
@@ -71,7 +77,7 @@ func (a *Agent) Check() error {
 	if a.Launcher == nil {
 		return errors.New("gmshost: agent without a launcher")
 	}
-	return nil
+	return a.checkLink()
 }
 
 func (a *Agent) public() string {
@@ -99,6 +105,10 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.mu.Lock()
 	a.running = map[int64]*agentHost{}
 	a.mu.Unlock()
+	if err := a.startRelay(); err != nil { // REGION1: the hosts' control port on this machine (relay.go)
+		return err
+	}
+	defer a.stopRelay()
 	retry := dur(a.Retry, 5*time.Second)
 	for {
 		err := a.serve(ctx)
@@ -107,12 +117,16 @@ func (a *Agent) Run(ctx context.Context) error {
 			a.Log.Log(agentWho, "stopped")
 			return nil
 		}
-		a.Log.Logf(agentWho, "link to %s: %v; next attempt in %v", a.Server, err, retry)
+		wait := retry
+		if isSlow(err) { // REGION1: refused (version), a wrong pin or key: not again at once
+			wait = dur(a.Link.RetrySlow, time.Minute)
+		}
+		a.Log.Logf(agentWho, "link to %s: %v; next attempt in %v", a.Server, err, wait)
 		select {
 		case <-ctx.Done():
 			a.Log.Log(agentWho, "stopped")
 			return nil
-		case <-time.After(retry):
+		case <-time.After(wait):
 		}
 	}
 }
@@ -121,6 +135,11 @@ func (a *Agent) Run(ctx context.Context) error {
 type agentLink struct {
 	c  net.Conn
 	mu sync.Mutex
+
+	// REGION1, the TLS link: the main server's start (the hosts' folders), the relayed lines' queue
+	started string
+	out     chan []byte
+	gone    chan struct{}
 }
 
 func (l *agentLink) send(msg Message) error {
@@ -132,6 +151,9 @@ func (l *agentLink) send(msg Message) error {
 
 // serve runs one connection: dial, register, then launchHost and killHost until it ends.
 func (a *Agent) serve(ctx context.Context) error {
+	if a.linkOn() {
+		return a.serveLink(ctx) // REGION1 (agent_link.go)
+	}
 	d := net.Dialer{Timeout: 5 * time.Second}
 	c, err := d.DialContext(ctx, "tcp4", a.Server)
 	if err != nil {
@@ -246,7 +268,7 @@ func (a *Agent) launch(l *agentLink, control string, v LaunchHost) {
 		fail(fmt.Sprintf("port %d is outside this agent's ports %s", v.Port, a.Ports))
 		return
 	}
-	h := &agentHost{port: v.Port, exited: make(chan struct{})}
+	h := &agentHost{port: v.Port, token: v.Token, exited: make(chan struct{})}
 	a.mu.Lock()
 	for id, o := range a.running {
 		if id == v.Match || o.port == v.Port {
@@ -257,7 +279,8 @@ func (a *Agent) launch(l *agentLink, control string, v LaunchHost) {
 	}
 	a.running[v.Match] = h
 	a.mu.Unlock()
-	env := Env{Control: control, Match: v.Match, Token: v.Token, Bind: net.JoinHostPort(a.BindHost, strconv.Itoa(v.Port))}
+	env := Env{Control: control, Match: v.Match, Token: v.Token, Bind: net.JoinHostPort(a.BindHost, strconv.Itoa(v.Port)),
+		DataName: l.dataName(v.Match), Options: a.hostOptions(v.Options)}
 	proc, err := a.Launcher.Launch(env)
 	if err != nil {
 		a.mu.Lock()

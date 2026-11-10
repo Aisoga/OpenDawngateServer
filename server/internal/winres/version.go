@@ -22,9 +22,9 @@ const (
 	versionCharset = 0x04B0
 )
 
-// Version is what a program's version resource says: the strings Windows shows in a file's Properties (Details) and
-// that code signing services check (SignPath's metadata restrictions: product name and version), and the numbers of
-// its fixed part (VS_FIXEDFILEINFO), which Windows uses for comparisons.
+// Version is what a program's version resource says: the strings Windows shows in a file's Properties (Details),
+// beside its signature (product name and version), and the numbers of its fixed part (VS_FIXEDFILEINFO), which
+// Windows uses for comparisons.
 type Version struct {
 	ProductName, ProductVersion, FileVersion, FileDescription string
 	InternalName, OriginalFilename, LegalCopyright            string

@@ -1,7 +1,7 @@
 // Command peversion writes and checks the version resource of the release's Windows programs and DLL
-// (Start-Server.exe, Start-Client.exe, host\dgsim.dll; package winres). Code signing for open-source projects
-// (SignPath) requires every signed file to carry the project's name as its product name and one product version for
-// the whole build, so make_release.ps1 sets both after building and checks them:
+// (Start-Server.exe, Start-Client.exe, host\dgsim.dll; package winres). Every signed file carries the project's name
+// as its product name and one product version for the whole build (what a file's Properties show beside its
+// signature), so make_release.ps1 sets both after building and checks them:
 //
 //	peversion set   -version <release> -description <text> <file>   (Windows only: UpdateResourceW)
 //	peversion check -version <release> <file>...                     (exit 1 when a file's version differs)
@@ -11,7 +11,7 @@
 // InternalName and OriginalFilename (the file's name), LegalCopyright (Copyright) and the fixed part's numbers
 // (winres.NumbersOf); it replaces a version resource the file already has and keeps every other resource.
 //
-// signed is make_release.ps1 -SignedFiles' check of a file that came back from the code signing service: its version
+// signed is make_release.ps1 -SignedFiles' (and sign_release.ps1's) check of a file the maintainer signed: its version
 // is right and it is the file this build made, byte for byte, apart from what an Authenticode signature adds (the
 // optional header's CheckSum, its certificate table entry, the zero padding to 8 bytes and the certificate table at
 // the end). Whether the signature itself is valid is Windows' check (Get-AuthenticodeSignature in the script).

@@ -4,9 +4,14 @@
 # A successful build of main (every job green) replaces the rolling "nightly" pre-release (never marked Latest).
 # A pushed tag v<major>.<minor>[.<patch>] on a commit of main builds the same way, with the tag as the
 # release's name and version, and publishes the numbered release <tag> with <tag>.zip and <tag>-linux.tar.gz.
-# A numbered release's Windows programs are signed through SignPath once the repository has its settings
-# (README.md *Code signing policy*; the steps after "Release zip and Linux archive"); until then, and for every
-# other build, they stay unsigned.
+# A numbered release's Windows programs are signed by the maintainer (README.md *Code signing policy*,
+# docs/development/signing.md) once the repository variable SIGN_RELEASES is true: then the tag's push run builds and
+# tests the release without publishing it and keeps the three programs as its artifact to-sign;
+# re/scripts/sign_release.ps1 signs them on the maintainer's PC (the Certum certificate), puts them into the tag's
+# draft release and starts a second run on the tag (workflow_dispatch, unsigned_run = the first run's id), which
+# takes the first run's dgsim.dll, builds the programs again, checks that each signed file is its own build's file
+# plus a valid signature (make_release.ps1 -SignedFiles), packs the archives and publishes the draft. Without
+# SIGN_RELEASES, and for every other build, the programs stay unsigned.
 # Nothing here needs the game's files: tests that read them skip themselves.
 name: build
 
@@ -17,6 +22,11 @@ on:
   schedule:
     - cron: '0 3 * * 1' # Mondays 03:00 UTC: catches changes in the runner's toolchain
   workflow_dispatch:
+    inputs:
+      unsigned_run:
+        description: 'A signed release (re/scripts/sign_release.ps1 starts it on the tag): the id of the tag push run whose programs were signed; empty for an ordinary build'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -27,19 +37,58 @@ concurrency:
 
 env:
   GOTOOLCHAIN: local
+  # a signed release's second run: the id of the tag's push run whose programs the maintainer signed
+  UNSIGNED_RUN: ${{ inputs.unsigned_run }}
   RAKNET_COMMIT: 1a169895a900c9fc4841c556e16514182b75faf8
   RAKNET_SHA256: 60b53557aa084fb5455c8e2e7efe309738dabe7f9db5c0bc103cf41c8f97c0e0
   LUAJ_SHA256: 02464b0a6cf90fa404d0b62ebb587b96a38e118420a7adc467c1550f889fa41b
 
 jobs:
+  signed-files:
+    # a signed release's second run: the three programs the maintainer signed, from the tag's draft release
+    # (re/scripts/sign_release.ps1 uploads them there), handed to the build job as this run's artifact signed.
+    # Its own job: reading a draft release takes write access, which the build job doesn't get
+    if: github.repository == 'Aisoga/OpenDawngateServer' && inputs.unsigned_run != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: The signed programs (the tag's draft release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF" in refs/tags/v*) ;; *) echo "::error::a signed release runs on its tag, not on $GITHUB_REF"; exit 1 ;; esac
+          if [ "$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft)" != true ]; then
+            echo "::error::release $TAG is not a draft: re/scripts/sign_release.ps1 makes the draft with the signed programs"; exit 1
+          fi
+          mkdir signed
+          gh release download "$TAG" --repo "$REPO" --dir signed --pattern Start-Server.exe --pattern Start-Client.exe --pattern dgsim.dll
+          ls -l signed
+          [ "$(ls signed | wc -l)" -eq 3 ] || { echo "::error::the draft $TAG lacks one of Start-Server.exe, Start-Client.exe, dgsim.dll"; exit 1; }
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed
+          path: signed/
+          if-no-files-found: error
+          retention-days: 1
+
   build:
-    # only in the public repository (a private copy of this file runs nothing)
-    if: github.repository == 'Aisoga/OpenDawngateServer'
+    # only in the public repository (a private copy of this file runs nothing); after signed-files in a signed
+    # release's second run, on its own in every other
+    needs: signed-files
+    if: github.repository == 'Aisoga/OpenDawngateServer' && !cancelled() && needs.signed-files.result != 'failure'
     runs-on: windows-2022 # Visual Studio 2022 with its x86 compiler and CMake
-    # a numbered release waits for the signing request's manual approval (up to 3 hours, below)
-    timeout-minutes: ${{ startsWith(github.ref, 'refs/tags/v') && 240 || 60 }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read # a signed release's second run: the first run's artifact match-host
     outputs:
-      signed: ${{ steps.signed.outputs.signed }}
+      signed: ${{ steps.release.outputs.signed }}
     defaults:
       run:
         shell: pwsh
@@ -56,6 +105,21 @@ jobs:
             throw "tag $env:GITHUB_REF_NAME`: a release tag is v<major>.<minor> or v<major>.<minor>.<patch> (e.g. v0.6, v1.0.1)"
           }
           "RELEASE_NAME=$env:GITHUB_REF_NAME" >> $env:GITHUB_ENV
+
+      - name: Signed release (the first run)
+        # the second run's input: a successful push run of this workflow on this tag's commit
+        if: env.UNSIGNED_RUN != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          if (-not $env:RELEASE_NAME) { throw "a signed release runs on its version tag, not on $env:GITHUB_REF" }
+          if ($env:UNSIGNED_RUN -notmatch '^[0-9]+$') { throw "unsigned_run $env:UNSIGNED_RUN is not a run id" }
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:UNSIGNED_RUN" | ConvertFrom-Json
+          $self = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" | ConvertFrom-Json
+          $want = [ordered]@{ workflow_id = $self.workflow_id; event = 'push'; head_sha = $env:GITHUB_SHA; head_branch = $env:GITHUB_REF_NAME; conclusion = 'success' }
+          foreach ($k in $want.Keys) { if ($run.$k -ne $want[$k]) { throw "run $env:UNSIGNED_RUN`: $k is '$($run.$k)', not '$($want[$k])'" } }
+          "the programs signed from run $env:UNSIGNED_RUN ($($run.html_url))"
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -86,7 +150,9 @@ jobs:
           New-Item -ItemType Directory -Force tools/raknet | Out-Null
           Move-Item (Join-Path $tmp "RakNet-$env:RAKNET_COMMIT") tools/raknet/RakNet
 
+      # a signed release's second run builds only the programs: the first run tested this commit and built its dgsim.dll
       - name: Go (format, vet, tests)
+        if: env.UNSIGNED_RUN == ''
         working-directory: server
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
@@ -96,12 +162,14 @@ jobs:
           go test ./...
 
       - name: Match host (build)
+        if: env.UNSIGNED_RUN == ''
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           cmake -S gms -B gms/build -G "Visual Studio 17 2022" -A Win32 "-DRAKNET_ROOT=$env:GITHUB_WORKSPACE/tools/raknet/RakNet"
           cmake --build gms/build --config Release
 
       - name: Match host (tests)
+        if: env.UNSIGNED_RUN == ''
         run: |
           # The RakNet loopback session tests fail now and then on a busy machine (about 1 run in 8):
           # one retry, flagged in the run's summary, so a single slow run doesn't turn the build red.
@@ -115,6 +183,7 @@ jobs:
           gms/build/core/control/Release/dg_control_tests.exe
 
       - name: Match host Lua (LuaJ check)
+        if: env.UNSIGNED_RUN == ''
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           New-Item -ItemType Directory -Force tools/luaj | Out-Null
@@ -124,12 +193,32 @@ jobs:
           if ($got -ne $env:LUAJ_SHA256) { throw "LuaJ SHA-256 $got, expected $env:LUAJ_SHA256" }
           python -I re/scripts/bots_lua_check.py --java "$env:JAVA_HOME_21_X64\bin\java.exe" --luaj $jar
 
+      # a signed release's second run: the first run's dgsim.dll with its build stamp (make_release.ps1 takes it as
+      # current: the stamp names its bytes, both are newer than the checkout) and the signed programs
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.UNSIGNED_RUN != ''
+        with:
+          name: match-host
+          path: gms/build/Release
+          run-id: ${{ env.UNSIGNED_RUN }}
+          github-token: ${{ github.token }}
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.UNSIGNED_RUN != ''
+        with:
+          name: signed
+          path: re/out/signed
+
       - name: Release zip and Linux archive
+        id: release
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          # a tag's build is named after the tag; any other build OpenDawngateServer-<date>-<commit>
+          # a tag's build is named after the tag; any other build OpenDawngateServer-<date>-<commit>. A signed
+          # release's second run takes the signed programs: make_release.ps1 -SignedFiles checks that each is this
+          # build's file plus a valid, timestamped signature, and BUILD.txt lists them (Start-Client's update checks them)
           $nameArgs = @()
           if ($env:RELEASE_NAME) { $nameArgs = @('-Name', $env:RELEASE_NAME) }
+          if ($env:UNSIGNED_RUN) { $nameArgs += @('-SignedFiles', 're/out/signed') }
           powershell -NoProfile -ExecutionPolicy Bypass -File re/scripts/make_release.ps1 @nameArgs
           $zip = @(Get-ChildItem re/out/release -Filter '*.zip')
           if ($zip.Count -ne 1) { throw "expected one release zip, found $($zip.Count)" }
@@ -138,64 +227,40 @@ jobs:
           if ($env:RELEASE_NAME -and $zip[0].Name -cne "$env:RELEASE_NAME.zip") { throw "the zip is $($zip[0].Name), not $env:RELEASE_NAME.zip" }
           "RELEASE_ZIP=$($zip[0].FullName)" >> $env:GITHUB_ENV
           "RELEASE_TGZ=$($tgz[0].FullName)" >> $env:GITHUB_ENV
+          if ($env:UNSIGNED_RUN) { "signed=true" >> $env:GITHUB_OUTPUT }
 
-      # Code signing (README.md *Code signing policy*): a numbered release's Start-Server.exe, Start-Client.exe and
-      # host\dgsim.dll go to SignPath as a workflow artifact of this run (its origin check: built here, on GitHub's
-      # runners), which signs them once an approver approves the request (by hand, within 3 hours). The release is
-      # then built again with the signed files: make_release.ps1 -SignedFiles checks that each is this build's file
-      # plus a valid signature, and BUILD.txt lists the signed files (Start-Client's update checks them). Runs only
-      # with the repository variable SIGNPATH_ORGANIZATION_ID and the secret SIGNPATH_API_TOKEN set
-      # (SIGNPATH_PROJECT_SLUG and SIGNPATH_SIGNING_POLICY_SLUG when they differ from the defaults below).
+      # Code signing (README.md *Code signing policy*): with SIGN_RELEASES, a tag's push run keeps the three programs
+      # for the maintainer (to-sign) and its dgsim.dll for the second run (match-host), and publishes nothing
       - name: Files to sign
         id: to-sign
-        if: env.RELEASE_NAME != '' && vars.SIGNPATH_ORGANIZATION_ID != ''
+        if: env.RELEASE_NAME != '' && env.UNSIGNED_RUN == '' && github.event_name == 'push' && vars.SIGN_RELEASES == 'true'
         run: |
           $d = "re/out/release/$env:RELEASE_NAME"
-          New-Item -ItemType Directory -Force re/out/to-sign | Out-Null
+          New-Item -ItemType Directory -Force re/out/to-sign, re/out/match-host | Out-Null
           Copy-Item "$d/Start-Server.exe", "$d/Start-Client.exe", "$d/host/dgsim.dll" re/out/to-sign
-          Get-ChildItem re/out/to-sign
+          Copy-Item gms/build/Release/dgsim.dll, gms/build/Release/dgsim.dll.stamp re/out/match-host
+          Get-ChildItem re/out/to-sign, re/out/match-host
+          @(
+            "### $env:RELEASE_NAME waits for its signature",
+            "On the maintainer's PC, with SimplySign Desktop connected: ``powershell -ExecutionPolicy Bypass -File re\scripts\sign_release.ps1 -Tag $env:RELEASE_NAME``",
+            "(within 14 days, while this run's artifacts are kept)."
+          ) -join "`n" >> $env:GITHUB_STEP_SUMMARY
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        id: upload-unsigned
         if: steps.to-sign.outcome == 'success'
         with:
           name: to-sign
           path: re/out/to-sign/
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 14
 
-      - uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: steps.to-sign.outcome == 'success'
         with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'OpenDawngateServer' }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
-          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
-          parameters: |
-            version: "${{ env.RELEASE_NAME }}"
-          wait-for-completion: true
-          wait-for-completion-timeout-in-seconds: 10800
-          output-artifact-directory: re/out/signed
-
-      - name: Release with the signed files
-        id: signed
-        if: steps.to-sign.outcome == 'success'
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          # the signed artifact as files (unpacked here if it came as a zip)
-          if (-not (Get-ChildItem re/out/signed -Recurse -Filter 'Start-Client.exe')) {
-            Get-ChildItem re/out/signed -Filter '*.zip' | ForEach-Object { Expand-Archive $_.FullName -DestinationPath re/out/signed/unzipped }
-          }
-          Remove-Item -Recurse -Force re/out/release
-          powershell -NoProfile -ExecutionPolicy Bypass -File re/scripts/make_release.ps1 -Name $env:RELEASE_NAME -SignedFiles re/out/signed
-          $zip = @(Get-ChildItem re/out/release -Filter '*.zip')
-          $tgz = @(Get-ChildItem re/out/release -Filter '*-linux.tar.gz')
-          if ($zip.Count -ne 1 -or $tgz.Count -ne 1) { throw "expected one release zip and one Linux archive" }
-          if ($zip[0].Name -cne "$env:RELEASE_NAME.zip") { throw "the zip is $($zip[0].Name), not $env:RELEASE_NAME.zip" }
-          "RELEASE_ZIP=$($zip[0].FullName)" >> $env:GITHUB_ENV
-          "RELEASE_TGZ=$($tgz[0].FullName)" >> $env:GITHUB_ENV
-          "signed=true" >> $env:GITHUB_OUTPUT
+          name: match-host
+          path: re/out/match-host/
+          if-no-files-found: error
+          retention-days: 14
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -328,11 +393,15 @@ jobs:
             --title "Nightly build $(date -u +%Y-%m-%d) (${SHA:0:10})" --notes-file notes.md
 
   release:
-    # a pushed version tag (v<major>.<minor>[.<patch>], checked by the build job) on a commit of main
-    # publishes the numbered release: the tag's name as its title and its files' names, not a pre-release,
-    # marked Latest by GitHub's rule (the newest version); nothing is replaced or deleted
+    # a version tag (v<major>.<minor>[.<patch>], checked by the build job) on a commit of main publishes the
+    # numbered release: the tag's name as its title and its files' names, not a pre-release, marked Latest by
+    # GitHub's rule (the newest version). Without SIGN_RELEASES the tag's push run publishes it unsigned; with it the
+    # second run (sign_release.ps1's) completes the draft that holds the signed programs: the archives in, the three
+    # loose programs out, then published. A published release is never replaced
     needs: [build, linux, linux-release]
-    if: github.repository == 'Aisoga/OpenDawngateServer' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      github.repository == 'Aisoga/OpenDawngateServer' && startsWith(github.ref, 'refs/tags/v') &&
+      ((github.event_name == 'push' && vars.SIGN_RELEASES != 'true') || (github.event_name == 'workflow_dispatch' && inputs.unsigned_run != ''))
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -353,7 +422,7 @@ jobs:
           set -euo pipefail
           policy="[Code signing policy](https://github.com/${REPO}#code-signing-policy)"
           if [ "$SIGNED" = true ]; then
-            signing="- The Windows programs are signed: free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org) (${policy})."
+            signing="- The Windows programs are signed with the maintainer's Certum Open Source Code Signing certificate (${policy})."
           else
             signing="- The programs are unsigned (SmartScreen: *More info*, *Run anyway*; ${policy})."
           fi
@@ -374,5 +443,15 @@ jobs:
           ${signing}
           - \`BUILD.txt\` in each archive names the commit it was built from (the source, AGPL-3.0).
           NOTES
-          gh release create "$TAG" "$zip" "$tgz" --repo "$REPO" --verify-tag \
-            --title "OpenDawngateServer $TAG" --notes-file notes.md
+          if [ "$SIGNED" = true ]; then
+            # the draft sign_release.ps1 made with the signed programs
+            if [ "$(gh release view "$TAG" --repo "$REPO" --json isDraft --jq .isDraft)" != true ]; then
+              echo "::error::release $TAG is not a draft (already published?)"; exit 1
+            fi
+            gh release upload "$TAG" "$zip" "$tgz" --repo "$REPO" --clobber
+            for f in Start-Server.exe Start-Client.exe dgsim.dll; do gh release delete-asset "$TAG" "$f" --repo "$REPO" --yes; done
+            gh release edit "$TAG" --repo "$REPO" --title "OpenDawngateServer $TAG" --notes-file notes.md --draft=false
+          else
+            gh release create "$TAG" "$zip" "$tgz" --repo "$REPO" --verify-tag \
+              --title "OpenDawngateServer $TAG" --notes-file notes.md
+          fi

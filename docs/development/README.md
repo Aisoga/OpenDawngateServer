@@ -6,7 +6,7 @@ These pages are for people who want to build the project from source, run it fro
 |---|---|
 | [building.md](building.md) | Tools, the one-command setup, building the release, running the tests |
 | [running-from-source.md](running-from-source.md) | Playing and serving from a checkout, test options for the match host, logs, LAN play, extra host machines |
-| [signing.md](signing.md) | Code signing of the releases (SignPath): the version resource, the build's signing steps, the one-time setup |
+| [signing.md](signing.md) | Code signing of the releases (the maintainer's Certum certificate): the version resource, the two build runs and the signing script, the one-time setup |
 | [ui-channel.md](ui-channel.md) | How a UI class of ours talks to the server: adding a feature, the wire, who a connection belongs to |
 | [decisions/](decisions/) | Design decisions: languages, the setup in Go, third-party Go modules, the UI channel |
 | [../how-it-works.md](../how-it-works.md) | An overview of the pieces |

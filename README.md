@@ -54,10 +54,10 @@ On your own PC and home network the game and the server send nothing to the inte
 
 ## Code signing policy
 
-The Windows programs of the numbered releases (`Start-Client.exe`, `Start-Server.exe` and `host\dgsim.dll`) get signed by the release build: free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org). The project is applying for it; until it is granted, the releases are unsigned.
+The Windows programs of the numbered releases (`Start-Client.exe`, `Start-Server.exe` and `host\dgsim.dll`) are signed with the maintainer's Certum Open Source Code Signing certificate, issued by *Certum Code Signing 2021 CA*. This applies from the first release after v0.18; v0.18 and older, and the nightly builds, are unsigned. To check a program, open its *Properties* → *Digital Signatures*: the signature must be valid and its certificate must come from Certum Code Signing 2021 CA.
 
-- Only files built by this repository's own build (`.github/workflows/build.yml`, from a tagged commit, on GitHub's runners) are signed, never a file built elsewhere or another project's.
-- Every signing request is approved by hand.
+- Only files built by this repository's own build (`.github/workflows/build.yml`, from a tagged commit, on GitHub's runners) are signed, never a file built elsewhere or another project's. The build checks that each signed file is its own file with nothing added but the signature.
+- The maintainer signs every release by hand ([how](docs/development/signing.md)). The certificate's key stays in Certum's cloud, and each use needs a second factor.
 - Committers and reviewers: [Aisoga](https://github.com/Aisoga). Approvers: [Aisoga](https://github.com/Aisoga).
 - Privacy policy: [docs/privacy.md](docs/privacy.md) lists everything the programs send and where (the servers you play on, the update check on GitHub, the Discord status) and how to switch each off. Nothing goes to this project's developers.
 

@@ -154,8 +154,10 @@ instead, and players need Start-Client.exe --tunnel off.
 
 Windows warnings
 ----------------
-- SmartScreen may say the programs are unrecognized while a release isn't signed yet: "More info", then
-  "Run anyway". Code signing policy: the project's README (https://github.com/Aisoga/OpenDawngateServer).
+- SmartScreen may say the programs are unrecognized: an unsigned build, or a signed release while its
+  certificate is still new to SmartScreen. "More info", then "Run anyway". A signed program shows its signature
+  under Properties, Digital Signatures (certificate from Certum Code Signing 2021 CA). Code signing policy: the
+  project's README (https://github.com/Aisoga/OpenDawngateServer).
 - On a LAN address the Windows firewall asks once whether Start-Server.exe may use the network: allow private
   networks only. On this PC alone (address 127.0.0.1) the question can be cancelled.
 - Your antivirus may look at the programs the first time; the setup patches a few bytes of the game's copy

@@ -17,10 +17,10 @@
      every image of that .ico. The Linux server start-server is the same
      build of server\cmd\start-server for linux/amd64 with the same version (not <Name>-linux: Start-Client.exe
      refuses a server of any other version). Both programs and host\dgsim.dll get a version resource (server\tools\
-     peversion: product name "OpenDawngateServer", product and file version <Name>), which code signing requires
-     (SignPath: the project's name and one product version per build); it is checked on all three. With
-     -SignedFiles <folder> (the CI's second run, with the files the signing service returned) those three are
-     replaced by their signed copies after checking that each is this build's file plus a valid signature.
+     peversion: product name "OpenDawngateServer", product and file version <Name>), which a signed file's
+     properties show; it is checked on all three. With -SignedFiles <folder> (the CI's second run of a signed
+     release, with the files re\scripts\sign_release.ps1 signed) those three are replaced by their signed copies
+     after checking that each is this build's file plus a valid, timestamped signature, all by one certificate.
   3. The folder <Out>\<Name>\: the two programs, host\dgsim.dll, host\lua\*.lua, README.txt (re\scripts\release),
      maps\README.txt (release\maps-README.txt: the maps folder, where players and operators copy map packages; none ship),
      LICENSE.txt (the AGPL text: the checkout's LICENSE, else branch public's), THIRD-PARTY-NOTICES.txt (RakNet 4.081's LICENSE and PATENTS
@@ -116,7 +116,7 @@ $listModules = {
 try {
     $env:GOOS = 'windows'; $env:GOARCH = 'amd64'; $env:CGO_ENABLED = '0'; $env:GOTOOLCHAIN = 'local'
     $ico = [IO.File]::ReadAllBytes((Join-Path $Repo 'server\cmd\assets\dawngate.ico'))
-    # the version resource of the signed files (SignPath: product name and one product version per build), written
+    # the version resource of the signed files (product name and one product version per build), written
     # by server\tools\peversion after each build; the tool itself is built into <Out> and removed at the end
     $peversion = Join-Path $Out "peversion-$PID.exe"
     & $go build -C (Join-Path $Repo 'server') -o $peversion ./tools/peversion
@@ -203,10 +203,12 @@ Copy-Item $dll (Join-Path $dir 'host\dgsim.dll')
 Set-PeVersion (Join-Path $dir 'host\dgsim.dll') 'OpenDawngateServer: the match host'
 & $peversion check -version $Name (Join-Path $dir 'Start-Server.exe') (Join-Path $dir 'Start-Client.exe') (Join-Path $dir 'host\dgsim.dll')
 if ($LASTEXITCODE -ne 0) { Fail 'a signed file lacks its version resource (product name, product version)' }
-# -SignedFiles: the three files as the code signing service returned them (CI: SignPath). Each must be this build's
-# file with an Authenticode signature added and nothing else changed (peversion signed) and Windows must find the
-# signature valid; they replace the built ones before BUILD.txt and the archives, so BUILD.txt's SHA-256 (which
-# Start-Client's update checks) are the signed files'
+# -SignedFiles: the three files as the maintainer signed them (re\scripts\sign_release.ps1, the Certum certificate).
+# Each must be this build's file with an Authenticode signature added and nothing else changed (peversion signed),
+# Windows must find the signature valid and timestamped (so it outlives the certificate), and all three must be signed
+# by one certificate; they replace the built ones before BUILD.txt and the archives, so BUILD.txt's SHA-256 (which
+# Start-Client's update checks) are the signed files'. BUILD.txt names the certificate by its thumbprint and issuer
+# (the subject, a person's name and town, stays in the signature)
 $signer = ''
 if ($SignedFiles) {
     if (-not (Test-Path $SignedFiles)) { Fail "-SignedFiles $SignedFiles`: no such folder" }
@@ -218,8 +220,11 @@ if ($SignedFiles) {
         if ($LASTEXITCODE -ne 0) { Fail "-SignedFiles: $leaf is not this build's file with a signature added" }
         $sig = Get-AuthenticodeSignature $found[0].FullName
         if ($sig.Status -ne 'Valid') { Fail "-SignedFiles: the signature of $leaf is $($sig.Status) ($($sig.StatusMessage))" }
+        if (-not $sig.TimeStamperCertificate) { Fail "-SignedFiles: the signature of $leaf has no timestamp" }
+        $by = "certificate $($sig.SignerCertificate.Thumbprint) ($($sig.SignerCertificate.GetNameInfo('SimpleName', $true)))"
+        if ($signer -and $by -ne $signer) { Fail "-SignedFiles: $leaf is signed by $by, the others by $signer" }
         Copy-Item $found[0].FullName (Join-Path $dir $f) -Force
-        $signer = $sig.SignerCertificate.Subject
+        $signer = $by
         Write-Host "signed: $f ($signer)" -ForegroundColor Green
     }
 }

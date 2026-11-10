@@ -47,14 +47,18 @@ jobs:
   signed-files:
     # a signed release's second run: the three programs the maintainer signed, from the tag's draft release
     # (re/scripts/sign_release.ps1 uploads them there), handed to the build job as this run's artifact signed.
-    # Its own job: reading a draft release takes write access, which the build job doesn't get
-    if: github.repository == 'Aisoga/OpenDawngateServer' && inputs.unsigned_run != ''
+    # Its own job: reading a draft release takes write access, which the build job doesn't get. It runs in every
+    # run, its steps only in a signed release's second run: a skipped job would skip every job after it (a job's
+    # implied success() looks at all the jobs before it, also through build): linux-release, nightly and release
+    # were skipped that way in the first run on main with this job
+    if: github.repository == 'Aisoga/OpenDawngateServer'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
       - name: The signed programs (the tag's draft release)
+        if: inputs.unsigned_run != ''
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -71,6 +75,7 @@ jobs:
           [ "$(ls signed | wc -l)" -eq 3 ] || { echo "::error::the draft $TAG lacks one of Start-Server.exe, Start-Client.exe, dgsim.dll"; exit 1; }
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: inputs.unsigned_run != ''
         with:
           name: signed
           path: signed/
@@ -78,10 +83,10 @@ jobs:
           retention-days: 1
 
   build:
-    # only in the public repository (a private copy of this file runs nothing); after signed-files in a signed
-    # release's second run, on its own in every other
+    # only in the public repository (a private copy of this file runs nothing); after signed-files (which does
+    # nothing outside a signed release's second run)
     needs: signed-files
-    if: github.repository == 'Aisoga/OpenDawngateServer' && !cancelled() && needs.signed-files.result != 'failure'
+    if: github.repository == 'Aisoga/OpenDawngateServer'
     runs-on: windows-2022 # Visual Studio 2022 with its x86 compiler and CMake
     timeout-minutes: 60
     permissions:

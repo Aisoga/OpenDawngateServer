@@ -766,7 +766,9 @@ func start(cfg config) (*instance, error) {
 	}
 	// MHIST2: the match history's JSON (history.go)
 	if bz.Store != nil {
-		httpSrv.History = newHistory(bz.Store, bz.Content, cfg.historyNames, bz.Now, log.Logf).Serve
+		hist := newHistory(bz.Store, bz.Content, cfg.historyNames, bz.Now, log.Logf)
+		hist.watched = bz.WatchedMatch // SPECSTATS: a spectator's review opens the match it watched
+		httpSrv.History = hist.Serve
 		if cfg.testHistorySeed != "" { // MHIST3's test aid (historyseed.go)
 			if note, err := seedHistory(bz.Store, bz.Content, cfg.testHistorySeed, bz.Now()); err != nil {
 				log.Logf("stub", "TEST: --test-history-seed %s: %v", cfg.testHistorySeed, err)

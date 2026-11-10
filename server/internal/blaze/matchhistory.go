@@ -68,14 +68,16 @@ func (hg *hostedGame) historyMatch(f gmshost.FinishGame) historyRecord {
 	hg.mu.Lock()
 	defer hg.mu.Unlock()
 	m, skipped := hg.matchLocked(f, hg.s.Now())
-	return historyRecord{Match: m, skipped: skipped, stats: len(hg.seatStats), timeline: hg.timeline != nil}
+	return historyRecord{Match: m, skipped: skipped, stats: len(hg.seatStats), timeline: hg.timeline != nil,
+		watchers: hg.spectatorsLocked()}
 }
 
 // historyRecord is historyMatch's record and what storeMatch's log line says about it.
 type historyRecord struct {
 	store.Match
-	skipped, stats int  // seatStats lines left out, seatStats lines kept
-	timeline       bool // the host sent a matchTimeline
+	skipped, stats int     // seatStats lines left out, seatStats lines kept
+	timeline       bool    // the host sent a matchTimeline
+	watchers       []int64 // SPECSTATS: the spectators who watched it to the end (no seats; watched.go)
 }
 
 // storeMatch stores the finished match in the history (Finish, after persist, before postResult, which gives the home
@@ -107,6 +109,11 @@ func (hg *hostedGame) storeMatch(rec historyRecord) int64 {
 	}
 	s.Log.Logf("blaze", "   game %d: stored as match %d (%d players, %d bots; seatStats from the host %d, timeline %v%s)",
 		hg.game.ID, id, len(m.Seats)-bots, bots, stats, timeline, note)
+	if len(rec.watchers) > 0 { // SPECSTATS: their review's MATCH STATS tab opens this match (watched.go)
+		s.noteWatched(rec.watchers, id)
+		s.Log.Logf("blaze", "   game %d: match %d watched by %d spectator(s) %v (not their own matches)", hg.game.ID, id,
+			len(rec.watchers), rec.watchers)
+	}
 	return id
 }
 

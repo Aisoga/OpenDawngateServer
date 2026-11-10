@@ -256,3 +256,36 @@ func TestHistoryBadSources(t *testing.T) {
 		t.Errorf("%d %s, log %s", code, got, log.String())
 	}
 }
+
+// SPECSTATS: games.json's "watched" is the match the asking player (me=) last watched as a spectator: Alpha watched
+// match 3 (Bravo's custom game, no seat of Alpha's), so Alpha's own list still ends at match 2 and carries
+// "watched":3 for the page's ?latest=1; without me=, for another player or without the server's record it is missing.
+func TestHistoryWatched(t *testing.T) {
+	s, ps := historyFixture(t)
+	h := newHistory(s, nil, true, func() time.Time { return historyNow }, func(string, string, ...any) {})
+	for _, c := range []struct {
+		query string
+		has   string
+		no    string
+	}{
+		{"player=Alpha&me=Alpha&n=1", `"matches":[{"id":2,`, ""},
+		{"player=Alpha&me=Alpha&n=1", `"watched":3}`, ""},
+		{"player=Alpha&n=1", "", `"watched"`},
+		{"player=Bravo&me=Bravo&n=1", `"matches":[{"id":3,`, `"watched"`},
+	} {
+		h.watched = func(p int64) int64 {
+			if p == ps[0] {
+				return 3
+			}
+			return 0
+		}
+		_, got := ask(h, web.HistoryGames, c.query)
+		if !strings.Contains(got, c.has) || (c.no != "" && strings.Contains(got, c.no)) {
+			t.Errorf("%s: %s", c.query, got)
+		}
+	}
+	h.watched = nil
+	if _, got := ask(h, web.HistoryGames, "player=Alpha&me=Alpha&n=1"); strings.Contains(got, `"watched"`) {
+		t.Errorf("without the record: %s", got)
+	}
+}

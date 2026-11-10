@@ -203,6 +203,8 @@ type Server struct {
 	results atomic.Pointer[ResultPosts]
 	// the last finished matches for the home page, without names (recent.go)
 	recent recentResults
+	// SPECSTATS: the last match each spectator watched, for its review's MATCH STATS tab (watched.go)
+	watched watchedMatches
 	// SEC6: the players of the games of a server without match hosts, for their match chats (matchchat.go)
 	unhosted unhostedRosters
 

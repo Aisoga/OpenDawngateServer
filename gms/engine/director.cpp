@@ -1702,6 +1702,13 @@ void Stop() {
   g_stopped = true;
 }
 
+bool IsLaneAgent(std::uint32_t id) {
+  if (!id) return false;
+  for (const LaneAgent& a : g_laneAgents)
+    if (a.id == id) return true;
+  return false;
+}
+
 void OnObjectDied(std::uint32_t id, int killerTeam) {
   if (!g_levelOk || !g_started || g_stopped || !id) return;
   for (LaneAgent& a : g_laneAgents) {  // MAPSTRIDER

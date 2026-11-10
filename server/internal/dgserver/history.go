@@ -58,6 +58,10 @@ type historyGames struct {
 	Matches    []historyMatch `json:"matches"` // newest first
 	More       bool           `json:"more"`    // older matches follow
 	NextBefore int64          `json:"nextBefore"`
+	// Watched is SPECSTATS': the match the asking player (me=) last watched as a custom game's spectator since the
+	// server started (a spectator has no seat, so it isn't in the player's list); missing for none. The page's
+	// ?latest=1 (the After Action Review's MATCH STATS) opens it when it is newer than the player's own newest match.
+	Watched int64 `json:"watched,omitempty"`
 }
 
 type historyPlayer struct {
@@ -158,6 +162,8 @@ type history struct {
 	logf  func(who, format string, a ...any)
 	items map[int64]string // a match item's or battle spell's asset id (AssetID of "<name>.Item") -> its title
 	perks map[int64]string // a spirit stone modifier's SPID (AssetID of its name) -> the stone's title
+	// watched is the match a persona last watched as a spectator, 0 none (SPECSTATS: blaze.Server.WatchedMatch; nil: none)
+	watched func(persona int64) int64
 }
 
 // newHistory reads the content's names once (it doesn't change while the server runs).
@@ -281,6 +287,9 @@ func (h *history) games(q url.Values) (any, int, string, string) {
 	n = min(n, historyPageMax)
 	me := h.me(q)
 	d := historyGames{Version: historyVersion, ServerTime: h.now().Unix(), Names: h.names, Matches: []historyMatch{}}
+	if me != 0 && h.watched != nil {
+		d.Watched = h.watched(me)
+	}
 	var ms []store.Match
 	var err error
 	if who := strings.TrimSpace(q.Get("player")); who == "" || who == historyAll {

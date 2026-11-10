@@ -14,6 +14,7 @@
 
 #include "control/messages.h"
 #include "core/banter/banter.h"
+#include "core/damage/gladiator.h"
 #include "core/damage/kills.h"
 #include "core/damage/pipeline.h"
 #include "core/damage/recap.h"
@@ -60,6 +61,7 @@ struct Stats {
   unsigned rewardBuffs, rewardBuffsRefused;  // D14: CharacterRewardData.buffs granted / refused by the engine
   unsigned roleGoldGrants, goldHandlerChanges;  // ROLEVIM-2: the roles' own grants; OnGrantGold changes
   unsigned roleGrantsBare;                      // ROLEVIM-2: OnGrantGold calls of a role grant (no handler run)
+  unsigned gladiatorHidden;  // GLADVIM: lane-agent deaths whose OnNearbyDeath skipped the Gladiator's store
   double roleGold;                              // ROLEVIM: the gold the roles' grants added
   // D1h
   unsigned playerKills, playerDeathsCounted, assists, creeps, firstBlood, killReports, recapHits, recaps,
@@ -215,6 +217,34 @@ bool SehFire(void* o, int event, const Arg* args, int n) {
     return true;
   } __except (SehNote(GetExceptionInformation(), "AbilityDataContainer_FireEvent")) {
     return false;
+  }
+}
+
+// GLADVIM: modifier_Role_Gladiator's OnNearbyDeath "has handler" byte (static +0x14 + 32), which
+// LabsAbilities_CallEventFunction (0x009063F0) tests before it calls an instance's handler. Cleared while a lane
+// agent's OnNearbyDeath fires, so no Gladiator stores it; every other instance gets the event as before.
+constexpr std::uint32_t kGuidRoleGladiator = 0x33B6C2B7u;  // modifier_Role_Gladiator (core/stats/gold.h)
+void* g_gladiatorStatic = nullptr;
+
+unsigned char* SehGladiatorNearbyFlag() {
+  __try {
+    if (!g_gladiatorStatic) g_gladiatorStatic = FindStaticAbility(kGuidRoleGladiator);
+    return g_gladiatorStatic ? static_cast<unsigned char*>(g_gladiatorStatic) + fns::kHasHandler + fns::kOnNearbyDeath
+                             : nullptr;
+  } __except (SehNote(GetExceptionInformation(), "Gladiator static ability")) {
+    return nullptr;
+  }
+}
+
+// Sets the byte to `value`; returns its old value, or -1 when there is no Gladiator static ability.
+int SehSetFlag(unsigned char* flag, unsigned char value) {
+  __try {
+    if (!flag) return -1;
+    const unsigned char old = *flag;
+    *flag = value;
+    return old;
+  } __except (SehNote(GetExceptionInformation(), "Gladiator handler byte")) {
+    return -1;
   }
 }
 
@@ -1622,14 +1652,15 @@ bool Install(const Options& options) {
   g_installed = true;
   Log("death (D1f-live): GameObject_Kill detour %s, OnGrantGold stub %s; nearby events %d, rewards %d, ends after %d "
       "scheduler run(s), interrupts %d, starting gold %d, passive gold %d; D1g death timer and respawn %d (%s); role gold "
-      "%d, its part %s",
+      "%d, its part %s; a lane agent in the Gladiator's store %s",
       g_opt.killHook ? (g_killHooked ? "installed" : "FAILED") : "off",
       g_opt.goldHook ? (g_goldHooked ? "replaced" : "FAILED") : "kept", g_opt.nearby, g_opt.rewards, g_opt.endRuns,
       g_opt.interrupt, g_opt.startGold, g_opt.passiveGold, g_opt.respawn,
       g_opt.respawnSeconds > 0.f ? ("fixed " + std::to_string(g_opt.respawnSeconds) + " s").c_str()
                                  : "LevelGameplayTuning's formula",
       g_opt.roleGold,
-      g_opt.roleGoldBonus ? "as the grant's bonus (VIMPOPUP)" : "as its own grant ([host] role_gold_bonus=0, ROLEVIM-2)");
+      g_opt.roleGoldBonus ? "as the grant's bonus (VIMPOPUP)" : "as its own grant ([host] role_gold_bonus=0, ROLEVIM-2)",
+      g_opt.gladiatorSkipLaneAgents ? "no (GLADVIM)" : "yes ([host] gladiator_skip_lane_agents=0)");
   return true;
 }
 
@@ -1737,15 +1768,25 @@ void OnDeath(void* victim, void* killer, std::uint32_t killerId, void* snapshot,
     }
     const Arg nearby[2] = {IdArg("nearbyDeathVictim", v.id), IdArg("nearbyDeathKiller", killerId)};
     int fired = 0;
+    // GLADVIM: a lane agent is no Gladiator's stored minion ([host] gladiator_skip_lane_agents)
+    unsigned char* gladFlag = nullptr;
+    int gladOld = -1;
+    if (gms::damage::gladiator::HideStore(g_opt.gladiatorSkipLaneAgents, v.npcType, director::IsLaneAgent(v.id))) {
+      gladFlag = SehGladiatorNearbyFlag();
+      gladOld = SehSetFlag(gladFlag, 0);
+      if (gladOld > 0) ++g_st.gladiatorHidden;
+    }
     if (v.hasContainer && SehFire(victim, fns::kOnNearbyDeath, nearby, 2)) ++fired;
     if (hasKiller && k.id != v.id && k.hasContainer && SehFire(killer, fns::kOnNearbyDeath, nearby, 2)) ++fired;
     void* around[64];
     const int n = SehNearby(v.pos, radius, v.id, killerId, around, 64);
     for (int i = 0; i < n; ++i)
       if (SehFire(around[i], fns::kOnNearbyDeath, nearby, 2)) ++fired;
+    if (gladOld > 0) SehSetFlag(gladFlag, static_cast<unsigned char>(gladOld));
     g_st.nearbyEvents += static_cast<unsigned>(fired);
     g_st.nearbyObjects += static_cast<unsigned>(n);
-    std::snprintf(b, sizeof b, " OnNearbyDeath on %d (victim, killer, %d within %.2f)", fired, n, radius);
+    std::snprintf(b, sizeof b, " OnNearbyDeath on %d (victim, killer, %d within %.2f)%s", fired, n, radius,
+                  gladOld > 0 ? " without the Gladiator's store (GLADVIM)" : "");
     events += b;
     // 2. OnKill on the killer
     if (hasKiller && k.id != v.id && k.hasContainer) {
@@ -2044,7 +2085,7 @@ void FormatStats(char* buf, std::size_t size) {
                 "deaths %u (damage %u, kill %u; players %u), OnNearbyDeath %u (nearby objects %u), OnKill %u, player events "
                 "%u; rewarded deaths %u: xp grants %u (%.0f), gold grants %u (%.0f), D14 reward buffs %u (refused %u); "
                 "OnGrantGold calls %u (handlers %u, "
-                "%.0f -> %.0f, changed %u); role gold (ROLEVIM) %u grants (%+.0f, OnGrantGold without handlers %u); start gold %.0f, passive grants %u (%.0f); ends: modifiers %u (item passives kept %u), "
+                "%.0f -> %.0f, changed %u); role gold (ROLEVIM) %u grants (%+.0f, OnGrantGold without handlers %u), lane-agent deaths without the Gladiator's store (GLADVIM) %u; start gold %.0f, passive grants %u (%.0f); ends: modifiers %u (item passives kept %u), "
                 "abilities interrupted %u (left running, released the agent: %u), deaths done %u, pending %zu; death "
                 "timers %u, respawns %u (failed %u, dropped %u, waiting %zu); D1h: "
                 "player deaths counted %u (%u before the report), player kills %u (first blood %u), assists %u, creeps "
@@ -2053,7 +2094,7 @@ void FormatStats(char* buf, std::size_t size) {
                 g_st.deaths, g_st.byDamage, g_st.byKill, g_st.playerDeaths, g_st.nearbyEvents, g_st.nearbyObjects,
                 g_st.killEvents, g_st.playerEvents, g_st.rewardDeaths, g_st.xpGrants, g_st.xp, g_st.goldGrants, g_st.gold,
                 g_st.rewardBuffs, g_st.rewardBuffsRefused, g_st.goldHookCalls, g_st.goldHandlers, g_st.goldHookIn, g_st.goldHookOut, g_st.goldHandlerChanges,
-                g_st.roleGoldGrants, g_st.roleGold, g_st.roleGrantsBare, g_st.startGold, g_st.passiveGrants,
+                g_st.roleGoldGrants, g_st.roleGold, g_st.roleGrantsBare, g_st.gladiatorHidden, g_st.startGold, g_st.passiveGrants,
                 g_st.passiveGold, g_st.modifiersEnded, g_st.itemPassivesKept, g_st.abilitiesInterrupted,
                 g_st.abilitiesKeptReleased, g_st.pendingDone, g_pending.size(),
                 g_st.deathTimers, g_st.respawns, g_st.respawnsFailed, g_st.respawnsDropped, g_respawns.size(),

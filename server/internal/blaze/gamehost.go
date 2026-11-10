@@ -338,7 +338,8 @@ func (s *Server) leaveHostedGame(r *Request, gameID, playerID, reason int64) boo
 var leaveNotifyDelay = 500 * time.Millisecond
 
 // leave takes a player out of the game on the Blaze side: the host gets removePlayer, and once no
-// player is left, abortGame (a finished host is on its way out anyway). False if the player wasn't
+// player is left, abortGame (a finished host is on its way out anyway). SPECLEAVE: so does a started custom game's
+// last team player whose removal leaves only spectators (onlySpectatorsLeftLocked). False if the player wasn't
 // in the game (or had left already).
 func (hg *hostedGame) leave(conn *Conn, playerID, reason int64) bool {
 	hg.mu.Lock()
@@ -353,6 +354,10 @@ func (hg *hostedGame) leave(conn *Conn, playerID, reason int64) bool {
 			left++
 		}
 	}
+	spectatorsOnly := 0
+	if hp != nil {
+		spectatorsOnly = hg.onlySpectatorsLeftLocked(hp)
+	}
 	mt, ended := hg.match, hg.ended
 	hg.mu.Unlock()
 	if hp == nil {
@@ -364,10 +369,48 @@ func (hg *hostedGame) leave(conn *Conn, playerID, reason int64) bool {
 	name := removedReasonName(reason)
 	hg.s.Log.Logf("blaze", "   game %d: player %d left (%s); %d still in the game", hg.game.ID, playerID, name, left)
 	mt.RemovePlayer(playerID, name)
-	if left == 0 {
+	switch {
+	case left == 0:
 		mt.Abort("no players left")
+	case spectatorsOnly > 0:
+		hg.abortSpectatorsOnly(mt, spectatorsOnly)
 	}
 	return true
+}
+
+// SpectatorsOnlyReason is the abortGame reason of a started custom game whose team players have all left (SPECLEAVE).
+const SpectatorsOnlyReason = "no team players left (only spectators)"
+
+// onlySpectatorsLeftLocked returns how many spectators remain when leaver's removal (already marked) left a started custom game with nobody
+// but spectators (SPECLEAVE, the user's rule of 2026-11-10: spectators never keep a match open). Only a team player's
+// removal counts: a game the --custom-autostart started with spectators alone (bots on both teams) had no team
+// player to lose, and a spectator's leave changes nothing for the players. Before the start the lobby's rules stay
+// (an all-spectator lobby is what --custom-autostart starts; its admin's leave ends it). Bots don't count, as at
+// "no players left". 0: the game goes on (or ends by "no players left"). (hg.mu held)
+func (hg *hostedGame) onlySpectatorsLeftLocked(leaver *hostedPlayer) int {
+	if hg.custom == nil || !hg.custom.started || leaver.p.Team == SpectatorTeam {
+		return 0
+	}
+	spectators := 0
+	for _, x := range hg.players {
+		if x.removed {
+			continue
+		}
+		if x.p.Team != SpectatorTeam {
+			return 0
+		}
+		spectators++
+	}
+	return spectators
+}
+
+// abortSpectatorsOnly ends a started custom game whose team players have all left (SPECLEAVE): abortGame, so the
+// host's end tells the spectators GAME_DESTROYED as it tells the players of any aborted game (the client back at
+// the main menu) and the game leaves the browser.
+func (hg *hostedGame) abortSpectatorsOnly(mt *gmshost.Match, spectators int) {
+	hg.s.Log.Logf("blaze", "   game %d: its last team player left, %d spectator(s) remain: the game ends (spectators don't "+
+		"keep a match open)", hg.game.ID, spectators)
+	mt.Abort(SpectatorsOnlyReason)
 }
 
 // push sends a notification to every player still in the game.

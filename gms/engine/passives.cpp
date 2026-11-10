@@ -200,18 +200,69 @@ int SehRenew(void* sim, unsigned index, std::uint32_t passive, std::uint32_t* cr
   }
 }
 
-}  // namespace
+// SAKFROST (2026-11-10): the passives that live through the death and whose Tick puts itself to sleep while the agent is
+// dead (nThread.Sleep: the thread's sleeping byte), with an OnRevive that doesn't wake it, so only a later event's
+// nThread.WakeUp resumes it. Sakari's modifier_SnowQueen_Passive (93480BB0): its Tick is the frost regeneration (6.5 s
+// after the last Q/W/E/R, +1 per 0.25 s up to 10) and sleeps while IsAlive is false; only OnAbilityUsed (Q/W/E/R) wakes
+// it, so after a respawn the frost stayed at its value at the death (plus what the base's modifier_base_regen gave while
+// she stood in it) until her first cast (Strato match 21, 2026-11-10: 2 of 10 from 602 s to her cast at 622 s). The host
+// wakes the Tick at the respawn, as nThread.WakeUp (0x009253D0) does: the regeneration then runs at once (the last cast
+// was at least the death timer ago). Kensu's modifier_Savage_Passive (B499A7D4): its Tick is the arrow reload (one
+// modifier_Savage_Basic_AmmoCounter stack per 1 / BasicAttacksPerSecond up to 2), asleep once full or while he is dead,
+// woken only by his basic attack going on cooldown (OnAbilityOnCooldown); the counter ends at the death (OnAgentDeath), so
+// he came back with no arrows and his first shot after the respawn was a single one on the basic's full 1.4 s cooldown.
+// Woken at the respawn, the Tick reloads both arrows at once (its reloadTimerStarted keeps a shot's wake from starting a
+// second reload). [host] respawn_wake (1).
+const std::uint32_t kWakeAtRespawn[] = {0x93480BB0u, 0xB499A7D4u};
+int g_wakeEnabled = -1;
 
-bool CreatureHasLiveInstance(void* creature, void* staticAbility) {
+void* FindLiveInstance(void* creature, void* staticAbility) {
   char* c = Field<char*>(creature, obj::kAbilityData);
-  if (!c) return false;
+  if (!c) return nullptr;
   for (const std::uint32_t* p = Field<const std::uint32_t*>(c, container::kModifiersBegin);
        p && p != Field<const std::uint32_t*>(c, container::kModifiersEnd); ++p) {
     void* in = GetInstance(*p);
     if (in && Field<void*>(in, inst::kStatic) == staticAbility && !Field<unsigned char>(in, inst::kEndPending))
-      return true;
+      return in;
   }
+  return nullptr;
+}
+
+// 1 woken, 2 it was awake (nothing done), 0 not on the list (or no creature, instance or thread), -2 exception.
+bool WakesAtRespawn(std::uint32_t passive) {
+  for (std::uint32_t g : kWakeAtRespawn)
+    if (g == passive) return true;
   return false;
+}
+
+int SehWake(void* sim, unsigned index, std::uint32_t passive, std::uint32_t* creatureId, std::uint32_t* instId,
+            std::uint32_t* tid) {
+  __try {
+    if (!WakesAtRespawn(passive)) return 0;
+    void* player = GetPlayerByIndex(sim, index);
+    if (!player) return 0;
+    *creatureId = Field<std::uint32_t>(player, player::kCurrentCreature);
+    void* creature = *creatureId ? GetObjectById(*creatureId) : nullptr;
+    void* st = FindStaticAbility(passive);
+    void* in = creature && st ? FindLiveInstance(creature, st) : nullptr;
+    if (!in) return 0;
+    *instId = Field<std::uint32_t>(in, inst::kId);
+    *tid = Field<std::uint32_t>(in, inst::kThreadId);
+    void* th = *tid ? GetThread(static_cast<char*>(sim) + sim::kLua, *tid) : nullptr;
+    if (!th) return 0;
+    unsigned char& sleeping = *reinterpret_cast<unsigned char*>(static_cast<char*>(th) + thread::kSleeping);
+    if (!sleeping) return 2;
+    sleeping = 0;
+    return 1;
+  } __except (EXCEPTION_EXECUTE_HANDLER) {
+    return -2;
+  }
+}
+
+}  // namespace
+
+bool CreatureHasLiveInstance(void* creature, void* staticAbility) {
+  return FindLiveInstance(creature, staticAbility) != nullptr;
 }
 
 std::uint32_t Activate(void* sim, unsigned index, const char* why) {
@@ -239,6 +290,16 @@ std::uint32_t Activate(void* sim, unsigned index, const char* why) {
     if (rr != 0)
       Log("passives: player %u's creature %08X at the respawn: %s's companion modifier renewed -> %s (modifier %08X)",
           index, creatureId, r.name, rr == 1 ? "activated" : rr == -1 ? "REFUSED" : "EXCEPTION", mod);
+    if (g_wakeEnabled < 0) g_wakeEnabled = HostOptionInt("respawn_wake", 1) != 0 ? 1 : 0;
+    std::uint32_t instId = 0, tid = 0;
+    const int rw = g_wakeEnabled ? SehWake(sim, index, r.guid, &creatureId, &instId, &tid) : 0;
+    if (rw != 0)
+      Log("passives: player %u's creature %08X at the respawn: %s's Tick (inst %08X, thread %08X) %s", index, r.creature,
+          r.name, instId, tid,
+          rw == 1 ? "was asleep -> woken (SAKFROST)" : rw == 2 ? "was awake" : "EXCEPTION");
+    else if (!g_wakeEnabled && WakesAtRespawn(r.guid))
+      Log("passives: player %u's creature %08X at the respawn: %s's Tick left asleep ([host] respawn_wake=0)", index,
+          r.creature, r.name);
   }
   return rc == 1 ? r.modifier : 0;
 }

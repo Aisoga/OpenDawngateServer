@@ -87,6 +87,7 @@ struct Options {
   bool rewardBuffs = true;      // D14: CharacterRewardData.buffs (the jungle buffs, the parasite's team buffs) in step 4
   bool roleGold = true;         // ROLEVIM: RolesTuning's NPC-kill gold modifiers in step 4 ([host] role_passives)
   bool roleGoldBonus = true;    // VIMPOPUP: a role's part as its grant's bonus (its own popup); 0 = its own grant (ROLEVIM-2)
+  bool gladiatorSkipLaneAgents = true;  // GLADVIM: a lane agent's death isn't modifier_Role_Gladiator's store ([host] gladiator_skip_lane_agents)
 };
 
 // DllMain time: the GameObject_Kill detour and the OnGrantGold replacement.

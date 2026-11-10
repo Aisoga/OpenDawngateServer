@@ -775,12 +775,16 @@ func (s *Server) kickFromCustomGame(r *Request, gid, pid, reason int64) {
 		hg.custom.kicked = map[int64]bool{}
 	}
 	hg.custom.kicked[pid] = true
+	spectatorsOnly := hg.onlySpectatorsLeftLocked(hp) // SPECLEAVE: a spectator admin kicked the last team player
 	kicked, mt, ended := hp.conn, hg.match, hg.ended
 	hg.mu.Unlock()
 	name := removedReasonName(reason)
 	s.Log.Logf("blaze", "   game %d: player %d removed by admin %d (%s)", gid, pid, r.Conn.Session.Persona.ID, name)
 	if mt != nil && !ended {
 		mt.RemovePlayer(pid, name)
+		if spectatorsOnly > 0 {
+			hg.abortSpectatorsOnly(mt, spectatorsOnly)
+		}
 	}
 	note := PlayerRemovedNotification(gid, pid, reason)
 	r.After(func() {
@@ -803,6 +807,10 @@ func (hg *hostedGame) lobbyLeft(playerID int64) {
 	hg.mu.Lock()
 	started, ended, mt := hg.custom.started, hg.ended, hg.match
 	wasAdmin := hg.isAdminLocked(playerID)
+	spectatorsOnly := false // SPECLEAVE: the removal left a started game with spectators alone (its host was aborted)
+	if hp := hg.playerLocked(playerID); hp != nil && hp.removed {
+		spectatorsOnly = hg.onlySpectatorsLeftLocked(hp) > 0
+	}
 	left, adminLeft := 0, false
 	for _, hp := range hg.players {
 		if hp.removed {
@@ -823,6 +831,11 @@ func (hg *hostedGame) lobbyLeft(playerID int64) {
 	case left == 0: // a host was aborted by leave ("no players left")
 		if mt == nil {
 			hg.endLobby("no players left")
+		}
+		return
+	case started && spectatorsOnly: // a host was aborted by leave or the kick (SpectatorsOnlyReason)
+		if mt == nil {
+			hg.endLobby(SpectatorsOnlyReason)
 		}
 		return
 	case !started && wasAdmin && !adminLeft:

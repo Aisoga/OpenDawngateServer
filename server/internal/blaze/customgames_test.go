@@ -494,7 +494,7 @@ func TestCustomGameAdminLeaves(t *testing.T) {
 }
 
 // Without a match host the lobby still works on the Blaze side: NotifyGameSetup names --gms-port at once, joins,
-// the team full error, the start; the game ends with its last player.
+// the team full error, the start; the game ends with its last team player (SPECLEAVE: its spectator doesn't keep it).
 func TestCustomGameNoHost(t *testing.T) {
 	ts := newTCPServer(t, nil)
 	g := golden.Load(t)
@@ -524,7 +524,9 @@ func TestCustomGameNoHost(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if log := ts.log.String(); !strings.Contains(log, "game 1 ends: no players left") {
+	// SPECLEAVE: the closes race, so the spectator's may come before the last team player's or after it
+	if log := ts.log.String(); !strings.Contains(log, "game 1 ends: no players left") &&
+		!strings.Contains(log, "game 1 ends: "+SpectatorsOnlyReason) {
 		t.Errorf("log:\n%s", log)
 	}
 }

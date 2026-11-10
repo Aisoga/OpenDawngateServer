@@ -300,7 +300,8 @@ func TestHistoryPage(t *testing.T) {
 		"&larr; Recent games", "Not recorded for this match.", "body.embed",
 		`name: "Overview"`, `name: "Damage"`, `name: "Healing"`, `name: "Vim & XP"`, `name: "Crowd control"`,
 		`name: "Vision & objectives"`, `name: "Timeline"`, "My games", "All games", `"Wins"`, `"Losses"`,
-		"function onLivingLoreVoteUpdate()", "not run by Waystone Games or Electronic Arts",
+		"function onLivingLoreVoteUpdate()", "d.watched > id", `"WATCHED MATCH"`,
+		"not run by Waystone Games or Electronic Arts",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("history.html lacks %q", want)

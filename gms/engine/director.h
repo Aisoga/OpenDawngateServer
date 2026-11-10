@@ -202,6 +202,9 @@ const Tuning& LevelTuning();
 // The object id that came from a marker (object +0x84), 0 if none (scanned at OnLevelStarted).
 std::uint32_t ObjectOfMarker(std::uint32_t marker);
 
+// GLADVIM: whether `id` is a lane agent the director spawned (MAPSTRIDER; alive or dead).
+bool IsLaneAgent(std::uint32_t id);
+
 // CAMPFINISH: the jungle camp (not the parasite's) with a living member nearest (x, y) within `radius`: its index and
 // name, each listed member's id and HP (dead ones 0; at most kMembers), and the living members' count, HP and max HP.
 struct CampFight {

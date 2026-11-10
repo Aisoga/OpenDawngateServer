@@ -1982,6 +1982,9 @@ constexpr std::uintptr_t kContainerHeldAbility = 0x540;
 
 // GearsLua thread fields (constructor 0x008740B0).
 namespace thread {
+// byte: set by nThread.Sleep (0x009253A0, whose wait callback 0x00925390 is "this byte == 0"), cleared by
+// nThread.WakeUp (0x009253D0) on the thread of the calling lua_State (GearsLua_GetThreadFromState 0x00872EB0)
+constexpr std::uintptr_t kSleeping = 0xF0;
 constexpr std::uintptr_t kStatus = 0xF8;  // 1 new, 2 function pending, 0 yielded, 3 reset, -1 finished, -2 running or failed
 }  // namespace thread
 

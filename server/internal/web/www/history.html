@@ -6,7 +6,8 @@
 <!--
   Dawngate restoration server: the match history page (recent games and a match's statistics), beside home.html.
   Two places show it: the main menu's home view (1440 x 633, the home page's links), and the After Action Review's
-  panel (history.html?embed=1&latest=1: a compact layout of about 1074 x 597 that opens the player's newest match).
+  panel (history.html?embed=1&latest=1: a compact layout of about 1074 x 597 that opens the player's newest match, or
+  the match the player just watched as a spectator).
 
   It reads games.json (a page of matches, newest first) and game.json (one match with every seat's stats, the damage
   and healing sources and the timeline) beside it. The player is Client.getLocalPlayerName() (in a browser ?me=),
@@ -379,6 +380,7 @@
   // ---- The server ---------------------------------------------------------------------------------------
   var ME = "";            // the player (Client.getLocalPlayerName)
   var EMBED = false;      // the After Action Review's panel
+  var WATCHED = 0;        // the match ?latest=1 opened as the one the player watched as a spectator (games.json's watched)
   var PAGE_N = 10;        // matches per page (?n=1..50): ten rows and Load more fit the home view
   var seq = 0;
 
@@ -1216,7 +1218,7 @@
     var id = matchFromHash();
     el("listView").style.display = id ? "none" : "block";
     el("matchView").style.display = id ? "block" : "none";
-    setText("pageTitle", id ? "MATCH" : "RECENT GAMES");
+    setText("pageTitle", id ? (id == WATCHED ? "WATCHED MATCH" : "MATCH") : "RECENT GAMES");
     el("backLink").style.display = id ? "inline-block" : "none";
     bottomNav(!!id);
     window.scrollTo(0, 0);
@@ -1239,11 +1241,14 @@
   function showList() { location.hash = "list"; return false; }
   function goHome() { location.href = "home.html"; return false; }
 
-  // ?latest=1: the player's newest match (everyone's newest without a player name).
+  // ?latest=1: the player's newest match (everyone's newest without a player name); or the match the player last
+  // watched as a spectator (the answer's "watched"), when that is newer: a spectator's review shows what it watched.
   function openLatest() {
     getJSON("games.json?player=" + encodeURIComponent(ME || "all") + "&me=" + encodeURIComponent(ME) + "&n=1", function (d) {
       var ms = d ? list(d.matches) : [];
-      if (ms.length) { location.hash = "match=" + ms[0].id; } else { location.hash = "list"; }
+      var id = ms.length ? ms[0].id : 0;
+      if (d && d.watched > id) { id = d.watched; WATCHED = id; }
+      if (id) { location.hash = "match=" + id; } else { location.hash = "list"; }
       route();
     });
   }

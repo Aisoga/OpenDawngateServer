@@ -50,6 +50,15 @@ func newSink(t *testing.T) *sink {
 				continue
 			}
 			k.mu.Lock()
+			// A connect the front cancelled has closed its socket before the next one dials, but this side sees the
+			// close a moment later (the io.Copy below, on a busy machine more than a moment): give an open one up to
+			// a second to go before counting both at once. A connect that wasn't cancelled stays open until its
+			// timeout (ConnectTimeout, 30 s here), so a real overlap still counts.
+			for wait := time.Now().Add(time.Second); k.open > 0 && time.Now().Before(wait); {
+				k.mu.Unlock()
+				time.Sleep(5 * time.Millisecond)
+				k.mu.Lock()
+			}
 			k.open++
 			k.total++
 			k.hi = max(k.hi, k.open)

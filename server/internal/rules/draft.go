@@ -9,12 +9,14 @@ import (
 // The draft (RULES5b; version 2 since DRAFT1, the user's decisions of 2026-11-11): before shaper select, the teams ban
 // and pick shapers on the lobby's board, and each human then plays the shaper it drafted.
 //
-//   - Bans first: DraftBansPerTeam (two) per team, alternating team by team (team 1, team 2, ...), each by the team's first player
-//     (its first seat), one at a time. Everyone sees them.
-//   - Then the picks by team turns 1-2-2-1-1-2-2-1-1-2 (team 1 = Mortal), played in windows 1-2-2-2-2-1: the two turns of
-//     a double window run at the same time, each seat locks on its own, and the window ends when both have locked (or
-//     at its timer). A team's k-th pick is its k-th player's (seat order), unless two teammates swapped their pick turns
-//     (SwapPicks) before either's window began.
+//   - One team starts (DraftOrder.First; DRAFTSHUF: the server flips a coin; team 1 = Mortal in the zero order): it has
+//     the first ban and the first pick.
+//   - Bans first: DraftBansPerTeam (two) per team, alternating team by team from the starting team, each by the team's
+//     banning seat (DraftOrder.Banner: the seat of the team's top player in the lobby), one at a time. Everyone sees them.
+//   - Then the picks by team turns 1-2-2-1-1-2-2-1-1-2 ("1" the starting team), played in windows 1-2-2-2-2-1: the two
+//     turns of a double window run at the same time, each seat locks on its own, and the window ends when both have
+//     locked (or at its timer). A team's k-th pick is its k-th seat's (DRAFTSHUF: the server shuffles the seats), unless
+//     two teammates swapped their pick turns (SwapPicks) before either's window began.
 //   - A shaper is banned or picked once in the whole game: it must be in the pool, not banned and not picked by either
 //     team (so a draft needs ten picks and four bans in the pool: PoolForDraft).
 //   - A team with fewer humans skips its turns beyond its size (a team without humans bans nothing either); the turns
@@ -34,7 +36,7 @@ const (
 	DraftPicksPerTeam = 5
 )
 
-// draftPickTeams is the pick order's team of each of the ten pick turns: 1-2-2-1-1-2-2-1-1-2.
+// draftPickTeams is the pick order's team of each of the ten pick turns: 1-2-2-1-1-2-2-1-1-2 (0 the starting team).
 var draftPickTeams = [2 * DraftPicksPerTeam]int{0, 1, 1, 0, 0, 1, 1, 0, 0, 1}
 
 // draftPickWindows is the window of each of the ten pick turns: 1-2-2-2-2-1 (DRAFT1: a double window's two turns run at
@@ -80,7 +82,7 @@ func IsDraftRole(id string) bool {
 type DraftTurn struct {
 	Kind   string // DraftBan or DraftPick
 	Team   int    // 0 (team 1) or 1 (team 2)
-	Seat   int    // the team's seat on turn (a ban: 0, the team's first player)
+	Seat   int    // the team's seat on turn (a ban: the team's DraftOrder.Banner)
 	Shaper string // the result, a PlayerClass; "" while the turn is to come or on, and for a skipped ban (after a trade: the shaper the seat holds now)
 	How    string // "" while the turn is to come or on, else DraftChosen, DraftHover or DraftTimeout
 	Window int    // its window: the turns that run at the same time, numbered from 0 over the planned turns
@@ -111,27 +113,51 @@ var (
 	ErrDraftNotOver   = errors.New("the picks aren't over")
 	ErrNothingToTrade = errors.New("one of the two has no shaper")
 	errDraftBadSeats  = errors.New("a team's humans must be 0 to 5")
+	errDraftBadOrder  = errors.New("the starting team must be 0 or 1, each banning seat one of its team's")
 )
 
-// NewDraft plans a draft over pool for teams of seats[0] and seats[1] humans: the bans of each team with a human, then
-// the picks of the seats that exist, in their windows.
+// DraftOrder is who starts and who bans (DRAFTSHUF). The zero value is the order before it: team 1 starts, each team's
+// first seat bans.
+type DraftOrder struct {
+	First  int    // the starting team, 0 (team 1) or 1 (team 2): the first ban and the first pick
+	Banner [2]int // each team's seat that bans
+}
+
+// NewDraft plans a draft over pool for teams of seats[0] and seats[1] humans in DraftOrder{} (team 1 starts, the first
+// seats ban): NewDraftOrder's.
 func NewDraft(pool []string, seats [2]int) (*Draft, error) {
+	return NewDraftOrder(pool, seats, DraftOrder{})
+}
+
+// NewDraftOrder plans a draft over pool for teams of seats[0] and seats[1] humans in order o: the bans of each team
+// with a human, alternating from o.First's, each by the team's o.Banner seat; then the picks of the seats that exist,
+// in their windows (o.First's team has the first).
+func NewDraftOrder(pool []string, seats [2]int, o DraftOrder) (*Draft, error) {
 	for _, n := range seats {
 		if n < 0 || n > DraftPicksPerTeam {
 			return nil, errDraftBadSeats
 		}
 	}
+	if o.First != 0 && o.First != 1 {
+		return nil, errDraftBadOrder
+	}
+	for team, b := range o.Banner {
+		if b < 0 || (seats[team] > 0 && b >= seats[team]) {
+			return nil, errDraftBadOrder
+		}
+	}
 	d := &Draft{Pool: append([]string(nil), pool...), Last: -1, used: map[string]string{}}
 	window := 0
 	for i := 0; i < 2*DraftBansPerTeam; i++ {
-		if team := i % 2; seats[team] > 0 {
-			d.Turns = append(d.Turns, DraftTurn{Kind: DraftBan, Team: team, Window: window})
+		if team := (i + o.First) % 2; seats[team] > 0 {
+			d.Turns = append(d.Turns, DraftTurn{Kind: DraftBan, Team: team, Seat: o.Banner[team], Window: window})
 			window++
 		}
 	}
 	var next [2]int
 	last := -1 // the last planned pick's window in draftPickWindows
-	for i, team := range draftPickTeams {
+	for i, t := range draftPickTeams {
+		team := t ^ o.First
 		seat := next[team]
 		next[team]++
 		if seat >= seats[team] {
@@ -334,7 +360,7 @@ func (d *Draft) CheckSwap(team, a, b int) error {
 }
 
 // SwapPicks exchanges the pick turns of team's seats a and b (CheckSwap's conditions): each then picks in the other's
-// turn. The bans stay the first seat's.
+// turn. The bans stay the banning seat's.
 func (d *Draft) SwapPicks(team, a, b int) error {
 	if err := d.CheckSwap(team, a, b); err != nil {
 		return err

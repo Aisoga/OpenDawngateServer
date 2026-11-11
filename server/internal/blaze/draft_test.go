@@ -91,6 +91,7 @@ func draftLobbyN(t *testing.T, setup func(s *Server), players []string, spectato
 		s.TestRules = &dr
 		s.DraftTurn, s.DraftRoleTime, s.DraftTradeTime = 10*time.Second, 10*time.Second, 10*time.Second
 		s.RollSeed = func() uint64 { return 5 }
+		s.DraftFixedOrder = true // the tests before DRAFTSHUF expect the lobby's order; draftshuf_test.go turns it off
 		if setup != nil {
 			setup(s)
 		}

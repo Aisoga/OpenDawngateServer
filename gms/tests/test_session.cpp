@@ -2056,6 +2056,52 @@ GMS_TEST(SessionLateSpectatorIsNamedAfterThePlayersPreGame) {
   }
 }
 
+// SPECLOAD (a player's report): a spectator present from the lobby gets player 0's perk page loadout (C0 02) at the
+// reveal; one who comes after the reveal skips shaper select and got none, so its perk tooltips stayed empty. Now it
+// gets the same C0 02 right before its C0 03 (done): its client is surely in the pre-game then, the only state that
+// reads C0 02 (right after B6 it was still in the lobby state live and dropped it); player 1 has no page, so no C0 02 for it. With lateSpectatorLoadouts off the late one gets none (the bug).
+GMS_TEST(SessionLateSpectatorGetsThePlayersLoadouts) {
+  for (const bool on : {true, false}) {
+    std::printf("  lateSpectatorLoadouts %d\n", on ? 1 : 0);
+    LogCapture log;
+    MultiRig rig(150, true, true, [on](gms::SessionOptions& so) { so.lateSpectatorLoadouts = on; });
+    gms::PerkPage p1;
+    p1.id = 1;
+    p1.version = 3;
+    p1.attributes = {gms::LoadoutAttribute{0, 1, 0.8f}, gms::LoadoutAttribute{2, 1, 50.f}};
+    p1.modifiers = {gms::AssetIdOf("modifier_MediumPerk_BushSpeed")};
+    rig.match.config.players[0].content.pages = {p1};
+    rig.match.roster[kUserS] = SpectatorSlot(10);
+    rig.match.roster[kUserT] = SpectatorSlot(11);
+    Human& a = rig.Connect(kUserA);
+    Human& b = rig.Connect(kUserB);
+    a.model.perkPage = 1;
+    Human& early = rig.Connect(kUserS);
+    CHECK(rig.RunUntil([&] { return rig.Phase() == 4; }, 3000));
+    Human& late = rig.Connect(kUserT);
+    CHECK(rig.RunUntil([&] { return a.Entered() && b.Entered() && early.Entered() && late.Entered(); }, 8000));
+    CHECK_EQ(late.model.state, 6);
+    CHECK(!late.model.inShaperSelect);
+    const std::string hex = gms::Hex(gms::BuildPreGameLoadout(0, p1.attributes, p1.modifiers), static_cast<size_t>(-1));
+    // the early spectator: at the reveal, before its C0 01
+    const int atEarly = early.First(hex);
+    CHECK(atEarly >= 0 && atEarly < early.First("c001"));
+    CHECK(early.First("c00201") < 0);
+    const int at = late.First(hex), b6 = late.First("b6"), done = late.First("c003"), entered = late.First("b7");
+    CHECK(b6 >= 0 && done > b6 && entered > done);
+    CHECK(late.First("c00201") < 0);  // player 1 has no page
+    if (on) {
+      CHECK(at > b6 && at == done - 1);  // right before C0 03
+      CHECK(log.Has("late spectator's pre-game loadout: player 0 perk page 1 (2 attribute(s), 1 modifier(s))"));
+      CHECK(log.Has("spectator 11 came after the reveal: 1 player loadout(s) sent before its C0 03"));
+      CHECK(!log.Has("spectator 10 came after the reveal"));  // the early one had the reveal's
+    } else {
+      CHECK_EQ(at, -1);
+      CHECK(!log.Has("came after the reveal"));
+    }
+  }
+}
+
 // A spectator leaves in the game: every client that had it gets PlayerDeparted (no 0x4 is kept); the same user comes
 // back on a new connection, keeps its gameplay index (RejoinMap), the others get PlayerJoined again and it enters
 // Spectator again.

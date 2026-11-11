@@ -169,6 +169,10 @@ type Server struct {
 	// DraftRoleTime and DraftTradeTime are the draft's role and trade phases (DRAFT1; dgserver --draft-role-time,
 	// --draft-trade-time; 0 = DraftRoleDefault, DraftTradeDefault).
 	DraftRoleTime, DraftTradeTime time.Duration
+	// DraftFixedOrder keeps a draft's pick order the lobby's and lets team 1 start (dgserver --draft-shuffle=off, for
+	// tests with a fixed order); false (the default) shuffles each team's pick order and flips a coin for the team
+	// that starts (DRAFTSHUF, draft.go shuffleDraftSeats).
+	DraftFixedOrder bool
 	// TestDraft makes the server act for every drafter this long after each step of every draft began (dgserver
 	// --test-draft, a test aid: a draft without the lobby's board; 0 = off): the roles, every seat on turn, one swap and
 	// one trade, the ready marks. draft.go.

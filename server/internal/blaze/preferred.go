@@ -36,6 +36,17 @@ import (
 // region of the server's = the home region). Only region.set writes it: saveUserSettings drops it.
 const SettingPreferredRegion = "PreferredRegion"
 
+// settingDraftMusic is the account setting the draft's music switch kept ("off" or "on") until the user had the switch
+// removed (2026-11-11): nothing reads or writes it any more, but an account may still hold it, so it stays hidden from
+// the client's settings calls like the other settings of ours.
+const settingDraftMusic = "DraftMusic"
+
+// ourSetting tells the account settings the server keeps for itself, which the client's settings calls never read or
+// write.
+func ourSetting(key string) bool {
+	return key == SettingPreferredRegion || key == settingDraftMusic
+}
+
 // The region area's call and event on the UI channel.
 const (
 	CallRegionSet    = "region.set"

@@ -98,6 +98,8 @@ type config struct {
 	draftTurn            time.Duration      // RULES5b: a draft turn's time (--draft-turn; 0 = 45 s since DRAFT1)
 	draftRoleTime        time.Duration      // DRAFT1: the draft's role phase (--draft-role-time; 0 = 20 s)
 	draftTradeTime       time.Duration      // DRAFT1: the draft's trade phase (--draft-trade-time; 0 = 30 s)
+	draftFixedOrder      bool               // DRAFTSHUF: the lobby's pick order, team 1 first (--draft-shuffle=off)
+	testRollSeed         uint64             // DRAFTSHUF: the seed of every All Random roll and draft (--test-roll-seed, a test aid; 0 = crypto/rand)
 	testDraft            time.Duration      // RULES5b: the server acts for the player on turn after this (--test-draft, a test aid)
 	level                string             // MAPLEVEL1: the level hosted games load (--map, --level; "" = blaze.HostedLevel)
 	customLevels         []string           // MAPPICK: the levels a custom game's name tag may pick (--custom-maps)
@@ -728,6 +730,14 @@ func start(cfg config) (*instance, error) {
 	}
 	bz.DraftTurn, bz.TestDraft = cfg.draftTurn, cfg.testDraft
 	bz.DraftRoleTime, bz.DraftTradeTime = cfg.draftRoleTime, cfg.draftTradeTime
+	bz.DraftFixedOrder = cfg.draftFixedOrder
+	if cfg.draftFixedOrder {
+		log.Logf("stub", "TEST: drafts keep the lobby's pick order and team 1 starts (--draft-shuffle=off)")
+	}
+	if seed := cfg.testRollSeed; seed != 0 {
+		bz.RollSeed = func() uint64 { return seed }
+		log.Logf("stub", "TEST: every All Random roll and draft has the seed %d (--test-roll-seed, a test aid)", seed)
+	}
 	if cfg.testDraft > 0 {
 		log.Logf("stub", "TEST: the server acts for every drafter %v into each step of every draft: roles, bans and picks, one swap, one trade, ready (--test-draft, a test aid)", cfg.testDraft)
 	}
@@ -1298,6 +1308,8 @@ func Run(args []string, h Hooks) int {
 	fs.DurationVar(&cfg.draftTurn, "draft-turn", 0, "the time of one turn of a custom game's draft, a ban or a pick window (e.g. 10s; 0 = 45s)")
 	fs.DurationVar(&cfg.draftRoleTime, "draft-role-time", 0, "the time of a custom game's draft's role phase, in which every drafter declares a role (e.g. 10s; 0 = 20s)")
 	fs.DurationVar(&cfg.draftTradeTime, "draft-trade-time", 0, "the longest time of a custom game's draft's trade phase after the picks, which ends early once every drafter is ready (e.g. 10s; 0 = 30s)")
+	draftShuffle := fs.String("draft-shuffle", "on", "a custom game's draft: on shuffles each team's pick order and flips a coin for the team that starts (the first ban and the first pick); off keeps the lobby's order and lets the Mortal team start, for tests with a fixed order; the bans are always each team's top player's in the lobby")
+	fs.Uint64Var(&cfg.testRollSeed, "test-roll-seed", 0, "test aid: the seed of every custom game's All Random rolls and draft (its pick order, the starting team, the random picks), instead of a random one; 0 = off")
 	fs.DurationVar(&cfg.testDraft, "test-draft", 0, "test aid: in every draft the server acts for every drafter this long (e.g. 2s) into each step, through the same checks as a player's calls: it declares the roles, bans and picks for every seat on turn, makes one pick-order swap and one trade, and marks everyone ready; 0 = off")
 	fs.DurationVar(&cfg.customAutoStart, "custom-autostart", 0, "a custom game whose humans all moved to the spectators starts by itself after this (e.g. 5s; 0 = off): a game of bots alone with --custom-bots, for tests")
 	fs.BoolVar(&cfg.shaperSelect.On, "shaper-select", false, "match hosts run shaper select with each player's shapers, skins, wards and announcers from its account (D3-live)")
@@ -1410,6 +1422,14 @@ func Run(args []string, h Hooks) int {
 		cfg.noHelloCheck = true
 	default:
 		fmt.Fprintf(os.Stderr, "dgserver: --gms-hello-check must be on or off, not %q\n", *helloCheck)
+		return 2
+	}
+	switch *draftShuffle {
+	case "on":
+	case "off":
+		cfg.draftFixedOrder = true
+	default:
+		fmt.Fprintf(os.Stderr, "dgserver: --draft-shuffle must be on or off, not %q\n", *draftShuffle)
 		return 2
 	}
 	if cl, err := blaze.ParseLevels(*customMaps); err != nil {

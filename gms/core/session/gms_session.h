@@ -78,7 +78,8 @@
 //   is echoed. nameSpectators: the players' clients get it too (HelloPlayer/PlayerJoined; their loading screen's 15
 //   slots and gates count spectators), but a spectator who comes while a client is between B6 and EnterGame is named
 //   to that client only at its EnterGame, so a late spectator never holds up the others' 0x100/0x400 gates. A spectator
-//   who comes after the reveal skips shaper select (0x10). A spectator's departure is PlayerDeparted (0x87) to every
+//   who comes after the reveal skips shaper select (0x10) and gets the picks' loadouts (C0 02) before its C0 03
+//   (SPECLOAD). A spectator's departure is PlayerDeparted (0x87) to every
 //   client that has it (no 0x4 is kept); the same user later keeps its gameplay index (RejoinMap). Spectators never
 //   answer the match-found prompt (no prompt wait, never a culprit).
 // Log lines (common/log.h) keep raknet_probe's format; the per-connection state line "session <addr>: ..." is what
@@ -143,6 +144,10 @@ struct SessionOptions {
   // B15b: the players' clients get the spectators too (HelloPlayer, PlayerJoined, their statuses); a spectator's client
   // always gets every player
   bool nameSpectators = true;
+  // SPECLOAD: a spectator who comes after the reveal (no shaper select of its own) gets every pick's pre-game loadout
+  // (C0 02) right before its C0 03 (done), as the reveal gives it to the clients in shaper select; without it its client has no
+  // player's loadout, so the shaper and target panels' perk tooltips stay empty
+  bool lateSpectatorLoadouts = true;
   // SEATAUTH: how long a HelloReq waits for its verdict (no verdict = refused, the connection closes), and how long a
   // connection may stay without a HelloReq (0 = for ever; never with stopAfter before kStepHello). HOSTHARD: progress-only
   // status echoes go out at most this often per connection (a changed status word always does), and the first
@@ -249,6 +254,7 @@ class GmsSession final : public ISender {
   void AfterShaperSelect();
   uint32_t RevealStatus(uint8_t gameplayIndex);
   void SendReveal(Conn& to, const std::vector<ShaperPick>& picks, const std::vector<ConnId>& owners);
+  void SendLateSpectatorLoadouts(Conn& to);  // SPECLOAD
   void PlayerGone(const Departed& d);
   void MarkOthersLoaded();
   // G3

@@ -19,7 +19,7 @@
 //   - the head row: whose turn it is (YOUR TURN, larger, on an orange band, the board framed in a glow; else the team
 //     and its players on turn), the time left large in the middle with a bar of the step's time (turnMs) under it, the
 //     turns as a row of chips (a circle per ban, a square per pick, in the team's colour: done faint, the open ones
-//     filled and framed); its rightmost 32 units stay free (the draft music's speaker);
+//     filled and framed) to its right end;
 //   - a column per team (Mortal left, Spirit right): its bans (two; the portrait darkened, a red cross) and a row per
 //     pick (its player's name, the portrait and name of the shaper picked, "Picking..." on an open turn's row); the
 //     team on turn has a glow of its colour behind its column. On the own team's rows only: each player's role (the
@@ -137,7 +137,6 @@ package {
         private static const START_ABOVE:int = 81;  // START's top above the stage's bottom (at every size, DRAFT0)
         private static const CHAT_W:Number = 297;   // EA's chat window's width and right margin in 768-high units
         private static const CHAT_GAP:int = 8;      // the board's right edge before the chat window's left
-        private static const SPEAKER_W:int = 32;    // the head row's right end, kept free for the music's speaker
         private static const TEAM_W_MAX:int = 190;  // a team's column
         private static const TEAM_W_MIN:int = 150;
         private static const COL_GAP:int = 16;
@@ -259,12 +258,6 @@ package {
         // the board's sprite (LobbyReady keeps it above the rules' layer)
         public function get top():DisplayObject {
             return layer;
-        }
-
-        // where the board is now, in the overlay's units (the window's pixels), or null while it isn't drawn; a class
-        // that adds to the board (the music's speaker) places itself in its head row's right end, SPEAKER_W wide
-        public function boardRect():Rectangle {
-            return layer != null && rect != null ? rect.clone() : null;
         }
 
         // ---- the server's event ----
@@ -1495,7 +1488,7 @@ package {
         }
 
         // the turns as chips: a circle per ban, a square per pick, in the team's colour; done faint, the open ones
-        // filled with an orange frame, the rest outlined; right of the timer, before the speaker's place
+        // filled with an orange frame, the rest outlined; right of the timer, to the head row's right end
         private function drawChips(open:Array):void {
             while (chips.numChildren > 0) {
                 chips.removeChildAt(0);
@@ -1507,7 +1500,7 @@ package {
             }
             var gap:int = bans > 0 && bans < n ? 12 : 0;
             var x0:Number = boardW / 2 + TIMER_W / 2 + 8;
-            var x1:Number = boardW - PAD - SPEAKER_W;
+            var x1:Number = boardW - PAD;
             var pitch:Number = Math.min(CHIP_W, (x1 - x0 - gap) / Math.max(1, n));
             var s:Number = Math.max(8, Math.min(CHIP_S, Math.floor(pitch - 4)));
             chips.x = Math.round(x1 - n * pitch - gap + (pitch - s));

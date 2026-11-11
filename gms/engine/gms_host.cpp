@@ -4463,6 +4463,8 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
   so.abortAckMs = HostOptionInt("abort_ack_ms", so.abortAckMs);
   // B15b: the players' clients get the spectators too (GMS_PROTOCOL.md *Spectators on the match host (B15b)*)
   so.nameSpectators = HostOptionInt("name_spectators", 1) != 0;
+  // SPECLOAD: 0 = a spectator who comes after the reveal gets no player's loadout (C0 02), as before
+  so.lateSpectatorLoadouts = HostOptionInt("late_spectator_loadouts", 1) != 0;
   // the strict message check (core/protocol/check.h): 1 drop (default), 2 count and log only, 0 off
   so.check.mode = HostOptionInt("strict_check", 1);
   so.check.kickCount = HostOptionInt("check_kick_count", so.check.kickCount);

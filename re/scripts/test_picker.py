@@ -477,14 +477,14 @@ def main(argv):
           b"lobby.setReady" in ltags and b"customMatchLobby" in ltags and b"Channel/dgchannel.json" in ltags and
           b"~#" not in ltags,
           "lobby_tags.hex: DefineSprite, DoABC, SymbolClass 2001 -> LobbyReady, PlaceObject3 at 2001")
-    # DRAFT2c's DraftSound (compiled into the same ABC): the music by name, the turn sounds, the chat switch, the speaker
-    # button's call. The chat manager is reached only from the draft's events, i.e. while the lobby shows (READY2's
-    # rule: never before the screen that uses it shows).
+    # DRAFT2c's DraftSound (compiled into the same ABC): the music by name, the turn sounds, the chat switch; no speaker
+    # button (removed at the user's word, 2026-11-11: no draft.music call, no musicOff). The chat manager is reached
+    # only from the draft's events, i.e. while the lobby shows (READY2's rule: never before the screen that uses it shows).
     check(b"Play_Music_Shaper_Select" in ltags and b"Stop_Music_Shaper_Select" in ltags and
           b"Global.PlaySound" in ltags and b"Global.OnInteractEvent" in ltags and b"SwitchToChannel" in ltags and
-          b"maxis.chat.manager.ChatManager" in ltags and b"draft.music" in ltags and b"musicOff" in ltags and
+          b"maxis.chat.manager.ChatManager" in ltags and b"draft.music" not in ltags and b"musicOff" not in ltags and
           b"UnMute_Shaper_Select_Music" not in ltags,
-          "lobby_tags.hex: DraftSound's music, turn sounds, team chat and speaker button (never an UnMute)")
+          "lobby_tags.hex: DraftSound's music, turn sounds and team chat, no speaker button (never an UnMute)")
     # The chat manager is allowed in the lobby's ABC for one thing only (the user's decision of 2026-11-11: a drafter's
     # lobby chat switches to the team channel by itself during the draft, DRAFT2c): customGameChatWindow's
     # SwitchToChannel("team"|"lobby"). The chat stays no data channel of ours: nothing that sends, writes, reads or joins.

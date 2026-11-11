@@ -140,7 +140,7 @@ package {
         private var said:Object = {};
         private var rules:RulesPanel = null; // the match rules' summary and the admin's editor (RulesPanel.as)
         private var draft:DraftBoard = null; // the draft's board (DraftBoard.as)
-        private var sound:DraftSound = null; // the draft's music, turn sounds, team chat and speaker button (DraftSound.as)
+        private var sound:DraftSound = null; // the draft's music, turn sounds and team chat (DraftSound.as)
 
         public function LobbyReady() {
             self = this;
@@ -155,7 +155,7 @@ package {
             channel.on("lobby.rulesCatalog", rules.setCatalog);
             draft = new DraftBoard(channel, say);
             draft.redraw = redraw;
-            sound = new DraftSound(channel, say);
+            sound = new DraftSound(say);
             channel.on("draft.state", onDraft);
             addEventListener(Event.ENTER_FRAME, onFirstFrame, false, 0, false);
         }
@@ -391,7 +391,6 @@ package {
         // the draft's board, while a draft runs (the server's draft.state says so)
         private function drawDraft():void {
             draft.draw(overlay, view);
-            sound.draw(draft.top, draft.boardRect());
         }
 
         private function part(name:String, f:Function):void {

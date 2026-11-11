@@ -275,9 +275,15 @@ func TestLobbyTags(t *testing.T) {
 	// the draft's sounds and team chat (DraftSound, compiled into the same ABC): the chat manager reached only from the
 	// draft's events, while the lobby shows; never an UnMute of the player's shaper-select music
 	for _, want := range []string{"Play_Music_Shaper_Select", "Stop_Music_Shaper_Select", "Global.OnInteractEvent",
-		"SwitchToChannel", "maxis.chat.manager.ChatManager", "draft.music", "musicOff"} {
+		"SwitchToChannel", "maxis.chat.manager.ChatManager"} {
 		if !bytes.Contains(p.Tags, []byte(want)) {
 			t.Errorf("the class lacks %q (the draft's sounds and team chat)", want)
+		}
+	}
+	// the music's speaker button is gone (the user's word of 2026-11-11): no switch, no call for it
+	for _, gone := range []string{"draft.music", "musicOff"} {
+		if bytes.Contains(p.Tags, []byte(gone)) {
+			t.Errorf("the class still has %q (the removed music switch)", gone)
 		}
 	}
 	if bytes.Contains(p.Tags, []byte("UnMute_")) {

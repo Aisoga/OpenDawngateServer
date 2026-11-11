@@ -142,9 +142,6 @@ type DraftState struct {
 	You      *DraftYou        `json:"you,omitempty"`    // the receiver's seat; absent for a spectator
 	YourTurn bool             `json:"yourTurn"`         // the receiver's seat has an open turn in the current window
 	Own      *DraftOwn        `json:"own,omitempty"`    // DRAFT1: the receiver's team's private part; absent for a spectator
-
-	// DRAFT2c: the receiver turned the draft's music off (draftmusic.go); absent when it is on
-	MusicOff bool `json:"musicOff,omitempty"`
 }
 
 // The stages of a running draft.
@@ -320,14 +317,15 @@ func (hg *hostedGame) beginDraftLocked() (func(), error) {
 	for i, p := range pool {
 		ids[i] = p.ID
 	}
-	board, err := rules.NewDraft(ids, [2]int{len(seats[0]), len(seats[1])})
+	seed := s.rollSeed()
+	rng := draftRNG(seed)
+	order, banners, how := shuffleDraftSeats(&seats, rng, !s.DraftFixedOrder)
+	board, err := rules.NewDraftOrder(ids, [2]int{len(seats[0]), len(seats[1])}, order)
 	if err != nil {
 		return nil, err
 	}
-	seed := s.rollSeed()
 	d := &draftRun{board: board, seats: seats, names: names, pool: pool, turn: s.draftTurn(), roleTime: s.draftRoleTime(),
-		tradeTime: s.draftTradeTime(), stage: draftStageRole, window: -1, seed: seed,
-		rng:   rand.New(rand.NewPCG(seed, seed^0x52554C4553350000)), // "RULES5"
+		tradeTime: s.draftTradeTime(), stage: draftStageRole, window: -1, seed: seed, rng: rng,
 		roles: map[int64]string{}, hovers: map[int64]string{}, ready: map[int64]bool{}, declined: map[draftAskKey]bool{}}
 	hg.custom.draft, hg.custom.lastDraft = d, d
 	var lock []tdf.Pair
@@ -340,8 +338,10 @@ func (hg *hostedGame) beginDraftLocked() (func(), error) {
 		windows = board.Turns[n-1].Window + 1
 	}
 	s.Log.Logf("blaze", "   game %d: the draft begins (DRAFT1; seed %d, %d shapers in the pool, %d turns in %d windows of %v; "+
-		"the role phase %v, the trade phase up to %v): team 1 %v, team 2 %v; the roster stays locked%s", hg.game.ID, seed,
-		len(pool), len(board.Turns), windows, d.turn, d.roleTime, d.tradeTime, seats[0], seats[1],
+		"the role phase %v, the trade phase up to %v): team 1 %v, team 2 %v (the pick order, %s); team %d starts%s: the "+
+		"first ban and the first pick; the bans by %s; the roster stays locked%s", hg.game.ID, seed,
+		len(pool), len(board.Turns), windows, d.turn, d.roleTime, d.tradeTime, seats[0], seats[1], how, order.First+1,
+		map[bool]string{true: " (a coin flip)", false: ""}[!s.DraftFixedOrder], banners,
 		map[bool]string{true: " (RosterLockedKey \"1\" set by the server)", false: ""}[lock != nil])
 	hg.draftStepLocked(d, d.roleTime)
 	gid := hg.game.ID
@@ -352,6 +352,48 @@ func (hg *hostedGame) beginDraftLocked() (func(), error) {
 		}
 		hg.publishDraft()
 	}, nil
+}
+
+// draftRNG is a draft's generator from its seed: the shuffle and the coin flip (shuffleDraftSeats), then the timeouts'
+// random picks.
+func draftRNG(seed uint64) *rand.Rand {
+	return rand.New(rand.NewPCG(seed, seed^0x52554C4553350000)) // "RULES5"
+}
+
+// shuffleDraftSeats decides a draft's order (DRAFTSHUF, the user's decision of 2026-11-11): with shuffle, each team's
+// drafters (seats, in the lobby's seat order) are shuffled into a random pick order (seat k makes the team's k-th
+// pick; rng is the draft's generator, from its logged seed) and a coin flip picks the team that starts (the first ban
+// and the first pick); without it (dgserver --draft-shuffle=off, Server.DraftFixedOrder) the lobby's order stays and
+// team 1 starts. Either way each team's bans stay its top player's in the lobby (its first seat before the shuffle):
+// the order's Banner is that player's seat. It returns the order, the bans' players and the order's kind for the log.
+func shuffleDraftSeats(seats *[2][]int64, rng *rand.Rand, shuffle bool) (rules.DraftOrder, string, string) {
+	var o rules.DraftOrder
+	var banners []string
+	how := "the lobby's"
+	for team := range seats {
+		ids := seats[team]
+		if len(ids) == 0 {
+			continue
+		}
+		top := ids[0]
+		if shuffle {
+			rng.Shuffle(len(ids), func(i, j int) { ids[i], ids[j] = ids[j], ids[i] })
+		}
+		for seat, id := range ids {
+			if id == top {
+				o.Banner[team] = seat
+			}
+		}
+		banners = append(banners, fmt.Sprintf("user %d (team %d)", top, team+1))
+	}
+	if shuffle {
+		o.First = rng.IntN(2)
+		how = "shuffled"
+	}
+	if len(banners) == 0 {
+		banners = []string{"nobody"}
+	}
+	return o, strings.Join(banners, " and "), how
 }
 
 // stopTimers ends the current step's timers (a timer that already fired finds its step gone: gen).
@@ -628,13 +670,6 @@ func (s *Server) attachDraftCalls(ui *uichannel.Server) {
 			return err
 		}
 		return s.draftReadyCall(user)
-	})
-	ui.Handle(CallDraftMusic, func(user int64, args json.RawMessage) error { // DRAFT2c (draftmusic.go)
-		on, err := parseDraftMusic(args)
-		if err != nil {
-			return err
-		}
-		return s.draftMusicCall(user, on)
 	})
 }
 
@@ -1209,7 +1244,6 @@ func (hg *hostedGame) sendDraft(only int64, team int) {
 	states := hg.draftStatesLocked(only, team)
 	hg.mu.Unlock()
 	for id, st := range states {
-		st.MusicOff = s.draftMusicOff(id) // the receiver's own choice, read outside hg.mu
 		s.UI.Send(id, EventDraftState, st)
 	}
 }

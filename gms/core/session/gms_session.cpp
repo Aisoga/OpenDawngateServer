@@ -690,6 +690,32 @@ void GmsSession::SendReveal(Conn& to, const std::vector<ShaperPick>& picks, cons
   Point(to, SessionPoint::kPicked);
 }
 
+// SPECLOAD: a spectator who comes after the reveal skips shaper select, so SendReveal never reaches it; its players'
+// updates carry their picks (SendHumanUpdate) but a loadout travels only in C0 02, which only cPreDungeonState reads
+// (PreDungeonState_OnPreGameMsg 0x006AABA0 -> LabsPlayer_SetLoadout 0x00915C30; it subscribes id 64 at its entry). So
+// right before its C0 03 (done) it gets every pick's C0 02 that its client has the player of. Not right after B6: the
+// client leaves the lobby state for cPreDungeonState a few frames after B6, and a C0 02 sent with B6 came before that
+// and was dropped ("HandleUserMessage [id=192] no handler registered", live). By C0 03 it is in the pre-game for sure
+// (its C0 04 comes from PreDungeonState_Update). Before, the shaper and target panels' perk tooltips
+// (LabsPlayer_GetLoadoutStats 0x00911A80, the player's +0x2D4) of a late spectator stayed empty for every player, while
+// a spectator present from the lobby got them at the reveal.
+void GmsSession::SendLateSpectatorLoadouts(Conn& to) {
+  if (!o_.lateSpectatorLoadouts || !to.spectator || to.shaperSelect || !ss_ || !ss_->Revealed()) return;
+  int n = 0;
+  for (const ShaperPick& k : ss_->Picks()) {
+    if (!to.known.count(k.gameplayIndex)) continue;
+    const Bytes loadout = RevealLoadout(k);
+    if (loadout.empty()) continue;
+    char lw[140];
+    std::snprintf(lw, sizeof lw, "late spectator's pre-game loadout: player %u perk page %u (%zu attribute(s), %zu "
+                  "modifier(s))", k.gameplayIndex, k.page, k.loadout.size(), k.modifiers.size());
+    SendRaw(to, loadout, lw);
+    ++n;
+  }
+  Logf("%s %8.3f    spectator %u came after the reveal: %d player loadout(s) sent before its C0 03", Clock().c_str(),
+       to.Secs(), to.slot.gameplayIndex, n);
+}
+
 // G3a: a seated human's connection ended (after the match's OnDisconnected). Its last status is kept with 0x4 for the
 // reveal; the clients that have its status from the reveal already and are still in the pre-game get it at once, so
 // their 0x400 gate leaves it out (through seam 5 as a player without a connection: members 0 and 1). G3 (nameHumans):
@@ -1190,6 +1216,7 @@ void GmsSession::Tick() {
       MarkOthersLoaded();
       if ((o_.echoStatus ? c.allLoaded : c.loaded) && o_.stopAfter >= kStepDone) c.due = now + step;
     } else if (next == kStepDone) {
+      SendLateSpectatorLoadouts(c);  // SPECLOAD: before C0 03, when the client is surely in its pre-game
       SendStep(c, kStepDone, BuildPreGame(kPreGameDone));
       if (o_.stopAfter >= kStepEnterGame) c.due = now + step;
     } else if (next == kStepEnterGame) {

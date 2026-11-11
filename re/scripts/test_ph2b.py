@@ -27,17 +27,17 @@ import dbpf  # noqa: E402
 import patch_locale as pl  # noqa: E402
 
 MADE_UP_SHA = "97766712cea3cf54c20204922cc472d86ac9d592c40e955f7c1a635e0567f25e"
-MADE_UP_LANE_B = "2ff15d6c50c83b5e871a0cac67c46ae67867d8518363f6035282522f31595398"  # --host 127.0.0.2
-MADE_UP_WEB = "b9ae72da71f1474c9d8a0b891e335881f5d0565fc869e8275660b121efff0c20"  # 192.168.1.20, Play.Example.org:8443
-MADE_UP_LOBBY_ANY = "6bd2220ec00f8aeb8d13af9a933505fc779ea71636e1aa00b11952585746c67d"  # 127.0.0.2, LOBBY_MAP_ANY, MAPS
+MADE_UP_LANE_B = "8a8b381b9a9cf51ca5ef9a5c85aecdb5e7986c1011074c07264271a1dd0f5d2d"  # --host 127.0.0.2
+MADE_UP_WEB = "26ef34c0babbd8682f09f87928fbf2d811c32c12ce72264ced40d5df3da9885d"  # 192.168.1.20, Play.Example.org:8443
+MADE_UP_LOBBY_ANY = "0fc64846c57c44dd40e96525089bbcebdc50ee77ad07f4e635037fa3008df8be"  # 127.0.0.2, LOBBY_MAP_ANY, MAPS
 # a maps folder's packages (localepatch_test.go's maps): CM_Ring, and one named like MM_Map_v3 (its line is the first's)
 MAPS = [("CM_Ring", "Test Ring"), ("mm_map_V3", "Not this")]
 SYNTH_LOCALE_SHA = "528ce9623b3b1542fa600b1036136a3c39e8e68bb586019fb3a6d3c2f6374832"
-SYNTH_LOCAL = "bcbe4a4907e8cd62af949b32cf42fbdbd0443dc235689825749774f9e6ee200c"  # the synthetic game, 127.0.0.1
+SYNTH_LOCAL = "a9386beef0740e61bcb1256b72873c397048d6dd60982ab7e41e46806e7833e2"  # the synthetic game, 127.0.0.1
 GAME_854 = {  # build 854's Locale.package
-    ("127.0.0.1", None): "66ce1d46f8be1f5d0c6133709752c74bce798e9debf38fd558b085f49eafd3d0",
-    ("127.0.0.2", None): "0abbfbda537ffb40c96fe682463dad997cac461d8ddeef6987c2e38b80995558",
-    ("203.0.113.7", "dawngate.example.org"): "75003a3064fd64f76e90923f6453ee39901c058d949eae761285c7c8c7b8b52e",
+    ("127.0.0.1", None): "8030edd76c6c4617e2c08ba1bacfc51fa63212a10860a200f5ab2bdb62063ef2",
+    ("127.0.0.2", None): "28fb493c164fb623804e02604981c226c2476449a458f3a78783f3f30308c5ff",
+    ("203.0.113.7", "dawngate.example.org"): "c82b4295ab32ec26d3ac2063d2eb12be0c704d868b59daf2e627d88eedd95e37",
 }
 # synthgame.Locale() (server/internal/setup/testgame/synthgame): one RefPack-compressed table, no login table
 SYNTH_LOCALE = bytes.fromhex(
@@ -145,7 +145,7 @@ class SameAsGo(Temp):
             self.assertEqual(alerts, [shipped + b"\r\n" + pl.ADDED_COMMENT.encode() +
                                       b"\r\n0x5e70e001 You can shop only after dying.\r\n"
                                       b"0x5e70e002 That item is not allowed in this match.\r\n"])
-            self.assertEqual(len(pkg.entries), 8)
+            self.assertEqual(len(pkg.entries), 10)  # PREF3: GameServerRegion, newFeatureNotify
 
 
 class Rule(unittest.TestCase):

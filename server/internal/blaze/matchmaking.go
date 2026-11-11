@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -42,7 +40,7 @@ import (
 // The match-found dialog (MatchFoundUI) is the GMS's: accept and decline are GMS player status bits
 // (0x10000/0x20000, LobbyState_OnMatchFoundResponse 0x005456F0), not Blaze requests.
 //
-// The server side is ours (internal/matchmaker): queues per mode and region, two teams of TeamSize,
+// The server side is ours (internal/matchmaker): one queue per mode (PREF1: no region split; the vote of its humans picks a match's region), two teams of TeamSize,
 // a game once the teams are full or, after FillAfter, with at least MinPlayers. The game is made like a
 // practice game: a match host per game with --gms-dir (C1, mode "pvp", every player in the roster),
 // otherwise the announced GMS port at once (B8/B9). Since B10d a game that started with open seats asks its
@@ -147,31 +145,6 @@ type NetworkInfo struct {
 	Ext, Int  Addr             // ADDR (IpPairAddress)
 }
 
-// MatchRegion is the region a StartMatchmakingRequest asks for (B10a). The request carries none: the
-// client puts "specificRegion" or "flexRegion" into CRIT.PSR.THLD, chosen in CreateGame from the ping
-// sites it reported (ConnectionManager +0x4C, 0x00CCBF30): the lowest latency wins, and an alias of
-// fewer than 3 characters ("na", "eu") means specificRegion, a longer one ("na-any", "eu-any") or no map
-// flexRegion. The play screen's region choice (Client_SetGameServerRegion 0x00670B70) pushes that
-// region's ping sites (GameServerRegionList InitialPing: na 50, na-any 100, eu 150, eu-any 200; R6)
-// with updateNetworkInfo. So: specificRegion = the lowest-latency alias, flexRegion = any ("").
-func MatchRegion(threshold string, pingSites map[string]int64) string {
-	if threshold != "specificRegion" || len(pingSites) == 0 {
-		return ""
-	}
-	aliases := make([]string, 0, len(pingSites))
-	for a := range pingSites {
-		aliases = append(aliases, a)
-	}
-	sort.Strings(aliases)
-	best := aliases[0]
-	for _, a := range aliases[1:] {
-		if pingSites[a] < pingSites[best] {
-			best = a
-		}
-	}
-	return strings.TrimSuffix(best, "-any")
-}
-
 // mmState is the server's matchmaking bookkeeping: session ids and the timer for the next Tick.
 type mmState struct {
 	mu    sync.Mutex
@@ -232,12 +205,8 @@ func registerMatchmaking(s *Server) {
 			r.Fail(code)
 			return nil
 		}
-		region := t.Region
-		if region == "" {
-			region = "any"
-		}
-		r.Server.Log.Logf("blaze", "   matchmaking session %d: %s, region %s, timeout %s; %d sessions queued (%s)",
-			t.ID, playerList(t.Players), region, t.Timeout, r.Server.MM.Len(), r.Server.MM.Config())
+		r.Server.Log.Logf("blaze", "   matchmaking session %d: %s, timeout %s; %d sessions queued (%s)",
+			t.ID, playerList(t.Players), t.Timeout, r.Server.MM.Len(), r.Server.MM.Config())
 		for _, m := range t.Data.(*mmSession).members {
 			conn, id := m.conn, t.ID
 			conn.OnSessionEnd(func() { r.Server.endMatchmaking(id, MatchmakingTerminated, "session ended") })
@@ -296,15 +265,9 @@ func (s *Server) ticketFromRequest(r *Request) (*matchmaker.Ticket, error) {
 	if ext == (Addr{}) && in == (Addr{}) {
 		ext, in = r.Conn.Net.Ext, r.Conn.Net.Int
 	}
-	threshold := ""
-	if crit, ok := req.Sub("CRIT"); ok {
-		if psr, ok := crit.Sub("PSR"); ok {
-			threshold, _ = psr.Str("THLD")
-		}
-	}
 	ms := &mmSession{game: g, members: []mmMember{{conn: r.Conn, userID: sess.Account.UserID,
 		ext: s.ClientAddr(ext), in: s.ClientAddr(in)}}}
-	t := &matchmaker.Ticket{ID: s.mm.next(), Mode: gmshost.ModePvP, Region: MatchRegion(threshold, r.Conn.Net.PingSites),
+	t := &matchmaker.Ticket{ID: s.mm.next(), Mode: gmshost.ModePvP, // PREF1: one queue; the region by vote (startMatch)
 		Players: []matchmaker.Player{{ID: sess.Persona.ID, Name: sess.Persona.Name}}, Data: ms}
 	if dur, ok := req.Int("DUR"); ok && dur > 0 {
 		t.Timeout = time.Duration(dur) * time.Millisecond
@@ -464,8 +427,8 @@ func (s *Server) startMatch(m matchmaker.Match) (MatchStarted, bool) {
 			seats = "; open seats stay empty (--mm-bots=false)"
 		}
 	}
-	s.Log.Logf("blaze", "   matchmaking: game %d %q, %d v %d (full %v, region %q): sessions %v v %v%s",
-		g.ID, g.Name, m.Size(0), m.Size(1), m.Full, m.Region, ticketIDs(m.Teams[0]), ticketIDs(m.Teams[1]), seats)
+	s.Log.Logf("blaze", "   matchmaking: game %d %q, %d v %d (full %v): sessions %v v %v%s",
+		g.ID, g.Name, m.Size(0), m.Size(1), m.Full, ticketIDs(m.Teams[0]), ticketIDs(m.Teams[1]), seats)
 	setup := func(g Game, hp *hostedPlayer) []byte { return MatchedGameSetupNotification(g, players, ctx[hp.p.ID]) }
 	started := MatchStarted{Players: len(players)}
 	if fill > 0 {

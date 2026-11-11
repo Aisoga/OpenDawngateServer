@@ -110,24 +110,8 @@ func TestB10aClientRequests(t *testing.T) {
 	}
 	crit, _ := req.Sub("CRIT")
 	psr, _ := crit.Sub("PSR")
-	thld, _ := psr.Str("THLD")
-	sites := map[string]int64{"eu": 150, "eu-any": 200, "na": 50, "na-any": 100}
-	if r := MatchRegion(thld, sites); r != "na" {
-		t.Errorf("region %q", r)
-	}
-	for _, c := range []struct {
-		thld  string
-		sites map[string]int64
-		want  string
-	}{
-		{"flexRegion", sites, ""},
-		{"specificRegion", nil, ""},
-		{"specificRegion", map[string]int64{"eu": 20, "na": 90}, "eu"},
-		{"specificRegion", map[string]int64{"eu-any": 20, "na": 90}, "eu"},
-	} {
-		if r := MatchRegion(c.thld, c.sites); r != c.want {
-			t.Errorf("MatchRegion(%q, %v) = %q, want %q", c.thld, c.sites, r, c.want)
-		}
+	if thld, _ := psr.Str("THLD"); thld != "specificRegion" { // the client's; since PREF1 it splits no queue
+		t.Errorf("THLD %q", thld)
 	}
 }
 
@@ -147,8 +131,8 @@ func TestMatchmadeGameGolden(t *testing.T) {
 	ps.expect(4, 0x14, fire.Notification, 0, "notifygamesetup_matchmade_notification")
 	log := ps.close()
 	for _, want := range []string{
-		"[blaze]    matchmaking session 1: player 2000000001, region na, timeout 3h0m0s; 1 sessions queued (5v5, start with 1+ players after 0s)\n",
-		"[blaze]    matchmaking: game 1 \"player's Game\", 1 v 0 (full false, region \"na\"): sessions [1] v []\n",
+		"[blaze]    matchmaking session 1: player 2000000001, timeout 3h0m0s; 1 sessions queued (5v5, start with 1+ players after 0s)\n",
+		"[blaze]    matchmaking: game 1 \"player's Game\", 1 v 0 (full false): sessions [1] v []\n",
 		"[blaze]    game 1 \"player's Game\": GMS 127.0.0.1:10042 (HNET), players [2000000001]\n",
 		"[blaze] -> GameManager::NotifyGameSetup notification, ",
 	} {
@@ -222,7 +206,7 @@ func TestPartyMatchmakingGolden(t *testing.T) {
 	two.expect(6, NotifyMemberPermissionsChangeID, fire.Notification, 0, "notifymemberpermissionschange_notification")
 	<-ps.done
 	two.close()
-	if log := ps.log.String(); !strings.Contains(log, "matchmaking session 1: players [2000000001 2000000002], region any") ||
+	if log := ps.log.String(); !strings.Contains(log, "matchmaking session 1: players [2000000001 2000000002], timeout") ||
 		!strings.Contains(log, "playgroup 1: 2000000002 is the new leader") {
 		t.Errorf("log:\n%s", log)
 	}

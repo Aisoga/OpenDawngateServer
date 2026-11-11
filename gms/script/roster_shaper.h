@@ -5,6 +5,7 @@
 // (ServerMatch) and gms_tests include it (both link gms_core and dg_control).
 #pragma once
 
+#include <cctype>
 #include <cstdint>
 #include <string>
 
@@ -17,6 +18,17 @@ namespace gms {
 
 // Whether the roster entry carries shaper select content (a list; the other fields only make sense with one).
 inline bool HasShaperContent(const dggms::control::RosterEntry& e) { return !e.shapers.empty(); }
+
+// DRAFT3: the roster entry's declared role as the record's value (0 gladiator, 1 tactician, 2 hunter, 3 predator; the
+// names of gmshost.Roles, case-insensitive); -1 for none or an unknown name.
+inline int ShaperRoleFromRoster(const dggms::control::RosterEntry& e) {
+  static const char* const kNames[kNumRoles] = {"gladiator", "tactician", "hunter", "predator"};
+  std::string r(e.role);
+  for (char& ch : r) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  for (int i = 0; i < kNumRoles; ++i)
+    if (r == kNames[i]) return i;
+  return -1;
+}
 
 // D3-perks: one of the roster's perk pages as shaper select keeps it: the C0 02 entries (the value from thousandths
 // as the client computes it, (float)(n x 0.001); attribute and op as bytes, out-of-range ones left out) and the

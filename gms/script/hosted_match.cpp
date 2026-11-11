@@ -9,19 +9,22 @@ bool HostedMatch::ShaperSelectSetup(ShaperSelectConfig* config) {
   if (!inner_.ShaperSelectSetup(config)) return false;
   if (!control_.HasGame()) return true;
   for (const dggms::control::RosterEntry& e : control_.Game().roster) {
-    if (e.bot || e.spectator || !HasShaperContent(e) || e.index < 0 || e.index >= 15) continue;
+    const int role = ShaperRoleFromRoster(e);  // DRAFT3: a declared role is preset, also without content
+    if (e.bot || e.spectator || (!HasShaperContent(e) && role < 0) || e.index < 0 || e.index >= 15) continue;
     bool taken = false;  // an --ally on the same index keeps it
     for (const ShaperSelectPlayer& p : config->players) taken = taken || p.gameplayIndex == e.index;
     if (taken) continue;
     ShaperSelectPlayer p;
     p.gameplayIndex = static_cast<uint8_t>(e.index);
     p.team = static_cast<uint8_t>(e.team);
-    p.content = ShaperContentFromRoster(e);
+    p.content = HasShaperContent(e) ? ShaperContentFromRoster(e) : config->humanDefault;
+    p.presetRole = role;
     config->players.push_back(p);
     Logf("%s match: shaper select content from createGame's roster: [%lld: user %lld, %zu shapers, skins of %zu, %zu saved, "
-         "%zu wards, %zu announcers, %zu perk pages]",
+         "%zu wards, %zu announcers, %zu perk pages%s%s]",
          Clock().c_str(), static_cast<long long>(e.index), static_cast<long long>(e.user), e.shapers.size(),
-         e.skins.size(), e.savedSkins.size(), e.wards.size(), e.announcers.size(), e.perkPages.size());
+         e.skins.size(), e.savedSkins.size(), e.wards.size(), e.announcers.size(), e.perkPages.size(),
+         role >= 0 ? ", role " : "", role >= 0 ? e.role.c_str() : "");
   }
   return true;
 }

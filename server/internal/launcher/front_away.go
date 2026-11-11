@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"dawngate/server/internal/logging"
 	"dawngate/server/internal/tunnel"
 )
 
@@ -381,13 +382,38 @@ func (f *Front) deliverAway(s *frontSession, as *awaySession) func(port int, dst
 		mine := s.away[port] == as
 		s.awayMu.Unlock()
 		f.mu.Lock()
-		ln, cur := f.udpLns[s.localPort(f, port)], f.cur
+		ln, cur, write := f.udpLns[s.localPort(f, port)], f.cur, f.writeGame
 		f.mu.Unlock()
-		if ln != nil && cur == s && mine {
+		if cur != s || !mine {
+			return
+		}
+		switch {
+		case write != nil:
+			as.last.Store(time.Now().UnixNano())
+			write(port, dst, payload)
+		case ln != nil:
 			as.last.Store(time.Now().UnixNano())
 			ln.WriteToUDP(payload, dst)
 		}
 	}
+}
+
+// awayWithoutFront gives Start-Client's path without the front (startTunnel, picker = off) the front's away sessions
+// on its one tunnel.Client c, which listens on the game's ports itself (PREF5): a Front of that one session, which never
+// switches and has no listeners of its own. c's listeners hand an away port's datagrams to sendAway (Divert), the
+// answers go out from c's listener of the port (WriteLocal); every rule of takeAway holds as with the front. Call it
+// before c.Start, since OnAway makes c say the version 4 hello (tunnel.Client.firstHello). Close ends the away sessions
+// and c.
+func awayWithoutFront(log *logging.Log, c *tunnel.Client, connectTimeout time.Duration) *Front {
+	f := &Front{Log: log, TunnelIP: c.TunnelIP, ConnectTimeout: connectTimeout, done: make(chan struct{}),
+		tcpLns: map[int]net.Listener{}, udpLns: map[int]*net.UDPConn{}, conns: map[net.Conn]struct{}{},
+		logWho: "tunnel"}
+	s := &frontSession{c: c}
+	f.cur = s
+	f.writeGame = func(port int, dst *net.UDPAddr, payload []byte) { c.WriteLocal(port, dst, payload) }
+	f.hookAway(s)
+	c.Divert = func(port int, src *net.UDPAddr, data []byte) bool { return f.sendAway(s, port, src, data) }
+	return f
 }
 
 // cancelAwayConnects cancels the session's away connects and joins when it stops being current (a switch, EndSession,

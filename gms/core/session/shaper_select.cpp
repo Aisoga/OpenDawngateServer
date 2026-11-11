@@ -88,7 +88,8 @@ ShaperSelect::ShaperSelect(const ShaperSelectConfig& config)
       rng_(config.seed),
       draftFn_(config.draft),
       draftGraceMs_(config.draftGraceMs),
-      lockAtOnceAnswer_(config.lockAtOnceAnswer) {
+      lockAtOnceAnswer_(config.lockAtOnceAnswer),
+      lockAtOnceMinMs_(config.lockAtOnceMinMs) {
   for (const ShaperSelectPlayer& sp : config.players) {
     Player& p = players_[sp.gameplayIndex];
     p.team = sp.team;
@@ -102,6 +103,13 @@ ShaperSelect::ShaperSelect(const ShaperSelectConfig& config)
       else p.plan.draft = false;
     } else if (sp.scripted && sp.plan.role < kNumRoles) {
       p.rec.role = sp.plan.role;  // its intention shows from the start
+    } else if (!sp.scripted && sp.presetRole >= 0 && sp.presetRole < kNumRoles) {
+      // DRAFT3: the human's declared role is its record's from the start: its client's role page opens with it
+      // selected (unless the player ticks a preferred role first); still its to change until its role lock
+      p.rec.role = static_cast<uint8_t>(sp.presetRole);
+      p.roleCard = sp.presetRole;  // BOTDRAFT: the human has said its role
+      Logf("%s    shaper select: player %u's role is preset to %u (DRAFT3: its declared role; it can still change it)",
+           Clock().c_str(), sp.gameplayIndex, p.rec.role);
     }
     p.content = sp.content;
     p.rec.index = sp.gameplayIndex;
@@ -577,7 +585,8 @@ void ShaperSelect::AnnounceDraftRole(uint8_t index, ISender& out) {
 }
 
 // RULES3 (All Random): a lockAtOnce human is locked to its list's shaper (the server's roll) once its client's shaper
-// select UI is up: its first C8 after its C8 02, or max(lateSkinsHoldMs, kLockAtOnceWaitMs) after it. Lock sends the
+// select UI is up: its first C8 after its C8 02, or max(lateSkinsHoldMs, kLockAtOnceWaitMs) after it, and at least
+// lockAtOnceMinMs after its C8 02 (DRAFT3: its role page selects its role card only then). Lock sends the
 // record to the team, the skins and, with lockAtOnceAnswer, the lock answer that takes the client into phase 2.
 void ShaperSelect::LockAtOnce(int64_t now, ISender& out) {
   const int wait = std::max(skinsHoldMs_, kLockAtOnceWaitMs);
@@ -585,6 +594,7 @@ void ShaperSelect::LockAtOnce(int64_t now, ISender& out) {
     Player& p = kv.second;
     if (!p.lockAtOnce || (p.rec.flags & kRecordShaperLocked) || !p.Receives() || p.skinsHeld) continue;
     if (!p.uiUp && now < p.readyAt + wait) continue;
+    if (now < p.readyAt + lockAtOnceMinMs_) continue;  // DRAFT3: the client's slots need their first refresh
     Logf("%s    shaper select: player %u's shaper is locked at once (RULES3, All Random or the draft: its list is the "
          "server's roll or the drafted shaper; %s)%s",
          Clock().c_str(), kv.first,

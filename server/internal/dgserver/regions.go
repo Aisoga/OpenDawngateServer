@@ -25,10 +25,17 @@ import (
 // key (each registration's, AgentLink.Linked), one route per admitted session to its match's host on this machine,
 // and the relay's verifyHello annotation from the gateway's sessions (gmshost.FlowAnnotator).
 
-// wireRegions turns the regions on (--region) with --host-machine's machines and sets Blaze's RegionRoute.
+// wireRegions turns the regions on (--region) with --host-machine's machines, gives them their names (--region-name,
+// PREF1; also LocalRegion's without --region) and sets Blaze's RegionRoute.
 func wireRegions(cfg config, hosts *gmshost.Manager, bz *blaze.Server, log *logging.Log) {
 	r := cfg.regions
-	if hosts == nil || r.region == "" {
+	if hosts == nil {
+		return
+	}
+	if names, err := r.regionNames(); err == nil { // linkConfig has checked them
+		hosts.SetRegionNames(names)
+	}
+	if r.region == "" {
 		return
 	}
 	machines := map[string]string{}
@@ -39,8 +46,13 @@ func wireRegions(cfg config, hosts *gmshost.Manager, bz *blaze.Server, log *logg
 	}
 	hosts.SetRegions(r.region, machines)
 	bz.RegionRoute = regionRoute(hosts, time.Now)
-	log.Logf("stub", "regions: home %s, custom games may run in %s (the creator's choice; a region that can't take "+
-		"the game falls back home with a notice)", r.region, strings.Join(hosts.Regions(), ", "))
+	var named []string
+	for _, id := range hosts.Regions() {
+		named = append(named, fmt.Sprintf("%s (%s)", id, hosts.RegionName(id)))
+	}
+	log.Logf("stub", "regions: home %s, games may run in %s (each player's Preferred Region: a custom game its creator's, "+
+		"practice its player's, a practice group and PvP by vote; a region that can't take the game falls back home)",
+		r.region, strings.Join(named, ", "))
 }
 
 // regionRoute is Blaze's RegionRoute: for a game on a TLS-linked machine that offered a match gateway, the gateway, its

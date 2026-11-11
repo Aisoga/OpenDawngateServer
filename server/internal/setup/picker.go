@@ -55,6 +55,28 @@ func (s *Setup) stepAfterAction(step, copy, host string) bool {
 	return s.stepMovie(step, copy, sp, "the After Action Review's tabs", "an older tabs class or another server's web root")
 }
 
+// stepMatchType installs the play screen's Preferred Region, game\Data\zz_MatchType.snap: the copy's own play screen
+// movie (from Battlegrounds.snap, which must be the build's) with the dropdown's class added (moviepatch.MatchType) and
+// where the server host the copy is set up for has its UI channel (moviepatch.ChannelFile). Every player copy gets it:
+// the play screen shows a Preferred Region dropdown of the server's regions instead of the game's region buttons (none
+// on a server with one region).
+func (s *Setup) stepMatchType(step, copy, host string) bool {
+	sp := moviepatch.MatchType
+	sp.WebHost = host
+	return s.stepMovie(step, copy, sp, "the play screen's Preferred Region", "an older Preferred Region class or another server's channel")
+}
+
+// stepPVPLobby installs the party lobby's Preferred Region, game\Data\zz_PVPLobby.snap: the copy's own party lobby movie
+// (from Battlegrounds.snap, which must be the build's) with the class added (moviepatch.PVPLobby) and where the server
+// host the copy is set up for has its UI channel (moviepatch.ChannelFile). Every player copy gets it: the party lobby
+// shows the player's own Preferred Region by the server's name instead of the game's region buttons (nothing on a
+// server with one region).
+func (s *Setup) stepPVPLobby(step, copy, host string) bool {
+	sp := moviepatch.PVPLobby
+	sp.WebHost = host
+	return s.stepMovie(step, copy, sp, "the party lobby's Preferred Region", "an older party region class or another server's channel")
+}
+
 // stepItemShop installs the item shop's inline refund, game\Data\zz_ItemShop.snap: the copy's own shop movie (from
 // HUD.snap, which must be the build's) with the refund's class added (moviepatch.ItemShop). Every player copy gets it:
 // a purchase made during the current visit to the base wears a badge in the shop, and selecting it turns the shop's

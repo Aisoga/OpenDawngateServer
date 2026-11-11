@@ -29,7 +29,7 @@
      module cache: modernc.org/sqlite and its dependencies, golang.org/x/crypto, golang.org/x/sys),
      BUILD.txt (commit, Go version, every file's SHA-256). The compiled classes of the server picker, the bot check box,
      the chat rooms opened by default and the After Action Review's tabs are checked to be in the SWF tags Start-Client.exe
-     embeds (picker_tags.hex, matchoptions_tags.hex, chatrooms_tags.hex, aftaction_tags.hex, itemshop_tags.hex,
+     embeds (picker_tags.hex, matchoptions_tags.hex, chatrooms_tags.hex, aftaction_tags.hex, matchtype_tags.hex, pvplobby_tags.hex, itemshop_tags.hex,
      collection_tags.hex, lobby_tags.hex, leaderboard_tags.hex: the Collection's class, the lobby's ready check and the
      Leaderboard's Rating column go into the same movie),
      and those in
@@ -187,6 +187,8 @@ $picker = Test-UiClass 'the server picker' 'picker_tags.hex' 'serverpicker' 'Ser
 $botBox = Test-UiClass 'the bot check box' 'matchoptions_tags.hex' 'matchoptions' 'BotCheckbox'
 $chatRooms = Test-UiClass 'the chat rooms opened by default' 'chatrooms_tags.hex' 'chatrooms' 'AutoRooms'
 $aarTabs = Test-UiClass "the After Action Review's tabs" 'aftaction_tags.hex' 'aftaction' 'AfterActionTabs'
+$regionPicker = Test-UiClass "the play screen's Preferred Region" 'matchtype_tags.hex' 'matchtype' 'RegionPicker'
+$partyRegion = Test-UiClass "the party lobby's Preferred Region" 'pvplobby_tags.hex' 'pvplobby' 'PartyRegion'
 $shopRefund = Test-UiClass "the shop's inline refund" 'itemshop_tags.hex' 'itemshop' 'ShopRefund'
 $collection = Test-UiClass "the Collection's items" 'collection_tags.hex' 'collection' 'CollectionItems'
 $lobbyReady = Test-UiClass "the custom lobby's ready check" 'lobby_tags.hex' 'lobby' 'LobbyReady'

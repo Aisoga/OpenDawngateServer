@@ -43,7 +43,7 @@ Steps, in order. Each one checks its result, is skipped when its result is curre
   collection items  client/run_854's game/Data/zz_CollectionItems.snap (patch_login_movie.py --spec collection
                  --content server/data/content.json: the Collection's Items category, made from the copy's own
                  code.snap and the content file's items; after the content step). The other movie steps (bot check
-                 box, chat rooms, after action review, shop refund) run after client maps.
+                 box, chat rooms, after action review, preferred region, party region, shop refund) run after client maps.
   RakNet probe   only with --probe: tools/raknet/build/Release/raknet_probe_p5.exe (run_session.ps1 -GmsProbe
                  silent|connected, a research tool).
   lane b, c, d   only with --lane <X>[,<Y>...] (repeatable; --lane-b = --lane b): re/scripts/setup_lane.py X for each
@@ -871,6 +871,22 @@ class Setup:
         return self.step_movie(step, copy, "aftaction", "the After Action Review's tabs",
                                "an older tabs class or another server's web root", host)
 
+    def step_match_type(self, step, copy, host):
+        """a client copy's added archive game/Data/zz_MatchType.snap (patch_login_movie.py --spec matchtype --host
+        <host>: the play screen movie from the copy's own Battlegrounds.snap with the Preferred Region dropdown, and
+        where the server `host` the copy is set up for has its UI channel; the Go setup's moviepatch.MatchType, the same
+        bytes). Every client copy."""
+        return self.step_movie(step, copy, "matchtype", "the play screen's Preferred Region",
+                               "an older Preferred Region class or another server's channel", host)
+
+    def step_party_region(self, step, copy, host):
+        """a client copy's added archive game/Data/zz_PVPLobby.snap (patch_login_movie.py --spec pvplobby --host <host>:
+        the party lobby movie from the copy's own Battlegrounds.snap with the player's Preferred Region in place of the
+        game's region choice, and where the server `host` the copy is set up for has its UI channel; the Go setup's
+        moviepatch.PVPLobby, the same bytes). Every client copy."""
+        return self.step_movie(step, copy, "pvplobby", "the party lobby's Preferred Region",
+                               "an older party region class or another server's channel", host)
+
     def step_item_shop(self, step, copy):
         """a client copy's added archive game/Data/zz_ItemShop.snap (patch_login_movie.py --spec itemshop: the item
         shop movie from the copy's own HUD.snap with our class for the inline refund, badges on the slots whose
@@ -1233,6 +1249,8 @@ class Setup:
         if client_copy:
             self.step_chat_rooms("chat rooms", self.client)
             self.step_after_action("after action review", self.client, LOCAL)
+            self.step_match_type("preferred region", self.client, LOCAL)
+            self.step_party_region("party region", self.client, LOCAL)
             self.step_item_shop("shop refund", self.client)
         self.step_server()
         host_copy = self.copy_there("host copy", self.host, archive, PATCHED + (LOADER,))
@@ -1285,6 +1303,8 @@ class Setup:
             self.step_maps("client maps", self.client, True)
             self.step_chat_rooms("chat rooms", self.client)
             self.step_after_action("after action review", self.client, host)
+            self.step_match_type("preferred region", self.client, host)
+            self.step_party_region("party region", self.client, host)
             self.step_item_shop("shop refund", self.client)
             if os.path.isfile(os.path.join(self.data, "content.json")):
                 self.step_collection("collection items", self.client, host)

@@ -1603,6 +1603,7 @@ GMS_TEST(ShaperSelectAllRandomLocksAtOnce) {
     me.lockAtOnce = true;
     rig.cfg.players.push_back(me);
     rig.cfg.lockAtOnceAnswer = variant != 1;
+    rig.cfg.lockAtOnceMinMs = 0;  // the UI-up path as RULES3 built it; DRAFT3's minimum wait: the preset test
     gms::ShaperSelect ss(rig.cfg);
     const gms::ConnId human = 78;
     ss.AddHuman(human, 0, 1);
@@ -1673,4 +1674,122 @@ GMS_TEST(ShaperSelectAllRandomOffKeepsThePick) {
   for (int64_t t = 1100; t <= 9000; t += 100) ss.Tick(t, out);
   CHECK((ss.Record(0)->flags & gms::kRecordShaperLocked) == 0);
   CHECK(!log.Has("locked at once"));
+}
+
+// ---- DRAFT3: the declared role preset ----------------------------------------------------------------------------------
+
+// A human with presetRole (the draft's declared role) has it in its record from the start: its client gets it with its
+// team's records at its C8 02 and opens the role page with that card selected (ShaperSelect_SetPhase 0x005201B0 reads
+// the record's role when the player ticked no preferred role) and sends it back as its own C8 07, which changes
+// nothing. The bots' draft counts it as said (no grace wait). A role card click still changes it (C8 03 with the new
+// role), and the role lock takes the changed role. Here with the draft's lock at once (pick "draft").
+GMS_TEST(ShaperSelectPresetRoleIsSelectedAndChangeable) {
+  QuietLog log;
+  DraftRig rig(4000);
+  gms::ShaperSelectPlayer me;
+  me.gameplayIndex = 0;
+  me.team = 1;
+  me.content.list = {Entry(kGunman, 0x20)};
+  me.lockAtOnce = true;
+  me.presetRole = 2;  // hunter
+  rig.cfg.players.push_back(me);
+  gms::ShaperSelect ss(rig.cfg);
+  CHECK_EQ(ss.Record(0)->role, uint8_t{2});
+  CHECK(log.Has("player 0's role is preset to 2 (DRAFT3"));
+  const gms::ConnId human = 79;
+  ss.AddHuman(human, 0, 1);
+  RecordingSender out;
+  const int64_t s = 20000;
+  Msg(ss, human, Req(gms::kShaperHello), s, out);
+  ss.OnReady(human, s, out);
+  bool presetSent = false;  // its own record, nothing picked yet, role 2
+  for (const std::string& h : out.To(human)) presetSent = presetSent || h == "c803000000000000000000020000000000";
+  CHECK(presetSent);
+  // its UI is up, but the lock waits lockAtOnceMinMs (2000) after its C8 02 (the client's slots need their first
+  // refresh, or its role page selects no card); then locked at once with the lock answer, the record keeps the role
+  size_t mark = out.sent.size();
+  Msg(ss, human, Req(gms::kShaperRequest, kAlpha), s + 400, out);  // outside its list: refused
+  for (int64_t t = s + 500; t <= s + 1900; t += 100) ss.Tick(t, out);
+  CHECK_LIST(out.To(human, mark), {"c804ab4a04ef00"});
+  CHECK((ss.Record(0)->flags & gms::kRecordShaperLocked) == 0);
+  mark = out.sent.size();
+  ss.Tick(s + 2000, out);
+  CHECK_LIST(out.To(human, mark), {"c80300271e1d7c271e1d7c020000000001", "c80b01271e1d7c00", "c805271e1d7c01"});
+  // its client enters phase 2 and sends the record's role: nothing to send, the role stays
+  mark = out.sent.size();
+  Msg(ss, human, Req(gms::kShaperSelectRole, 0, 2), s + 2050, out);
+  CHECK(out.To(human, mark).empty());
+  CHECK_EQ(ss.Record(0)->role, uint8_t{2});
+  // the draft saw the role at once (no grace)
+  ss.Tick(s + 2100, out);
+  CHECK_EQ(rig.calls.size(), size_t{1});
+  if (!rig.calls.empty()) CHECK_EQ(rig.calls[0][0].roleCard, 2);
+  for (int64_t t = s + 2200; t <= s + 5000; t += 100) ss.Tick(t, out);
+  CHECK_EQ(ss.Phase(), 2);
+  // the player clicks the Predator card: accepted, its team gets the record with role 3
+  mark = out.sent.size();
+  Msg(ss, human, Req(gms::kShaperSelectRole, 0, 3), s + 5100, out);
+  CHECK_LIST(out.To(human, mark), {"c80300271e1d7c271e1d7c030000000001"});
+  CHECK_EQ(ss.Record(0)->role, uint8_t{3});
+  Msg(ss, human, Req(gms::kShaperLockRole, 0, 3), s + 5200, out);
+  CHECK((ss.Record(0)->flags & gms::kRecordRoleLocked) != 0);
+  for (int64_t t = s + 5300; t <= s + 60000 && !ss.Revealed(); t += 100) ss.Tick(t, out);
+  CHECK(ss.Revealed());
+  for (const gms::ShaperPick& p : ss.Picks())
+    if (p.gameplayIndex == 0) CHECK_EQ(p.role, uint8_t{3});
+}
+
+// Without a preset (or with one out of range) a human's record starts with role 0 as before; a scripted player's
+// presetRole is ignored (its plan has its role); a preset Gladiator (0, the record's default value) still counts as said.
+GMS_TEST(ShaperSelectPresetRoleOnlyForHumans) {
+  QuietLog log;
+  gms::ShaperSelectConfig cfg;
+  cfg.timers = Timers(30000, 30000, 10000, 16);
+  gms::ShaperSelectPlayer bad;
+  bad.gameplayIndex = 0;
+  bad.team = 1;
+  bad.content.list = {Entry(kAlpha, 1)};
+  bad.presetRole = 4;
+  cfg.players.push_back(bad);
+  gms::ShaperSelectPlayer bot = Scripted(1, 1, 0, 1000, 2500, 1);
+  bot.presetRole = 3;
+  cfg.players.push_back(bot);
+  gms::ShaperSelectPlayer ok;
+  ok.gameplayIndex = 5;
+  ok.team = 2;
+  ok.presetRole = 0;
+  cfg.players.push_back(ok);
+  gms::ShaperSelect ss(cfg);
+  CHECK_EQ(ss.Record(0)->role, uint8_t{0});
+  CHECK_EQ(ss.Record(1)->role, uint8_t{1});
+  CHECK_EQ(ss.Record(5)->role, uint8_t{0});
+  CHECK(!log.Has("player 0's role is preset"));
+  CHECK(!log.Has("player 1's role is preset"));
+  CHECK(log.Has("player 5's role is preset to 0"));
+}
+
+// The roster's role (startGame, the shared example line) as the record's value.
+GMS_TEST(ShaperSelectPresetRoleFromStartGame) {
+  const std::string line =
+      "{\"t\":\"startGame\",\"roster\":[{\"user\":2000000001,\"name\":\"alpha\",\"index\":0,\"team\":1,\"noun\":\"\","
+      "\"bot\":false,\"shapers\":[{\"noun\":\"tidalqueen.Noun\",\"flags\":32}],\"role\":\"hunter\"},{\"user\":2000000002,"
+      "\"name\":\"bravo\",\"index\":5,\"team\":2,\"noun\":\"\",\"bot\":false,\"shapers\":[{\"noun\":\"alpha.Noun\","
+      "\"flags\":32}],\"role\":\"gladiator\"}],\"rules\":{\"pick\":\"draft\",\"shaperPool\":\"all\",\"shop\":\"normal\","
+      "\"itemPool\":\"all\"},\"fillTeams\":0}";
+  dggms::control::Message m;
+  std::string err;
+  CHECK(dggms::control::Decode(line, m, &err));
+  const auto* g = std::get_if<dggms::control::StartGame>(&m);
+  CHECK(g != nullptr);
+  if (!g) return;
+  CHECK_EQ(g->roster.size(), size_t{2});
+  if (g->roster.size() != 2) return;
+  CHECK_EQ(gms::ShaperRoleFromRoster(g->roster[0]), 2);
+  CHECK_EQ(gms::ShaperRoleFromRoster(g->roster[1]), 0);
+  dggms::control::RosterEntry e;
+  CHECK_EQ(gms::ShaperRoleFromRoster(e), -1);
+  e.role = "Predator";
+  CHECK_EQ(gms::ShaperRoleFromRoster(e), 3);
+  e.role = "support";
+  CHECK_EQ(gms::ShaperRoleFromRoster(e), -1);
 }

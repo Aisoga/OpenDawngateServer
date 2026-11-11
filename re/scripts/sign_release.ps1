@@ -46,8 +46,10 @@ function Step([string]$m) { Write-Host $m -ForegroundColor Cyan }
 # a native command whose stderr is dropped (Windows PowerShell turns redirected stderr into errors, which 'Stop'
 # makes fatal); its output, $LASTEXITCODE as it left it
 function Quiet([scriptblock]$b) { $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'; try { & $b 2>$null } finally { $ErrorActionPreference = $old } }
-# gh's --json output as a list of objects (Windows PowerShell's ConvertFrom-Json hands an array on as one object)
-function FromJson($lines) { $o = ($lines -join "`n") | ConvertFrom-Json; @($o | Where-Object { $_ }) }
+# gh's --json output as a list of objects (Windows PowerShell's ConvertFrom-Json hands an array on as one object).
+# The comma keeps the list a list: a function's output is unrolled, and a single object in Windows PowerShell has no
+# .Count (v0.19's first try: its one run counted as none).
+function FromJson($lines) { $o = ($lines -join "`n") | ConvertFrom-Json; return , @($o | Where-Object { $_ }) }
 if ($Tag -cnotmatch '^v[0-9]+\.[0-9]+(\.[0-9]+)?$') { Fail "-Tag $Tag`: a release tag is v<major>.<minor> or v<major>.<minor>.<patch>" }
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 if (-not $Work) { $Work = Join-Path $Root "re\out\sign\$Tag" }

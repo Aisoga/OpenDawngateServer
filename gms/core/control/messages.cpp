@@ -101,6 +101,7 @@ Json RosterJson(const std::vector<RosterEntry>& entries) {
     }
     if (r.party != 0) e.Set("party", Json::Int(r.party));  // D8b: the PvP party (Go: omitempty)
     if (r.spectator) e.Set("spectator", Json::Bool(true));  // B15: an observer (Go: omitempty)
+    if (!r.role.empty()) e.Set("role", Json::Str(r.role));  // DRAFT3: the declared role (Go: omitempty)
     roster.Push(std::move(e));
   }
   return roster;
@@ -501,6 +502,7 @@ bool DecodeRoster(Fields& f, std::vector<RosterEntry>& out) {
     }
     if (e.err.empty()) e.Int("party", r.party);  // D8b
     if (e.err.empty()) e.Bool("spectator", r.spectator);  // B15
+    if (e.err.empty()) e.Str("role", r.role);  // DRAFT3
     if (!e.err.empty()) {
       f.err = "roster: " + e.err;
       return false;

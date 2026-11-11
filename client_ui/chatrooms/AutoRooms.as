@@ -32,6 +32,14 @@
 // nor for the lines that come with the join (the first QUIET_MS of a window), and at most once every RING_GAP_MS.
 // The game's sound options (Mute All, the volumes) apply to it as to every other sound of the menus.
 //
+// A minimised window's tab passes the clicks above its drawn bar on to the screen below. The tab's bar (the game's
+// ChatTopBar, and ChatSmallBar for the narrow tab) is a picture 44 units high whose top part is transparent, and it
+// reaches about 11 units higher than the tab's own click area (m_shield), so it swallowed every click in that strip
+// without doing anything. The bottom bar grows with the window and the screens above it don't, so at 1920 x 1080 the
+// strip lay over the custom lobby's START GAME button. The class turns hit testing off for those two bars (Scaleform's
+// InteractiveObjectEx.setHitTestDisable, as the game does for its in-match chat's background); the shield still opens
+// the window.
+//
 // Build: re/scripts/build_picker.py build chatrooms (the Apache Flex SDK's mxmlc).
 package {
     import flash.display.DisplayObject;
@@ -68,6 +76,9 @@ package {
         private static const RING_GAP_MS:int = 2000; // at most one sound in this time
         private var marked:Object = {}; // room id -> true: a marked room of the Rooms tab's list, this login
         private var lastRing:int = -RING_GAP_MS;
+        // A tab's bars whose transparent top swallowed clicks (ChatWindowTab's ChatTopBar and ChatSmallBar).
+        private static const TAB_BARS:Array = ["m_topBar", "m_topBar2"];
+        private static const HIT_TEST_EX:String = "scaleform.gfx.InteractiveObjectEx";
 
         public function AutoRooms() {
             super();
@@ -140,7 +151,9 @@ package {
                 }
                 var t:Object = w.GetChatWindow()["m_chatText"];
                 if (t != null) {
-                    kept.push({w: w, text: t, quiet: 0, since: getTimer(), len: int(t["length"])});
+                    var rec:Object = {w: w, text: t, quiet: 0, since: getTimer(), len: int(t["length"])};
+                    kept.push(rec);
+                    passTabClicks(rec);
                 }
             } catch (err:Error) {
             }
@@ -156,6 +169,7 @@ package {
                         continue; // closed
                     }
                     still.push(k);
+                    passTabClicks(k);
                     if (k.quiet != 0) {
                         unmark(k);
                     }
@@ -192,6 +206,28 @@ package {
                 }
             }
             kept = still;
+        }
+
+        // passTabClicks turns hit testing off for the bars of k's tab (see the header), once per bar object: the
+        // tab's timeline keeps them across its states, a new object (should the game make one) gets it too.
+        private function passTabClicks(k:Object):void {
+            var tab:Object;
+            try {
+                tab = k.w["m_chatTab"];
+            } catch (err:Error) {
+                return;
+            }
+            for each (var name:String in TAB_BARS) {
+                try {
+                    var b:Object = tab[name];
+                    if (b == null || b == k[name]) {
+                        continue;
+                    }
+                    k[name] = b; // tried once, also when the call fails
+                    getDefinitionByName(HIT_TEST_EX)["setHitTestDisable"](b, true);
+                } catch (err2:Error) {
+                }
+            }
         }
 
         // newLines looks at the text the game appended to k's field since the last frame.

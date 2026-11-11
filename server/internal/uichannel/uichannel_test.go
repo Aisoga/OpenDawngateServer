@@ -216,6 +216,30 @@ func TestCalls(t *testing.T) {
 	}
 }
 
+// Greet's events reach each new connection right after its hello, the user's own, before anything else; an event that
+// can't be encoded is logged and left out.
+func TestGreet(t *testing.T) {
+	f := newFixture(t)
+	f.s.Greet = func(user int64) []Greeting {
+		return []Greeting{{Event: "region.state", Data: map[string]any{"user": user}}, {Event: "bad", Data: func() {}},
+			{Event: "second"}}
+	}
+	a := f.hello("alpha")
+	if got, want := a.line(), `{"event":"region.state","data":{"user":1}}`; got != want {
+		t.Errorf("greeting %s, want %s", got, want)
+	}
+	if got, want := a.line(), `{"event":"second"}`; got != want {
+		t.Errorf("second greeting %s, want %s", got, want)
+	}
+	b := f.hello("bravo")
+	if got, want := b.line(), `{"event":"region.state","data":{"user":2}}`; got != want {
+		t.Errorf("bravo's greeting %s, want %s", got, want)
+	}
+	if log := f.log.String(); !strings.Contains(log, "greeting bad for 1:") {
+		t.Errorf("log: %s", log)
+	}
+}
+
 // A line over the limit, a malformed one, one without a call and too many calls end the connection, and the end is told.
 func TestBadClients(t *testing.T) {
 	for _, tc := range []struct {

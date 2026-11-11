@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -166,7 +167,7 @@ func TestAwayAndHome(t *testing.T) {
 	buf3 := &syncBuf{}
 	old, _ := startGatewayWith(t, buf3, func(g *Gateway) { g.maxSessionHello = mapsVersion })
 	oc := &Client{Log: logging.New(buf3), Gateway: old.Addr(), Pin: old.Identity.Pin, TunnelIP: net.ParseIP(tunIP),
-		DialIP: net.ParseIP(peerIP), External: true, Maps: []InstalledMap{}}
+		DialIP: net.ParseIP(peerIP), External: true, Maps: []InstalledMap{}, OnAway: func(int, Away) {}}
 	if err := oc.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -183,5 +184,41 @@ func TestAwayAndHome(t *testing.T) {
 	}
 	if (&Addr{}).TakesAway() || (&Addr{}).RouteAway(1, testAway()) {
 		t.Error("an address without a session")
+	}
+}
+
+// TestHelloSaysAway (PREF4): only a client that reads away messages (OnAway) or carries a ticket says the version 4
+// hello; one without (dgserver's --tunnel-client, Start-Client's path without the front) says version 3, so the main
+// server never sends its port away (Blaze keeps its players' games home: wantedBy), and version 2 without a map list.
+func TestHelloSaysAway(t *testing.T) {
+	buf := &syncBuf{}
+	g, _ := startGatewayWith(t, buf, func(g *Gateway) { g.Forward = nil })
+	for _, c := range []struct {
+		what   string
+		maps   []InstalledMap
+		onAway func(int, Away)
+		takes  bool
+		named  bool
+	}{
+		{"with OnAway", []InstalledMap{}, func(int, Away) {}, true, true},
+		{"without OnAway", []InstalledMap{}, nil, false, true},
+		{"without OnAway and maps", nil, nil, false, false},
+	} {
+		cl := &Client{Log: logging.New(buf), Gateway: g.Addr(), Pin: g.Identity.Pin, TunnelIP: net.ParseIP(tunIP),
+			DialIP: net.ParseIP(peerIP), External: true, Maps: c.maps, OnAway: c.onAway}
+		if err := cl.Start(); err != nil {
+			t.Fatalf("%s: %v", c.what, err)
+		}
+		addr := gatewayAddr(g, cl.session(time.Second).id)
+		if addr.TakesAway() != c.takes || addr.RouteAway(portHost, testAway()) != c.takes {
+			t.Errorf("%s: TakesAway %v, want %v", c.what, addr.TakesAway(), c.takes)
+		}
+		if _, named := addr.Maps(); named != c.named {
+			t.Errorf("%s: maps named %v, want %v", c.what, named, c.named)
+		}
+		cl.Close()
+	}
+	if s := buf.String(); strings.Contains(s, "takes no away messages") || strings.Contains(s, "takes no map list") {
+		t.Errorf("a client stepped down:\n%s", s)
 	}
 }

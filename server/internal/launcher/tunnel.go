@@ -299,7 +299,11 @@ func startTunnel(o IO, l setup.Layout, gw string, pin tunnel.Pin, tunnelIP strin
 		}
 	})
 	c.AcceptConn = func(port int, lc net.Conn) bool { return port == HTTPPort || guard.allows(port, lc) }
+	// a match on a host machine in another region (the server's away message): the front's away sessions on this one
+	// client (front_away.go; since PREF5, so this path says the version 4 hello and its player's games may leave home)
+	away := awayWithoutFront(log, c, 10*time.Second)
 	closeAll := func() {
+		away.Close()
 		c.Close()
 		if f != nil {
 			f.Close()

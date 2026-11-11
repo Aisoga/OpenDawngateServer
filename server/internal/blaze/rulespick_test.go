@@ -168,7 +168,7 @@ func TestApplyPickRulesDraft(t *testing.T) {
 	s := &Server{Log: logging.New(&log), Content: c}
 	sg := gmshost.StartGame{Roster: pickRoster(c, [][2]int{{0, 1}, {5, 2}, {6, 2}}), Rules: &gmshost.Rules{Pick: "draft",
 		ShaperPool: "melee", Shop: "normal", ItemPool: "all"}}
-	s.applyPickRules(1, &sg, map[int64]string{2000000001: "PC_Warden", 2000000002: "PC_Artificer"})
+	s.applyPickRules(1, &sg, map[int64]draftedSeat{2000000001: {Shaper: "PC_Warden"}, 2000000002: {Shaper: "PC_Artificer", Role: "hunter"}})
 	if len(sg.PoolClasses) != 17 {
 		t.Errorf("poolClasses %v", sg.PoolClasses)
 	}
@@ -186,9 +186,28 @@ func TestApplyPickRulesDraft(t *testing.T) {
 		t.Errorf("the spectator got a list")
 	}
 	for _, want := range []string{"game 1: the draft's shapers: user 2000000001 (index 0, team 1) -> Warden.Noun",
-		"user 2000000003 (team 2): no drafted shaper in its list (\"\"), keeps its list"} {
+		"user 2000000003 (team 2): no drafted shaper in its list (\"\"), keeps its list",
+		"game 1: the draft's roles: user 2000000002 (index 5) hunter; the host presets each in shaper select"} {
 		if !strings.Contains(log.String(), want) {
 			t.Errorf("log lacks %q:\n%s", want, log.String())
+		}
+	}
+	// DRAFT3: the declared role goes into the roster for the host's preset; none stays none
+	for i, want := range []string{"", "hunter", "", ""} {
+		if sg.Roster[i].Role != want {
+			t.Errorf("roster %d: role %q, want %q", i, sg.Roster[i].Role, want)
+		}
+	}
+}
+
+// DRAFT3: the draft's role ids (rules.DraftRoles, the wire's) are the roster's (gmshost.Roles), in the record's order.
+func TestDraftRolesAreTheRosterRoles(t *testing.T) {
+	if len(rules.DraftRoles) != len(gmshost.Roles) {
+		t.Fatalf("%d draft roles, %d roster roles", len(rules.DraftRoles), len(gmshost.Roles))
+	}
+	for i, r := range rules.DraftRoles {
+		if gmshost.RoleIndex(r.ID) != i {
+			t.Errorf("draft role %q is roster role %d, want %d", r.ID, gmshost.RoleIndex(r.ID), i)
 		}
 	}
 }

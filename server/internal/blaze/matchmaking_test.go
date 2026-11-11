@@ -226,9 +226,9 @@ func TestMatchmakingHostedBots(t *testing.T) {
 		logs    []string
 		wantRaw string
 	}{
-		{true, 5, []string{`1 v 0 (full false, region ""): sessions [1] v []; open seats: bots up to 5 a team`,
+		{true, 5, []string{`1 v 0 (full false): sessions [1] v []; open seats: bots up to 5 a team`,
 			"player 2000000001, bots fill each team to 5; NotifyGameSetup follows gameReady"}, want},
-		{false, 0, []string{`1 v 0 (full false, region ""): sessions [1] v []; open seats stay empty (--mm-bots=false)`},
+		{false, 0, []string{`1 v 0 (full false): sessions [1] v []; open seats stay empty (--mm-bots=false)`},
 			strings.Replace(want, `,"fillTeams":5`, "", 1)},
 	} {
 		got := make(chan gmshost.CreateGame, 1)

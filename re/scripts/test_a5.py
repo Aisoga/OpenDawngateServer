@@ -63,7 +63,7 @@ NUMFMT_OUTPUT_SHA256 = "1ec27470fb246a4d81820a96929a670f8cf27476fdca2f2417c5848d
 # AVGPREC: NUMFMT_OUTPUT with the profile's averages at full precision (one block)
 AVERAGES_OUTPUT_SHA256 = "73feaac8ca6b72ce79cbfe07205530f94ee583389c2e5ae991f1075f72b05a20"
 # FADE1 (FADE1b, FADE1c): the default output, AVERAGES_OUTPUT with the fade at the fog's edge (five sites, in place)
-FADE_OUTPUT_SHA256 = "1554a60850b11880dbe1519b13cadeb4dd0f5a5a5d836c9f18ab3da3194c5135"
+FADE_OUTPUT_SHA256 = "30c36547e0b64b30dfaf3aad85d2d5e0f61b90a5480fee70218cd5e0fe647cf1"
 RATING_SUMMARY = MAPTABLE_SUMMARY + "; the profile box shows the rating the server sends (rating cave at 0x011ab170)"
 EXE = None  # set in __main__
 
@@ -224,9 +224,10 @@ class PatchClientTest(unittest.TestCase):
                 for op in x.operands:
                     if op.type == capstone.x86.X86_OP_MEM and op.mem.base == 0 and op.mem.index == 0:
                         reads.add(op.mem.disp)
-        # the functions called: the observer test, the local team mask, FadeTarget, the simulator, the frame's seconds;
-        # FadeStep
-        self.assertEqual(calls, [0x0066D010, 0x0066CE20, target, 0x008EF090, 0x008F99C0, step])
+        # the functions called: LocalViewAsShipped, the local team mask, FadeTarget, the simulator, the frame's seconds;
+        # in LocalViewAsShipped (COLL3D) the local player (no assert without one) and the observer bit; FadeStep
+        local_view = 0x0056E470
+        self.assertEqual(calls, [local_view, 0x0066CE20, target, 0x008EF090, 0x008F99C0, 0x0066CD30, 0x00912040, step])
         # every jump stays in its block or goes to the shipped paths: not drawn (0x0057634E), the normal and the glass
         # materials (0x0056E568, 0x0056E5C6), and the second assert after FadeTarget's room (0x0056E48B)
         for t in targets:
@@ -244,11 +245,18 @@ class PatchClientTest(unittest.TestCase):
         self.assertEqual(sum(1 for x in ins if x.mnemonic == "ret"), 3)
         # FadeTarget: the bit, then the fog query's value against 160 (clearly lit, FADE1c), no stack use
         ins = list(md.disasm(code[pc.FADE_TARGET], pc.FADE_TARGET))
-        self.assertEqual([(x.mnemonic, x.op_str) for x in ins][2:], [
+        self.assertEqual([(x.mnemonic, x.op_str) for x in ins][2:10], [
             ("and", "al, byte ptr [edi + 0x888]"), ("movzx", "esi, al"), ("mov", "ecx, dword ptr [edi + 0x860]"),
             ("jecxz", hex(target + 0x1C)), ("cmp", "dword ptr [ecx + 0x5c], 0xa0"), ("cmc", ""), ("adc", "esi, 0"),
             ("ret", "")])
         self.assertEqual(ins[1].op_str, "0x56e48b")
+        # LocalViewAsShipped (COLL3D), right after it in the same room: al = 1 without a local player (the front end's
+        # shaper models, which the fade hid), else the observer bit; its stack balanced on both ways
+        self.assertEqual(ins[10].address, local_view)
+        self.assertEqual([(x.mnemonic, x.op_str) for x in ins][10:], [
+            ("push", "0"), ("call", "0x66cd30"), ("pop", "ecx"), ("test", "eax, eax"), ("je", "0x56e484"),
+            ("push", "eax"), ("call", "0x912040"), ("pop", "ecx"), ("ret", ""), ("mov", "al, 1"), ("ret", "")])
+        self.assertEqual(pc.FADE_TARGET_NEW[-4:], b"\xcc" * 4)
         # UpdateCreatureOpacity's front: one push edi on both ways to the materials, as shipped
         ins = list(md.disasm(pc.FADE_FRONT_NEW, pc.FADE_FRONT))
         self.assertEqual([x.op_str for x in ins if x.mnemonic == "push"], ["edi", "edi"])

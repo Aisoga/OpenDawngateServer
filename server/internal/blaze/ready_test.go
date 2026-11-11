@@ -39,6 +39,8 @@ type uiClient struct {
 	t  *testing.T
 	nc net.Conn
 	r  *bufio.Reader
+
+	greeting string // the region.state line after the hello
 }
 
 // uiConnect opens tc's channel and says hello.
@@ -52,6 +54,7 @@ func uiConnect(t *testing.T, addr string, tc *tcpClient) *uiClient {
 	u := &uiClient{t: t, nc: nc, r: bufio.NewReader(nc)}
 	u.call(uichannel.CallHello, `{"protocol":1,"name":"`+tc.name+`"}`)
 	u.want(`{"event":"hello","data":{"protocol":1}}`)
+	u.greeting = u.event(EventRegionState) // PREF1: every connection's greeting (preferred.go)
 	return u
 }
 
@@ -109,8 +112,11 @@ func lobbyStateLine(players ...string) string {
 		}
 		out = append(out, s+"}")
 	}
-	return `{"event":"lobby.state","data":{"players":[` + strings.Join(out, ",") + `]}}`
+	return `{"event":"lobby.state","data":{"players":[` + strings.Join(out, ",") + `],"region":` + localRegionJSON + `}}`
 }
+
+// localRegionJSON is lobby.state's region on a server without regions (PREF1).
+const localRegionJSON = `{"id":"local","name":"Local"}`
 
 // The state object itself.
 func TestReadyCheckObject(t *testing.T) {
@@ -470,6 +476,7 @@ func TestUIEndsWithItsOwnLogin(t *testing.T) {
 		u := &uiClient{t: t, nc: out, r: bufio.NewReader(out)}
 		u.call(uichannel.CallHello, `{"protocol":1,"name":""}`)
 		u.want(`{"event":"hello","data":{"protocol":1}}`)
+		u.event(EventRegionState) // PREF1's greeting
 		return u
 	}
 	first := stream(1)

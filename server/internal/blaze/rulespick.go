@@ -61,8 +61,10 @@ func (s *Server) rollSeed() uint64 {
 
 // applyPickRules puts the start's pick rules into startGame (sg.Rules from the rules' last check; nil: nothing to do):
 // the pool's lists and poolClasses, All Random's rolled lists, and the draft's (drafted: each human's drafted
-// PlayerClass, RULES5b). Logged per game.
-func (s *Server) applyPickRules(gid int64, sg *gmshost.StartGame, drafted map[int64]string) {
+// PlayerClass, RULES5b, and its declared role, DRAFT1, which nothing uses before the role preset in shaper select).
+// Logged per game.
+func (s *Server) applyPickRules(gid int64, sg *gmshost.StartGame, drafted map[int64]draftedSeat) {
+	s.applyTestRoles(gid, sg) // DRAFT3: a test aid's declared roles (roles.go)
 	if sg.Rules == nil {
 		return
 	}
@@ -185,10 +187,16 @@ func (s *Server) applyPickRules(gid int64, sg *gmshost.StartGame, drafted map[in
 // "draft") locks it at once, as All Random's. A human without a drafted shaper, or whose list lacks it, keeps its list
 // (never after a draft of the checks' pool size: every seat picks, a timeout picks at random).
 func (s *Server) applyDraft(gid int64, humans []*gmshost.RosterEntry, class func(gmshost.ShaperOffer) string,
-	drafted map[int64]string) {
-	var desc []string
+	drafted map[int64]draftedSeat) {
+	var desc, roles []string
 	for _, e := range humans {
-		cl := drafted[e.User]
+		// DRAFT3: the declared role goes into the roster, and the host presets it in the human's shaper select
+		// record (its role page opens with it selected, still changeable)
+		if r := drafted[e.User].Role; gmshost.RoleIndex(r) >= 0 {
+			e.Role = r
+			roles = append(roles, fmt.Sprintf("user %d (index %d) %s", e.User, e.Index, r))
+		}
+		cl := drafted[e.User].Shaper
 		var got *gmshost.ShaperOffer
 		for i := range e.Shapers {
 			if cl != "" && class(e.Shapers[i]) == cl {
@@ -209,4 +217,9 @@ func (s *Server) applyDraft(gid int64, humans []*gmshost.RosterEntry, class func
 	sort.Strings(desc)
 	s.Log.Logf("blaze", "   game %d: the draft's shapers: %s; each list holds only the drafted shaper and the host locks it",
 		gid, strings.Join(desc, "; "))
+	if len(roles) > 0 {
+		sort.Strings(roles)
+		s.Log.Logf("blaze", "   game %d: the draft's roles: %s; the host presets each in shaper select", gid,
+			strings.Join(roles, "; "))
+	}
 }

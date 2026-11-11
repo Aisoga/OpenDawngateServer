@@ -47,9 +47,10 @@ const NewHostMachineFlag = "new-host-machine"
 const (
 	RegionKey       = "region"
 	HostMachinesKey = "host_machines"
+	RegionNamesKey  = "region_names" // PREF1: the names players see, alias=name separated by semicolons
 )
 
-func init() { serverKeys = append(serverKeys, RoleKey, RegionKey, HostMachinesKey) }
+func init() { serverKeys = append(serverKeys, RoleKey, RegionKey, HostMachinesKey, RegionNamesKey) }
 
 // hostMachineKeys are the keys a host machine's Start-Server.ini takes.
 var hostMachineKeys = []string{RoleKey, "main_server", "main_pin", "machine_name", "machine_key", "address", "bind",
@@ -117,9 +118,51 @@ func ReadRegions(cfg Config) (region string, machines []RegionMachine, err error
 	return region, machines, nil
 }
 
-// RegionFlags are the main server's dgserver flags for regions: --region and one --host-machine NAME=REGION:KEYFILE
-// per machine of host_machines (its key in the setup folder). host_machines needs region and the tunnel; a machine
-// without its key file is an error that names the command making it. note is the banner's line ("" without machines).
+// RegionName is one entry of region_names: a region and the name players see for it.
+type RegionName struct{ Region, Name string }
+
+// ReadRegionNames reads region_names (alias=name, separated by semicolons, e.g. "eu=Europe; na=NA (Virginia)"): each
+// alias must be region or a region of machines (without region only local, the one region of a server without regions),
+// each name 1-32 printable characters (gmshost.CheckRegionName). A region left out is named by its alias in capitals.
+func ReadRegionNames(cfg Config, region string, machines []RegionMachine) ([]RegionName, error) {
+	known := []string{region}
+	if region == "" {
+		known = []string{gmshost.LocalRegion}
+	}
+	for _, m := range machines {
+		if !slices.Contains(known, m.Region) {
+			known = append(known, m.Region)
+		}
+	}
+	var out []RegionName
+	seen := map[string]bool{}
+	for _, e := range strings.Split(cfg[RegionNamesKey], ";") {
+		if e = strings.TrimSpace(e); e == "" {
+			continue
+		}
+		alias, name, ok := strings.Cut(e, "=")
+		alias, name = strings.TrimSpace(alias), strings.TrimSpace(name)
+		switch {
+		case !ok:
+			return nil, fmt.Errorf("%s: %q: want region=name, e.g. na=NA (Virginia)", RegionNamesKey, e)
+		case !slices.Contains(known, alias):
+			return nil, fmt.Errorf("%s: %q: %s is no region of this server (%s)", RegionNamesKey, e, alias, strings.Join(known, ", "))
+		case seen[alias]:
+			return nil, fmt.Errorf("%s: %s twice", RegionNamesKey, alias)
+		}
+		if why := gmshost.CheckRegionName(name); why != "" {
+			return nil, fmt.Errorf("%s: %q: %s", RegionNamesKey, e, why)
+		}
+		seen[alias] = true
+		out = append(out, RegionName{alias, name})
+	}
+	return out, nil
+}
+
+// RegionFlags are the main server's dgserver flags for regions: --region, a --region-name per entry of region_names,
+// and one --host-machine NAME=REGION:KEYFILE per machine of host_machines (its key in the setup folder). host_machines
+// needs region and the tunnel; a machine without its key file is an error that names the command making it. note is
+// the banner's line ("" without machines).
 func RegionFlags(cfg Config, root string, tunnelOn bool) (flags []string, note string, err error) {
 	region, machines, err := ReadRegions(cfg)
 	if err != nil {
@@ -127,6 +170,13 @@ func RegionFlags(cfg Config, root string, tunnelOn bool) (flags []string, note s
 	}
 	if region != "" {
 		flags = append(flags, "--region", region)
+	}
+	named, err := ReadRegionNames(cfg, region, machines)
+	if err != nil {
+		return nil, "", err
+	}
+	for _, n := range named {
+		flags = append(flags, "--region-name", n.Region+"="+n.Name)
 	}
 	if len(machines) == 0 {
 		return flags, "", nil

@@ -30,6 +30,8 @@ type regionFlags struct {
 	agentPin string     // --agent-pin: the main server's gateway pin (64 hex)
 
 	agentPinCert string // REGION5: --agent-pin-cert, the main server's gateway_cert.pem instead of --agent-pin (test lanes)
+
+	names stringList // PREF1: --region-name ALIAS=NAME, repeatable
 }
 
 func addRegionFlags(fs *flag.FlagSet, r *regionFlags) {
@@ -41,6 +43,51 @@ func addRegionFlags(fs *flag.FlagSet, r *regionFlags) {
 	fs.StringVar(&r.agentPin, "agent-pin", "", "with --agent-tls: the main server's gateway key pin (64 hex digits, its banner's)")
 	fs.StringVar(&r.agentPinCert, "agent-pin-cert", "", "with --agent-tls instead of --agent-pin: the main server's gateway certificate file "+
 		"(gateway_cert.pem; a test lane's main server on the same PC)")
+	fs.Var(&r.names, "region-name", "ALIAS=NAME: the name players see for a region (--region's or a --host-machine's; local "+
+		"without --region), e.g. na=NA (Virginia); 1-32 characters; repeatable. Default: the alias in capitals")
+}
+
+// regionNames reads --region-name: each alias with its name, checked against the server's regions (--region and the
+// --host-machine regions; without --region only gmshost.LocalRegion).
+func (r regionFlags) regionNames() (map[string]string, error) {
+	known := map[string]bool{}
+	if r.region == "" {
+		known[gmshost.LocalRegion] = true
+	} else {
+		known[r.region] = true
+		for _, s := range r.machines {
+			if _, region, _, err := parseHostMachine(s); err == nil {
+				known[region] = true
+			}
+		}
+	}
+	names := map[string]string{}
+	for _, s := range r.names {
+		alias, name, ok := strings.Cut(s, "=")
+		alias = strings.TrimSpace(alias)
+		switch {
+		case !ok || !regionRE.MatchString(alias):
+			return nil, fmt.Errorf("--region-name %q: want ALIAS=NAME, the alias 2-8 lower-case letters", s)
+		case !known[alias]:
+			return nil, fmt.Errorf("--region-name %q: %s is no region of this server (%s)", s, alias, strings.Join(sortedKeys(known), ", "))
+		case names[alias] != "":
+			return nil, fmt.Errorf("--region-name: %s twice", alias)
+		}
+		if why := gmshost.CheckRegionName(name); why != "" {
+			return nil, fmt.Errorf("--region-name %q: %s", s, why)
+		}
+		names[alias] = name
+	}
+	return names, nil
+}
+
+func sortedKeys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 var regionRE = regexp.MustCompile(`^[a-z]{2,8}$`)
@@ -64,6 +111,9 @@ func (c config) linkConfig() (gmshost.LinkConfig, string, error) {
 	r := c.regions
 	if r.region != "" && !regionRE.MatchString(r.region) {
 		return gmshost.LinkConfig{}, "", fmt.Errorf("--region %q: 2-8 lower-case letters", r.region)
+	}
+	if _, err := r.regionNames(); err != nil {
+		return gmshost.LinkConfig{}, "", err
 	}
 	if len(r.machines) == 0 {
 		return gmshost.LinkConfig{}, "", nil

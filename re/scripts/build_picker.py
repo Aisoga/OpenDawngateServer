@@ -1,6 +1,6 @@
 """Builds the compiled bytes of our UI classes from their ActionScript source, or checks the committed ones.
 
-Eight classes run inside the game's own UI movies, each placed there by four added SWF tags (the game's bytecode stays
+Ten classes run inside the game's own UI movies, each placed there by four added SWF tags (the game's bytecode stays
 as it is; re/scripts/patch_login_movie.py and its Go port, server/internal/setup/moviepatch, insert them):
     picker        client_ui/serverpicker/ServerPicker.as, the server picker on the login screen (Start-Client's
                   picker mode), in UI/Scaleform/LoginScreen/LoginScreen_BG.gfx
@@ -11,6 +11,10 @@ as it is; re/scripts/patch_login_movie.py and its Go port, server/internal/setup
     aftaction     client_ui/aftaction/AfterActionTabs.as, the After Action Review's tabs (Scoreboard, Match Stats,
                   Recent Games: the server's match history pages in a web view), in
                   UI/Scaleform/Battlegrounds/AfterActionReviewUI.gfx
+    matchtype     client_ui/matchtype/RegionPicker.as, the play screen's Preferred Region dropdown (the server's regions
+                  over the UI channel, in place of the game's region buttons), in UI/Scaleform/Battlegrounds/MatchTypeUI.gfx
+    pvplobby      client_ui/pvplobby/PartyRegion.as, the party lobby's Preferred Region (the player's own, read-only,
+                  in place of the game's region choice), in UI/Scaleform/Battlegrounds/PVPLobbyUI.gfx
     itemshop      client_ui/itemshop/ShopRefund.as, the item shop's inline refund (badges on the slots whose purchase
                   of this visit can be undone, the Refund texts and tooltip line), in UI/Scaleform/HUD/ItemShopUI.gfx
     collection    client_ui/collection/CollectionItems.as, the Collection's Items category (the match items as the
@@ -38,10 +42,10 @@ of a folder above it), else the environment variables FLEX_SDK, PLAYERGLOBAL and
 the same source, so `check` can compare byte for byte.
 
 Usage:
-    python -I re/scripts/build_picker.py build [picker|matchoptions|chatrooms|aftaction|itemshop|collection|lobby|leaderboard]   # compile and write both files (default: all)
-    python -I re/scripts/build_picker.py check [picker|matchoptions|chatrooms|aftaction|itemshop|collection|lobby|leaderboard]   # compile into a temporary folder; exit 1 if a
+    python -I re/scripts/build_picker.py build [picker|matchoptions|chatrooms|aftaction|matchtype|pvplobby|itemshop|collection|lobby|leaderboard]   # compile and write both files (default: all)
+    python -I re/scripts/build_picker.py check [picker|matchoptions|chatrooms|aftaction|matchtype|pvplobby|itemshop|collection|lobby|leaderboard]   # compile into a temporary folder; exit 1 if a
                                                                          file differs
-    python -I re/scripts/build_picker.py tags <file.abc> <out.hex> [--spec picker|matchoptions|chatrooms|aftaction|itemshop|collection|lobby|leaderboard]   # only the tags
+    python -I re/scripts/build_picker.py tags <file.abc> <out.hex> [--spec picker|matchoptions|chatrooms|aftaction|matchtype|pvplobby|itemshop|collection|lobby|leaderboard]   # only the tags
     python -I re/scripts/build_picker.py compile <Source.as> <out_tags.hex>   # a throwaway class (a spike): its tags,
                                                      character 2000 at depth 2000, class = the file's name
 """
@@ -81,6 +85,8 @@ SPECS = {
     "matchoptions": Spec("matchoptions", "BotCheckbox", "matchoptions_tags.hex"),
     "chatrooms": Spec("chatrooms", "AutoRooms", "chatrooms_tags.hex"),
     "aftaction": Spec("aftaction", "AfterActionTabs", "aftaction_tags.hex"),
+    "matchtype": Spec("matchtype", "RegionPicker", "matchtype_tags.hex"),
+    "pvplobby": Spec("pvplobby", "PartyRegion", "pvplobby_tags.hex"),
     "itemshop": Spec("itemshop", "ShopRefund", "itemshop_tags.hex", symbols=((250, "ShopVim"),)),
     "collection": Spec("collection", "CollectionItems", "collection_tags.hex"),
     "lobby": Spec("lobby", "LobbyReady", "lobby_tags.hex", char_id=2001, depth=2001),

@@ -32,6 +32,10 @@ references are computed with the Go setup's own ca_modulus.bin):
                  chatrooms); the host copy has none
   review tabs    the client copy's game\\Data\\zz_AfterActionReview.snap = patch_login_movie.build(its own
                  Battlegrounds.snap, spec aftaction, the client copy's address: its web root); the host copy has none
+  preferred region  the client copy's game\\Data\\zz_MatchType.snap = patch_login_movie.build(its own
+                 Battlegrounds.snap, spec matchtype, the client copy's address: its UI channel); the host copy has none
+  party region   the client copy's game\\Data\\zz_PVPLobby.snap = patch_login_movie.build(its own Battlegrounds.snap,
+                 spec pvplobby, the client copy's address: its UI channel); the host copy has none
   shop refund    the client copy's game\\Data\\zz_ItemShop.snap = patch_login_movie.build(its own HUD.snap, spec
                  itemshop); the host copy has none
   collection items  the client copy's game\\Data\\zz_CollectionItems.snap = patch_login_movie.build(its own
@@ -254,6 +258,8 @@ def main(argv):
     for title, name, what in (("bot check box", "matchoptions", "bot check box"),
                               ("chat rooms", "chatrooms", "chat rooms class"),
                               ("review tabs", "aftaction", "After Action Review tabs"),
+                              ("preferred region", "matchtype", "Preferred Region class"),
+                              ("party region", "pvplobby", "party lobby's Preferred Region class"),
                               ("shop refund", "itemshop", "shop refund class")):
         print(title)
         mo = patch_login_movie.SPECS[name]
@@ -355,6 +361,8 @@ def main(argv):
                                                       patch_login_movie.SPECS["matchoptions"].rel,
                                                       patch_login_movie.SPECS["chatrooms"].rel,
                                                       patch_login_movie.SPECS["aftaction"].rel,
+                                                      patch_login_movie.SPECS["matchtype"].rel,
+                                                      patch_login_movie.SPECS["pvplobby"].rel,
                                                       patch_login_movie.SPECS["itemshop"].rel,
                                                       patch_login_movie.SPECS["collection"].rel, hw_rel)):
                     extra.append(rel)

@@ -1,4 +1,4 @@
-// Package matchmaker is the server's PvP matchmaker (roadmap B10a): queues per mode and region, and
+// Package matchmaker is the server's PvP matchmaker: one queue per mode, and
 // team assembly for 1v1 up to 5v5. It knows nothing about Blaze or match hosts; the Blaze side
 // (internal/blaze, matchmaking.go) turns a formed Match into a game and tells its players.
 //
@@ -6,8 +6,8 @@
 // playgroup) that must end up on one team. Tick, called by the owner every few hundred milliseconds and
 // right after every Add, forms matches from the waiting tickets:
 //
-//   - The oldest ticket anchors a match. Candidates are the tickets of the same mode whose region is
-//     compatible with the anchor's ("" = any region; the first ticket with a region fixes it).
+//   - The oldest ticket anchors a match. Candidates are the tickets of the same mode (one queue: since PREF1
+//     regions don't split it; the Blaze side picks a formed match's region by its players' vote).
 //   - Teams are filled oldest ticket first, each ticket onto the team with fewer players that still
 //     has room for the whole group (TeamSize per team); a ticket that fits nowhere waits.
 //   - A match starts at once when both teams are full. With fewer players it starts once there are at
@@ -42,7 +42,6 @@ type Player struct {
 type Ticket struct {
 	ID      int64  // the session id (MSID), unique
 	Mode    string // queue: only tickets of the same mode meet
-	Region  string // "" = any region
 	Players []Player
 	Timeout time.Duration // 0 = none
 	Data    any           // the caller's own data (the Blaze side keeps connections and requests here)
@@ -56,10 +55,9 @@ func (t *Ticket) Queued() time.Time { return t.queued }
 // Match is a formed match: two teams of tickets. Team 0 is Blaze's team index 0 (TIDX 0, the host's
 // team 1), team 1 the other.
 type Match struct {
-	Mode   string
-	Region string // the match's region ("" if every ticket said any)
-	Teams  [2][]*Ticket
-	Full   bool // both teams full; otherwise it started on its fill deadline with open slots
+	Mode  string
+	Teams [2][]*Ticket
+	Full  bool // both teams full; otherwise it started on its fill deadline with open slots
 }
 
 // Size returns the number of players on team i.
@@ -283,14 +281,14 @@ func (m *Matchmaker) fillDeadline(mt Match) time.Time {
 // assemble puts the candidates for the match anchored at a onto the two teams.
 func (m *Matchmaker) assemble(a *Ticket) Match {
 	size := m.cfg.TeamSize
-	mt := Match{Mode: a.Mode, Region: a.Region}
+	mt := Match{Mode: a.Mode}
 	mt.Teams[0] = []*Ticket{a}
 	count := [2]int{len(a.Players), 0}
 	for _, t := range m.queue {
 		if count[0] == size && count[1] == size {
 			break
 		}
-		if t == a || t.Mode != a.Mode || !compatible(mt.Region, t.Region) {
+		if t == a || t.Mode != a.Mode {
 			continue
 		}
 		n := len(t.Players)
@@ -304,18 +302,12 @@ func (m *Matchmaker) assemble(a *Ticket) Match {
 				continue
 			}
 		}
-		if mt.Region == "" {
-			mt.Region = t.Region
-		}
 		mt.Teams[team] = append(mt.Teams[team], t)
 		count[team] += n
 	}
 	mt.Full = count[0]+count[1] == 2*size
 	return mt
 }
-
-// compatible reports whether a ticket of region r can join a match of region want ("" = any).
-func compatible(want, r string) bool { return want == "" || r == "" || want == r }
 
 // QueueState is what one mode's queue looks like now (Snapshot): for the Discord queue message (DISCORD2b).
 type QueueState struct {

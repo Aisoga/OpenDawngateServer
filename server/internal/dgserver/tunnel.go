@@ -182,6 +182,16 @@ func runTunnelClient(cfg config, seconds int, h Hooks) int {
 		c.Maps = tunnel.ReadInstalledMaps(filepath.Join(cfg.tunnelMaps, "game", "Data"),
 			append([]string{mmArchive()}, folderArchives(cfg.mapsDir)...)...)
 	}
+	stopAway := func() {}
+	if cfg.tunnelAway { // PREF5: Start-Client's away route without the front, before Start (the version 4 hello)
+		if TunnelAway == nil {
+			fmt.Fprintln(os.Stderr, "dgserver: --tunnel-away: this build has no launcher (cmd/dgserver sets it)")
+			return 2
+		}
+		stopAway = TunnelAway(log, c)
+		log.Logf("tunnel", "--tunnel-away: the main server's away messages are taken (Start-Client's path without the front)")
+	}
+	defer stopAway()
 	if err := c.Start(); err != nil {
 		log.Logf("tunnel", "the tunnel didn't start: %v", err)
 		fmt.Fprintln(os.Stderr, "dgserver:", err)
@@ -218,6 +228,10 @@ type FrontConfig struct {
 // RunFront starts Start-Client's front for dgserver --tunnel-front (the launcher sets it: dgserver can't import the
 // launcher, which imports dgserver); it returns its stop function and its TCP ports.
 var RunFront func(FrontConfig) (stop func(), tcpPorts []int, err error)
+
+// TunnelAway gives dgserver --tunnel-client --tunnel-away's one tunnel Start-Client's away route without the front (the
+// launcher sets it: launcher.awayWithoutFront); call it before c.Start. stop ends the away sessions and c.
+var TunnelAway func(log *logging.Log, c *tunnel.Client) (stop func())
 
 // clientPin is --tunnel-pin (64 hex digits) or the pin of --tunnel-pin-cert (the gateway's certificate file).
 func clientPin(cfg config) (tunnel.Pin, error) {

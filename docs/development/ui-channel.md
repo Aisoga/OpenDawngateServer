@@ -48,7 +48,7 @@ One JSON object per line, at most 64 KiB, on TCP port **10039** (`dgserver --ui-
 | Client → server | `{"call":"lobby.setReady","args":{"ready":true}}` (`args` may be left out) |
 | Server → client | `{"event":"lobby.state","data":{"players":[{"name":"alpha","rating":1612},{"name":"bravo","ready":false}]}}` (`data` may be left out) |
 
-A connection starts with a handshake: `{"call":"hello","args":{"protocol":1,"name":"<the player's name>"}}`, answered by `{"event":"hello","data":{"protocol":1}}` or by `{"event":"refused","data":{"reason":"..."}}` and the connection's end.
+A connection starts with a handshake: `{"call":"hello","args":{"protocol":1,"name":"<the player's name>"}}`, answered by `{"event":"hello","data":{"protocol":1}}` or by `{"event":"refused","data":{"reason":"..."}}` and the connection's end. Right after the hello every connection gets the events of the server's `Greet` hook, before any other event: today `region.state` (the regions and the player's Preferred Region), so a class that needs it has it at every connect and reconnect without a call. A class ignores events it has no handler for.
 
 A connection is ended for a malformed line, a line over the limit, a player's calls going over 10 a second (bursts of 20, counted over all that player's connections and across reconnects), no hello within 10 s, a name in the hello over 64 bytes, or not reading its events (64 queued). A player may hold up to 8 connections at once, so classes in different movies don't have to share one; every connection gets the player's events.
 
@@ -88,7 +88,7 @@ Measured in the running client (build 854). `ServerChannel` handles all of this,
 - `close()` throws on a socket that isn't connected. A socket isn't reused after its end.
 - `bytesAvailable` can promise more than there is. `readUTFBytes(1)` then gives an empty string, while `readUnsignedByte` logs `Scaleform: Error: null`, so read one character at a time. That is also why events are pure ASCII.
 - The movies have no global `JSON`. `com.adobe.serialization.json.JSON` is in the game's code and does both directions (`GravityJSON.encode` returns null here).
-- A clean quit with a socket open is fine: the server sees the connection end. A movie unloaded with a socket open while the game goes on has not been tried, and the socket's thread allocates from that movie's heap: check it before using the channel in a movie that doesn't stay loaded.
+- A clean quit with a socket open is fine: the server sees the connection end. A movie unloaded with a socket open while the game goes on has not been tried, and the socket's thread allocates from that movie's heap: check it before using the channel in a movie that doesn't stay loaded. The play screen's movie is one (the game loads it anew at each visit), so its Preferred Region class (`client_ui/matchtype/RegionPicker.as`) keeps the channel open only for the moments it needs it: the state at the movie's start and the answer to a pick, a few tens of milliseconds each, then it closes it again (also when the movie leaves the stage). Do the same in any movie that doesn't stay loaded.
 
 ## Waiting for a screen without polling
 

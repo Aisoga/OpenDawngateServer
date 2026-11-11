@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -62,6 +63,46 @@ func TestReadRegions(t *testing.T) {
 		case c.err == "" && c.cfg["host_machines"] != "" && !strings.Contains(note, "na1 ("):
 			t.Errorf("%v: note %q", c.cfg, note)
 		}
+	}
+}
+
+// PREF1: region_names becomes one --region-name per entry, for the server's own regions only (local without region);
+// the template has the key.
+func TestReadRegionNames(t *testing.T) {
+	root := t.TempDir()
+	if err := writeMachineKey(agentKeyPath(root, "na1"), gmshost.NewAgentKey()); err != nil {
+		t.Fatal(err)
+	}
+	key := agentKeyPath(root, "na1")
+	cases := []struct {
+		cfg   Config
+		flags []string
+		err   string
+	}{
+		{Config{"region": "eu", "host_machines": "na1=na", "region_names": " eu=Europe ;na = NA (Virginia); "},
+			[]string{"--region", "eu", "--region-name", "eu=Europe", "--region-name", "na=NA (Virginia)", "--host-machine", "na1=na:" + key}, ""},
+		{Config{"region": "eu", "region_names": "eu=Europe"}, []string{"--region", "eu", "--region-name", "eu=Europe"}, ""},
+		{Config{"region_names": "local=Our LAN"}, []string{"--region-name", "local=Our LAN"}, ""},
+		{Config{"region": "eu", "region_names": "na=NA"}, nil, "na is no region of this server (eu)"},
+		{Config{"region_names": "eu=Europe"}, nil, "eu is no region of this server (local)"},
+		{Config{"region": "eu", "region_names": "Europe"}, nil, "want region=name"},
+		{Config{"region": "eu", "region_names": "eu="}, nil, "a region's name is empty"},
+		{Config{"region": "eu", "region_names": "eu=" + strings.Repeat("x", 33)}, nil, "over 32 characters"},
+		{Config{"region": "eu", "region_names": "eu=Europe; eu=EU"}, nil, "eu twice"},
+	}
+	for _, c := range cases {
+		flags, _, err := RegionFlags(c.cfg, root, true)
+		switch {
+		case c.err != "" && (err == nil || !strings.Contains(err.Error(), c.err)):
+			t.Errorf("%v: error %v, want %q", c.cfg, err, c.err)
+		case c.err == "" && err != nil:
+			t.Errorf("%v: %v", c.cfg, err)
+		case c.err == "" && !reflect.DeepEqual(flags, c.flags):
+			t.Errorf("%v: flags %q, want %q", c.cfg, flags, c.flags)
+		}
+	}
+	if !strings.Contains(ServerConfigText, "\nregion_names =\n") || !slices.Contains(serverKeys, RegionNamesKey) {
+		t.Error("region_names is not in the template or not a known key")
 	}
 }
 
@@ -279,6 +320,7 @@ func TestStartServerRegions(t *testing.T) {
 	}
 	SetKey(ini, "tunnel", "auto")
 	SetKey(ini, "web_port", "0")
+	SetKey(ini, "region_names", "eu=Europe; na=NA (Virginia)") // PREF1: the names reach the host manager
 	if code, out = run(t, RunServer, dir, "--non-interactive", "--new-host-machine", "na1", "na"); code != 0 {
 		t.Fatalf("--new-host-machine: exit %d\n%s", code, out)
 	}
@@ -288,6 +330,9 @@ func TestStartServerRegions(t *testing.T) {
 	}
 	if !logHas(t, setup.Layout{Root: filepath.Join(dir, DefaultFolder)}.Logs(), "host machines na1 (na) through the gateway") {
 		t.Error("the server log doesn't name the host machine")
+	}
+	if !logHas(t, setup.Layout{Root: filepath.Join(dir, DefaultFolder)}.Logs(), "games may run in eu (Europe), na (NA (Virginia))") {
+		t.Error("the server log doesn't name the regions")
 	}
 }
 

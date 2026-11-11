@@ -33,6 +33,14 @@ game/Data/Battlegrounds.snap, the added archive game/Data/zz_AfterActionReview.s
 archive also holds the web root of the server the copy is set up for, UI/Scaleform/Battlegrounds/dgweb.json
 (web_root_file: the root the config packages' web content URLs use, http://<host>:18080/battlegrounds_test/live/www/
 client/1/common; --host names the copy's server, default 127.0.0.1), from which the class loads the match history pages.
+And for the play screen's Preferred Region (--spec matchtype): client_ui/matchtype/RegionPicker.as, its tags
+server/internal/setup/moviepatch/matchtype_tags.hex, the play screen's movie UI/Scaleform/Battlegrounds/MatchTypeUI.gfx
+from game/Data/Battlegrounds.snap, the added archive game/Data/zz_MatchType.snap (the same id and depth, 2000), with
+where the copy's server has its UI channel (UI/Scaleform/Channel/dgchannel.json, channel_file; --host as for aftaction).
+And for the party lobby's Preferred Region (--spec pvplobby): client_ui/pvplobby/PartyRegion.as, its tags
+server/internal/setup/moviepatch/pvplobby_tags.hex, the party lobby's movie UI/Scaleform/Battlegrounds/PVPLobbyUI.gfx
+from game/Data/Battlegrounds.snap, the added archive game/Data/zz_PVPLobby.snap (the same id and depth, 2000), with the
+channel file as for matchtype.
 And for the item shop's inline refund (--spec itemshop): client_ui/itemshop/ShopRefund.as, its tags
 server/internal/setup/moviepatch/itemshop_tags.hex, the shop movie UI/Scaleform/HUD/ItemShopUI.gfx from
 game/Data/HUD.snap, the added archive game/Data/zz_ItemShop.snap (the same id and depth, 2000). The class's optional
@@ -57,10 +65,14 @@ Usage (python -I: the game's files are untrusted input):
     python -I re/scripts/patch_login_movie.py --spec chatrooms <game/Data/Global.snap> <out zz_Chat.snap>
     python -I re/scripts/patch_login_movie.py --spec aftaction <game/Data/Battlegrounds.snap> <out zz_AfterActionReview.snap>
                                               [--host <address>]   # the copy's server (patch_config.py's --host)
+    python -I re/scripts/patch_login_movie.py --spec matchtype <game/Data/Battlegrounds.snap> <out zz_MatchType.snap>
+                                              [--host <address>]
+    python -I re/scripts/patch_login_movie.py --spec pvplobby <game/Data/Battlegrounds.snap> <out zz_PVPLobby.snap>
+                                              [--host <address>]
     python -I re/scripts/patch_login_movie.py --spec itemshop <game/Data/HUD.snap> <out zz_ItemShop.snap>
     python -I re/scripts/patch_login_movie.py --spec collection --content <server/data/content.json> <game/Data/code.snap>
                                               <out zz_CollectionItems.snap> [--debug]   # --debug: the class's log lines
-    python -I re/scripts/patch_login_movie.py [--spec matchoptions|chatrooms|aftaction|itemshop|collection] --movie <in .gfx> <out .gfx> [--tags <file>]
+    python -I re/scripts/patch_login_movie.py [--spec matchoptions|chatrooms|aftaction|matchtype|pvplobby|itemshop|collection] --movie <in .gfx> <out .gfx> [--tags <file>]
 """
 import json
 import math
@@ -116,6 +128,12 @@ SPECS = {
     "aftaction": Spec("the After Action Review's tabs", "game/Data/Battlegrounds.snap",
                       "game/Data/zz_AfterActionReview.snap", "UI/Scaleform/Battlegrounds/AfterActionReviewUI.gfx",
                       os.path.join(MOVIEPATCH, "aftaction_tags.hex"), "AfterActionTabs", web_root=True),
+    "matchtype": Spec("the play screen's Preferred Region", "game/Data/Battlegrounds.snap",
+                      "game/Data/zz_MatchType.snap", "UI/Scaleform/Battlegrounds/MatchTypeUI.gfx",
+                      os.path.join(MOVIEPATCH, "matchtype_tags.hex"), "RegionPicker", channel=True),
+    "pvplobby": Spec("the party lobby's Preferred Region", "game/Data/Battlegrounds.snap",
+                     "game/Data/zz_PVPLobby.snap", "UI/Scaleform/Battlegrounds/PVPLobbyUI.gfx",
+                     os.path.join(MOVIEPATCH, "pvplobby_tags.hex"), "PartyRegion", channel=True),
     "itemshop": Spec("the shop's inline refund", "game/Data/HUD.snap", "game/Data/zz_ItemShop.snap",
                      "UI/Scaleform/HUD/ItemShopUI.gfx", os.path.join(MOVIEPATCH, "itemshop_tags.hex"), "ShopRefund",
                      extra=(("UI/Scaleform/HUD/dgrefund.json", b"dawngate-refund\t1\nend\n"),)),

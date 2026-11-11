@@ -73,7 +73,7 @@ func registerBattlegroundsAccounts(s *Server) {
 				for _, e := range m.Entries {
 					k, kok := e.Key.(string)
 					v, vok := e.Value.(string)
-					if kok && vok {
+					if kok && vok && !ourSetting(k) { // PREF1, DRAFT2c: ours, written by region.set and draft.music only
 						settings[k] = v
 					}
 				}

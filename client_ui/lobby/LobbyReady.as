@@ -11,17 +11,21 @@
 // back as the whole lobby in one event, which is simply drawn:
 //     lobby.enter, lobby.setReady {ready}                  -> the server
 //     lobby.state {players: [{name, ready?, rating?}], rules?,
-//                  region?: {want, got, why}},
+//                  region: {id, name, want?, wantName?, got?, why?}},
 //     lobby.startRefused {findings?}, lobby.rulesCatalog   <- the server
 // The match rules (the state's rules, the catalog, the admin's lobby.setRules) are RulesPanel's, which this class draws
 // on its overlay and whose findings hold START as an unready player does. A draft (the rules' pick "draft": the
 // server's draft.state, the calls draft.ban and draft.pick) is DraftBoard's, drawn on the same overlay above the rest;
 // while it runs the guest's READY button stays away.
 //
-// lobby.state's region says that the game runs in another region than its creator chose (want "na", got "eu": the
-// region's machine was down, full, of another release, without the map, or failed to start it: why). The class draws one
-// line for it, at the top of the lobby, worded here by why; a region or reason it doesn't know draws nothing of the
-// server's text.
+//     region.state {regions: [{id, name}], home, selected}   <- the server, after every hello (the regions it has)
+//
+// lobby.state's region says where the game runs: one line at the top of the lobby, "Server: <name>" with the server's
+// own name for the region, drawn only when the server has more than one region (region.state: a server with one has
+// nothing to choose, and its players see no region anywhere). When the game runs in another region than its creator
+// chose (want and wantName, got, why: the region's machine was down, full, of another release, without the map, or
+// failed to start it) the line is the notice instead, worded here by why and in amber; it names both regions, so it
+// says the server too. The names are the server's text: drawn with .text, cut at NAME_MAX characters.
 //
 // The class sits on the root timeline of the front end's movie (UIRuntime.gfx), placed there by four added tags; the
 // game's bytecode stays as it is, and the class uses only public members of the game's classes, by name. Its clip is on
@@ -81,10 +85,11 @@ package {
         private static const RATING_LABEL:String = "Rating "; // as the profile box's "Rating 1532"
         private static const RATING_GAP:int = 14;              // after the wins, in the wins label's own units
         private static const MARK_PAD:int = 10;                // the ready mark's end before the tile's right edge
-        // the region notice: the regions by their aliases (the play screen's names), and its line (centred at the top of
-        // the lobby [assumed: the place is not seen yet])
-        private static const REGION_NAMES:Object = {na: "North America", eu: "Europe"};
+        // the region line: "Server: <name>", or the notice of a fallback in amber (centred at the top of the lobby)
+        private static const SERVER_LABEL:String = "Server: ";
+        private static const NAME_MAX:int = 32; // gmshost.MaxRegionName
         private static const NOTICE_COLOR:uint = 0xE8B04A;
+        private static const SERVER_COLOR:uint = 0xD0D0D0;
         private static const NOTICE_WIDTH:int = 760;
         private static const NOTICE_TOP:int = 142; // below the menu bar, above the game's name (REGION5: at 6 it covered the window title's "N players online")
         // the colours: the lobby's own (a ready mark green as the client's online state, the rest the tile's wins grey)
@@ -129,11 +134,13 @@ package {
         private var avatarsOverdue:Boolean = false;
         private var countTf:TextField = null;
         private var noticeTf:TextField = null;
-        private var notice:Object = null;    // lobby.state's region: {want, got, why} as strings, or null
+        private var notice:Object = null;    // lobby.state's region: {name, wantName, why} as strings, or null
+        private var regionCount:int = 0;     // region.state's regions: the server's (1 = the line stays away)
         private var asserts:int = 0;
         private var said:Object = {};
         private var rules:RulesPanel = null; // the match rules' summary and the admin's editor (RulesPanel.as)
         private var draft:DraftBoard = null; // the draft's board (DraftBoard.as)
+        private var sound:DraftSound = null; // the draft's music, turn sounds, team chat and speaker button (DraftSound.as)
 
         public function LobbyReady() {
             self = this;
@@ -143,10 +150,12 @@ package {
             rules.redraw = redraw;
             channel.on("hello", onChannelOpen);
             channel.on("lobby.state", onState);
+            channel.on("region.state", onRegionState);
             channel.on("lobby.startRefused", onStartRefused);
             channel.on("lobby.rulesCatalog", rules.setCatalog);
             draft = new DraftBoard(channel, say);
             draft.redraw = redraw;
+            sound = new DraftSound(channel, say);
             channel.on("draft.state", onDraft);
             addEventListener(Event.ENTER_FRAME, onFirstFrame, false, 0, false);
         }
@@ -305,6 +314,7 @@ package {
             }
             rules.detach();
             draft.detach();
+            sound.detach();
             if (overlay.parent != null) {
                 overlay.parent.removeChild(overlay);
             }
@@ -381,6 +391,7 @@ package {
         // the draft's board, while a draft runs (the server's draft.state says so)
         private function drawDraft():void {
             draft.draw(overlay, view);
+            sound.draw(draft.top, draft.boardRect());
         }
 
         private function part(name:String, f:Function):void {
@@ -615,6 +626,7 @@ package {
         // the draft's board as the server has it now (each turn, its end or cancel; a late entry's one)
         private function onDraft(data:Object):void {
             draft.setState(data);
+            sound.setState(data);
             if (box != null) {
                 redraw();
             }
@@ -627,7 +639,8 @@ package {
             }
             players = next;
             var r:Object = data.region;
-            notice = (r != null && typeof r == "object") ? {want: String(r.want), got: String(r.got), why: String(r.why)} : null;
+            notice = (r != null && typeof r == "object") ? {name: regionName(r.name), why: r.why != null ? String(r.why) : null,
+                wantName: r.want != null && r.want != r.id ? regionName(r.wantName) : null} : null;
             rules.setState(data.rules); // none for a game without rules (a practice group's, no match host)
             if (box != null) {
                 redraw();
@@ -1045,6 +1058,13 @@ package {
                 var r:Rectangle = sb.getBounds(overlay);
                 countTf.x = r.x - COUNT_WIDTH - COUNT_GAP; // left of START, before the footer's icons
                 countTf.y = r.y + (r.height - 22) / 2;
+                // a narrow window (1024 x 768) leaves no room between the icons and START: no text over the icons
+                for each (var ic:Object in [view.inviteButton, view.balanceButton]) {
+                    var d:DisplayObject = ic as DisplayObject;
+                    if (d != null && d.visible && d.getBounds(overlay).right > r.x - COUNT_GAP - countTf.textWidth - 4) {
+                        countTf.visible = false;
+                    }
+                }
             }
             // the view's own switch: its setter does nothing when the value is the same, and its draw enables the button
             if (n < c.length || refused || drafting) {
@@ -1060,22 +1080,36 @@ package {
             }
         }
 
-        // ---- the region notice: the game runs elsewhere than its creator chose (lobby.state's region) ----
+        // ---- the region line: where the game runs (lobby.state's region), and the notice of a fallback ----
 
-        private static function regionName(alias:String):String {
-            return REGION_NAMES.hasOwnProperty(alias) ? String(REGION_NAMES[alias]) : null;
+        // the server's regions: only their number matters here (one region = no line)
+        private function onRegionState(data:Object):void {
+            var r:Array = data != null ? data.regions as Array : null;
+            regionCount = r != null ? r.length : 0;
+            if (box != null) {
+                redraw();
+            }
         }
 
-        // the line for a notice, worded here (none for a region or a reason this class doesn't know)
+        // a region's name as the server sent it: a string of at most NAME_MAX characters, or null
+        private static function regionName(v:*):String {
+            if (!(v is String)) {
+                return null;
+            }
+            var n:String = String(v);
+            if (n == "") {
+                return null;
+            }
+            return n.length > NAME_MAX ? n.substr(0, NAME_MAX) : n;
+        }
+
+        // the notice's line, worded here by why (null: no fallback, or one this class can't name)
         private static function noticeText(n:Object):String {
-            if (n == null) {
+            if (n == null || n.wantName == null || n.name == null || n.why == null || n.wantName == n.name) {
                 return null;
             }
-            var want:String = regionName(n.want);
-            var got:String = regionName(n.got);
-            if (want == null || got == null || want == got) {
-                return null;
-            }
+            var want:String = n.wantName;
+            var got:String = n.name;
             switch (n.why) {
                 case "down":
                     return want + "'s server isn't available right now, so this game runs in " + got + ".";
@@ -1091,14 +1125,28 @@ package {
             return "This game runs in " + got + " instead of " + want + ".";
         }
 
+        // the server line ("Server: Europe"), only on a server with more than one region
+        private function serverText(n:Object):String {
+            if (n == null || n.name == null || regionCount < 2) {
+                return null;
+            }
+            return SERVER_LABEL + n.name;
+        }
+
         private function drawNotice():void {
             var line:String = noticeText(notice);
+            var color:uint = NOTICE_COLOR;
+            if (line == null) {
+                line = serverText(notice);
+                color = SERVER_COLOR;
+            }
             noticeTf.visible = line != null && cardsUp;
             if (!noticeTf.visible) {
                 return;
             }
-            if (noticeTf.text != line) {
+            if (noticeTf.text != line || noticeTf.textColor != color) {
                 noticeTf.text = line;
+                noticeTf.textColor = color;
             }
             var b:Rectangle = box.getBounds(overlay);
             noticeTf.x = b.x + (b.width - NOTICE_WIDTH) / 2;

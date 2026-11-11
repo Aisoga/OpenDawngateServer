@@ -19,7 +19,11 @@ in docs/RUNNING_THE_CLIENT.md *How to start it*, or by setup_all.py); this scrip
               lan below), and patch_login_movie.py --spec chatrooms (game/Data/zz_Chat.snap: the class that opens the
               chat rooms the server marks as open by default; the same copies), and patch_login_movie.py --spec
               aftaction --host 127.0.0.N (game/Data/zz_AfterActionReview.snap: the After Action Review's tabs with
-              the lane's web root; the same copies), and patch_login_movie.py --spec itemshop
+              the lane's web root; the same copies), and patch_login_movie.py --spec matchtype --host 127.0.0.N
+              (game/Data/zz_MatchType.snap: the play screen's Preferred Region with the lane's UI channel; the same
+              copies), and patch_login_movie.py --spec pvplobby --host 127.0.0.N (game/Data/zz_PVPLobby.snap: the
+              party lobby's Preferred Region with the lane's UI channel; the same copies), and
+              patch_login_movie.py --spec itemshop
               (game/Data/zz_ItemShop.snap: the item shop's inline refund; the same copies), and
               patch_login_movie.py --spec collection --content <main checkout's server/data/content.json>
               (game/Data/zz_CollectionItems.snap: the Collection's Items category; the same copies; left out
@@ -304,6 +308,20 @@ def after_action_step(data_dir, address, check_only, missing):
     movie_step(data_dir, check_only, missing, "aftaction", address)
 
 
+def match_type_step(data_dir, address, check_only, missing):
+    """a client copy's added play screen movie with the Preferred Region dropdown and where the copy's server has its
+    UI channel (patch_login_movie.py --spec matchtype --host <address>: game/Data/zz_MatchType.snap), byte for byte
+    what it makes from the copy's own Battlegrounds.snap."""
+    movie_step(data_dir, check_only, missing, "matchtype", address)
+
+
+def party_region_step(data_dir, address, check_only, missing):
+    """a client copy's added party lobby movie with the player's Preferred Region in place of the game's region choice
+    and where the copy's server has its UI channel (patch_login_movie.py --spec pvplobby --host <address>:
+    game/Data/zz_PVPLobby.snap), byte for byte what it makes from the copy's own Battlegrounds.snap."""
+    movie_step(data_dir, check_only, missing, "pvplobby", address)
+
+
 def item_shop_step(data_dir, check_only, missing):
     """a client copy's added item shop movie with the inline refund (patch_login_movie.py --spec itemshop:
     game/Data/zz_ItemShop.snap), byte for byte what it makes from the copy's own HUD.snap."""
@@ -423,6 +441,8 @@ def setup(lane, dll, with_host, check_only, root=None):
         halloween_step(data_dir, check_only, missing)
         chat_rooms_step(data_dir, check_only, missing)
         after_action_step(data_dir, cfg["address"], check_only, missing)
+        match_type_step(data_dir, cfg["address"], check_only, missing)
+        party_region_step(data_dir, cfg["address"], check_only, missing)
         item_shop_step(data_dir, check_only, missing)
         collection_step(data_dir, cfg["address"], check_only, missing)
     # 4. the match-host copy with the harness (setup_server_copy.py copies the lane's client copy once)
@@ -589,6 +609,8 @@ def setup_extra(name, check_only, root=None):
         halloween_step(data_dir, check_only, missing)
         chat_rooms_step(data_dir, check_only, missing)
         after_action_step(data_dir, lane["address"], check_only, missing)
+        match_type_step(data_dir, lane["address"], check_only, missing)
+        party_region_step(data_dir, lane["address"], check_only, missing)
         item_shop_step(data_dir, check_only, missing)
         collection_step(data_dir, lane["address"], check_only, missing)
     return finish(f"copy {name}", missing, check_only)
@@ -649,6 +671,8 @@ def setup_lan(address, check_only, new_certs=False, root=None):
         halloween_step(data_dir, check_only, missing)
         chat_rooms_step(data_dir, check_only, missing)
         after_action_step(data_dir, address, check_only, missing)
+        match_type_step(data_dir, address, check_only, missing)
+        party_region_step(data_dir, address, check_only, missing)
         item_shop_step(data_dir, check_only, missing)
         collection_step(data_dir, address, check_only, missing)
     return finish("lan copy", missing, check_only)

@@ -119,7 +119,9 @@ Patches (each checks the original bytes first):
            by the fog texture's value at its feet (GameGraphics_UpdateCreatureFrame 0x00570140): a pale ghost under 0.5,
            solid above, at once. So a shaper the server handed over early (the host's head start, FOGEDGE, removed by
            FOGEDGE-RM) showed early. Now an enemy creature (noun creature 0x06C27D00 with fowControlsObjectVisibility, another
-           team than GameClient_GetLocalTeamMask's, not for an observer) is drawn while mVisibleToTeam & the local mask
+           team than GameClient_GetLocalTeamMask's, not for an observer, and since COLL3D only while there is a local
+           player: the front end's shaper models are such creatures too, and with no player the target was 0) is
+           drawn while mVisibleToTeam & the local mask
            (+0x888) is set or (FADE1b) its own fog query (+0x860 -> +0x5C, the fog texture at its feet, 0-255, without
            UpdateCreatureFrame's nearness boost) is at least 160, clearly lit (FADE1c: the texture fades out over about a
            second where the viewer was, so at 50, the radius's rim, an enemy stayed drawn out to 45 units behind a viewer
@@ -395,7 +397,7 @@ FADE_APPLY_NEW = bytes.fromhex(
     "75e8"                      # 0056e793 jne 0x56e77d
     "51"                        # 0056e795 push ecx: the flags, which the caller reads again
     "56"                        # 0056e796 push esi
-    "e874e80f00"                # 0056e797 call 0x66d010: GameClient_IsLocalPlayerObserver: observers as shipped
+    "e8d4fcffff"                # 0056e797 call 0x56e470: LocalViewAsShipped: no local player, or an observer
     "84c0"                      # 0056e79c test al, al: as shipped from here: grass or stealth 0.5
     "75db"                      # 0056e79e jne 0x56e77b
     "6a00"                      # 0056e7a0 push 0
@@ -450,7 +452,18 @@ FADE_TARGET_NEW = bytes.fromhex(
     "f5"                        # 0056e46b cmc
     "83d600"                    # 0056e46c adc esi, 0: lit: shown too
     "c3"                        # 0056e46f ret
-) + b"\xcc" * 27
+    "6a00"                      # 0056e470 push 0: LocalViewAsShipped (COLL3D): al = 1 when FadeStep leaves the object
+    "e8b9e80f00"                # 0056e472 call 0x66cd30: GameClient_GetLocalPlayer(0): the player or 0, no assert
+    "59"                        # 0056e477 pop ecx
+    "85c0"                      # 0056e478 test eax, eax: no local player (the front end): as shipped
+    "7408"                      # 0056e47a je 0x56e484
+    "50"                        # 0056e47c push eax
+    "e8be3b3a00"                # 0056e47d call 0x912040: LabsPlayer_IsObserver: observers as shipped
+    "59"                        # 0056e482 pop ecx
+    "c3"                        # 0056e483 ret
+    "b001"                      # 0056e484 mov al, 1
+    "c3"                        # 0056e486 ret
+) + b"\xcc" * 4
 FADE_HOOK = 0x00576256        # GameGraphics_UpdateVisibleObject: the fogged test (flag 1 and fowControlsObjectVisibility)
 FADE_HOOK_ORIG = bytes.fromhex("f6c101740d80b8cd020000000f85e6000000")
 FADE_HOOK_NEW = bytes.fromhex(

@@ -95,16 +95,3 @@ func (s *Server) awayHello(mt *gmshost.Match, v gmshost.VerifyHello) (ok, away b
 	}
 	return false, true
 }
-
-// reachableWant is the wanted region of a custom game whose creator can reach another region's match gateway: with
-// RegionRoute set (host machines with match gateways), a creator whose Start-Client takes no away message (a direct
-// client, an earlier release) plays at home, wanted there, so without a notice and with the home region in the browser
-// (region games need the tunnel: a direct client has no session to hand the match gateway to).
-func (s *Server) reachableWant(r *Request, want, home string) string {
-	if want == "" || want == home || s.RegionRoute == nil || r.Conn.TunnelAddr().TakesAway() {
-		return want
-	}
-	s.Log.Logf("blaze", "   region %s ignored: player's client has no tunnel session that takes the match gateway (direct, or an earlier Start-Client); the game stays in %s",
-		want, home)
-	return home
-}

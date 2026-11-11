@@ -14,12 +14,19 @@
 // So do the After Action Review's tabs (client_ui/aftaction, aftaction_tags.hex):
 // UI/Scaleform/Battlegrounds/AfterActionReviewUI.gfx from game\Data\Battlegrounds.snap into
 // game\Data\zz_AfterActionReview.snap, with the web root of the copy's server (WebRootPath, webroot.go).
+// So does the play screen's Preferred Region (client_ui/matchtype, matchtype_tags.hex):
+// UI/Scaleform/Battlegrounds/MatchTypeUI.gfx from game\Data\Battlegrounds.snap into game\Data\zz_MatchType.snap, with
+// where the copy's server has its UI channel (ChannelPath).
+// So does the party lobby's Preferred Region (client_ui/pvplobby, pvplobby_tags.hex):
+// UI/Scaleform/Battlegrounds/PVPLobbyUI.gfx from game\Data\Battlegrounds.snap into game\Data\zz_PVPLobby.snap, with
+// the channel file as for MatchType.
 // So does the item shop's inline refund (client_ui/itemshop, itemshop_tags.hex): UI/Scaleform/HUD/ItemShopUI.gfx from
 // game\Data\HUD.snap into game\Data\zz_ItemShop.snap.
 // So does the Collection's Items category (client_ui/collection, collection_tags.hex; collection.go):
 // UI/Scaleform/CDN/swf/code/UIRuntime.gfx from game\Data\code.snap into game\Data\zz_CollectionItems.snap, with the
 // item list (ItemsPath, ItemList).
-// A Spec names one such movie (Picker, MatchOptions, ChatRooms, AfterAction, ItemShop, Collection).
+// A Spec names one such movie (Picker, MatchOptions, ChatRooms, AfterAction, MatchType, PVPLobby, ItemShop,
+// Collection).
 //
 // The output is deterministic: the movie keeps its CFX header (the version, the u32 length as stored plus the tags'
 // size) and its body is a zlib stream of stored blocks (65,535 bytes each, the last one final), which the archive
@@ -94,6 +101,20 @@ var AfterActionTags = mustHex(afterActionTagsHex)
 //go:embed aftaction_tags.hex
 var afterActionTagsHex string
 
+// MatchTypeTags are the play screen's Preferred Region's four tags: DefineSprite 2000, DoABC (the class), SymbolClass
+// 2000 -> RegionPicker, PlaceObject3 of 2000 at depth 2000 without an instance name.
+var MatchTypeTags = mustHex(matchTypeTagsHex)
+
+//go:embed matchtype_tags.hex
+var matchTypeTagsHex string
+
+// PVPLobbyTags are the party lobby's Preferred Region's four tags: DefineSprite 2000, DoABC (the class), SymbolClass
+// 2000 -> PartyRegion, PlaceObject3 of 2000 at depth 2000 without an instance name.
+var PVPLobbyTags = mustHex(pvpLobbyTagsHex)
+
+//go:embed pvplobby_tags.hex
+var pvpLobbyTagsHex string
+
 // ItemShopTags are the item shop's inline refund's four tags: DefineSprite 2000, DoABC (the class), SymbolClass 2000 ->
 // ShopRefund and 250 (the shop's own vim symbol, mcCoins' character) -> ShopVim, PlaceObject3 of 2000 at depth 2000
 // without an instance name.
@@ -165,6 +186,18 @@ var (
 	AfterAction = Spec{What: "the After Action Review's tabs", Source: "game/Data/Battlegrounds.snap",
 		Rel: "game/Data/zz_AfterActionReview.snap", MoviePath: "UI/Scaleform/Battlegrounds/AfterActionReviewUI.gfx",
 		Class: "AfterActionTabs", CharID: 2000, Depth: 2000, Tags: AfterActionTags, WebRoot: true}
+	// MatchType is the play screen's Preferred Region: a dropdown of the server's regions (over the UI channel) in place
+	// of the game's two region buttons and its "Match With All Regions" box (every player copy; the setup sets WebHost
+	// to the copy's server, whose UI channel the archive names).
+	MatchType = Spec{What: "the play screen's Preferred Region", Source: "game/Data/Battlegrounds.snap",
+		Rel: "game/Data/zz_MatchType.snap", MoviePath: "UI/Scaleform/Battlegrounds/MatchTypeUI.gfx",
+		Class: "RegionPicker", CharID: 2000, Depth: 2000, Tags: MatchTypeTags, Channel: true}
+	// PVPLobby is the party lobby's Preferred Region: the player's own (over the UI channel, read-only) in place of the
+	// game's region choice, whose pick the server doesn't read (every player copy; the setup sets WebHost to the
+	// copy's server, whose UI channel the archive names).
+	PVPLobby = Spec{What: "the party lobby's Preferred Region", Source: "game/Data/Battlegrounds.snap",
+		Rel: "game/Data/zz_PVPLobby.snap", MoviePath: "UI/Scaleform/Battlegrounds/PVPLobbyUI.gfx",
+		Class: "PartyRegion", CharID: 2000, Depth: 2000, Tags: PVPLobbyTags, Channel: true}
 	// ItemShop is the item shop's inline refund: a badge on each slot whose purchase of this visit to the base can
 	// be undone, and the shop's Sell turned into Refund for the full price there (every player copy; the server's
 	// rule, the texts in localepatch.HUDLines).

@@ -84,6 +84,7 @@ type config struct {
 	testHomeJSON         string             // test aid: home.json from this file (--test-home-json)
 	testHistorySeed      string             // test aid: N[:<login name>] made-up matches in an empty history (--test-history-seed)
 	testRating           string             // test aid: <login name>=<rating>[,...] set at the start (--test-rating)
+	testPreferred        string             // PREF3's test aid: <login name>[|<password>]=<region>[,...] set at the start (--test-preferred-region)
 	mmBots               bool               // B10d: bots in a matchmade game's open seats (--mm-bots, on by default)
 	leaderboardMinGames  int                // LBFIX: the fewest games for the Leaderboard (--leaderboard-min-games)
 	ratingLeaderboard    bool               // RATING1: the Leaderboard ranks by skill rating (--rating-leaderboard, on by default)
@@ -93,7 +94,10 @@ type config struct {
 	customAutoStart      time.Duration      // BOTS2c: a custom game whose humans all spectate starts by itself
 	testRefuseStart      bool               // READY2b: each custom game's first start refused (--test-refuse-start, a test aid)
 	testRules            *rules.Combination // RULES1: every new custom game's rules (--test-rules, a test aid)
-	draftTurn            time.Duration      // RULES5b: a draft turn's time (--draft-turn; 0 = 30 s)
+	testRoles            []string           // DRAFT3: startGame's humans' roles (--test-roles, a test aid)
+	draftTurn            time.Duration      // RULES5b: a draft turn's time (--draft-turn; 0 = 45 s since DRAFT1)
+	draftRoleTime        time.Duration      // DRAFT1: the draft's role phase (--draft-role-time; 0 = 20 s)
+	draftTradeTime       time.Duration      // DRAFT1: the draft's trade phase (--draft-trade-time; 0 = 30 s)
 	testDraft            time.Duration      // RULES5b: the server acts for the player on turn after this (--test-draft, a test aid)
 	level                string             // MAPLEVEL1: the level hosted games load (--map, --level; "" = blaze.HostedLevel)
 	customLevels         []string           // MAPPICK: the levels a custom game's name tag may pick (--custom-maps)
@@ -153,6 +157,10 @@ type config struct {
 	// --tunnel-front <folder> (with --tunnel-client): Start-Client's picker front instead of one tunnel, its server
 	// list and trusted keys in <folder>, the login screen's list written into --front-copy
 	tunnelFront, frontCopy string
+	// --tunnel-away (with --tunnel-client, without --tunnel-front): the one tunnel takes the main server's away messages
+	// as Start-Client's path without the front does (picker = off, PREF5); without it the plain client says the version 3
+	// hello and its players' games stay home
+	tunnelAway bool
 	// --limits (auto: on for a public bind or announced address) and the limits themselves (nil = Default())
 	limitsMode limits.Mode
 	limitsCfg  *limits.Config
@@ -714,9 +722,14 @@ func start(cfg config) (*instance, error) {
 	if cfg.testRules != nil {
 		log.Logf("stub", "TEST: every new custom game starts with the rules %s (--test-rules, a test aid)", rules.Describe(*cfg.testRules))
 	}
+	bz.TestRoles = cfg.testRoles
+	if len(cfg.testRoles) > 0 {
+		log.Logf("stub", "TEST: every custom game's start gives its humans the roles %s in roster order (--test-roles, a test aid)", strings.Join(cfg.testRoles, ","))
+	}
 	bz.DraftTurn, bz.TestDraft = cfg.draftTurn, cfg.testDraft
+	bz.DraftRoleTime, bz.DraftTradeTime = cfg.draftRoleTime, cfg.draftTradeTime
 	if cfg.testDraft > 0 {
-		log.Logf("stub", "TEST: the server bans and picks for the player on turn of every draft after %v (--test-draft, a test aid)", cfg.testDraft)
+		log.Logf("stub", "TEST: the server acts for every drafter %v into each step of every draft: roles, bans and picks, one swap, one trade, ready (--test-draft, a test aid)", cfg.testDraft)
 	}
 	bz.Level = cfg.level
 	bz.CustomLevels = cfg.customLevels
@@ -790,6 +803,13 @@ func start(cfg config) (*instance, error) {
 				log.Logf("stub", "TEST: --test-rating %s: %v", cfg.testRating, err)
 			} else {
 				log.Logf("stub", "TEST: skill rating: %s (--test-rating, a test aid)", note)
+			}
+		}
+		if cfg.testPreferred != "" { // PREF3's test aid (testpreferred.go)
+			if note, err := applyTestPreferred(bz.Store, cfg.testPreferred, bz.Now()); err != nil {
+				log.Logf("stub", "TEST: --test-preferred-region %s: %v", cfg.testPreferred, err)
+			} else {
+				log.Logf("stub", "TEST: %s (--test-preferred-region, a test aid)", note)
 			}
 		}
 	}
@@ -1253,6 +1273,7 @@ func Run(args []string, h Hooks) int {
 	testLoginErrors := fs.String("test-login-errors", "", "test aid: comma-separated 16-bit error codes (hex 0x.. or decimal); the n-th login gets the n-th as its error reply (0 = answered as usual), later logins are answered as usual; e.g. 0x0C,0x4072,0")
 	fs.StringVar(&cfg.testHistorySeed, "test-history-seed", "", "test aid: N[:<login name>]: an empty match history gets N made-up matches at the start (the login's account, made without a password when missing, in every one), for looking at the history page")
 	fs.StringVar(&cfg.testRating, "test-rating", "", "test aid: <login name>=<rating>[,...]: each account (made without a password when missing) gets this skill rating at the start, after the seed from the stored matches")
+	fs.StringVar(&cfg.testPreferred, "test-preferred-region", "", "test aid: <login name>[|<password>]=<region>[,...]: each account (made with that password when missing) gets this Preferred Region stored at the start, as the play screen's region.set would")
 	fs.StringVar(&cfg.testHomeJSON, "test-home-json", "", "test aid: answer the home page's home.json with this file's bytes, read anew at every request (the live data while it can't be read)")
 	fs.BoolVar(&cfg.mmRefuse, "mm-refuse", false, "PvP matchmaking test aid: refuse every startMatchmaking (GAMEMANAGER_ERR_INVALID_MATCHMAKING_CRITERIA)")
 	fs.BoolVar(&cfg.mmBots, "mm-bots", true, "PvP matchmaking with match hosts: a game that starts with open seats (after --mm-fill-after) gets bots in them, up to --mm-team-size a team (B10d); --mm-bots=false leaves them empty")
@@ -1273,8 +1294,11 @@ func Run(args []string, h Hooks) int {
 	fs.BoolVar(&cfg.customBots, "custom-bots", false, "custom games with match hosts: bots fill the open seats when the game starts (B15; off: only the lobby's players)")
 	fs.BoolVar(&cfg.testRefuseStart, "test-refuse-start", false, "test aid: each custom game's first start (its admin's advanceGameState IN_GAME) is refused, as the ready check refuses a start while a player isn't ready")
 	testRules := fs.String("test-rules", "", "test aid: every new custom game with a match host starts with these match rules: a preset (standard, aram, allRandom), a JSON object of categories to options, e.g. {\"pick\":\"random\"}, or its short form pick=random,shaperPool=melee; the lobby's admin can still change them")
-	fs.DurationVar(&cfg.draftTurn, "draft-turn", 0, "the time of one turn of a custom game's draft (e.g. 10s; 0 = 30s)")
-	fs.DurationVar(&cfg.testDraft, "test-draft", 0, "test aid: in every draft the server bans and picks for the player on turn this long (e.g. 2s) after the turn began, through the same checks as a player's call; 0 = off")
+	testRoles := fs.String("test-roles", "", "test aid: every custom game's start gives its humans these declared roles in roster order, cycling (gladiator, tactician, hunter, predator; e.g. hunter or hunter,gladiator), as the draft's roles do: the match host presets each in shaper select")
+	fs.DurationVar(&cfg.draftTurn, "draft-turn", 0, "the time of one turn of a custom game's draft, a ban or a pick window (e.g. 10s; 0 = 45s)")
+	fs.DurationVar(&cfg.draftRoleTime, "draft-role-time", 0, "the time of a custom game's draft's role phase, in which every drafter declares a role (e.g. 10s; 0 = 20s)")
+	fs.DurationVar(&cfg.draftTradeTime, "draft-trade-time", 0, "the longest time of a custom game's draft's trade phase after the picks, which ends early once every drafter is ready (e.g. 10s; 0 = 30s)")
+	fs.DurationVar(&cfg.testDraft, "test-draft", 0, "test aid: in every draft the server acts for every drafter this long (e.g. 2s) into each step, through the same checks as a player's calls: it declares the roles, bans and picks for every seat on turn, makes one pick-order swap and one trade, and marks everyone ready; 0 = off")
 	fs.DurationVar(&cfg.customAutoStart, "custom-autostart", 0, "a custom game whose humans all moved to the spectators starts by itself after this (e.g. 5s; 0 = off): a game of bots alone with --custom-bots, for tests")
 	fs.BoolVar(&cfg.shaperSelect.On, "shaper-select", false, "match hosts run shaper select with each player's shapers, skins, wards and announcers from its account (D3-live)")
 	freeRotation := fs.String("free-rotation", "", `shaper select: shapers in the free rotation, comma-separated ("gunman,PC_Otter,Fenmore")`)
@@ -1328,6 +1352,7 @@ func Run(args []string, h Hooks) int {
 	fs.StringVar(&cfg.tunnelPin, "tunnel-pin", "", "--tunnel-client: the gateway key's pin (64 hex digits)")
 	fs.StringVar(&cfg.tunnelPinCert, "tunnel-pin-cert", "", "--tunnel-client: pin the key of this gateway certificate file (the server's "+tunnel.CertFile+")")
 	fs.StringVar(&cfg.tunnelFront, "tunnel-front", "", "--tunnel-client: test aid: run Start-Client's server picker front instead of one tunnel, with the server list and trusted keys in this folder (servers\\bookmarks.json; the --tunnel-client gateway is added, its key trusted, and preselected)")
+	fs.BoolVar(&cfg.tunnelAway, "tunnel-away", false, "--tunnel-client: test aid: the one tunnel takes the main server's away messages as Start-Client's path without the front (picker = off) does: a match on a host machine elsewhere goes through a session to its match gateway (without it: a version 3 session hello, the games stay home)")
 	fs.StringVar(&cfg.frontCopy, "front-copy", "", "--tunnel-front: the player copy (the folder with game\\Data) the login screen's server list is written into")
 	fs.IntVar(&cfg.web.port, "web-port", 0, "the website's HTTPS port (registration, password change, account deletion, data download, status, privacy); 0 = no website. Start-Server.ini's web_port: 443")
 	webDomain := fs.String("web-domain", "", "the website's domain name (e.g. play.example.org, its A record at this server): a Let's Encrypt certificate by TLS-ALPN-01, so the CA must reach <domain>:443 (forwarded to --web-port); empty = a self-signed certificate for the server's addresses")
@@ -1392,6 +1417,16 @@ func Run(args []string, h Hooks) int {
 		return 2
 	} else {
 		cfg.customLevels = cl
+	}
+	if *testRoles != "" {
+		for _, r := range strings.Split(*testRoles, ",") {
+			r = strings.ToLower(strings.TrimSpace(r))
+			if gmshost.RoleIndex(r) < 0 {
+				fmt.Fprintf(os.Stderr, "dgserver: --test-roles: %q is no role (%s)\n", r, strings.Join(gmshost.Roles, ", "))
+				return 2
+			}
+			cfg.testRoles = append(cfg.testRoles, r)
+		}
 	}
 	if *testRules != "" {
 		c, err := rules.Parse(*testRules)

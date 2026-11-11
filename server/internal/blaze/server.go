@@ -154,16 +154,24 @@ type Server struct {
 	// TestRules are every new custom game's starting rules (dgserver --test-rules, a test aid: rules without the lobby's
 	// panel); nil = the standard game. lobbyrules.go.
 	TestRules *rules.Combination
+	// TestRoles give startGame's humans declared roles (dgserver --test-roles, a test aid for DRAFT3's role preset
+	// without the draft): the k-th human of the roster without a role gets TestRoles[k mod len]. roles.go.
+	TestRoles []string
 	// RulesNoteDelay is how long after the host's first inGame a custom game with rules sends its players the System
 	// line with the rules (RULES1b, lobbyrules.go announceRulesLater); 0 = rulesNoteDelay.
 	RulesNoteDelay time.Duration
 	// RollSeed gives the seed of a custom game's All Random rolls at its start (RULES3, rulespick.go); nil = 8 bytes of
 	// crypto/rand (tests set it).
 	RollSeed func() uint64
-	// DraftTurn is the time of one turn of a draft (RULES5b, draft.go; dgserver --draft-turn; 0 = DraftTurnDefault).
+	// DraftTurn is the time of one turn (one window) of a draft (RULES5b, draft.go; dgserver --draft-turn; 0 =
+	// DraftTurnDefault).
 	DraftTurn time.Duration
-	// TestDraft makes the server act for the player on turn of every draft this long after the turn began (dgserver
-	// --test-draft, a test aid: a draft without the lobby's board; 0 = off). draft.go.
+	// DraftRoleTime and DraftTradeTime are the draft's role and trade phases (DRAFT1; dgserver --draft-role-time,
+	// --draft-trade-time; 0 = DraftRoleDefault, DraftTradeDefault).
+	DraftRoleTime, DraftTradeTime time.Duration
+	// TestDraft makes the server act for every drafter this long after each step of every draft began (dgserver
+	// --test-draft, a test aid: a draft without the lobby's board; 0 = off): the roles, every seat on turn, one swap and
+	// one trade, the ready marks. draft.go.
 	TestDraft time.Duration
 	// rulesGap is the least time between two rules changes of one lobby (lobbyRulesGap; tests set 0).
 	rulesGap time.Duration

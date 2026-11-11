@@ -1,6 +1,7 @@
 package dgserver
 
 import (
+	"flag"
 	"fmt"
 	"net"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"dawngate/server/internal/golden"
 	"dawngate/server/internal/logging"
 	"dawngate/server/internal/redirector"
+	"dawngate/server/internal/store"
 	"dawngate/server/internal/tdf"
 	"dawngate/server/internal/tunnel"
 )
@@ -176,13 +178,21 @@ func (b *r5Client) note(comp, cmd uint16, within time.Duration) fire.Frame {
 	}
 }
 
-// createCustom picks the region (updateNetworkInfo's NLMP, as the play screen's click) and creates a custom game; it
-// returns once NotifyGameSetup came (the host is ready).
-func (b *r5Client) createCustom(region string) {
+// createCustom sets the player's Preferred Region (as region.set stores it; PREF1) and creates a custom game; EA's own
+// region click (updateNetworkInfo's NLMP) names the other region, which decides nothing. It returns once
+// NotifyGameSetup came (the host is ready).
+func (b *r5Client) createCustom(st *store.Store, region string) {
 	b.t.Helper()
+	acct, _, ok := st.PersonaByID(b.buid)
+	if !ok {
+		b.t.Fatalf("no account for %d", b.buid)
+	}
+	if _, err := st.Update(acct.UserID, func(a *store.Account) { a.Settings[blaze.SettingPreferredRegion] = region }); err != nil {
+		b.t.Fatal(err)
+	}
 	other := map[string]string{"na": "eu", "eu": "na"}[region]
 	b.call(blaze.ComponentUserSessions, blaze.CmdUserSessionsUpdateNetworkInfo, tdf.NewWriter().Map("NLMP", tdf.TypeString, tdf.TypeInt,
-		tdf.KV(other, int64(150)), tdf.KV(other+"-any", int64(200)), tdf.KV(region, int64(50)), tdf.KV(region+"-any", int64(100))).Bytes())
+		tdf.KV(region, int64(150)), tdf.KV(region+"-any", int64(200)), tdf.KV(other, int64(50)), tdf.KV(other+"-any", int64(100))).Bytes())
 	g := golden.Load(b.t)
 	hexReq := ""
 	for _, c := range g.Decode {
@@ -231,7 +241,7 @@ func TestRegionsJoined(t *testing.T) {
 	}
 	mainLog, agentLog := t.TempDir(), t.TempDir()
 	in, err := start(config{bind: mainIP, certs: testCerts(t), logDir: mainLog, redirectorPort: redirector.Port, tunnel: TunnelOn,
-		gmsDir: exe, gmsArgs: "-multipleInstances", gmsPorts: "20070-20071", gmsControlBind: mainIP,
+		gmsDir: exe, gmsArgs: "-multipleInstances", gmsPorts: "20070-20072", gmsControlBind: mainIP,
 		regions: regionFlags{region: "eu", machines: stringList{"na1=na:" + key}}})
 	if err != nil {
 		t.Fatal(err)
@@ -279,7 +289,7 @@ func TestRegionsJoined(t *testing.T) {
 
 	// 1. North America: the game runs on na1, the creator's Start-Client is sent to its match gateway
 	alpha := r5Login(t, tunIP, blazePort, "alpha@example.com")
-	alpha.createCustom("na")
+	alpha.createCustom(in.store, "na")
 	var away tunnel.Away
 	select {
 	case away = <-awayCh:
@@ -341,7 +351,7 @@ func TestRegionsJoined(t *testing.T) {
 	// 2. Europe: a second login behind the same session plays at home, through session A (the port is the same number
 	// on this machine: the session's route comes home)
 	bravo := r5Login(t, tunIP, blazePort, "bravo@example.com")
-	bravo.createCustom("eu")
+	bravo.createCustom(in.store, "eu")
 	select {
 	case p := <-homeCh:
 		if p != naPort {
@@ -354,23 +364,43 @@ func TestRegionsJoined(t *testing.T) {
 		t.Errorf("the Europe game through session A: %q", got)
 	}
 
+	// 2b. PREF4: a session without OnAway (dgserver's --tunnel-client, Start-Client's path without the front) says a
+	// version 3 hello, so its player's North American game stays home: an away message would have stranded it
+	// (pref2_s1bc's solo practice on na1, aborted)
+	const tunIPC = "127.0.9.114"
+	sc := &tunnel.Client{Log: slog, Gateway: in.gateway.Addr(), Pin: in.gateway.Identity.Pin, TunnelIP: net.ParseIP(tunIPC),
+		DialIP: net.ParseIP(tunIPC)}
+	if err := sc.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer sc.Close()
+	delta := r5Login(t, tunIPC, blazePort, "delta@example.com")
+	delta.createCustom(in.store, "na")
+	select {
+	case a := <-awayCh:
+		t.Errorf("an away message on session A for delta's game: %v", a.Gateway)
+	case <-time.After(300 * time.Millisecond):
+	}
+
 	// 3. na1 stops: the next North American game plays in Europe, with the reason
 	ag.stop()
 	ag = nil
 	waitFor(t, "na1 still registered", func() bool { _, ok := in.hosts.Machine("na1"); return !ok })
 	charlie := r5Login(t, tunIP, blazePort, "charlie@example.com")
-	charlie.createCustom("na")
+	charlie.createCustom(in.store, "na")
 
 	in.stop()
 	in = nil
 	main, agent := readLog(t, mainLog), readLog(t, agentLog)
 	for _, want := range []string{
-		"regions: home eu, custom games may run in eu, na",
+		"regions: home eu, games may run in eu (EU), na (NA)",
 		`registered over the TLS link (`,
 		"match gateway " + agentIP + ":",
 		fmt.Sprintf("game 1: player %d sent to host machine na1's match gateway %s for GMS port %d (match 1)", alpha.buid, away.Gateway, naPort),
 		fmt.Sprintf("not among its tickets' users [%d] at na1; refused", alpha.buid),
 		"wanted na, runs on local (eu): down",
+		fmt.Sprintf("game 3: region na (the player's Preferred Region) ignored: player %d's client has no tunnel session that "+
+			"takes the match gateway", delta.buid),
 	} {
 		if !strings.Contains(main, want) {
 			t.Errorf("main server log lacks %q:\n%s", want, main)
@@ -378,6 +408,9 @@ func TestRegionsJoined(t *testing.T) {
 	}
 	if strings.Contains(main, fmt.Sprintf("game 2: player %d sent to host machine", bravo.buid)) {
 		t.Error("the Europe game was sent away")
+	}
+	if strings.Contains(main, fmt.Sprintf("player %d sent to host machine", delta.buid)) {
+		t.Error("the game of a session without away was sent away")
 	}
 	for _, want := range []string{
 		`[stub] agent "na1": match gateway on ` + agentIP + ":",
@@ -412,5 +445,52 @@ func TestMachineLevels(t *testing.T) {
 	}
 	if got := machineLevels(nil)(nil); !has(got, "MM_Map_v3") {
 		t.Errorf("no versions known: %v", got)
+	}
+}
+
+// PREF1: --region-name, as Start-Server passes region_names, names the regions in the host manager (and so in Blaze's
+// region.state); an alias that is no region of this server, a bad alias or a bad name is refused at the start.
+func TestRegionNameFlags(t *testing.T) {
+	parse := func(args ...string) regionFlags {
+		var r regionFlags
+		fs := flag.NewFlagSet("dgserver", flag.ContinueOnError)
+		addRegionFlags(fs, &r)
+		if err := fs.Parse(args); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	r := parse("--region", "eu", "--host-machine", "na1=na:na1.key", "--region-name", "eu=Europe", "--region-name", "na=NA (Virginia)")
+	hosts := gmshost.NewManager(gmshost.Config{})
+	var buf strings.Builder
+	log := logging.New(&buf)
+	wireRegions(config{regions: r}, hosts, blaze.NewServer(log, "127.0.0.1", 17502), log)
+	if hosts.RegionName("eu") != "Europe" || hosts.RegionName("na") != "NA (Virginia)" {
+		t.Errorf("names eu %q, na %q", hosts.RegionName("eu"), hosts.RegionName("na"))
+	}
+	if !strings.Contains(buf.String(), "regions: home eu, games may run in eu (Europe), na (NA (Virginia))") {
+		t.Errorf("log: %s", buf.String())
+	}
+	// without --region the one region is local, and it may be named
+	hosts = gmshost.NewManager(gmshost.Config{})
+	wireRegions(config{regions: parse("--region-name", "local=Our LAN")}, hosts, blaze.NewServer(log, "127.0.0.1", 17502), log)
+	if got := hosts.RegionName(gmshost.LocalRegion); got != "Our LAN" || hosts.HomeRegion() != "" {
+		t.Errorf("local %q, home %q", got, hosts.HomeRegion())
+	}
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--region", "eu", "--region-name", "na=NA"}, "na is no region of this server (eu)"},
+		{[]string{"--region-name", "eu=Europe"}, "eu is no region of this server (local)"},
+		{[]string{"--region", "eu", "--region-name", "Europe"}, "want ALIAS=NAME"},
+		{[]string{"--region", "eu", "--region-name", "EU=Europe"}, "want ALIAS=NAME"},
+		{[]string{"--region", "eu", "--region-name", "eu="}, "a region's name is empty"},
+		{[]string{"--region", "eu", "--region-name", "eu=" + strings.Repeat("x", 33)}, "over 32 characters"},
+		{[]string{"--region", "eu", "--region-name", "eu=Europe", "--region-name", "eu=EU"}, "eu twice"},
+	} {
+		if _, _, err := (config{regions: parse(c.args...)}).linkConfig(); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q: %v, want %q", c.args, err, c.want)
+		}
 	}
 }

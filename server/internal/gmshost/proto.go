@@ -37,6 +37,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strings"
 )
 
 // Message types ("t").
@@ -125,6 +126,25 @@ type RosterEntry struct {
 	// Spectator marks an observer of a custom game (B15: the Blaze spectator team, TIDX 2; the custom lobby's third
 	// roster): gameplay index 10-14 (GameSimulator_IsSpectatorIndex 0x008EED10), team 0. Omitted when false.
 	Spectator bool `json:"spectator,omitempty"`
+	// Role is the role a human declared before the match (DRAFT3: the custom lobby's draft), one of Roles: the
+	// host presets it in the human's shaper select record, so the role page opens with that role card selected and
+	// the player can still change it. "" = none (the client's own default); omitted then. A host that doesn't know
+	// the field ignores it (no preset).
+	Role string `json:"role,omitempty"`
+}
+
+// Roles are the four roles by their record value in shaper select (C8 03 byte 9, mRole): 0 gladiator, 1 tactician,
+// 2 hunter, 3 predator. RosterEntry.Role is one of them.
+var Roles = []string{"gladiator", "tactician", "hunter", "predator"}
+
+// RoleIndex is a role's record value, -1 for "" or an unknown name (case-insensitive).
+func RoleIndex(name string) int {
+	for i, r := range Roles {
+		if strings.EqualFold(r, name) {
+			return i
+		}
+	}
+	return -1
 }
 
 // PerkPage is one of a human's perk pages with the stats it gives (D3-perks; docs/HOST_CONTROL.md): the page's

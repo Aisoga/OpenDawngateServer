@@ -182,7 +182,9 @@
   America picked runs there, its players' GMS traffic through a second tunnel session to that gateway (the front's away
   session: use -TunnelClientArgs '--tunnel-front ...'). -HostMachineSeconds <s> stops it s seconds after its start
   (just before the game's): the next North American game falls back to Europe with the notice. The summary gets a
-  'hostmach' line; check the capture with tunnel_capture.py --server 127.0.N.20 too.
+  'hostmach' line; check the capture with tunnel_capture.py --server 127.0.N.20 too. -RegionNames '<alias>=<name>;
+  ...' (PREF3; default with -HostMachine 'eu=Europe; na=NA (Virginia)', Start-Server.ini's region_names) gives the
+  server one --region-name per entry (names may hold blanks, which -ServerArgs splits at); '-' names none.
 
   Usage (from anywhere):
     powershell -ExecutionPolicy Bypass -File re\scripts\run_session.ps1 [-Name a2_run1] [-Seconds 60]
@@ -262,6 +264,7 @@ param(
     [string]$TunnelClientArgs = '',
     [switch]$HostMachine,
     [int]$HostMachineSeconds = 0,
+    [string]$RegionNames = '',
     [string]$StopFile,
     [string]$MapsDir
 )
@@ -1283,6 +1286,14 @@ try {
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path $hmKey)) { throw "-HostMachine: dgserver --make-agent-key $hmKey failed (exit $LASTEXITCODE)" }
         $stubArgs += @('--region', 'eu', "`"--host-machine=na1=na:$hmKey`"")
         Say "host machine: the server takes na1 (region na) with the key $hmKey; its own region eu"
+        if (-not $RegionNames) { $RegionNames = 'eu=Europe; na=NA (Virginia)' }
+    }
+    if ($RegionNames -and $RegionNames -ne '-') {
+        # PREF3: the regions' display names, one --region-name per entry (a blank stays inside its quotes)
+        foreach ($entry in @($RegionNames -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+            $stubArgs += @("`"--region-name=$entry`"")
+        }
+        Say "region names (-RegionNames): $RegionNames"
     }
     if ($ServerArgs) {
         # D8-live test aid: extra dgserver flags (e.g. --owned starter)
@@ -1390,6 +1401,7 @@ try {
         if ($Background) { $mon2Args += @('-Background') }
         if ($KeepAlive -gt 0) { $mon2Args += @('-KeepAlive', $KeepAlive) }
         if ($ShotFocus -ne 'auto') { $mon2Args += @('-ShotFocus', $ShotFocus) }
+        if ($ShotWidth -ne 1280) { $mon2Args += @('-ShotWidth', $ShotWidth) } # DRAFT4: the second client's pictures were 1280 wide
     }
     # wait for the monitor; with -HostDir start the host once the monitor's capture runs, and sample it every second
     $monDeadline = (Get-Date).AddSeconds($monLimit + $(if ($Second) { $SecondAfter } else { 0 }))
@@ -1410,6 +1422,7 @@ try {
             if ($Background) { $mon3Args += @('-Background') }
             if ($KeepAlive -gt 0) { $mon3Args += @('-KeepAlive', $KeepAlive) }
             if ($ShotFocus -ne 'auto') { $mon3Args += @('-ShotFocus', $ShotFocus) }
+            if ($ShotWidth -ne 1280) { $mon3Args += @('-ShotWidth', $ShotWidth) }
             $mon3 = Start-Logged 'powershell.exe' $mon3Args 'monitor3'
             $mon3Start = Get-Date
             Say "second client restarted (-SecondRestartAt $SecondRestartAt): launch_monitor.ps1 -OutDir $dir3 -Seconds $left (pid $($mon3.Id)), $([int]((Get-Date) - $launchTime).TotalSeconds) s after the first"

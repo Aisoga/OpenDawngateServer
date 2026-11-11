@@ -265,8 +265,34 @@ func TestLobbyTags(t *testing.T) {
 	if !bytes.Contains(p.Tags, []byte("server isn't available right now, so this game runs in ")) { // M27
 		t.Error("the class doesn't word lobby.state's region notice")
 	}
-	if bytes.Contains(p.Tags, []byte("~#")) || bytes.Contains(p.Tags, []byte("ChatManager")) {
-		t.Error("the class still touches the chat")
+	if !bytes.Contains(p.Tags, []byte("Server: ")) || !bytes.Contains(p.Tags, []byte("region.state")) ||
+		bytes.Contains(p.Tags, []byte("North America")) { // PREF3: the server's names, none of its own
+		t.Error("the class doesn't draw the server line from the server's region names")
+	}
+	if bytes.Contains(p.Tags, []byte("~#")) {
+		t.Error("the class still writes into the chat")
+	}
+	// the draft's sounds and team chat (DraftSound, compiled into the same ABC): the chat manager reached only from the
+	// draft's events, while the lobby shows; never an UnMute of the player's shaper-select music
+	for _, want := range []string{"Play_Music_Shaper_Select", "Stop_Music_Shaper_Select", "Global.OnInteractEvent",
+		"SwitchToChannel", "maxis.chat.manager.ChatManager", "draft.music", "musicOff"} {
+		if !bytes.Contains(p.Tags, []byte(want)) {
+			t.Errorf("the class lacks %q (the draft's sounds and team chat)", want)
+		}
+	}
+	if bytes.Contains(p.Tags, []byte("UnMute_")) {
+		t.Error("the class unmutes the shaper-select music")
+	}
+	// the chat only for the automatic team channel during the draft (the user's decision of 2026-11-11): the custom
+	// lobby window's SwitchToChannel, nothing that sends, writes, reads or joins
+	if bytes.Count(p.Tags, []byte("customGameChatWindow")) != 1 || bytes.Count(p.Tags, []byte("SwitchToChannel")) != 1 {
+		t.Error("the class reaches the chat other than by the one channel switch")
+	}
+	for _, bad := range []string{"SendMessage", "SendChat", "AppendMessage", "m_chatText", "htmlText", "JoinRoom",
+		"GetChatChannel", "OnChatMemberMessage", "m_currChannel", "MaxisChat"} {
+		if bytes.Contains(p.Tags, []byte(bad)) {
+			t.Errorf("the class uses the chat's %s", bad)
+		}
 	}
 	ps, err := pairs(p.Tags, tags[2].start, tags[2].end)
 	if err != nil || len(ps) != 1 || ps[0] != (pair{2001, "LobbyReady"}) || p.Class != "LobbyReady" || p.CharID != 2001 {

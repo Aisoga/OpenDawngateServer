@@ -196,6 +196,10 @@ type Front struct {
 
 	// AwayIdle ends an away session after this long without a datagram (front_away.go; 0: tunnel.DefaultFlowIdle)
 	AwayIdle time.Duration
+	// writeGame, when set, sends an away session's answers to the game instead of the front's listeners, and logWho
+	// names the log lines (Start-Client's path without the front: awayWithoutFront)
+	writeGame func(port int, dst *net.UDPAddr, payload []byte)
+	logWho    string
 }
 
 // frontSession is a tunnel session to one server, with the server's own ports where they differ from the game's.
@@ -249,7 +253,11 @@ func (s *frontSession) localPort(f *Front, server int) int {
 
 func (f *Front) logf(format string, a ...any) {
 	if f.Log != nil {
-		f.Log.Logf(frontWho, format, a...)
+		who := frontWho
+		if f.logWho != "" {
+			who = f.logWho
+		}
+		f.Log.Logf(who, format, a...)
 	}
 }
 

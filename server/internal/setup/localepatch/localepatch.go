@@ -1,6 +1,6 @@
 // Package localepatch makes a player copy's added locale package game\Data\Locale\en-us\AA_Server.package:
-// changed copies of eight of the copy's own string tables with the server's login texts and links, the
-// Leaderboard's rule, the custom lobby's map line, the item shop's refund lines and the match rules' alert lines, byte for byte
+// changed copies of ten of the copy's own string tables with the server's login texts and links, the
+// Leaderboard's rule, the custom lobby's map line, the item shop's refund lines and the match rules' alert lines, the region names (regions.go), byte for byte
 // what re/scripts/patch_locale.py makes (that script's docstring has the rule). The client mounts every *.package of Locale\en-us and the one whose name
 // sorts first wins, so AA_Server.package overrides the shipped Locale.package, which stays untouched. The game's
 // text can't ship, so the package is made at setup time from the copy's own Locale.package.
@@ -28,7 +28,7 @@ const (
 	Comment = "# PH2b: lines the build lacks, added by the server's setup" // before appended lines
 )
 
-// The string tables' key parts and the eight tables (FNV-1 of BlazeErrors, the URL table's id, LoginScreen,
+// The string tables' key parts and the eight older tables (FNV-1 of BlazeErrors, the URL table's id, LoginScreen,
 // FNV-1 of fe_leaderboard, fe_matchtype, fe_customgamelobby, hud and labsalerts).
 const (
 	StringType    = 0x02FAC0B6
@@ -307,9 +307,11 @@ func Tables(o Options) (map[uint32]map[uint32]string, error) {
 			lobby[id] = text
 		}
 	}
-	return map[uint32]map[uint32]string{BlazeErrors: ErrorLines, URLs: urls, LoginScreen: LoginLines,
+	t := map[uint32]map[uint32]string{BlazeErrors: ErrorLines, URLs: urls, LoginScreen: LoginLines,
 		FELeaderboard: LeaderboardLines, FEMatchType: MatchTypeLines, FECustomGameLobby: lobby, HUD: HUDLines,
-		LabsAlerts: LabsAlertsLines}, nil
+		LabsAlerts: LabsAlertsLines}
+	regionTables(t) // PREF3 (regions.go)
+	return t, nil
 }
 
 var bom = []byte{0xEF, 0xBB, 0xBF}
@@ -407,7 +409,7 @@ func table(p *dbpf.Package, inst uint32) ([]byte, error) {
 	return nil, nil
 }
 
-// Build makes AA_Server.package from the copy's Locale.package (its bytes): the eight tables changed, in instance
+// Build makes AA_Server.package from the copy's Locale.package (its bytes): the ten tables changed, in instance
 // order, stored uncompressed (dbpf.WritePackage). A table missing from it (a synthetic test build) is made of the
 // appended lines alone.
 func Build(locale []byte, o Options) ([]byte, error) {

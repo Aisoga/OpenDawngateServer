@@ -78,7 +78,7 @@ var allSteps = []string{"certificates", "client copy", "client exe", "client con
 
 // synthLocal is the client copy's AA_Server.package for 127.0.0.1 from the synthetic archive's Locale.package: what
 // re/scripts/patch_locale.py makes from the same file (test_ph2b.py and localepatch_test.go pin the same SHA-256).
-const synthLocal = "bcbe4a4907e8cd62af949b32cf42fbdbd0443dc235689825749774f9e6ee200c"
+const synthLocal = "a9386beef0740e61bcb1256b72873c397048d6dd60982ab7e41e46806e7833e2"
 
 func localeSHA(t *testing.T, copy string) string {
 	t.Helper()
@@ -280,10 +280,14 @@ func TestClientForAnotherServer(t *testing.T) {
 	}
 	expect(t, s, map[string]Status{"client copy": Done, "client exe": Done, "client config": Done, "client texts": Done,
 		"bot check box": Done, "chat rooms": Done, "after action review": Done, "shop refund": Done, "halloween": Done,
-		"collection items": Done})
+		"collection items": Done, "preferred region": Done, "party region": Done})
 	aar := moviepatch.AfterAction
 	aar.WebHost = "192.168.1.20" // the review's pages come from the copy's server
-	for _, sp := range []moviepatch.Spec{moviepatch.MatchOptions, moviepatch.ChatRooms, aar, moviepatch.ItemShop} {
+	mt := moviepatch.MatchType
+	mt.WebHost = "192.168.1.20" // the dropdown's channel is the copy's server's
+	pl := moviepatch.PVPLobby
+	pl.WebHost = "192.168.1.20" // so is the party lobby's
+	for _, sp := range []moviepatch.Spec{moviepatch.MatchOptions, moviepatch.ChatRooms, aar, mt, pl, moviepatch.ItemShop} {
 		src, _ := os.ReadFile(filepath.Join(s.ClientCopy(), filepath.FromSlash(sp.Source)))
 		want, err := sp.Build(src)
 		if b, err2 := os.ReadFile(filepath.Join(s.ClientCopy(), filepath.FromSlash(sp.Rel))); err != nil ||
@@ -323,7 +327,7 @@ func TestClientForAnotherServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	expect(t, s2, map[string]Status{"client copy": OK, "client exe": OK, "client config": OK, "client texts": OK,
-		"bot check box": OK, "chat rooms": OK, "after action review": OK, "halloween": OK})
+		"bot check box": OK, "chat rooms": OK, "after action review": OK, "preferred region": OK, "party region": OK, "halloween": OK})
 	// a map's archive in the copy: the create dialog's map list names it (its dropdown), and drops it again
 	mmArchive := filepath.Join(s.ClientCopy(), "game", "Data", "zz_MM_Map_v3.snap")
 	added := filepath.Join(s.ClientCopy(), filepath.FromSlash(moviepatch.MatchOptions.Rel))

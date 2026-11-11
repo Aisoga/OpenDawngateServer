@@ -70,6 +70,9 @@ struct RosterEntry {
   int64_t party = 0;
   // B15: an observer of a custom game (the Blaze spectator team): gameplay index 10-14, team 0; written only when true.
   bool spectator = false;
+  // DRAFT3: the role the human declared before the match (gmshost.RosterEntry.Role: "gladiator", "tactician", "hunter",
+  // "predator"; "" = none), preset in its shaper select record; written only when not empty.
+  std::string role;
 };
 
 // server -> host: the match to load.

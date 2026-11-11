@@ -75,6 +75,11 @@ func TestEncodeValues(t *testing.T) {
 			{User: 2000000002, Name: "second", Index: 10, Spectator: true}}},
 			`{"t":"startGame","roster":[{"user":2000000001,"name":"player","index":0,"team":1,"noun":"","bot":false},` +
 				`{"user":2000000002,"name":"second","index":10,"team":0,"noun":"","bot":false,"spectator":true}]}`},
+		// DRAFT3: a human's declared role (role, last in the entry; omitted when "", so every line above stays as it was)
+		{StartGame{Roster: []RosterEntry{{User: 2000000001, Name: "player", Team: 1, Role: "hunter"},
+			{User: 2000000002, Name: "second", Index: 5, Team: 2}}},
+			`{"t":"startGame","roster":[{"user":2000000001,"name":"player","index":0,"team":1,"noun":"","bot":false,"role":"hunter"},` +
+				`{"user":2000000002,"name":"second","index":5,"team":2,"noun":"","bot":false}]}`},
 		// RULES1: a host that takes rules says so in its hello; startGame then carries the rules (omitted for the
 		// standard game) and the lobby's bots setting (fillTeams, 0 written: no bots)
 		{Hello{Match: 1, Token: "t", PID: 4242, Build: "dgsim", Features: []string{FeatureRules}},
@@ -254,6 +259,19 @@ func TestDecode(t *testing.T) {
 }
 
 // H5: reportGMSError's codes and names, the same numbers and names as gms/core/control (kErr*, ErrorCodeName).
+// DRAFT3: the roles' record values (C8 03 byte 9) are the client's: 0 gladiator ... 3 predator; the host's codec
+// (gms/script/roster_shaper.h ShaperRoleFromRoster) reads the same names.
+func TestRoleIndex(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		want int
+	}{{"gladiator", 0}, {"tactician", 1}, {"hunter", 2}, {"predator", 3}, {"Hunter", 2}, {"", -1}, {"support", -1}} {
+		if got := RoleIndex(c.name); got != c.want {
+			t.Errorf("RoleIndex(%q) = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
 func TestErrorNames(t *testing.T) {
 	for _, c := range []struct {
 		code int

@@ -142,7 +142,7 @@ func (hg *hostedGame) listed() (ListedGame, bool) {
 		return ListedGame{}, false
 	}
 	return ListedGame{Game: hg.game, State: hg.state, Admins: append([]int64(nil), hg.custom.admins...),
-		Region: hg.custom.region, Players: hg.lobbyPlayersLocked()}, true
+		Region: hg.custom.psas, Players: hg.lobbyPlayersLocked()}, true
 }
 
 // listedGames is every game the browser lists, by game id.

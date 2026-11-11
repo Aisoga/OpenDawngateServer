@@ -6,7 +6,8 @@ import "bytes"
 // the fog texture's value at its feet: a pale ghost under 0.5, solid above, at once, so a creature the server sends a
 // little before its team sees it (the match host's head start, FOGEDGE, removed by FOGEDGE-RM) showed early. With the patch an enemy creature
 // (noun creature with fowControlsObjectVisibility, of a team not in GameClient_GetLocalTeamMask, unless the local
-// player observes) is drawn while mVisibleToTeam & the local mask (+0x888) is set or its own fog query (+0x860 ->
+// player observes or there is no local player: the front end's shaper models, in the Collection and elsewhere, are
+// such creatures too, and without a player their target was 0, so they were never drawn) is drawn while mVisibleToTeam & the local mask (+0x888) is set or its own fog query (+0x860 ->
 // +0x5C, the fog texture at its feet, 0-255) is at least 160, clearly lit (the texture fades out over about a second
 // where the viewer was, so a lower value kept an enemy drawn behind a viewer walking away); the fog texture knows walls
 // and bushes. Its own opacity (+0x868) follows that
@@ -59,7 +60,7 @@ var fadeApplyNew = append(mustHex(
 		"75e8"+ // jne 0x56e77d
 		"51"+ // push ecx: the flags, which the caller reads again
 		"56"+ // push esi
-		"e874e80f00"+ // call 0x66d010: GameClient_IsLocalPlayerObserver: observers as shipped
+		"e8d4fcffff"+ // call 0x56e470: LocalViewAsShipped: no local player, or an observer
 		"84c0"+ // test al, al: as shipped from here: grass or stealth 0.5
 		"75db"+ // jne 0x56e77b
 		"6a00"+ // push 0
@@ -104,7 +105,8 @@ var fadeTargetOrig = mustHex(
 		"04f51d016a00e85881320083c418")
 
 // fadeTargetNew keeps the block's store, jumps over FadeTarget (esi = the target from eax, the local team mask)
-// and leaves the rest int3.
+// and, after it, LocalViewAsShipped (FadeStep's test whether to leave an object as shipped: no local player, as in
+// the front end, or an observer); the rest stays int3.
 var fadeTargetNew = append(mustHex(
 	"89742408"+ // mov dword ptr [esp + 8], esi: what the assert block stored for later
 		"eb38"+ // jmp 0x56e48b: over FadeTarget to the second assert
@@ -115,7 +117,18 @@ var fadeTargetNew = append(mustHex(
 		"81795ca0000000"+ // cmp dword ptr [ecx + 0x5c], 0xa0: the texture (0-255) against 160
 		"f5"+ // cmc
 		"83d600"+ // adc esi, 0: lit: shown too
-		"c3"), bytes.Repeat([]byte{0xCC}, 27)...) // ret
+		"c3"+ // ret
+		"6a00"+ // push 0: LocalViewAsShipped: al = 1 when FadeStep leaves the object as shipped
+		"e8b9e80f00"+ // call 0x66cd30: GameClient_GetLocalPlayer(0): the player or 0, no assert
+		"59"+ // pop ecx
+		"85c0"+ // test eax, eax: no local player (the front end): as shipped
+		"7408"+ // je 0x56e484
+		"50"+ // push eax
+		"e8be3b3a00"+ // call 0x912040: LabsPlayer_IsObserver: observers as shipped
+		"59"+ // pop ecx
+		"c3"+ // ret
+		"b001"+ // mov al, 1
+		"c3"), bytes.Repeat([]byte{0xCC}, 4)...) // ret
 
 var fadeHookOrig = mustHex(
 	"f6c101740d80b8cd020000000f85e6000000")

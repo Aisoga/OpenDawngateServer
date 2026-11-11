@@ -76,11 +76,13 @@ func TestUIChannelThroughTunnel(t *testing.T) {
 		c := dial(uiPort)
 		fmt.Fprintf(c, `{"call":"hello","args":{"protocol":1,"name":%q}}`+"\n", name)
 		c.SetReadDeadline(time.Now().Add(5 * time.Second))
-		line, err := bufio.NewReader(c).ReadString('\n')
-		if err != nil {
-			t.Fatalf("hello: %v", err)
+		line := readLine(t, c)
+		if strings.Contains(line, `"event":"hello"`) { // PREF1: the greeting follows
+			if g := readLine(t, c); !strings.HasPrefix(g, `{"event":"region.state","data":{"regions":[{"id":"local","name":"Local"}]`) {
+				t.Errorf("greeting %s", g)
+			}
 		}
-		return c, strings.TrimSpace(line)
+		return c, line
 	}
 
 	alpha, bravo, nobody := player("127.0.9.42"), player("127.0.9.43"), player("127.0.9.44")
@@ -130,5 +132,21 @@ func TestUIChannelThroughTunnel(t *testing.T) {
 	}
 	if !in.ui.Connected(bravoID) {
 		t.Error("bravo's channel ended with alpha's login")
+	}
+}
+
+// readLine reads one line from c a byte at a time (no buffer that could take the next line with it), without its end.
+func readLine(t *testing.T, c net.Conn) string {
+	t.Helper()
+	var b []byte
+	one := make([]byte, 1)
+	for {
+		if _, err := c.Read(one); err != nil {
+			t.Fatalf("read: %v (so far %q)", err, b)
+		}
+		if one[0] == '\n' {
+			return strings.TrimSpace(string(b))
+		}
+		b = append(b, one[0])
 	}
 }

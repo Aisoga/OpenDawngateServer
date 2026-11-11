@@ -73,6 +73,12 @@ const (
 // Identify names the user behind a connection; name is the hello's. False refuses the connection.
 type Identify func(c net.Conn, name string) (user int64, ok bool)
 
+// Greeting is one event of Server.Greet.
+type Greeting struct {
+	Event string
+	Data  any
+}
+
 // Handler serves one call from user. A returned error is logged, cut short; the connection stays.
 type Handler func(user int64, args json.RawMessage) error
 
@@ -82,6 +88,9 @@ type Server struct {
 	Identify Identify
 	// OnDisconnect is told when user's last connection ended.
 	OnDisconnect func(user int64)
+	// Greet, when set, gives the events a new connection of user gets right after its hello, at every connect and
+	// reconnect (PREF1's region.state): a state every class may need, without a call of its own.
+	Greet func(user int64) []Greeting
 
 	mu       sync.Mutex
 	handlers map[string]Handler
@@ -353,6 +362,15 @@ func (s *Server) ServeConn(nc net.Conn) {
 	}
 	defer s.forget(c)
 	nc.SetReadDeadline(time.Time{})
+	if s.Greet != nil {
+		for _, g := range s.Greet(c.user) {
+			if line, err := encodeEvent(g.Event, g.Data); err == nil {
+				c.send(s, line)
+			} else {
+				s.logf("greeting %s for %d: %v", g.Event, c.user, err)
+			}
+		}
+	}
 	go c.writeLoop()
 	for {
 		call, args, err := readCall(r)

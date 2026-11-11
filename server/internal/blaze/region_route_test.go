@@ -20,13 +20,14 @@ func TestRegionNeedsTheTunnel(t *testing.T) {
 	}}
 	ts, _ := newCustomHostServer(t, func(s *Server) {
 		s.Hosts.SetRegions("eu", map[string]string{"na1": "na"})
+		s.Hosts.SetRegionNames(map[string]string{"eu": "Europe", "na": "NA (Virginia)"})
 		s.Hosts.AddTestMachine("na1", na, gmshost.NewPool(GMSPort+20, GMSPort+20), "")
 		s.RegionRoute = func(Game, int64) (tunnel.Away, bool) { asked <- true; return tunnel.Away{}, false }
 	})
 	ui := attachUI(t, ts)
 	_, u := createInRegion(t, ts, ui)
-	u.wantRegionState(lobbyStateLine("alpha"))
-	if psas, want, notice := ts.lobbyRegions(t); psas != "eu" || want != "eu" || notice != nil {
+	u.wantRegionState(withRegion(lobbyStateLine("alpha"), regionJSON("eu")))
+	if psas, want, notice := ts.lobbyRegions(t); psas != "eu" || want != "eu" || notice == nil || notice.Why != "" {
 		t.Errorf("PSAS %q, want %q, notice %+v", psas, want, notice)
 	}
 	select {
@@ -36,7 +37,8 @@ func TestRegionNeedsTheTunnel(t *testing.T) {
 		t.Error("RegionRoute asked for a direct client")
 	case <-time.After(200 * time.Millisecond):
 	}
-	if log := ts.log.String(); !strings.Contains(log, "region na ignored: player's client has no tunnel session that takes the match gateway") {
+	if log := ts.log.String(); !strings.Contains(log, "game 1: region na (the player's Preferred Region) ignored: player 2000000001's client "+
+		"has no tunnel session that takes the match gateway") {
 		t.Errorf("log lacks the ignored region:\n%s", log)
 	}
 }

@@ -145,16 +145,17 @@ func TestDraftTimeouts(t *testing.T) {
 		if err := d.Act(0, 0, DraftBan, "PC_00"); err != nil {
 			t.Fatal(err)
 		}
-		turn, ok := d.Timeout(r)
-		if !ok || turn.Kind != DraftBan || turn.Shaper != "" || turn.How != DraftTimeout {
-			t.Fatalf("a ban's timeout: %+v", turn)
+		ended := d.Timeout(r, nil)
+		if len(ended) != 1 || d.Turns[ended[0]].Kind != DraftBan || d.Turns[ended[0]].Shaper != "" ||
+			d.Turns[ended[0]].How != DraftTimeout {
+			t.Fatalf("a ban's timeout: %v %+v", ended, d.Turns)
 		}
 		for !d.Done() {
-			if _, ok := d.Timeout(r); !ok {
+			if len(d.Timeout(r, nil)) == 0 {
 				t.Fatal("no turn")
 			}
 		}
-		if _, ok := d.Timeout(r); ok {
+		if len(d.Timeout(r, nil)) != 0 {
 			t.Fatal("a timeout after the end")
 		}
 		seen := map[string]bool{"PC_00": true}
@@ -174,7 +175,7 @@ func TestDraftTimeoutPoolRunsOut(t *testing.T) {
 	r := rand.New(rand.NewPCG(7, 7))
 	d, _ := NewDraft(draftPool(9), [2]int{5, 5})
 	for !d.Done() {
-		d.Timeout(r)
+		d.Timeout(r, nil)
 	}
 	n := 0
 	for _, team := range d.Picks() {

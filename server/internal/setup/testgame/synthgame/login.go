@@ -11,12 +11,15 @@ import (
 // its symbol, a placed object), so the server picker's setup step has something to patch.
 func LoginScreen() []byte { return movieSnap(moviepatch.Picker.MoviePath, "maxis.LoginScreen") }
 
-// Battlegrounds is the synthetic Battlegrounds.snap: the CREATE GAME dialog's and the After Action Review's movie
-// paths with the same kind of made-up movie each, for the setup steps of the bot check box and the review's tabs.
+// Battlegrounds is the synthetic Battlegrounds.snap: the CREATE GAME dialog's, the After Action Review's, the play
+// screen's and the party lobby's movie paths with the same kind of made-up movie each, for the setup steps of the bot
+// check box, the review's tabs and the two Preferred Regions.
 func Battlegrounds() []byte {
 	return snap.Pack([]snap.File{
 		{Name: moviepatch.MatchOptions.MoviePath, Data: movie("maxis.MatchOptionsUI")},
 		{Name: moviepatch.AfterAction.MoviePath, Data: movie("maxis.AfterActionReview")},
+		{Name: moviepatch.MatchType.MoviePath, Data: movie("maxis.MatchTypeUI")},
+		{Name: moviepatch.PVPLobby.MoviePath, Data: movie("maxis.PVPLobbyUI")},
 	})
 }
 

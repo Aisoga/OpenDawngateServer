@@ -1,17 +1,23 @@
 package launcher
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"dawngate/server/internal/logging"
+	"dawngate/server/internal/setup"
 	"dawngate/server/internal/tunnel"
 )
 
@@ -293,6 +299,164 @@ func TestFrontAway(t *testing.T) {
 	}
 	waitLog("ended: the server's session ended")
 	waitAway(nil)
+}
+
+// The front-less test's addresses (TestTunnelPathAway): the player's PC, the main server's gateway and its match host,
+// a host machine's match gateway and its host of match 7.
+const (
+	tpaPC    = "127.0.9.160"
+	tpaMain  = "127.0.9.161"
+	tpaGw    = "127.0.9.162"
+	tpaHost  = "127.0.9.163"
+	tpaMatch = 23520
+	tpaQoS   = 23521
+)
+
+// TestTunnelPathAway (PREF5): Start-Client's path without the front (startTunnel, picker = off) says the version 4
+// hello and takes the main server's away message like the front: the match port's datagrams go through a session to the
+// host machine's match gateway, the answers come back from the game's own port, the main server's host sees none, the
+// session's other ports stay on the main session; home brings the port back, and closing ends an open away session.
+func TestTunnelPathAway(t *testing.T) {
+	key := make([]byte, 32)
+	key[0] = 9
+	guard := &tunnel.TicketGuard{Machine: "na1"}
+	guard.SetKey(key, time.Now())
+	nonce := byte(0)
+	ticket := func(user int64) []byte {
+		nonce++
+		tk := tunnel.Ticket{Machine: "na1", Match: 7, User: user, Issued: time.Now()}
+		tk.Nonce[0] = nonce
+		b, err := tunnel.MintTicket(key, tk)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	mainHost := newPrefixEcho(t, tpaMain+":0", "main:")
+	host := newPrefixEcho(t, net.JoinHostPort(tpaHost, strconv.Itoa(tpaMatch)), "A:")
+	id, _, err := tunnel.LoadOrCreateIdentity(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gwID, _, err := tunnel.LoadOrCreateIdentity(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := &tunnel.Gateway{Log: logging.New(io.Discard), Identity: gwID, BindIP: net.ParseIP(tpaGw),
+		Admit:   tunnel.TicketAdmit(guard, func(m int64) (*net.UDPAddr, bool) { return host.addr(), m == 7 }),
+		Running: func(m int64) (*net.UDPAddr, bool) { return host.addr(), m == 7 }}
+	gw.ForwardUDP(tpaMatch)
+	if err := gw.Start(net.JoinHostPort(tpaGw, "0")); err != nil {
+		t.Fatal(err)
+	}
+	defer gw.Close()
+	addrs := make(chan *tunnel.Addr, 8)
+	main := &tunnel.Gateway{Log: logging.New(io.Discard), Identity: id, BindIP: net.ParseIP(tpaMain)}
+	main.ForwardUDP(tpaMatch)
+	main.HandleUDP(tpaQoS, func(_ []byte, from *tunnel.Addr, reply func([]byte) error) {
+		addrs <- from
+		reply([]byte("qos"))
+	})
+	if err := main.Start(net.JoinHostPort(tpaMain, "0")); err != nil {
+		t.Fatal(err)
+	}
+	defer main.Close()
+
+	l := setup.Layout{Root: t.TempDir()}
+	var out bytes.Buffer
+	_, stop, err := startTunnel(IO{Out: &out, ExeDir: t.TempDir()}, l, main.Addr(), main.Identity.Pin, tpaPC, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stopped := false
+	defer func() {
+		if !stopped {
+			stop()
+		}
+	}()
+	logText := func() string {
+		names, _ := filepath.Glob(filepath.Join(l.Logs(), "tunnel-*.log"))
+		var b strings.Builder
+		for _, n := range names {
+			raw, _ := os.ReadFile(n)
+			b.Write(raw)
+		}
+		return b.String()
+	}
+	waitLog := func(want string) {
+		t.Helper()
+		for deadline := time.Now().Add(5 * time.Second); !strings.Contains(logText(), want); time.Sleep(10 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("the tunnel log lacks %q:\n%s", want, logText())
+			}
+		}
+	}
+	ip := net.ParseIP(tpaPC).To4()
+	game, err := net.ListenUDP("udp4", &net.UDPAddr{IP: ip})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer game.Close()
+	send := func(port int, msg string) (string, error) {
+		t.Helper()
+		game.WriteToUDP([]byte(msg), &net.UDPAddr{IP: ip, Port: port})
+		game.SetReadDeadline(time.Now().Add(2 * time.Second))
+		buf := make([]byte, 2048)
+		n, from, err := game.ReadFromUDP(buf)
+		if err == nil && from.Port != port {
+			return "", fmt.Errorf("the answer came from port %d, not %d", from.Port, port)
+		}
+		return string(buf[:n]), err
+	}
+	if got, err := send(tpaQoS, "who"); err != nil || got != "qos" {
+		t.Fatalf("the main session's in-process port: %q %v", got, err)
+	}
+	addr := <-addrs
+	if !addr.TakesAway() {
+		t.Fatal("the front-less path's session doesn't say the version 4 hello")
+	}
+	addr.Route(tpaMatch, mainHost.addr())
+	if got, err := send(tpaMatch, "m1"); err != nil || got != "main:m1" {
+		t.Fatalf("the match on the main server: %q %v", got, err)
+	}
+
+	// away: the match port's datagrams go to the host machine, the answers come back from the same port
+	if !addr.RouteAway(tpaMatch, tunnel.Away{Gateway: netip.MustParseAddrPort(gw.Addr()), Pin: gw.Identity.Pin, Ticket: ticket(2000000001)}) {
+		t.Fatal("RouteAway didn't send")
+	}
+	waitLog(fmt.Sprintf("away: port %d through the match gateway %s", tpaMatch, gw.Addr()))
+	before := mainHost.count()
+	for i := range 3 {
+		msg := "a" + string(rune('0'+i))
+		if got, err := send(tpaMatch, msg); err != nil || got != "A:"+msg {
+			t.Fatalf("through the away session: %q %v", got, err)
+		}
+	}
+	if mainHost.count() != before {
+		t.Errorf("the main server's host got %d datagrams while the port was away", mainHost.count()-before)
+	}
+	if got, err := send(tpaQoS, "who"); err != nil || got != "qos" {
+		t.Errorf("the main session's other port while away: %q %v", got, err)
+	}
+	<-addrs
+
+	// home: the port goes through the main session again
+	addr.Route(tpaMatch, mainHost.addr())
+	waitLog(fmt.Sprintf("away: port %d to %s ended: the server sent it home", tpaMatch, gw.Addr()))
+	if got, err := send(tpaMatch, "m2"); err != nil || got != "main:m2" {
+		t.Errorf("after home: %q %v", got, err)
+	}
+
+	// away again, then Start-Client closes: the away session ends with it
+	addr.RouteAway(tpaMatch, tunnel.Away{Gateway: netip.MustParseAddrPort(gw.Addr()), Pin: gw.Identity.Pin, Ticket: ticket(2000000002)})
+	for deadline := time.Now().Add(5 * time.Second); strings.Count(logText(), "through the match gateway") < 2; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the second away session didn't open:\n%s", logText())
+		}
+	}
+	stop()
+	stopped = true
+	waitLog(fmt.Sprintf("away: port %d to %s ended: Start-Client closes", tpaMatch, gw.Addr()))
 }
 
 // TestAwayAddrAllowed is the address rule on its own.

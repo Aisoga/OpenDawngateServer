@@ -125,7 +125,8 @@ type customLobby struct {
 	started   bool    // advanceGameState IN_GAME came (the host got startGame)
 	browsable bool    // the game browser lists it: a custom game (a practice group's isn't)
 	ready     bool    // NotifyGameSetup went out (its host is ready, or it has none): the browser may list it
-	region    string  // PSAS for the browser: the creator's lowest-latency ping site
+	region    string  // the region id it runs in (PREF1; before gameReady the wanted one)
+	psas      string  // the browser's Region (PSAS): region's name, "" with one region (PREF3, region_names.go)
 	nextSlot  int64   // the next joiner's Blaze slot (SID)
 	// the ready check (ready.go)
 	check readyCheck
@@ -135,8 +136,8 @@ type customLobby struct {
 	// READY2b: the first start was refused for Server.TestRefuseStart
 	testRefused bool
 
-	// M27 (regions.go): the region its creator wanted ("" = none: a practice group's game, or regions off), and from
-	// gameReady lobby.state's notice when it runs elsewhere
+	// M27, PREF1 (regions.go): the region it was wanted in ("" = regions off), and lobby.state's region: where it runs
+	// (from gameReady the host's; with the notice when that isn't where it was wanted)
 	want   string
 	notice *LobbyRegion
 
@@ -462,22 +463,6 @@ func (s *Server) lobbyContent(roster []gmshost.RosterEntry, players []*hostedPla
 	}
 }
 
-// lobbyRegion is the game browser's Region (PSAS) for a game its creator made: the ping site the creator's client
-// reported with the lowest latency (updateNetworkInfo's NLMP: "na", "eu", ...; the browser shows the region it belongs
-// to, 0x0066B3C0), "local" without one.
-func lobbyRegion(sites map[string]int64) string {
-	best, bestMs := "", int64(-1)
-	for alias, ms := range sites {
-		if bestMs < 0 || ms < bestMs || ms == bestMs && alias < best {
-			best, bestMs = alias, ms
-		}
-	}
-	if best == "" {
-		return "local"
-	}
-	return best
-}
-
 // startCustomGame is resetDedicatedServer for a custom game (or a practice group's): the creator is its admin and
 // Blaze slot 0. With a match host (--gms-dir) the host starts at once in mode custom and holds the lobby's HelloReqs;
 // without one NotifyGameSetup names --gms-port at once, as B8's practice game.
@@ -488,10 +473,16 @@ func (s *Server) startCustomGame(r *Request, g Game, p Player) []byte {
 		p.Team = 0 // a practice group's humans are all on team index 0, the bots on the other
 	}
 	hp := &hostedPlayer{p: p, userID: r.Conn.Session.Account.UserID, conn: r.Conn, setupCtx: SetupContextCreateGame}
-	lobby := &customLobby{admins: []int64{p.ID}, browsable: flags&GameFlagBotsFillTeams == 0,
-		region: lobbyRegion(r.Conn.Net.PingSites), nextSlot: 1}
-	// M27: where its creator wants it (regions.go)
-	lobby.want = s.customWant(r, lobby.browsable)
+	lobby := &customLobby{admins: []int64{p.ID}, browsable: flags&GameFlagBotsFillTeams == 0, nextSlot: 1}
+	// PREF1: where it should run, by its creator's Preferred Region (a practice group's: the creator's party's vote);
+	// the browser's Region and lobby.state's name it until its host says where it runs (regions.go)
+	lobby.want = s.customWant(r, g.ID, lobby.browsable)
+	lobby.region = lobby.want
+	if lobby.region == "" {
+		lobby.region, _ = s.regionTable()
+	}
+	lobby.notice = s.regionInfo(lobby.region, "", "")
+	lobby.psas = s.browserRegion(lobby.region)
 	defer func() { // a lobby nobody starts doesn't hold its host for ever (access.go)
 		if hg := s.hosted.get(g.ID); hg != nil {
 			time.AfterFunc(LobbyMaxAge, hg.expireLobby)

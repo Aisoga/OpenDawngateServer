@@ -231,16 +231,22 @@ discord_queue_edit = on
 discord_names = on
 discord_result_modes = pvp,custom
 
-; Regions for custom games: host machines in other regions run this server's matches near their players (the hosting
-; guide, "Host machines in other regions"). A player picks the region when creating a custom game.
+; Regions: host machines in other regions run this server's matches near their players (the hosting guide, "Host
+; machines in other regions"). Each player picks a Preferred Region on the play screen: a custom game runs in its
+; creator's, practice in its player's, a practice group and a PvP match in the one most of its players prefer (a tie:
+; this server's own region).
 ;   region         this server's own region, 2-8 lower-case letters (e.g. eu): the region of its own matches and of
 ;                  every player who chose none. Empty: no regions (the default).
 ;   host_machines  the host machines that may register with this server, each as name=region, separated by commas
 ;                  (e.g. na1=na). Each has its own key, Dawngate-Data\agents\<name>.key; make it and the host machine's
 ;                  Start-Server.ini with  Start-Server.exe --new-host-machine <name> <region>. Needs the tunnel. A
 ;                  machine whose line is removed can no longer register.
+;   region_names   the names players see for the regions, each as region=name, separated by semicolons (e.g.
+;                  eu=Europe; na=NA (Virginia)), at most 32 characters each. A region left out shows its letters in
+;                  capitals (EU). Without region, local=<name> names this server's only one.
 region =
 host_machines =
+region_names =
 
 ; More server options, separated by blanks, e.g.  --owned starter  or  --mm-team-size 1 --mm-fill-after 5s
 ; (README.txt lists a few; "dgserver.exe -h" in the developers' build lists all). Empty: the defaults.

@@ -44,7 +44,7 @@ func rulesPart(c rules.Combination, bots, canEdit, host bool, findings ...rules.
 // stateWithRules is the lobby.state line with these players (lobbyStateLine's form) and the rules part.
 func stateWithRules(rulesJSON string, players ...string) string {
 	line := lobbyStateLine(players...)
-	return strings.TrimSuffix(line, "]}}") + `],"rules":` + rulesJSON + "}}"
+	return strings.TrimSuffix(line, "}}") + `,"rules":` + rulesJSON + "}}"
 }
 
 func catalogLine(t *testing.T) string {

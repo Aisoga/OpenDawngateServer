@@ -580,7 +580,11 @@ Accounts live in one database, `Dawngate-Data\data\accounts.db`, with `accounts.
 
 ## Host machines in other regions
 
-A server in Europe plays badly for players in North America: every move crosses the ocean. A **host machine** is a second machine, in another region, that runs matches for your server and nothing else. Players still log in to your server (the **main server**): their accounts, friends, chat, matchmaking, the website and the match history stay there. When a player creates a custom game and picks a region, the match runs on a host machine of that region, and the players' games send their match traffic straight to it.
+A server in Europe plays badly for players in North America: every move crosses the ocean. A **host machine** is a second machine, in another region, that runs matches for your server and nothing else. Players still log in to your server (the **main server**): their accounts, friends, chat, matchmaking, the website and the match history stay there. Each player picks a **Preferred Region** on the play screen, and the matches run on a host machine of the region the players prefer; the players' games send their match traffic straight to it.
+
+- **Which region a match runs in:** a custom game runs in its creator's Preferred Region, chosen when it is created; solo practice in its player's. A practice group and a matchmade PvP match run in the region most of their players prefer: one vote per player, none for bots, and a tie goes to your main server's region. Matchmaking has one queue for all regions. New players start on your main server's region.
+- **Names:** players see the regions by the names in `region_names`, for example `region_names = eu=Europe; na=NA (Virginia)` (at most 32 characters each). A region without a name shows its letters in capitals (`NA`). With only one region (no host machines) the play screen shows no choice.
+- **A player whose game can't reach host machines** (playing without the tunnel, or with an older Start-Client) keeps the whole match on the main server.
 
 - The host machine keeps no accounts and has no website, sign-up or game package for players. Results, statistics, experience and ratings go to the main server as for any match.
 - It keeps its matches' logs (and, with `match_record = on` on the main server, their recordings) in its own `Dawngate-Data/logs/hosts`, deleted after its own `log_days`. Fetch them from there if you want them.
@@ -601,7 +605,8 @@ On the **main server**:
 
    (on Linux `sudo -u dawngate ./start-server --new-host-machine na1 na`). This writes the machine's own key to `Dawngate-Data\agents\na1.key`, adds `na1=na` to `host_machines`, and writes the host machine's `Start-Server.ini` to `Dawngate-Data\agents\na1-Start-Server.ini`, with the main server's address and key pin and the machine's name and key. It also prints those lines, except the key, which stays in the files. On Linux it makes the `agents` folder and both files readable by their owner only. Running it again keeps the key and writes the file again. If the server has never started, its key doesn't exist yet: start it once, then run the command again so that the file holds the pin.
 3. If the server's `address` isn't the one the host machine reaches it by (for example you use a domain name), change `main_server` in that file, for example `main_server = play.example.org:42128`.
-4. Restart the main server. It reads `host_machines` at its start and from then on takes the machines named there.
+4. Name the regions for your players in the main server's `Start-Server.ini`, for example `region_names = eu=Europe; na=NA (Virginia)`.
+5. Restart the main server. It reads `host_machines` and `region_names` at its start and from then on takes the machines named there.
 
 On the **host machine** (Windows or Linux, set up like any server: [Linux server](#linux-server)):
 

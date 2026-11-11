@@ -297,6 +297,88 @@ def main(argv):
             with open(os.environ["DAWNGATE_AFTERACTION_GO"], "rb") as f:
                 check(f.read() == abuilt, "the Go setup's zz_AfterActionReview.snap is the same")
 
+    # the play screen's Preferred Region: the same patcher with its spec, and where the copy's server has its UI channel
+    mt = plm.SPECS["matchtype"]
+    mtags = plm.read_tags(mt.tags)
+    mtt = plm.tags_of(mtags, 0, len(mtags))
+    check([c for c, *_ in mtt] == [39, 82, 76, 70] and mtt[-1][3] == len(mtags),
+          "matchtype_tags.hex: DefineSprite, DoABC, SymbolClass, PlaceObject3")
+    check(plm._pairs(mtags, mtt[2][2], mtt[2][3]) == [(2000, "RegionPicker")], "its SymbolClass: 2000 -> RegionPicker")
+    check(mtags[mtt[3][2]:mtt[3][3]] == bytes([0x06, 0]) + struct.pack("<HH", 2000, 2000) + b"\0",
+          "its PlaceObject3: character 2000 at depth 2000, no name")
+    check(all(w in mtags for w in (b"Channel/dgchannel.json", b"region.state", b"region.set", b"PREFERRED REGION",
+                                   b"MaxisChat.GetLocalUser", b"m_persona")),
+          "the class reads Channel/dgchannel.json, speaks region.state and region.set, names its player by the chat's "
+          "native")
+    with tempfile.TemporaryDirectory() as d:
+        bsnap = os.path.join(d, "Battlegrounds.snap")
+        with open(bsnap, "wb") as f:
+            f.write(plm.pack_bytes([(mt.movie_path, m)]))
+        for host, want in ((None, "d432e1c1475435e8ae6921c758de53ed0199f1c47e8c714a4c5ea2bbe6e45b2d"),
+                           ("192.168.1.20", "47083ccb52f2ed95223668d87f85ce21f6421a1c2d6809a414ec962c294c2976")):
+            arc = plm.build(bsnap, b"OURTAGS", mt, host=host)
+            check(sha(arc) == want, f"a made-up play screen archive for {host or 'the default host'} as "
+                                    f"matchtype_test.go pins it ({len(arc)} bytes)")
+    if game:
+        msrc = os.path.join(game, "game", "Data", "Battlegrounds.snap")
+        mbuilt = plm.build(msrc, spec=mt)
+        tmp = tempfile.NamedTemporaryFile(suffix=".snap", delete=False)
+        tmp.write(mbuilt)
+        tmp.close()
+        back = snap.Snap(tmp.name)
+        mraw = back.read(back.entries[0])
+        mchan = back.read(back.entries[1])
+        os.remove(tmp.name)
+        ids, names, depths, _ = plm.scan(zlib.decompress(mraw[8:]))
+        check(back.entries[0].name == mt.movie_path and "RegionPicker" in names and "maxis.MatchTypeUI" in names and
+              2000 in ids and 2000 in depths and back.entries[1].name == plm.CHANNEL_PATH and
+              mchan == plm.channel_file(),
+              f"the player's own play screen movie patched ({len(mbuilt)} bytes, SHA-256 {sha(mbuilt)[:16]})")
+        if os.environ.get("DAWNGATE_MATCHTYPE_GO"):  # moviepatch's TestBuildMatchType854 output
+            with open(os.environ["DAWNGATE_MATCHTYPE_GO"], "rb") as f:
+                check(f.read() == mbuilt, "the Go setup's zz_MatchType.snap is the same")
+
+    # the party lobby's Preferred Region: the same patcher with its spec, and the channel file as for matchtype
+    pl = plm.SPECS["pvplobby"]
+    ptags = plm.read_tags(pl.tags)
+    ptt = plm.tags_of(ptags, 0, len(ptags))
+    check([c for c, *_ in ptt] == [39, 82, 76, 70] and ptt[-1][3] == len(ptags),
+          "pvplobby_tags.hex: DefineSprite, DoABC, SymbolClass, PlaceObject3")
+    check(plm._pairs(ptags, ptt[2][2], ptt[2][3]) == [(2000, "PartyRegion")], "its SymbolClass: 2000 -> PartyRegion")
+    check(ptags[ptt[3][2]:ptt[3][3]] == bytes([0x06, 0]) + struct.pack("<HH", 2000, 2000) + b"\0",
+          "its PlaceObject3: character 2000 at depth 2000, no name")
+    check(all(w in ptags for w in (b"Channel/dgchannel.json", b"region.state", b"PREFERRED REGION", b"mcMatchAllRegionsCb")),
+          "the class reads Channel/dgchannel.json and region.state and hides the game's region choice")
+    check(b"region.set" not in ptags and b"OnServerRegionChangeRequested" not in ptags,
+          "the class only reads (no region.set, no region change in the game's lobby)")
+    with tempfile.TemporaryDirectory() as d:
+        lsnap = os.path.join(d, "Battlegrounds.snap")
+        with open(lsnap, "wb") as f:
+            f.write(plm.pack_bytes([(pl.movie_path, m)]))
+        for host, want in ((None, "6c689c298fd196d9d9df1bbb53730caba55e87c61adf4cb3d83ed8330d705498"),
+                           ("192.168.1.20", "b76ea4923c8b96d282e632adaab609965345a059d9a33f5017bcc166749bdf77")):
+            arc = plm.build(lsnap, b"OURTAGS", pl, host=host)
+            check(sha(arc) == want, f"a made-up party lobby archive for {host or 'the default host'} as "
+                                    f"pvplobby_test.go pins it ({len(arc)} bytes)")
+    if game:
+        psrc = os.path.join(game, "game", "Data", "Battlegrounds.snap")
+        pbuilt = plm.build(psrc, spec=pl)
+        tmp = tempfile.NamedTemporaryFile(suffix=".snap", delete=False)
+        tmp.write(pbuilt)
+        tmp.close()
+        back = snap.Snap(tmp.name)
+        praw = back.read(back.entries[0])
+        pchan = back.read(back.entries[1])
+        os.remove(tmp.name)
+        ids, names, depths, _ = plm.scan(zlib.decompress(praw[8:]))
+        check(back.entries[0].name == pl.movie_path and "PartyRegion" in names and "maxis.PVPLobbyUI" in names and
+              2000 in ids and 2000 in depths and back.entries[1].name == plm.CHANNEL_PATH and
+              pchan == plm.channel_file(),
+              f"the player's own party lobby movie patched ({len(pbuilt)} bytes, SHA-256 {sha(pbuilt)[:16]})")
+        if os.environ.get("DAWNGATE_PVPLOBBY_GO"):  # moviepatch's TestBuildPVPLobby854 output
+            with open(os.environ["DAWNGATE_PVPLOBBY_GO"], "rb") as f:
+                check(f.read() == pbuilt, "the Go setup's zz_PVPLobby.snap is the same")
+
     # the item shop's inline refund: the same patcher with its spec
     rs = plm.SPECS["itemshop"]
     rtags = plm.read_tags(rs.tags)
@@ -393,8 +475,24 @@ def main(argv):
           plm._pairs(ltags, lt[2][2], lt[2][3]) == [(2001, "LobbyReady")] and
           ltags[lt[3][2]:lt[3][3]] == bytes([0x06, 0]) + struct.pack("<HH", 2001, 2001) + b"\0" and
           b"lobby.setReady" in ltags and b"customMatchLobby" in ltags and b"Channel/dgchannel.json" in ltags and
-          b"~#" not in ltags and b"ChatManager" not in ltags,
+          b"~#" not in ltags,
           "lobby_tags.hex: DefineSprite, DoABC, SymbolClass 2001 -> LobbyReady, PlaceObject3 at 2001")
+    # DRAFT2c's DraftSound (compiled into the same ABC): the music by name, the turn sounds, the chat switch, the speaker
+    # button's call. The chat manager is reached only from the draft's events, i.e. while the lobby shows (READY2's
+    # rule: never before the screen that uses it shows).
+    check(b"Play_Music_Shaper_Select" in ltags and b"Stop_Music_Shaper_Select" in ltags and
+          b"Global.PlaySound" in ltags and b"Global.OnInteractEvent" in ltags and b"SwitchToChannel" in ltags and
+          b"maxis.chat.manager.ChatManager" in ltags and b"draft.music" in ltags and b"musicOff" in ltags and
+          b"UnMute_Shaper_Select_Music" not in ltags,
+          "lobby_tags.hex: DraftSound's music, turn sounds, team chat and speaker button (never an UnMute)")
+    # The chat manager is allowed in the lobby's ABC for one thing only (the user's decision of 2026-11-11: a drafter's
+    # lobby chat switches to the team channel by itself during the draft, DRAFT2c): customGameChatWindow's
+    # SwitchToChannel("team"|"lobby"). The chat stays no data channel of ours: nothing that sends, writes, reads or joins.
+    check(ltags.count(b"customGameChatWindow") == 1 and ltags.count(b"SwitchToChannel") == 1 and
+          all(w not in ltags for w in (b"SendMessage", b"SendChat", b"AppendMessage", b"m_chatText", b"htmlText",
+                                       b"JoinRoom", b"GetChatChannel", b"OnChatMemberMessage", b"m_currChannel",
+                                       b"MaxisChat")),
+          "lobby_tags.hex: the chat only switched between its team and lobby channels (no send, read or join)")
     # the Leaderboard's Rating column: the third class (character and depth 2002)
     rtags = plm.read_tags(parts[2].tags)
     rt = plm.tags_of(rtags, 0, len(rtags))

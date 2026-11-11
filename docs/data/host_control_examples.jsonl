@@ -85,3 +85,7 @@
 # RULES3: All Random in a pool: each human's list is its rolled shaper (flags 32, available), the host locks it at once;
 # "poolClasses" (omitted for the pool "all") are the pool's PlayerClasses, from which the host's bots draw.
 {"t":"startGame","roster":[{"user":2000000001,"name":"alpha","index":0,"team":1,"noun":"","bot":false,"shapers":[{"noun":"tidalqueen.Noun","flags":32}]}],"rules":{"pick":"random","shaperPool":"ranged","shop":"normal","itemPool":"all"},"fillTeams":5,"poolClasses":["PC_Artist","PC_TidalQueen"]}
+# DRAFT3: a human's declared role ("role", last in the entry, omitted when none: gladiator, tactician, hunter or
+# predator), here the draft's: the host presets it in the human's shaper select record, so its role page opens with
+# that role card selected (still changeable). A host that doesn't know the field ignores it.
+{"t":"startGame","roster":[{"user":2000000001,"name":"alpha","index":0,"team":1,"noun":"","bot":false,"shapers":[{"noun":"tidalqueen.Noun","flags":32}],"role":"hunter"},{"user":2000000002,"name":"bravo","index":5,"team":2,"noun":"","bot":false,"shapers":[{"noun":"alpha.Noun","flags":32}],"role":"gladiator"}],"rules":{"pick":"draft","shaperPool":"all","shop":"normal","itemPool":"all"},"fillTeams":0}

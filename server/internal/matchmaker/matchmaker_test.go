@@ -19,10 +19,10 @@ func newMM(c *clock, team, min int, fill time.Duration) *Matchmaker {
 
 var nextID int64
 
-// ticket makes a ticket with n players (ids from 100*id) in mode and region.
-func ticket(mode, region string, n int) *Ticket {
+// ticket makes a ticket with n players (ids from 100*id) in mode.
+func ticket(mode string, n int) *Ticket {
 	nextID++
-	t := &Ticket{ID: nextID, Mode: mode, Region: region}
+	t := &Ticket{ID: nextID, Mode: mode}
 	for i := 0; i < n; i++ {
 		t.Players = append(t.Players, Player{ID: nextID*100 + int64(i), Name: fmt.Sprintf("p%d_%d", nextID, i)})
 	}
@@ -54,12 +54,12 @@ func TestFullMatchStartsAtOnce(t *testing.T) {
 	m := newMM(c, 5, 10, time.Hour) // no early start
 	nextID = 0
 	for i := 0; i < 9; i++ {
-		mustAdd(t, m, ticket("pvp", "na", 1))
+		mustAdd(t, m, ticket("pvp", 1))
 	}
 	if ms, _ := m.Tick(); len(ms) != 0 {
 		t.Fatalf("9 players: %d matches", len(ms))
 	}
-	mustAdd(t, m, ticket("pvp", "na", 1))
+	mustAdd(t, m, ticket("pvp", 1))
 	ms, ex := m.Tick()
 	if len(ms) != 1 || len(ex) != 0 {
 		t.Fatalf("got %d matches, %d expired", len(ms), len(ex))
@@ -78,7 +78,7 @@ func TestTeamSizes(t *testing.T) {
 		c := newClock()
 		m := newMM(c, size, 2*size, 0)
 		for i := 0; i < 2*size+1; i++ {
-			mustAdd(t, m, ticket("pvp", "", 1))
+			mustAdd(t, m, ticket("pvp", 1))
 		}
 		ms, _ := m.Tick()
 		if len(ms) != 1 || ms[0].Size(0) != size || ms[0].Size(1) != size || m.Len() != 1 {
@@ -98,7 +98,7 @@ func TestFillAfter(t *testing.T) {
 	c := newClock()
 	m := newMM(c, 5, 1, 10*time.Second)
 	nextID = 0
-	mustAdd(t, m, ticket("pvp", "na", 1))
+	mustAdd(t, m, ticket("pvp", 1))
 	if ms, _ := m.Tick(); len(ms) != 0 {
 		t.Fatal("started before FillAfter")
 	}
@@ -106,7 +106,7 @@ func TestFillAfter(t *testing.T) {
 		t.Errorf("next deadline %v", d)
 	}
 	c.advance(5 * time.Second)
-	mustAdd(t, m, ticket("pvp", "na", 1))
+	mustAdd(t, m, ticket("pvp", 1))
 	c.advance(5 * time.Second)
 	ms, _ := m.Tick()
 	if len(ms) != 1 || teams(ms[0]) != "[1|2]" || ms[0].Full {
@@ -114,7 +114,7 @@ func TestFillAfter(t *testing.T) {
 	}
 	// FillAfter 0 and MinPlayers 1: at once
 	m = newMM(c, 5, 1, 0)
-	mustAdd(t, m, ticket("pvp", "", 1))
+	mustAdd(t, m, ticket("pvp", 1))
 	if ms, _ := m.Tick(); len(ms) != 1 || ms[0].Size(0) != 1 || ms[0].Size(1) != 0 {
 		t.Fatalf("instant match %v", ms)
 	}
@@ -125,13 +125,13 @@ func TestMinPlayers(t *testing.T) {
 	c := newClock()
 	m := newMM(c, 5, 4, time.Second)
 	for i := 0; i < 3; i++ {
-		mustAdd(t, m, ticket("pvp", "", 1))
+		mustAdd(t, m, ticket("pvp", 1))
 	}
 	c.advance(time.Minute)
 	if ms, _ := m.Tick(); len(ms) != 0 {
 		t.Fatal("started with 3 of 4")
 	}
-	mustAdd(t, m, ticket("pvp", "", 1)) // the new one hasn't waited, but the anchor has
+	mustAdd(t, m, ticket("pvp", 1)) // the new one hasn't waited, but the anchor has
 	if ms, _ := m.Tick(); len(ms) != 1 || ms[0].Size(0) != 2 || ms[0].Size(1) != 2 {
 		t.Fatalf("matches %v", ms)
 	}
@@ -142,7 +142,7 @@ func TestGroups(t *testing.T) {
 	c := newClock()
 	m := newMM(c, 5, 10, time.Hour)
 	nextID = 0
-	mustAdd(t, m, ticket("pvp", "", 3), ticket("pvp", "", 3), ticket("pvp", "", 3), ticket("pvp", "", 2), ticket("pvp", "", 2))
+	mustAdd(t, m, ticket("pvp", 3), ticket("pvp", 3), ticket("pvp", 3), ticket("pvp", 2), ticket("pvp", 2))
 	ms, _ := m.Tick()
 	if len(ms) != 1 || teams(ms[0]) != "[1 4|2 5]" {
 		t.Fatalf("matches %v", ms)
@@ -150,7 +150,7 @@ func TestGroups(t *testing.T) {
 	if left, ok := m.Find(300); !ok || left.ID != 3 || m.Len() != 1 {
 		t.Errorf("left %v %v", left, ok)
 	}
-	if err := m.Add(ticket("pvp", "", 6)); !errors.Is(err, ErrTooBig) {
+	if err := m.Add(ticket("pvp", 6)); !errors.Is(err, ErrTooBig) {
 		t.Errorf("6-player group: %v", err)
 	}
 	if err := m.Add(&Ticket{ID: 99}); !errors.Is(err, ErrEmpty) {
@@ -158,30 +158,23 @@ func TestGroups(t *testing.T) {
 	}
 }
 
-// Modes never meet; regions meet only if equal or one side is "any".
-func TestModesAndRegions(t *testing.T) {
+// Modes never meet; every ticket of a mode is in one queue (PREF1: regions don't split it, the match's region is the
+// vote of its players, decided by the Blaze side).
+func TestModesAndOneQueue(t *testing.T) {
 	c := newClock()
 	m := newMM(c, 1, 2, time.Hour)
 	nextID = 0
-	mustAdd(t, m, ticket("pvp", "na", 1), ticket("pvp", "eu", 1), ticket("other", "na", 1))
+	mustAdd(t, m, ticket("pvp", 1), ticket("other", 1))
 	if ms, _ := m.Tick(); len(ms) != 0 {
-		t.Fatalf("matched across region or mode: %v", teams(ms[0]))
+		t.Fatalf("matched across modes: %v", teams(ms[0]))
 	}
-	mustAdd(t, m, ticket("pvp", "", 1)) // any region: joins the oldest compatible (na)
+	mustAdd(t, m, ticket("pvp", 1), ticket("pvp", 1)) // the next pvp ticket meets the oldest
 	ms, _ := m.Tick()
-	if len(ms) != 1 || teams(ms[0]) != "[1|4]" || ms[0].Region != "na" {
+	if len(ms) != 1 || teams(ms[0]) != "[1|3]" || ms[0].Mode != "pvp" {
 		t.Fatalf("matches %v", ms)
 	}
-	mustAdd(t, m, ticket("pvp", "eu", 1))
-	ms, _ = m.Tick()
-	if len(ms) != 1 || teams(ms[0]) != "[2|5]" || ms[0].Region != "eu" {
-		t.Fatalf("eu match %v", ms)
-	}
-	// an "any" anchor takes its region from the first ticket that has one
-	m = newMM(c, 1, 2, 0)
-	mustAdd(t, m, ticket("pvp", "", 1), ticket("pvp", "eu", 1))
-	if ms, _ := m.Tick(); len(ms) != 1 || ms[0].Region != "eu" {
-		t.Fatalf("any + eu: %v", ms)
+	if m.Len() != 2 {
+		t.Errorf("%d left in the queue, want 2 (ticket 4 and the other mode's)", m.Len())
 	}
 }
 
@@ -189,7 +182,7 @@ func TestDuplicatesCancelAndTimeout(t *testing.T) {
 	c := newClock()
 	m := newMM(c, 5, 10, time.Hour)
 	nextID = 0
-	a := ticket("pvp", "", 2)
+	a := ticket("pvp", 2)
 	mustAdd(t, m, a)
 	if err := m.Add(&Ticket{ID: 50, Players: []Player{{ID: a.Players[1].ID}}}); !errors.Is(err, ErrAlreadyQueued) {
 		t.Errorf("player twice: %v", err)
@@ -203,9 +196,9 @@ func TestDuplicatesCancelAndTimeout(t *testing.T) {
 	if _, ok := m.Remove(a.ID); ok {
 		t.Error("removed twice")
 	}
-	b := ticket("pvp", "", 1)
+	b := ticket("pvp", 1)
 	b.Timeout = 30 * time.Second
-	mustAdd(t, m, b, ticket("pvp", "", 1))
+	mustAdd(t, m, b, ticket("pvp", 1))
 	if d := m.NextDeadline(); !d.Equal(c.t.Add(30 * time.Second)) {
 		t.Errorf("next deadline %v", d)
 	}
@@ -221,7 +214,7 @@ func TestMaxWait(t *testing.T) {
 	c := newClock()
 	m := New(Config{TeamSize: 5, MinPlayers: 10, FillAfter: time.Hour, MaxWait: 20 * time.Second, Now: c.now})
 	nextID = 0
-	long, none, short := ticket("pvp", "", 1), ticket("pvp", "", 1), ticket("pvp", "", 1)
+	long, none, short := ticket("pvp", 1), ticket("pvp", 1), ticket("pvp", 1)
 	long.Timeout = 3 * time.Hour // the client's DUR
 	short.Timeout = 10 * time.Second
 	mustAdd(t, m, long, none, short)
@@ -243,7 +236,7 @@ func TestSeveralMatchesPerTick(t *testing.T) {
 	m := newMM(c, 1, 2, time.Hour)
 	nextID = 0
 	for i := 0; i < 5; i++ {
-		mustAdd(t, m, ticket("pvp", "", 1))
+		mustAdd(t, m, ticket("pvp", 1))
 	}
 	ms, _ := m.Tick()
 	if len(ms) != 2 || teams(ms[0]) != "[1|2]" || teams(ms[1]) != "[3|4]" || m.Len() != 1 {
@@ -259,22 +252,22 @@ func TestFillExtend(t *testing.T) {
 	start := c.t
 	m := New(Config{TeamSize: 5, MinPlayers: 1, FillAfter: 90 * time.Second, FillExtend: 30 * time.Second, Now: c.now})
 	nextID = 0
-	mustAdd(t, m, ticket("pvp", "", 1))
+	mustAdd(t, m, ticket("pvp", 1))
 	if d := m.NextDeadline(); !d.Equal(start.Add(90 * time.Second)) {
 		t.Fatalf("next deadline %v", d.Sub(start))
 	}
 	// joins with more than 30 s left change nothing
 	c.t = start.Add(10 * time.Second)
-	mustAdd(t, m, ticket("pvp", "", 1))
+	mustAdd(t, m, ticket("pvp", 1))
 	c.t = start.Add(60 * time.Second)
-	mustAdd(t, m, ticket("pvp", "", 1))
+	mustAdd(t, m, ticket("pvp", 1))
 	if d := m.NextDeadline().Sub(start); d != 90*time.Second {
 		t.Fatalf("deadline after early joins %v", d)
 	}
 	// the user's case: three join at once with 10 s left: 30 s from their join, once, not 3 × 30 s
 	c.t = start.Add(80 * time.Second)
 	for i := 0; i < 3; i++ {
-		mustAdd(t, m, ticket("pvp", "", 1))
+		mustAdd(t, m, ticket("pvp", 1))
 	}
 	if d := m.NextDeadline().Sub(start); d != 110*time.Second {
 		t.Fatalf("deadline after three late joins %v", d)
@@ -291,13 +284,13 @@ func TestFillExtend(t *testing.T) {
 	// joins just in time: each lifts the time left to 30 s
 	c.t = start
 	nextID = 0
-	mustAdd(t, m, ticket("pvp", "", 1))
+	mustAdd(t, m, ticket("pvp", 1))
 	for i := 0; i < 8; i++ { // each joins 1 s before the deadline so far
 		c.t = m.NextDeadline().Add(-time.Second)
 		if ms, _ := m.Tick(); len(ms) != 0 {
 			t.Fatalf("join %d: started early", i)
 		}
-		mustAdd(t, m, ticket("pvp", "", 1))
+		mustAdd(t, m, ticket("pvp", 1))
 	}
 	if d := m.NextDeadline().Sub(start); d != 90*time.Second+8*29*time.Second {
 		t.Fatalf("deadline after 8 joins %v", d)
@@ -314,7 +307,7 @@ func TestFillExtend(t *testing.T) {
 	c.t = start
 	nextID = 0
 	for i := 0; i < 10; i++ {
-		mustAdd(t, m, ticket("pvp", "", 1))
+		mustAdd(t, m, ticket("pvp", 1))
 		c.advance(time.Second)
 	}
 	if ms, _ := m.Tick(); len(ms) != 1 || !ms[0].Full {
@@ -323,9 +316,9 @@ func TestFillExtend(t *testing.T) {
 
 	// a party is one join; a cancel takes its extension back
 	c.t = start
-	mustAdd(t, m, ticket("pvp", "", 1))
+	mustAdd(t, m, ticket("pvp", 1))
 	c.advance(80 * time.Second)
-	mustAdd(t, m, ticket("pvp", "", 3))
+	mustAdd(t, m, ticket("pvp", 3))
 	if d := m.NextDeadline().Sub(start); d != 110*time.Second {
 		t.Fatalf("deadline with a party %v", d)
 	}
@@ -344,9 +337,9 @@ func TestSnapshot(t *testing.T) {
 	if st := m.Snapshot("pvp"); len(st.Tickets) != 0 || st.Players != 0 || !st.StartsAt.IsZero() || st.Capacity != 10 {
 		t.Fatalf("empty queue %+v", st)
 	}
-	mustAdd(t, m, ticket("pvp", "", 1))
+	mustAdd(t, m, ticket("pvp", 1))
 	c.advance(10 * time.Second)
-	mustAdd(t, m, ticket("pvp", "", 3), ticket("custom", "", 1))
+	mustAdd(t, m, ticket("pvp", 3), ticket("custom", 1))
 	st := m.Snapshot("pvp")
 	if len(st.Tickets) != 2 || st.Players != 4 || st.Tickets[1].Players[0].Name != "p2_0" || !st.Tickets[0].Queued.Equal(start) {
 		t.Fatalf("snapshot %+v", st)
@@ -358,13 +351,13 @@ func TestSnapshot(t *testing.T) {
 		t.Fatalf("custom %+v", st)
 	}
 	// a full match starts now
-	mustAdd(t, m, ticket("pvp", "", 5), ticket("pvp", "", 1))
+	mustAdd(t, m, ticket("pvp", 5), ticket("pvp", 1))
 	if st := m.Snapshot("pvp"); st.Players != 10 || !st.StartsAt.Equal(c.t) {
 		t.Fatalf("full: %+v", st)
 	}
 	// fewer than MinPlayers: no start time
 	m2 := New(Config{TeamSize: 5, MinPlayers: 2, FillAfter: time.Minute, Now: c.now})
-	mustAdd(t, m2, ticket("pvp", "", 1))
+	mustAdd(t, m2, ticket("pvp", 1))
 	if st := m2.Snapshot("pvp"); st.Players != 1 || !st.StartsAt.IsZero() {
 		t.Fatalf("below MinPlayers %+v", st)
 	}

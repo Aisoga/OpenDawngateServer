@@ -120,6 +120,13 @@ struct ShaperSelectPlayer {
   // RULES3 (All Random): a human whose list is the shaper the server rolled for it: its record is locked to that shaper
   // as soon as its client's shaper select UI is up (ShaperSelectConfig::lockAtOnceAnswer says how), not at its lock-in.
   bool lockAtOnce = false;
+  // DRAFT3: a human's declared role (startGame's roster `role`, the draft's), 0-3; -1 = none. It is the human's record
+  // role from the start (C8 03 byte 9, in its team's records at its C8 02), so its client opens the role page with that
+  // role card selected: on entering phase 2 ShaperSelect_SetPhase 0x005201B0 selects (SetActiveRole) and sends (C8 07)
+  // the first of the slot's preferred roles, or the record's role when the player ticked none. The player can still
+  // pick another role card (C8 07), as always until its role lock. The bots' draft counts it as the role the human
+  // said (ShaperDraftHuman::roleCard). Ignored for a scripted player (its plan has its role).
+  int presetRole = -1;
 };
 
 // IMatch::ShaperSelectSetup fills this in.
@@ -151,6 +158,12 @@ struct ShaperSelectConfig {
   // first C8 after C8 02, or lateSkinsHoldMs, at least kLockAtOnceWaitMs, after its C8 02): before the movie has loaded
   // the client drops a phase change and the skins would crash it (REJOINSS).
   bool lockAtOnceAnswer = true;
+  // DRAFT3: and never before this many ms after its C8 02, even with its UI up. A lock answer that comes too soon (its
+  // first C8 0A follows its C8 02 by 0.2-0.3 s) races the client's first slot refresh: entering phase 2,
+  // ShaperSelect_SetPhase 0x005201B0 finds no slot of its own player yet, so it selects no role card (an empty role
+  // page, no card lit) and sends no C8 07 (about half of the lock-at-once runs before DRAFT3). Its own lock-in, seconds
+  // later, never missed. 0 = the old behaviour (at its first C8 after C8 02).
+  int lockAtOnceMinMs = 2000;
 };
 constexpr int kLockAtOnceWaitMs = 3000;
 
@@ -337,6 +350,7 @@ class ShaperSelect {
   int64_t draftAt_ = 0;
   int64_t lastHumanLock_ = 0;
   bool lockAtOnceAnswer_ = true;  // RULES3
+  int lockAtOnceMinMs_ = 2000;     // DRAFT3
   void LockAtOnce(int64_t now, ISender& out);
 };
 

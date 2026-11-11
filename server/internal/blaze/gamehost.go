@@ -248,8 +248,16 @@ func (s *Server) launchHostedGame(g Game, mode string, fillTeams int, players []
 		spec.Roster = lobbyRoster(players, g.Attrs) // B15: the lobby's slots (team blocks, spectators 10-14)
 	}
 	s.shaperSelectSpec(&spec, players) // D3-live step 4: with --shaper-select
+	// PREF1: the region by the players' Preferred Regions (preferred.go): a custom game's was read at its create, a
+	// practice game's is its player's, a PvP match's the vote of its humans
+	want := ""
+	if custom != nil {
+		want = custom.want
+	} else {
+		want = s.wantedBy(fmt.Sprintf("game %d", g.ID), hostedVoters(players))
+	}
 	s.hosted.add(hg)
-	mt, err := s.startHost(spec, hg.events(), custom) // M27: a custom game in its creator's region (regions.go)
+	mt, err := s.startHost(spec, hg.events(), want)
 	if err != nil {
 		s.hosted.remove(g.ID)
 		s.Log.Logf("blaze", "   game %d %q: no match host (%v); error reply", g.ID, g.Name, err)

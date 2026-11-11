@@ -99,7 +99,7 @@ type LobbyStatePlayer struct {
 // receiver's.
 type LobbyState struct {
 	Players []LobbyStatePlayer `json:"players"`
-	// M27: where the game runs when that isn't where its creator wanted (regions.go); absent otherwise
+	// M27, PREF1: where the game runs, with the notice when that isn't where it was wanted (regions.go)
 	Region *LobbyRegion `json:"region,omitempty"`
 
 	Rules *LobbyRules `json:"rules,omitempty"`
@@ -112,17 +112,11 @@ func (s *Server) AttachUI(ui *uichannel.Server) {
 	s.rulesGap = lobbyRulesGap
 	ui.Identify = s.identifyUI
 	ui.OnDisconnect = s.uiDisconnected
+	ui.Greet = s.regionGreeting           // PREF1: region.state at every connect (preferred.go)
+	ui.Handle(CallRegionSet, s.regionSet) // PREF1
 	ui.Handle(CallLobbyEnter, func(user int64, _ json.RawMessage) error { return s.lobbyEnter(user) })
 	ui.Handle(CallLobbySetRules, func(user int64, args json.RawMessage) error { return s.lobbySetRules(user, args) })
-	for call, kind := range map[string]string{CallDraftBan: rules.DraftBan, CallDraftPick: rules.DraftPick} { // RULES5b
-		ui.Handle(call, func(user int64, args json.RawMessage) error {
-			shaper, err := parseDraftArgs(args)
-			if err != nil {
-				return err
-			}
-			return s.draftCall(user, kind, shaper)
-		})
-	}
+	s.attachDraftCalls(ui) // RULES5b, DRAFT1 (draft.go)
 	ui.Handle(CallLobbySetReady, func(user int64, args json.RawMessage) error {
 		var a struct {
 			Ready *bool `json:"ready"`

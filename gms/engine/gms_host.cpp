@@ -973,6 +973,9 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     const std::string pick = hostctl::Active() ? hostctl::StartPick() : std::string();
     const bool lockAtOnce = gms::rules::PickLocksAtOnce(pick);
     config->lockAtOnceAnswer = HostOptionInt("random_lock_answer", 1) != 0;
+    // DRAFT3: [host] random_lock_min_ms (2000): the lock at once waits at least this long after the client's C8 02, so
+    // its role page opens with its role card selected (too soon, the client finds no slot of its own yet); 0 = before
+    config->lockAtOnceMinMs = HostOptionInt("random_lock_min_ms", 2000);
     if (lockAtOnce)
       gms::Logf("%s match: shaper select: %s (startGame's rules): every human's shaper is locked at once, %s",
                 gms::Clock().c_str(), gms::rules::PickName(pick),
@@ -982,19 +985,25 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     std::string humans;
     if (hostctl::Active() && hostctl::HasGame())
       for (const dggms::control::RosterEntry& e : hostctl::Game().roster) {
-        if (e.bot || !gms::HasShaperContent(e) || e.index < 0 || e.index >= static_cast<std::int64_t>(kMaxPlayers))
+        // DRAFT3: a human with a declared role (startGame's roster `role`) gets it preset in its record, also without
+        // content of its own (then the [host] list, as for any human without an entry)
+        const int role = gms::ShaperRoleFromRoster(e);
+        if (e.bot || (!gms::HasShaperContent(e) && role < 0) || e.index < 0 ||
+            e.index >= static_cast<std::int64_t>(kMaxPlayers))
           continue;
         gms::ShaperSelectPlayer p;
         p.gameplayIndex = static_cast<uint8_t>(e.index);
         p.team = static_cast<uint8_t>(e.team);
-        p.content = gms::ShaperContentFromRoster(e);
+        p.content = gms::HasShaperContent(e) ? gms::ShaperContentFromRoster(e) : config->humanDefault;
         p.lockAtOnce = lockAtOnce;  // RULES3
+        p.presetRole = role;
         config->players.push_back(p);
-        char buf[160];
+        char buf[200];
         std::snprintf(buf, sizeof buf,
-                      " [%lld: user %lld, %zu shapers, skins of %zu, %zu saved, %zu wards, %zu announcers, %zu perk pages]",
+                      " [%lld: user %lld, %zu shapers, skins of %zu, %zu saved, %zu wards, %zu announcers, %zu perk pages%s%s]",
                       static_cast<long long>(e.index), static_cast<long long>(e.user), e.shapers.size(), e.skins.size(),
-                      e.savedSkins.size(), e.wards.size(), e.announcers.size(), e.perkPages.size());
+                      e.savedSkins.size(), e.wards.size(), e.announcers.size(), e.perkPages.size(),
+                      role >= 0 ? ", role " : "", role >= 0 ? e.role.c_str() : "");
         humans += buf;
       }
     if (!humans.empty())

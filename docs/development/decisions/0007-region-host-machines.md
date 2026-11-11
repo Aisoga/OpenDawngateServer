@@ -32,3 +32,13 @@
 - A host machine's operator is trusted with the results of its matches and sees its players' addresses, as any match host's operator is.
 - A break of the link between the machines ends that machine's running matches, as a lost agent always did.
 - A player needs nothing new: the same Start-Client, one login, the region choice the game already has.
+
+## Addendum: Preferred Region (2026-11-10)
+
+The maintainer asked for the region choice to work differently, and the server now decides as follows. Decisions 1 to 6 stand; only who picks the region changed.
+
+- **The choice is the server's, not the game's.** Each player has a Preferred Region, stored with the account and set over the UI channel. The game's own region buttons and its ping sites decide nothing any more: their two regions are fixed in the game's data, while the server's regions are whatever its operator configures. The server lists its regions with their names (the operator's, in `Start-Server.ini`), and every account starts on the main server's region.
+- **Every kind of game uses it, not only custom games.** A custom game runs in its creator's region, chosen when it is created. Solo practice runs in its player's. A practice group and a matchmade PvP game run where most of their players want: one vote per human, none for bots, and any tie goes to the main server's region. Matchmaking has one queue for all regions; the vote happens once a match has formed.
+- **Anyone who can't reach a host machine keeps the game home.** A host machine is reached only through its own gateway, which needs a current Start-Client with the tunnel. If any player of a game lacks that, the game runs on the main server, whatever the vote said.
+- **Why one queue, not one per region:** a server with few players would split them further, and a player's region is a preference about latency, not a rule. The vote keeps the majority's latency low, and the tie rule makes the main server the default.
+- **What a server without regions sees:** one region, the server itself. The game screens hide the choice then.

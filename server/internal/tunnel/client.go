@@ -85,8 +85,8 @@ type Client struct {
 	// hello: the server lets the player into a game on a map of its maps folder only with its own version. An empty
 	// list names a copy without such maps; nil names no list (a version 2 hello: the server keeps its release rule).
 	Maps []InstalledMap
-	// helloVer is the session hello's version this client writes: sessionVersion, or releaseVersion after a gateway
-	// of an earlier release refused the maps' version (connect)
+	// helloVer is the session hello's version this client writes: firstHello's, or a lower one after a gateway of an
+	// earlier release refused it (connect)
 	helloVer atomic.Uint32
 
 	// Ticket, when set, opens a session to a match gateway (a host machine's; Start-Client's away session, front_away.go):
@@ -99,6 +99,11 @@ type Client struct {
 	// port's datagrams to a host machine's gateway, and back. They run on the control connection's reader: keep them short.
 	OnAway func(port int, a Away)
 	OnHome func(port int)
+	// Divert, when set, is asked first for each of the game's datagrams to one of this client's own UDP listeners (not
+	// External mode): true takes it (Start-Client's path without the front sends an away port's datagrams through a
+	// session to the match gateway, launcher/front_away.go), false sends it through this client's session. WriteLocal
+	// sends the answers from that port's listener.
+	Divert func(port int, src *net.UDPAddr, data []byte) bool
 
 	HeartbeatEvery, HeartbeatTimeout, Keepalive, DialTimeout time.Duration
 
@@ -350,6 +355,19 @@ func (c *Client) whileContext(conn net.Conn) (stop func() bool) {
 	return context.AfterFunc(c.Context, func() { conn.Close() })
 }
 
+// firstHello is the session hello's version before a gateway refused one: sessionVersion (awayHelloVersion) only for a
+// client that reads away and home (OnAway set) or carries a ticket, else mapsVersion. A version 4 hello tells the main
+// server this client follows an away message (tunnel.Addr.TakesAway); a client without OnAway (dgserver's
+// --tunnel-client) would drop the match port's datagrams after one, so the main server keeps its players' games home
+// instead (PREF4: pref2_s1bc's solo practice went to na1 and was aborted). Start-Client's path without the front sets
+// OnAway since PREF5 (launcher.startTunnel), its front always did.
+func (c *Client) firstHello() byte {
+	if c.OnAway != nil || len(c.Ticket) > 0 {
+		return sessionVersion
+	}
+	return mapsVersion
+}
+
 // connect opens a control session (resume: the last one's id and token).
 func (c *Client) connect(resumeID uint64, resumeToken [16]byte) (*clientSession, sessionReply, error) {
 	var rep sessionReply
@@ -361,7 +379,7 @@ func (c *Client) connect(resumeID uint64, resumeToken [16]byte) (*clientSession,
 	defer c.whileContext(conn)()
 	ver := byte(c.helloVer.Load())
 	if ver == 0 {
-		ver = sessionVersion
+		ver = c.firstHello()
 	}
 	if c.Maps == nil && ver == mapsVersion {
 		ver = releaseVersion
@@ -678,8 +696,22 @@ func (c *Client) udpListenerLoop(port int, ln *net.UDPConn) {
 			}
 			continue
 		}
+		if c.Divert != nil && c.Divert(port, src, buf[:n]) {
+			continue
+		}
 		c.SendDatagram(port, src, buf[:n])
 	}
+}
+
+// WriteLocal sends a datagram to a game socket on this PC from this client's own listener of port (not External mode;
+// the answers of a Divert's away session). Only to a loopback address; false: not sent (no such listener).
+func (c *Client) WriteLocal(port int, dst *net.UDPAddr, payload []byte) bool {
+	ln := c.udpLns[port] // written by Start before any datagram, only read after
+	if ln == nil || c.External || dst == nil || !dst.IP.IsLoopback() {
+		return false
+	}
+	_, err := ln.WriteToUDP(payload, dst)
+	return err == nil
 }
 
 // SendDatagram carries one of the game's datagrams to a server port through the channel: src is the game socket

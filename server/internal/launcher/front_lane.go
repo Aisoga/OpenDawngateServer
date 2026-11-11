@@ -7,11 +7,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"dawngate/server/internal/dgserver"
+	"dawngate/server/internal/logging"
 	"dawngate/server/internal/mapdist"
 	"dawngate/server/internal/setup"
 	"dawngate/server/internal/setup/mapc"
+	"dawngate/server/internal/tunnel"
 )
 
 // dgserver --tunnel-client <gateway> --tunnel-front <folder> (a test aid for the lanes, which run the game from their
@@ -19,7 +22,13 @@ import (
 // and trusted keys in <folder> (Dawngate-Data's layout: servers\bookmarks.json, servers\<address>\gateway.pin), the
 // --tunnel-client gateway in the list (added when missing, its key trusted) and preselected, the login screen's list
 // written into --front-copy.
-func init() { dgserver.RunFront = runLaneFront }
+func init() {
+	dgserver.RunFront = runLaneFront
+	// --tunnel-client --tunnel-away (PREF5): the plain tunnel with Start-Client's away route without the front
+	dgserver.TunnelAway = func(log *logging.Log, c *tunnel.Client) func() {
+		return awayWithoutFront(log, c, 10*time.Second).Close
+	}
+}
 
 func runLaneFront(c dgserver.FrontConfig) (func(), []int, error) {
 	l := setup.Layout{Root: c.Folder}

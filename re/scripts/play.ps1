@@ -18,6 +18,8 @@
     map files    its MM_Map_v3, maps\ packages (zz_<name>.snap), zz_BotProfiles.snap, zz_MatchOptions.snap   -> installs them (go run .\tools\mapsetup --maps maps\ --client; MAPED2b)
     chat rooms   its game\Data\zz_Chat.snap is current (the rooms the server opens by default, ROOMS3) -> installs it (setup_lane.py's step)
     review tabs  its game\Data\zz_AfterActionReview.snap is current (the After Action Review's tabs, MHIST4) -> installs it (setup_lane.py's step)
+    region       its game\Data\zz_MatchType.snap is current (the play screen's Preferred Region, PREF2)  -> installs it (setup_lane.py's step)
+    party region its game\Data\zz_PVPLobby.snap is current (the party lobby's Preferred Region, PREF3b)  -> installs it (setup_lane.py's step)
     shop refund  its game\Data\zz_ItemShop.snap is current (the item shop's inline refund, REFUND2)  -> installs it (setup_lane.py's step)
     collection   its game\Data\zz_CollectionItems.snap is current (the Collection's Items, COLLITEMS2; with server\data\content.json) -> installs it (setup_lane.py's step)
     halloween    its game\Data\zz_Halloween.snap is current (halloween.py --check; HOLIDAY1)            -> installs it (halloween.py)
@@ -321,6 +323,40 @@ try {
                 '.venv\Scripts\python -I re\scripts\patch_login_movie.py --spec aftaction --host 127.0.0.1 client\run_854\Dawngate\game\Data\Battlegrounds.snap client\run_854\Dawngate\game\Data\zz_AfterActionReview.snap') }
         }
     }
+    # PREF2: the play screen's Preferred Region (a dropdown of the server's regions over the UI channel) comes from the
+    # added game\Data\zz_MatchType.snap with the channel of 127.0.0.1, byte for byte what setup_lane.py's
+    # match_type_step makes from the copy's own Battlegrounds.snap (setup_all.py's step too)
+    if ((Test-Path $Python) -and (Test-Path (Join-Path $ClientDir 'game\Data\Battlegrounds.snap'))) {
+        $data = Join-Path $ClientDir 'game\Data'
+        $mtCode = "import sys; sys.path.insert(0, sys.argv[1]); import setup_lane; m = []; setup_lane.match_type_step(sys.argv[2], '127.0.0.1', sys.argv[3] == 'check', m); sys.exit(1 if m else 0)"
+        & $Python -I -c $mtCode $PSScriptRoot $data 'check'
+        if ($LASTEXITCODE -eq 0) { Ok "the play screen's Preferred Region (game\Data\zz_MatchType.snap)" }
+        else {
+            Write-Host "  install  the play screen's Preferred Region (game\Data\zz_MatchType.snap)" -ForegroundColor Yellow
+            & $Python -I -c $mtCode $PSScriptRoot $data 'install' | ForEach-Object { Write-Host "           $_" -ForegroundColor Gray }
+            & $Python -I -c $mtCode $PSScriptRoot $data 'check'
+            if ($LASTEXITCODE -eq 0) { Ok "the play screen's Preferred Region (game\Data\zz_MatchType.snap)" }
+            else { Missing "installing the play screen's Preferred Region failed (is the game running from client\run_854?)" @(
+                '.venv\Scripts\python -I re\scripts\patch_login_movie.py --spec matchtype --host 127.0.0.1 client\run_854\Dawngate\game\Data\Battlegrounds.snap client\run_854\Dawngate\game\Data\zz_MatchType.snap') }
+        }
+    }
+    # PREF3b: the party lobby's Preferred Region (the player's own, read-only, over the UI channel) comes from the
+    # added game\Data\zz_PVPLobby.snap with the channel of 127.0.0.1, byte for byte what setup_lane.py's
+    # party_region_step makes from the copy's own Battlegrounds.snap (setup_all.py's step too)
+    if ((Test-Path $Python) -and (Test-Path (Join-Path $ClientDir 'game\Data\Battlegrounds.snap'))) {
+        $data = Join-Path $ClientDir 'game\Data'
+        $prCode = "import sys; sys.path.insert(0, sys.argv[1]); import setup_lane; m = []; setup_lane.party_region_step(sys.argv[2], '127.0.0.1', sys.argv[3] == 'check', m); sys.exit(1 if m else 0)"
+        & $Python -I -c $prCode $PSScriptRoot $data 'check'
+        if ($LASTEXITCODE -eq 0) { Ok "the party lobby's Preferred Region (game\Data\zz_PVPLobby.snap)" }
+        else {
+            Write-Host "  install  the party lobby's Preferred Region (game\Data\zz_PVPLobby.snap)" -ForegroundColor Yellow
+            & $Python -I -c $prCode $PSScriptRoot $data 'install' | ForEach-Object { Write-Host "           $_" -ForegroundColor Gray }
+            & $Python -I -c $prCode $PSScriptRoot $data 'check'
+            if ($LASTEXITCODE -eq 0) { Ok "the party lobby's Preferred Region (game\Data\zz_PVPLobby.snap)" }
+            else { Missing "installing the party lobby's Preferred Region failed (is the game running from client\run_854?)" @(
+                '.venv\Scripts\python -I re\scripts\patch_login_movie.py --spec pvplobby --host 127.0.0.1 client\run_854\Dawngate\game\Data\Battlegrounds.snap client\run_854\Dawngate\game\Data\zz_PVPLobby.snap') }
+        }
+    }
     # REFUND2: the item shop's inline refund (a badge on a purchase of this visit, Sell turned into Refund) comes from
     # the added game\Data\zz_ItemShop.snap, byte for byte what setup_lane.py's item_shop_step makes from the copy's own
     # HUD.snap (setup_all.py's step too)
@@ -344,7 +380,7 @@ try {
     $contentFile = Join-Path (Split-Path (Split-Path $PSScriptRoot)) 'server\data\content.json'
     if ((Test-Path $Python) -and (Test-Path (Join-Path $ClientDir 'game\Data\code.snap')) -and (Test-Path $contentFile)) {
         $data = Join-Path $ClientDir 'game\Data'
-        $collCode = "import sys; sys.path.insert(0, sys.argv[1]); import setup_lane; m = []; setup_lane.collection_step(sys.argv[2], sys.argv[3] == 'check', m); sys.exit(1 if m else 0)"
+        $collCode = "import sys; sys.path.insert(0, sys.argv[1]); import setup_lane; m = []; setup_lane.collection_step(sys.argv[2], '127.0.0.1', sys.argv[3] == 'check', m); sys.exit(1 if m else 0)"
         & $Python -I -c $collCode $PSScriptRoot $data 'check'
         if ($LASTEXITCODE -eq 0) { Ok "the Collection's items (game\Data\zz_CollectionItems.snap)" }
         else {
@@ -353,7 +389,7 @@ try {
             & $Python -I -c $collCode $PSScriptRoot $data 'check'
             if ($LASTEXITCODE -eq 0) { Ok "the Collection's items (game\Data\zz_CollectionItems.snap)" }
             else { Missing "installing the Collection's items failed (is the game running from client\run_854?)" @(
-                '.venv\Scripts\python -I re\scripts\patch_login_movie.py --spec collection --content server\data\content.json client\run_854\Dawngate\game\Data\code.snap client\run_854\Dawngate\game\Data\zz_CollectionItems.snap') }
+                '.venv\Scripts\python -I re\scripts\patch_login_movie.py --spec collection --host 127.0.0.1 --content server\data\content.json client\run_854\Dawngate\game\Data\code.snap client\run_854\Dawngate\game\Data\zz_CollectionItems.snap') }
         }
     }
     # HOLIDAY1: the Halloween decoration, shown when the server turns it on (dgserver --halloween)

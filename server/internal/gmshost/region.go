@@ -7,14 +7,16 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
-// Regions (M27): a server's host machines can stand in other regions (North America beside a European main server),
-// and a custom game runs in the region its creator chose. Every machine has a region: this machine the server's home
-// region (SetRegions), an agent's machine the one the server's configuration gives its name (an agent without one counts
-// as home, as the host machines of one network always did). StartIn starts a game in a wanted region; Start (PvP,
-// practice, practice groups, and a custom game wanted at home) uses the home region's machines only, and so does every
-// restart. Without a home region regions are off and every machine is a candidate, as before.
+// Regions (M27, M28): a server's host machines can stand in other regions (North America beside a European main
+// server), and a game runs in the region its players prefer (the Blaze side's choice: a custom game's creator's, the
+// vote of a PvP match's humans, ...). Every machine has a region: this machine the server's home region (SetRegions),
+// an agent's machine the one the server's configuration gives its name (an agent without one counts as home, as the
+// host machines of one network always did); each region has a display name (SetRegionNames). StartIn starts a game in
+// a wanted region; Start uses the home region's machines only, and so does every restart. Without a home region
+// regions are off and every machine is a candidate, as before.
 //
 // A game wanted in another region runs at home instead when that region can't take it, and the match says why
 // (Match.FellBack): no machine of the region registered (down; version when its last registration was refused for
@@ -47,6 +49,7 @@ type regionState struct {
 	machines map[string]string   // an agent's name -> its region
 	maps     map[string][]string // an agent's name -> the maps it offers (absent: not told, every map)
 	refused  map[string]string   // an agent's name -> why its last registration was refused (FellBackVersion)
+	names    map[string]string   // PREF1: a region's display name (SetRegionNames; absent: DefaultRegionName)
 	limit    time.Duration       // RegionLaunchTimeout (tests set it shorter)
 }
 
@@ -63,6 +66,66 @@ func (m *Manager) SetRegions(home string, machines map[string]string) {
 	for name, r := range machines {
 		m.reg.machines[name] = NormRegion(r)
 	}
+}
+
+// LocalRegion is the one region of a server without regions (no home region): its id on the UI channel, in the
+// browser's PSAS and in lobby.state (PREF1).
+const LocalRegion = "local"
+
+// MaxRegionName is the longest display name of a region, in characters.
+const MaxRegionName = 32
+
+// DefaultRegionName is a region's display name when the operator gave it none: the alias in capitals ("eu" -> "EU"),
+// LocalRegion's "Local".
+func DefaultRegionName(alias string) string {
+	if alias == LocalRegion {
+		return "Local"
+	}
+	return strings.ToUpper(alias)
+}
+
+// CheckRegionName says what is wrong with a region's display name ("" when nothing): 1-MaxRegionName printable
+// characters, no leading or trailing blank.
+func CheckRegionName(name string) string {
+	n := 0
+	for _, r := range name {
+		if !unicode.IsPrint(r) {
+			return "a region's name has a character that isn't printable"
+		}
+		n++
+	}
+	switch {
+	case n == 0:
+		return "a region's name is empty"
+	case n > MaxRegionName:
+		return fmt.Sprintf("a region's name is over %d characters", MaxRegionName)
+	case strings.TrimSpace(name) != name:
+		return "a region's name starts or ends with a blank"
+	}
+	return ""
+}
+
+// SetRegionNames gives regions their display names (PREF1, Start-Server.ini's region_names), by alias; a region left
+// out keeps DefaultRegionName. It works with regions off too (the name of LocalRegion).
+func (m *Manager) SetRegionNames(names map[string]string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reg.names = map[string]string{}
+	for alias, name := range names {
+		m.reg.names[NormRegion(alias)] = name
+	}
+}
+
+// RegionName is a region's display name (SetRegionNames, else DefaultRegionName).
+func (m *Manager) RegionName(alias string) string {
+	alias = NormRegion(alias)
+	m.mu.Lock()
+	name, ok := m.reg.names[alias]
+	m.mu.Unlock()
+	if ok && name != "" {
+		return name
+	}
+	return DefaultRegionName(alias)
 }
 
 // HomeRegion is the home region ("" = regions off).
@@ -159,8 +222,8 @@ func (mt *Match) RegionPlacement() (region, wanted, fellBack string) {
 	return mt.Region, mt.Wanted, mt.FellBack
 }
 
-// StartIn is Start for a game wanted in a region (a custom game, M27). The home region, an unknown region or regions
-// off: Start, on the home region's machines (and the warm pool). Another region: a machine of that region with the
+// StartIn is Start for a game wanted in a region (M27; every game since PREF1). The home region, an unknown region or
+// regions off: Start, on the home region's machines (and the warm pool). Another region: a machine of that region with the
 // game's map and the most free ports, launched within RegionLaunchTimeout; if that region can't take the game it starts
 // at home (Start) and the match records why (Match.FellBack, logged as "game N: wanted R, runs on S (H): why").
 func (m *Manager) StartIn(game CreateGame, ev Events, want Want) (*Match, error) {

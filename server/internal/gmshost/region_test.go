@@ -46,6 +46,36 @@ func wantPlacement(t *testing.T, mt *Match, site, region, wanted, fellBack strin
 	}
 }
 
+// PREF1: a region's display name is the operator's (SetRegionNames, also with regions off for LocalRegion), else its
+// alias in capitals; CheckRegionName keeps names short and printable.
+func TestRegionNames(t *testing.T) {
+	m := NewManager(Config{})
+	if got := m.RegionName(LocalRegion); got != "Local" {
+		t.Errorf("local: %q", got)
+	}
+	m.SetRegionNames(map[string]string{"local": "Our LAN"})
+	if got := m.RegionName("local"); got != "Our LAN" {
+		t.Errorf("a named local: %q", got)
+	}
+	m.SetRegions("eu", map[string]string{"na1": "na", "ap1": "ap"})
+	m.SetRegionNames(map[string]string{"EU": "Europe", "na": "NA (Virginia)"})
+	for alias, want := range map[string]string{"eu": "Europe", "na": "NA (Virginia)", "ap": "AP", "local": "Local"} {
+		if got := m.RegionName(alias); got != want {
+			t.Errorf("%s: %q, want %q", alias, got, want)
+		}
+	}
+	if got := m.Regions(); !reflect.DeepEqual(got, []string{"eu", "ap", "na"}) {
+		t.Errorf("Regions %v", got)
+	}
+	for name, ok := range map[string]bool{"Europe": true, "NA (Virginia)": true, "Ü": true, "": false, " Europe": false,
+		"Europe ": false, "a\tb": false, "a\nb": false, strings.Repeat("x", MaxRegionName): true,
+		strings.Repeat("ä", MaxRegionName): true, strings.Repeat("x", MaxRegionName+1): false} {
+		if why := CheckRegionName(name); (why == "") != ok {
+			t.Errorf("%q: %q, want ok %v", name, why, ok)
+		}
+	}
+}
+
 // A game wanted in North America runs on na1, one wanted at home or with no wish here; Start never picks na1, though it
 // has more free ports.
 func TestStartInRegion(t *testing.T) {

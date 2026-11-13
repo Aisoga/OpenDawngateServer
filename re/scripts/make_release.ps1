@@ -30,8 +30,9 @@
      BUILD.txt (commit, Go version, every file's SHA-256). The compiled classes of the server picker, the bot check box,
      the chat rooms opened by default and the After Action Review's tabs are checked to be in the SWF tags Start-Client.exe
      embeds (picker_tags.hex, matchoptions_tags.hex, chatrooms_tags.hex, aftaction_tags.hex, matchtype_tags.hex, pvplobby_tags.hex, itemshop_tags.hex,
-     collection_tags.hex, lobby_tags.hex, leaderboard_tags.hex: the Collection's class, the lobby's ready check and the
-     Leaderboard's Rating column go into the same movie),
+     collection_tags.hex, lobby_tags.hex, leaderboard_tags.hex, profile_tags.hex: the Collection's class, the lobby's
+     ready check, the Leaderboard's Rating column and the Profile's game-type tabs go into the same movie;
+     options_tags.hex, the Options menu's drag scroll check box),
      and those in
      the built Start-Client.exe; the notices name their AGPL sources and the development-only tools (the Flex SDK compiler, FFDec), which aren't shipped.
      The folder <Out>\<Name>-linux\ (unless -NoLinux): start-server, the same host\ files, dawngate.service (the
@@ -193,6 +194,8 @@ $shopRefund = Test-UiClass "the shop's inline refund" 'itemshop_tags.hex' 'items
 $collection = Test-UiClass "the Collection's items" 'collection_tags.hex' 'collection' 'CollectionItems'
 $lobbyReady = Test-UiClass "the custom lobby's ready check" 'lobby_tags.hex' 'lobby' 'LobbyReady'
 $leaderboardRating = Test-UiClass "the Leaderboard's Rating column" 'leaderboard_tags.hex' 'leaderboard' 'LeaderboardRating'
+$profileModes = Test-UiClass "the Profile's game-type tabs" 'profile_tags.hex' 'profile' 'ProfileModes'
+$dragOption = Test-UiClass "the Options menu's drag scroll check box" 'options_tags.hex' 'options' 'DragGrabOption'
 $tagsBytes = $picker.Bytes; $firstLine = $picker.First
 # start-server links the setup with the tags too (only Start-Client.exe uses them); its notice names them if it holds them
 $linuxPicker = $Linux -and ([IO.File]::ReadAllText((Join-Path $ldir 'start-server'), $latin1)).Contains($firstLine)

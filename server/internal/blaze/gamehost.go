@@ -141,6 +141,9 @@ type hostedGame struct {
 	// matchmaking setup context, matchmaking.go).
 	setup func(g Game, hp *hostedPlayer) []byte
 
+	// tilesMode is the game type whose ratings the players' cached tile ratings are (MMR2, sendLobbyState; "" =
+	// none read yet)
+	tilesMode string
 	// lobbySend makes a lobby.state's snapshot and its sends one step (sendLobbyState), so everyone hears the
 	// states in the order they were taken; without it a slower send (the ratings' read) could deliver an older
 	// state after a newer one, and a lobby would show it until the next change.
@@ -154,6 +157,12 @@ type hostedGame struct {
 	ended    bool
 	finishes map[int64]gmshost.PlayerFinish // the host's playerFinish per user (B7c), used at finishGame
 	held     map[int64]*heldRewards         // D8c: the rewards that wait for the karma vote, by user
+
+	// PROFILE3: the server sent abortGame because the players left (no players left, or only spectators: leave),
+	// so the host's end counts the game as a loss for each of them (leftgames.go); endedByAdmin: the admin page ended
+	// it first (EndHostedMatch), which counts for nobody
+	abandoned, endedByAdmin bool
+
 	// B15: a custom game's lobby (customgames.go); nil for practice and matchmade games. hg.game.Attrs is then the
 	// game's attribute map as it is now (setGameAttributes changes it), sorted the way the client looks keys up.
 	custom *customLobby
@@ -195,8 +204,10 @@ type hostedPlayer struct {
 	// RATING1: the player was in the game (not removed) when it went IN_GAME; a custom game's player who left its lobby
 	// before then has no seat in the match (matchLocked), so it isn't one of the humans the rating's rule counts
 	atStart bool
-	// the rating lobby.state shows for this player (0: none), read from the store once (ready.go): it can't change
-	// during a lobby, and a rejoin is a new hostedPlayer
+	// PROFILE3: when the player left the game on the Blaze side (leave; zero = never, or back since)
+	leftAt time.Time
+	// the rating lobby.state shows for this player (0: none), read from the store once per game type of the lobby
+	// (ready.go, hostedGame.tilesMode): it can't change during a lobby, and a rejoin is a new hostedPlayer
 	rating     int64
 	ratingRead bool
 }
@@ -357,6 +368,7 @@ func (hg *hostedGame) leave(conn *Conn, playerID, reason int64) bool {
 		if x.p.ID == playerID && x.conn == conn && !x.removed {
 			hp = x
 			x.removed = true
+			x.leftAt = hg.s.Now() // PROFILE3: a mass leave is told by these times (leftgames.go)
 		}
 		if !x.removed {
 			left++
@@ -377,6 +389,11 @@ func (hg *hostedGame) leave(conn *Conn, playerID, reason int64) bool {
 	name := removedReasonName(reason)
 	hg.s.Log.Logf("blaze", "   game %d: player %d left (%s); %d still in the game", hg.game.ID, playerID, name, left)
 	mt.RemovePlayer(playerID, name)
+	if left == 0 || spectatorsOnly > 0 {
+		hg.mu.Lock()
+		hg.abandoned = true // PROFILE3: the players left it; the host's end counts it (leftgames.go)
+		hg.mu.Unlock()
+	}
 	switch {
 	case left == 0:
 		mt.Abort("no players left")
@@ -610,6 +627,7 @@ func (hg *hostedGame) events() gmshost.Events {
 				hg.push(NotifyPlayerRemovedID, "NotifyPlayerRemoved", func(hp *hostedPlayer) []byte {
 					return PlayerRemovedNotification(gid, hp.p.ID, RemovedGameDestroyed)
 				})
+				hg.countLeftGame(o) // PROFILE3: a game its players left is a loss for each of them (leftgames.go)
 			}
 		},
 	}
@@ -630,7 +648,10 @@ func (hg *hostedGame) events() gmshost.Events {
 //
 // A player's result: won = its team (Blaze TIDX + 1) is finishGame's winner, unless the host's
 // playerFinish says otherwise (stats "won"); the match length is finishGame's durationMs. A player the
-// host sent no playerFinish for still gets the game counted, with no kills or assists.
+// host sent no playerFinish for still gets the game counted, with no kills or assists. PROFILE3: a player who left
+// before finishGame (not kicked) lost, whatever its team's result, when the game ended by a surrender or the
+// Guardian's death or ran LeftLossAfter (leaverLoses); the rating still scores the team's (RATING1). A game whose
+// players all left never finishes and is counted at the host's end (leftgames.go).
 //
 // D8c: in a game with a karma vote (progress.Game.KarmaVote: matchmade) the rewards are held (hg.held) until
 // the host's playerKarma for the player (grantHeld), so the karma votes count in the bag score; everything
@@ -643,14 +664,17 @@ func (hg *hostedGame) persist(mt *gmshost.Match, f gmshost.FinishGame) []afterGa
 	}
 	practice := hg.mode == gmshost.ModePractice
 	hg.mu.Lock()
-	ranked, withRules := hg.ranked(), hg.unratedRulesLocked()
+	ranked, withRules, unrated := hg.ranked(), hg.unratedRulesLocked(), hg.adminUnratedLocked()
 	var joined []*hostedPlayer
+	var leftEarly []bool // PROFILE3: left before finishGame (left, lost its connection; not kicked) in a game that counts it
+	leaverLoses := s.leaverLoses(f)
 	var pushes []afterGamePush
 	for _, hp := range hg.players {
 		// B15b: a custom game's spectator joins the GMS (the host's addPlayer) but plays nothing: no result, no
 		// history, no rewards
 		if hp.joined && !(hg.custom != nil && hp.p.Team == SpectatorTeam) {
 			joined = append(joined, hp)
+			leftEarly = append(leftEarly, leaverLoses && hg.leftByChoiceLocked(hp))
 		} else if hp.joined {
 			s.Log.Logf("blaze", "   account %d: game %d not stored (a spectator)", hp.userID, hg.game.ID)
 		}
@@ -658,16 +682,21 @@ func (hg *hostedGame) persist(mt *gmshost.Match, f gmshost.FinishGame) []afterGa
 	finishes := hg.finishes
 	game := hg.game
 	hg.mu.Unlock()
-	for _, hp := range joined {
+	for i, hp := range joined {
 		pf := finishes[hp.p.ID]
 		won := f.WinnerTeam != 0 && int(hp.p.Team)+1 == f.WinnerTeam
 		if v, ok := pf.Stats[progress.StatWon]; ok {
 			won = v != 0
 		}
+		if leftEarly[i] { // PROFILE3 (the user's rules of 2026-11-12/13): who left before the end lost
+			won = false
+			s.Log.Logf("blaze", "   account %d: game %d left before its end: counted as a loss", hp.userID, game.ID)
+		}
 		g := progress.Game{Descriptors: game.descriptors(), Won: won, Seconds: float64(f.DurationMs) / 1000}
 		hold := g.KarmaVote()
-		acct, res, err := s.applyGame(hp.userID, g, pf.Stats, pf.Rewards, practice, ranked, hold)
+		acct, res, err := s.applyGame(hp.userID, g, pf.Stats, pf.Rewards, practice, ranked, hold, !unrated)
 		res.Rules = withRules
+		res.Unrated = unrated
 		if err != nil {
 			s.Log.Logf("blaze", "   (account %d: game %d not stored: %v)", hp.userID, game.ID, err)
 			if err == store.ErrNoAccount {
@@ -733,10 +762,11 @@ func (hg *hostedGame) pushExtendedData(ps []afterGamePush) {
 // the operator's rule): a PvP game (matchmade, queued solo or as a group) and a custom game do; a practice game
 // doesn't, nor does a practice group's, which the server makes as a custom game with the bots-fill bit in its
 // GameFlags (0x412; customgames.go). The profile's PlayerStats and history count every game. RULES1: a custom game
-// with rules away from the standard game doesn't count either (unratedRulesLocked; nor does the rating, rating.Judge on
-// the history's rules). Called with hg.mu held.
+// with rules away from the standard game doesn't count either (unratedRulesLocked; since M30 such a game is rated in
+// its own type, the draft or custom rating, but History.Ranked stays the standard game's), nor does one its admin made
+// unrated (M30, adminUnratedLocked; nor its rating, rating.Judge on the history's Unrated). Called with hg.mu held.
 func (hg *hostedGame) ranked() bool {
-	return Ranked(hg.mode, hg.game.descriptors()) && !hg.unratedRulesLocked()
+	return Ranked(hg.mode, hg.game.descriptors()) && !hg.unratedRulesLocked() && !hg.adminUnratedLocked()
 }
 
 // Ranked is hostedGame.ranked's rule by the game's mode (createGame's mode) and GameFlags (createGame's descriptors):

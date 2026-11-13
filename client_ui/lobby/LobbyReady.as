@@ -15,8 +15,9 @@
 //     lobby.startRefused {findings?}, lobby.rulesCatalog   <- the server
 // The match rules (the state's rules, the catalog, the admin's lobby.setRules) are RulesPanel's, which this class draws
 // on its overlay and whose findings hold START as an unready player does. A draft (the rules' pick "draft": the
-// server's draft.state, the calls draft.ban and draft.pick) is DraftBoard's, drawn on the same overlay above the rest;
-// while it runs the guest's READY button stays away.
+// server's draft.state, the calls draft.ban and draft.pick; a vote, the picks "army" and "clone": draft.vote and
+// draft.lock) is DraftBoard's, drawn on the same overlay above the rest; while it runs the guest's READY button stays
+// away.
 //
 //     region.state {regions: [{id, name}], home, selected}   <- the server, after every hello (the regions it has)
 //
@@ -82,6 +83,7 @@ package {
         private static const WAIT_TEXT:String = "Not all ready";
         private static const RULES_TEXT:String = "See the rules";  // START held for the rules' findings
         private static const DRAFT_TEXT:String = "Drafting...";    // START held while the draft runs
+        private static const VOTE_TEXT:String = "Voting...";       // START held while a vote runs (Army, Clone Pick)
         private static const RATING_LABEL:String = "Rating "; // as the profile box's "Rating 1532"
         private static const RATING_GAP:int = 14;              // after the wins, in the wins label's own units
         private static const MARK_PAD:int = 10;                // the ready mark's end before the tile's right edge
@@ -1048,7 +1050,7 @@ package {
             var showWait:Boolean = waiting && n < c.length;
             countTf.visible = cardsUp && (c.length > 0 || refused || drafting) && sb != null && sb.visible;
             if (countTf.visible) {
-                var want:String = drafting ? DRAFT_TEXT : (refused ? RULES_TEXT :
+                var want:String = drafting ? (draft.voting ? VOTE_TEXT : DRAFT_TEXT) : (refused ? RULES_TEXT :
                     (showWait ? WAIT_TEXT : n + "/" + c.length + " ready"));
                 if (countTf.text != want) {
                     countTf.text = want;

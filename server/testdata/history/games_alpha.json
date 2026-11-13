@@ -18,6 +18,7 @@
       "started": 1793116800,
       "ended": 1793118300,
       "durationSec": 1501,
+      "type": "standard",
       "seats": [
         {
           "seat": 0,
@@ -90,6 +91,7 @@
       "started": 1793106000,
       "ended": 1793107200,
       "durationSec": 1200,
+      "type": "practice",
       "seats": [
         {
           "seat": 0,

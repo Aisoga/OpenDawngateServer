@@ -8,10 +8,11 @@
 //   - the turn sounds, for a drafter only and only for its own turns: the notification (Play_UI_notification, the
 //     menus' interact event 74) when a ban or pick window with the player's open turn begins, and the countdown tick
 //     (Play_UI_Countdown_tick, 149) at 5, 4, 3, 2 and 1 s left in it while the turn is still open; once per window
-//     (keyed to the phase and the window's number);
+//     (keyed to the phase and the window's number); a vote (Army Pick, Clone Pick) is one such window, open until the
+//     player's lock;
 //   - the chat: a drafter's custom lobby chat window switches to the team channel at the draft's begin and back to the
 //     lobby channel at its end, cancel or the lobby's hide (the window's own "Switched to ..." line is the cue);
-//     spectators keep the lobby channel.
+//     spectators keep the lobby channel, and so does everyone in a Clone Pick vote (all ten vote for one shaper).
 //
 // The game's mute setting for shaper-select music can't be read from the lobby (only the Options screen reads it), so
 // the music plays even for a player who muted shaper select's, until the game re-applies that setting at the next
@@ -59,7 +60,7 @@ package {
                 return;
             }
             var ph:String = d.phase is String ? String(d.phase) : "";
-            if (ph != "role" && ph != "ban" && ph != "pick" && ph != "trade") {
+            if (ph != "role" && ph != "ban" && ph != "pick" && ph != "trade" && ph != "vote") {
                 end(); // done, cancelled, or nothing we know
                 return;
             }
@@ -68,10 +69,11 @@ package {
                 post(MUSIC_PLAY);
             }
             var drafter:Boolean = d.you != null && (int(d.you.team) == 1 || int(d.you.team) == 2);
-            if (drafter && !chatTeam) {
+            var clone:Boolean = d.vote != null && d.vote.kind == "clone"; // everyone votes together: the lobby's chat
+            if (drafter && !chatTeam && !clone) {
                 chatTeam = chat("team"); // again at the next event if the window wasn't there
             }
-            var open:Boolean = drafter && d.yourTurn === true && (ph == "ban" || ph == "pick");
+            var open:Boolean = drafter && d.yourTurn === true && (ph == "ban" || ph == "pick" || ph == "vote");
             if (!open) {
                 mine = false;
                 stopTicks();

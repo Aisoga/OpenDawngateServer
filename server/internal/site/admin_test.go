@@ -135,7 +135,7 @@ func TestAdminLoginAndSession(t *testing.T) {
 	if code != 200 || !strings.Contains(body, `action="/admin/login"`) || strings.Contains(body, "/admin/accounts") {
 		t.Fatalf("/admin without a session: %d\n%s", code, body)
 	}
-	for _, p := range []string{"/admin/accounts", "/admin/invites", "/admin/signup", "/admin/matches", "/admin/audit"} {
+	for _, p := range []string{"/admin/accounts", "/admin/invites", "/admin/signup", "/admin/matches", "/admin/notice", "/admin/audit"} {
 		res, err := af.c.Get(af.srv.URL + p)
 		if err != nil {
 			t.Fatal(err)
@@ -175,7 +175,7 @@ func TestAdminLoginAndSession(t *testing.T) {
 	if e := af.lastAudit(); e.Action != "admin login" || e.Actor != "admin boss (account 1000000001)" {
 		t.Errorf("audit %+v", e)
 	}
-	for _, p := range []string{"/admin", "/admin/accounts", "/admin/invites", "/admin/signup", "/admin/matches", "/admin/audit"} {
+	for _, p := range []string{"/admin", "/admin/accounts", "/admin/invites", "/admin/signup", "/admin/matches", "/admin/notice", "/admin/audit"} {
 		code, body, h := af.get(af.c, p)
 		if code != 200 || strings.Contains(body, "<script") || !strings.Contains(h.Get("Content-Security-Policy"), "default-src 'none'") ||
 			h.Get("Cache-Control") != "no-store" || !strings.Contains(body, "Log out boss") {

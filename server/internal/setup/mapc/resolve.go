@@ -28,6 +28,11 @@ const (
 	// shipped graphs' 10.0-10.9 m and 3.8 m).
 	HoleRadius   = 10.0
 	IslandRadius = 3.7
+	// StructureRadius is each Binding's and each Core's hole in both graphs: no square comes closer to its centre, so
+	// no unit walks through one (the user, CM_Vale, 2026-11-12). SM_Map_v5's own graphs leave one round each
+	// Binding and Core, no island in it: their rim 3.4-5.3 m from the marker, 4.6 median (a Binding's footprint is
+	// 2.76, plus the movers' radius). Squares of 3 cells give a rim of 3.6 m nearest, 4.9 median at 3.2.
+	StructureRadius = 3.2
 )
 
 // Tier names, in the order of a lane's three Bindings.

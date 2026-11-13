@@ -13,7 +13,8 @@ and the web root file (DAWNGATE_AFTERACTION_GO naming the file TestBuildAfterAct
 DAWNGATE_AFTERACTION_OUT), and its HUD.snap with the item shop's inline refund (DAWNGATE_ITEMSHOP_GO naming the file
 TestBuildItemShop854 wrote with DAWNGATE_ITEMSHOP_OUT), and its code.snap with the Collection's Items
 (DAWNGATE_COLLECTION_GO naming the file TestBuildCollection854 wrote with DAWNGATE_COLLECTION_OUT, and the content
-beside it). --compile also checks that the committed ABC and tags are what the source compiles to (build_picker.py
+beside it), and its Options.snap with the Options menu's drag scroll check box (DAWNGATE_OPTIONS_GO naming
+the file TestBuildOptions854 wrote with DAWNGATE_OPTIONS_OUT). --compile also checks that the committed ABC and tags are what the source compiles to (build_picker.py
 check; needs the Flex SDK and Java).
 
 Usage:
@@ -205,6 +206,49 @@ def main(argv):
             check(open(arch, "rb").read() == old and not plm.map_list_only(old, mm),
                   "write_map_list refuses an older layout, the file unchanged")
 
+    # the Options menu's drag scroll check box (DRAGGRAB2a): the same patcher with its spec
+    op = plm.SPECS["options"]
+    otags = plm.read_tags(op.tags)
+    ot = plm.tags_of(otags, 0, len(otags))
+    check([c for c, *_ in ot] == [39, 82, 76, 70] and ot[-1][3] == len(otags),
+          "options_tags.hex: DefineSprite, DoABC, SymbolClass, PlaceObject3")
+    check(plm._pairs(otags, ot[2][2], ot[2][3]) == [(2000, "DragGrabOption")], "its SymbolClass: 2000 -> DragGrabOption")
+    check(otags[ot[3][2]:ot[3][3]] == bytes([0x06, 0]) + struct.pack("<HH", 2000, 2000) + b"\0",
+          "its PlaceObject3: character 2000 at depth 2000, no name")
+    # the game's save stores every root child whose String() holds "CheckBox" as a check box: never our class
+    check("CheckBox" not in op.class_name, "the class's name doesn't contain CheckBox (the save would cast it)")
+    check(plm.patch_movie(m, b"OURTAGS", op) == out, "the options spec patches as the picker's (the same bytes)")
+    try:
+        plm.patch_movie(plm.patch_movie(m, otags, op), otags, op)
+        check(False, "refused: the drag scroll class twice")
+    except plm.MovieError as e:
+        check("drag scroll check box already" in str(e), f"refused: the drag scroll class twice ({e})")
+    with open(os.path.join(REPO, "client_ui", "options", "DragGrabOption.as"), encoding="utf-8") as f:
+        src_as = f.read()
+    import patch_locale  # noqa: E402
+    label = patch_locale.OPTIONS_LINES[0x5E70F001]
+    check('NAME:String = "OptionDragGrab"' in src_as and 'KEY:String = "^Options!0x5e70f001"' in src_as and
+          f'LABEL:String = "{label}"' in src_as,
+          "the class's key, locale line and fallback are the setup's (patch_locale.OPTIONS_LINES)")
+    game = game_dir()
+    if game:
+        osrc = os.path.join(game, "game", "Data", "Options.snap")
+        obuilt = plm.build(osrc, spec=op)
+        tmp = tempfile.NamedTemporaryFile(suffix=".snap", delete=False)
+        tmp.write(obuilt)
+        tmp.close()
+        back = snap.Snap(tmp.name)
+        oraw = back.read(back.entries[0])
+        os.remove(tmp.name)
+        ids, names, depths, _ = plm.scan(zlib.decompress(oraw[8:]))
+        check(back.entries[0].name == op.movie_path and "DragGrabOption" in names and
+              "Options_GameSettings_fla.MainTimeline" in names and "Options_GameSetCheckBox" in names and
+              2000 in ids and 2000 in depths,
+              f"the player's own Options gameplay tab patched ({len(obuilt)} bytes, SHA-256 {sha(obuilt)[:16]})")
+        if os.environ.get("DAWNGATE_OPTIONS_GO"):  # moviepatch's TestBuildOptions854 output
+            with open(os.environ["DAWNGATE_OPTIONS_GO"], "rb") as f:
+                check(f.read() == obuilt, "the Go setup's zz_Options.snap is the same")
+
     # the chat rooms opened by default: the same patcher with its spec
     cr = plm.SPECS["chatrooms"]
     ctags = plm.read_tags(cr.tags)
@@ -226,6 +270,11 @@ def main(argv):
     # a new line's sound: the game's interact event 74 (CHAT_NOTIFY_SYS_MESSAGE), its table entry Play_UI_notification
     check("SOUND_EVENT:uint = 74;" in src_as and 'ExternalInterface.call("Global.OnInteractEvent", SOUND_EVENT)' in src_as,
           "the class rings with the game's interact event 74 (Play_UI_notification)")
+    # the System window a match leaves (SYSCHAT): the game's own window "1" of type 7, closed by its own call
+    check('SYSTEM_WINDOW_ID:String = "1";' in src_as and "CHAT_TYPE_SYSTEM:int = 7;" in src_as and
+          'root["DestroyChatWindow"](SYSTEM_WINDOW_ID)' in src_as and "CHAT_CONTEXT_GAME_CHAT:int = 5;" in src_as and
+          'if (!b["visible"]) {' in src_as,
+          "the class closes the System window a match made (id 1, type 7, DestroyChatWindow; hidden bar or match context)")
 
     game = game_dir()
     if game:
@@ -467,8 +516,10 @@ def main(argv):
     check(plm.channel_file("127.0.0.2") == b"dawngate-channel\t1\nhost\t127.0.0.2\nport\t10039\nend\n",
           "the channel file for a copy's server (moviepatch.ChannelFile)")
     check([(p.class_name, p.char_id, p.depth) for p in parts] == [("CollectionItems", 2000, 2000), ("LobbyReady", 2001, 2001),
-                                                                  ("LeaderboardRating", 2002, 2002)],
-          "the collection spec's classes: CollectionItems 2000/2000, LobbyReady 2001/2001, LeaderboardRating 2002/2002")
+                                                                  ("LeaderboardRating", 2002, 2002),
+                                                                  ("ProfileModes", 2003, 2003)],
+          "the collection spec's classes: CollectionItems 2000/2000, LobbyReady 2001/2001, LeaderboardRating 2002/2002, "
+          "ProfileModes 2003/2003")
     ltags = plm.read_tags(parts[1].tags)
     lt = plm.tags_of(ltags, 0, len(ltags))
     check([c for c, *_ in lt] == [39, 82, 76, 70] and lt[-1][3] == len(ltags) and
@@ -501,8 +552,16 @@ def main(argv):
           rtags[rt[3][2]:rt[3][3]] == bytes([0x06, 0]) + struct.pack("<HH", 2002, 2002) + b"\0" and
           b"<dgr r='" in rtags and b"^FE_Leaderboard!0x5e70d001" in rtags,
           "leaderboard_tags.hex: DefineSprite, DoABC, SymbolClass 2002 -> LeaderboardRating, PlaceObject3 at 2002")
-    check(plm.spec_tags(cs) == ctags + ltags + rtags,
-          "the collection spec's tags: the Collection's, the lobby's, then the Leaderboard's")
+    # the Profile's game-type tabs: the fourth class (character and depth 2003; PROFILE2)
+    ptags = plm.read_tags(parts[3].tags)
+    pt = plm.tags_of(ptags, 0, len(ptags))
+    check([c for c, *_ in pt] == [39, 82, 76, 70] and pt[-1][3] == len(ptags) and
+          plm._pairs(ptags, pt[2][2], pt[2][3]) == [(2003, "ProfileModes")] and
+          ptags[pt[3][2]:pt[3][3]] == bytes([0x06, 0]) + struct.pack("<HH", 2003, 2003) + b"\0" and
+          all(s in ptags for s in (b"profile.select", b"profile.state", b"playerProfile", b"Tab000", b"All Modes")),
+          "profile_tags.hex: DefineSprite, DoABC, SymbolClass 2003 -> ProfileModes, PlaceObject3 at 2003")
+    check(plm.spec_tags(cs) == ctags + ltags + rtags + ptags,
+          "the collection spec's tags: the Collection's, the lobby's, the Leaderboard's, then the Profile's")
     if game and os.environ.get("DAWNGATE_COLLECTION_GO"):
         # moviepatch's TestBuildCollection854 output and the content it was made from (<file>.content.json)
         go_out = os.environ["DAWNGATE_COLLECTION_GO"]

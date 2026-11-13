@@ -101,6 +101,11 @@ type Hello struct {
 // FeatureRules is the host feature for a custom game's rules: startGame's Rules and FillTeams.
 const FeatureRules = "rules"
 
+// FeatureRules2 is the host feature for the second set of rule options, which a host without it would misplay (an
+// older host takes an unknown item pool as "all items"): the item pool "lightning", later the picks "army" and
+// "clone". The rules catalog marks each such option (rules.Option.Host, rules.HostRules2).
+const FeatureRules2 = "rules2"
+
 // RosterEntry is one player of the match.
 type RosterEntry struct {
 	User  int64  `json:"user"`  // Blaze id (persona id, BUID); HelloReq's user id

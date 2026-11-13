@@ -1100,7 +1100,9 @@ static void TestHostControlCustomLobby(const std::string& examplesPath) {
 static void TestHostControlRules(const std::string& examplesPath) {
   std::string helloLine, startLine, poolLine;
   for (const std::string& l : ReadExamples(examplesPath)) {
-    if (l.find("\"t\":\"hello\"") != std::string::npos && l.find("\"features\"") != std::string::npos) helloLine = l;
+    if (l.find("\"t\":\"hello\"") != std::string::npos && l.find("\"features\"") != std::string::npos &&
+        helloLine.empty())
+      helloLine = l;  // RULES1's (the first)
     if (l.find("\"t\":\"startGame\"") != std::string::npos && l.find("\"rules\"") != std::string::npos &&
         startLine.empty())
       startLine = l;  // RULES1's (the first)
@@ -1193,6 +1195,32 @@ static void TestHostControlRules(const std::string& examplesPath) {
   WSACleanup();
 }
 
+// M30 (LIGHTNING1): this build's host names "rules2" beside "rules" (HostFeatures, what host/control.cpp sends); the
+// shared example decodes to both and encodes back byte for byte; a startGame with the item pool "lightning" carries it.
+static void TestHostControlRules2(const std::string& examplesPath) {
+  std::string helloLine, startLine;
+  for (const std::string& l : ReadExamples(examplesPath)) {
+    if (l.find("\"t\":\"hello\"") != std::string::npos && l.find("\"rules2\"") != std::string::npos) helloLine = l;
+    if (l.find("\"t\":\"startGame\"") != std::string::npos && l.find("\"lightning\"") != std::string::npos)
+      startLine = l;
+  }
+  CHECK(!helloLine.empty() && !startLine.empty());
+  const std::vector<std::string> feats = HostFeatures();
+  CHECK(feats.size() == 2 && feats[0] == kFeatureRules && feats[1] == kFeatureRules2);
+  CHECK_STR(std::string(kFeatureRules2), "rules2");
+  Message m;
+  std::string err;
+  CHECK(Decode(helloLine, m, &err) && std::get<Hello>(m).features == feats);
+  Hello h{1, "00112233445566778899aabbccddeeff", 4242, "dgsim c1", feats};
+  CHECK_STR(Encode(h), helloLine + "\n");
+  CHECK(Decode(startLine, m, &err));
+  {
+    const StartGame& sg = std::get<StartGame>(m);
+    CHECK(sg.rules && sg.rules->itemPool == "lightning" && sg.rules->pick == "blind" && sg.rules->shop == "normal");
+    CHECK_STR(Encode(sg), startLine + "\n");
+  }
+}
+
 int main(int argc, char** argv) {
   std::string examples = argc > 1 ? argv[1] : DG_CONTROL_EXAMPLES;
   TestJsonParse();
@@ -1209,6 +1237,7 @@ int main(int argc, char** argv) {
   TestHostControlCustomLobby(examples);  // B15
   TestWithSpectatorsOf();                // B15b
   TestHostControlRules(examples);        // RULES1
+  TestHostControlRules2(examples);       // M30 (LIGHTNING1)
   std::printf("%d checks, %d failed\n", g_checks, g_failed);
   return g_failed == 0 ? 0 : 1;
 }

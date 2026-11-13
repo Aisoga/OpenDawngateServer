@@ -56,6 +56,22 @@ func registerStats(s *Server) {
 		name, _ := r.Body.Str("NAME")
 		vid, _ := r.Body.Int("VID")
 		blazeID, acct, ok := r.statsEntity()
+		if ok { // PROFILE2: the numbers of the game type the viewing player chose on the Profile's tabs
+			viewer := r.Conn.Session.Persona.ID
+			if mode := r.Server.profileMode(viewer); mode != ProfileAll {
+				a, games, err := r.Server.profileIn(blazeID, acct, mode)
+				switch {
+				case err != nil:
+					r.Server.Log.Logf("blaze", "   (profile: persona %d's %s games not read: %v; all games sent)", blazeID, mode, err)
+				default:
+					acct = a
+					if name == progress.PlayerStats {
+						r.Server.Log.Logf("blaze", "   profile: persona %d's stats for persona %d in mode %s (%d games)",
+							blazeID, viewer, mode, games)
+					}
+				}
+			}
+		}
 		switch name {
 		case progress.ShaperStats, progress.ShaperHistoryStats, progress.RoleHistoryStats:
 			var keys []progress.Keyed

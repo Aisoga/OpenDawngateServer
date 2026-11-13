@@ -132,6 +132,10 @@ type History struct {
 	// and custom games. The zero value is an account without a rated game (the store reads the start values back as
 	// it): use OrStart.
 	Rating Rating `json:"rating,omitzero"`
+
+	// ModeRatings are the ratings of the other game types (M30, MMR1): ModeDraft's and ModeCustom's, by type; a type
+	// without a rated game has no entry (RatingIn gives the zero Rating). The standard rating is Rating.
+	ModeRatings map[string]Rating `json:"modeRatings,omitempty"`
 }
 
 // Rating is a skill rating on the Glicko scale (internal/rating updates it): the rating, its deviation (RD) and the
@@ -173,6 +177,9 @@ type HistoryDay struct {
 	// game (the rating at the end of the day before; valid when Rated.Games > 0): the daily ranking by rating.
 	Rated        GamesWon `json:"rated,omitzero"`
 	RatingBefore float64  `json:"ratingBefore,omitempty"`
+
+	// ModeRated is the same for the other game types (M30, MMR1), by type: only the types the day has rated games of.
+	ModeRated map[string]ModeDay `json:"modeRated,omitempty"`
 }
 
 // ShaperDay is one shaper's games of one day: the eight values of a ShaperHistoryStats row, as totals (the
@@ -190,12 +197,12 @@ type ShaperDay struct {
 
 // Clone returns a deep copy of h.
 func (h History) Clone() History {
-	c := History{Shapers: maps.Clone(h.Shapers), Ranked: h.Ranked, Rating: h.Rating}
+	c := History{Shapers: maps.Clone(h.Shapers), Ranked: h.Ranked, Rating: h.Rating, ModeRatings: maps.Clone(h.ModeRatings)}
 	if h.Days != nil {
 		c.Days = make([]HistoryDay, len(h.Days))
 		for i, d := range h.Days {
 			c.Days[i] = HistoryDay{Day: d.Day, Shapers: maps.Clone(d.Shapers), Roles: maps.Clone(d.Roles), Ranked: d.Ranked,
-				Rated: d.Rated, RatingBefore: d.RatingBefore}
+				Rated: d.Rated, RatingBefore: d.RatingBefore, ModeRated: maps.Clone(d.ModeRated)}
 		}
 	}
 	return c

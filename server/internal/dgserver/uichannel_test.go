@@ -81,6 +81,12 @@ func TestUIChannelThroughTunnel(t *testing.T) {
 			if g := readLine(t, c); !strings.HasPrefix(g, `{"event":"region.state","data":{"regions":[{"id":"local","name":"Local"}]`) {
 				t.Errorf("greeting %s", g)
 			}
+			if g := readLine(t, c); !strings.HasPrefix(g, `{"event":"leaderboard.state","data":{"board":"standard"`) {
+				t.Errorf("MMR2's greeting %s", g)
+			}
+			if g := readLine(t, c); !strings.HasPrefix(g, `{"event":"profile.state","data":{"mode":"all"`) {
+				t.Errorf("PROFILE2's greeting %s", g)
+			}
 		}
 		return c, line
 	}

@@ -46,6 +46,7 @@ func TestDescribeAndPrefix(t *testing.T) {
 		{with(Standard(), Pick, "random", Shop, "onDeath"), "All Random, Shop on Death", "[ARAM] "},
 		{with(Standard(), Pick, "random"), "All Random", "[All Random] "},
 		{with(Standard(), ItemPool, "basics"), "Basic items only", CustomPrefix},
+		{with(Standard(), ItemPool, "lightning"), "Lightning items only", CustomPrefix}, // LIGHTNING1
 		{with(Standard(), Pick, "draft", ShaperPool, "melee", Shop, "onDeath", ItemPool, "noLegendary"),
 			"Draft, Melee shapers, Shop on Death, No legendary items", CustomPrefix},
 	}
@@ -119,6 +120,11 @@ func TestJSON(t *testing.T) {
 		!strings.Contains(string(v), `{"id":"aram","name":"ARAM","options":{"pick":"random"`) {
 		t.Errorf("catalog view %s", v)
 	}
+	// LIGHTNING1: the pool is in the catalog; the host feature it needs stays off the wire
+	if !strings.Contains(string(v), `{"id":"lightning","name":"Lightning items only","bots":false}`) ||
+		strings.Contains(string(v), HostRules2) {
+		t.Errorf("catalog view %s", v)
+	}
 }
 
 type fakeCatalog map[string][2]int
@@ -140,6 +146,7 @@ func categories(fs []Finding) string {
 func TestCheck(t *testing.T) {
 	host := Context{HostRules: true}
 	bots := Context{HostRules: true, Bots: true, BotSeats: 4}
+	rules2 := Context{HostRules: true, HostFeatures: []string{"rules", HostRules2}}
 	small := fakeCatalog{"all": {24, 10}, "melee": {4, 4}, "ranged": {16, 3}}
 	cases := []struct {
 		name string
@@ -176,6 +183,18 @@ func TestCheck(t *testing.T) {
 		{"no such pool in the catalog", with(Standard(), ShaperPool, "ranged"),
 			Context{HostRules: true, Catalog: fakeCatalog{"all": {24, 10}}}, ShaperPool},
 		{"unknown ids", Combination{Pick: "chaos", Shop: "always"}, host, Pick + "," + Shop},
+		// M30 (LIGHTNING1): the pool "lightning" needs a host that names rules2; without it the rules host would take
+		// the pool as "all items"
+		{"lightning, rules2 host", with(Standard(), ItemPool, "lightning"), rules2, ""},
+		{"lightning, rules host without rules2", with(Standard(), ItemPool, "lightning"), host, ItemPool},
+		{"lightning, a host naming other features", with(Standard(), ItemPool, "lightning"),
+			Context{HostRules: true, HostFeatures: []string{"rules", "x"}}, ItemPool},
+		{"lightning, old host", with(Standard(), ItemPool, "lightning"), Context{}, FindingHost},
+		{"lightning with bots", with(Standard(), ItemPool, "lightning"),
+			Context{HostRules: true, HostFeatures: []string{HostRules2}, Bots: true, BotSeats: 4}, ItemPool},
+		{"lightning with bots, no rules2", with(Standard(), ItemPool, "lightning"), bots, ItemPool + "," + ItemPool},
+		{"lightning and shop on death", with(Standard(), Shop, "onDeath", ItemPool, "lightning"), rules2, ""},
+		{"rules2 host, standard options", with(Standard(), ItemPool, "basics"), rules2, ""},
 	}
 	for _, c := range cases {
 		got := Check(c.c, c.ctx)

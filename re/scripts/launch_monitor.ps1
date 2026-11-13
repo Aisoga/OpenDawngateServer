@@ -22,6 +22,9 @@
                       WM_MOUSEMOVEs with MK_LBUTTON over 0.6 s, WM_LBUTTONUP at 2; B7b: a perk shape onto the perk page)
     '<t>:press<fx>,<fy>', '<t>:moveto<fx>,<fy>', '<t>:release<fx>,<fy>' (READYUI) a drag held across screenshots: the
                       button down, moves with MK_LBUTTON from the last point, the button up, each at its own t
+    '<t>:mpress<fx>,<fy>', '<t>:mrelease<fx>,<fy>' (DRAGGRAB2b) the middle button down / up there (WM_MBUTTONDOWN with
+                      MK_MBUTTON after a WM_MOUSEMOVE, WM_MBUTTONUP). The match's drag scroll does NOT take them (the drag-active
+                      byte stayed 0 in draggrab2b_grab4c): a lane can't start a drag this way
     '<t>:h<fx>,<fy>'  hover there: 6 WM_MOUSEMOVEs (no button) over 0.6 s, then after 1 s a screenshot h<t>.png
                       (D3-perks: a tooltip, e.g. the shaper panel's perk icon in game)
     '<t>:key=<vk>'    key press (WM_KEYDOWN/WM_KEYUP, virtual-key code in decimal, e.g. 27 = Escape)
@@ -273,6 +276,12 @@ function HeldMouse($h, $how, $fx, $fy) {
         [void][W]::PostMessage($h, 0x0200, [IntPtr]0, $lp)   # WM_MOUSEMOVE
         Start-Sleep -Milliseconds 150
         [void][W]::PostMessage($h, 0x0201, [IntPtr]1, $lp)   # WM_LBUTTONDOWN (MK_LBUTTON)
+    } elseif ($how -eq 'mpress') {
+        [void][W]::PostMessage($h, 0x0200, [IntPtr]0, $lp)   # WM_MOUSEMOVE
+        Start-Sleep -Milliseconds 150
+        [void][W]::PostMessage($h, 0x0207, [IntPtr]0x10, $lp)   # WM_MBUTTONDOWN (MK_MBUTTON)
+    } elseif ($how -eq 'mrelease') {
+        [void][W]::PostMessage($h, 0x0208, [IntPtr]0, $lp)   # WM_MBUTTONUP
     } elseif ($how -eq 'moveto') {
         if ($null -eq $script:HeldFrom) { $script:HeldFrom = @($x, $y) }
         $steps = 12
@@ -350,7 +359,7 @@ if ($Actions) {
         if ($a -notmatch '^(\d+):(.+)$') { throw "bad -Actions item '$a'" }
         $at = [int]$Matches[1]; $what = $Matches[2].Trim()
         if ($at % 2) { throw "-Actions time $at must be even" }
-        if ($what -notmatch '^(([rh]|dbl|press|moveto|release)?\d*\.?\d+,\d*\.?\d+|d\d*\.?\d+,\d*\.?\d+,\d*\.?\d+,\d*\.?\d+|key=\d+(\+\d+)?|keydown=\d+|keyup=\d+|wheel=-?\d+(x\d+)?(@\d*\.?\d+,\d*\.?\d+)?|text=[A-Za-z0-9_@./#+~-]+|login=[A-Za-z0-9_@.#+-]+\|[^|]+|shot|fshot|pshot|pburst=\d+(x\d+)?|lockfg=\d+|front|back|close)$') { throw "bad -Actions item '$($a -replace '\|.*$', '|...')'" }
+        if ($what -notmatch '^(([rh]|dbl|press|moveto|release|mpress|mrelease)?\d*\.?\d+,\d*\.?\d+|d\d*\.?\d+,\d*\.?\d+,\d*\.?\d+,\d*\.?\d+|key=\d+(\+\d+)?|keydown=\d+|keyup=\d+|wheel=-?\d+(x\d+)?(@\d*\.?\d+,\d*\.?\d+)?|text=[A-Za-z0-9_@./#+~-]+|login=[A-Za-z0-9_@.#+-]+\|[^|]+|shot|fshot|pshot|pburst=\d+(x\d+)?|lockfg=\d+|front|back|close)$') { throw "bad -Actions item '$($a -replace '\|.*$', '|...')'" }
         if (-not $ActionsAt.ContainsKey($at)) { $ActionsAt[$at] = @() }
         $ActionsAt[$at] += $what
     }
@@ -407,7 +416,7 @@ function DoActions($p, $at) {
             $how = [W]::PressWithModifier($h, [int]$Matches[1], [int]$Matches[2])
             Log "action t=${at}: key $($Matches[2]) with modifier $($Matches[1]) (key state $how)"; continue
         }
-        if ($what -match '^(press|moveto|release)(.+),(.+)$') {
+        if ($what -match '^(press|moveto|release|mpress|mrelease)(.+),(.+)$') {
             $ic = [Globalization.CultureInfo]::InvariantCulture
             $pos = HeldMouse $h $Matches[1] ([double]::Parse($Matches[2], $ic)) ([double]::Parse($Matches[3], $ic))
             Log "action t=${at}: $($what) $pos"; continue

@@ -10,8 +10,10 @@ What is pinned:
   - the local profile with --laa off --preload off writes exactly what the A4 version of patch_client.py wrote
     (SHA-256 of its output for a fixed CA modulus, taken from that version before A5 changed it); Q3b added only the
     LARGE_ADDRESS_AWARE bit, SNDBANK only the preload call (5 bytes), MAPTABLE only the map-name cave (its jmp, the
-    cave, the key, two VirtualSizes), RATINGSHOW1 only the rating cave (its two call sites, the cave, the label);
-    each output is pinned;
+    cave, the key, two VirtualSizes), RATINGSHOW1 only the rating cave (its two call sites, the cave, the label),
+    and so on up to FADE1; EXESECT appends the section .dgx (five header fields and the appended bytes; the synthetic
+    exe's outputs, shared with the Go port, are pinned by the section's own tests); DRAGGRAB1 adds only its piece in .dgx and its
+    three sites; each output is pinned;
   - the lan profile changes only the CA, the redirector host and UPnP, and leaves every bind site, the
     cave slack and .text's VirtualSize as shipped; with --client-bind it narrows to that address;
   - the refusals (non-loopback host in the local profile, loopback/public/wildcard hosts in lan, a
@@ -62,8 +64,15 @@ HEAPLOCKS_OUTPUT_SHA256 = "b7254e054218a1e7a44be37a9e32c714317413c01853f15c93fd8
 NUMFMT_OUTPUT_SHA256 = "1ec27470fb246a4d81820a96929a670f8cf27476fdca2f2417c5848d59e1255d"
 # AVGPREC: NUMFMT_OUTPUT with the profile's averages at full precision (one block)
 AVERAGES_OUTPUT_SHA256 = "73feaac8ca6b72ce79cbfe07205530f94ee583389c2e5ae991f1075f72b05a20"
-# FADE1 (FADE1b, FADE1c): the default output, AVERAGES_OUTPUT with the fade at the fog's edge (five sites, in place)
+# FADE1 (FADE1b, FADE1c): AVERAGES_OUTPUT with the fade at the fog's edge (five sites, in place)
 FADE_OUTPUT_SHA256 = "30c36547e0b64b30dfaf3aad85d2d5e0f61b90a5480fee70218cd5e0fe647cf1"
+# EXESECT: the default output, FADE_OUTPUT with the section .dgx appended (five header fields, 0x10F0 bytes more)
+DGX_OUTPUT_SHA256 = "38060cc4855556502cf00e52abf27ad010de8ba9fd06c808205bf364c6d578f4"
+# DRAGGRAB1: the default output, DGX_OUTPUT with the drag grab (its piece in .dgx and its three sites; .tls's
+# VirtualSize was already raised by MAPTABLE); since DRAGGRAB2b also the options piece and its six sites
+DRAGGRAB_OUTPUT_SHA256 = "32ae4cff8509842192a1aa9c5516278616417aeb2ad25b2f49775c48d996bd07"
+# PROFILE2: the default output, DRAGGRAB_OUTPUT with the Profile's same-player check jumped over (one byte)
+PROFILE_RELOAD_OUTPUT_SHA256 = "c12c60ec198f1e4577e6e45484dcafe591c45ee853af13c5827802b127d458c5"
 RATING_SUMMARY = MAPTABLE_SUMMARY + "; the profile box shows the rating the server sends (rating cave at 0x011ab170)"
 EXE = None  # set in __main__
 
@@ -113,18 +122,21 @@ class PatchClientTest(unittest.TestCase):
         cls.vsize_at = pe.sections[0].get_file_offset() + 8
         cls.local, cls.local_summary = pc.patch_bytes(cls.orig, MODULUS)
         cls.a4, cls.a4_summary = pc.patch_bytes(cls.orig, MODULUS, laa=False, preload=False, maptable=False,
-                                                rating=False, heaplocks=False, numfmt=False, averages=False, fade=False)
+                                                rating=False, heaplocks=False, numfmt=False, averages=False, fade=False, dgx=False, profilereload=False)
         cls.q3b, cls.q3b_summary = pc.patch_bytes(cls.orig, MODULUS, preload=False, maptable=False, rating=False,
-                                                  heaplocks=False, numfmt=False, averages=False, fade=False)
+                                                  heaplocks=False, numfmt=False, averages=False, fade=False, dgx=False, profilereload=False)
         cls.sndbank, cls.sndbank_summary = pc.patch_bytes(cls.orig, MODULUS, maptable=False, rating=False,
-                                                          heaplocks=False, numfmt=False, averages=False, fade=False)
+                                                          heaplocks=False, numfmt=False, averages=False, fade=False, dgx=False, profilereload=False)
         cls.maptable, cls.maptable_summary = pc.patch_bytes(cls.orig, MODULUS, rating=False, heaplocks=False,
-                                                            numfmt=False, averages=False, fade=False)
+                                                            numfmt=False, averages=False, fade=False, dgx=False, profilereload=False)
         cls.rating, cls.rating_summary = pc.patch_bytes(cls.orig, MODULUS, heaplocks=False, numfmt=False, averages=False,
-                                                        fade=False)
-        cls.heaplocks, cls.heaplocks_summary = pc.patch_bytes(cls.orig, MODULUS, numfmt=False, averages=False, fade=False)
-        cls.numfmt, cls.numfmt_summary = pc.patch_bytes(cls.orig, MODULUS, averages=False, fade=False)
-        cls.averages, cls.averages_summary = pc.patch_bytes(cls.orig, MODULUS, fade=False)
+                                                        fade=False, dgx=False, profilereload=False)
+        cls.heaplocks, cls.heaplocks_summary = pc.patch_bytes(cls.orig, MODULUS, numfmt=False, averages=False, fade=False, dgx=False, profilereload=False)
+        cls.numfmt, cls.numfmt_summary = pc.patch_bytes(cls.orig, MODULUS, averages=False, fade=False, dgx=False, profilereload=False)
+        cls.averages, cls.averages_summary = pc.patch_bytes(cls.orig, MODULUS, fade=False, dgx=False, profilereload=False)
+        cls.fade, cls.fade_summary = pc.patch_bytes(cls.orig, MODULUS, dgx=False, profilereload=False)
+        cls.dgx, cls.dgx_summary = pc.patch_bytes(cls.orig, MODULUS, draggrab=False, profilereload=False)
+        cls.draggrab, cls.draggrab_summary = pc.patch_bytes(cls.orig, MODULUS, profilereload=False)
 
     def at(self, data, va, n):
         return data[self.off(va):self.off(va) + n]
@@ -192,15 +204,15 @@ class PatchClientTest(unittest.TestCase):
         self.assertEqual(self.averages_summary, self.numfmt_summary + "; the profile's averages at full precision "
                          "(8.7, not 8.6)")
 
-    def test_local_default_is_averages_output_plus_fade(self):
-        self.assertEqual(sha256(self.local), FADE_OUTPUT_SHA256)
+    def test_fade_output_is_averages_output_plus_fade(self):
+        self.assertEqual(sha256(self.fade), FADE_OUTPUT_SHA256)
         sites = [(va, orig, new) for va, orig, new, _what in pc.FADE_SITES]
-        for start, end in diff_ranges(self.averages, self.local):
+        for start, end in diff_ranges(self.averages, self.fade):
             self.assertTrue(any(self.off(va) <= start and end <= self.off(va) + len(n) for va, _, n in sites), hex(start))
         for va, orig, new in sites:
             self.assertEqual(len(new), len(orig), hex(va))
             self.assertEqual(self.at(self.orig, va, len(orig)), orig, hex(va))
-            self.assertEqual(self.at(self.local, va, len(new)), new, hex(va))
+            self.assertEqual(self.at(self.fade, va, len(new)), new, hex(va))
         # the room: ApplyCreatureOpacity's body and padding up to the next function, which nothing else jumps into
         self.assertEqual(pc.FADE_APPLY + len(pc.FADE_APPLY_ORIG), 0x0056E830)
         self.assertEqual(pc.FADE_APPLY_ORIG[-9:], b"\xcc" * 9)
@@ -260,10 +272,76 @@ class PatchClientTest(unittest.TestCase):
         # UpdateCreatureOpacity's front: one push edi on both ways to the materials, as shipped
         ins = list(md.disasm(pc.FADE_FRONT_NEW, pc.FADE_FRONT))
         self.assertEqual([x.op_str for x in ins if x.mnemonic == "push"], ["edi", "edi"])
-        self.assertEqual([pc.describe(d)["fade"] for d in (self.orig, self.averages, self.local)],
+        self.assertEqual([pc.describe(d)["fade"] for d in (self.orig, self.averages, self.fade)],
                          ["as-shipped", "as-shipped", "on"])
-        self.assertEqual(self.local_summary, self.averages_summary + "; enemy creatures fade in and out by their "
+        self.assertEqual(self.fade_summary, self.averages_summary + "; enemy creatures fade in and out by their "
                          "team's sight and the fog (0.25 s)")
+
+    def test_dgx_output_is_fade_output_plus_dgx(self):
+        # EXESECT: the section .dgx appended; the first bytes differ from FADE_OUTPUT only in five header fields
+        self.assertEqual(sha256(self.dgx), DGX_OUTPUT_SHA256)
+        pe = pc.pefile.PE(data=self.orig, fast_load=True)
+        fh, opt = pe.FILE_HEADER.get_file_offset(), pe.OPTIONAL_HEADER.get_file_offset()
+        slot = pe.sections[-1].get_file_offset() + 40
+        self.assertEqual(slot, 0x2E0)
+        fields = [(fh + 2, 2), (opt + 4, 4), (opt + 56, 4), (opt + 128, 8), (slot, 40)]
+        n = len(self.orig)
+        for start, end in diff_ranges(self.fade, self.dgx[:n]):
+            self.assertTrue(any(f <= start and end <= f + k for f, k in fields), hex(start))
+        self.assertEqual(len(self.dgx), 0x0110A800 + pc.DGX_SIZE)
+        self.assertEqual(self.dgx[n:0x0110A800], bytes(0x0110A800 - n))
+        self.assertEqual(self.dgx[0x0110A800:], pc.DGX_MAGIC + bytes(pc.DGX_SIZE - len(pc.DGX_MAGIC)))
+        new = pc.pefile.PE(data=self.dgx, fast_load=True)
+        self.assertEqual([s.Name.rstrip(b"\0") for s in new.sections][-1], b".dgx")
+        self.assertEqual((new.OPTIONAL_HEADER.SizeOfImage, new.OPTIONAL_HEADER.SizeOfCode),
+                         (0x01885000, pe.OPTIONAL_HEADER.SizeOfCode + 0x1000))
+        self.assertEqual((new.OPTIONAL_HEADER.DATA_DIRECTORY[4].VirtualAddress, new.OPTIONAL_HEADER.DATA_DIRECTORY[4].Size),
+                         (0, 0))
+        self.assertEqual(new.OPTIONAL_HEADER.CheckSum, pe.OPTIONAL_HEADER.CheckSum)
+        self.assertEqual(new.get_offset_from_rva(pc.DGX_VA - pc.IMAGE_BASE), 0x0110A800)
+        self.assertEqual([pc.describe(d)["dgx"] for d in (self.orig, self.fade, self.dgx)], ["as-shipped", "as-shipped", "on"])
+        self.assertEqual(self.dgx_summary, self.fade_summary + "; an executable section .dgx at 0x01c84000 (4096 bytes) "
+                         "for later patches")
+
+    def test_draggrab_output_is_dgx_output_plus_draggrab(self):
+        # DRAGGRAB1: the piece in .dgx and the three sites; .tls's VirtualSize was already raised by MAPTABLE
+        self.assertEqual(sha256(self.draggrab), DRAGGRAB_OUTPUT_SHA256)
+        piece = 0x0110A800 + pc.dgx_piece("draggrab")[0] - pc.DGX_VA  # .dgx's raw data (self.off knows the untouched exe)
+        code = pc.drag_grab_code()
+        opts = 0x0110A800 + pc.dgx_piece("options")[0] - pc.DGX_VA
+        table = self.at(self.orig, pc.OPT_TABLE, pc.OPT_TABLE_SIZE)
+        allowed = [(piece, len(code)), (opts, pc.OPT_NAME_OFFSET + len(pc.OPT_NAME))] + [
+            (self.off(va), len(n)) for va, _o, n in pc.drag_grab_sites() + pc.drag_options_sites()]
+        ranges = diff_ranges(self.dgx, self.draggrab)
+        for start, end in ranges:
+            self.assertTrue(any(a <= start and end <= a + k for a, k in allowed), hex(start))
+        self.assertEqual(self.draggrab[piece:piece + len(code)], code)
+        # DRAGGRAB2b: EA's 12 gameplay entries (OptionFilterProfanity first) and ours as the 13th
+        self.assertEqual(table[:4], pc.OPT_TABLE_FIRST)
+        self.assertEqual(self.draggrab[opts:opts + 0x7F], pc.drag_options_piece(table))
+        self.assertEqual(self.at(self.draggrab, pc.DRAG_STATE, pc.DRAG_STATE_ROOM), bytes(pc.DRAG_STATE_ROOM))
+        self.assertEqual([pc.describe(d)["draggrab"] for d in (self.orig, self.fade, self.dgx, self.draggrab)],
+                         ["as-shipped", "as-shipped", "as-shipped", "on"])
+        self.assertEqual(self.draggrab_summary, self.dgx_summary.replace(
+            "; an executable section", "; the middle-mouse drag grabs the ground when the preference OptionDragGrab "
+            "is on (cave at 0x01c84010, the Options menu's 13-entry gameplay table at 0x01c84400); an executable section"))
+
+    def test_local_default_is_draggrab_output_plus_profile_reload(self):
+        # PROFILE2: one byte, the jnz past the same player's id (75 08) becomes a jmp (EB 08)
+        self.assertEqual(sha256(self.local), PROFILE_RELOAD_OUTPUT_SHA256)
+        self.assertEqual(diff_ranges(self.draggrab, self.local),
+                         [(self.off(pc.PROFILE_RELOAD_SITE), self.off(pc.PROFILE_RELOAD_SITE) + 1)])
+        self.assertEqual(self.at(self.orig, pc.PROFILE_RELOAD_SITE, 2), pc.PROFILE_RELOAD_ORIG)
+        self.assertEqual(self.at(self.local, pc.PROFILE_RELOAD_SITE, 2), pc.PROFILE_RELOAD_NEW)
+        # what it jumps over: cmp [esi+0x46c8],edi before it; cmp [esi+0x46cc],ebx and jz (the same id: no load) after
+        # it, then the store of the new id that it jumps to
+        self.assertEqual(self.at(self.orig, pc.PROFILE_RELOAD_SITE - 6, 6), bytes.fromhex("39bec8460000"))
+        self.assertEqual(self.at(self.orig, pc.PROFILE_RELOAD_SITE + 2, 8), bytes.fromhex("399ecc460000742b"))
+        self.assertEqual(self.at(self.orig, pc.PROFILE_RELOAD_SITE + 10, 6), bytes.fromhex("89bec8460000"))
+        self.assertEqual([pc.describe(d)["profilereload"] for d in (self.orig, self.draggrab, self.local)],
+                         ["as-shipped", "as-shipped", "on"])
+        self.assertEqual(self.local_summary, self.draggrab_summary + "; the Profile loads its player again when asked "
+                         "(its mode tabs)")
 
     def test_number_format_output_is_heap_locks_output_plus_number_format(self):
         self.assertEqual(sha256(self.numfmt), NUMFMT_OUTPUT_SHA256)
@@ -331,7 +409,7 @@ class PatchClientTest(unittest.TestCase):
     def test_lan_leaves_the_sockets_as_shipped(self):
         # (the map-name and rating caves left out: they use .text's slack after the bind cave in every profile)
         lan, summary = pc.patch_bytes(self.orig, MODULUS, "lan", server_host="192.168.1.20", maptable=False,
-                                     rating=False)
+                                     rating=False, dgx=False)
         self.assertEqual(self.at(lan, pc.REDIRECTOR_HOST, 21), b"192.168.1.20".ljust(21, b"\0"))
         for va in pc.BIND_CALLS:
             self.assertEqual(self.at(lan, va, 6), pc.CALL_BIND)
@@ -349,6 +427,7 @@ class PatchClientTest(unittest.TestCase):
         changed |= {(self.off(pc.NUMFMT_FORMAT), 6), (self.off(pc.NUMFMT_STEP), 6)}  # since NUMFMT the number format
         changed |= {(self.off(pc.AVERAGES_BLOCK), len(pc.AVERAGES_NEW))}  # since AVGPREC the averages
         changed |= {(self.off(va), len(n)) for va, _o, n, _w in pc.FADE_SITES}  # since FADE1 the fade
+        changed |= {(self.off(pc.PROFILE_RELOAD_SITE), 2)}  # since PROFILE2 the Profile's reload
         for start, end in diff_ranges(self.orig, lan):
             self.assertTrue(any(s <= start and end <= s + n for s, n in changed), hex(start))
         self.assertIn("sockets as shipped", summary)
@@ -411,7 +490,7 @@ class PatchClientTest(unittest.TestCase):
         for va in (pc.BIND_CALLS[0], pc.BIND_THUNK, pc.REDIRECTOR_HOST, pc.NOUPNP_JNZ, pc.PRELOAD_COUNT, pc.MAP_MISS,
                    pc.MAP_RESUME, pc.NUMFMT_FORMAT, pc.NUMFMT_STEP, pc.NUMFMT_1E15, pc.AVERAGES_BLOCK,
                    pc.FADE_APPLY + 0xDF, pc.FADE_TARGET + 0x3D, pc.FADE_HOOK, pc.FADE_FRONT + 0x8C,
-                   pc.FADE_PARAM):
+                   pc.FADE_PARAM, pc.DRAG_HOOK, pc.DRAG_SPEC_SITES[0][0], pc.DRAG_SPEC_SITES[1][0]):
             bad = bytearray(self.orig)
             bad[self.off(va)] ^= 0xFF
             for profile, kw in [("local", {}), ("lan", {"server_host": "192.168.1.20"})]:
@@ -426,37 +505,45 @@ class PatchClientTest(unittest.TestCase):
             with open(mod, "wb") as f:
                 f.write(MODULUS)
             pc.main(["patch_client.py", exe, mod])
+            self.assertEqual(sha256(read(exe)), PROFILE_RELOAD_OUTPUT_SHA256)
+            pc.main(["patch_client.py", exe, mod, "--profile-reload", "off"])
+            self.assertEqual(sha256(read(exe)), DRAGGRAB_OUTPUT_SHA256)
+            pc.main(["patch_client.py", exe, mod, "--profile-reload", "off", "--drag-grab", "off"])
+            self.assertEqual(sha256(read(exe)), DGX_OUTPUT_SHA256)
+            with self.assertRaises(SystemExit):  # the drag grab lives in .dgx
+                pc.main(["patch_client.py", exe, mod, "--profile-reload", "off", "--dgx", "off", "--drag-grab", "on"])
+            pc.main(["patch_client.py", exe, mod, "--profile-reload", "off", "--dgx", "off"])
             self.assertEqual(sha256(read(exe)), FADE_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--fade", "off"])
+            pc.main(["patch_client.py", exe, mod, "--profile-reload", "off", "--dgx", "off", "--fade", "off"])
             self.assertEqual(sha256(read(exe)), AVERAGES_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--fade", "off", "--averages", "off"])
+            pc.main(["patch_client.py", exe, mod, "--profile-reload", "off", "--dgx", "off", "--fade", "off", "--averages", "off"])
             self.assertEqual(sha256(read(exe)), NUMFMT_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--fade", "off", "--averages", "off", "--number-format", "off"])
+            pc.main(["patch_client.py", exe, mod, "--profile-reload", "off", "--dgx", "off", "--fade", "off", "--averages", "off", "--number-format", "off"])
             self.assertEqual(sha256(read(exe)), HEAPLOCKS_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--fade", "off", "--averages", "off", "--number-format", "off", "--heap-locks", "off"])
+            pc.main(["patch_client.py", exe, mod, "--profile-reload", "off", "--dgx", "off", "--fade", "off", "--averages", "off", "--number-format", "off", "--heap-locks", "off"])
             self.assertEqual(sha256(read(exe)), RATING_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--fade", "off", "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--rating", "off"])
+            pc.main(["patch_client.py", exe, mod, "--profile-reload", "off", "--dgx", "off", "--fade", "off", "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--rating", "off"])
             self.assertEqual(sha256(read(exe)), MAPTABLE_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--fade", "off", "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--maptable", "off",
+            pc.main(["patch_client.py", exe, mod, "--profile-reload", "off", "--dgx", "off", "--fade", "off", "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--maptable", "off",
                      "--rating", "off"])
             self.assertEqual(sha256(read(exe)), SNDBANK_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--fade", "off", "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--preload", "off",
+            pc.main(["patch_client.py", exe, mod, "--profile-reload", "off", "--dgx", "off", "--fade", "off", "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--preload", "off",
                      "--maptable", "off", "--rating", "off"])
             self.assertEqual(sha256(read(exe)), Q3B_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--fade", "off", "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--laa", "off", "--preload",
+            pc.main(["patch_client.py", exe, mod, "--profile-reload", "off", "--dgx", "off", "--fade", "off", "--averages", "off", "--number-format", "off", "--heap-locks", "off", "--laa", "off", "--preload",
                      "off", "--maptable", "off",
                      "--rating", "off"])
             self.assertEqual(sha256(read(exe)), A4_OUTPUT_SHA256)
-            pc.main(["patch_client.py", exe, mod, "--profile", "lan", "--server-host", "192.168.1.20"])
+            pc.main(["patch_client.py", exe, mod, "--profile-reload", "off", "--profile", "lan", "--server-host", "192.168.1.20"])
             lan = read(exe)
             self.assertEqual(self.at(lan, pc.REDIRECTOR_HOST, 12), b"192.168.1.20")
             self.assertEqual(self.at(lan, pc.BIND_THUNK, 6), pc.JMP_BIND)
             self.assertEqual(sha256(read(exe + ".orig")), BUILD_854_SHA256)
             pc.main(["patch_client.py", exe, mod, "127.0.0.1"])  # the A4 command line, back to local
-            self.assertEqual(sha256(read(exe)), FADE_OUTPUT_SHA256)
+            self.assertEqual(sha256(read(exe)), PROFILE_RELOAD_OUTPUT_SHA256)
             with self.assertRaises(SystemExit):  # refused before anything is written
-                pc.main(["patch_client.py", exe, mod, "--profile", "lan"])
-            self.assertEqual(sha256(read(exe)), FADE_OUTPUT_SHA256)
+                pc.main(["patch_client.py", exe, mod, "--profile-reload", "off", "--profile", "lan"])
+            self.assertEqual(sha256(read(exe)), PROFILE_RELOAD_OUTPUT_SHA256)
 
 
 class RefusalWithoutExeTest(unittest.TestCase):

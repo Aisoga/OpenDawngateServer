@@ -37,6 +37,12 @@ func Code() []byte {
 	return movieSnap(moviepatch.Collection.MoviePath, "com.gravity.framework.Gravity")
 }
 
+// Options is the synthetic Options.snap: the Options menu's gameplay tab's movie path with the same kind of made-up
+// movie, for the setup step of the drag scroll check box.
+func Options() []byte {
+	return movieSnap(moviepatch.Options.MoviePath, "Options_GameSettings_fla.MainTimeline")
+}
+
 func movieSnap(path, docClass string) []byte {
 	return snap.Pack([]snap.File{{Name: path, Data: movie(docClass)}})
 }

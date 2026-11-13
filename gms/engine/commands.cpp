@@ -766,7 +766,7 @@ bool RulesRefused(void* sim, unsigned index, const PlayerInfo& pi, const gms::It
   if (v == gms::rules::Verdict::kAllowed) return false;
   const Wallet w = SehWallet(pi.player);
   ++g_st.itemsRefused[r.type <= 5 ? r.type : 0];
-  const char* def = gms::rules::FeedbackDef(v);
+  const char* def = gms::rules::FeedbackDef(v, shoprules::Current().pool);  // LIGHTNING1: the pool's own line
   unsigned mask = 0;
   const bool due = shoprules::TextDue(index);
   if (due) mask = SendPlayerText(sim, index, def);

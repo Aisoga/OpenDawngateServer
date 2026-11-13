@@ -4,15 +4,18 @@
 // The custom game lobby's match rules: what everyone sees and what the game's admin changes. LobbyReady owns it, draws
 // it on its overlay and hands it the server's events:
 //     lobby.rulesCatalog {categories: [{id, name, default, options: [{id, name, bots}]}], presets: [{id, name, options}]}
-//     lobby.state's rules {options, preset, text, bots, findings: [{category, message}], canEdit, host}
-//     lobby.setRules {preset} | {rules: {<category>: <option>, ...}} | {bots}             -> the server
+//     lobby.state's rules {options, preset, text, bots, rated, findings: [{category, message}], canEdit, host}
+//     lobby.setRules {preset[, bots]} | {rules: {<category>: <option>, ...}} | {bots} | {rated}  -> the server
 //
-// Every player sees a summary above the Spirit team: MATCH RULES, the rules in words (the preset's name and the server's
-// text), the bots, and in red, in a short form, that the game can't start like this. The admin also gets CHANGE,
-// which opens the editor over the teams: the presets first, then a column per category with its options, the bots
-// check box, the findings and a hint line. A click is a call; the server's next lobby.state says how things stand (a
-// change resets every ready mark there). The editor greys out nothing on its own authority: an option the catalog says
-// the bots can't play is dimmed while the bots are on (the hint line says why), and a choice the server's checks refuse
+// Every player sees a summary above the Spirit team: MATCH RULES, the game's type (Standard, Draft, or "Custom: " and
+// the server's text), Rated or Unrated and the bots, and in red, in a short form, that the game can't start like this.
+// The admin also gets CHANGE, which opens the editor over the teams: one row of radio buttons Standard / Draft / Custom;
+// Standard shows the Bots and Rated check boxes, Draft only Rated (the draft has no bots), Custom a column per category
+// with its options as radio buttons, then Bots and Rated; then the findings and a hint line. Custom is the admin's own
+// choice in this panel (sticky: a lobby.state whose options are a preset doesn't take it away); Standard and Draft are
+// the server's presets of those ids. A click is a call; the server's next lobby.state says how things stand (a change
+// resets every ready mark there). The editor greys out nothing on its own authority: an option the catalog says the
+// bots can't play is dimmed while the bots are on (the hint line says why), and a choice the server's checks refuse
 // shows in red with the server's reason, while LobbyReady holds START (the server refuses it too).
 //
 // Everything the server sends is untrusted: strings go into .text only (never htmlText), clipped; lists are cut short;
@@ -32,14 +35,19 @@ package {
 
     public class RulesPanel {
         private static const CHECK_CLASS:String = "MSCCheckBox001";
+        private static const RADIO_CLASS:String = "MSCRadioButton003"; // the Collection's Spells menu's (same box)
         private static const TITLE:String = "MATCH RULES";
         private static const CHANGE:String = "CHANGE";
         private static const CLOSE:String = "DONE";
-        private static const PRESET_HEADER:String = "PRESET";
-        private static const CUSTOM:String = "Custom rules";
+        private static const STANDARD:String = "standard"; // the presets the type row offers
+        private static const DRAFT:String = "draft";
+        private static const CUSTOM:String = "Custom";
         private static const BOTS_LABEL:String = "Fill open seats with bots"; // the CREATE GAME dialog's words
-        private static const BOTS_ON:String = "Bots fill the open seats";
-        private static const BOTS_OFF:String = "No bots";
+        private static const RATED_LABEL:String = "Rated (the result counts for the rating)";
+        private static const BOTS_ON:String = "bots fill the open seats";
+        private static const BOTS_OFF:String = "no bots";
+        private static const RATED:String = "Rated";
+        private static const UNRATED:String = "Unrated";
         private static const NO_BOTS_HINT:String = "Dimmed options can't be played with bots yet. ";
         private static const RESET_HINT:String = "A change resets every player's ready mark.";
         private static const INCOMPATIBLE:String = "Incompatible match rules!"; // the user's words
@@ -62,11 +70,13 @@ package {
         private static const BTN_W:int = 76;           // the fallback button's size
         private static const BTN_H:int = 19;
         private static const PAD:int = 12;
-        private static const COLUMNS:int = 5;          // the presets and four categories
+        private static const EDITOR_W:int = 804;       // over the two teams
+        private static const TYPE_W:int = 156;         // a cell of the type row
+        private static const TOGGLE_W:int = 380;       // the bots' and the rated row, side by side
         private static const HEAD_H:int = 26;          // the editor's title row
         private static const COL_HEAD_H:int = 22;
         private static const ROW_H:int = 28;
-        private static const MAX_CATEGORIES:int = 4;   // what the editor has room for (the catalog's four)
+        private static const MAX_CATEGORIES:int = 5;   // the catalog has four; the columns share the editor's width
         private static const MAX_OPTIONS:int = 10;     // the shaper pool has 8 (all, melee, ranged, five archetypes)
         private static const MAX_PRESETS:int = 6;
         private static const MAX_FINDINGS:int = 4;
@@ -86,6 +96,10 @@ package {
         private var preset:String = "";
         private var rulesText:String = "";
         private var bots:Boolean = false;
+        private var rated:Boolean = true;
+        private var hasRated:Boolean = false; // the server sends rated (an older one doesn't take the call)
+        private var customPick:Boolean = false; // the admin chose Custom here: stays until Standard or Draft
+        private var radioMissing:Boolean = false; // RADIO_CLASS isn't there: the check box instead (said once)
         private var findings:Array = [];  // {category, message}
         private var canEdit:Boolean = false;
         private var hostTakes:Boolean = true;
@@ -189,6 +203,8 @@ package {
             preset = str(r.preset, 32);
             rulesText = str(r.text, 120);
             bots = r.bots === true;
+            hasRated = r.rated is Boolean;
+            rated = r.rated !== false;
             var fs:Array = [];
             for each (var f:Object in r.findings) {
                 if (f != null && fs.length < MAX_FINDINGS) {
@@ -246,6 +262,7 @@ package {
             presets = [];
             findings = [];
             editing = false;
+            customPick = false;
             dirty = true;
         }
 
@@ -361,16 +378,20 @@ package {
             var w:Number = sumW;
             changeBtn.visible = canEdit && cats != null;
             placeChange();
+            // the type as the server's state has it (the admin's sticky Custom is the editor's only): a combination
+            // equal to Standard or Draft counts as that type
             var t:String = rulesText;
             var p:Object = presetById(preset);
-            if (p != null && p.name != "" && p.name != t) {
-                t = p.name + ": " + t;
-            } else if (p == null && preset == "" && cats != null && t != "") {
+            if (p != null && (preset == STANDARD || preset == DRAFT)) {
+                t = p.name != "" ? p.name : t;
+            } else if (cats != null && t != "") {
                 t = CUSTOM + ": " + t;
             }
             setLine(textTf, t, 0, LINE_H, w);
             fit(textTf, 15, w);
-            setLine(botsTf, bots ? BOTS_ON : BOTS_OFF, 0, 2 * LINE_H, w);
+            var b:String = bots ? BOTS_ON : BOTS_OFF;
+            setLine(botsTf, hasRated ? (rated ? RATED : UNRATED) + ", " + b : b.charAt(0).toUpperCase() + b.substr(1),
+                    0, 2 * LINE_H, w);
             var f:String = "";
             if (findings.length > 0) {
                 // a short form that fits, the same for everyone: the reasons are long, and the editor has them in full
@@ -467,14 +488,25 @@ package {
             return o;
         }
 
+        // the editor's type: "custom" while the admin chose it here, else the state's preset (standard, draft), and
+        // "custom" for any other combination (ARAM, All Random, ...: the server's presets the type row doesn't offer)
+        private function mode():String {
+            if (customPick) {
+                return "custom";
+            }
+            if ((preset == STANDARD || preset == DRAFT) && presetById(preset) != null) {
+                return preset;
+            }
+            return "custom";
+        }
+
         private function fillEditor():void {
             clearEditor();
             editor = new Sprite();
             layer.addChild(editor);
             var bad:Object = flagged();
             dimmed = false;
-            var colW:Number = 156;
-            var w:Number = PAD * 2 + COLUMNS * colW;
+            var w:Number = EDITOR_W;
             var y:Number = PAD;
             var title:TextField = field("$Header", 17, WHITE, "left");
             title.text = TITLE;
@@ -489,40 +521,47 @@ package {
             doneBtn.addEventListener(MouseEvent.CLICK, onClose, false, 0, false);
             editor.addChild(doneBtn);
             y += HEAD_H;
-            // the columns: the presets, then each category; as many rows as the presets' column can have (with the
-            // Custom row), so no row moves when the Custom row comes or goes
-            var rows:int = presets.length + 1;
-            var col:int = 0;
+            // the type row: Standard / Draft / Custom (the presets the catalog has of those ids)
+            var m:String = mode();
             var x:Number = PAD;
-            header(PRESET_HEADER, x, y, colW, false);
-            var r:int = 0;
-            for each (var p:Object in presets) {
-                row(x, y + COL_HEAD_H + r * ROW_H, colW, p.name, preset == p.id, false, false, {preset: p.id});
-                r++;
-            }
-            if (preset == "") {
-                row(x, y + COL_HEAD_H + r * ROW_H, colW, CUSTOM, true, false, false, null);
-                r++;
-            }
-            rows = Math.max(rows, r);
-            for each (var c:Object in cats) {
-                col++;
-                x = PAD + col * colW;
-                header(c.name, x, y, colW, bad[c.id] === true);
-                r = 0;
-                for each (var o:Object in c.options) {
-                    var on:Boolean = options[c.id] == o.id;
-                    var noBots:Boolean = bots && !o.bots && o.id != c.def;
-                    dimmed = dimmed || noBots;
-                    row(x, y + COL_HEAD_H + r * ROW_H, colW, o.name, on, on && bad[c.id] === true, noBots,
-                        {category: c.id, option: o.id});
-                    r++;
+            for each (var id:String in [STANDARD, DRAFT]) {
+                var p:Object = presetById(id);
+                if (p != null) {
+                    row(x, y, TYPE_W, p.name, m == id, false, false, {type: id}, true);
+                    x += TYPE_W;
                 }
-                rows = Math.max(rows, r);
             }
-            y += COL_HEAD_H + rows * ROW_H + 8;
-            // the bots, across the editor
-            row(PAD, y, w - 2 * PAD, BOTS_LABEL, bots, bad["bots"] === true, false, {bots: !bots});
+            row(x, y, TYPE_W, CUSTOM, m == "custom", false, false, {type: "custom"}, true);
+            y += ROW_H + 6;
+            // Custom: a column per category, each option a radio button; the columns share the editor's width
+            if (m == "custom" && cats != null) {
+                var colW:Number = Math.floor((w - 2 * PAD) / Math.max(1, cats.length));
+                var rows:int = 0;
+                var col:int = 0;
+                for each (var c:Object in cats) {
+                    x = PAD + col * colW;
+                    col++;
+                    header(c.name, x, y, colW, bad[c.id] === true);
+                    var r:int = 0;
+                    for each (var o:Object in c.options) {
+                        var on:Boolean = options[c.id] == o.id;
+                        var noBots:Boolean = bots && !o.bots && o.id != c.def;
+                        dimmed = dimmed || noBots;
+                        row(x, y + COL_HEAD_H + r * ROW_H, colW, o.name, on, on && bad[c.id] === true, noBots,
+                            {category: c.id, option: o.id}, true);
+                        r++;
+                    }
+                    rows = Math.max(rows, r);
+                }
+                y += COL_HEAD_H + rows * ROW_H + 8;
+            }
+            // the bots (not in Draft: the draft has no bots) and Rated, side by side, at the same places in every type
+            if (m != DRAFT || bots) {
+                row(PAD, y, TOGGLE_W, BOTS_LABEL, bots, bad["bots"] === true, false, {bots: !bots}, false);
+            }
+            if (hasRated) {
+                row(PAD + TOGGLE_W + 10, y, TOGGLE_W, RATED_LABEL, rated, false, false, {rated: !rated}, false);
+            }
             y += ROW_H + 6;
             // the findings, each on its own lines
             if (findings.length > 0) {
@@ -568,17 +607,18 @@ package {
             editor.addChild(t);
         }
 
-        // one choice: EA's check box (checked = the active option) and its name; the whole row takes the click
+        // one choice: EA's radio button (one of several) or check box (on/off), selected = active, and its name; the
+        // whole row takes the click
         private function row(x:Number, y:Number, w:Number, label:String, on:Boolean, bad:Boolean, dim:Boolean,
-                             act:Object):void {
+                             act:Object, radio:Boolean):void {
             var s:Sprite = new Sprite();
             s.x = x;
             s.y = y;
             s.mouseChildren = false;
             s.buttonMode = act != null;
             paintRow(s, w, false);
-            try {
-                var ck:Object = new (getDefinitionByName(CHECK_CLASS) as Class)();
+            var ck:Object = control(radio);
+            if (ck != null) {
                 ck.mouseEnabled = false;
                 ck.mouseChildren = false;
                 ck.label = "";
@@ -588,8 +628,6 @@ package {
                 s.addChild(ck as DisplayObject);
                 ck.selected = on; // and again at each draw (a CLIK control may set itself up a frame later)
                 checks.push({ck: ck, on: on});
-            } catch (err:Error) {
-                say("rules check box: " + err.message);
             }
             var t:TextField = field("$Body", 13, bad ? RED : (dim ? OFF : (on ? WHITE : LIGHT)), "left");
             t.text = label;
@@ -607,6 +645,24 @@ package {
                 s.addEventListener(MouseEvent.ROLL_OUT, onRowOut, false, 0, false);
             }
             editor.addChild(s);
+        }
+
+        // EA's control for a row: the radio button (falls back to the check box when the symbol isn't there)
+        private function control(radio:Boolean):Object {
+            if (radio && !radioMissing) {
+                try {
+                    return new (getDefinitionByName(RADIO_CLASS) as Class)();
+                } catch (err:Error) {
+                    radioMissing = true;
+                    say("rules radio button: " + err.message);
+                }
+            }
+            try {
+                return new (getDefinitionByName(CHECK_CLASS) as Class)();
+            } catch (err2:Error) {
+                say("rules check box: " + err2.message);
+            }
+            return null;
         }
 
         private var rowActs:Array = [];   // a row's action, by the row's name (its index here)
@@ -652,10 +708,20 @@ package {
             }
         }
 
-        // a click is a call; it shows at once, and the server's lobby.state confirms it or puts it back
+        // a click is a call; it shows at once, and the server's lobby.state confirms it or puts it back. The type row:
+        // Custom only shows the categories (no call: the rules stay as they are until an option changes); Standard and
+        // Draft set their preset (Draft also turns the bots off: the draft has none).
         private function onRowClick(e:MouseEvent):void {
             var a:Object = actOf(e);
             if (a == null || !canEdit || cats == null) {
+                return;
+            }
+            if (a.type == "custom") {
+                if (!customPick) {
+                    customPick = true;
+                    dirty = true;
+                    askRedraw();
+                }
                 return;
             }
             var now:int = getTimer();
@@ -663,11 +729,17 @@ package {
                 return;
             }
             var args:Object = null;
-            if (a.preset != null) {
-                if (a.preset == preset) {
+            if (a.type != null) {
+                if (a.type == preset && !(a.type == DRAFT && bots)) {
+                    customPick = false; // the server's state already is this type
+                    dirty = true;
+                    askRedraw();
                     return;
                 }
-                args = {preset: a.preset};
+                args = {preset: a.type};
+                if (a.type == DRAFT && bots) {
+                    args.bots = false;
+                }
             } else if (a.category != null) {
                 if (options[a.category] == a.option) {
                     return;
@@ -679,12 +751,15 @@ package {
                 args = {rules: next};
             } else if (a.bots != null) {
                 args = {bots: a.bots === true};
+            } else if (a.rated != null) {
+                args = {rated: a.rated === true};
             }
             if (args == null || !channel.call("lobby.setRules", args)) {
                 return;
             }
             lastCall = now;
             if (args.preset != null) {
+                customPick = false;
                 var p:Object = presetById(args.preset);
                 if (p != null) {
                     for (var k:String in p.options) {
@@ -692,12 +767,17 @@ package {
                     }
                     preset = p.id;
                 }
+                if (args.bots === false) {
+                    bots = false;
+                }
             } else if (args.rules != null) {
                 options = args.rules;
                 var m:Object = presetMatching(options);
                 preset = m != null ? m.id : "";
-            } else {
+            } else if (args.bots != null) {
                 bots = args.bots;
+            } else {
+                rated = args.rated;
             }
             dirty = true;
             askRedraw();

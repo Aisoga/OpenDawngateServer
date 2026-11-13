@@ -27,17 +27,17 @@ import dbpf  # noqa: E402
 import patch_locale as pl  # noqa: E402
 
 MADE_UP_SHA = "97766712cea3cf54c20204922cc472d86ac9d592c40e955f7c1a635e0567f25e"
-MADE_UP_LANE_B = "8a8b381b9a9cf51ca5ef9a5c85aecdb5e7986c1011074c07264271a1dd0f5d2d"  # --host 127.0.0.2
-MADE_UP_WEB = "26ef34c0babbd8682f09f87928fbf2d811c32c12ce72264ced40d5df3da9885d"  # 192.168.1.20, Play.Example.org:8443
-MADE_UP_LOBBY_ANY = "0fc64846c57c44dd40e96525089bbcebdc50ee77ad07f4e635037fa3008df8be"  # 127.0.0.2, LOBBY_MAP_ANY, MAPS
+MADE_UP_LANE_B = "0dd924829de311cb46ad3114e15f7cec23455437ea1e4151f9edb452ea00aca1"  # --host 127.0.0.2
+MADE_UP_WEB = "b7c94dfd9980c1320d6c62093b5f28018a08f1fd27b13b64ace0fe90d4644c42"  # 192.168.1.20, Play.Example.org:8443
+MADE_UP_LOBBY_ANY = "a08a6767d8ffd454998f82667b95ca649eb03f20b61b3ec6aef145d2133f55e8"  # 127.0.0.2, LOBBY_MAP_ANY, MAPS
 # a maps folder's packages (localepatch_test.go's maps): CM_Ring, and one named like MM_Map_v3 (its line is the first's)
 MAPS = [("CM_Ring", "Test Ring"), ("mm_map_V3", "Not this")]
 SYNTH_LOCALE_SHA = "528ce9623b3b1542fa600b1036136a3c39e8e68bb586019fb3a6d3c2f6374832"
-SYNTH_LOCAL = "a9386beef0740e61bcb1256b72873c397048d6dd60982ab7e41e46806e7833e2"  # the synthetic game, 127.0.0.1
+SYNTH_LOCAL = "03c124ee431b3c3007f50fca450e24c19161e42c54fa631b3fbc86308f806865"  # the synthetic game, 127.0.0.1
 GAME_854 = {  # build 854's Locale.package
-    ("127.0.0.1", None): "8030edd76c6c4617e2c08ba1bacfc51fa63212a10860a200f5ab2bdb62063ef2",
-    ("127.0.0.2", None): "28fb493c164fb623804e02604981c226c2476449a458f3a78783f3f30308c5ff",
-    ("203.0.113.7", "dawngate.example.org"): "c82b4295ab32ec26d3ac2063d2eb12be0c704d868b59daf2e627d88eedd95e37",
+    ("127.0.0.1", None): "3d97f41690b2393d40804f487e070c7f38ffae4c33e566b57ee813b2aa42daff",
+    ("127.0.0.2", None): "2f5b56f4a53c3073756d1abd0108fe7bbeeb8699a3409753b98c552787b65311",
+    ("203.0.113.7", "dawngate.example.org"): "650f6e91a29b5183ed8ef5badb80f54a99471401d5ee28e53f03b3176f988438",
 }
 # synthgame.Locale() (server/internal/setup/testgame/synthgame): one RefPack-compressed table, no login table
 SYNTH_LOCALE = bytes.fromhex(
@@ -118,8 +118,9 @@ class SameAsGo(Temp):
                     self.assertEqual(text.count(f"0x{lid:08x} {line}\r\n".encode()), 1, (hex(e.instance), lid))
                 if e.instance == pl.FE_MATCH_TYPE:  # LBMIN: every line replaced in place
                     self.assertNotIn(pl.ADDED_COMMENT.encode(), text)
-                if e.instance == pl.FE_LEADERBOARD:  # LBMIN's in place; RATINGSHOW2's column header appended
-                    self.assertTrue(text.endswith(pl.ADDED_COMMENT.encode() + b"\r\n0x5e70d001 Rating\r\n"), text[-80:])
+                if e.instance == pl.FE_LEADERBOARD:  # LBMIN's in place; RATINGSHOW2's header and MMR2's rules appended
+                    added = "".join(f"0x{lid:08x} {pl.LEADERBOARD_LINES[lid]}\r\n" for lid in range(0x5E70D001, 0x5E70D005))
+                    self.assertTrue(text.endswith(pl.ADDED_COMMENT.encode() + b"\r\n" + added.encode()), text[-80:])
             lb = [pkg.read(e) for e in pkg.entries if e.instance == pl.FE_LEADERBOARD]
             self.assertIn(b"0x00000101 Rank is based upon skill rating from balanced PvP and custom games. Must have at least 10 rated games.\r\n",
                           lb[0])
@@ -138,14 +139,15 @@ class SameAsGo(Temp):
                                    b"0x5e70c002 Refund for ~price~ vim?\r\n0x5e70c003 Refunds for: ~price~\r\n"
                                    b"0x5e70c004 Refund for ~item~ and ~price~ vim?\r\n"
                                    b"0x5e70c005 Refunds for: ~item~ and ~price~\r\n"])
-            # RULES0b: LabsAlerts is the shipped one (no final line end) plus the match rules' two alert lines
+            # RULES0b: LabsAlerts is the shipped one (no final line end) plus the match rules' alert lines (LIGHTNING1: three)
             shipped = pl.find_table(dbpf.Package(path), pl.LABS_ALERTS)
             alerts = [pkg.read(e) for e in pkg.entries if e.instance == pl.LABS_ALERTS]
             self.assertTrue(shipped.endswith(b"Some content may not be available."), shipped[-40:])
             self.assertEqual(alerts, [shipped + b"\r\n" + pl.ADDED_COMMENT.encode() +
                                       b"\r\n0x5e70e001 You can shop only after dying.\r\n"
-                                      b"0x5e70e002 That item is not allowed in this match.\r\n"])
-            self.assertEqual(len(pkg.entries), 10)  # PREF3: GameServerRegion, newFeatureNotify
+                                      b"0x5e70e002 That item is not allowed in this match.\r\n"
+                                      b"0x5e70e003 Only Time, Energy, Chaos, Potency, Resonance.\r\n"])
+            self.assertEqual(len(pkg.entries), 11)  # PREF3: GameServerRegion, newFeatureNotify; DRAGGRAB2a: Options
 
 
 class Rule(unittest.TestCase):

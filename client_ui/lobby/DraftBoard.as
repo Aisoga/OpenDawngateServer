@@ -39,6 +39,14 @@
 // for a few seconds; when it is done the board stays until the game starts. The enemy's roles, hovers and requests are
 // never sent, so never drawn; a spectator sees the public board only.
 //
+// A vote (the rules' pick "army", Army Pick, or "clone", Clone Pick) uses the same board in its own mode: the event has
+// the phase "vote" (then "done" for the result), the part vote {kind, drawn, how, votes?, locked?} and own's votes and
+// locked; the calls are draft.vote {shaper} (a card click: the player's vote, changeable) and draft.lock {} (LOCK IN:
+// final). The head line says what the vote is for ("VOTE FOR YOUR TEAM'S SHAPER" or "VOTE FOR EVERYONE'S SHAPER"),
+// the countdown runs as in a turn, each card shows how many of the votes this player sees are for it (Army: the own
+// team's, Clone: everyone's), a team's rows show its voters' votes (where they are sent to this player) and LOCKED; no
+// bans, roles, chips, swaps or trades. The result names and frames each team's drawn shaper until the game starts.
+//
 // Everything the server sends is untrusted: texts go into .text only (never htmlText), clipped; lists are cut short; a
 // picture is loaded (img://, the game's own texture lookup, as the Collection's IconLoader) only when its path has the
 // form of a shaper picture, Heroes/<letters>/default/ui/Textures/<letters and _>.dds, or is one of the four role icons
@@ -105,6 +113,16 @@ package {
         private static const RB_ASKED:String = "ASKED";
         private static const RB_ASKS:String = "ASKS YOU";
         private static const RB_READY:String = "READY";
+        // a vote (Army Pick, Clone Pick)
+        private static const VOTE_ARMY:String = "VOTE FOR YOUR TEAM'S SHAPER";
+        private static const VOTE_CLONE:String = "VOTE FOR EVERYONE'S SHAPER";
+        private static const VOTE_WATCH_ARMY:String = "ARMY PICK: THE TEAMS VOTE";
+        private static const VOTE_WATCH_CLONE:String = "CLONE PICK: EVERYONE VOTES";
+        private static const VOTE_OVER:String = "THE VOTE IS OVER";
+        private static const VOTE_WATCHING:String = "You are watching the vote.";
+        private static const VOTING:String = "Voting...";
+        private static const VOTE_FIRST:String = "Vote for a shaper first: click its card.";
+        private static const RB_LOCKED:String = "LOCKED";
         private static const ROLES:Array = ["gladiator", "tactician", "hunter", "predator"]; // the wire's role ids
         private static const ROLE_NAMES:Array = ["Gladiator", "Tactician", "Hunter", "Predator"];
         private static const ROLE_SHORT:Array = ["GLA", "TAC", "HUN", "PRE"]; // under the icon (shows if it can't load)
@@ -162,6 +180,8 @@ package {
         private static const TILE_GAP:int = 12;
         private static const ICON_MAX:int = 64;
         private static const TIMES_UP_MS:int = 10000; // an own turn's last seconds: the hint says what the timeout does
+        private static const BADGE_W:int = 18;      // a card's vote count (a vote)
+        private static const BADGE_H:int = 16;
 
         // what is read of an event
         private static const MAX_POOL:int = 60;
@@ -194,8 +214,12 @@ package {
         private var you:Object = null;     // {team: 0 or 1, seat}, null for a spectator
         private var yourTurn:Boolean = false;
         private var myTurn:int = -1;       // the index of the receiver's open turn while yourTurn
-        private var own:Object = null;     // the own team's part, by seat: {roles, hovers, ready, swaps, trades}
+        private var own:Object = null;     // the own team's part, by seat: {roles, hovers, ready, swaps, trades, votes,
+                                           // locked}
+        private var vote:Object = null;    // a vote's public part: {kind, drawn: [2], how: [2], votes, locked} (votes
+                                           // and locked by team and seat, Clone Pick only: else null); null in a draft
         private var stateKey:String = "";  // the board's content (all but the time): a resend after a refusal is equal
+        private var counts:Object = {};    // a vote: the votes this player sees, by pool id (refresh counts them)
 
         private var sel:String = "";       // the card the player chose: its hover (a pool id), the server's once answered
         private var sent:Object = null;    // {idx, id, key, at}: the ban or pick call made and not yet answered
@@ -255,6 +279,11 @@ package {
             return phase != "";
         }
 
+        // the board is a vote's (Army Pick, Clone Pick)
+        public function get voting():Boolean {
+            return vote != null;
+        }
+
         // the board's sprite (LobbyReady keeps it above the rules' layer)
         public function get top():DisplayObject {
             return layer;
@@ -275,7 +304,7 @@ package {
                 dirty = true;
                 return;
             }
-            if (ph != "role" && ph != "ban" && ph != "pick" && ph != "trade" && ph != "done") {
+            if (ph != "role" && ph != "ban" && ph != "pick" && ph != "trade" && ph != "done" && ph != "vote") {
                 return; // nothing this board knows
             }
             var p:Array = [];
@@ -284,6 +313,7 @@ package {
             var tm:Array = [[], []];
             var y:Object = null;
             var ow:Object = null;
+            var vt:Object = null;
             try {
                 for each (var o:Object in d.pool) {
                     if (p.length >= MAX_POOL) {
@@ -325,11 +355,18 @@ package {
                 }
                 if (d.you != null && (int(d.you.team) == 1 || int(d.you.team) == 2)) {
                     y = {team: int(d.you.team) - 1, seat: Math.max(0, Math.min(MAX_SEATS - 1, int(d.you.seat)))};
-                    ow = d.own != null ? ownOf(d.own) : null;
+                    ow = d.own != null ? ownOf(d.own, ids) : null;
                 }
+                vt = voteOf(d.vote, ids);
             } catch (err:Error) {
                 say("draft state: " + err.message);
                 return;
+            }
+            if (vt == null && ph == "vote") {
+                return; // a vote's phase without its part: nothing to draw
+            }
+            if (vt != null) {
+                ts = []; // a vote has no turns (the server sends none)
             }
             var key:String = "";
             for each (var q:Object in p) {
@@ -362,7 +399,10 @@ package {
                 }
             }
             var mine:Boolean = d.yourTurn === true && y != null && win >= 0 && (mt >= 0 || fallback >= 0);
-            if (!mine) {
+            if (vt != null) {
+                mine = d.yourTurn === true && y != null && ph == "vote"; // the receiver may still vote (not locked)
+                mt = -1;
+            } else if (!mine) {
                 mt = -1;
             } else if (mt < 0) {
                 mt = fallback;
@@ -373,7 +413,14 @@ package {
             }
             if (ow != null) {
                 sk += "/" + ow.roles.join(",") + "/" + ow.hovers.join(",") + "/" + ow.ready.join(",") + "/" +
-                    pairKey(ow.swaps) + "/" + pairKey(ow.trades);
+                    pairKey(ow.swaps) + "/" + pairKey(ow.trades) + "/" + ow.votes.join(",") + "/" + ow.locked.join(",");
+            }
+            if (vt != null) {
+                sk += "/" + vt.kind + "/" + vt.drawn.join(",") + "/" + vt.how.join(",");
+                if (vt.votes != null) {
+                    sk += "/" + vt.votes[0].join(",") + ";" + vt.votes[1].join(",") + "/" + vt.locked[0].join(",") + ";" +
+                        vt.locked[1].join(",");
+                }
             }
             if (win != window || ph != phase) {
                 flashText = ""; // a click's answer belongs to its window ("Not your turn: rules5a bans now.")
@@ -391,9 +438,11 @@ package {
                     sent.key = sk;
                 }
             }
-            // the hover in flight: answered when the team's part names it, refused when the board came back unchanged
+            // the hover (in a vote: the vote) in flight: answered when the team's part names it, refused when the board
+            // came back unchanged
             if (hoverReq != null) {
-                if (ow == null || y == null || ow.hovers[y.seat] == hoverReq.id || sk == hoverReq.key) {
+                if (ow == null || y == null || (vt != null ? ow.votes : ow.hovers)[y.seat] == hoverReq.id ||
+                    sk == hoverReq.key || (vt != null && ph != "vote")) {
                     hoverReq = null;
                 } else {
                     hoverReq.key = sk;
@@ -416,7 +465,7 @@ package {
                 // the choice is the player's hover as the server has it (cleared at its pick, when its shaper is taken,
                 // in the trade phase), unless a hover of its own is still on its way
                 if (hoverReq == null) {
-                    sel = ow.hovers[y.seat];
+                    sel = vt != null ? ow.votes[y.seat] : ow.hovers[y.seat]; // a vote: the own vote
                 }
             } else if (mt != myTurn || !mine) {
                 sel = ""; // a server without the team's part (the first version): a choice lasts for its turn only
@@ -440,6 +489,7 @@ package {
             yourTurn = mine;
             myTurn = mt;
             own = ow;
+            vote = vt;
             stateKey = sk;
             noteText = "";
             if (key != poolKey) {
@@ -450,14 +500,62 @@ package {
         }
 
         // the own team's part, each list by seat: a role id of the four or "", a pool id or "", a ready mark, the
-        // pending requests {from, to} (seats)
-        private static function ownOf(o:Object):Object {
-            var r:Object = {roles: [], hovers: [], ready: [], swaps: pairs(o.swaps), trades: pairs(o.trades)};
+        // pending requests {from, to} (seats); in a vote also each seat's vote (a pool id or "") and lock
+        private static function ownOf(o:Object, ids:Object):Object {
+            var r:Object = {roles: [], hovers: [], ready: [], swaps: pairs(o.swaps), trades: pairs(o.trades), votes: [],
+                locked: []};
             for (var i:int = 0; i < MAX_SEATS; i++) {
                 var role:String = o.roles is Array && i < o.roles.length ? str(o.roles[i], 16) : "";
                 r.roles.push(ROLES.indexOf(role) >= 0 ? role : "");
                 r.hovers.push(o.hovers is Array && i < o.hovers.length ? idOf(o.hovers[i]) : "");
                 r.ready.push(o.ready is Array && i < o.ready.length && o.ready[i] === true);
+            }
+            r.votes = seatIds(o.votes, ids);
+            r.locked = seatFlags(o.locked);
+            return r;
+        }
+
+        // A vote's public part (Army Pick, Clone Pick): {kind, drawn: each team's drawn pool id or "", how: "vote",
+        // "random" or "", votes and locked: by team and seat (Clone Pick only; null in Army Pick, whose votes only the
+        // own team gets, in own)}; null when the event has none (a draft).
+        private static function voteOf(v:*, ids:Object):Object {
+            if (v == null || typeof(v) != "object") {
+                return null;
+            }
+            var kind:String = str(v.kind, 8);
+            if (kind != "army" && kind != "clone") {
+                return null;
+            }
+            var r:Object = {kind: kind, drawn: ["", ""], how: ["", ""], votes: null, locked: null};
+            for (var t:int = 0; t < 2; t++) {
+                var dr:String = v.drawn is Array && t < v.drawn.length ? idOf(v.drawn[t]) : "";
+                r.drawn[t] = ids[dr] != null ? dr : "";
+                var how:String = v.how is Array && t < v.how.length ? str(v.how[t], 8) : "";
+                r.how[t] = how == "vote" || how == "random" ? how : "";
+            }
+            if (kind == "clone" && v.votes is Array) {
+                r.votes = [seatIds(v.votes[0], ids), seatIds(v.votes.length > 1 ? v.votes[1] : null, ids)];
+                var lk:Array = v.locked is Array ? v.locked : [];
+                r.locked = [seatFlags(lk[0]), seatFlags(lk.length > 1 ? lk[1] : null)];
+            }
+            return r;
+        }
+
+        // a list by seat (MAX_SEATS long) of pool ids ("" for anything else)
+        private static function seatIds(a:*, ids:Object):Array {
+            var r:Array = [];
+            for (var i:int = 0; i < MAX_SEATS; i++) {
+                var id:String = a is Array && i < a.length ? idOf(a[i]) : "";
+                r.push(ids[id] != null ? id : "");
+            }
+            return r;
+        }
+
+        // a list by seat (MAX_SEATS long) of flags (true only for a true)
+        private static function seatFlags(a:*):Array {
+            var r:Array = [];
+            for (var i:int = 0; i < MAX_SEATS; i++) {
+                r.push(a is Array && i < a.length && a[i] === true);
             }
             return r;
         }
@@ -509,6 +607,8 @@ package {
                     return !hasPair(ow.trades, int(r.val), seat);
                 case "ready":
                     return ow.ready[seat] === true;
+                case "lock":
+                    return ow.locked[seat] === true;
             }
             return true;
         }
@@ -564,6 +664,7 @@ package {
             yourTurn = false;
             myTurn = -1;
             own = null;
+            vote = null;
             stateKey = "";
             sel = "";
             sent = null;
@@ -1137,6 +1238,10 @@ package {
         }
 
         private function refresh():void {
+            if (vote != null) {
+                refreshVote();
+                return;
+            }
             var open:Array = openTurns();
             var first:Object = open.length > 0 ? turns[open[0]] : null;
             var my:Object = myTurn >= 0 ? turns[myTurn] : null;
@@ -1245,6 +1350,313 @@ package {
             }
             placeButtons();
             showHint();
+        }
+
+        // ---- a vote (Army Pick, Clone Pick): the same board without bans, roles or chips ----
+
+        // The vote's board: the head line (what the vote is for; the drawn shaper once it is over), the countdown, a
+        // column per team with each voter's vote as this player may see it (Army: the own team's, Clone: everyone's)
+        // and LOCKED, the cards with their counts, LOCK IN. The result (phase done) shows each team's drawn shaper in
+        // all its rows and frames its card in the team's colour.
+        private function refreshVote():void {
+            var army:Boolean = vote.kind == "army";
+            var over:Boolean = phase == "done";
+            var line:String;
+            var lineColor:uint = WHITE;
+            var size:int = 18;
+            if (over) {
+                var any:String = vote.drawn[0] != "" ? vote.drawn[0] : vote.drawn[1];
+                if (!army && any != "") {
+                    line = "EVERYONE PLAYS " + nameOf(any).toUpperCase();
+                } else if (army && you != null && vote.drawn[you.team] != "") {
+                    line = "YOUR TEAM PLAYS " + nameOf(vote.drawn[you.team]).toUpperCase();
+                } else {
+                    line = VOTE_OVER;
+                }
+                lineColor = ACCENT;
+                size = 22;
+            } else if (you == null) {
+                line = army ? VOTE_WATCH_ARMY : VOTE_WATCH_CLONE;
+            } else {
+                line = army ? VOTE_ARMY : VOTE_CLONE;
+                if (yourTurn) {
+                    lineColor = ACCENT;
+                    size = 22;
+                }
+            }
+            turnTf.text = line;
+            turnTf.textColor = lineColor;
+            fit(turnTf, size, headSide);
+            turnTf.y = PAD + 1 + (22 - size) / 2;
+            band.visible = yourTurn;
+            turnFrame.visible = yourTurn;
+            for (var gt:int = 0; gt < 2; gt++) {
+                glows[gt].visible = false;
+            }
+            drawChips([]); // none: a vote has no turns
+            timerTf.visible = timeBar.visible = !over;
+            showTime();
+            // the columns: no ban slots; a row per voter
+            counts = {};
+            for (var t:int = 0; t < 2; t++) {
+                var col:Object = cols[t];
+                for (var bv:int = 0; bv < MAX_BANS; bv++) {
+                    col.bans[bv].sp.visible = false;
+                }
+                for (var k:int = 0; k < MAX_SEATS; k++) {
+                    var row:Object = col.picks[k];
+                    if (k < teams[t].length) {
+                        drawVoteRow(row, t, k);
+                        var v:String = voteAt(t, k);
+                        if (v != null && v != "") {
+                            counts[v] = (counts[v] is Number ? counts[v] : 0) + 1;
+                        }
+                        continue;
+                    }
+                    showIn(row.slot, "", false, false);
+                    row.slot.frame.visible = false;
+                    row.slot.dash.visible = false;
+                    row.slot.sp.alpha = 0.35;
+                    row.who.text = "";
+                    row.what.text = "";
+                    row.seat = -1;
+                    drawTag(row.tag, null, false);
+                    setRowButton(row, "");
+                }
+            }
+            if (cells.length == 0 && pool.length > 0) {
+                fillGrid();
+            }
+            for each (var c:Object in cells) {
+                drawCell(c);
+            }
+            chooser.visible = false;
+            grid.visible = true;
+            actBtn.visible = yourTurn;
+            if (actBtn.visible) {
+                setLabel(actBtn, BTN_PICK);
+                setAlpha(actBtn, sel != "" && req == null ? 1 : 0.5);
+            }
+            readyBtn.visible = acceptBtn.visible = declineBtn.visible = false;
+            placeButtons();
+            showHint();
+        }
+
+        // A voter's vote as this player may see it: the own choice for the own seat (also while its call is on the way),
+        // everyone's in Clone Pick, the own team's in Army Pick; "" for none, null when it isn't sent to this player.
+        private function voteAt(team:int, seat:int):String {
+            if (vote == null || seat < 0 || seat >= MAX_SEATS) {
+                return null;
+            }
+            if (you != null && team == you.team && seat == you.seat) {
+                return sel;
+            }
+            if (vote.votes != null) {
+                return vote.votes[team][seat];
+            }
+            if (you != null && team == you.team && own != null) {
+                return own.votes[seat];
+            }
+            return null;
+        }
+
+        // a voter's lock as this player may see it (as voteAt; false when not sent)
+        private function lockAt(team:int, seat:int):Boolean {
+            if (vote == null || seat < 0 || seat >= MAX_SEATS) {
+                return false;
+            }
+            if (you != null && team == you.team && own != null) {
+                return own.locked[seat];
+            }
+            return vote.locked != null && vote.locked[team][seat];
+        }
+
+        // the player has locked its vote (the server says so)
+        private function voteLocked():Boolean {
+            return vote != null && you != null && own != null && own.locked[you.seat];
+        }
+
+        // How many voters this player sees locked, of how many it sees ("2 of 3"), or "" when it sees none.
+        private function lockCount():String {
+            var n:int = 0;
+            var l:int = 0;
+            for (var t:int = 0; t < 2; t++) {
+                for (var s:int = 0; s < teams[t].length && s < MAX_SEATS; s++) {
+                    if (voteAt(t, s) != null) {
+                        n++;
+                        l += lockAt(t, s) ? 1 : 0;
+                    }
+                }
+            }
+            return n > 0 ? l + " of " + n : "";
+        }
+
+        // a voter's row: its name, its vote (faint with "?" until locked, the own one in orange) and LOCKED; "Voting..."
+        // where the vote isn't sent to this player; after the draw the team's drawn shaper
+        private function drawVoteRow(row:Object, team:int, seat:int):void {
+            row.slot.sp.alpha = 1;
+            row.seat = seat;
+            var mine:Boolean = you != null && team == you.team && seat == you.seat;
+            var who:String = teams[team][seat] + (mine ? " (you)" : "");
+            if (row.who.text != who) {
+                row.who.text = who;
+                fit(row.who, 13, row.who.width);
+            }
+            row.who.textColor = mine ? LIGHT : DIM;
+            drawTag(row.tag, null, false);
+            var mode:String = "";
+            if (phase == "done") {
+                var dr:String = vote.drawn[team];
+                showIn(row.slot, dr != "" ? portraitOf(dr) : "", false, false, dr != "" ? nameOf(dr) : "");
+                row.what.text = dr != "" ? nameOf(dr) : "-";
+                row.what.textColor = dr != "" ? WHITE : DARK;
+            } else {
+                var v:String = voteAt(team, seat);
+                var lk:Boolean = lockAt(team, seat);
+                if (v == null || v == "") {
+                    showIn(row.slot, "", false, false);
+                    row.what.text = v == null ? VOTING : "-";
+                    row.what.textColor = v == null ? DIM : DARK;
+                } else {
+                    showIn(row.slot, portraitOf(v), false, !lk, nameOf(v));
+                    row.what.text = nameOf(v) + (lk ? "" : "?");
+                    row.what.textColor = lk ? WHITE : (mine ? ACCENT : LIGHT);
+                }
+                mode = lk ? RB_LOCKED : "";
+            }
+            setRowButton(row, mode);
+            fit(row.what, 15, row.what.width);
+            row.slot.frame.visible = mine && yourTurn;
+            row.slot.dash.visible = false;
+        }
+
+        // a card in a vote: its count (the votes this player sees), the own vote framed orange, under the pointer while
+        // the player may vote a faint frame; after the draw the drawn card framed in its team's colour (Army: both
+        // frames when both teams drew it; Clone: orange) and every other card darkened
+        private function drawVoteCell(c:Object):void {
+            var over:Boolean = phase == "done";
+            var n:int = counts[c.id] is Number ? int(counts[c.id]) : 0;
+            var bits:int = over ? (vote.drawn[0] == c.id ? 1 : 0) | (vote.drawn[1] == c.id ? 2 : 0) : 0;
+            var chosen:Boolean = !over && you != null && sel == c.id;
+            var canPick:Boolean = !over && yourTurn && req == null;
+            var look:String = "v|" + n + "|" + bits + "|" + over + "|" + chosen + "|" + (c.over && canPick);
+            c.sp.buttonMode = canPick;
+            if (c.look == look) {
+                return;
+            }
+            c.look = look;
+            var dim:Boolean = over && bits == 0;
+            if (c.ld != null) {
+                c.ld.transform.colorTransform = dim ? new ColorTransform(0.45, 0.45, 0.45, 1) : new ColorTransform();
+            }
+            // each frame a Shape of its own (one Graphics' paths are joined: see chip)
+            var g:Graphics = c.mark.graphics;
+            g.clear();
+            var f:Graphics = c.frame.graphics;
+            f.clear();
+            if (bits != 0) {
+                var army:Boolean = vote.kind == "army";
+                f.lineStyle(3, !army ? ACCENT : TEAM_COLORS[bits == 2 ? 1 : 0], 1);
+                f.drawRect(-2, -2, c.aw + 4, c.ah + 4);
+                if (army && bits == 3) {
+                    g.lineStyle(3, TEAM_COLORS[1], 1);
+                    g.drawRect(2, 2, c.aw - 4, c.ah - 4);
+                }
+            } else if (chosen) {
+                f.lineStyle(2, ACCENT, 1);
+                f.drawRect(-1, -1, c.aw + 2, c.ah + 2);
+            } else if (c.over && canPick) {
+                f.lineStyle(1, WHITE, 0.7);
+                f.drawRect(-1, -1, c.aw + 2, c.ah + 2);
+            }
+            c.nm.textColor = dim ? DARK : WHITE;
+            c.badge.visible = n > 0;
+            if (n > 0) {
+                c.cnt.text = String(n);
+            }
+        }
+
+        // the hint line in a vote
+        private function voteHint():String {
+            var army:Boolean = vote.kind == "army";
+            if (phase == "done") {
+                if (!army) {
+                    var any:String = vote.drawn[0] != "" ? vote.drawn[0] : vote.drawn[1];
+                    return any == "" ? "The game starts now." : "Everyone plays " + nameOf(any) + " (" +
+                        drawnHow(vote.how[0] != "" ? vote.how[0] : vote.how[1]) + "). The game starts now.";
+                }
+                var s:String = "";
+                for (var t:int = 0; t < 2; t++) {
+                    if (vote.drawn[t] != "") {
+                        s += (s != "" ? "; " : "") + (TEAM_NAMES[t].charAt(0) + TEAM_NAMES[t].substr(1).toLowerCase()) +
+                            " plays " + nameOf(vote.drawn[t]) + " (" + drawnHow(vote.how[t]) + ")";
+                    }
+                }
+                return (s != "" ? s + ". " : "") + "The game starts now.";
+            }
+            var locks:String = lockCount();
+            var waiting:String = locks != "" ? " " + locks + " locked." : "";
+            if (you == null) {
+                return VOTE_WATCHING + waiting;
+            }
+            var who:String = army ? "your team sees it" : "everyone sees it";
+            if (voteLocked()) {
+                return "Your vote for " + nameOf(sel) + " is locked. The vote ends when everyone has locked or the time " +
+                    "is up." + waiting;
+            }
+            if (req != null) {
+                return "Locking your vote...";
+            }
+            if (deadline - getTimer() <= TIMES_UP_MS) {
+                return sel != "" ? "Time's up soon: your vote for " + nameOf(sel) + " counts as it is." :
+                    "Time's up soon: the draw goes on without your vote.";
+            }
+            if (sel != "") {
+                return "You vote for " + nameOf(sel) + " (" + who + "). LOCK IN makes it final; another card changes it.";
+            }
+            return "Click a shaper to vote for it (" + who + "), then LOCK IN.";
+        }
+
+        private static function drawnHow(how:String):String {
+            return how == "random" ? "no votes: a random shaper" : "drawn from the votes";
+        }
+
+        // a card's click in a vote: the player's vote (draft.vote), changeable until its lock
+        private function onVoteCell(c:Object):void {
+            if (phase != "vote") {
+                return;
+            }
+            if (you == null) {
+                flash(VOTE_WATCHING);
+            } else if (voteLocked()) {
+                flash("Your vote is locked.");
+            } else if (yourTurn && req == null && sel != c.id) {
+                if (channel.call("draft.vote", {shaper: c.id})) {
+                    flashText = "";
+                    sel = c.id;
+                    hoverReq = {id: c.id, key: stateKey, at: getTimer()};
+                } else {
+                    flash("Not connected to the server.");
+                }
+            }
+            redrawSoon();
+        }
+
+        // LOCK IN in a vote: the own vote made final (draft.lock; the server needs a vote)
+        private function onVoteLock():void {
+            if (!yourTurn || req != null || phase != "vote") {
+                return;
+            }
+            if (sel == "") {
+                flash(VOTE_FIRST);
+                return;
+            }
+            var now:int = getTimer();
+            if (now - lastCall < CALL_GAP_MS) {
+                return;
+            }
+            lastCall = now;
+            ask("lock", "draft.lock", {}, null);
         }
 
         // the hover to draw for a seat of a team: the own choice for the own seat, a teammate's from the team's part;
@@ -1450,7 +1862,8 @@ package {
             var button:Boolean = mode == RB_SWAP || mode == RB_TRADE;
             var t:TextField = sp.getChildAt(0) as TextField;
             t.text = mode;
-            t.textColor = button ? ACCENT : (mode == RB_READY ? LIGHT : (mode == RB_ASKS ? ACCENT : DIM));
+            t.textColor = button ? ACCENT : (mode == RB_READY || mode == RB_LOCKED ? LIGHT : (mode == RB_ASKS ? ACCENT :
+                DIM));
             fit(t, 11, RB_W);
             var g:Graphics = sp.graphics;
             g.clear();
@@ -1637,6 +2050,10 @@ package {
             if (flashText != "") {
                 s = flashText;
                 color = RED;
+            } else if (vote != null) {
+                s = voteHint();
+                var soon:Boolean = phase == "vote" && yourTurn && req == null && deadline - getTimer() <= TIMES_UP_MS;
+                color = phase == "done" || soon ? ACCENT : (yourTurn ? LIGHT : DIM);
             } else if (asks != null) {
                 // a teammate's request: ACCEPT / DECLINE beside it
                 color = ACCENT;
@@ -1785,12 +2202,30 @@ package {
                 nm.text = e.name;
                 fit(nm, 12, cw - 4);
                 sp.addChild(nm);
+                // a vote's count of this card: a small orange box with the number at the card's top right corner
+                var badge:Sprite = new Sprite();
+                badge.mouseEnabled = false;
+                badge.mouseChildren = false;
+                var bg:Shape = new Shape();
+                bg.graphics.lineStyle(1, 0x0A0A0C, 1);
+                bg.graphics.beginFill(ACCENT, 1);
+                bg.graphics.drawRect(0, 0, BADGE_W, BADGE_H);
+                bg.graphics.endFill();
+                badge.addChild(bg);
+                var cnt:TextField = field("$Header", 12, 0x0A0A0C, "center");
+                cnt.width = BADGE_W;
+                cnt.y = (BADGE_H - 20) / 2;
+                badge.addChild(cnt);
+                badge.x = aw - BADGE_W + 2;
+                badge.y = -2;
+                badge.visible = false;
+                sp.addChild(badge);
                 sp.addEventListener(MouseEvent.CLICK, onCell, false, 0, false);
                 sp.addEventListener(MouseEvent.ROLL_OVER, onCellOver, false, 0, false);
                 sp.addEventListener(MouseEvent.ROLL_OUT, onCellOut, false, 0, false);
                 grid.addChild(sp);
                 cells.push({sp: sp, ld: ld, id: e.id, name: e.name, mark: mark, frame: frame, nm: nm, aw: aw, ah: ah,
-                    over: false, look: ""});
+                    over: false, look: "", badge: badge, cnt: cnt});
             }
             if (rows > 0 && grid != null) {
                 grid.y = PAD + HEAD_H + Math.max(0, Math.floor((H - rows * ch) / 2));
@@ -1828,6 +2263,10 @@ package {
         // a card's look: free, banned (darkened, a red cross), picked (darkened, a bar in the team's colour), chosen
         // (the player's choice and hover: an orange frame), under the pointer while it can be chosen (a faint frame)
         private function drawCell(c:Object):void {
+            if (vote != null) {
+                drawVoteCell(c);
+                return;
+            }
             var st:int = stateOf(c.id, turns);
             var chosen:Boolean = sel == c.id && (yourTurn || canHover());
             var canPick:Boolean = st == 0 && ((yourTurn && sent == null) || canHover());
@@ -1901,6 +2340,10 @@ package {
         // it), on its own turn or before it while it may hover; anyone else hears why nothing happens.
         private function onCell(e:MouseEvent):void {
             var c:Object = cellOf(e);
+            if (c != null && vote != null) {
+                onVoteCell(c);
+                return;
+            }
             var open:Array = openTurns();
             if (c == null || open.length == 0) {
                 return;
@@ -1949,6 +2392,10 @@ package {
         // BAN or LOCK IN: the call for the player's own open turn; the server's next draft.state says whether it was
         // taken
         private function onAct(e:MouseEvent):void {
+            if (vote != null) {
+                onVoteLock();
+                return;
+            }
             var my:Object = myTurn >= 0 ? turns[myTurn] : null;
             if (my == null || !yourTurn || sent != null) {
                 return;

@@ -1078,6 +1078,10 @@ B14_CASES = {
     # ONLINECOUNT: the players-online count, a broadcast of our own (id 100, the marquee only, after a login's list)
     "notifymessage_onlinecount_notification": lambda: b14_system_message(4, 2, [
         (0xB0000, "100"), (0xB0001, "4"), (0xB0002, "604800"), (0xB0003, "2 players online, 1 in a match")]),
+    # SYSCHAT: an admin's notice to every player online (the first id 200; a System chat line and the main menu's
+    # notification, kept 30 minutes)
+    "notifymessage_notice_notification": lambda: b14_system_message(5, 2, [
+        (0xB0000, "200"), (0xB0001, "3"), (0xB0002, "1800"), (0xB0003, "Server update at 20:00 UTC")]),
 }
 
 # RATING2: every user's skill rating as DMAP[0x00070035] beside the wins (server/internal/blaze/usersessions.go

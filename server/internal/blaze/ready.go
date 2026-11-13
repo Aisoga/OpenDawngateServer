@@ -110,10 +110,14 @@ func (s *Server) AttachUI(ui *uichannel.Server) {
 	s.UI = ui
 	s.lobbyGap = lobbyPublishGap
 	s.rulesGap = lobbyRulesGap
+	s.lbGap = leaderboardSelectGap
+	s.pfGap = profileSelectGap
 	ui.Identify = s.identifyUI
 	ui.OnDisconnect = s.uiDisconnected
-	ui.Greet = s.regionGreeting           // PREF1: region.state at every connect (preferred.go)
-	ui.Handle(CallRegionSet, s.regionSet) // PREF1
+	ui.Greet = s.greetUI                                  // PREF1's region.state and MMR2's leaderboard.state at every connect
+	ui.Handle(CallRegionSet, s.regionSet)                 // PREF1
+	ui.Handle(CallLeaderboardSelect, s.leaderboardSelect) // MMR2 (leaderboardtabs.go)
+	ui.Handle(CallProfileSelect, s.profileSelect)         // PROFILE2 (profilemodes.go)
 	ui.Handle(CallLobbyEnter, func(user int64, _ json.RawMessage) error { return s.lobbyEnter(user) })
 	ui.Handle(CallLobbySetRules, func(user int64, args json.RawMessage) error { return s.lobbySetRules(user, args) })
 	s.attachDraftCalls(ui) // RULES5b, DRAFT1 (draft.go)
@@ -375,6 +379,7 @@ func (hg *hostedGame) sendLobbyState(only int64) {
 	}
 	var to []int64
 	var state LobbyState
+	mode := hg.tilesModeLocked()      // MMR2: the tiles show the rating of the lobby's current type
 	unread := map[int]*hostedPlayer{} // state.Players' index -> a player whose rating hasn't been read yet
 	for _, hp := range hg.players {
 		if hp.removed {
@@ -409,7 +414,7 @@ func (hg *hostedGame) sendLobbyState(only int64) {
 		return
 	}
 	for i, hp := range unread {
-		v := s.lobbyRating(hp.p.ID)
+		v := s.lobbyRating(hp.p.ID, mode)
 		state.Players[i].Rating = v
 		hg.mu.Lock()
 		hp.rating, hp.ratingRead = v, true
@@ -422,13 +427,13 @@ func (hg *hostedGame) sendLobbyState(only int64) {
 	}
 }
 
-// lobbyRating is the rating lobby.state shows for persona id; 0: none.
-func (s *Server) lobbyRating(id int64) int64 {
+// lobbyRating is the rating lobby.state shows for persona id in game type mode; 0: none.
+func (s *Server) lobbyRating(id int64, mode string) int64 {
 	if s.Store == nil {
 		return 0
 	}
 	if acct, _, ok := s.Store.PersonaByID(id); ok {
-		if v, shown := s.ShownRating(acct.History); shown {
+		if v, shown := s.ShownRatingIn(acct.History, mode); shown {
 			return v
 		}
 	}
@@ -440,6 +445,8 @@ func (s *Server) uiLoginEnded(user int64) {
 	if s.UI != nil {
 		s.UI.Recheck(user)
 	}
+	s.forgetLeaderboardBoard(user) // MMR2: a new login starts on STANDARD
+	s.forgetProfileMode(user)      // PROFILE2: and the Profile on All Modes
 }
 
 // refuseUnreadyStart refuses the admin's advanceGameState IN_GAME while counted players aren't ready (hg.mu held; it

@@ -302,6 +302,34 @@ CREATE TABLE api_tokens (
 	{9, "the match rules (RULES1)", `
 ALTER TABLE matches ADD COLUMN rules TEXT NOT NULL DEFAULT '';
 `},
+	// a rating per game type (M30, MMR1; internal/rating's ModeOf): the standard rating stays in the accounts' and
+	// history days' columns (schema 7); the draft and custom ratings get a row per account and type once it has a
+	// rated game of that type (History.ModeRatings), and a row per kept history day and type with rated games
+	// (HistoryDay.ModeRated: the daily ranking). A match the custom game's admin made unrated is marked (never rated).
+	// dgserver seeds the new types once from the stored matches (the server setting rating_seed_modes).
+	{10, "a rating per game type (MMR1)", `
+ALTER TABLE matches ADD COLUMN unrated INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE mode_ratings (
+	user_id INTEGER NOT NULL REFERENCES accounts(user_id) ON DELETE CASCADE,
+	mode    TEXT    NOT NULL,
+	rating  REAL    NOT NULL,
+	rd      REAL    NOT NULL,
+	vol     REAL    NOT NULL,
+	games   INTEGER NOT NULL DEFAULT 0,
+	wins    INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (user_id, mode)
+) WITHOUT ROWID;
+CREATE INDEX mode_ratings_mode ON mode_ratings (mode, rating DESC);
+CREATE TABLE mode_rating_days (
+	user_id       INTEGER NOT NULL REFERENCES accounts(user_id) ON DELETE CASCADE,
+	day           TEXT    NOT NULL,
+	mode          TEXT    NOT NULL,
+	rated_games   INTEGER NOT NULL DEFAULT 0,
+	rated_wins    INTEGER NOT NULL DEFAULT 0,
+	rating_before REAL    NOT NULL DEFAULT 0,
+	PRIMARY KEY (user_id, day, mode)
+) WITHOUT ROWID;
+`},
 }
 
 // SchemaVersion is the schema version this build writes (the last migration's).

@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"dawngate/server/internal/accounts"
 	"dawngate/server/internal/gmshost"
+	"dawngate/server/internal/progress"
 	"dawngate/server/internal/store"
 )
 
@@ -36,8 +38,11 @@ func TestHistorySeed(t *testing.T) {
 		t.Fatalf("seed: %q, %v", note, err)
 	}
 	cred, found, err := st.Credentials("mhist3@x.io")
-	if err != nil || !found || cred.Hash != "" {
-		t.Fatalf("the login's account: %+v %v %v (want one without a password)", cred, found, err)
+	if err != nil || !found || !accounts.Verify(cred.Hash, historySeedPassword) {
+		t.Fatalf("the login's account: %+v %v %v (want one with the password %s: SEEDPW)", cred, found, err, historySeedPassword)
+	}
+	if cred, found, err := st.Credentials("kestrel@seed.invalid"); err != nil || !found || cred.Hash != "" {
+		t.Errorf("a made-up player's account: %+v %v %v (want one without a password)", cred, found, err)
 	}
 	_, me, ok := st.PersonaByName("mhist3")
 	if !ok {
@@ -46,6 +51,10 @@ func TestHistorySeed(t *testing.T) {
 	mine, err := st.MatchesOf(me.ID, 0, 50)
 	if err != nil || len(mine) != 12 {
 		t.Fatalf("the player's matches: %d, %v", len(mine), err)
+	}
+	// PROFILE2: the stored profile (All Modes) holds the 11 matches that weren't made Unrated (the eighth was)
+	if acct, _, _ := st.PersonaByID(me.ID); acct.Stats[progress.PlayerStats]["PLAYED"] != "11" || len(acct.History.Shapers) == 0 {
+		t.Errorf("the seeded profile: %v, shapers %v", acct.Stats[progress.PlayerStats], acct.History.Shapers)
 	}
 	for id := int64(1); id <= 12; id++ {
 		m, found, err := st.Match(id)
@@ -102,6 +111,14 @@ func TestHistorySeed(t *testing.T) {
 		if m.Kind == "practice" && humans != 1 || m.Kind != "practice" && humans < 2 {
 			t.Errorf("match %d (%s): %d humans", id, m.Kind, humans)
 		}
+		// PROFILE1: the kinds cycle through every game type, the eighth an Unrated draft game
+		k := historySeedKinds[(id-1)%int64(len(historySeedKinds))]
+		if m.Kind != k.kind || m.Rules != k.rules || m.Unrated != k.unrated {
+			t.Errorf("match %d: %s %q unrated %v, want %+v", id, m.Kind, m.Rules, m.Unrated, k)
+		}
+		if want := []string{"standard", "practice", "standard", "standard", "practice", "draft", "custom", "draft"}[(id-1)%8]; historyType(m) != want {
+			t.Errorf("match %d: type %s, want %s", id, historyType(m), want)
+		}
 		if basic {
 			continue
 		}
@@ -134,12 +151,39 @@ func TestHistorySeed(t *testing.T) {
 	if note, err := seedHistory(st, c, "3", now); err != nil || !strings.Contains(note, "nothing seeded") {
 		t.Errorf("second seed: %q, %v", note, err)
 	}
-	for _, bad := range []string{"", "0", "501", "x", "-2:a@b.c"} {
-		if _, _, err := parseHistorySeed(bad); err == nil {
+	for _, bad := range []string{"", "0", "501", "x", "-2:a@b.c", "3:a@b.c|"} {
+		if _, _, _, err := parseHistorySeed(bad); err == nil {
 			t.Errorf("parseHistorySeed(%q) accepted", bad)
 		}
 	}
-	if n, login, err := parseHistorySeed("7"); err != nil || n != 7 || login != "" {
-		t.Errorf("parseHistorySeed(7): %d %q %v", n, login, err)
+	if n, login, pw, err := parseHistorySeed("7"); err != nil || n != 7 || login != "" || pw != historySeedPassword {
+		t.Errorf("parseHistorySeed(7): %d %q %q %v", n, login, pw, err)
+	}
+	if n, login, pw, err := parseHistorySeed("4:P1@X.io|secret 2"); err != nil || n != 4 || login != "P1@X.io" || pw != "secret 2" {
+		t.Errorf("parseHistorySeed with a password: %d %q %q %v", n, login, pw, err)
+	}
+}
+
+// SEEDPW: the seed's login account gets the password when it has none (an account of an earlier seed), and an
+// account with a password keeps its own.
+func TestHistorySeedPassword(t *testing.T) {
+	st := store.New()
+	now := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
+	if _, _, err := seedPersona(st, "old@x.io", "", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := seedPersona(st, "own@x.io", "mine", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seedHistory(st, nil, "2:old@x.io|fresh", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := seedPersona(st, "own@x.io", "other", now); err != nil {
+		t.Fatal(err)
+	}
+	for login, pw := range map[string]string{"old@x.io": "fresh", "own@x.io": "mine"} {
+		if cred, found, err := st.Credentials(login); err != nil || !found || !accounts.Verify(cred.Hash, pw) {
+			t.Errorf("%s: %+v %v %v, want the password %q", login, cred, found, err, pw)
+		}
 	}
 }

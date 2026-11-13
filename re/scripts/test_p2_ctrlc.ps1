@@ -18,7 +18,7 @@
   This file must stay ASCII: Windows PowerShell 5.1 reads scripts without a BOM in the ANSI codepage.
 #>
 param(
-    [ValidateSet('', 'b', 'c', 'd')][string]$Lane = '',
+    [ValidateSet('', 'b', 'c', 'd', 'g')][string]$Lane = '',
     [string]$Name = 'p2live_ctrlc',
     [int]$Seconds = 400,
     [int]$AfterDungeon = 20,

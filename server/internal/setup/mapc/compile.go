@@ -2,6 +2,7 @@ package mapc
 
 import (
 	"fmt"
+	"math"
 
 	"dawngate/server/internal/setup/mapmm/ground"
 	"dawngate/server/internal/setup/mapmm/navgraph"
@@ -46,6 +47,10 @@ type Compiled struct {
 	barred    []bool        // the cells a fill never uses (fillBarred)
 	fillSolid []bool        // the cells the blocking fills stamped
 	field     *ground.Field // the ground model's field, for the fills' heights
+
+	fit     [2][]bool       // the squares that fit in the Player and the NPC mask, before the keep filter (narrow.go)
+	holeSet []navgraph.Hole // holes(), made once (the layout doesn't change after Compile)
+	narrow  []bool          // the walkable cells too narrow for the graphs, in reported parts (narrow.go)
 }
 
 // walkableBlock reports whether every cell of block (bx, by) is in the walkable mask.
@@ -109,12 +114,58 @@ func (c *Compiled) Guardians() []navgraph.Point {
 	return []navgraph.Point{navPoint(c.Layout.Teams[0].Guardian), navPoint(c.Layout.Teams[1].Guardian)}
 }
 
-func (c *Compiled) holes() []navgraph.Hole {
+// Structures are both teams' Bindings and Cores, each a hole of StructureRadius in both graphs (no island: they
+// stand off the graphs, as on SM_Map_v5's).
+func (c *Compiled) Structures() []navgraph.Point {
+	var ps []navgraph.Point
+	seen := map[Point]bool{}
+	add := func(p Point) {
+		if !seen[p] {
+			seen[p] = true
+			ps = append(ps, navPoint(p))
+		}
+	}
+	for t := range 2 {
+		tm := &c.Layout.Teams[t]
+		for _, p := range tm.Cores {
+			add(p)
+		}
+		for _, id := range c.Layout.LaneIDs {
+			for _, p := range tm.Bindings[id] {
+				add(p)
+			}
+		}
+	}
+	return ps
+}
+
+func (c *Compiled) structureHoles() []navgraph.Hole {
 	var hs []navgraph.Hole
-	for _, g := range c.Guardians() {
-		hs = append(hs, navgraph.Hole{X: g.X, Y: g.Y, R: HoleRadius})
+	for _, s := range c.Structures() {
+		hs = append(hs, navgraph.Hole{X: s.X, Y: s.Y, R: StructureRadius})
 	}
 	return hs
+}
+
+// holes are every hole in both graphs: the Guardians' platforms, then the structures'.
+func (c *Compiled) holes() []navgraph.Hole {
+	if c.holeSet == nil {
+		for _, g := range c.Guardians() {
+			c.holeSet = append(c.holeSet, navgraph.Hole{X: g.X, Y: g.Y, R: HoleRadius})
+		}
+		c.holeSet = append(c.holeSet, c.structureHoles()...)
+	}
+	return c.holeSet
+}
+
+// nearAnyHole reports whether world point p lies within margin of a hole's rim.
+func (c *Compiled) nearAnyHole(p Point, margin float64) bool {
+	for _, h := range c.holes() {
+		if math.Hypot(p[0]-h.X, p[1]-h.Y) < h.R+margin {
+			return true
+		}
+	}
+	return false
 }
 
 // PlayerKeep are the Player graph's island markers: each team's first spawn point (the parts of the walkable ground
@@ -154,6 +205,7 @@ func (c *Compiled) NavSpec() navgraph.Spec {
 		SizeX: c.Map.Size, SizeY: c.Map.Size, Cell: c.Cell, Erode: Erode, Z: GraphZ,
 		Keep: c.PlayerKeep(), NPCKeep: c.NPCKeep(), Guardians: c.Guardians(),
 		HoleRadius: HoleRadius, IslandRadius: IslandRadius, IslandZ: IslandZ, IslandSides: 8,
+		Holes: c.structureHoles(),
 	}
 }
 

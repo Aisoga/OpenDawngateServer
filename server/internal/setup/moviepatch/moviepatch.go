@@ -25,7 +25,9 @@
 // So does the Collection's Items category (client_ui/collection, collection_tags.hex; collection.go):
 // UI/Scaleform/CDN/swf/code/UIRuntime.gfx from game\Data\code.snap into game\Data\zz_CollectionItems.snap, with the
 // item list (ItemsPath, ItemList).
-// A Spec names one such movie (Picker, MatchOptions, ChatRooms, AfterAction, MatchType, PVPLobby, ItemShop,
+// So does the Options menu's drag scroll check box (client_ui/options, options_tags.hex; options.go):
+// UI/Scaleform/Options/Options_GameSettings.gfx from game\Data\Options.snap into game\Data\zz_Options.snap.
+// A Spec names one such movie (Picker, MatchOptions, ChatRooms, AfterAction, MatchType, PVPLobby, ItemShop, Options,
 // Collection).
 //
 // The output is deterministic: the movie keeps its CFX header (the version, the u32 length as stored plus the tags'

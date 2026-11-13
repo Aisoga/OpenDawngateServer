@@ -35,6 +35,12 @@ type AdminConfig struct {
 	// none can be ended.
 	Matches  func() []Match
 	EndMatch func(gameID int64, reason string) error
+	// Notice sends a line to every player logged into the game (admin_notice.go): text as the admin typed it, from
+	// the admin's name; it returns how many connections got it and the text as sent, or why not (the server's check,
+	// or an error wrapping ErrNoticeTooSoon); nil = no notices. NoticeMax is the form box's maxlength (0 = the
+	// form's own limit).
+	Notice    func(text, from string) (sent int, sentText string, err error)
+	NoticeMax int
 	// Idle and Max end a session (zero = AdminIdle, AdminMax).
 	Idle, Max time.Duration
 }
@@ -108,6 +114,8 @@ type adminView struct {
 	IssueRows    []adminIssueRow
 	Issue        *adminIssueView
 	Tokens       []tokenRow
+	// the message to all players (admin_notice.go)
+	Notice *noticeView
 }
 
 type adminCounts struct {
@@ -168,6 +176,8 @@ func (s *Site) adminRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /admin/signup", s.adminAction(s.adminSetSignup))
 	m.HandleFunc("GET /admin/matches", s.adminPage(s.adminMatches))
 	m.HandleFunc("POST /admin/matches/end", s.adminAction(s.adminEndMatch))
+	m.HandleFunc("GET /admin/notice", s.adminPage(s.adminNotice))
+	m.HandleFunc("POST /admin/notice", s.adminAction(s.adminSendNotice))
 	m.HandleFunc("GET /admin/audit", s.adminPage(s.adminAudit))
 }
 

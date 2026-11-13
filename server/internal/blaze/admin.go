@@ -103,6 +103,9 @@ func (s *Server) EndHostedMatch(gameID int64, reason string) error {
 	}
 	hg.mu.Lock()
 	mt, ended := hg.match, hg.ended
+	if !ended && mt != nil {
+		hg.endedByAdmin = true // PROFILE3: the players who leave it now didn't leave a running game by choice
+	}
 	hg.mu.Unlock()
 	if ended || mt == nil {
 		return ErrNoHostedGame

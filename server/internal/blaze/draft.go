@@ -126,6 +126,10 @@ type DraftOwn struct {
 	Ready  []bool     `json:"ready"`  // each seat's ready mark (the trade phase)
 	Swaps  []DraftAsk `json:"swaps"`  // the pending pick-order swaps
 	Trades []DraftAsk `json:"trades"` // the pending trades
+
+	// ARMY1, a vote only (absent in a draft): each seat's vote ("" none) and lock.
+	Votes  []string `json:"votes,omitempty"`
+	Locked []bool   `json:"locked,omitempty"`
 }
 
 // DraftState is EventDraftState's data: the whole board as its receiver may see it.
@@ -142,6 +146,8 @@ type DraftState struct {
 	You      *DraftYou        `json:"you,omitempty"`    // the receiver's seat; absent for a spectator
 	YourTurn bool             `json:"yourTurn"`         // the receiver's seat has an open turn in the current window
 	Own      *DraftOwn        `json:"own,omitempty"`    // DRAFT1: the receiver's team's private part; absent for a spectator
+
+	Vote *DraftVote `json:"vote,omitempty"` // ARMY1: Army or Clone Pick's vote (vote.go); absent in a draft
 }
 
 // The stages of a running draft.
@@ -196,6 +202,8 @@ type draftRun struct {
 	declined map[draftAskKey]bool
 
 	aidTried, aidSwapped, aidTraded bool // the test aid's one-off calls were made
+
+	vote *voteRun // ARMY1: Army or Clone Pick's vote (vote.go; board nil), nil in a draft
 }
 
 // seatOf is user's (team, seat) in the draft; false for someone who doesn't draft.
@@ -245,6 +253,10 @@ func (d *draftRun) stageWhy() string {
 		return "the role phase runs"
 	case draftStageTrade:
 		return "the picks are over"
+	case draftStageVote:
+		return "the vote runs"
+	case draftStageDrawn:
+		return "the vote is over"
 	}
 	return "the board runs"
 }
@@ -293,14 +305,20 @@ func (s *Server) draftPool(pool string) []DraftShaper {
 	return out
 }
 
-// isDraftLocked reports whether the game's rules are a draft (hg.mu held).
+// isDraftLocked reports whether the game's rules are a draft, or a vote (Army or Clone Pick, ARMY1), which holds the
+// start the same way (hg.mu held).
 func (hg *hostedGame) isDraftLocked() bool {
-	return hg.custom != nil && hg.rulesOnLocked() && hg.custom.rules.Normal().Pick == "draft"
+	if hg.custom == nil || !hg.rulesOnLocked() {
+		return false
+	}
+	pick := hg.custom.rules.Normal().Pick
+	return pick == "draft" || rules.IsVotePick(pick)
 }
 
 // beginDraftLocked starts the lobby's draft at its admin's START (hg.mu held; the rules passed their check): the seats
-// from the lobby's roster, the pool, the role phase's timers. The roster is locked (the server sets RosterLockedKey "1"
-// when the admin's START didn't); the returned func tells the players (outside hg.mu).
+// from the lobby's roster, the pool, the role phase's timers; for Army or Clone Pick the vote instead (ARMY1, vote.go).
+// The roster is locked (the server sets RosterLockedKey "1" when the admin's START didn't); the returned func tells the
+// players (outside hg.mu).
 func (hg *hostedGame) beginDraftLocked() (func(), error) {
 	s := hg.s
 	var seats [2][]int64
@@ -313,6 +331,43 @@ func (hg *hostedGame) beginDraftLocked() (func(), error) {
 		names[e.User] = e.Name
 	}
 	pool := s.draftPool(hg.custom.rules.Normal().ShaperPool)
+	var lock []tdf.Pair
+	if attrValue(hg.game.Attrs, AttrRosterLocked) != "1" {
+		lock = []tdf.Pair{tdf.KV(AttrRosterLocked, "1")}
+	}
+	lockNote := map[bool]string{true: " (RosterLockedKey \"1\" set by the server)", false: ""}[lock != nil]
+	var d *draftRun
+	first := time.Duration(0)
+	if pick := hg.custom.rules.Normal().Pick; rules.IsVotePick(pick) {
+		d = hg.beginVoteLocked(pick, seats, names, pool, lockNote)
+		first = d.turn
+	} else {
+		var err error
+		if d, err = hg.newDraftLocked(seats, names, pool, lockNote); err != nil {
+			return nil, err
+		}
+		first = d.roleTime
+	}
+	hg.custom.draft, hg.custom.lastDraft = d, d
+	if lock != nil {
+		hg.game.Attrs = mergeAttrs(hg.game.Attrs, lock)
+	}
+	hg.draftStepLocked(d, first)
+	gid := hg.game.ID
+	return func() {
+		if lock != nil {
+			note := GameAttribChangeNotification(gid, lock)
+			hg.push(NotifyGameAttribChangeID, "NotifyGameAttribChange", func(*hostedPlayer) []byte { return note })
+		}
+		hg.publishDraft()
+	}, nil
+}
+
+// newDraftLocked plans a draft (hg.mu held): the shuffled pick order, the board, the run in its role phase; lockNote
+// ends its log line.
+func (hg *hostedGame) newDraftLocked(seats [2][]int64, names map[int64]string, pool []DraftShaper,
+	lockNote string) (*draftRun, error) {
+	s := hg.s
 	ids := make([]string, len(pool))
 	for i, p := range pool {
 		ids[i] = p.ID
@@ -327,12 +382,6 @@ func (hg *hostedGame) beginDraftLocked() (func(), error) {
 	d := &draftRun{board: board, seats: seats, names: names, pool: pool, turn: s.draftTurn(), roleTime: s.draftRoleTime(),
 		tradeTime: s.draftTradeTime(), stage: draftStageRole, window: -1, seed: seed, rng: rng,
 		roles: map[int64]string{}, hovers: map[int64]string{}, ready: map[int64]bool{}, declined: map[draftAskKey]bool{}}
-	hg.custom.draft, hg.custom.lastDraft = d, d
-	var lock []tdf.Pair
-	if attrValue(hg.game.Attrs, AttrRosterLocked) != "1" {
-		lock = []tdf.Pair{tdf.KV(AttrRosterLocked, "1")}
-		hg.game.Attrs = mergeAttrs(hg.game.Attrs, lock)
-	}
 	windows := 0
 	if n := len(board.Turns); n > 0 {
 		windows = board.Turns[n-1].Window + 1
@@ -341,17 +390,8 @@ func (hg *hostedGame) beginDraftLocked() (func(), error) {
 		"the role phase %v, the trade phase up to %v): team 1 %v, team 2 %v (the pick order, %s); team %d starts%s: the "+
 		"first ban and the first pick; the bans by %s; the roster stays locked%s", hg.game.ID, seed,
 		len(pool), len(board.Turns), windows, d.turn, d.roleTime, d.tradeTime, seats[0], seats[1], how, order.First+1,
-		map[bool]string{true: " (a coin flip)", false: ""}[!s.DraftFixedOrder], banners,
-		map[bool]string{true: " (RosterLockedKey \"1\" set by the server)", false: ""}[lock != nil])
-	hg.draftStepLocked(d, d.roleTime)
-	gid := hg.game.ID
-	return func() {
-		if lock != nil {
-			note := GameAttribChangeNotification(gid, lock)
-			hg.push(NotifyGameAttribChangeID, "NotifyGameAttribChange", func(*hostedPlayer) []byte { return note })
-		}
-		hg.publishDraft()
-	}, nil
+		map[bool]string{true: " (a coin flip)", false: ""}[!s.DraftFixedOrder], banners, lockNote)
+	return d, nil
 }
 
 // draftRNG is a draft's generator from its seed: the shuffle and the coin flip (shuffleDraftSeats), then the timeouts'
@@ -425,6 +465,9 @@ func (hg *hostedGame) draftStepLocked(d *draftRun, length time.Duration) {
 // outside hg.mu.
 func (hg *hostedGame) draftAdvanceLocked(d *draftRun) func() {
 	s := hg.s
+	if d.board == nil { // a vote (ARMY1) has no board
+		return nil
+	}
 	for id, h := range d.hovers {
 		team, seat, _ := d.seatOf(id)
 		if pt := d.board.PickTurn(team, seat); d.board.Free(h) != nil || pt < 0 || d.board.Turns[pt].How != "" {
@@ -517,6 +560,10 @@ func (hg *hostedGame) draftTimedOut(d *draftRun, gen int) {
 		finish = hg.draftAdvanceLocked(d)
 	case draftStageTrade:
 		s.Log.Logf("blaze", "   game %d: the draft's trade phase is over (its time)", hg.game.ID)
+		finish = hg.draftDoneLocked(d)
+	case draftStageVote: // ARMY1
+		hg.drawVoteLocked(d, "its time")
+	case draftStageDrawn: // ARMY1: the drawn shapers were shown
 		finish = hg.draftDoneLocked(d)
 	}
 	hg.mu.Unlock()
@@ -671,12 +718,14 @@ func (s *Server) attachDraftCalls(ui *uichannel.Server) {
 		}
 		return s.draftReadyCall(user)
 	})
+	s.attachVoteCalls(ui) // ARMY1 (vote.go)
 }
 
 // draftTell is what an accepted draft call tells: the board to everyone, or (team 1 or 2) to that team's drafters only,
-// then finish (the start after the end) outside hg.mu.
+// or (quiet) nobody, since nothing changed; then finish (the start after the end) outside hg.mu.
 type draftTell struct {
 	team   int
+	quiet  bool
 	finish func()
 }
 
@@ -706,9 +755,11 @@ func (s *Server) draftDo(user int64, act func(hg *hostedGame, d *draftRun, team,
 		return refuse(err)
 	}
 	hg.mu.Unlock()
-	if tell.team != 0 {
+	switch {
+	case tell.quiet:
+	case tell.team != 0:
 		hg.publishDraftTeam(tell.team)
-	} else {
+	default:
 		hg.publishDraft()
 	}
 	if tell.finish != nil {
@@ -740,6 +791,9 @@ func (s *Server) draftCall(user int64, kind, shaper string) error {
 // draftRoleCall is user's draft.role: declared or changed in any phase until the end; its team hears it.
 func (s *Server) draftRoleCall(user int64, role string) error {
 	return s.draftDo(user, func(hg *hostedGame, d *draftRun, team, _ int) (draftTell, error) {
+		if d.vote != nil { // ARMY1: the roles are shaper select's, as usual
+			return draftTell{}, errors.New("role: no roles in a vote")
+		}
 		if d.roles[user] != role {
 			d.roles[user] = role
 			s.Log.Logf("blaze", "   game %d: draft: user %d (team %d) declares the role %s", hg.game.ID, user, team+1, role)
@@ -784,6 +838,8 @@ func (s *Server) draftAskCall(user int64, trade bool, toSeat int) error {
 			asks = &d.trades
 		}
 		switch {
+		case d.board == nil: // ARMY1
+			return draftTell{}, fmt.Errorf("%s: no %ss in a vote", kind, kind)
 		case trade && d.stage != draftStageTrade:
 			return draftTell{}, errors.New("trade: only in the trade phase")
 		case !trade && d.stage == draftStageTrade:
@@ -820,6 +876,9 @@ func (s *Server) draftAskCall(user int64, trade bool, toSeat int) error {
 func (s *Server) draftAnswerCall(user int64, trade, accept bool) error {
 	kind := map[bool]string{false: "swap", true: "trade"}[trade]
 	return s.draftDo(user, func(hg *hostedGame, d *draftRun, team, seat int) (draftTell, error) {
+		if d.board == nil { // ARMY1
+			return draftTell{}, fmt.Errorf("%sAnswer: no %ss in a vote", kind, kind)
+		}
 		asks := &d.swaps
 		if trade {
 			asks = &d.trades
@@ -913,6 +972,12 @@ func (s *Server) draftTestAid(hg *hostedGame, d *draftRun, gen int) {
 	hg.mu.Lock()
 	if hg.custom == nil || hg.custom.draft != d || d.gen != gen || hg.ended {
 		hg.mu.Unlock()
+		return
+	}
+	if d.vote != nil { // ARMY1: every voter votes and locks
+		run := s.voteTestAid(hg, d)
+		hg.mu.Unlock()
+		run()
 		return
 	}
 	gid := hg.game.ID
@@ -1037,32 +1102,42 @@ func (hg *hostedGame) draftDoneLocked(d *draftRun) func() {
 		}
 	}
 	d.phase = DraftPhaseDone
-	drafted := map[int64]draftedSeat{}
+	var drafted map[int64]draftedSeat
 	var desc, roles []string
-	board := d.board.Picks()
-	for team, ids := range d.seats {
-		for seat, id := range ids {
-			role := d.roles[id]
-			if seat < len(board[team]) && board[team][seat] != "" {
-				drafted[id] = draftedSeat{Shaper: board[team][seat], Role: role}
-				desc = append(desc, fmt.Sprintf("user %d (team %d) %s", id, team+1, board[team][seat]))
+	var done, what string
+	if d.vote != nil { // ARMY1: each team's drawn shaper, no roles
+		drafted, desc = d.voteDrafted()
+		done, what = fmt.Sprintf("the vote is done: %s", strings.Join(desc, ", ")), "the vote"
+	} else {
+		drafted = map[int64]draftedSeat{}
+		board := d.board.Picks()
+		for team, ids := range d.seats {
+			for seat, id := range ids {
+				role := d.roles[id]
+				if seat < len(board[team]) && board[team][seat] != "" {
+					drafted[id] = draftedSeat{Shaper: board[team][seat], Role: role}
+					desc = append(desc, fmt.Sprintf("user %d (team %d) %s", id, team+1, board[team][seat]))
+				}
+				if role == "" {
+					role = "none"
+				}
+				roles = append(roles, fmt.Sprintf("user %d %s", id, role))
 			}
-			if role == "" {
-				role = "none"
-			}
-			roles = append(roles, fmt.Sprintf("user %d %s", id, role))
 		}
+		done = fmt.Sprintf("the draft is done: %s; bans %v; roles %s", strings.Join(desc, ", "), d.board.Bans(),
+			strings.Join(roles, ", "))
+		what = "the draft"
 	}
 	hg.custom.started = true
 	roster := lobbyRoster(hg.players, hg.game.Attrs)
 	players := append([]*hostedPlayer(nil), hg.players...)
 	mt := hg.match
 	gid := hg.game.ID
+	unrated := hg.adminUnratedLocked()
 	return func() {
-		s.Log.Logf("blaze", "   game %d: the draft is done: %s; bans %v; roles %s", gid, strings.Join(desc, ", "),
-			d.board.Bans(), strings.Join(roles, ", "))
-		s.Log.Logf("blaze", "   game %d starts (the draft ended): roster %s%s", gid, describeRoster(roster),
-			describeStartRules(rl, fill))
+		s.Log.Logf("blaze", "   game %d: %s", gid, done)
+		s.Log.Logf("blaze", "   game %d starts (%s ended): roster %s%s", gid, what, describeRoster(roster),
+			describeStartRules(rl, fill, unrated))
 		if mt != nil {
 			s.lobbyContent(roster, players)
 			sg := gmshost.StartGame{Roster: roster, Rules: rl, FillTeams: fill}
@@ -1146,6 +1221,9 @@ func (d *draftRun) ownLocked(team int) *DraftOwn {
 			}
 		}
 	}
+	if d.vote != nil {
+		d.ownVoteLocked(own, team) // ARMY1
+	}
 	return own
 }
 
@@ -1158,7 +1236,7 @@ func (hg *hostedGame) draftStatesLocked(only int64, team int) map[int64]DraftSta
 		return nil
 	}
 	base := DraftState{Phase: d.phase, Reason: d.reason, Turn: -1, Window: -1, TurnMs: d.turn.Milliseconds(), Pool: d.pool}
-	onBoard := d.running() && d.stage == draftStageBoard && !d.board.Done()
+	onBoard := d.running() && d.stage == draftStageBoard && d.board != nil && !d.board.Done()
 	if d.running() {
 		base.Left = max(time.Until(d.stepEnds).Milliseconds(), 0)
 		base.TurnMs = d.stepLen.Milliseconds()
@@ -1167,9 +1245,12 @@ func (hg *hostedGame) draftStatesLocked(only int64, team int) map[int64]DraftSta
 			base.Phase = DraftPhaseRole
 		case draftStageTrade:
 			base.Phase = DraftPhaseTrade
-		default:
+		case draftStageBoard:
 			base.Phase = d.board.Phase()
 		}
+	}
+	if d.vote != nil {
+		d.voteStateLocked(&base) // ARMY1: the phase "vote" or "done", the vote's public part
 	}
 	if onBoard {
 		base.Turn, base.Window = d.board.Cur, d.board.CurWindow()
@@ -1180,7 +1261,11 @@ func (hg *hostedGame) draftStatesLocked(only int64, team int) map[int64]DraftSta
 			base.Teams[t] = append(base.Teams[t], d.names[id])
 		}
 	}
-	for _, t := range d.board.Turns {
+	var turns []rules.DraftTurn
+	if d.board != nil {
+		turns = d.board.Turns
+	}
+	for _, t := range turns {
 		player := ""
 		if t.Seat < len(d.seats[t.Team]) {
 			player = d.names[d.seats[t.Team][t.Seat]]
@@ -1211,7 +1296,8 @@ func (hg *hostedGame) draftStatesLocked(only int64, team int) map[int64]DraftSta
 				own[rteam] = d.ownLocked(rteam)
 			}
 			st.You, st.Own = &DraftYou{Team: rteam + 1, Seat: rseat}, own[rteam]
-			st.YourTurn = onBoard && d.board.OnTurn(rteam, rseat)
+			st.YourTurn = onBoard && d.board.OnTurn(rteam, rseat) ||
+				d.vote != nil && d.running() && d.stage == draftStageVote && !d.vote.locked[id] // ARMY1: may still vote
 		}
 		out[id] = st
 	}

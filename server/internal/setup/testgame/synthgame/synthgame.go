@@ -172,6 +172,21 @@ func Files(ts *assetdata.Types) ([]testgame.SnapFile, error) {
 		}
 		files = append(files, testgame.SnapFile{Name: "AssetData/Binary/PC_" + n + ".BotClass.bin", Data: b})
 	}
+	// the Locus's two impact effects, each with its one sound (botprofiles.LocusZapSound changes it)
+	for _, n := range []string{"base_megaZap_impact_red_effect", "base_megaZap_impact_blue_effect"} {
+		snd := assetdata.NewObject()
+		snd.Set("name", "Play_Salous_Ult_hit")
+		fx := assetdata.NewObject()
+		fx.Set("name", n)
+		v := assetdata.NewObject()
+		v.Set("effects", []any{fx})
+		v.Set("audio", []any{snd})
+		b, err := ts.Write(ts.Type("ServerEventDef"), v, assetdata.WriteOptions{})
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, testgame.SnapFile{Name: "AssetData/Binary/" + n + ".ServerEventDef.bin", Data: b})
+	}
 	// the map's level and its unlisted holiday markerset (the Halloween archive, halloween): a Level of 0x620 bytes
 	// listing one markerset, a Markerset of 0x28 bytes with one 8-byte marker and the group "none", no condition
 	level := make([]byte, 0x620)
@@ -251,6 +266,9 @@ func Write(dir string) error {
 		return err
 	}
 	if err := os.WriteFile(filepath.Join(data, "code.snap"), Code(), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(data, "Options.snap"), Options(), 0o644); err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(data, "Locale", "en-us", "Locale.package"), Locale(), 0o644)

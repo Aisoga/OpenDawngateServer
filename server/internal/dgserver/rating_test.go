@@ -48,6 +48,7 @@ func TestRatingSeedAtStart(t *testing.T) {
 	data := t.TempDir()
 	log := runBriefly(t, data, "--test-history-seed", "60:rseed@x.io")
 	if !strings.Contains(log, "skill rating (RATING1): 60 stored matches replayed, ") ||
+		!strings.Contains(log, "draft and custom ratings (MMR1): 60 stored matches replayed, ") ||
 		!strings.Contains(log, "leaderboard: ranked by skill rating, at least 10 rated games (balanced PvP and custom games) (--rating-leaderboard on") ||
 		!strings.Contains(log, "profile box: each player's skill rating shown from 10 rated games (--show-rating on)") {
 		t.Fatalf("first start:\n%s", log)
@@ -58,7 +59,7 @@ func TestRatingSeedAtStart(t *testing.T) {
 	}
 	mark, _, found, err := st.Setting(rating.SeedKey)
 	_, p, _ := st.PersonaByName("rseed")
-	rows, _ := st.RatingLeaderboard("", 1, 200)
+	rows, _ := st.RatingLeaderboard(store.ModeStandard, "", 1, 200)
 	st.Close()
 	if err != nil || !found || !strings.Contains(log, mark) {
 		t.Errorf("the mark %q %v %v", mark, found, err)
@@ -72,6 +73,7 @@ func TestRatingSeedAtStart(t *testing.T) {
 	}
 	log = runBriefly(t, data, "--rating-leaderboard", "off", "--show-rating", "off")
 	if !strings.Contains(log, "skill rating (RATING1): seeded before ("+mark+")") ||
+		!strings.Contains(log, "draft and custom ratings (MMR1): seeded before (60 stored matches replayed, ") ||
 		!strings.Contains(log, "leaderboard: ranked by wins, at least 10 PvP and custom games (--rating-leaderboard off") ||
 		!strings.Contains(log, "profile box: no rating shown (--show-rating off)") {
 		t.Errorf("second start:\n%s", log)

@@ -236,9 +236,23 @@ The server runs a small website at `https://<server address>/` (`web_port`, 443 
 - make, list and revoke invite codes;
 - change the sign-up mode while the server runs;
 - see the running matches and end one;
+- send a message to all players (below);
 - read the audit log.
 
 The admin login is limited strictly against password guessing. Sessions end after 30 idle minutes.
+
+**A message to all players.** *Message* (`/admin/notice`) sends one line to every player who is logged into the game
+now, for example "Server update at 20:00 UTC, about 10 minutes". Type it, tick *sure* and click *Send*; the page says
+how many players got it. Players see it from *System*:
+
+- in the main menu and the lobbies, in the chat's *System* window and as a notification at the bottom right;
+- in a match, in the match's chat, and as a notification when they are back in the main menu (within 30 minutes). A
+  message sent in the first seconds of a match doesn't reach the match's chat, only the later notification.
+
+Players who log in afterwards don't get it: for a notice that should stay, use the [announcements](#announcements)
+file. A message has at most 200 characters and can't contain `<`, `>`, `&` or `~` (the game's chat would read them as
+formatting); line breaks become spaces. One message every 10 seconds at most. Each one is in the audit log with your
+name and the text.
 
 **The issue tracker** (`issues = on` in `Start-Server.ini`, off by default) adds the pages *Check the rules* at
 `https://<server address>/issues`. The server's rules are partly guesses about how the original game played; there
@@ -277,7 +291,7 @@ Write messages into `Dawngate-Data\data\broadcast.txt`, one per line. The server
 To choose where a message shows, put `@<number>` in front of the line. Add up the places you want:
 
 - `4`: the main menu's status line and shaper select;
-- `2`: a "System" line in the chat, even during a match;
+- `2`: a "System" line in the chat, even during a match (for a one-off message to everyone online, the admin page's *Message* is simpler);
 - `1`: the chat's notification list.
 
 Lines starting with `#` are comments. Delete the file, or empty it, to take the messages down.
@@ -324,7 +338,9 @@ the same number of human players at its start, at least one each; bots and spect
 against bots only; practice games never are. After a rated game each player's rating moves against the other team's
 players taken together (their average rating), by the team's result: a player who left early keeps it. The Leaderboard
 lists the players with at least 10 rated games (`--leaderboard-min-games`), highest rating first, with their rated games
-and wins; the arrows compare with the ranking at the end of the day before (UTC).
+and wins; the arrows compare with the ranking at the end of the day before (UTC). Each game type has its own rating and
+its own tab on the screen: Standard (PvP games and custom games with the standard rules), Draft (custom games with the
+Draft rules) and Custom (any other rules); a rated game changes only its type's rating, and the minimum holds per tab.
 
 To rank by wins instead, as earlier versions did (every PvP and custom game counts, whatever the teams):
 
@@ -713,6 +729,18 @@ sudo -u dawngate ./start-server --create-account alex
 sudo -u dawngate ./start-server --make-invite --invite-uses 5
 ```
 
+### Automatic updates restart the server
+
+Ubuntu installs security updates by itself every day (`unattended-upgrades`). When a library the server uses changes, such as libc or zlib, the update's helper `needrestart` restarts every service that still uses the old one. That includes `dawngate`, so the update ends every match running at that moment, and on a main server it also logs everyone out. Tell needrestart to leave the server alone, on every Linux server and host machine:
+
+```sh
+echo '$nrconf{override_rc}{qr(^dawngate\.service$)} = 0;' | sudo tee /etc/needrestart/conf.d/dawngate.conf
+```
+
+- Security updates still install. The server takes the new libraries at its next restart, for example your next update. `sudo needrestart -r l` restarts nothing; it lists `dawngate.service` under *Service restarts being deferred* while the server waits for one. To catch up sooner, restart it at a quiet time with `sudo systemctl restart dawngate`.
+- `sudo needrestart -r l -v 2>&1 | grep dawngate.conf` shows that needrestart reads the file.
+- A machine without needrestart (no `/etc/needrestart` folder) doesn't need it.
+
 ### Ports and the firewall on Linux
 
 Players need one port, **TCP and UDP 42128**, and the website **TCP 443**. Nothing else of the server listens on the network: the control channel uses `127.0.0.1:10040`, and the match hosts use UDP 10042–10051 on `127.0.0.1`. With the website behind nginx ([below](#the-website-behind-nginx)), ports 80 and 443 are nginx's, and the server's website listens only on `127.0.0.1`.
@@ -845,6 +873,7 @@ If nginx answers `502 Bad Gateway`, the server isn't running, or `proxy_pass` na
 ```sh
 sudo systemctl disable --now dawngate
 sudo rm /etc/systemd/system/dawngate.service
+sudo rm -f /etc/needrestart/conf.d/dawngate.conf
 sudo systemctl daemon-reload
 sudo userdel --remove dawngate
 ```

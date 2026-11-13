@@ -17,7 +17,7 @@ import (
 // host reported. The host's seatStats and matchTimeline (sent before the playerFinish lines) are kept on the game until
 // then; a host without them (an older build, [host] match_stats=0) still gets its match stored from the roster and the
 // playerFinish lines, its humans only (it reports nothing about its bots). An aborted match (no finishGame) stores
-// nothing.
+// nothing, unless its players left it (PROFILE3, leftgames.go: stored with Winner 0, each player's seat a loss).
 
 // statLevel is playerFinish's level key (the champion level at the end).
 const statLevel = "level"
@@ -127,7 +127,8 @@ func (hg *hostedGame) storeMatch(rec historyRecord) int64 {
 func (hg *hostedGame) matchLocked(f gmshost.FinishGame, now time.Time) (m store.Match, skipped int) {
 	m = store.Match{GameID: hg.game.ID, Kind: matchKind(hg.mode, hg.game.descriptors()), Mode: hg.mode,
 		Level: hg.s.gameLevel(hg.game), Winner: f.WinnerTeam, Reason: f.Reason, Started: hg.started, Ended: now,
-		DurationMs: f.DurationMs, Rules: hg.rulesRecordLocked()} // RULES1: the custom game's rules, "" for the standard game
+		DurationMs: f.DurationMs, Rules: hg.rulesRecordLocked(), // RULES1: the custom game's rules, "" for the standard game
+		Unrated: hg.adminUnratedLocked()} // M30: the admin's Unrated (never rated, rating.Judge)
 	if !hg.inGameAt.IsZero() {
 		m.Started = hg.inGameAt
 	}
@@ -167,6 +168,9 @@ func (hg *hostedGame) matchLocked(f gmshost.FinishGame, now time.Time) (m store.
 		st := store.MatchSeat{Seat: seat, PersonaID: hp.p.ID, UserID: hp.userID, Team: int(hp.p.Team) + 1,
 			Left: hp.removed || !hp.joined}
 		fillSeat(&st, f, mergeStats(pf.Stats, ss.Stats), ss, hasStats)
+		if hp.joined && hg.s != nil && hg.s.leaverLoses(f) && hg.leftByChoiceLocked(hp) {
+			st.Won = false // PROFILE3: who left before the end lost (persist counts it so; the rating keeps the team's)
+		}
 		m.Seats = append(m.Seats, st)
 	}
 	skipped = len(byUser)

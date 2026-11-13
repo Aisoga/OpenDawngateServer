@@ -115,7 +115,7 @@ func (s *Server) applyPickRules(gid int64, sg *gmshost.StartGame, drafted map[in
 		s.Log.Logf("blaze", "   game %d: shaper pool %s: %d shapers (%s); each human's list holds only them, all "+
 			"available; the bots draw from them", gid, c.ShaperPool, len(members), strings.Join(members, ", "))
 	}
-	if c.Pick == "draft" {
+	if c.Pick == "draft" || rules.IsVotePick(c.Pick) { // ARMY1: a vote's drawn shapers go the draft's way
 		s.applyDraft(gid, humans, class, drafted)
 		return
 	}

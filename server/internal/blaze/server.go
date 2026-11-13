@@ -144,6 +144,9 @@ type Server struct {
 	// admin without players on the teams, so a bots-only match (5 bots a team, with CustomBots) for tests and head-to-head
 	// bot comparisons couldn't start. The start is the admin's advanceGameState IN_GAME's.
 	CustomAutoStart time.Duration
+	// LeftLossAfter is PROFILE3's least match time for a left game to count as the leaver's loss without a surrender or
+	// the Guardian's death (dgserver --left-loss-after; 0 = DefaultLeftLossAfter, 15 minutes; leftgames.go)
+	LeftLossAfter time.Duration
 	// UI is the game UI's own channel (AttachUI; nil: none, so nobody takes part in the ready check).
 	UI *uichannel.Server
 	// lobbyGap is the least time between two lobby.state broadcasts of a lobby (AttachUI: lobbyPublishGap).
@@ -173,12 +176,24 @@ type Server struct {
 	// tests with a fixed order); false (the default) shuffles each team's pick order and flips a coin for the team
 	// that starts (DRAFTSHUF, draft.go shuffleDraftSeats).
 	DraftFixedOrder bool
+	// VoteTime is Army and Clone Pick's vote (ARMY1, vote.go; dgserver --vote-time; 0 = VoteTimeDefault, 30 s), and
+	// VoteShowTime how long the drawn shapers are shown before the game starts (--vote-show-time; 0 =
+	// VoteShowDefault, 3 s).
+	VoteTime, VoteShowTime time.Duration
 	// TestDraft makes the server act for every drafter this long after each step of every draft began (dgserver
 	// --test-draft, a test aid: a draft without the lobby's board; 0 = off): the roles, every seat on turn, one swap and
 	// one trade, the ready marks. draft.go.
 	TestDraft time.Duration
 	// rulesGap is the least time between two rules changes of one lobby (lobbyRulesGap; tests set 0).
 	rulesGap time.Duration
+	// MMR2: the players' Leaderboard boards (leaderboardtabs.go) and the least time between two changes of one
+	// (AttachUI: leaderboardSelectGap; tests set 0)
+	lbChoice leaderboardChoices
+	lbGap    time.Duration
+	// PROFILE2: the players' Profile modes (profilemodes.go) and the least time between two changes of one (AttachUI:
+	// profileSelectGap; tests set 0)
+	pfChoice profileChoices
+	pfGap    time.Duration
 	// Halloween shows the map's Halloween decoration in every hosted match (dgserver --halloween, Start-Server.ini
 	// halloween): createGame's levelFlags gets gmshost.LevelFlagHalloween, which the host loads its level with and sends
 	// in GamePrepareForStart; a client whose copy has zz_Halloween.snap then loads the holiday markerset. Off = level

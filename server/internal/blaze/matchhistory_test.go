@@ -76,7 +76,7 @@ func TestMatchRecord(t *testing.T) {
 			Started: end.Add(-time.Hour), Ended: end, DurationMs: 1000,
 			Seats: []store.MatchSeat{
 				{Seat: 0, PersonaID: 2000000001, Team: 1, Won: true, Kills: 1, Stats: map[string]int64{"kills": 1, "won": 1}},
-				{Seat: 5, PersonaID: 2000000002, Team: 2, Won: true, Left: true},
+				{Seat: 5, PersonaID: 2000000002, Team: 2, Won: false, Left: true}, // PROFILE3: left before the end, so lost
 			}}
 		if !reflect.DeepEqual(m, want) || skipped != 0 {
 			t.Errorf("record (skipped %d)\n got %+v\nwant %+v", skipped, m, want)

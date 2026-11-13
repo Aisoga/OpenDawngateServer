@@ -19,6 +19,7 @@ type Spec struct {
 	IslandRadius float64
 	IslandZ      float64
 	IslandSides  int
+	Holes        []Hole // more holes in both graphs, without islands (a compiled map's Bindings and Cores)
 }
 
 // MM is MM_Map_v3's spec: squares of 2 x 2 cells at z 0.7; the Player marker in the middle; the NPC markers there,
@@ -63,17 +64,18 @@ func BuildTwo(img, npcImg los.Image, spec Spec, playerTemplate, npcTemplate []by
 	if len(pt.Graphs) == 0 || len(nt.Graphs) == 0 {
 		return nil, nil, fmt.Errorf("navgraph: a template holds no graph")
 	}
-	holes := make([]Hole, len(spec.Guardians))
+	holes := make([]Hole, len(spec.Guardians), len(spec.Guardians)+len(spec.Holes))
 	for i, g := range spec.Guardians {
 		holes[i] = Hole{g.X, g.Y, spec.HoleRadius}
 	}
+	holes = append(holes, spec.Holes...)
 	mask := WalkableMask(img.Pix, img.W, img.H, spec.Erode)
 	polys := GridPolygons(mask, img.W, img.H, spec.SizeX, spec.SizeY, spec.Cell, spec.Z, spec.Keep, holes)
 	player = Write(FromPolygons(polys, pt))
 	mask = WalkableMask(npcImg.Pix, img.W, img.H, spec.Erode)
 	polys = GridPolygons(mask, img.W, img.H, spec.SizeX, spec.SizeY, spec.Cell, spec.Z, spec.NPCKeep, holes)
-	for _, ho := range holes {
-		polys = append(polys, IslandPolygon(ho.X, ho.Y, spec.IslandRadius, spec.IslandZ, spec.IslandSides))
+	for _, g := range spec.Guardians {
+		polys = append(polys, IslandPolygon(g.X, g.Y, spec.IslandRadius, spec.IslandZ, spec.IslandSides))
 	}
 	npc = Write(FromPolygons(polys, nt))
 	return player, npc, nil

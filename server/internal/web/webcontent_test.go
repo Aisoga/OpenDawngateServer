@@ -302,6 +302,11 @@ func TestHistoryPage(t *testing.T) {
 		`name: "Vision & objectives"`, `name: "Timeline"`, "My games", "All games", `"Wins"`, `"Losses"`,
 		"function onLivingLoreVoteUpdate()", "d.watched > id", `"WATCHED MATCH"`,
 		"not run by Waystone Games or Electronic Arts",
+		// PROFILE1: the mode tabs in the user's order, All Modes the default, filtered by the server (type=); the
+		// review's latest match also an Unrated one
+		`[["practice", "Practice"], ["standard", "Standard"], ["draft", "Draft"], ["custom", "Custom"],
+                   ["all", "All Modes"]]`, `type: "all"`, `"&type=" + L.type`, `<div id="modeTabs"></div>`,
+		`"&n=1&unrated=1"`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("history.html lacks %q", want)

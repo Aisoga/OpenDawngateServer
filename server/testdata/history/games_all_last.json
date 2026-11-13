@@ -16,6 +16,7 @@
       "started": 1793106000,
       "ended": 1793107200,
       "durationSec": 1200,
+      "type": "practice",
       "seats": [
         {
           "seat": 0,

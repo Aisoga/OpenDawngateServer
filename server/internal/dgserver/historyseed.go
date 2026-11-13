@@ -13,40 +13,77 @@ import (
 	"dawngate/server/internal/blaze"
 	"dawngate/server/internal/content"
 	"dawngate/server/internal/gmshost"
+	"dawngate/server/internal/progress"
 	"dawngate/server/internal/store"
 )
 
-// The test aid --test-history-seed N[:<login name>] (MHIST3): an empty match history gets N made-up matches at the
-// start, so the history page can be looked at (its Load more, every tab with data) without playing them. Each match
-// has ten seats: the given login's persona (its account is made without a password when it doesn't exist, so the
-// first login sets one, as for an account of an earlier build) on alternating teams, up to three made-up players
-// ("Kestrel", "Marrow", ...; accounts <name>@seed.invalid without a password) and bots. Every fifth match carries
+// The test aid --test-history-seed N[:<login name>[|<password>]] (MHIST3): an empty match history gets N made-up
+// matches at the start, so the history page can be looked at (its Load more, every tab with data) without playing
+// them. Each match has ten seats: the given login's persona on alternating teams (its account is made when it
+// doesn't exist, and given the password, default historySeedPassword, when it has none: SEEDPW, a login refuses an
+// account without one), up to three made-up players ("Kestrel", "Marrow", ...; accounts <name>@seed.invalid without a
+// password, never logged in) and bots. The kinds cycle through historySeedKinds: PvP, practice, a practice group's
+// and custom games with each game type's rules, one of them made Unrated by its admin (PROFILE1's filter and rule). Every fifth match carries
 // only the basics (no detailed stats, no sources, no timeline), as a host without match stats leaves it; the others
 // carry every key of the stats catalogue, damage and heal sources with the content's item, spell and spirit stone
 // ids, and a timeline. The numbers are random (a fixed seed per match), not a game's. A store that already holds a
 // match is left alone, so a restart doesn't add them twice.
 
+// historySeedPassword is the seeded login's password when the spec names none (the test sessions' password).
+const historySeedPassword = "dawngate1"
+
+// historySeedKinds is the cycle of the seeded matches' kinds: a custom game's rules (store.Match.Rules) give its game
+// type (rating.ModeOf: none standard, the draft preset draft, others custom); unrated is its admin's Unrated.
+var historySeedKinds = []struct {
+	kind, mode, rules string
+	unrated           bool
+}{
+	{"pvp", "pvp", "", false}, {"practice", "practice", "", false}, {"custom", "custom", "", false},
+	{"pvp", "pvp", "", false}, {"practiceGroup", "practice", "", false},
+	{"custom", "custom", `{"pick":"draft"}`, false}, {"custom", "custom", `{"pick":"random","shop":"onDeath"}`, false},
+	{"custom", "custom", `{"pick":"draft"}`, true},
+}
+
 // historySeedNames are the made-up players' persona names.
 var historySeedNames = []string{"Kestrel", "Marrow", "Vesper", "Orrin", "Thistle", "Calder"}
 
-// parseHistorySeed reads N[:<login name>] (N 1..500).
-func parseHistorySeed(spec string) (int, string, error) {
-	nText, login, _ := strings.Cut(strings.TrimSpace(spec), ":")
+// parseHistorySeed reads N[:<login name>[|<password>]] (N 1..500; the password historySeedPassword when missing).
+func parseHistorySeed(spec string) (int, string, string, error) {
+	nText, rest, _ := strings.Cut(strings.TrimSpace(spec), ":")
+	login, password, withPassword := strings.Cut(rest, "|")
 	n, err := strconv.Atoi(strings.TrimSpace(nText))
-	if err != nil || n < 1 || n > 500 {
-		return 0, "", fmt.Errorf("%q: want N[:<login name>] with N from 1 to 500", spec)
+	if err != nil || n < 1 || n > 500 || (withPassword && password == "") {
+		return 0, "", "", fmt.Errorf("%q: want N[:<login name>[|<password>]] with N from 1 to 500", spec)
 	}
-	return n, accounts.NormalizeName(login), nil
+	if !withPassword {
+		password = historySeedPassword
+	}
+	return n, accounts.NormalizeName(login), password, nil
 }
 
-// seedPersona returns the persona of the account with this login name, making the account (no password) when there
-// is none.
-func seedPersona(st *store.Store, login string, now time.Time) (store.Persona, store.Account, error) {
-	a, err := st.Create(store.NewAccount{Name: login}, now)
+// seedPersona returns the persona of the account with this login name, making the account when there is none; a
+// password ("" = none) is set when the account has none (an existing password stays).
+func seedPersona(st *store.Store, login, password string, now time.Time) (store.Persona, store.Account, error) {
+	hash := ""
+	if password != "" {
+		h, err := accounts.Hash(password)
+		if err != nil {
+			return store.Persona{}, store.Account{}, err
+		}
+		hash = h
+	}
+	a, err := st.Create(store.NewAccount{Name: login, Hash: hash}, now)
 	if errors.Is(err, store.ErrExists) {
 		acc, p, ok := st.PersonaByName(store.PersonaName(login))
 		if !ok {
 			return store.Persona{}, store.Account{}, fmt.Errorf("account %s exists, but its persona %q wasn't found", login, store.PersonaName(login))
+		}
+		if cred, found, err := st.Credentials(login); err != nil {
+			return store.Persona{}, store.Account{}, err
+		} else if found && cred.Hash == "" && hash != "" {
+			if err := st.SetPassword(cred.UserID, hash); err != nil {
+				return store.Persona{}, store.Account{}, err
+			}
 		}
 		return p, acc, nil
 	}
@@ -61,7 +98,7 @@ func seedPersona(st *store.Store, login string, now time.Time) (store.Persona, s
 
 // seedHistory inserts the matches and returns the log line's text.
 func seedHistory(st *store.Store, c *content.Content, spec string, now time.Time) (string, error) {
-	n, login, err := parseHistorySeed(spec)
+	n, login, password, err := parseHistorySeed(spec)
 	if err != nil {
 		return "", err
 	}
@@ -76,7 +113,7 @@ func seedHistory(st *store.Store, c *content.Content, spec string, now time.Time
 	}
 	var main *human
 	if login != "" {
-		p, a, err := seedPersona(st, login, now)
+		p, a, err := seedPersona(st, login, password, now)
 		if err != nil {
 			return "", err
 		}
@@ -84,18 +121,16 @@ func seedHistory(st *store.Store, c *content.Content, spec string, now time.Time
 	}
 	var others []human
 	for _, name := range historySeedNames {
-		p, a, err := seedPersona(st, name+"@seed.invalid", now)
+		p, a, err := seedPersona(st, name+"@seed.invalid", "", now)
 		if err != nil {
 			return "", err
 		}
 		others = append(others, human{persona: p.ID, user: a.UserID, name: p.Name})
 	}
 	pool := seedPool(c)
-	kinds := []struct{ kind, mode string }{{"pvp", "pvp"}, {"practice", "practice"}, {"custom", "custom"},
-		{"pvp", "pvp"}, {"practiceGroup", "practice"}, {"pvp", "pvp"}}
 	for i := 0; i < n; i++ {
 		r := rand.New(rand.NewSource(int64(i + 1)))
-		k := kinds[i%len(kinds)]
+		k := historySeedKinds[i%len(historySeedKinds)]
 		minutes := 14 + r.Intn(24)
 		if k.kind == "practice" {
 			minutes = 9 + r.Intn(10)
@@ -104,7 +139,7 @@ func seedHistory(st *store.Store, c *content.Content, spec string, now time.Time
 		ended := now.Add(-time.Duration(n-i) * 47 * time.Minute)
 		m := store.Match{GameID: int64(i + 1), Kind: k.kind, Mode: k.mode, Level: blaze.HostedLevel,
 			Winner: 1 + r.Intn(2), Reason: []string{"guardian", "surrender", "guardian"}[r.Intn(3)],
-			Started: ended.Add(-dur), Ended: ended, DurationMs: dur.Milliseconds()}
+			Started: ended.Add(-dur), Ended: ended, DurationMs: dur.Milliseconds(), Rules: k.rules, Unrated: k.unrated}
 		if i%7 == 3 {
 			m.Level = "MM_Map_v3"
 		}
@@ -147,6 +182,28 @@ func seedHistory(st *store.Store, c *content.Content, spec string, now time.Time
 			m.Timeline = seedTimeline(r, seats, minutes, m.Reason == "guardian")
 		}
 		if _, err := st.InsertMatch(m); err != nil {
+			return "", err
+		}
+	}
+	// PROFILE2: the seeded players' stored profile (the Profile's All Modes) as the games would have left it: their
+	// matches but the Unrated ones, added in the order played (blaze.ProfileOf, applyGame's functions)
+	humans := others
+	if main != nil {
+		humans = append([]human{*main}, others...)
+	}
+	for _, h := range humans {
+		ms, err := st.PlayedMatches(h.persona, func(m store.Match) bool { return !m.Unrated })
+		if err != nil {
+			return "", err
+		}
+		ps, hist := blaze.ProfileOf(c, ms)
+		if _, err := st.Update(h.user, func(a *store.Account) {
+			if a.Stats == nil {
+				a.Stats = map[string]map[string]string{}
+			}
+			a.Stats[progress.PlayerStats] = ps
+			a.History.Shapers, a.History.Days = hist.Shapers, hist.Days
+		}); err != nil {
 			return "", err
 		}
 	}

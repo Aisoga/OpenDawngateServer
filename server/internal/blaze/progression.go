@@ -83,6 +83,10 @@ type GameResult struct {
 	RankedTotal store.GamesWon
 	// Rules: the game had rules away from the standard game (RULES1), which is why it doesn't count
 	Rules bool
+	// Unrated: the custom game's admin made it unrated (M30), which is why it doesn't count
+	Unrated bool
+	// NotInProfile: the game left the profile's numbers alone (PROFILE2: made Unrated by its admin)
+	NotInProfile bool
 }
 
 // describeRanked is the log text of what a game of this mode added to the Leaderboard's counts.
@@ -90,6 +94,8 @@ func (r GameResult) describeRanked(mode string) string {
 	if !r.Ranked {
 		kind := "a practice game"
 		switch {
+		case r.Unrated:
+			kind = "a custom game unrated by the admin"
 		case r.Rules:
 			kind = "a custom game with rules"
 		case mode != gmshost.ModePractice:
@@ -119,14 +125,19 @@ func (r GameResult) describeHistory(c *content.Content) string {
 	} else if r.Role != 0 {
 		role = fmt.Sprintf("no role (role %d is none of 1-4)", r.Role)
 	}
+	if r.NotInProfile {
+		return "not in the profile (made Unrated by its admin; " + shaper + ", " + role + ")"
+	}
 	return shaper + ", " + role
 }
 
 // applyGame stores one player's finished game in the account and returns what changed. The rewards
 // (grantRewards) are part of it unless holdRewards (D8c: a game with a karma vote, whose rewards wait for the
 // host's playerKarma and applyRewards). A ranked game (hostedGame.ranked) also adds to the Leaderboard's counts.
+// inProfile false (PROFILE2: a custom game its admin made Unrated) leaves the profile's numbers alone: PlayerStats
+// (also the main menu's wins) and the shaper and role history; the rewards, XP and level still come.
 func (s *Server) applyGame(userID int64, g progress.Game, stats map[string]int64, hostRewards *gmshost.Rewards,
-	practice, ranked, holdRewards bool) (store.Account, GameResult, error) {
+	practice, ranked, holdRewards, inProfile bool) (store.Account, GameResult, error) {
 	today := s.Now().UTC().Format("2006-01-02")
 	var res GameResult
 	acct, err := s.Store.Update(userID, func(a *store.Account) {
@@ -138,10 +149,13 @@ func (s *Server) applyGame(userID int64, g progress.Game, stats map[string]int64
 		if practice {
 			a.Flags |= store.FlagFTUEDone
 		}
-		a.Stats[progress.PlayerStats] = progress.ApplyPlayerStats(a.Stats[progress.PlayerStats], g.Won, stats)
 		res.Noun, res.Role = uint32(stats[progress.StatNoun]), stats[progress.StatRole]
 		res.Shaper, _ = s.Content.ShaperOf(res.Noun)
-		a.History = progress.ApplyHistory(a.History, s.Now(), res.Shaper, res.Role, g.Won, stats, g.Seconds)
+		res.NotInProfile = !inProfile
+		if inProfile {
+			a.Stats[progress.PlayerStats] = progress.ApplyPlayerStats(a.Stats[progress.PlayerStats], g.Won, stats)
+			a.History = progress.ApplyHistory(a.History, s.Now(), res.Shaper, res.Role, g.Won, stats, g.Seconds)
+		}
 		if ranked {
 			a.History = progress.ApplyRanked(a.History, s.Now(), g.Won)
 		}

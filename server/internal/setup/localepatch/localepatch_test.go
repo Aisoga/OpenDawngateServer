@@ -36,14 +36,14 @@ func MadeUp() []byte {
 // The SHA-256s re/scripts/patch_locale.py gives for the same inputs (test_ph2b.py pins the same values).
 const (
 	madeUpSHA        = "97766712cea3cf54c20204922cc472d86ac9d592c40e955f7c1a635e0567f25e"
-	madeUpLaneB      = "8a8b381b9a9cf51ca5ef9a5c85aecdb5e7986c1011074c07264271a1dd0f5d2d" // --host 127.0.0.2
-	madeUpWebDomain  = "26ef34c0babbd8682f09f87928fbf2d811c32c12ce72264ced40d5df3da9885d" // 192.168.1.20, Play.Example.org:8443
-	madeUpLobbyAny   = "0fc64846c57c44dd40e96525089bbcebdc50ee77ad07f4e635037fa3008df8be" // 127.0.0.2, LobbyMapAny, testMaps
+	madeUpLaneB      = "0dd924829de311cb46ad3114e15f7cec23455437ea1e4151f9edb452ea00aca1" // --host 127.0.0.2
+	madeUpWebDomain  = "b7c94dfd9980c1320d6c62093b5f28018a08f1fd27b13b64ace0fe90d4644c42" // 192.168.1.20, Play.Example.org:8443
+	madeUpLobbyAny   = "a08a6767d8ffd454998f82667b95ca649eb03f20b61b3ec6aef145d2133f55e8" // 127.0.0.2, LobbyMapAny, testMaps
 	synthLocaleSHA   = "528ce9623b3b1542fa600b1036136a3c39e8e68bb586019fb3a6d3c2f6374832" // synthgame.Locale()
-	synthLocal       = "a9386beef0740e61bcb1256b72873c397048d6dd60982ab7e41e46806e7833e2" // the synthetic game, 127.0.0.1
-	game854Local     = "8030edd76c6c4617e2c08ba1bacfc51fa63212a10860a200f5ab2bdb62063ef2" // build 854, --host 127.0.0.1
-	game854LaneB     = "28fb493c164fb623804e02604981c226c2476449a458f3a78783f3f30308c5ff" // --host 127.0.0.2
-	game854WebDomain = "c82b4295ab32ec26d3ac2063d2eb12be0c704d868b59daf2e627d88eedd95e37" // 203.0.113.7, dawngate.example.org
+	synthLocal       = "03c124ee431b3c3007f50fca450e24c19161e42c54fa631b3fbc86308f806865" // the synthetic game, 127.0.0.1
+	game854Local     = "3d97f41690b2393d40804f487e070c7f38ffae4c33e566b57ee813b2aa42daff" // build 854, --host 127.0.0.1
+	game854LaneB     = "2f5b56f4a53c3073756d1abd0108fe7bbeeb8699a3409753b98c552787b65311" // --host 127.0.0.2
+	game854WebDomain = "650f6e91a29b5183ed8ef5badb80f54a99471401d5ee28e53f03b3176f988438" // 203.0.113.7, dawngate.example.org
 )
 
 // testMaps are a maps folder's packages (test_ph2b.py's MAPS): CM_Ring, and one named like MM_Map_v3 (its line is the
@@ -134,8 +134,8 @@ func TestBuildGame(t *testing.T) {
 				}
 			}
 		}
-		if len(p.Entries) != 10 { // PREF3: GameServerRegion, newFeatureNotify
-			t.Errorf("%d tables, want 10", len(p.Entries))
+		if len(p.Entries) != 11 { // PREF3: GameServerRegion, newFeatureNotify; DRAGGRAB2a: Options
+			t.Errorf("%d tables, want 11", len(p.Entries))
 		}
 	}
 }

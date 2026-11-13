@@ -90,6 +90,10 @@ func TestJudge(t *testing.T) {
 		{"a practice game", match("practice", 1, 1, 0), false, "a practice game"},
 		{"a practice group's game", match("practiceGroup", 1, 2, 0), false, "a practice group's game"},
 		{"no winner", match("pvp", 0, 1, 1), false, "no winner"},
+		// M30 (MMR1): rules no longer keep a game out (it rates in its type, TestJudgeModes); the admin's Unrated does
+		{"a custom game with rules", withRules(match("custom", 1, 1, 1), `{"pick":"random"}`), true, "1 v 1 humans"},
+		{"unrated by the admin", func() store.Match { m := match("custom", 1, 1, 1); m.Unrated = true; return m }(), false,
+			"unrated by the admin"},
 	} {
 		v := Judge(c.m)
 		if v.Rated != c.rated || v.Why != c.why {
@@ -114,7 +118,7 @@ func TestRate(t *testing.T) {
 		1: {Value: 1600, RD: 80, Vol: 0.06}, 2: {Value: 1400, RD: 120, Vol: 0.06},
 		101: {Value: 1550, RD: 60, Vol: 0.06}, // 102 has none: 1500, RD 350
 	}
-	current := func(id int64) store.Rating { return ratings[id] }
+	current := func(id int64, _ string) store.Rating { return ratings[id] }
 	m := match("pvp", 2, 2, 2)
 	m.Seats[0].Left = true // account 1 left during the match: it still loses with its team
 	m.Seats[0].Won = true  // even if its seat says otherwise
@@ -128,11 +132,11 @@ func TestRate(t *testing.T) {
 		var want store.Rating
 		switch c.Team {
 		case 1:
-			want = Update(current(c.UserID), []Result{{opp1.Rating, opp1.RD, 0}})
+			want = Update(current(c.UserID, ""), []Result{{opp1.Rating, opp1.RD, 0}})
 		case 2:
-			want = Update(current(c.UserID), []Result{{opp2.Rating, opp2.RD, 1}})
+			want = Update(current(c.UserID, ""), []Result{{opp2.Rating, opp2.RD, 1}})
 		}
-		if c.Won != (c.Team == 2) || c.After != want || c.Before != current(c.UserID).OrStart() {
+		if c.Won != (c.Team == 2) || c.After != want || c.Before != current(c.UserID, "").OrStart() {
 			t.Errorf("account %d: %+v, want after %+v", c.UserID, c, want)
 		}
 		if (c.Team == 2) != (c.After.Value > c.Before.Value) {
@@ -144,7 +148,7 @@ func TestRate(t *testing.T) {
 		t.Errorf("the log text: %q", changes[0].Describe(v))
 	}
 	// two new players, 1 v 1: the winner gains what the loser loses
-	_, cs := Rate(match("custom", 1, 1, 1), func(int64) store.Rating { return store.Rating{} })
+	_, cs := Rate(match("custom", 1, 1, 1), func(int64, string) store.Rating { return store.Rating{} })
 	if len(cs) != 2 || !near(cs[0].After.Value-1500, 1500-cs[1].After.Value, 1e-9) || cs[0].After.Value <= 1500 ||
 		cs[0].After.RD != cs[1].After.RD {
 		t.Errorf("1 v 1 of new players: %+v", cs)
@@ -196,7 +200,7 @@ func TestSeed(t *testing.T) {
 	}
 	// the replay by hand
 	cur := map[int64]store.Rating{}
-	get := func(id int64) store.Rating { return cur[id] }
+	get := func(id int64, _ string) store.Rating { return cur[id] }
 	for _, i := range []int{0, 2, 3} {
 		_, cs := Rate(matches[i], get)
 		for _, c := range cs {
@@ -221,7 +225,7 @@ func TestSeed(t *testing.T) {
 		a.History.Days[1].Rated != (store.GamesWon{Games: 1}) {
 		t.Fatalf("a's days: %+v", a.History.Days)
 	}
-	_, first := Rate(matches[0], func(int64) store.Rating { return store.Rating{} })
+	_, first := Rate(matches[0], func(int64, string) store.Rating { return store.Rating{} })
 	if !near(a.History.Days[0].RatingBefore, first[0].After.Value, 1e-9) {
 		t.Errorf("a's rating before yesterday: %v, want %v", a.History.Days[0].RatingBefore, first[0].After.Value)
 	}

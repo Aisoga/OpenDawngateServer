@@ -112,7 +112,10 @@
   does (play.ps1 -Check runs that path). Ctrl+C arrives as a key ([Console]::TreatControlCAsInput), so no child process gets a console
   signal; without a console (redirected input) only the finally block's cleanup covers an interrupted run. The capture
   is stopped once the server is down (its autostop is an 8-hour safety net, like dgserver's --seconds). -NoCapture
-  (only with -Play) starts no capture and runs no egress check; every test session is captured.
+  (only with -Play) starts no capture and runs no egress check; every test session is captured. Once the egress check
+  finds nothing, the session deletes its capture.pcapng (DISKCLEAN: captures filled re\logs with 80 GB; the verdict
+  stays in egress.txt and the summary); a flagged or failed check keeps it. -KeepCapture keeps it anyway: pass it when
+  tshark or tunnel_capture.py should read the capture afterwards.
   -StopFile <file> (only with -Play): when the file appears, the session ends as on Ctrl+C (for a program that started
   the session; the summary's 'play' line says 'ended by the stop file').
   -MapsDir <dir>: the maps folder dgserver gets as --maps (default: this checkout's maps\ when it holds a package,
@@ -122,13 +125,13 @@
   process start, name, mode and lane, and removes it at the end; a session refuses to start (exit 2) while the lock names
   a live process, so a test session never stops a running play session's processes as leftovers, and vice versa.
 
-  -Lane a|b|c|d (A6, A6b; docs/RUNNING_THE_CLIENT.md *Test lanes (A6, A6b)*): up to four sessions can run at the same
-  time, one per lane. Lane a (the default) is everything above: client\run_854, client\run_854_server, 127.0.0.1,
-  server\bin\dgserver.exe, %APPDATA%\DawngateData, re\logs\session.lock. Lane X = b, c or d (set up by
-  re\scripts\setup_lane.py X; b = 2, c = 3, d = 4) has client\run_854_X, client\run_854_server_X, 127.0.0.N for every
+  -Lane a|b|c|d|g: up to five sessions can run at
+  the same time, one per lane. Lane a (the default) is everything above: client\run_854, client\run_854_server, 127.0.0.1,
+  server\bin\dgserver.exe, %APPDATA%\DawngateData, re\logs\session.lock. Lane X = b, c, d or g (set up by
+  re\scripts\setup_lane.py X; b = 2, c = 3, d = 4, g = 5: the fifth lane is g, e, f and h being second clients) has client\run_854_X, client\run_854_server_X, 127.0.0.N for every
   port (dgserver --bind/--public-host, the control port, the hosts' GMS ports), server\bin\lane_X\dgserver.exe with
   server\certs\lane_X and server\data\lane_X, the client started with -multipleInstances, %APPDATA%\DawngateDataX and
-  re\logs\session_X.lock; a session in lane b, c or d refuses to start while the user plays (a live play lock in
+  re\logs\session_X.lock; a session in lane b, c, d or g refuses to start while the user plays (a live play lock in
   lane a). Each session folder gets lane.txt. Leftovers are only this lane's: Dawngate.exe and CrashSender by copy,
   dgserver.exe and gms_script.exe by their --bind (dgserver's --host when --bind isn't given, since P2-live; or their
   dgserver's), dumpcap and the monitor by their session folder's lane. Ports are checked on the lane's address only. The egress check gets --lane-address.
@@ -182,7 +185,7 @@
   America picked runs there, its players' GMS traffic through a second tunnel session to that gateway (the front's away
   session: use -TunnelClientArgs '--tunnel-front ...'). -HostMachineSeconds <s> stops it s seconds after its start
   (just before the game's): the next North American game falls back to Europe with the notice. The summary gets a
-  'hostmach' line; check the capture with tunnel_capture.py --server 127.0.N.20 too. -RegionNames '<alias>=<name>;
+  'hostmach' line; check the capture (-KeepCapture) with tunnel_capture.py --server 127.0.N.20 too. -RegionNames '<alias>=<name>;
   ...' (PREF3; default with -HostMachine 'eu=Europe; na=NA (Virginia)', Start-Server.ini's region_names) gives the
   server one --region-name per entry (names may hold blanks, which -ServerArgs splits at); '-' names none.
 
@@ -194,8 +197,8 @@
         [-HostDir client\run_854_server\Dawngate [-HostAfter <s>] [-HostOptions 'key=value;...']] [-Background]
         [-ShotFocus auto|on|off] [-ShotWidth <px>]
         [-GmsHost client\run_854_server|gms\build\Release\gms_script.exe [-GmsHostArgs '...'] [-HostOptions '...']]
-        [-HostKillAt <s>] [-ServerArgs '<dgserver flags>'] [-FreshData] [-KeepAlive <s>] [-Play [-NoCapture]]
-        [-Lane a|b|c|d] [-Lan <IPv4>|auto] [-SecondClient [-SecondAfter <s>] [-Login2 'email|password' [-LoginAt2 <s>]]
+        [-HostKillAt <s>] [-ServerArgs '<dgserver flags>'] [-FreshData] [-KeepAlive <s>] [-Play [-NoCapture]] [-KeepCapture]
+        [-Lane a|b|c|d|g] [-Lan <IPv4>|auto] [-SecondClient [-SecondAfter <s>] [-Login2 'email|password' [-LoginAt2 <s>]]
         [-Actions2 '...'] [-ShotTimes2 '...'] [-SecondRestartAt <s> [-Actions3 '...'] [-ShotTimes3 '...']]]
         [-Tunnel [-TunnelClientArgs '...'] [-HostMachine [-HostMachineSeconds <s>]]]
   With -Lane b the default -GameDir is client\run_854_b\Dawngate and the host copy is client\run_854_server_b (lanes c
@@ -249,7 +252,8 @@ param(
     [int]$KeepAlive = -1,
     [switch]$Play,
     [switch]$NoCapture,
-    [ValidateSet('a', 'b', 'c', 'd')][string]$Lane = 'a',
+    [switch]$KeepCapture,
+    [ValidateSet('a', 'b', 'c', 'd', 'g')][string]$Lane = 'a',
     [string]$Lan,
     [switch]$SecondClient,
     [int]$SecondAfter = 24,
@@ -287,6 +291,8 @@ $LaneTable = @{
     b = @{ Address = '127.0.0.2'; Client = 'client\run_854_b\Dawngate'; HostCopy = 'client\run_854_server_b\Dawngate'; Certs = 'server\certs\lane_b'; Suffix = 'B'; Data = 'server\data\lane_b'; ServerExe = 'server\bin\lane_b\dgserver.exe'; Lock = 're\logs\session_b.lock'; GameArgs = '-multipleInstances' }
     c = @{ Address = '127.0.0.3'; Client = 'client\run_854_c\Dawngate'; HostCopy = 'client\run_854_server_c\Dawngate'; Certs = 'server\certs\lane_c'; Suffix = 'C'; Data = 'server\data\lane_c'; ServerExe = 'server\bin\lane_c\dgserver.exe'; Lock = 're\logs\session_c.lock'; GameArgs = '-multipleInstances' }
     d = @{ Address = '127.0.0.4'; Client = 'client\run_854_d\Dawngate'; HostCopy = 'client\run_854_server_d\Dawngate'; Certs = 'server\certs\lane_d'; Suffix = 'D'; Data = 'server\data\lane_d'; ServerExe = 'server\bin\lane_d\dgserver.exe'; Lock = 're\logs\session_d.lock'; GameArgs = '-multipleInstances' }
+    # LANE5: the fifth lane, built like b-d; g, not e, since e, f and h are lanes d's, b's and c's second clients
+    g = @{ Address = '127.0.0.5'; Client = 'client\run_854_g\Dawngate'; HostCopy = 'client\run_854_server_g\Dawngate'; Certs = 'server\certs\lane_g'; Suffix = 'G'; Data = 'server\data\lane_g'; ServerExe = 'server\bin\lane_g\dgserver.exe'; Lock = 're\logs\session_g.lock'; GameArgs = '-multipleInstances' }
 }
 # A5b: further client copies of a lane (setup_lane.py's EXTRA_CLIENTS; test_a6.py checks they agree): lane d's second
 # client, since G3b lane b's too. A letter no lane uses, so every script since A6b counts the copy as nobody's but its
@@ -318,7 +324,7 @@ if ($Lan) {
 $ServerAddr = if ($LanAddr) { $LanAddr } else { $LaneAddr }  # where dgserver binds and what it announces
 # -Tunnel: the lane's server on its own "server machine" address 127.0.N.9 behind the gateway; the tunnel's client
 # side (dgserver --tunnel-client) on the lane's address, where the client copies connect
-$LaneNumber = @{ a = 1; b = 2; c = 3; d = 4 }
+$LaneNumber = @{ a = 1; b = 2; c = 3; d = 4; g = 5 }
 $TunnelServerAddr = $null
 $GatewayPort = 42128  # dgserver's --gateway-port default (tunnel.DefaultPort)
 if ($Tunnel) {
@@ -522,7 +528,7 @@ function Get-ServerBind([string]$cmd) {
 }
 function Get-BindLane([string]$cmd) {
     # A6: the lane of a dgserver or gms_script by its listen address (Get-ServerBind; default 127.0.0.1, lane a); $null
-    # for an unknown address. 127.0.N.9 is lane N's tunnelled server (-Tunnel: a 1, b 2, c 3, d 4), 127.0.N.20 its host
+    # for an unknown address. 127.0.N.9 is lane N's tunnelled server (-Tunnel: a 1, b 2, c 3, d 4, g 5), 127.0.N.20 its host
     # machine (-HostMachine, REGION5: region5_na2b's host machine bound .20 only, so the cleanup took it for nobody's and
     # left it running; the next session's -HostMachine then found 127.0.2.20:42128 taken)
     $bind = Get-ServerBind $cmd
@@ -1542,6 +1548,7 @@ if ($cleanNote -like 'NOT CLEAN*') {
 
 # 7. egress check (whenever a capture exists)
 $egress = $null
+$capDeleted = $false
 if (Test-Path (In-Session 'capture.pcapng')) {
     $egress = Invoke-EgressCheck $SessionDir
     if ($egress.ExitCode -eq 1) {
@@ -1557,6 +1564,11 @@ if (Test-Path (In-Session 'capture.pcapng')) {
         if (-not $failure) { $failure = $msg }
     } else {
         Say "egress: $($egress.Total)" 'Green'
+        # DISKCLEAN: a clean check's capture is only bytes on disk (its verdict is in egress.txt); -KeepCapture keeps it
+        if (-not $KeepCapture) {
+            Remove-Item (In-Session 'capture.pcapng') -ErrorAction SilentlyContinue
+            $capDeleted = -not (Test-Path (In-Session 'capture.pcapng'))
+        }
     }
 } elseif ($launchTime -and -not $failure -and -not $NoCapture) {
     $failure = 'no capture.pcapng; the egress check could not run'
@@ -1788,7 +1800,7 @@ if ($HostState.Proc) {
         $sum += "host app : no Application.log in $($HostState.Data)\AppData (folder redirect off or not reached)"
     }
 }
-if ($egress) { $sum += "egress   : $($egress.Total) (egress.txt)" }
+if ($egress) { $sum += "egress   : $($egress.Total) (egress.txt)$(if ($capDeleted) { '; capture deleted (clean; -KeepCapture keeps it)' })" }
 elseif ($NoCapture) { $sum += 'egress   : not checked (-NoCapture: no capture)' }
 $shots = @(Get-ChildItem $SessionDir -Filter '*.png' | Sort-Object LastWriteTime | ForEach-Object { $_.BaseName })
 if ($shots.Count) {

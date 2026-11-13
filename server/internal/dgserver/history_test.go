@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -287,5 +288,107 @@ func TestHistoryWatched(t *testing.T) {
 	h.watched = nil
 	if _, got := ask(h, web.HistoryGames, "player=Alpha&me=Alpha&n=1"); strings.Contains(got, `"watched"`) {
 		t.Errorf("without the record: %s", got)
+	}
+}
+
+// PROFILE1: games.json's type= filter and the Unrated rule. The fixture's matches 1 (practice), 2 (PvP), 3 (a custom
+// game without rules: Bravo's) and five more of Alpha's: 4 a practice group, 5 a custom game with the draft preset,
+// 6 a custom game with other rules, 7 a custom game its admin made Unrated (draft rules), 8 a custom game without
+// rules, 9 a second draft game. Every type lists its games newest first, practice includes the practice group, a
+// custom game without rules is standard, the Unrated game is in no list but with unrated=1, and paging through a
+// filter gives full pages with the right more and nextBefore.
+func TestHistoryTypes(t *testing.T) {
+	s, ps := historyFixture(t)
+	draft, other := `{"pick":"draft"}`, `{"pick":"random","shop":"onDeath"}`
+	for i, c := range []struct {
+		kind, rules string
+		unrated     bool
+	}{
+		{"practiceGroup", "", false}, {"custom", draft, false}, {"custom", other, false}, {"custom", draft, true},
+		{"custom", "", false}, {"custom", draft, false},
+	} {
+		at := historyNow.Add(time.Duration(i-60) * time.Minute)
+		if _, err := s.InsertMatch(store.Match{GameID: int64(10 + i), Kind: c.kind, Mode: "custom", Level: "SM_Map_v5",
+			Winner: 1, Reason: "guardian", Rules: c.rules, Unrated: c.unrated, Started: at.Add(-10 * time.Minute), Ended: at,
+			DurationMs: 600000, Seats: []store.MatchSeat{{Seat: 0, PersonaID: ps[0], UserID: 1, Team: 1, Won: true}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := newHistory(s, nil, true, func() time.Time { return historyNow }, func(string, string, ...any) {})
+	ids := func(query string) ([]int64, []string, historyGames, int) {
+		code, got := ask(h, web.HistoryGames, query)
+		var d historyGames
+		if code == 200 {
+			if err := json.Unmarshal([]byte(got), &d); err != nil {
+				t.Fatalf("%s: %v", query, err)
+			}
+		}
+		var out []int64
+		var types []string
+		for _, m := range d.Matches {
+			out = append(out, m.ID)
+			types = append(types, m.Type)
+		}
+		return out, types, d, code
+	}
+	for _, c := range []struct {
+		query string
+		want  []int64
+	}{
+		{"player=Alpha", []int64{9, 8, 6, 5, 4, 2, 1}},
+		{"player=Alpha&type=all", []int64{9, 8, 6, 5, 4, 2, 1}},
+		{"player=Alpha&type=", []int64{9, 8, 6, 5, 4, 2, 1}},
+		{"player=Alpha&type=practice", []int64{4, 1}},
+		{"player=Alpha&type=standard", []int64{8, 2}},
+		{"player=Alpha&type=Draft", []int64{9, 5}},
+		{"player=Alpha&type=custom", []int64{6}},
+		{"player=Alpha&unrated=1", []int64{9, 8, 7, 6, 5, 4, 2, 1}},
+		{"player=Alpha&type=draft&unrated=1", []int64{9, 7, 5}},
+		{"player=Alpha&type=draft&unrated=0", []int64{9, 5}},
+		{"", []int64{9, 8, 6, 5, 4, 3, 2, 1}},
+		{"type=standard", []int64{8, 3, 2}},
+		{"player=Bravo&type=standard", []int64{3, 2}},
+		{"player=Bravo&type=draft", nil},
+	} {
+		if got, _, _, code := ids(c.query); code != 200 || !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: %d %v, want %v", c.query, code, got, c.want)
+		}
+	}
+	_, types, _, _ := ids("unrated=1")
+	if want := []string{"draft", "standard", "draft", "custom", "draft", "practice", "standard", "standard", "practice"}; !reflect.DeepEqual(types, want) {
+		t.Errorf("the types %v, want %v", types, want)
+	}
+	if _, got := ask(h, web.HistoryGames, "player=Alpha&type=draft&unrated=1"); !strings.Contains(got, `"id":7,`) ||
+		strings.Count(got, `"unrated":true`) != 1 {
+		t.Errorf("the Unrated game is marked: %s", got)
+	}
+	if _, got := ask(h, web.HistoryGame, "id=7"); !strings.Contains(got, `"type":"draft","unrated":true`) {
+		t.Errorf("game.json of the Unrated game: %s", got)
+	}
+	// paging with a filter: full pages, more and nextBefore from the kept matches
+	for _, c := range []struct {
+		query string
+		want  []int64
+		more  bool
+		next  int64
+	}{
+		{"player=Alpha&type=standard&n=1", []int64{8}, true, 8},
+		{"player=Alpha&type=standard&n=1&before=8", []int64{2}, false, 0},
+		{"type=standard&n=2", []int64{8, 3}, true, 3},
+		{"type=standard&n=2&before=3", []int64{2}, false, 0},
+		{"player=Alpha&n=3", []int64{9, 8, 6}, true, 6},
+		{"player=Alpha&n=3&before=6", []int64{5, 4, 2}, true, 2},
+		{"player=Alpha&n=3&before=2", []int64{1}, false, 0},
+		{"player=Alpha&type=practice&n=2", []int64{4, 1}, false, 0},
+	} {
+		got, _, d, code := ids(c.query)
+		if code != 200 || !reflect.DeepEqual(got, c.want) || d.More != c.more || d.NextBefore != c.next {
+			t.Errorf("%s: %d %v more %v next %d, want %v %v %d", c.query, code, got, d.More, d.NextBefore, c.want, c.more, c.next)
+		}
+	}
+	for _, q := range []string{"type=pvp", "type=ranked", "type=all,draft", "unrated=2", "unrated=-1", "unrated=yes"} {
+		if code, got := ask(h, web.HistoryGames, q); code != 400 || !strings.Contains(got, `"error":"badRequest"`) {
+			t.Errorf("%s: %d %s, want badRequest", q, code, got)
+		}
 	}
 }

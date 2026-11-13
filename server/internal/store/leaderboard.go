@@ -52,8 +52,16 @@ func (s *Store) Leaderboard(excludeFrom string, minGames, limit int) ([]LeaderRo
 // rated ones (History.Rating), Skill the rating rounded. excludeFrom ("2006-01-02") gives the ranking as it stood
 // before that day: the rated games and wins of that day and later taken out, and the rating the one before the first
 // rated game of those days (HistoryDay.RatingBefore), as far as the account's history keeps them (HistoryDays days; ""
-// = now). Disabled, banned and deleted accounts are left out.
-func (s *Store) RatingLeaderboard(excludeFrom string, minGames, limit int) ([]LeaderRow, error) {
+// = now). Disabled, banned and deleted accounts are left out. mode is the game type (M30, MMR1: one of RatingModes):
+// ModeStandard ranks by History.Rating, the others by their History.ModeRatings entry (only the accounts with one);
+// LeaderRow's Rating and RatedGames are the type's too. An unknown mode is an error.
+func (s *Store) RatingLeaderboard(mode, excludeFrom string, minGames, limit int) ([]LeaderRow, error) {
+	if err := checkMode(mode); err != nil {
+		return nil, err
+	}
+	if mode != ModeStandard {
+		return s.modeLeaderboard(mode, excludeFrom, minGames, limit)
+	}
 	return s.leaderboard(`SELECT persona_id, name, games, MIN(wins, games) AS wins, shaper, rating, rating, rated FROM (
 		SELECT p.persona_id, p.name, a.rated_games AS rated,
 			MAX(a.rated_games - COALESCE(d.games, 0), 0) AS games,
@@ -69,13 +77,32 @@ func (s *Store) RatingLeaderboard(excludeFrom string, minGames, limit int) ([]Le
 	WHERE games >= ?3 ORDER BY rating DESC, games DESC, persona_id LIMIT ?4`, excludeFrom, minGames, limit, true)
 }
 
+// modeLeaderboard is RatingLeaderboard for a game type other than the standard (mode_ratings, mode_rating_days).
+func (s *Store) modeLeaderboard(mode, excludeFrom string, minGames, limit int) ([]LeaderRow, error) {
+	return s.leaderboard(`SELECT persona_id, name, games, MIN(wins, games) AS wins, shaper, rating, rating, rated FROM (
+		SELECT p.persona_id, p.name, m.games AS rated,
+			MAX(m.games - COALESCE(d.games, 0), 0) AS games,
+			MAX(m.wins - COALESCE(d.wins, 0), 0) AS wins,
+			COALESCE((SELECT rating_before FROM mode_rating_days WHERE user_id = a.user_id AND mode = ?5 AND day >= ?1
+				AND rated_games > 0 ORDER BY day LIMIT 1), m.rating) AS rating,
+			`+favouriteShaper+` AS shaper
+		FROM accounts a
+		JOIN mode_ratings m ON m.user_id = a.user_id AND m.mode = ?5
+		JOIN personas p ON p.user_id = a.user_id AND p.pos = 0
+		LEFT JOIN (SELECT user_id, SUM(rated_games) AS games, SUM(rated_wins) AS wins FROM mode_rating_days
+			WHERE day >= ?1 AND mode = ?5 GROUP BY user_id) d ON d.user_id = a.user_id
+		WHERE a.status = ?2)
+	WHERE games >= ?3 ORDER BY rating DESC, games DESC, persona_id LIMIT ?4`, excludeFrom, minGames, limit, true, mode)
+}
+
 // favouriteShaper is the account's shaper with the most games of any kind (a correlated subquery on a.user_id).
 const favouriteShaper = `COALESCE((SELECT catalog_id FROM history_shapers WHERE user_id = a.user_id
 				ORDER BY games DESC, catalog_id LIMIT 1), 0)`
 
 // leaderboard runs a ranking query whose columns are persona id, name, games, wins, shaper, the skill (the wins, or
 // the rating when rating is set), the rating and the rated games, and whose parameters are excludeFrom, the active status, minGames and limit.
-func (s *Store) leaderboard(query, excludeFrom string, minGames, limit int, rating bool) ([]LeaderRow, error) {
+// extra are further parameters (?5 on).
+func (s *Store) leaderboard(query, excludeFrom string, minGames, limit int, rating bool, extra ...any) ([]LeaderRow, error) {
 	if excludeFrom == "" {
 		excludeFrom = "~" // sorts after every day
 	}
@@ -99,6 +126,6 @@ func (s *Store) leaderboard(query, excludeFrom string, minGames, limit int, rati
 		row.Rating = uint32(min(max(math.Round(value), 0), math.MaxUint32))
 		out = append(out, row)
 		return nil
-	}, query, excludeFrom, int(StatusActive), max(minGames, 1), limit)
+	}, query, append([]any{excludeFrom, int(StatusActive), max(minGames, 1), limit}, extra...)...)
 	return out, err
 }

@@ -45,6 +45,17 @@
 //     server sends a little early stays hidden until it is in sight, and shows without waiting for the server.
 //     Observers as shipped. In place: a function only the fog exit called and an assert block (fade.go). On unless
 //     NoFade.
+//   - dgx: room for code and data that no longer fit .text's slack: a sixth section .dgx (code, execute, read) at
+//     0x01C84000, the untouched SizeOfImage, its raw data appended after the file's end; every later piece has a fixed
+//     place in it (dgx.go's dgxLayout, append-only). On unless NoDgx.
+//   - draggrab: the middle-mouse drag scroll grabs the ground (the point under the cursor stays under it) instead of
+//     acting as a joystick, while the game's preference OptionDragGrab is on; off or missing, the joystick runs as
+//     shipped. A hook into .dgx's draggrab piece and two observer sites, state in .tls's slack (draggrab.go). On
+//     unless NoDragGrab or NoDgx.
+//   - profilereload: the Profile screen loads its player again when asked for the same one. As shipped it loads only
+//     for another player (ProfileUI_SetShownPlayer 0x004EE200 skips the same id), so its own search native for the
+//     shown name reloads nothing; the jnz past the id becomes a jmp. The Profile's mode tabs (the server answers its
+//     stat requests for the chosen game type) reload the screen that way. On unless NoProfileReload.
 //
 // Profiles: "local" (the default; the server on a loopback address, every wildcard bind narrowed to it) and "lan" (a
 // server elsewhere on our own network: ServerHost required, the binds as shipped unless ClientBind names this
@@ -98,6 +109,7 @@ const (
 	numFmtStep        = 0x00EA6B3C // its fld of the value from which it raises the digits (1e16)
 	numFmt1e15        = 0x0135D140 // a 1e15 double in .rdata, which the step reads instead
 	averagesBlock     = 0x00AA63C8 // StatsManager_OnShaperHistoryStatsResult, with the games in st(0): the averages
+	profileReloadSite = 0x004EE25B // ProfileUI_SetShownPlayer's jnz past the same player's id (its low dword)
 
 	// The map-name method (0x00684380): its loop over the one-entry map table, the not-found exit, the found path
 	// and where the found path checks and looks up its key.
@@ -277,6 +289,13 @@ var averagesOrig = mustHex("d9e8" + "8b842490000000" + "def1" + "33d2" + "f7f1" 
 	"dd5c2478" + "dd842480000000" + "d8c9" + "dd9c2480000000" + "dc8c2488000000" + "dd9c2488000000")
 
 // averagesNew is the same block with real divisions on an x87 at 53 bits, its padding the rest of the 97 bytes.
+// The Profile's same-player check (ProfileUI_SetShownPlayer): jnz past it as shipped (the low dword differs: load), a
+// jmp since PROFILE2 (always load).
+var (
+	profileReloadOrig = mustHex("7508")
+	profileReloadNew  = mustHex("eb08")
+)
+
 var averagesNew = append(mustHex(
 	"50"+ // push eax: a slot for the x87's control word
 		"d93c24"+ // fnstcw word ptr [esp]: the game's
@@ -330,6 +349,12 @@ type Options struct {
 	NoAverages bool
 	// NoFade leaves out the fade at the fog's edge: enemy creatures drawn as shipped
 	NoFade bool
+	// NoDgx leaves out the section .dgx (patch_client.py --dgx off), and with it the drag grab
+	NoDgx bool
+	// NoDragGrab leaves out the grab-style drag scroll (patch_client.py --drag-grab off)
+	NoDragGrab bool
+	// NoProfileReload leaves out the Profile's reload of the same player (patch_client.py --profile-reload off)
+	NoProfileReload bool
 }
 
 // Error is a refusal: the exe isn't the expected build, or the options don't fit the profile (patch_client.py's
@@ -445,6 +470,14 @@ func Patch(orig, modulus []byte, o Options) ([]byte, string, error) {
 		return nil, "", err
 	}
 	data := bytes.Clone(orig)
+	if !o.NoDgx { // first, so the patches can address .dgx
+		if data, err = addDgxSection(orig); err != nil {
+			return nil, "", err
+		}
+		if _, err := dgxPlace(data, "header", dgxMagic); err != nil {
+			return nil, "", err
+		}
+	}
 	img, err := parsePE(data)
 	if err != nil {
 		return nil, "", err
@@ -763,16 +796,80 @@ func Patch(orig, modulus []byte, o Options) ([]byte, string, error) {
 		}
 		summary += "; enemy creatures fade in and out by their team's sight and the fog (0.25 s)"
 	}
+	// --- the middle-mouse drag grabs the ground when the preference OptionDragGrab is on
+	sites := dragGrabSites()
+	for _, s := range sites {
+		if err := expect(s.va, s.orig, "the drag scroll's hook site"); err != nil {
+			return nil, "", err
+		}
+	}
+	optSites := dragOptionsSites()
+	for _, s := range optSites {
+		if err := expect(s.va, s.orig, "the gameplay options table's reader"); err != nil {
+			return nil, "", err
+		}
+	}
+	if err := expect(optTable, optTableFirst, "the gameplay options table (OptionFilterProfanity first)"); err != nil {
+		return nil, "", err
+	}
+	if !o.NoDgx && !o.NoDragGrab {
+		if img.dllChars&0x40 != 0 || img.characteristics&0x1 == 0 {
+			return nil, "", errorf("exe is relocatable (ASLR or relocations); absolute addresses in the cave would break")
+		}
+		if !(ratingText+ratingTextRoom <= dragState && dragState+dragStateRoom <= tlsVA+tlsRaw &&
+			dragRayEnd+12 <= dragState+dragStateRoom) {
+			return nil, "", errorf("the drag grab's state doesn't fit into .tls's slack")
+		}
+		if err := expect(dragState, make([]byte, dragStateRoom), "unused slack after the rating text"); err != nil {
+			return nil, "", err
+		}
+		binary.LittleEndian.PutUint32(data[tls.headerAt+8:], tlsRaw) // map .tls's slack (VirtualSize = SizeOfRawData)
+		caveVA, err := dgxPlace(data, "draggrab", dragGrabCode())
+		if err != nil {
+			return nil, "", err
+		}
+		for _, s := range sites {
+			write(s.va, s.new)
+		}
+		table, err := at(optTable, optTableSize)
+		if err != nil {
+			return nil, "", err
+		}
+		piece, err := dragOptionsPiece(table)
+		if err != nil {
+			return nil, "", err
+		}
+		tableVA, err := dgxPlace(data, "options", piece)
+		if err != nil {
+			return nil, "", err
+		}
+		for _, s := range optSites {
+			write(s.va, s.new)
+		}
+		summary += fmt.Sprintf("; the middle-mouse drag grabs the ground when the preference OptionDragGrab is on "+
+			"(cave at 0x%08x, the Options menu's 13-entry gameplay table at 0x%08x)", caveVA, tableVA)
+	}
+	if !o.NoDgx {
+		summary += fmt.Sprintf("; an executable section .dgx at 0x%08x (%d bytes) for later patches", dgxVA, dgxSize)
+	}
+	// --- the Profile loads the same player again when asked (its mode tabs)
+	if err := expect(profileReloadSite, profileReloadOrig, "the Profile's same-player check"); err != nil {
+		return nil, "", err
+	}
+	if !o.NoProfileReload {
+		write(profileReloadSite, profileReloadNew)
+		summary += "; the Profile loads its player again when asked (its mode tabs)"
+	}
 	return data, summary, nil
 }
 
 // Description is what an exe carries (patch_client.py's describe, --show), by key: redirector, bind, appdata,
-// documents, raknet_loopback, ca_sha256, ca_flag, laa, preload, maptable, rating, heaplocks, numfmt, averages, fade
-// (DescriptionKeys, in --show's order).
+// documents, raknet_loopback, ca_sha256, ca_flag, laa, preload, maptable, rating, heaplocks, numfmt, averages, fade,
+// dgx, draggrab, profilereload (DescriptionKeys, in --show's order).
 type Description map[string]string
 
 // DescriptionKeys are Description's keys in patch_client.py --show's order.
-var DescriptionKeys = []string{"redirector", "bind", "appdata", "documents", "raknet_loopback", "ca_sha256", "ca_flag", "laa", "preload", "maptable", "rating", "heaplocks", "numfmt", "averages", "fade"}
+var DescriptionKeys = []string{"redirector", "bind", "appdata", "documents", "raknet_loopback", "ca_sha256", "ca_flag", "laa", "preload", "maptable", "rating", "heaplocks", "numfmt", "averages", "fade", "dgx", "draggrab", "profilereload"}
 
 // HostKeys are what a match host's copy must carry (setup_all.py's HOST_KEYS): its sockets are the harness's.
 var HostKeys = []string{"redirector", "appdata", "documents"}
@@ -913,6 +1010,15 @@ func Describe(data []byte) (Description, error) {
 		out["rating"] = "on"
 	default:
 		out["rating"] = "unknown"
+	}
+	out["dgx"] = describeDgx(img)
+	out["draggrab"] = describeDragGrab(img, out["dgx"])
+	out["profilereload"] = "unknown"
+	switch site := at(profileReloadSite, len(profileReloadOrig)); {
+	case bytes.Equal(site, profileReloadNew):
+		out["profilereload"] = "on"
+	case bytes.Equal(site, profileReloadOrig):
+		out["profilereload"] = "as-shipped"
 	}
 	return out, nil
 }

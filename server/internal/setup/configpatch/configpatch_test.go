@@ -1,7 +1,9 @@
 package configpatch
 
 import (
+	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -362,5 +364,71 @@ func TestPatchDir(t *testing.T) {
 	back, _ := os.ReadFile(filepath.Join(dir, "Config.package"))
 	if string(back) != string(pk["Config.package"]) {
 		t.Error("not restored")
+	}
+}
+
+// The option's name line goes after its anchor with the anchor's line end (the Python patcher's tests have the
+// same cases).
+func TestAddDragGrab(t *testing.T) {
+	line := `property OptionDragGrab                         (hash("OptionDragGrab")) uint32`
+	for _, c := range []struct {
+		name     string
+		instance uint64
+		in, want string
+	}{
+		{"middle", 0x2CB7250D, "a\r\n  property OptionShowAttackMoveRange   (x) uint32\r\nb\r\n",
+			"a\r\n  property OptionShowAttackMoveRange   (x) uint32\r\n" + line + "\r\nb\r\n"},
+		{"last line without its end", 0x2CB7250D, "a\nproperty OptionShowAttackMoveRange (x) uint32",
+			"a\nproperty OptionShowAttackMoveRange (x) uint32\r\n" + line},
+		{"another entry", 0x9A06678C, "property OptionShowAttackMoveRange (x) uint32\r\n", "property OptionShowAttackMoveRange (x) uint32\r\n"},
+	} {
+		var res Result
+		got, err := addDragGrab(c.in, c.instance, &res, "w")
+		if err != nil || got != c.want {
+			t.Errorf("%s: %q (%v), want %q", c.name, got, err, c.want)
+		}
+		if (got != c.in) != (len(res.Changes) == 1) {
+			t.Errorf("%s: changes %q", c.name, res.Changes)
+		}
+	}
+	for _, in := range []string{"no anchor\r\n", "property OptionShowAttackMoveRange 0\r\nproperty OptionShowAttackMoveRange 1\r\n"} {
+		if _, err := addDragGrab(in, 0x2CB7250D, &Result{}, "w"); err == nil || !strings.Contains(err.Error(), "not patching an unknown config") {
+			t.Errorf("%q: %v", in, err)
+		}
+	}
+}
+
+// The compiled options' index gets OptionDragGrab; the settings are one bool property each (golden bytes shared
+// with the Python patcher's tests).
+func TestDragOptionIndex(t *testing.T) {
+	arr := func(id uint32, vals ...uint32) []byte {
+		b := binary.BigEndian.AppendUint32(nil, id)
+		b = append(b, 0, 0x0A, 0, 0x10)
+		b = binary.BigEndian.AppendUint32(b, uint32(len(vals)))
+		b = binary.BigEndian.AppendUint32(b, 4)
+		for _, v := range vals {
+			b = binary.BigEndian.AppendUint32(b, v)
+		}
+		return b
+	}
+	index := func(ids, first, count []uint32) []byte {
+		b := binary.BigEndian.AppendUint32(nil, 3)
+		b = append(b, arr(optionIDs, ids...)...)
+		b = append(b, arr(optionFirst, first...)...)
+		return append(b, arr(optionCount, count...)...)
+	}
+	got, err := addDragOptionIndex(index([]uint32{0x90FBF794, 0x3E7B5F0F}, []uint32{0, 0}, []uint32{2, 2}), "w")
+	want := index([]uint32{0x90FBF794, 0x3E7B5F0F, 0x14958012}, []uint32{0, 0, 0}, []uint32{2, 2, 2})
+	if err != nil || !bytes.Equal(got, want) {
+		t.Errorf("index %x (%v)", got, err)
+	}
+	if _, err := addDragOptionIndex(want, "w"); err == nil || !strings.Contains(err.Error(), "already an option") {
+		t.Errorf("twice: %v", err)
+	}
+	if _, err := addDragOptionIndex(index([]uint32{1, 2}, []uint32{0}, []uint32{2, 2}), "w"); err == nil {
+		t.Error("arrays of different lengths: accepted")
+	}
+	if hex.EncodeToString(dragOptionSetting(0)) != "00000001149580120001000000" || hex.EncodeToString(dragOptionSetting(1)) != "00000001149580120001000001" {
+		t.Errorf("settings %x %x", dragOptionSetting(0), dragOptionSetting(1))
 	}
 }

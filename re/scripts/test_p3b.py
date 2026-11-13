@@ -18,7 +18,7 @@ references are computed with the Go setup's own ca_modulus.bin):
   client texts   the client copy's game\\Data\\Locale\\en-us\\AA_Server.package = patch_locale.build(its own
                  Locale.package, the address [, --web-domain]); the host copy has none
   bot profiles   both copies' game\\Data\\zz_BotProfiles.snap holds bot_profiles.py's profile files
-                 (bot_profiles.files of its own AssetData.snap) byte for byte, a catalog and the match rules' two
+                 (bot_profiles.files of its own AssetData.snap) byte for byte, a catalog and the match rules'
                  ClientFeedbackDefs (RULES_FEEDBACK_FILES; the catalog and those files are the Go setup's, its tests
                  check them); not compared when the release's maps folder holds a package
   maps folder    the release has maps\\README.txt; a package in it makes the client texts' lobby line
@@ -38,6 +38,8 @@ references are computed with the Go setup's own ca_modulus.bin):
                  spec pvplobby, the client copy's address: its UI channel); the host copy has none
   shop refund    the client copy's game\\Data\\zz_ItemShop.snap = patch_login_movie.build(its own HUD.snap, spec
                  itemshop); the host copy has none
+  drag scroll option  the client copy's game\\Data\\zz_Options.snap = patch_login_movie.build(its own Options.snap,
+                 spec options); the host copy has none
   collection items  the client copy's game\\Data\\zz_CollectionItems.snap = patch_login_movie.build(its own
                  code.snap, spec collection, the release's data\\content.json); the host copy has none
   halloween     the client copy's game\\Data\\zz_Halloween.snap = halloween.build(its own AssetData.snap); the host
@@ -71,7 +73,8 @@ import halloween  # noqa: E402
 MM_ARCHIVE = "zz_MM_Map_v3.snap"
 # RULES0b: the match rules' ClientFeedbackDefs, which the Go setup adds to zz_BotProfiles.snap (botprofiles.RulesFeedback)
 RULES_FEEDBACK_FILES = ("AssetData/Binary/Rules_ShopClosed.ClientFeedbackDef.bin",
-                        "AssetData/Binary/Rules_ItemNotAllowed.ClientFeedbackDef.bin")
+                        "AssetData/Binary/Rules_ItemNotAllowed.ClientFeedbackDef.bin",
+                        "AssetData/Binary/Rules_LightningOnly.ClientFeedbackDef.bin")  # LIGHTNING1
 MM_ARCHIVE_SHA256 = "eed1e14c861eb5a68e315410aedc994d99a11079bfdf16ace1c23e0702b98bbf"
 import patch_client  # noqa: E402
 import patch_config  # noqa: E402
@@ -260,7 +263,8 @@ def main(argv):
                               ("review tabs", "aftaction", "After Action Review tabs"),
                               ("preferred region", "matchtype", "Preferred Region class"),
                               ("party region", "pvplobby", "party lobby's Preferred Region class"),
-                              ("shop refund", "itemshop", "shop refund class")):
+                              ("shop refund", "itemshop", "shop refund class"),
+                              ("drag scroll option", "options", "Options menu's drag scroll check box")):
         print(title)
         mo = patch_login_movie.SPECS[name]
         base = mo.rel.split("/")[-1]
@@ -364,6 +368,7 @@ def main(argv):
                                                       patch_login_movie.SPECS["matchtype"].rel,
                                                       patch_login_movie.SPECS["pvplobby"].rel,
                                                       patch_login_movie.SPECS["itemshop"].rel,
+                                                      patch_login_movie.SPECS["options"].rel,
                                                       patch_login_movie.SPECS["collection"].rel, hw_rel)):
                     extra.append(rel)
         r.line(f"{label}: extra files {extra[:5] if extra else 'none'}")

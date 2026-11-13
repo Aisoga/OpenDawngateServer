@@ -2,6 +2,8 @@ package blaze
 
 import (
 	"encoding/json"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -28,9 +30,15 @@ func rulesHostServer(t *testing.T, features []string, setup func(s *Server)) (*t
 	return ts, host, addr
 }
 
-// rulesPart is lobby.state's rules part as the server writes it.
+// rulesPart is lobby.state's rules part as the server writes it, for a rated game (the default).
 func rulesPart(c rules.Combination, bots, canEdit, host bool, findings ...rules.Finding) string {
-	lr := LobbyRules{Options: c.Normal(), Text: rules.Describe(c), Bots: bots, Findings: findings, CanEdit: canEdit, Host: host}
+	return rulesPartRated(c, bots, true, canEdit, host, findings...)
+}
+
+// rulesPartRated is rulesPart with the game's Rated/Unrated (M30).
+func rulesPartRated(c rules.Combination, bots, rated, canEdit, host bool, findings ...rules.Finding) string {
+	lr := LobbyRules{Options: c.Normal(), Text: rules.Describe(c), Bots: bots, Rated: rated, Findings: findings,
+		CanEdit: canEdit, Host: host}
 	if lr.Findings == nil {
 		lr.Findings = []rules.Finding{}
 	}
@@ -356,26 +364,38 @@ func TestRulesOffWithoutHost(t *testing.T) {
 
 // lobby.setRules' arguments.
 func TestParseSetRules(t *testing.T) {
-	c, bots, err := parseSetRules([]byte(`{"preset":"aram","bots":false}`))
-	if err != nil || c == nil || rules.Describe(*c) != "All Random, Shop on Death" || bots == nil || *bots {
-		t.Errorf("preset and bots: %v %v %v", c, bots, err)
+	ch, err := parseSetRules([]byte(`{"preset":"aram","bots":false}`))
+	if err != nil || ch.rules == nil || rules.Describe(*ch.rules) != "All Random, Shop on Death" || ch.bots == nil || *ch.bots ||
+		ch.rated != nil {
+		t.Errorf("preset and bots: %+v %v", ch, err)
 	}
-	c, bots, err = parseSetRules([]byte(`{"rules":{"shop":"onDeath"}}`))
-	if err != nil || c == nil || rules.Describe(*c) != "Shop on Death" || bots != nil {
-		t.Errorf("rules: %v %v %v", c, bots, err)
+	ch, err = parseSetRules([]byte(`{"rules":{"shop":"onDeath"}}`))
+	if err != nil || ch.rules == nil || rules.Describe(*ch.rules) != "Shop on Death" || ch.bots != nil {
+		t.Errorf("rules: %+v %v", ch, err)
 	}
-	if c, bots, err = parseSetRules([]byte(`{"bots":true}`)); err != nil || c != nil || bots == nil || !*bots {
-		t.Errorf("bots: %v %v %v", c, bots, err)
+	if ch, err = parseSetRules([]byte(`{"bots":true}`)); err != nil || ch.rules != nil || ch.bots == nil || !*ch.bots {
+		t.Errorf("bots: %+v %v", ch, err)
+	}
+	// M30: rated alone, and with a preset and the bots (the panel's Draft: {preset, bots false})
+	if ch, err = parseSetRules([]byte(`{"rated":false}`)); err != nil || ch.rules != nil || ch.bots != nil || ch.rated == nil || *ch.rated {
+		t.Errorf("rated: %+v %v", ch, err)
+	}
+	ch, err = parseSetRules([]byte(`{"preset":"draft","bots":false,"rated":true}`))
+	if err != nil || ch.rules == nil || rules.Describe(*ch.rules) != "Draft" || ch.bots == nil || ch.rated == nil || !*ch.rated {
+		t.Errorf("draft, bots and rated: %+v %v", ch, err)
 	}
 	for _, bad := range []string{`{}`, `{"preset":"nope"}`, `{"rules":{"pick":"chaos"}}`, `{"rules":"aram"}`, `{"bots":"yes"}`,
+		`{"rated":1}`, `{"rated":"false"}`, `{"rated":null}`,
 		`{"x":1}`, `[]`, `{"preset":"aram"} {}`, `{"rules":{"pick":"random"},"preset":"aram"}`, `{"rules":{"pick":"` + strings.Repeat("x", 3000) + `"}}`} {
-		if c, bots, err := parseSetRules([]byte(bad)); err == nil {
-			t.Errorf("%.40s: %v %v, want an error", bad, c, bots)
+		if ch, err := parseSetRules([]byte(bad)); err == nil {
+			t.Errorf("%.40s: %+v, want an error", bad, ch)
 		}
 	}
 }
 
-// A finished custom game with rules: not counted on the Leaderboard, not rated, its history row has the rules.
+// A finished custom game with rules (ARAM): not counted on the Leaderboard (History.Ranked stays the standard game's),
+// its history row has the rules, and since M30 (MMR1) it is rated in the custom type: the custom rating moves, the
+// standard rating stays.
 func TestCustomGameRulesUnrated(t *testing.T) {
 	hg, buf := ratingGame(t, gmshost.ModeCustom, "2", true, []resultSeat{{name: "alpha", team: 0}, {name: "bravo", team: 1}})
 	hg.custom.rules = aram(t)
@@ -389,17 +409,20 @@ func TestCustomGameRulesUnrated(t *testing.T) {
 	f := gmshost.FinishGame{WinnerTeam: 1, DurationMs: 1200000, Reason: "guardian"}
 	hg.persist(nil, f)
 	rec := hg.historyMatch(f)
-	if rec.Rules != `{"pick":"random","shaperPool":"all","shop":"onDeath","itemPool":"all"}` {
-		t.Errorf("history rules %q", rec.Rules)
+	if rec.Rules != `{"pick":"random","shaperPool":"all","shop":"onDeath","itemPool":"all"}` || rec.Unrated {
+		t.Errorf("history rules %q, unrated %v", rec.Rules, rec.Unrated)
 	}
 	hg.rate(rec)
-	for _, hp := range hg.players {
+	for i, hp := range hg.players {
 		a, _ := hg.s.Store.Account(hp.userID)
-		if a.History.Rating != (store.Rating{}) || a.History.Ranked.Games != 0 {
-			t.Errorf("%s: rating %+v, Leaderboard %+v", hp.p.Name, a.History.Rating, a.History.Ranked)
+		c := a.History.RatingIn(store.ModeCustom)
+		if a.History.Rating != (store.Rating{}) || a.History.Ranked.Games != 0 || a.History.ModeRatings[store.ModeDraft] != (store.Rating{}) ||
+			c.Games != 1 || (i == 0) != (c.Value > 1500) || len(a.History.Days) != 1 ||
+			a.History.Days[0].Rated != (store.GamesWon{}) || a.History.Days[0].RatedIn(store.ModeCustom).Rated.Games != 1 {
+			t.Errorf("%s: %+v", hp.p.Name, a.History)
 		}
 	}
-	for _, line := range []string{"leaderboard: not counted (a custom game with rules)", "rating: not rated (a custom game with rules)"} {
+	for _, line := range []string{"leaderboard: not counted (a custom game with rules)", "custom rating: 1500 -> "} {
 		if n := strings.Count(buf.String(), line); n != 2 {
 			t.Errorf("%d lines %q:\n%s", n, line, buf)
 		}
@@ -408,5 +431,191 @@ func TestCustomGameRulesUnrated(t *testing.T) {
 	hg.custom.rules = rules.Standard()
 	if !hg.ranked() || hg.historyMatch(f).Rules != "" {
 		t.Error("the standard game: not ranked, or rules in its history")
+	}
+}
+
+// M30 (LIGHTNING1): the item pool "lightning" needs a host that names rules2 (an older rules host would take it as
+// "all items"). On a host with only "rules" it is a finding that refuses the start; on a host with both the start
+// carries it. The feature's two names agree.
+func TestCustomGameRulesLightningNeedsRules2(t *testing.T) {
+	if rules.HostRules2 != gmshost.FeatureRules2 {
+		t.Fatalf("rules.HostRules2 %q, gmshost.FeatureRules2 %q", rules.HostRules2, gmshost.FeatureRules2)
+	}
+	lightning, err := rules.Parse("itemPool=lightning")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := golden.Load(t)
+	for _, c := range []struct {
+		name     string
+		features []string
+		refused  bool
+	}{
+		{"rules only", []string{gmshost.FeatureRules}, true},
+		{"rules and rules2", []string{gmshost.FeatureRules, gmshost.FeatureRules2}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ts, host, _ := rulesHostServer(t, c.features, func(s *Server) { s.TestRules = &lightning })
+			a := ts.client("alpha@example.com")
+			wantReply(t, "create", a.gm(CmdGameManagerResetDedicatedServer, golden.Bytes(t, decodeCase(t, g, "resetdedicatedserver_custom_request"))))
+			<-host.created
+			a.note(ComponentGameManager, NotifyGameSetupID)
+			hg := ts.s.hosted.get(1)
+			hg.mu.Lock()
+			fs := hg.rulesFindingsLocked()
+			hg.mu.Unlock()
+			start := golden.Bytes(t, decodeCase(t, g, "advancegamestate_request"))
+			if c.refused {
+				want := []rules.Finding{{Category: rules.ItemPool,
+					Message: "Lightning items only needs a newer match host than this game's: choose another option."}}
+				if !reflect.DeepEqual(fs, want) {
+					t.Errorf("findings %+v, want %+v", fs, want)
+				}
+				wantError(t, "A starts", a.gm(CmdGameManagerAdvanceGameState, start), ErrInvalidGameStateAction)
+				return
+			}
+			if len(fs) != 0 {
+				t.Errorf("findings %+v", fs)
+			}
+			wantReply(t, "A starts", a.gm(CmdGameManagerAdvanceGameState, start))
+			sg := hostNext[gmshost.StartGame](t, host)
+			if sg.Rules == nil || sg.Rules.ItemPool != "lightning" {
+				t.Errorf("startGame rules %+v", sg.Rules)
+			}
+		})
+	}
+}
+
+// M30's Rated/Unrated: rated by default; a guest's {rated} is refused; the admin's resets every ready mark, puts
+// [Unrated] into the browser's name (before the rules' prefix) and comes back in lobby.state; the start's log and the
+// match's System line name it.
+func TestCustomGameRatedLobby(t *testing.T) {
+	ts, host, addr := rulesHostServer(t, []string{gmshost.FeatureRules}, nil)
+	g := golden.Load(t)
+	a, b := ts.client("alpha@example.com"), ts.client("bravo@example.com")
+	wantReply(t, "create", a.gm(CmdGameManagerResetDedicatedServer, golden.Bytes(t, decodeCase(t, g, "resetdedicatedserver_custom_request"))))
+	<-host.created
+	a.note(ComponentGameManager, NotifyGameSetupID)
+	wantReply(t, "B joins", b.gm(CmdGameManagerJoinGame, golden.Bytes(t, decodeCase(t, g, "joingame_browser_request"))))
+	b.settle()
+	hg := ts.s.hosted.get(1)
+	name := func() string {
+		hg.mu.Lock()
+		defer hg.mu.Unlock()
+		return hg.game.Name
+	}
+	before := name()
+	if strings.Contains(before, UnratedPrefix) {
+		t.Fatalf("a new game's name %q is unrated", before)
+	}
+	std := rules.Standard()
+	ua, ub := uiConnect(t, addr, a), uiConnect(t, addr, b)
+	ua.call(CallLobbyEnter, "")
+	ua.want(catalogLine(t))
+	ua.want(stateWithRules(rulesPart(std, false, true, true), a.name, b.name))
+	if !strings.Contains(rulesPart(std, false, true, true), `"bots":false,"rated":true,`) {
+		t.Errorf("the wire's rated: %s", rulesPart(std, false, true, true))
+	}
+	ub.call(CallLobbyEnter, "")
+	ub.want(catalogLine(t))
+	ua.want(stateWithRules(rulesPart(std, false, true, true), a.name, b.name+" 0"))
+	ub.want(stateWithRules(rulesPart(std, false, false, true), a.name, b.name+" 0"))
+	ub.call(CallLobbySetReady, `{"ready":true}`)
+	ua.want(stateWithRules(rulesPart(std, false, true, true), a.name, b.name+" 1"))
+	ub.want(stateWithRules(rulesPart(std, false, false, true), a.name, b.name+" 1"))
+
+	// the guest can't make it unrated: refused, the guest hears the state again
+	ub.call(CallLobbySetRules, `{"rated":false}`)
+	ub.want(stateWithRules(rulesPart(std, false, false, true), a.name, b.name+" 1"))
+	ua.quiet()
+	hg.mu.Lock()
+	unrated := hg.adminUnratedLocked()
+	hg.mu.Unlock()
+	if unrated {
+		t.Fatal("the guest's call made the game unrated")
+	}
+
+	// the admin's: B's mark is reset, the browser's name gets [Unrated]
+	ua.call(CallLobbySetRules, `{"rated":false}`)
+	ua.want(stateWithRules(rulesPartRated(std, false, false, true, true), a.name, b.name+" 0"))
+	ub.want(stateWithRules(rulesPartRated(std, false, false, false, true), a.name, b.name+" 0"))
+	if !strings.Contains(ts.log.String(), "game 1: rules set by admin "+itoa(a.id)+": Standard, bots false, unrated; every ready mark reset; findings: none") {
+		t.Errorf("log lacks the change:\n%s", ts.log.String())
+	}
+	if n := name(); n != strings.Replace(before, "] ", "] "+UnratedPrefix, 1) && n != UnratedPrefix+before {
+		t.Errorf("name %q after unrated (was %q)", n, before)
+	}
+	// the same again changes nothing: only the caller hears the state
+	ua.call(CallLobbySetRules, `{"rated":false}`)
+	ua.want(stateWithRules(rulesPartRated(std, false, false, true, true), a.name, b.name+" 0"))
+	ub.quiet()
+	// a preset keeps it unrated; the prefixes in order: [Unrated] [Draft]
+	ua.call(CallLobbySetRules, `{"preset":"draft"}`)
+	dr, _ := rules.Parse("draft")
+	ua.want(stateWithRules(rulesPartRated(dr, false, false, true, true), a.name, b.name+" 0"))
+	ub.want(stateWithRules(rulesPartRated(dr, false, false, false, true), a.name, b.name+" 0"))
+	if n := name(); !strings.Contains(n, UnratedPrefix+"[Draft] ") ||
+		!strings.Contains(ts.log.String(), "game 1: the browser's name is now "+strconv.Quote(n)) {
+		t.Errorf("name %q, want %q, and its log line:\n%s", n, UnratedPrefix+"[Draft] ", ts.log.String())
+	}
+	ua.call(CallLobbySetRules, `{"preset":"standard"}`)
+	ua.want(stateWithRules(rulesPartRated(std, false, false, true, true), a.name, b.name+" 0"))
+	ub.want(stateWithRules(rulesPartRated(std, false, false, false, true), a.name, b.name+" 0"))
+
+	// the start names it; the match's line is "Rules: Standard (Unrated)"
+	ub.call(CallLobbySetReady, `{"ready":true}`)
+	ua.want(stateWithRules(rulesPartRated(std, false, false, true, true), a.name, b.name+" 1"))
+	ub.want(stateWithRules(rulesPartRated(std, false, false, false, true), a.name, b.name+" 1"))
+	for _, x := range []*tcpClient{a, b} {
+		x.takeAll(ComponentUserSessions, NotifyUserSessionExtendedDataUpdate, 50*time.Millisecond)
+	}
+	wantReply(t, "A starts", a.gm(CmdGameManagerAdvanceGameState, golden.Bytes(t, decodeCase(t, g, "advancegamestate_request"))))
+	hostNext[gmshost.StartGame](t, host)
+	if !strings.Contains(ts.log.String(), "; the standard game, fillTeams 0; unrated (the admin's choice)") {
+		t.Errorf("the start's log lacks unrated:\n%s", ts.log.String())
+	}
+	hg.mu.Lock()
+	unrated = hg.adminUnratedLocked()
+	hg.mu.Unlock()
+	if !unrated {
+		t.Error("adminUnratedLocked false after the admin's unrated")
+	}
+	hg.announceRules()
+	for _, x := range []*tcpClient{a, b} {
+		if f := x.note(ComponentMessaging, NotifyMessageID); !strings.Contains(string(f.Payload), "Rules: Standard (Unrated)") {
+			t.Errorf("the rules line: %q", f.Payload)
+		}
+	}
+	// the match's record carries it (store.Match.Unrated), and the game counts for no Leaderboard
+	hg.mu.Lock()
+	ranked := hg.ranked()
+	hg.mu.Unlock()
+	if rec := hg.historyMatch(gmshost.FinishGame{WinnerTeam: 1, DurationMs: 600000, Reason: "guardian"}); !rec.Unrated || ranked {
+		t.Errorf("the match's Unrated %v, ranked %v", rec.Unrated, ranked)
+	}
+	// started: locked
+	ua.call(CallLobbySetRules, `{"rated":true}`)
+	ua.quiet()
+}
+
+// The browser's name and the rules line per setting.
+func TestLobbyNameUnrated(t *testing.T) {
+	ar := aram(t)
+	for _, c := range []struct {
+		bots, unrated bool
+		rules         rules.Combination
+		want, line    string
+	}{
+		{false, false, rules.Standard(), "Map: Game", "Rules: Standard"},
+		{false, true, rules.Standard(), "Map: [Unrated] Game", "Rules: Standard (Unrated)"},
+		{true, true, ar, "Map: [Bots] [Unrated] [ARAM] Game", "Rules: All Random, Shop on Death (Unrated)"},
+		{true, false, ar, "Map: [Bots] [ARAM] Game", "Rules: All Random, Shop on Death"},
+	} {
+		if got := lobbyName("Map: ", c.bots, c.unrated, c.rules, "Game"); got != c.want {
+			t.Errorf("lobbyName(%v, %v, %v) = %q, want %q", c.bots, c.unrated, rules.Describe(c.rules), got, c.want)
+		}
+		if got := rulesNoteText(c.rules, c.unrated); got != c.line {
+			t.Errorf("rulesNoteText = %q, want %q", got, c.line)
+		}
 	}
 }

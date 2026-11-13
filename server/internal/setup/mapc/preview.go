@@ -212,8 +212,10 @@ func (cm *Compiled) Preview(r *Report) (map[string][]byte, error) {
 		name, shows string
 		b           *Blocks
 		islands     bool
-	}{{"graph_player.png", "the Player graph's squares over the walkable cells", &cm.Player, false},
-		{"graph_npc.png", "the NPC graph's squares and the Guardians' islands", &cm.NPC, true}} {
+	}{{"graph_player.png", "the Player graph's squares (green) over the walkable cells (grey); left out: red too " +
+		"narrow for any square, orange cut off from the bases", &cm.Player, false},
+		{"graph_npc.png", "the NPC graph's squares (green) and the Guardians' islands (yellow); left out: red too " +
+			"narrow for any square, orange cut off from the bases", &cm.NPC, true}} {
 		img := cm.graphImage(g.b, g.islands)
 		if err := put(g.name, g.shows, img); err != nil {
 			return nil, err
@@ -302,18 +304,40 @@ func (cm *Compiled) pixel(p Point) (int, int) {
 	return i, Grid - 1 - j
 }
 
+// graphImage draws a graph's squares (green, their edges darker) over its ground: the walkable mask grey, the walkable
+// cells the mask's erosion leaves out darker grey, and (EDNARROW) what the graph leaves out in the check's colours:
+// orange the squares cut off from the bases (reach.dropped), red the ground too narrow for any square (reach.narrow).
+// The page's readers (overlays.js, feedback.js and a reference script) take a pixel as a square when its green
+// exceeds its red by 30, which only the squares do; feedback.js reads red and orange too.
 func (cm *Compiled) graphImage(b *Blocks, islands bool) *image.RGBA {
-	mask := cm.Mask
+	mask, walk := cm.Mask, func(k byte) bool { return k == Open }
 	if islands { // the NPC graph: over the ground NPCs walk
-		mask = cm.NPCMask
+		mask, walk = cm.NPCMask, Walkable
 	}
+	narrow := cm.narrowCells()
 	img := cm.cellImage(func(k int) color.RGBA {
-		if mask[k] {
+		switch {
+		case narrow[k]:
+			return color.RGBA{210, 60, 60, 255}
+		case mask[k]:
 			return color.RGBA{90, 90, 90, 255}
+		case walk(cm.Layers.Kind[k]):
+			return color.RGBA{50, 50, 50, 255}
 		}
 		return color.RGBA{20, 20, 20, 255}
 	})
 	cell := cm.Cell
+	for k, d := range cm.droppedBlocks() { // the Player graph's grid, the same squares as b's
+		if !d {
+			continue
+		}
+		bx, by := k%cm.Player.W, k/cm.Player.W
+		for dj := 0; dj < cell; dj++ {
+			for di := 0; di < cell; di++ {
+				img.SetRGBA(bx*cell+di, Grid-1-(by*cell+dj), color.RGBA{225, 140, 40, 255})
+			}
+		}
+	}
 	for by := 0; by < b.H; by++ {
 		for bx := 0; bx < b.W; bx++ {
 			if !b.On[by*b.W+bx] {

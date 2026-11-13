@@ -17,11 +17,13 @@ import (
 // The pins. RingMadeUp* are CM_Ring's files that need no game file, the graphs and the assets from made-up templates
 // (so the public tests, on Windows and Linux, pin everything the compiler computes); Ring854SHA256 is the whole
 // archive from build 854's files with the shared mesh (the level files and the assets), RingTiled854SHA256 the same
-// with the tiled ground and no decals (the archive before the baked ground).
+// with the tiled ground and no decals (the archive before the baked ground). Re-pinned when a spirit well's height
+// became SpiritWellZ (2026-11-12): only the wells' markers changed; again when the Bindings and Cores got their holes in
+// both graphs (StructureRadius, 2026-11-12): only the Player and NPC graphs changed.
 const (
-	RingMadeUpSHA256   = "58485edeb47776c7a1ef30ae8633b7f0cfa476f4bc6fa315632618a9447079e8"
-	Ring854SHA256      = "729eb1b39189826d5ccdfc91ce270218cb86a6ba56ae3981811627478ba26c2f"
-	RingTiled854SHA256 = "f0fd13daab5ba836fb465065494dfdb0b2292f48476e382637e1f2637092da37"
+	RingMadeUpSHA256   = "5660fdb47615043b1786198a95458d920d7b1adbe1378f0764fa812ea59fbf64"
+	Ring854SHA256      = "a5d71fcde84e8d97f6517ea3a4592a6f381eae7a3d54ba504934c325930bce76"
+	RingTiled854SHA256 = "77a6eab24f74e39f74fa5e870c9365e8d32729822c61df506a34e3e0cc5819d0"
 )
 
 // madeUpTemplate is a made-up graph template: two triangles and made-up header values (navgraph's tests' kind).

@@ -10,6 +10,7 @@ import (
 	"dawngate/server/internal/gmshost"
 	"dawngate/server/internal/logging"
 	"dawngate/server/internal/rating"
+	"dawngate/server/internal/rules"
 	"dawngate/server/internal/store"
 )
 
@@ -52,7 +53,7 @@ func TestRateHostedGame(t *testing.T) {
 	a, _ := hg.s.Store.Account(alpha.userID)
 	b, _ := hg.s.Store.Account(bravo.userID)
 	c, _ := hg.s.Store.Account(carl.userID)
-	_, want := rating.Rate(rec.Match, func(int64) store.Rating { return store.Rating{} })
+	_, want := rating.Rate(rec.Match, func(int64, string) store.Rating { return store.Rating{} })
 	if ra := a.History.Rating; ra.Value != want[0].After.Value || ra.Games != 1 || ra.Wins != 0 || ra.Value >= 1500 {
 		t.Errorf("alpha (lost): %+v", ra)
 	}
@@ -109,6 +110,59 @@ func TestRateHostedGameNotRated(t *testing.T) {
 		for _, hp := range hg.players {
 			if a, _ := hg.s.Store.Account(hp.userID); a.History.Rating != (store.Rating{}) {
 				t.Errorf("%s: %s rated %+v", c.mode, hp.p.Name, a.History.Rating)
+			}
+		}
+	}
+}
+
+// A custom game its admin made unrated (M30, MMR1): the history's row says so, no rating of any type moves and the
+// Leaderboard doesn't count it, with or without rules; a draft game (exactly the preset) rates in the draft type.
+func TestRateHostedGameAdminUnrated(t *testing.T) {
+	draft, err := rules.Parse("draft")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		rules   rules.Combination
+		unrated bool
+		want    string // the log line's end
+		mode    string // the type rated ("" none)
+	}{
+		{rules.Standard(), true, "rating: not rated (unrated by the admin)\n", ""},
+		{draft, true, "rating: not rated (unrated by the admin)\n", ""},
+		{draft, false, " (rated: 1 v 1 humans)\n", rating.Draft},
+	} {
+		hg, buf := ratingGame(t, gmshost.ModeCustom, "2", true, []resultSeat{{name: "alpha", team: 0}, {name: "bravo", team: 1}})
+		hg.custom.rules, hg.custom.unrated = c.rules, c.unrated
+		hg.inGameAt = resultAt.Add(-20 * time.Minute)
+		for _, hp := range hg.players {
+			hp.atStart = true
+		}
+		f := gmshost.FinishGame{WinnerTeam: 2, DurationMs: 1200000, Reason: "guardian"}
+		hg.persist(nil, f)
+		rec := hg.historyMatch(f)
+		if rec.Unrated != c.unrated {
+			t.Errorf("%v: the history's unrated %v", c.rules, rec.Unrated)
+		}
+		hg.rate(rec)
+		if n := strings.Count(buf.String(), c.want); n != 2 {
+			t.Errorf("%v: %d lines %q:\n%s", c.rules, n, c.want, buf)
+		}
+		if c.unrated && strings.Count(buf.String(), "leaderboard: not counted (a custom game unrated by the admin)") != 2 {
+			t.Errorf("%v: the Leaderboard's line:\n%s", c.rules, buf)
+		}
+		if c.mode == rating.Draft && strings.Count(buf.String(), "game 7 draft rating: 1500 -> ") != 2 {
+			t.Errorf("the draft rating's line:\n%s", buf)
+		}
+		for _, hp := range hg.players {
+			a, _ := hg.s.Store.Account(hp.userID)
+			for _, mode := range rating.Modes() {
+				if r := a.History.RatingIn(mode); (r.Games == 1) != (mode == c.mode) {
+					t.Errorf("%v: %s's %s rating %+v", c.rules, hp.p.Name, mode, r)
+				}
+			}
+			if a.History.Ranked.Games != 0 {
+				t.Errorf("%v: %s counted on the Leaderboard", c.rules, hp.p.Name)
 			}
 		}
 	}

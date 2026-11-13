@@ -93,16 +93,16 @@ func TestApplyRated(t *testing.T) {
 	h := ApplyRanked(store.History{}, now, true)
 	before := h.Clone()
 	r1 := store.Rating{Value: 1580, RD: 290, Vol: 0.06}
-	got := ApplyRated(h, now, at(0), r1, true) // 2026-10-01: too old for a day
+	got := ApplyRated(h, store.ModeStandard, now, at(0), r1, true) // 2026-10-01: too old for a day
 	if !reflect.DeepEqual(h, before) {
 		t.Fatal("ApplyRated changed its input")
 	}
 	r2 := store.Rating{Value: 1550, RD: 260, Vol: 0.0599}
-	got = ApplyRated(got, now, at(3), r2, false) // 2026-10-04's first: before it 1580
+	got = ApplyRated(got, store.ModeStandard, now, at(3), r2, false) // 2026-10-04's first: before it 1580
 	r3 := store.Rating{Value: 1590, RD: 240, Vol: 0.0599}
-	got = ApplyRated(got, now, at(3), r3, true) // its second: RatingBefore stays
+	got = ApplyRated(got, store.ModeStandard, now, at(3), r3, true) // its second: RatingBefore stays
 	r4 := store.Rating{Value: 1610, RD: 230, Vol: 0.0598}
-	got = ApplyRated(got, now, now, r4, true) // today, beside the Leaderboard's game
+	got = ApplyRated(got, store.ModeStandard, now, now, r4, true) // today, beside the Leaderboard's game
 	want := store.History{
 		Days: []store.HistoryDay{
 			{Day: "2026-10-04", Rated: store.GamesWon{Games: 2, Wins: 1}, RatingBefore: 1580},
@@ -115,9 +115,35 @@ func TestApplyRated(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("history\n got %+v\nwant %+v", got, want)
 	}
-	if first := ApplyRated(store.History{}, now, now, r1, false); first.Days[0].RatingBefore != 1500 ||
+	if first := ApplyRated(store.History{}, store.ModeStandard, now, now, r1, false); first.Days[0].RatingBefore != 1500 ||
 		first.Rating != (store.Rating{Value: 1580, RD: 290, Vol: 0.06, Games: 1}) {
 		t.Errorf("a first rated game: %+v", first)
+	}
+}
+
+// ApplyRated in another game type (MMR1) changes only that type's rating and day part: the standard rating, the day's
+// standard part and the other type stay as they were.
+func TestApplyRatedMode(t *testing.T) {
+	now := at(8)
+	h := ApplyRated(store.History{}, store.ModeStandard, now, now, store.Rating{Value: 1600, RD: 300, Vol: 0.06}, true)
+	before := h.Clone()
+	got := ApplyRated(h, store.ModeDraft, now, now, store.Rating{Value: 1450, RD: 300, Vol: 0.06}, false)
+	got = ApplyRated(got, store.ModeDraft, now, now, store.Rating{Value: 1500, RD: 280, Vol: 0.06}, true)
+	if !reflect.DeepEqual(h, before) {
+		t.Fatal("ApplyRated changed its input")
+	}
+	if got.Rating != before.Rating || got.Days[0].Rated != before.Days[0].Rated || got.Days[0].RatingBefore != 1500 {
+		t.Errorf("the standard rating changed: %+v", got)
+	}
+	if r := got.RatingIn(store.ModeDraft); r != (store.Rating{Value: 1500, RD: 280, Vol: 0.06, Games: 2, Wins: 1}) {
+		t.Errorf("draft rating %+v", r)
+	}
+	if md := got.Days[0].RatedIn(store.ModeDraft); md != (store.ModeDay{Rated: store.GamesWon{Games: 2, Wins: 1},
+		RatingBefore: 1500}) {
+		t.Errorf("draft day %+v", md)
+	}
+	if got.RatingIn(store.ModeCustom) != (store.Rating{}) || len(got.Days[0].ModeRated) != 1 {
+		t.Errorf("custom touched: %+v", got)
 	}
 }
 

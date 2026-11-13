@@ -607,6 +607,11 @@
    "pretty": "    FLAG: 0\n    MGID: 4\n    NAME: ''\n    PYLD: \n      ATTR: \n        720896: '100'\n        720897: '4'\n        720898: '604800'\n        720899: '2 players online, 1 in a match'\n      FLAG: 0\n      STAT: 0\n      TAG: 2\n      TIDS: []\n      TTYP: \n        (0, 0)\n      TYPE: 300\n    SRCE: \n      (0, 0, 0)\n    TIME: 1791405059"
   },
   {
+   "name": "notifymessage_notice_notification",
+   "hex": "9ac8670000b67a640005ba1b65010100c39b2403874d320500010480805804323030008180580233008280580531383030008380581b536572766572207570646174652061742032303a303020555443009ac8670000cf48740000d219c00002d29933040000d34e70080000d39c2500ac0400cf28e509000000d29b650083b0b5ac0d",
+   "pretty": "    FLAG: 0\n    MGID: 5\n    NAME: ''\n    PYLD: \n      ATTR: \n        720896: '200'\n        720897: '3'\n        720898: '1800'\n        720899: 'Server update at 20:00 UTC'\n      FLAG: 0\n      STAT: 0\n      TAG: 2\n      TIDS: []\n      TTYP: \n        (0, 0)\n      TYPE: 300\n    SRCE: \n      (0, 0, 0)\n    TIME: 1791405059"
+  },
+  {
    "name": "rating2_extendeddataupdate_notification",
    "hex": "921d21038b0cc001066c6f63616c008f4e4001010092d87005000002b4803803b58038be19c6487403922c330000ba1d340000d62c33000000d61d34000000cf58b30001d73a640081d0acf30e",
    "pretty": "    DATA: \n      BPS: 'local'\n      CTY: ''\n      DMAP: \n        458804: 3\n        458805: 1662\n      QDAT: \n        DBPS: 0\n        NATT: 0\n        UBPS: 0\n      UATT: 0\n    SUBS: 1\n    USID: 2000000001"

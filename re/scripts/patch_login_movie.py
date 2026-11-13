@@ -53,9 +53,14 @@ also holds the item list, UI/Scaleform/Collection/dgitems.json (item_list), writ
 (--content; the item icons are the game's own textures, which the front end has mounted). The same movie also gets the
 custom game lobby's ready check, client_ui/lobby/LobbyReady.as (its tags server/internal/setup/moviepatch/lobby_tags.hex
 after the Collection's, character and depth 2001) and the Leaderboard's Rating column,
-client_ui/leaderboard/LeaderboardRating.as (leaderboard_tags.hex, after the lobby's, 2002): a spec's `more` Parts are
+client_ui/leaderboard/LeaderboardRating.as (leaderboard_tags.hex, after the lobby's, 2002) and
+client_ui/profile/ProfileModes.as (profile_tags.hex, after the Leaderboard's, 2003): a spec's `more` Parts are
 further classes of its movie, each with its own id and depth, their tags in order (another class of that movie is one more Part, here and in Go's
 moviepatch.Collection.More). --tags <file> replaces all of a spec's tags.
+And for the Options menu's grab-style drag scroll check box (--spec options): client_ui/options/DragGrabOption.as,
+its tags server/internal/setup/moviepatch/options_tags.hex, the Options menu's gameplay tab
+UI/Scaleform/Options/Options_GameSettings.gfx from game/Data/Options.snap, the added archive game/Data/zz_Options.snap
+(the same id and depth, 2000; the tab's ids end at 80, its root depths at 99).
 
 Usage (python -I: the game's files are untrusted input):
     python -I re/scripts/patch_login_movie.py <game/Data/LoginScreen.snap> <out zz_ServerPicker.snap> [--tags <file>]
@@ -72,7 +77,8 @@ Usage (python -I: the game's files are untrusted input):
     python -I re/scripts/patch_login_movie.py --spec itemshop <game/Data/HUD.snap> <out zz_ItemShop.snap>
     python -I re/scripts/patch_login_movie.py --spec collection --content <server/data/content.json> <game/Data/code.snap>
                                               <out zz_CollectionItems.snap> [--debug]   # --debug: the class's log lines
-    python -I re/scripts/patch_login_movie.py [--spec matchoptions|chatrooms|aftaction|matchtype|pvplobby|itemshop|collection] --movie <in .gfx> <out .gfx> [--tags <file>]
+    python -I re/scripts/patch_login_movie.py --spec options <game/Data/Options.snap> <out zz_Options.snap>
+    python -I re/scripts/patch_login_movie.py [--spec matchoptions|chatrooms|aftaction|matchtype|pvplobby|itemshop|collection|options] --movie <in .gfx> <out .gfx> [--tags <file>]
 """
 import json
 import math
@@ -143,7 +149,11 @@ SPECS = {
                        # the front end's movie carries more classes of ours: one Part each (the next free character
                        # id and depth; moviepatch.Collection's More, in the same order)
                        more=(Part("LobbyReady", 2001, 2001, os.path.join(MOVIEPATCH, "lobby_tags.hex")),
-                             Part("LeaderboardRating", 2002, 2002, os.path.join(MOVIEPATCH, "leaderboard_tags.hex")))),
+                             Part("LeaderboardRating", 2002, 2002, os.path.join(MOVIEPATCH, "leaderboard_tags.hex")),
+                             Part("ProfileModes", 2003, 2003, os.path.join(MOVIEPATCH, "profile_tags.hex")))),
+    "options": Spec("the Options menu's drag scroll check box", "game/Data/Options.snap", "game/Data/zz_Options.snap",
+                    "UI/Scaleform/Options/Options_GameSettings.gfx", os.path.join(MOVIEPATCH, "options_tags.hex"),
+                    "DragGrabOption"),
 }
 # The shop refund's settings file (client_ui/itemshop/ShopRefund.as reads it as HUD/dgrefund.json): the setup writes
 # the default (no settings), since the class always asks for it and a missing file costs a FileDepot.cpp 138 assert

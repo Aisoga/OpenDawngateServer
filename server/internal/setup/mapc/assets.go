@@ -520,10 +520,17 @@ func (b *assetBuild) titans(spawners [2][]uint32) error {
 	return nil
 }
 
+// SpiritWellZ is the height a spirit well (kind well) stands at on a compiled map. The game draws the well's carved
+// dais (darius_mine_dais, its top at the model's z 0.36, from the well noun's state prefabs
+// Prefab_Darius_Mine_*_gfx) at the well's height; TemplateLevel's marker stands at z -0.37, over its 13-m pit, which
+// on a compiled map's flat floor puts the dais's top at the floor and hides it. At -0.24 its top lies 0.12 m above
+// the floor, just over the units' feet. A mine keeps MineLevel's height (its floor is flat as ours).
+const SpiritWellZ = -0.24
+
 // wells places each well: the template well of its team's noun with its worker spots (its children) and each spot's
 // target, all moved by the well's offset from the template's. A well of kind mine takes MineLevel's mine and spots
-// instead of TemplateLevel's well (read only when the map has one, so a map without keeps its bytes). It reports a
-// well with a spot on blocked ground.
+// instead of TemplateLevel's well (read only when the map has one, so a map without keeps its bytes); a spirit well
+// stands at SpiritWellZ. It reports a well with a spot on blocked ground.
 func (b *assetBuild) wells() ([]Finding, error) {
 	var fs []Finding
 	var mine *templates
@@ -554,6 +561,9 @@ func (b *assetBuild) wells() ([]Finding, error) {
 				return Point{q[0] + dx, q[1] + dy}
 			}
 			well := b.place(setFollowers, tm, fmt.Sprintf("well/%d/%d", t+1, w), p)
+			if !b.cm.Map.Wells[w].IsMine() {
+				well.Set("pos", f32s(p[0], p[1], SpiritWellZ))
+			}
 			var kids []uint32
 			blocked := 0
 			for k, c := range vec(tm, "childMarkerIds") {

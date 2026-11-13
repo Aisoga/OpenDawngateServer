@@ -80,6 +80,7 @@ bool g_drafted = false;           // the draft ran
 std::set<std::string> g_available;  // the classes the composition may use (EnsurePlayers)
 unsigned g_draftSeed = 1;
 std::vector<std::string> g_draftPool;  // RULES3: startGame's poolClasses (empty: no pool)
+std::uint32_t g_cloneNoun = 0;          // MODES0: [host] test_clone_class (0: off)
 
 // BOTLANESPLIT (core/bots/lanesplit.h): the humans' roles by team the last split counted (the composition's, the
 // draft's intents, the reveal's picks), and the match's single lane changes the rule refused or took
@@ -2183,6 +2184,8 @@ void SetDraftPool(const std::vector<std::string>& classes, const char* from) {  
       list.empty() ? "none" : list.c_str());
 }
 
+void SetCloneShaper(std::uint32_t noun) { g_cloneNoun = noun; }  // MODES0
+
 // ---- BOTDRAFT -------------------------------------------------------------------------------------------------------
 
 namespace {
@@ -2283,9 +2286,16 @@ std::vector<DraftOut> Draft(void* sim, const std::vector<DraftHumanIn>& humans) 
   o.gladiators = gb::ParseGladiatorList(g_opt.gladiators);
   o.jungle = HunterSeat();  // MAPHOST
   o.laneSplit = g_opt.laneSplit;  // BOTLANESPLIT
-  const std::map<int, std::vector<gb::ComposedSeat>> drawn =
+  std::map<int, std::vector<gb::ComposedSeat>> drawn =
       gb::DraftMatch(teams, hs, gb::PoolFilter(g_available, g_draftPool), o);  // RULES3: the pool's classes only
   Log("bots: BOTDRAFT: draw with seed %u: humans%s", g_draftSeed, hdesc.empty() ? " none" : hdesc.c_str());
+  if (g_cloneNoun) {  // MODES0: every bot takes the test's shaper
+    const std::string base = SehPlayerClassOf(g_cloneNoun);
+    const bool cloned = gb::CloneDraw(&drawn, base, g_available);
+    Log("bots: BOTDRAFT: test_clone_class %08X (%s): %s", g_cloneNoun, base.empty() ? "no PlayerClass" : base.c_str(),
+        cloned ? "every bot of both teams takes it (MODES0), each seat keeps its role and lane"
+               : "no bot class plays it; the draw stands");
+  }
   g_humanRoles.clear();  // BOTLANESPLIT: the draw counted the humans' intents
   for (const gb::DraftHuman& h : hs) g_humanRoles[h.team].push_back(h.role);
   std::map<int, size_t> nth;

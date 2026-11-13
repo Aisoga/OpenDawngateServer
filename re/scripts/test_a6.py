@@ -22,6 +22,9 @@ What is pinned:
     Get-CopyLane gives the second client's copy to its lane and never counts client\run_854_lan or client\run_854_l as
     lane a's; Test-OwnBind takes a dgserver bound to the -Lan address as the lan session's; the cross-lane rule with a
     second client's address and with the lan copy's endpoints.
+  - LANE5: the fifth lane g (127.0.0.5) is in every table (the -Lane values of the lane test scripts too) and the lane
+    number map agrees with the addresses; setup_lane.py's profile_step writes the test lane's options (windowed,
+    silent, camera locked) only where the file is missing.
 
 Usage:
     .venv/Scripts/python -I re/scripts/test_a6.py [--exe <untouched Dawngate.exe>] [-v]
@@ -62,8 +65,9 @@ class LanePatchTest(unittest.TestCase):
     def test_lane_a_is_still_the_a4_output(self):
         # since Q3b plus the LARGE_ADDRESS_AWARE bit, since SNDBANK plus the preload call, since MAPTABLE plus the map-name
         # cave, since RATINGSHOW1 plus the rating cave, since UICHAN plus the heap locks, since NUMFMT plus the
-        # number format, since AVGPREC plus the averages, since FADE1 plus the fade (test_a5 pins each)
-        self.assertEqual(test_a5.sha256(self.lane_a), test_a5.FADE_OUTPUT_SHA256)
+        # number format, since AVGPREC plus the averages, since FADE1 plus the fade, since EXESECT and DRAGGRAB the
+        # section and the drag grab, since PROFILE2 the Profile's reload (test_a5 pins each)
+        self.assertEqual(test_a5.sha256(self.lane_a), test_a5.PROFILE_RELOAD_OUTPUT_SHA256)
 
     def test_lane_b_changes_only_host_bind_and_folders(self):
         allowed = [(self.off(pc.REDIRECTOR_HOST), 21),
@@ -98,7 +102,8 @@ class LanePatchTest(unittest.TestCase):
         self.assertEqual(pc.describe(self.lane_b), {
             "redirector": "127.0.0.2", "bind": "127.0.0.2", "appdata": "DawngateDataB", "documents": "DawngateB",
             "raknet_loopback": "127.0.0.2", "ca_sha256": pc.hashlib.sha256(MODULUS).hexdigest()[:16], "ca_flag": "0",
-            "laa": "on", "preload": "all", "maptable": "on", "rating": "on", "heaplocks": "on", "numfmt": "on", "averages": "on", "fade": "on"})
+            "laa": "on", "preload": "all", "maptable": "on", "rating": "on", "heaplocks": "on", "numfmt": "on", "averages": "on", "fade": "on", "dgx": "on", "draggrab": "on",
+            "profilereload": "on"})
         a = pc.describe(self.lane_a)
         self.assertEqual((a["redirector"], a["bind"], a["appdata"], a["documents"], a["raknet_loopback"]),
                          ("127.0.0.1", "127.0.0.1", "DawngateData", "Dawngate", "127.0.0.1"))
@@ -200,6 +205,7 @@ class EgressLaneTest(unittest.TestCase):
 
 
 class LaneTableTest(unittest.TestCase):
+    maxDiff = None
     def test_run_session_agrees_with_setup_lane(self):
         with open(os.path.join(HERE, "run_session.ps1"), encoding="utf-8") as f:
             text = f.read()
@@ -279,11 +285,13 @@ class LaneTableTest(unittest.TestCase):
             cases = {f"copy {c}": client + c + "\\dawngate\\game\\dawngate.exe"
                      for c in ("run_854", "run_854_server", "run_854_b", "run_854_server_b", "run_854_c",
                                "run_854_server_c", "run_854_d", "run_854_server_d", "run_854_e", "run_854_server_e",
-                               "run_854_lan", "run_854_l", "run_854_f", "run_854_g")}
+                               "run_854_lan", "run_854_l", "run_854_f", "run_854_x", "run_854_g", "run_854_server_g")}
             cases.update({f"folder {n}": f'dumpcap.exe -w "{logs}{n}\\capture.pcapng"'
                           for n in ("s_a", "s_b", "s_c", "s_d", "s_e", "s_x")})
             cases.update({f"bind {b}": f"dgserver.exe {b}".strip()
                           for b in ("", "--bind 127.0.0.3", "--bind 127.0.0.4", "--bind 127.0.0.9",
+                                    # LANE5: lane g's server and its tunnelled server (127.0.5.9)
+                                    "--bind 127.0.0.5", "--bind 127.0.5.9",
                                     # P2-live: dgserver's --host counts when --bind isn't given (p2live_run1b's
                                     # server, --host <LAN address>, was stopped as lane a's)
                                     "--host 192.168.20.40", "--host 127.0.0.3", "--host 127.0.0.3 --bind 127.0.0.4",
@@ -303,7 +311,7 @@ class LaneTableTest(unittest.TestCase):
                 f.write("$ErrorActionPreference = 'Stop'\n"
                         f"$ast = [System.Management.Automation.Language.Parser]::ParseFile('{HERE}\\run_session.ps1', "
                         "[ref]$null, [ref]$null)\n"
-                        "foreach ($v in '$LaneTable', '$ExtraClients') {\n"
+                        "foreach ($v in '$LaneTable', '$ExtraClients', '$LaneNumber') {\n"
                         "  $t = @($ast.FindAll({ param($a) $a -is [System.Management.Automation.Language."
                         "AssignmentStatementAst] -and $a.Left.Extent.Text -eq $v }, $true))[0]\n"
                         "  . ([scriptblock]::Create($t.Extent.Text)) }\n"
@@ -324,14 +332,14 @@ class LaneTableTest(unittest.TestCase):
             got = dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
         # A5b: run_854_e is lane d's second client, run_854_lan (setup_all.py --player) nobody's ('lan'), run_854_l
         # (the lan test copy) 'l' (the -Lan session's); a server bound to the LAN address is the -Lan session's
-        # G3b: run_854_f is lane b's second client; run_854_g a letter nobody uses ('g': never lane a's)
+        # G3b: run_854_f is lane b's second client; run_854_x a letter nobody uses ('x': never lane a's); LANE5: g a lane
         want = {"copy run_854": "a", "copy run_854_server": "a", "copy run_854_lan": "lan", "copy run_854_l": "l",
-                "copy run_854_f": "b", "copy run_854_g": "g",
+                "copy run_854_f": "b", "copy run_854_x": "x", "copy run_854_g": "g", "copy run_854_server_g": "g",
                 "copy run_854_b": "b", "copy run_854_server_b": "b", "copy run_854_c": "c", "copy run_854_server_c": "c",
                 "copy run_854_d": "d", "copy run_854_server_d": "d", "copy run_854_e": "d", "copy run_854_server_e": "e",
                 "folder s_a": "a", "folder s_b": "b", "folder s_c": "c", "folder s_d": "d", "folder s_e": "e",
                 "folder s_x": "a", "bind ": "a", "bind --bind 127.0.0.3": "c", "bind --bind 127.0.0.4": "d",
-                "bind --bind 127.0.0.9": "", "bind --host 192.168.20.40": "", "bind --host 127.0.0.3": "c",
+                "bind --bind 127.0.0.9": "", "bind --bind 127.0.0.5": "g", "bind --bind 127.0.5.9": "g","bind --host 192.168.20.40": "", "bind --host 127.0.0.3": "c",
                 "bind --host 127.0.0.3 --bind 127.0.0.4": "d", "bind --public-host 127.0.0.3": "a",
                 "bind --gms-control-bind 127.0.0.2": "a",
                 "own --bind 127.0.0.4": "True", "own --bind 127.0.0.3": "False",
@@ -366,6 +374,55 @@ class LaneTableTest(unittest.TestCase):
         roots = [os.path.dirname(cfg[k]) + "/" for cfg in setup_lane.LANES.values() for k in ("client", "host")]
         for r in roots:
             self.assertEqual([x for x in roots if x.startswith(r)], [r], r)
+
+    def test_lane_numbers_and_test_scripts(self):
+        # LANE5: run_session.ps1's $LaneNumber (the tunnel's 127.0.N.9) is the lane's address's last byte, and the
+        # lane test scripts with their own -Lane set and number map know every lane but a
+        with open(os.path.join(HERE, "run_session.ps1"), encoding="utf-8") as f:
+            m = re.search(r"^\$LaneNumber = @\{([^}]*)\}", f.read(), re.M)
+        got = dict((k, v) for k, v in re.findall(r"(\w) = (\d+)", m.group(1)))
+        self.assertEqual(got, {k: cfg["address"].rsplit(".", 1)[1] for k, cfg in setup_lane.LANES.items()})
+        extra = sorted(k for k in setup_lane.LANES if k != "a")
+        for name in ("seat_attack", "test_install1", "test_p2", "test_rel3", "test_remote", "test_sp1"):
+            with open(os.path.join(HERE, name + ".ps1"), encoding="utf-8") as f:
+                text = f.read()
+            with self.subTest(script=name):
+                m = re.search(r"\[ValidateSet\(([^)]*)\)\]\[string\]\$Lane\b", text)
+                self.assertEqual([x for x in re.findall(r"'(\w)'", m.group(1))], extra)
+                m = re.search(r"@\{ (b = 2[^}]*)\}", text)
+                self.assertEqual(dict(re.findall(r"(\w) = (\d+)", m.group(1))),
+                                 {k: setup_lane.LANES[k]["address"].rsplit(".", 1)[1] for k in extra})
+
+    def test_profile_step(self):
+        # LANE5: a lane without options gets the test lane's (windowed, silent, camera locked); an existing file stays
+        old = os.environ.get("APPDATA")
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["APPDATA"] = tmp
+            try:
+                setup_lane.profile_step("G", True)  # --check writes nothing
+                self.assertFalse(os.path.exists(setup_lane.profile_path("G")))
+                setup_lane.profile_step("G", False)
+                with open(setup_lane.profile_path("G"), "rb") as f:
+                    raw = f.read()
+                self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))  # CRLF only, as the game writes it
+                opts = dict(line.split(" ", 1) for line in raw.decode("latin-1").splitlines())
+                for k in ("OptionBorderlessWindow", "OptionFullScreen", "OptionAudioVolumeMaster",
+                          "OptionAudioVolumeMusic", "OptionAudioVolumeSFX"):
+                    self.assertEqual(opts[k], "0", k)
+                for k in ("OptionAudioMuteAll", "OptionMuteLoginMusic", "OptionEnableLockedCamera"):
+                    self.assertEqual(opts[k], "1", k)
+                self.assertEqual(opts["OptionVersion"], "6")
+                self.assertFalse(any(k.startswith("ScreenSize") for k in opts))  # the desktop's: the game's own
+                with open(setup_lane.profile_path("G"), "wb") as f:
+                    f.write(b"OptionBorderlessWindow 1\r\n")
+                setup_lane.profile_step("G", False)
+                with open(setup_lane.profile_path("G"), "rb") as f:
+                    self.assertEqual(f.read(), b"OptionBorderlessWindow 1\r\n")
+            finally:
+                if old is None:
+                    os.environ.pop("APPDATA", None)
+                else:
+                    os.environ["APPDATA"] = old
 
 
 if __name__ == "__main__":

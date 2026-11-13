@@ -37,7 +37,8 @@ const LeaderboardMinGames = 10
 // Server.LeaderboardMinGames games: by skill rating with Server.RatingLeaderboard (store.RatingLeaderboard, rated games), else
 // by wins (store.Leaderboard); SkillDaily with POFF n >= 1 the ranking at the end of the UTC
 // day n days ago (POFF 1: without today's games), with POFF 0 the ranking now; any other name gets no rows. Ranks
-// count from 1; STRT below 1 counts as 1.
+// count from 1; STRT below 1 counts as 1. With the rating ranking both rank by the rating of the board the player
+// picked on the screen's tabs (MMR2, leaderboardtabs.go: standard, draft or custom; standard before a login).
 func (r *Request) leaderboard() []byte {
 	name, _ := r.Body.Str("NAME")
 	start, _ := r.Body.Int("STRT")
@@ -57,9 +58,16 @@ func (r *Request) leaderboard() []byte {
 		return LeaderboardReply(nil, 1)
 	}
 	// rows from rank start to start + count - 1
+	var persona int64
+	if sess := r.Conn.Session; sess != nil {
+		persona = sess.Persona.ID
+	}
+	board := r.Server.leaderboardBoard(persona) // MMR2: the tab the player picked
 	ranking := r.Server.Store.Leaderboard
 	if r.Server.RatingLeaderboard {
-		ranking = r.Server.Store.RatingLeaderboard
+		ranking = func(day string, minGames, limit int) ([]store.LeaderRow, error) {
+			return r.Server.Store.RatingLeaderboard(board, day, minGames, limit)
+		}
 	}
 	rows, err := ranking(day, r.Server.LeaderboardMinGames, int(start-1+count))
 	if err != nil {
@@ -74,6 +82,9 @@ func (r *Request) leaderboard() []byte {
 	by := "" // the wins ranking's line as before
 	if r.Server.RatingLeaderboard {
 		by = " (by rating)"
+		if board != store.ModeStandard {
+			by = " (by " + board + " rating)"
+		}
 	}
 	shown := 0
 	if name == LeaderboardSkill {

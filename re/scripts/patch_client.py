@@ -104,6 +104,12 @@ Patches (each checks the original bytes first):
            in st(0), the x87 goes to 53 bits, each of the five doubles in a row is divided by the games, and the control
            word goes back. Real divisions because the reciprocal stays wrong at any precision (7 over 35). The exe has no
            SSE2 doubles, so this stays on the x87. The seconds' integer division and the list's head as shipped.
+  profilereload Since PROFILE2, in every profile (--profile-reload off leaves it out): the Profile screen loads a
+           player's numbers only when the player it is asked to show differs from the one it shows
+           (ProfileUI_SetShownPlayer 0x004EE200: the jnz at 0x004EE25B skips the load for the same id), so its own
+           search native for the shown name reloads nothing. The jnz becomes a jmp (75 08 -> EB 08): the same player
+           loads again, which the Profile's mode tabs (client_ui/profile/ProfileModes.as) use after the server changed
+           the mode its numbers are answered in; a second click on Profile reloads it too.
   rating   Since RATINGSHOW1, in every profile (--rating off leaves it out): the main menu's profile box has EA's field
            mcProfile.m_glickoText (MainMenuUI.gfx; shown when SetExtendedData's second argument isn't null), and both
            C++ callers (MainMenuUI_OnUserExtendedDataChanged 0x004DE0D0, MainMenuUI_BindExtFunctions 0x004DFFC0) pass
@@ -139,6 +145,32 @@ Patches (each checks the original bytes first):
            and stealth at most the shipped 0.375), and any other creature as shipped; the glass parameter's load
            (0x0056E706) takes the stored value. +0x864..+0x870 are written only by GameObjectManager_CreateObject and
            these. Sounds are not muted in the window (only the fog step's Set_FOW_Invisible does).
+  dgx      Since EXESECT, in every profile (--dgx off leaves it out): room for code and data that no longer fit .text's
+           slack (15 bytes left after the caves above). A sixth section .dgx (code, execute, read; not writable) is
+           appended: its header in the free slot after .rsrc's (file offset 0x2E0; the headers end at 0x400), VA
+           0x01C84000 (the untouched SizeOfImage), 0x1000 bytes virtual and raw, its raw data after the file's end
+           aligned to 0x200 (0x0110A800; EA's certificate before it stays as dead bytes), SizeOfImage 0x01884000 ->
+           0x01885000, SizeOfCode raised by 0x1000, the security directory zeroed (the certificate has been invalid since
+           the first patch and no longer ends the file), the PE checksum left stale as by every other patch. Its first
+           8 bytes are DGX_MAGIC; every later piece has a fixed place in DGX_LAYOUT (append-only, so placed pieces never
+           move) and is written with dgx_place(). Writable state does not go here: .tls's slack (0x01C000C0-0x01C00200).
+  draggrab Since DRAGGRAB1, with .dgx (--drag-grab off leaves it out; --dgx off too): a grab-style middle-mouse drag
+           scroll, switched in the game by the preference OptionDragGrab (FNV-1 0x14958012; missing = off). The 12
+           bytes at 0x00697EB8 (the joystick's active check) jump to .dgx's draggrab piece (0x01C84010), which reads the
+           preference at each drag's first frame (AppPrefs_GetBool) into .tls's slack: off runs the two replaced
+           instructions and the shipped joystick; on stores G0 = the cursor's ground point, then each frame casts the
+           cursor ray onto the plane z = G0.z and moves the camera's current and target look-at points
+           (0x013F5724/0x013F5730) by G0 - G, so the grabbed point stays under the cursor. The two observer release
+           sites (0x00697D3C, 0x006981A0) call a helper that skips the cursor's jump back after a grab. State at
+           0x01C000C0-0x01C000EF (.tls). The assembly is drag_grab_code()'s docstring.
+           Since DRAGGRAB2b the same switch also gives the Options menu's GAME tab the key: the 12 gameplay booleans'
+           table (0x011D1988, {FNV-1 of the lower-case name, char *name}) is copied from the exe into .dgx's options
+           piece (0x01C84400) with a 13th entry {0x14958012, "OptionDragGrab"} (the name at +0x70), and
+           OptionsUI_GetGameSettings / OptionsUI_SaveSettings read that copy (four disp32 operands, two loop bounds
+           0x60 -> 0x68). The option itself (its two settings, the bool app property the cave reads, its default and the
+           name Preferences.prop is written with) is config data: patch_config.py's drag-grab lines. Ship the exe with the
+           Options movie (zz_Options.snap): an exe with the entry and without the movie's box makes the movie call an
+           "is undefined" ExternalInterface name at every opening.
 
 Profiles (roadmap A5, docs/RUNNING_THE_CLIENT.md "Playing across machines (A5)"):
   local    (default) everything above; redirector host 127.0.0.1 (or a loopback address given as [host]
@@ -176,6 +208,7 @@ import hashlib
 import ipaddress
 import os
 import shutil
+import struct
 import sys
 
 import pefile
@@ -325,6 +358,11 @@ NUMFMT_STEP_ORIG = bytes.fromhex("dd05d87b3001")  # fld qword ptr [0x01307BD8]: 
 NUMFMT_STEP_NEW = bytes.fromhex("dd0540d13501")   # fld qword ptr [0x0135D140]: 1e15
 NUMFMT_1E15 = 0x0135D140                          # a 1e15 double in .rdata
 NUMFMT_1E15_VALUE = bytes.fromhex("00003426f56b0c43")
+# PROFILE2: ProfileUI_SetShownPlayer (0x004EE200) reloads the Profile only for another player; the jump past the same
+# player's id becomes unconditional, so the same player loads again (the Profile's mode tabs, a second Profile click)
+PROFILE_RELOAD_SITE = 0x004EE25B
+PROFILE_RELOAD_ORIG = bytes.fromhex("7508")  # jnz 0x004EE265: the low dword differs, so set it
+PROFILE_RELOAD_NEW = bytes.fromhex("eb08")   # jmp 0x004EE265: always
 # AVGPREC: the profile's averages, in StatsManager_OnShaperHistoryStatsResult with the games in st(0)
 AVERAGES_BLOCK = 0x00AA63C8
 # as shipped: 1 / games, the seconds' integer division and the list's head, then each total times the reciprocal
@@ -600,6 +638,333 @@ class PatchError(Exception):
     """The exe isn't the expected build, or the options don't fit the profile."""
 
 
+# --- EXESECT: the section .dgx, appended after .rsrc, for code and data that no longer fit .text's slack
+DGX_NAME = b".dgx"
+DGX_VA = 0x01C84000            # the untouched exe's SizeOfImage: .rsrc (0x01C01000, 0x82338 bytes) ends in the page before
+DGX_SIZE = 0x1000              # VirtualSize = SizeOfRawData: one page; it may grow by whole pages, no piece ever moves
+DGX_CHARACTERISTICS = 0x60000020  # IMAGE_SCN_CNT_CODE | MEM_EXECUTE | MEM_READ, as .text's: not writable
+DGX_MAGIC = b"DGX\0" + (1).to_bytes(4, "little")  # the section's first bytes: its name and the layout's version 1
+# Every piece's fixed place in .dgx: (name, offset from DGX_VA, room in bytes). Append-only: a new piece goes after the
+# last one (16-byte aligned), and a piece that has shipped never moves or shrinks, so the addresses the game's code is
+# patched to reach stay where they are. exepatch's dgxLayout is the same table (both test suites pin it).
+DGX_LAYOUT = (
+    ("header", 0x000, 0x010),      # DGX_MAGIC
+    ("draggrab", 0x010, 0x3F0),    # DRAGGRAB1: drag_grab_code() (452 bytes: the cave, the spectator helper, eps2)
+    ("options", 0x400, 0x100),     # DRAGGRAB2b: drag_options_piece() (the 13-entry gameplay table, 104 bytes; the name at +0x70)
+)
+SECURITY_DIR = 4                   # IMAGE_DIRECTORY_ENTRY_SECURITY: EA's Authenticode certificate, at the file's end
+
+
+def dgx_piece(name):
+    """(VA, room) of a piece of .dgx's layout."""
+    for piece, offset, room in DGX_LAYOUT:
+        if piece == name:
+            return DGX_VA + offset, room
+    raise PatchError(f"no piece {name!r} in .dgx's layout")
+
+
+def _pe_fields(data):
+    """The offsets of IMAGE_FILE_HEADER and the optional header, and the section headers as
+    (header offset, name, VirtualSize, VirtualAddress, SizeOfRawData, PointerToRawData)."""
+    u16 = lambda o: int.from_bytes(data[o:o + 2], "little")  # noqa: E731
+    u32 = lambda o: int.from_bytes(data[o:o + 4], "little")  # noqa: E731
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        raise PatchError("not a PE file (no MZ header)")
+    fh = u32(0x3C) + 4
+    if data[fh - 4:fh] != b"PE\0\0":
+        raise PatchError("not a PE file (no PE signature)")
+    opt = fh + 20
+    table = opt + u16(fh + 16)
+    secs = []
+    for i in range(u16(fh + 2)):
+        h = table + 40 * i
+        secs.append((h, bytes(data[h:h + 8]).rstrip(b"\0"), u32(h + 8), u32(h + 12), u32(h + 16), u32(h + 20)))
+    return fh, opt, secs
+
+
+def add_dgx_section(orig):
+    """The exe's bytes with the empty section .dgx appended (the patches place its pieces): a sixth section header
+    in the free slot after the fifth, VirtualAddress DGX_VA - ImageBase (the untouched SizeOfImage), its raw data
+    after the file's end aligned to the file alignment (0x200), so EA's certificate stays where it is, unused;
+    SizeOfImage and SizeOfCode raised by DGX_SIZE; the security directory zeroed (the certificate no longer ends the
+    file and has been invalid since the first patch: the file now says it is unsigned). The PE checksum stays as
+    shipped (stale, as after every other patch: the loader checks it only for drivers)."""
+    data = bytearray(orig)
+    fh, opt, secs = _pe_fields(data)
+    u32 = lambda o: int.from_bytes(data[o:o + 4], "little")  # noqa: E731
+
+    def put(o, v, n=4):
+        data[o:o + n] = v.to_bytes(n, "little")
+
+    size_of_image, size_of_headers = u32(opt + 56), u32(opt + 60)
+    if (len(secs) != 5 or int.from_bytes(data[opt:opt + 2], "little") != 0x10B or u32(opt + 32) != 0x1000
+            or u32(opt + 36) != 0x200 or size_of_image != DGX_VA - IMAGE_BASE or any(s[1] == DGX_NAME for s in secs)):
+        raise PatchError(f"unexpected PE header for .dgx ({len(secs)} sections, SizeOfImage {size_of_image:#x}; "
+                         "wrong build, or not the untouched exe?)")
+    if max((va + vsize + 0xFFF) & ~0xFFF for _h, _n, vsize, va, _rs, _rp in secs) != size_of_image:
+        raise PatchError("the last section doesn't end at SizeOfImage (wrong build?)")
+    slot = secs[-1][0] + 40
+    if slot + 40 > size_of_headers or any(data[slot:slot + 40]):
+        raise PatchError("no free section header after the last one (wrong build?)")
+    raw_end = max(rp + rs for _h, _n, _vs, _va, rs, rp in secs)
+    sec_dir = opt + 96 + 8 * SECURITY_DIR
+    cert_at, cert_len = u32(sec_dir), u32(sec_dir + 4)
+    if (cert_at or cert_len) and (cert_at < raw_end or cert_at + cert_len != len(data)):
+        raise PatchError(f"the certificate ({cert_at:#x}, {cert_len:#x} bytes) doesn't end the file (wrong build?)")
+    if len(data) < raw_end:
+        raise PatchError("the file ends before its last section's raw data (truncated?)")
+    put(sec_dir, 0)
+    put(sec_dir + 4, 0)
+    raw = (len(data) + 0x1FF) & ~0x1FF
+    data += bytes(raw - len(data) + DGX_SIZE)
+    data[slot:slot + 8] = DGX_NAME.ljust(8, b"\0")
+    put(slot + 8, DGX_SIZE)                   # VirtualSize
+    put(slot + 12, DGX_VA - IMAGE_BASE)       # VirtualAddress
+    put(slot + 16, DGX_SIZE)                  # SizeOfRawData
+    put(slot + 20, raw)                       # PointerToRawData (relocations, line numbers: none)
+    put(slot + 36, DGX_CHARACTERISTICS)
+    put(fh + 2, len(secs) + 1, 2)             # NumberOfSections
+    put(opt + 56, size_of_image + DGX_SIZE)   # SizeOfImage
+    put(opt + 4, u32(opt + 4) + DGX_SIZE)     # SizeOfCode
+    return bytes(data)
+
+
+def dgx_place(data, piece, blob):
+    """Write `blob` at its piece's fixed place in .dgx (data: a bytearray of an exe that has the section; the room must
+    still be empty) and return its VA. The API for patches whose code or data no longer fit .text's slack: declare the
+    piece in DGX_LAYOUT (and exepatch's dgxLayout), build its bytes for dgx_piece(name)'s VA, place them."""
+    va, room = dgx_piece(piece)
+    if len(blob) > room:
+        raise PatchError(f".dgx's {piece} piece has room for {room} bytes, not {len(blob)}")
+    _fh, _opt, secs = _pe_fields(data)
+    sec = next((s for s in secs if s[1] == DGX_NAME), None)
+    if sec is None or sec[3] != DGX_VA - IMAGE_BASE or sec[4] < DGX_SIZE:
+        raise PatchError(f"{piece} needs the section .dgx (--dgx on)")
+    at = sec[5] + va - DGX_VA
+    if at + len(blob) > len(data):
+        raise PatchError(f".dgx's {piece} piece is beyond the end of the file")
+    if any(data[at:at + len(blob)]):
+        raise PatchError(f".dgx's {piece} piece is written already")
+    data[at:at + len(blob)] = blob
+    return va
+
+
+# --- DRAGGRAB1: a grab-style middle-mouse drag scroll, switched in the game by the preference OptionDragGrab
+# GameplayControls_UpdateEdgeAndDragScroll (0x00697D80) runs the joystick while trigger 0xA686879F (the middle button)
+# is down. Its frame at the hook (sub esp,0x40; push ebx; push ebp): ebx = the camera, [esp+0x08] = dx and [esp+0x4C] =
+# dy (both 0 here) for SPGearsCamera_AddTranslateInput, the byte [esp+0x18] = the "trigger down" flag the epilogue
+# hands to SetDragScrollActive.
+DRAG_HOOK = 0x00697EB8                    # the joystick's first instructions (12 bytes): jmp into .dgx + 7 nops
+DRAG_HOOK_ORIG = bytes.fromhex("803ddd7f970100" "c644241801")  # cmp byte [0x01977FDD],0; mov byte [esp+0x18],1
+DRAG_RESUME = 0x00697EC4                  # jne 0x00697ED5 (later frames) / the first frame's SetDragScrollActive(1)
+DRAG_NO_MOVE = 0x006980B5                 # the shared "no move" path (the joystick's first frame and dead zone)
+DRAG_MOVED = 0x0069810B                   # the shared "moved" path: stopwatch, end a temporary lock, mode-6 translate
+DRAG_SPEC_SITES = ((0x00697D3C, bytes.fromhex("e8cf52fdff")),  # SetDragScrollActive(0): call IsSpectating
+                   (0x006981A0, bytes.fromhex("e86b4efdff")))  # the no-camera path: call IsSpectating
+DRAG_ACTIVE = 0x01977FDD                  # byte: a drag is active (SetDragScrollActive)
+APPPREFS = 0x01BA4118                     # the AppPrefs object
+APPPREFS_GETBOOL = 0x00A83800             # thiscall (key), ret 4; a missing key is false
+DRAG_GRAB_KEY = 0x14958012                # FNV-1 of "optiondraggrab" (the key OptionDragGrab)
+SET_DRAG_ACTIVE = 0x00697CC0              # GameplayControls_SetDragScrollActive(bool), cdecl
+GET_CURSOR_GROUND = 0x006993A0            # GameplayControls_GetCursorGroundPoint(out, fromMinimap), cdecl
+CAMERA_MANAGER = 0x00A6F910               # returns [0x01BA40C0]; its slot +0x6C, then +0x1C: the viewer
+VIEWER_GET_CURSOR_RAY = 0x00A6B670        # thiscall viewer (start*, end*), ret 8: the cursor's ray (x, y, z each)
+IS_SPECTATING = 0x0066D010                # the observer test before the cursor's jump back
+LOOK_AT_CURRENT = 0x013F5724              # SPGearsCamera's look-at point, current (x, y, z)
+LOOK_AT_TARGET = 0x013F5730               # and target
+DRAG_STATE = 0x01C000C0                   # in .tls's slack after the rating text (0x01C00090-0x01C000BF)
+DRAG_STATE_ROOM = 0x30
+DRAG_G0 = DRAG_STATE                      # the grabbed ground point G0 (x, y, z), set at the drag's start
+DRAG_GRAB = DRAG_STATE + 0x0C             # byte: this drag is a grab (the preference read at its start)
+DRAG_RAY_START = DRAG_STATE + 0x10        # the cursor ray's start (x, y, z)
+DRAG_RAY_END = DRAG_STATE + 0x1C          # and end
+DRAG_EPS2 = 1e-6                          # |d|^2 below this (1 mm): the mouse stopped, no move
+DRAG_SPEC_OFFSET = 0x1A0                  # the spectator helper's offset in the piece (after the grab step)
+DRAG_EPS2_OFFSET = 0x1C0                  # the constant's offset
+
+
+def drag_grab_code():
+    """The draggrab piece of .dgx (at dgx_piece("draggrab")'s VA): the cave the hook jumps to, the spectator helper
+    at +DRAG_SPEC_OFFSET and the constant DRAG_EPS2 at +DRAG_EPS2_OFFSET. Its source, as assembled here:
+
+    cave:   cmp byte [DRAG_ACTIVE],0 ; jne later           ; a drag's first frame:
+            push DRAG_GRAB_KEY ; mov ecx,[APPPREFS] ; call AppPrefs_GetBool
+            mov [DRAG_GRAB],al ; test al,al ; jz shipped    ; the preference, read once per drag
+            mov byte [esp+0x18],1 ; push 1 ; call SetDragScrollActive
+            push 0 ; push DRAG_G0 ; call GetCursorGroundPoint ; add esp,0xC
+            jmp DRAG_NO_MOVE                                ; G0 = the ground point under the cursor
+    later:  cmp byte [DRAG_GRAB],0 ; jne grab
+    shipped: cmp byte [DRAG_ACTIVE],0 ; mov byte [esp+0x18],1 ; jmp DRAG_RESUME   ; the joystick, as shipped
+    grab:   mov byte [esp+0x18],1
+            call CameraManager ; ecx = eax ; call [vt+0x6C] ; ecx = eax ; call [vt+0x1C]   ; the viewer
+            push DRAG_RAY_END ; push DRAG_RAY_START ; mov ecx,eax ; call Viewer_GetCursorRay
+            xmm2 = end.z - start.z ; if 0 or NaN: jmp nomove
+            t = (G0.z - start.z) / xmm2                    ; the ray on the plane z = G0.z
+            d.x (xmm2) = G0.x - (start.x + t * (end.x - start.x))
+            d.y (xmm3) = G0.y - (start.y + t * (end.y - start.y))
+            if d.x^2 + d.y^2 <= DRAG_EPS2 (or NaN): jmp nomove     ; the mouse stopped: the camera stops
+            if [ebx+0x30] == 6 and [ebx+0x2C] not in (3, 4):        ; the match camera, not following
+                current.xy += d ; target.xy += d                     ; no smoothing lag, no overshoot
+    zero:   [esp+0x08] = [esp+0x4C] = 0 ; jmp DRAG_MOVED            ; AddTranslateInput adds nothing
+    nomove: jmp DRAG_NO_MOVE
+    spec:   cmp byte [DRAG_GRAB],0 ; jne +5 ; jmp IsSpectating ; xor eax,eax ; ret   ; a grab: no jump back
+    """
+    va, _room = dgx_piece("draggrab")
+    c = bytearray()
+    labels, fixups = {}, []
+
+    def emit(hexs, *tail):
+        c.extend(bytes.fromhex(hexs))
+        for t in tail:
+            c.extend(t)
+
+    def u32(v):
+        return v.to_bytes(4, "little")
+
+    def to(op, target):                       # call/jmp rel32 to an exe address
+        emit(op)
+        c.extend(rel32(va + len(c) + 4, target))
+
+    def short(op, label):                     # jcc/jmp rel8 to a label in this piece
+        emit(op)
+        fixups.append((len(c), label, 1))
+        c.append(0)
+
+    def near(op, label):                      # jcc rel32 (0f 8x) to a label in this piece
+        emit(op)
+        fixups.append((len(c), label, 4))
+        c.extend(bytes(4))
+
+    def label(name):
+        labels[name] = len(c)
+
+    label("cave")
+    emit("803d", u32(DRAG_ACTIVE), b"\x00")               # cmp byte [active],0
+    short("75", "later")                                   # jne later
+    emit("68", u32(DRAG_GRAB_KEY))                         # push key
+    emit("8b0d", u32(APPPREFS))                            # mov ecx,[appprefs]
+    to("e8", APPPREFS_GETBOOL)                             # call AppPrefs_GetBool
+    emit("a2", u32(DRAG_GRAB))                             # mov [grab],al
+    emit("84c0")                                           # test al,al
+    short("74", "shipped")                                 # jz shipped
+    emit("c644241801")                                     # mov byte [esp+0x18],1
+    emit("6a01")                                           # push 1
+    to("e8", SET_DRAG_ACTIVE)                              # call SetDragScrollActive
+    emit("6a00" "68", u32(DRAG_G0))                        # push 0; push G0
+    to("e8", GET_CURSOR_GROUND)                            # call GetCursorGroundPoint
+    emit("83c40c")                                         # add esp,0xC
+    to("e9", DRAG_NO_MOVE)                                 # jmp no-move
+    label("later")
+    emit("803d", u32(DRAG_GRAB), b"\x00")                  # cmp byte [grab],0
+    short("75", "grab")                                    # jne grab
+    label("shipped")
+    c.extend(DRAG_HOOK_ORIG)                               # the two hooked instructions
+    to("e9", DRAG_RESUME)                                  # jmp resume
+    label("grab")
+    emit("c644241801")                                     # mov byte [esp+0x18],1
+    to("e8", CAMERA_MANAGER)                               # call CameraManager
+    emit("8b10" "8bc8" "ff526c")                           # mov edx,[eax]; mov ecx,eax; call [edx+0x6c]
+    emit("8b10" "8bc8" "ff521c")                           # mov edx,[eax]; mov ecx,eax; call [edx+0x1c]: viewer
+    emit("68", u32(DRAG_RAY_END), b"\x68", u32(DRAG_RAY_START))  # push end; push start
+    emit("8bc8")                                           # mov ecx,eax
+    to("e8", VIEWER_GET_CURSOR_RAY)                        # call Viewer_GetCursorRay
+    emit("f30f1015", u32(DRAG_RAY_END + 8))                # movss xmm2,[end.z]
+    emit("f30f5c15", u32(DRAG_RAY_START + 8))              # subss xmm2,[start.z]
+    emit("0f57db" "0f2ed3")                                # xorps xmm3,xmm3; ucomiss xmm2,xmm3
+    near("0f8a", "nomove")                                 # jp nomove
+    near("0f84", "nomove")                                 # jz nomove
+    emit("f30f1005", u32(DRAG_G0 + 8))                     # movss xmm0,[G0.z]
+    emit("f30f5c05", u32(DRAG_RAY_START + 8))              # subss xmm0,[start.z]
+    emit("f30f5ec2")                                       # divss xmm0,xmm2: t
+    for axis, (g0_reg, sub) in enumerate((("15", "d1"), ("1d", "d9"))):  # x into xmm2, y into xmm3
+        emit("f30f100d", u32(DRAG_RAY_END + 4 * axis))     # movss xmm1,[end]
+        emit("f30f5c0d", u32(DRAG_RAY_START + 4 * axis))   # subss xmm1,[start]
+        emit("f30f59c8")                                   # mulss xmm1,xmm0
+        emit("f30f580d", u32(DRAG_RAY_START + 4 * axis))   # addss xmm1,[start]: G
+        emit("f30f10" + g0_reg, u32(DRAG_G0 + 4 * axis))   # movss xmm2|xmm3,[G0]
+        emit("f30f5c" + sub)                               # subss xmm2|xmm3,xmm1: d
+    emit("0f28c2" "f30f59c2")                              # movaps xmm0,xmm2; mulss xmm0,xmm2
+    emit("0f28cb" "f30f59cb")                              # movaps xmm1,xmm3; mulss xmm1,xmm3
+    emit("f30f58c1")                                       # addss xmm0,xmm1
+    emit("0f2f05", u32(va + DRAG_EPS2_OFFSET))             # comiss xmm0,[eps2]
+    short("76", "nomove")                                  # jbe nomove
+    emit("837b3006")                                       # cmp dword [ebx+0x30],6
+    short("75", "zero")                                    # jne zero
+    emit("8b432c" "83f803")                                # mov eax,[ebx+0x2c]; cmp eax,3
+    short("74", "zero")                                    # je zero
+    emit("83f804")                                         # cmp eax,4
+    short("74", "zero")                                    # je zero
+    for point in (LOOK_AT_CURRENT, LOOK_AT_TARGET):
+        for axis, reg in ((0, "c2"), (1, "c3")):
+            emit("f30f1005", u32(point + 4 * axis))        # movss xmm0,[p]
+            emit("f30f58" + reg)                           # addss xmm0,xmm2|xmm3
+            emit("f30f1105", u32(point + 4 * axis))        # movss [p],xmm0
+    label("zero")
+    emit("33c0" "89442408" "8944244c")                     # xor eax,eax; mov [esp+8],eax; mov [esp+0x4c],eax
+    to("e9", DRAG_MOVED)                                   # jmp moved
+    label("nomove")
+    to("e9", DRAG_NO_MOVE)                                 # jmp no-move
+    for at, name, size in fixups:
+        rel = labels[name] - (at + size)
+        if size == 1 and not -128 <= rel <= 127:
+            raise PatchError(f"draggrab: short jump to {name} out of range")
+        c[at:at + size] = (rel & (1 << 8 * size) - 1).to_bytes(size, "little")
+    if len(c) > DRAG_SPEC_OFFSET:
+        raise PatchError(f"draggrab: the cave ({len(c)} bytes) runs into the spectator helper")
+    c.extend(bytes(DRAG_SPEC_OFFSET - len(c)))
+    emit("803d", u32(DRAG_GRAB), b"\x00")                  # spec: cmp byte [grab],0
+    emit("7505")                                           # jne +5
+    to("e9", IS_SPECTATING)                                # jmp IsSpectating
+    emit("33c0" "c3")                                      # xor eax,eax; ret
+    c.extend(bytes(DRAG_EPS2_OFFSET - len(c)))
+    c.extend(struct.pack("<f", DRAG_EPS2))
+    return bytes(c)
+
+
+def drag_grab_sites():
+    """((VA, original bytes, patched bytes), ...): the hook and the two spectator sites."""
+    va, _room = dgx_piece("draggrab")
+    hook = b"\xe9" + rel32(DRAG_HOOK + 5, va) + b"\x90" * (len(DRAG_HOOK_ORIG) - 5)
+    sites = [(DRAG_HOOK, DRAG_HOOK_ORIG, hook)]
+    for site, orig in DRAG_SPEC_SITES:
+        sites.append((site, orig, b"\xe8" + rel32(site + 5, va + DRAG_SPEC_OFFSET)))
+    return tuple(sites)
+
+
+# The gameplay options' table, copied into .dgx with a 13th entry (OptionDragGrab, the Options menu's grab-style
+# drag scroll)
+OPT_TABLE = 0x011D1988                    # 12 x {u32 FNV-1 of the lower-case name, char *name}, OptionFilterProfanity..
+OPT_TABLE_SIZE = 12 * 8
+OPT_TABLE_FIRST = (0x90FBF794).to_bytes(4, "little")  # its first hash: FNV-1 of "optionfilterprofanity"
+OPT_NAME = b"OptionDragGrab\0"
+OPT_NAME_OFFSET = 0x70                    # the name's offset in the options piece (after the 13 entries)
+
+
+def drag_options_piece(table):
+    """The options piece of .dgx: `table` (EA's 12 entries, read from the exe being patched), the 13th entry
+    {DRAG_GRAB_KEY, the name's VA}, zeros, the name at OPT_NAME_OFFSET."""
+    va, _room = dgx_piece("options")
+    if len(table) != OPT_TABLE_SIZE:
+        raise PatchError(f"options table: {len(table)} bytes, expected {OPT_TABLE_SIZE}")
+    blob = bytes(table) + struct.pack("<II", DRAG_GRAB_KEY, va + OPT_NAME_OFFSET)
+    return blob + bytes(OPT_NAME_OFFSET - len(blob)) + OPT_NAME
+
+
+def drag_options_sites():
+    """((VA, original bytes, patched bytes), ...): the table's four disp32 readers and the two loop bounds in
+    OptionsUI_GetGameSettings (0x004D3F90) and OptionsUI_SaveSettings (0x004D60C0)."""
+    va, _room = dgx_piece("options")
+    mov = lambda op, disp: bytes.fromhex(op) + struct.pack("<I", disp)  # noqa: E731
+    return (
+        (0x004D4070, mov("8bb7", OPT_TABLE), mov("8bb7", va)),            # mov esi,[edi+table]      (hash)
+        (0x004D40AC, mov("8b87", OPT_TABLE + 4), mov("8b87", va + 4)),    # mov eax,[edi+table+4]    (name)
+        (0x004D414E, bytes.fromhex("83ff60"), bytes.fromhex("83ff68")),   # cmp edi,0x60 -> 0x68
+        (0x004D66A0, mov("8b95", OPT_TABLE + 4), mov("8b95", va + 4)),    # mov edx,[ebp+table+4]    (name)
+        (0x004D66A6, mov("8b8d", OPT_TABLE), mov("8b8d", va)),            # mov ecx,[ebp+table]      (hash)
+        (0x004D66BE, bytes.fromhex("83fd60"), bytes.fromhex("83fd68")),   # cmp ebp,0x60 -> 0x68
+    )
+
+
 def lan_address(text, what):
     """The IPv4 address of a server on another machine: not loopback, wildcard, multicast or reserved. A public
     address is accepted too (the operator's own risk, docs/hosting.md)."""
@@ -658,11 +1023,14 @@ def check_data_suffix(suffix):
 
 def patch_bytes(orig, modulus, profile="local", host=None, server_host=None, client_bind=None, data_suffix=None,
                 laa=True, preload=True, maptable=True, rating=True, heaplocks=True, numfmt=True, averages=True,
-                fade=True):
-    """Patch a copy of the untouched exe's bytes; returns (patched bytes, summary text)."""
+                fade=True, dgx=True, draggrab=True, profilereload=True):
+    """Patch a copy of the untouched exe's bytes; returns (patched bytes, summary text). draggrab needs dgx (without
+    the section it is left out: the cave lives there)."""
     server, cave_address = resolve_profile(profile, host, server_host, client_bind)
     check_data_suffix(data_suffix)
-    data = bytearray(orig)
+    data = bytearray(add_dgx_section(orig) if dgx else orig)  # EXESECT: first, so the patches can address .dgx
+    if dgx:
+        dgx_place(data, "header", DGX_MAGIC)
     pe = pefile.PE(data=bytes(data), fast_load=True)
     off = lambda va: pe.get_offset_from_rva(va - IMAGE_BASE)  # noqa: E731
 
@@ -848,6 +1216,36 @@ def patch_bytes(orig, modulus, profile="local", host=None, server_host=None, cli
         for va, _orig, new, _what in FADE_SITES:
             data[off(va):off(va) + len(new)] = new
         summary += "; enemy creatures fade in and out by their team's sight and the fog (0.25 s)"
+    # --- DRAGGRAB1: the middle-mouse drag grabs the ground when the preference OptionDragGrab is on
+    for va, want, _new in drag_grab_sites():
+        expect(va, want, "the drag scroll's hook site")
+    for va, want, _new in drag_options_sites():
+        expect(va, want, "the gameplay options table's reader")
+    expect(OPT_TABLE, OPT_TABLE_FIRST, "the gameplay options table (OptionFilterProfanity first)")
+    if dgx and draggrab:
+        if pe.OPTIONAL_HEADER.DllCharacteristics & 0x40 or not pe.FILE_HEADER.Characteristics & 0x1:
+            raise PatchError("exe is relocatable (ASLR or relocations); absolute addresses in the cave would break")
+        if not (RATING_TEXT + RATING_TEXT_ROOM <= DRAG_STATE and DRAG_STATE + DRAG_STATE_ROOM <= TLS_VA + TLS_RAW
+                and DRAG_RAY_END + 12 <= DRAG_STATE + DRAG_STATE_ROOM):
+            raise PatchError("the drag grab's state doesn't fit into .tls's slack")
+        expect(DRAG_STATE, bytes(DRAG_STATE_ROOM), "unused slack after the rating text")
+        vsize_at = tls.get_file_offset() + 8      # map .tls's slack (VirtualSize = SizeOfRawData)
+        data[vsize_at:vsize_at + 4] = TLS_RAW.to_bytes(4, "little")
+        cave_va = dgx_place(data, "draggrab", drag_grab_code())
+        for va, _want, new in drag_grab_sites():
+            data[off(va):off(va) + len(new)] = new
+        table_va = dgx_place(data, "options", drag_options_piece(data[off(OPT_TABLE):off(OPT_TABLE) + OPT_TABLE_SIZE]))
+        for va, _want, new in drag_options_sites():
+            data[off(va):off(va) + len(new)] = new
+        summary += (f"; the middle-mouse drag grabs the ground when the preference OptionDragGrab is on "
+                    f"(cave at {cave_va:#010x}, the Options menu's 13-entry gameplay table at {table_va:#010x})")
+    if dgx:
+        summary += f"; an executable section .dgx at {DGX_VA:#010x} ({DGX_SIZE} bytes) for later patches"
+    # --- PROFILE2: the Profile loads the same player again when asked (its mode tabs)
+    expect(PROFILE_RELOAD_SITE, PROFILE_RELOAD_ORIG, "the Profile's same-player check")
+    if profilereload:
+        data[off(PROFILE_RELOAD_SITE):off(PROFILE_RELOAD_SITE) + len(PROFILE_RELOAD_NEW)] = PROFILE_RELOAD_NEW
+        summary += "; the Profile loads its player again when asked (its mode tabs)"
     return bytes(data), summary
 
 
@@ -908,6 +1306,27 @@ def describe(data):
     fade = tuple(at(va, len(o)) for va, o, _n, _w in FADE_SITES)
     out["fade"] = {tuple(n for _v, _o, n, _w in FADE_SITES): "on",
                    tuple(o for _v, o, _n, _w in FADE_SITES): "as-shipped"}.get(fade, "unknown")
+    sec = next((s for s in pe.sections if s.Name.rstrip(b"\0") == DGX_NAME), None)
+    if sec is None:
+        out["dgx"] = "as-shipped"
+    elif (sec.VirtualAddress == DGX_VA - IMAGE_BASE and sec.Misc_VirtualSize == DGX_SIZE == sec.SizeOfRawData
+          and sec.Characteristics == DGX_CHARACTERISTICS and at(DGX_VA, len(DGX_MAGIC)) == DGX_MAGIC):
+        out["dgx"] = "on"
+    else:
+        out["dgx"] = "unknown"
+    sites = drag_grab_sites() + drag_options_sites()
+    got = tuple(at(va, len(want)) for va, want, _new in sites)
+    if got == tuple(want for _va, want, _new in sites):
+        out["draggrab"] = "as-shipped"
+    elif (out["dgx"] == "on" and got == tuple(new for _va, _want, new in sites)
+          and at(dgx_piece("draggrab")[0], len(drag_grab_code())) == drag_grab_code()
+          and at(dgx_piece("options")[0], OPT_NAME_OFFSET + len(OPT_NAME))
+          == drag_options_piece(at(OPT_TABLE, OPT_TABLE_SIZE))):
+        out["draggrab"] = "on"
+    else:
+        out["draggrab"] = "unknown"
+    out["profilereload"] = {PROFILE_RELOAD_NEW: "on", PROFILE_RELOAD_ORIG: "as-shipped"}.get(
+        at(PROFILE_RELOAD_SITE, len(PROFILE_RELOAD_ORIG)), "unknown")
     return out
 
 
@@ -940,11 +1359,21 @@ def main(argv):
                     help="NUMFMT: the UI's numbers print with 15 digits (8.2, not 8.199999999999999); on by default")
     ap.add_argument("--averages", choices=("on", "off"), default="on",
                     help="AVGPREC: the profile's averages are real divisions at full precision (8.7, not 8.6); on by default")
+    ap.add_argument("--profile-reload", choices=("on", "off"), default="on",
+                    help="PROFILE2: the Profile loads the same player again when asked (its mode tabs); on by default")
     ap.add_argument("--fade", choices=("on", "off"), default="on",
                     help="FADE1: enemy creatures are drawn by their team's sight and fade in and out; on by default")
     ap.add_argument("--rating", choices=("on", "off"), default="on",
                     help="RATINGSHOW1: the main menu's profile box shows the rating the server sends; on by default")
+    ap.add_argument("--dgx", choices=("on", "off"), default="on",
+                    help="EXESECT: append the executable section .dgx (room for later patches); on by default")
+    ap.add_argument("--drag-grab", choices=("on", "off"), default=None,
+                    help="DRAGGRAB1: the middle-mouse drag grabs the ground when the game's preference OptionDragGrab "
+                         "is on (the joystick as shipped while it is off or missing), and the Options menu's 13th "
+                         "gameplay entry OptionDragGrab (DRAGGRAB2b); needs .dgx; on with --dgx on")
     args = ap.parse_args(argv[1:])
+    if args.drag_grab == "on" and args.dgx == "off":
+        sys.exit("--drag-grab on needs the section .dgx (--dgx on)")
     exe = os.path.abspath(args.exe)
     if os.sep + "ia_" in exe or "/ia_" in exe:
         sys.exit("refusing to patch a pristine extraction (client/ia_*); use a working copy")
@@ -968,7 +1397,8 @@ def main(argv):
                                     args.data_suffix, laa=args.laa == "on", preload=args.preload == "on",
                                     maptable=args.maptable == "on", rating=args.rating == "on",
                                     heaplocks=args.heap_locks == "on", numfmt=args.number_format == "on",
-                                    averages=args.averages == "on", fade=args.fade == "on")
+                                    averages=args.averages == "on", fade=args.fade == "on", dgx=args.dgx == "on",
+                                    draggrab=args.drag_grab != "off", profilereload=args.profile_reload == "on")
     except PatchError as e:
         sys.exit(str(e))
     with open(exe, "wb") as f:

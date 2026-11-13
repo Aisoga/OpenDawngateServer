@@ -252,6 +252,9 @@ type systemMessages struct {
 	mapNotes map[*Conn]int
 	// rulesNotes is the last rules line per connection (RULES1, lobbyrules.go announceRules)
 	rulesNotes map[*Conn]rulesNote
+	// notices counts the admins' notices sent, noticeAt is when the last went out (SYSCHAT, notice.go SendNotice)
+	notices  int64
+	noticeAt time.Time
 }
 
 // SetBroadcasts makes list the current broadcast messages (ids 1, 2, ... in order) and turns broadcasts on: from now

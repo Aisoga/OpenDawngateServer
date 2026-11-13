@@ -25,7 +25,7 @@ Steps, in order. Each one checks its result, is skipped when its result is curre
                  --maps (default this checkout's maps/, from a worktree without a package the main checkout's): with a map package there, the lobby's map line names none.
   client maps    (and host maps) the release setup's map steps, `go run ./tools/mapsetup --maps <maps/> [--client]`:
                  zz_MM_Map_v3.snap, zz_<name>.snap of every package in maps/ (compiled from its map.json and the
-                 copy's files), zz_BotProfiles.snap (the bot profiles and the maps' catalog entries) and, in the client
+                 copy's files), zz_BotProfiles.snap (the bot profiles, the maps' catalog entries, the Locus zap's sound) and, in the client
                  copy, zz_MatchOptions.snap (the create dialog's bot check box and map dropdown); --check passes on.
   RakNet       tools/raknet/RakNet (Source/ and the licence files) from the facebookarchive/RakNet archive of commit
                  1a169895 (--raknet-zip; SHA-256 checked). This script downloads nothing.
@@ -113,7 +113,7 @@ PATCHED = (EXE,) + CONFIGS
 KEY_FILES = PATCHED + (LOADER,)  # hashed in every check of client/ia_Dawngate
 CERT_FILES = ("ca_key.pem", "ca_cert.pem", "ca_modulus.bin", "server_key.pem", "server_cert.pem")
 HOST_KEYS = ("redirector", "appdata", "documents")  # what a host copy's exe must carry (setup_lane.py's rule)
-EXTRA_LANES = ("b", "c", "d")  # A6, A6b: the lanes setup_lane.py makes (its LANES but a; test_a6.py checks they agree)
+EXTRA_LANES = ("b", "c", "d", "g")  # A6, A6b, LANE5: the lanes setup_lane.py makes (its LANES but a; test_a6.py checks they agree)
 # A5b: further copies setup_lane.py makes: lane d's second client (its EXTRA_CLIENTS; since G3b lane b's, f) and the LAN
 # profile's test copy
 EXTRA_COPIES = ("e", "f", "h", "lan")
@@ -829,7 +829,7 @@ class Setup:
         """MAPED2b: a copy's map files by the release setup's own code (`go run ./tools/mapsetup --maps <maps/>
         [--client] <copy>`, with --check when this run only checks): game/Data/zz_MM_Map_v3.snap (build 854's archive,
         MM_ARCHIVE_SHA256), zz_<name>.snap of every package in this checkout's maps/ (compiled from its map.json and the
-        copy's files), zz_BotProfiles.snap (the bot profiles, a Warden with the Predator role, and the maps' catalog
+        copy's files), zz_BotProfiles.snap (the bot profiles, a Warden with the Predator role, the Locus zap's sound, and the maps' catalog
         entries) and, in a player copy, zz_MatchOptions.snap (the CREATE GAME dialog's bot check box and map dropdown,
         after the archives it lists). Current means byte for byte what the Go setup makes now. Every client copy and
         the host copy: a server may host any of these maps. Each line the Go setup prints is reported here."""
@@ -893,6 +893,14 @@ class Setup:
         purchase of this visit can be undone and the shop's Sell turned into Refund there; the Go setup's
         moviepatch.ItemShop, the same bytes). Every client copy."""
         return self.step_movie(step, copy, "itemshop", "the shop's inline refund", "an older refund class")
+
+    def step_options(self, step, copy):
+        """a client copy's added archive game/Data/zz_Options.snap (patch_login_movie.py --spec options: the Options
+        menu's gameplay tab movie from the copy's own Options.snap with our class that adds one more of the tab's own
+        check boxes, OptionDragGrab, "Grab-style drag scroll (middle mouse)", which the game's Options code loads and
+        saves by name; the Go setup's moviepatch.Options, the same bytes). Every client copy."""
+        return self.step_movie(step, copy, "options", "the Options menu's drag scroll check box",
+                               "an older drag scroll check box")
 
     def step_collection(self, step, copy, host):
         """a client copy's added archive game/Data/zz_CollectionItems.snap (patch_login_movie.py --spec collection
@@ -1252,6 +1260,7 @@ class Setup:
             self.step_match_type("preferred region", self.client, LOCAL)
             self.step_party_region("party region", self.client, LOCAL)
             self.step_item_shop("shop refund", self.client)
+            self.step_options("drag scroll option", self.client)
         self.step_server()
         host_copy = self.copy_there("host copy", self.host, archive, PATCHED + (LOADER,))
         host = False
@@ -1306,6 +1315,7 @@ class Setup:
             self.step_match_type("preferred region", self.client, host)
             self.step_party_region("party region", self.client, host)
             self.step_item_shop("shop refund", self.client)
+            self.step_options("drag scroll option", self.client)
             if os.path.isfile(os.path.join(self.data, "content.json")):
                 self.step_collection("collection items", self.client, host)
             else:

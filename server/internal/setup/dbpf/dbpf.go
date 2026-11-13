@@ -394,3 +394,41 @@ func (p *Package) Rebuild(replacements map[string][]byte) ([]byte, error) {
 	out = append(out, body.Bytes()...)
 	return append(out, index...), nil
 }
+
+// Added is a new entry for RebuildAdd.
+type Added struct {
+	Type, Group uint32
+	Instance    uint64
+	Data        []byte
+}
+
+// RebuildAdd is Rebuild with new entries (dbpf.py's rebuild with added): each is stored uncompressed (committed 1)
+// after the old entries, in the data and at the end of the index, in their order. A replacement key the package
+// doesn't have, or an added key it has (or one added twice), is an error.
+func (p *Package) RebuildAdd(replacements map[string][]byte, added []Added) ([]byte, error) {
+	have := make(map[string]bool, len(p.Entries)+len(added))
+	for _, e := range p.Entries {
+		have[e.Key()] = true
+	}
+	for k := range replacements {
+		if !have[k] {
+			return nil, fmt.Errorf("dbpf: not in the package: %s", k)
+		}
+	}
+	q := *p
+	q.Entries = append([]Entry(nil), p.Entries...)
+	repl := make(map[string][]byte, len(replacements)+len(added))
+	for k, v := range replacements {
+		repl[k] = v
+	}
+	for _, a := range added {
+		e := Entry{Type: a.Type, Group: a.Group, Instance: a.Instance, Offset: 0xFFFFFFFF, Committed: 1}
+		if have[e.Key()] {
+			return nil, fmt.Errorf("dbpf: already in the package: %s", e.Key())
+		}
+		have[e.Key()] = true
+		q.Entries = append(q.Entries, e)
+		repl[e.Key()] = a.Data
+	}
+	return q.Rebuild(repl)
+}

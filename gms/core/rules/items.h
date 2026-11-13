@@ -130,6 +130,104 @@ inline const ItemRow* ItemTable(std::size_t* count) {
   return kRows;
 }
 
+// LIGHTNING1: each stat item's components (item id, component id), from the item catalog's `from` column: an Advanced
+// item's Basic one, a Legendary item's Advanced one (Advanced_Integrity has two, Resilience and Will). The pools by id
+// (shop.h) are checked against it (gms_tests RulesItemPoolsClosedDownwardsById): REFUND1's undo puts a component back.
+struct ItemComponent {
+  std::uint32_t item;
+  std::uint32_t component;
+};
+
+inline const ItemComponent* ItemComponents(std::size_t* count) {
+  static const ItemComponent kRows[] = {
+      {0x0484AAA0, 0x7FDF6F5A},  // Advanced_Abolition <- Basic_Time
+      {0xC8846639, 0x595ED4FA},  // Advanced_Aggression <- Basic_Power
+      {0xD2DDFA15, 0xD1CDA3DF},  // Advanced_Balance <- Basic_Will
+      {0x8DB56EF1, 0x7FDF6F5A},  // Advanced_Clarity <- Basic_Time
+      {0x7AE6CC48, 0x595ED4FA},  // Advanced_Command <- Basic_Power
+      {0x2D4AEB6E, 0x183E3A78},  // Advanced_Consumption <- Basic_Hunger
+      {0xD37B324C, 0x595ED4FA},  // Advanced_Control <- Basic_Power
+      {0x008B0129, 0xD1CDA3DF},  // Advanced_Conviction <- Basic_Will
+      {0xEA8DF487, 0x183E3A78},  // Advanced_Desire <- Basic_Hunger
+      {0xA90CD55F, 0x6F470916},  // Advanced_Discipline <- Basic_Resilience
+      {0xF485EF39, 0x7FDF6F5A},  // Advanced_Energy <- Basic_Time
+      {0x9DA67B0A, 0x595ED4FA},  // Advanced_Force <- Basic_Power
+      {0x35EA2247, 0x6F470916},  // Advanced_Form <- Basic_Resilience
+      {0x813F2DE7, 0xD1CDA3DF},  // Advanced_Freedom <- Basic_Will
+      {0xEA6C002A, 0xB22758B1},  // Advanced_Growth <- Basic_Life
+      {0x5CB67D6D, 0x7FDF6F5A},  // Advanced_Inspiration <- Basic_Time
+      {0x22651152, 0x6F470916},  // Advanced_Integrity <- Basic_Resilience
+      {0x584438CE, 0x595ED4FA},  // Advanced_Might <- Basic_Power
+      {0x79E76C0B, 0x7FDF6F5A},  // Advanced_Motion <- Basic_Time
+      {0xF16A118F, 0xB22758B1},  // Advanced_Pride <- Basic_Life
+      {0x13587A9C, 0xB22758B1},  // Advanced_Purity <- Basic_Life
+      {0xBD9441F1, 0x6F470916},  // Advanced_Resolve <- Basic_Resilience
+      {0xBD9441F1, 0xD1CDA3DF},  // Advanced_Resolve <- Basic_Will
+      {0x46E84A06, 0xB22758B1},  // Advanced_Vigor <- Basic_Life
+      {0xEAB6BFD2, 0x35EA2247},  // Legendary_Adamance <- Advanced_Form
+      {0x4D83E1BF, 0xEA8DF487},  // Legendary_Ambition <- Advanced_Desire
+      {0xA4593C15, 0x2D4AEB6E},  // Legendary_Assimilation <- Advanced_Consumption
+      {0x63C3F8AA, 0xD2DDFA15},  // Legendary_Betrayal <- Advanced_Balance
+      {0x97AF2200, 0xF485EF39},  // Legendary_Chaos <- Advanced_Energy
+      {0x79333B14, 0x0484AAA0},  // Legendary_Conquest <- Advanced_Abolition
+      {0x4DF411E3, 0x5CB67D6D},  // Legendary_Corruption <- Advanced_Inspiration
+      {0xD9E78243, 0xEA6C002A},  // Legendary_Creation <- Advanced_Growth
+      {0xFC34A372, 0x584438CE},  // Legendary_Decay <- Advanced_Might
+      {0xFA8CE86F, 0x46E84A06},  // Legendary_Defiance <- Advanced_Vigor
+      {0x49056D24, 0xC8846639},  // Legendary_Destruction <- Advanced_Aggression
+      {0xD0A7565C, 0x13587A9C},  // Legendary_Devotion <- Advanced_Purity
+      {0xF6F88EF6, 0x9DA67B0A},  // Legendary_Divinity <- Advanced_Force
+      {0x6809FA7C, 0x9DA67B0A},  // Legendary_Dominance <- Advanced_Force
+      {0xD26C7B6A, 0x5CB67D6D},  // Legendary_Duress <- Advanced_Inspiration
+      {0x3768ED3C, 0xBD9441F1},  // Legendary_Empathy <- Advanced_Resolve
+      {0xB9E0FE48, 0xA90CD55F},  // Legendary_Equilibrium <- Advanced_Discipline
+      {0x4792EAB0, 0x008B0129},  // Legendary_Faith <- Advanced_Conviction
+      {0xD4EBC6FC, 0x8DB56EF1},  // Legendary_Fate <- Advanced_Clarity
+      {0x33DA840D, 0x0484AAA0},  // Legendary_Finesse <- Advanced_Abolition
+      {0x05E8C38A, 0x79E76C0B},  // Legendary_Fluidity <- Advanced_Motion
+      {0xAD2F89A0, 0x5CB67D6D},  // Legendary_Furor <- Advanced_Inspiration
+      {0x848E0E69, 0xF16A118F},  // Legendary_Glory <- Advanced_Pride
+      {0x62A19ED4, 0x5CB67D6D},  // Legendary_Grace <- Advanced_Inspiration
+      {0xED6E120E, 0x13587A9C},  // Legendary_Harmony <- Advanced_Purity
+      {0x38234B18, 0xBD9441F1},  // Legendary_Hope <- Advanced_Resolve
+      {0xDFC050AD, 0x9DA67B0A},  // Legendary_Hostility <- Advanced_Force
+      {0xC6E5AB8B, 0x79E76C0B},  // Legendary_Impulse <- Advanced_Motion
+      {0x51AE1179, 0xD37B324C},  // Legendary_Inevitability <- Advanced_Control
+      {0x2923BB47, 0x79E76C0B},  // Legendary_Influence <- Advanced_Motion
+      {0x03C416DC, 0x8DB56EF1},  // Legendary_Insight <- Advanced_Clarity
+      {0x8A86E54F, 0xC8846639},  // Legendary_Judgement <- Advanced_Aggression
+      {0xAB47FDDD, 0x7AE6CC48},  // Legendary_Justice <- Advanced_Command
+      {0x51CD1140, 0x813F2DE7},  // Legendary_Momentum <- Advanced_Freedom
+      {0xC9E846F6, 0xD2DDFA15},  // Legendary_Oppression <- Advanced_Balance
+      {0x977E2A08, 0x22651152},  // Legendary_Order <- Advanced_Integrity
+      {0x5F9338CA, 0x9DA67B0A},  // Legendary_Pain <- Advanced_Force
+      {0xE777D941, 0xEA8DF487},  // Legendary_Passion <- Advanced_Desire
+      {0xBA39CD7C, 0x13587A9C},  // Legendary_Pestilence <- Advanced_Purity
+      {0xD62F5190, 0xF485EF39},  // Legendary_Potency <- Advanced_Energy
+      {0x8B99C808, 0x35EA2247},  // Legendary_Preservation <- Advanced_Form
+      {0x02696CC3, 0x46E84A06},  // Legendary_Prosperity <- Advanced_Vigor
+      {0x6F553DFA, 0xD37B324C},  // Legendary_Pursuit <- Advanced_Control
+      {0xA7AE27CB, 0xC8846639},  // Legendary_Rage <- Advanced_Aggression
+      {0x5FD24179, 0x46E84A06},  // Legendary_Rampancy <- Advanced_Vigor
+      {0x99BD92EE, 0xEA6C002A},  // Legendary_Rebirth <- Advanced_Growth
+      {0xB0FB4E50, 0xF485EF39},  // Legendary_Resonance <- Advanced_Energy
+      {0xA6C747D1, 0x008B0129},  // Legendary_Retribution <- Advanced_Conviction
+      {0xF4DE8330, 0x0484AAA0},  // Legendary_Ruin <- Advanced_Abolition
+      {0xE7327947, 0x813F2DE7},  // Legendary_Stability <- Advanced_Freedom
+      {0xDD1E0AE9, 0x584438CE},  // Legendary_Strife <- Advanced_Might
+      {0xD74B4399, 0xA90CD55F},  // Legendary_Subjugation <- Advanced_Discipline
+      {0x8DD2812F, 0x7AE6CC48},  // Legendary_Supremacy <- Advanced_Command
+      {0x998E205E, 0xD2DDFA15},  // Legendary_Valor <- Advanced_Balance
+      {0x31E5063A, 0xF16A118F},  // Legendary_Vengeance <- Advanced_Pride
+      {0xF3CD7A80, 0xEA6C002A},  // Legendary_Vibrance <- Advanced_Growth
+      {0xF1F810B3, 0x2D4AEB6E},  // Legendary_Voracity <- Advanced_Consumption
+      {0x0EC81301, 0x7AE6CC48},  // Legendary_Wisdom <- Advanced_Command
+      {0x34D0A812, 0x8DB56EF1},  // Legendary_Zeal <- Advanced_Clarity
+  };
+  *count = sizeof kRows / sizeof kRows[0];
+  return kRows;
+}
+
 // The item's kind; kUnknown for an id not in the table.
 inline ItemKind KindOf(std::uint32_t id) {
   std::size_t n = 0;

@@ -19,19 +19,19 @@ var pythonHashes = []struct {
 	want map[string]string
 }{
 	{"local (setup_all.py's client copy)", Defaults(), map[string]string{
-		"Config.package":      "e154e0940bf417f15115826e89269aad124b02a80a1b639a507946b883042209",
-		"Config_Ship.package": "d1d189ffb1424183af95f54860e005113e22a2daee3c53da40031f117b8c087c",
+		"Config.package":      "ca19b9ebfb2b0e0335b174c7db6e246cc200e6bc3b2ceb1ea770f3c65baed8b0",
+		"Config_Ship.package": "bb8ca33343e094f35d86f098e17a7e78312d94c9e034ea82fa8ebedfba5be7e5",
 		"Config_Pack.package": "b163d83b11abe3d0163f54698aff9094a6410cab73e9083916a66a12d1d0322f",
 	}},
 	{"lan --host 192.168.1.20", Options{Host: "192.168.1.20", HTTPPort: 18080, TelemetryPort: 9988}, map[string]string{
-		"Config.package":      "3d707074e165489c9050eb3dafd0ce004812694625f92d33cd063b460f7a6f86",
-		"Config_Ship.package": "c13eb0721358a0d5159e07eec56c6ec96240fa52664c81589a0a6bb707e3ea0b",
+		"Config.package":      "372dff660cd326ee18c3987442a39daa368fd63c3572f1a326130ef1f7d4bdb8",
+		"Config_Ship.package": "9c32a6e8ff968e630775a6275aed70b599f1827b671d1013c08bd583703ab163",
 		"Config_Pack.package": "e2b8318ed2ae5d0760931d283f19b15924207a490b4944a04d8e20ec289bf46b",
 	}},
 	{"--host 10.0.0.5 --http-port 8080 --telemetry-port 9000 --afk-minutes 30 --afk-disconnect-minutes 5",
 		Options{Host: "10.0.0.5", HTTPPort: 8080, TelemetryPort: 9000, AFKMinutes: 30, AFKDisconnectMinutes: 5}, map[string]string{
-			"Config.package":      "ced0b49e056dff0330bf6f7b0ad5fc0f8b43c70d38d585995b770a7e14ea40fb",
-			"Config_Ship.package": "4d6533295fe5fdeb6be0188498fe6bfa3853450e780f1d54ad9eca4522c3c527",
+			"Config.package":      "3b3581714adfccf5aa5add26af5bc0ce98e1e46816b2184bc34fd6c252970867",
+			"Config_Ship.package": "98da329177826c88cfa8e135e41806c7d57855c72238bf22a62c7e0f8b959260",
 			"Config_Pack.package": "c5336241f6d6759367e5f1f4de58f12ccccde1e73c0128223b3f6c4c630cc48d",
 		}},
 }

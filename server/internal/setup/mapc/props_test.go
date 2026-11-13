@@ -16,7 +16,7 @@ import (
 var dressDir = testmaps.Pkg("CM_Dress")
 
 // Dress854SHA256 pins CM_Dress built from build 854's files with the shared mesh.
-const Dress854SHA256 = "7250890f146dfceb91f7ef49e2bb425f1e801dc22e71126fc00cce9fcf49cd41"
+const Dress854SHA256 = "eab6cb793ca9df2475b55213d44047d6b80afde3176e8fbb6a78ee37630ba524"
 
 func dress(t *testing.T) *Map {
 	t.Helper()

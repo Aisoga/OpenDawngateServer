@@ -164,6 +164,10 @@ struct ShaperSelectConfig {
   // page, no card lit) and sends no C8 07 (about half of the lock-at-once runs before DRAFT3). Its own lock-in, seconds
   // later, never missed. 0 = the old behaviour (at its first C8 after C8 02).
   int lockAtOnceMinMs = 2000;
+  // MODES0 (for Army and Clone Pick, M30): one shaper may be held by several players of a team. EA's game never allowed
+  // it (the client greys out a teammate's shaper itself, 0x0051A872); with this the host doesn't either refuse a click
+  // on a teammate's shaper (C8 04 "a teammate holds it"), skip it in a lock's free entries or move a lock off it.
+  bool teamDuplicates = false;
 };
 constexpr int kLockAtOnceWaitMs = 3000;
 
@@ -351,6 +355,7 @@ class ShaperSelect {
   int64_t lastHumanLock_ = 0;
   bool lockAtOnceAnswer_ = true;  // RULES3
   int lockAtOnceMinMs_ = 2000;     // DRAFT3
+  bool teamDuplicates_ = false;    // MODES0
   void LockAtOnce(int64_t now, ISender& out);
 };
 

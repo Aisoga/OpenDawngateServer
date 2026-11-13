@@ -85,11 +85,13 @@ type config struct {
 	testHistorySeed      string             // test aid: N[:<login name>] made-up matches in an empty history (--test-history-seed)
 	testRating           string             // test aid: <login name>=<rating>[,...] set at the start (--test-rating)
 	testPreferred        string             // PREF3's test aid: <login name>[|<password>]=<region>[,...] set at the start (--test-preferred-region)
+	testAdmin            string             // SYSCHAT's test aid: <login name>[|<password>] made an admin at the start (--test-admin)
 	mmBots               bool               // B10d: bots in a matchmade game's open seats (--mm-bots, on by default)
 	leaderboardMinGames  int                // LBFIX: the fewest games for the Leaderboard (--leaderboard-min-games)
 	ratingLeaderboard    bool               // RATING1: the Leaderboard ranks by skill rating (--rating-leaderboard, on by default)
 	showRating           bool               // RATINGSHOW1: players see their rating in the profile box (--show-rating, on by default)
 	customBots           bool               // B15: bots in a custom game's open seats (--custom-bots)
+	leftLossAfter        time.Duration      // PROFILE3: a left game's least match time to count as a loss (--left-loss-after)
 	noHelloCheck         bool               // --gms-hello-check off: every match host's verifyHello answered ok
 	customAutoStart      time.Duration      // BOTS2c: a custom game whose humans all spectate starts by itself
 	testRefuseStart      bool               // READY2b: each custom game's first start refused (--test-refuse-start, a test aid)
@@ -178,6 +180,10 @@ type config struct {
 
 	// REGION1: --region, --host-machine, --agent-tls, --agent-pin (hostmachines.go)
 	regions regionFlags
+
+	// ARMY1: Army and Clone Pick's vote (--vote-time; 0 = 30 s) and how long its drawn shapers are shown (--vote-show-time;
+	// 0 = 3 s)
+	voteTime, voteShowTime time.Duration
 }
 
 // broadcastEvery is how often the operator's broadcast file is read (B14).
@@ -714,6 +720,7 @@ func start(cfg config) (*instance, error) {
 	bz.RatingLeaderboard = cfg.ratingLeaderboard
 	bz.ShowRating = cfg.showRating
 	bz.CustomBots = cfg.customBots
+	bz.LeftLossAfter = cfg.leftLossAfter
 	bz.NoHelloCheck = cfg.noHelloCheck
 	bz.CustomAutoStart = cfg.customAutoStart
 	bz.TestRefuseStart = cfg.testRefuseStart
@@ -731,6 +738,7 @@ func start(cfg config) (*instance, error) {
 	bz.DraftTurn, bz.TestDraft = cfg.draftTurn, cfg.testDraft
 	bz.DraftRoleTime, bz.DraftTradeTime = cfg.draftRoleTime, cfg.draftTradeTime
 	bz.DraftFixedOrder = cfg.draftFixedOrder
+	bz.VoteTime, bz.VoteShowTime = cfg.voteTime, cfg.voteShowTime
 	if cfg.draftFixedOrder {
 		log.Logf("stub", "TEST: drafts keep the lobby's pick order and team 1 starts (--draft-shuffle=off)")
 	}
@@ -808,6 +816,12 @@ func start(cfg config) (*instance, error) {
 		} else {
 			log.Logf("stub", "skill rating (RATING1): %s", rep)
 		}
+		// MMR1: the draft and custom ratings from the stored matches, once (a mark of its own; the standard untouched)
+		if rep, err := rating.SeedModes(bz.Store, bz.Now()); err != nil {
+			log.Logf("stub", "draft and custom ratings: the seed from the stored matches FAILED (ratings as they are): %v", err)
+		} else {
+			log.Logf("stub", "draft and custom ratings (MMR1): %s", rep)
+		}
 		if cfg.testRating != "" { // RATING2's test aid (testrating.go), after the seed
 			if note, err := applyTestRating(bz.Store, cfg.testRating, bz.Now()); err != nil {
 				log.Logf("stub", "TEST: --test-rating %s: %v", cfg.testRating, err)
@@ -820,6 +834,13 @@ func start(cfg config) (*instance, error) {
 				log.Logf("stub", "TEST: --test-preferred-region %s: %v", cfg.testPreferred, err)
 			} else {
 				log.Logf("stub", "TEST: %s (--test-preferred-region, a test aid)", note)
+			}
+		}
+		if cfg.testAdmin != "" { // SYSCHAT's test aid (testadmin.go): refused with the limits on (a public address)
+			if note, err := applyTestAdmin(bz.Store, cfg.testAdmin, in.limits != nil, bz.Now()); err != nil {
+				log.Logf("stub", "TEST: --test-admin: %v", err)
+			} else {
+				log.Logf("stub", "TEST: %s (--test-admin, a test aid)", note)
 			}
 		}
 	}
@@ -1281,9 +1302,10 @@ func Run(args []string, h Hooks) int {
 	fs.DurationVar(&cfg.mm.FillExtend, "mm-fill-extend", cfg.mm.FillExtend, "PvP matchmaking: the least time a smaller match still waits after a player (session) joins it; a join with less left sets the rest to this, it does not add up (0 = no extension)")
 	fs.DurationVar(&cfg.mm.MaxWait, "mm-max-wait", 0, "PvP matchmaking: the longest a player waits in the queue before it gives up (SESSION_TIMED_OUT; 0 = the client's 3 h)")
 	testLoginErrors := fs.String("test-login-errors", "", "test aid: comma-separated 16-bit error codes (hex 0x.. or decimal); the n-th login gets the n-th as its error reply (0 = answered as usual), later logins are answered as usual; e.g. 0x0C,0x4072,0")
-	fs.StringVar(&cfg.testHistorySeed, "test-history-seed", "", "test aid: N[:<login name>]: an empty match history gets N made-up matches at the start (the login's account, made without a password when missing, in every one), for looking at the history page")
-	fs.StringVar(&cfg.testRating, "test-rating", "", "test aid: <login name>=<rating>[,...]: each account (made without a password when missing) gets this skill rating at the start, after the seed from the stored matches")
+	fs.StringVar(&cfg.testHistorySeed, "test-history-seed", "", "test aid: N[:<login name>[|<password>]]: an empty match history gets N made-up matches of every game type at the start (the login's account in every one, made when missing and given the password, default dawngate1, when it has none), for looking at the history page")
+	fs.StringVar(&cfg.testRating, "test-rating", "", "test aid: <login name>=<rating>[:<type>][,...]: each account (made without a password when missing) gets this skill rating at the start, after the seed from the stored matches; the type is standard (the default), draft or custom")
 	fs.StringVar(&cfg.testPreferred, "test-preferred-region", "", "test aid: <login name>[|<password>]=<region>[,...]: each account (made with that password when missing) gets this Preferred Region stored at the start, as the play screen's region.set would")
+	fs.StringVar(&cfg.testAdmin, "test-admin", "", "test aid: <login name>[|<password>]: the account (made with that password when missing; default dawngate1) gets the admin role at the start, for the website's /admin page; refused with the limits on (a public address)")
 	fs.StringVar(&cfg.testHomeJSON, "test-home-json", "", "test aid: answer the home page's home.json with this file's bytes, read anew at every request (the live data while it can't be read)")
 	fs.BoolVar(&cfg.mmRefuse, "mm-refuse", false, "PvP matchmaking test aid: refuse every startMatchmaking (GAMEMANAGER_ERR_INVALID_MATCHMAKING_CRITERIA)")
 	fs.BoolVar(&cfg.mmBots, "mm-bots", true, "PvP matchmaking with match hosts: a game that starts with open seats (after --mm-fill-after) gets bots in them, up to --mm-team-size a team (B10d); --mm-bots=false leaves them empty")
@@ -1301,6 +1323,7 @@ func Run(args []string, h Hooks) int {
 	fs.StringVar(&cfg.tunnelRelease, "tunnel-release", "", "--tunnel-client test aid: the release name its session hello gives instead of this build's (a server with --allow-any-client lets it in as another release)")
 	customMaps := fs.String("custom-maps", "", `the maps a custom game's creator may pick with a tag at the end of the game's name ("~#mm" MM_Map_v3, "~#sm" SM_Map_v5), comma-separated, besides SM_Map_v5 and --map; "" or "none" = only those`)
 	helloCheck := fs.String("gms-hello-check", "on", "whether a match host may seat a connection only after the server confirmed it may claim that player: on, or off for a NAT between the tunnel gateway and an agent's hosts, where the source address names no flow (off: whoever reaches a host's port can take a seat)")
+	fs.DurationVar(&cfg.leftLossAfter, "left-loss-after", blaze.DefaultLeftLossAfter, "a game a player left counts as that player's loss when it ended by a surrender or the Guardian's death, or ran at least this long (match time; a game every player left within a minute of each other counts for nobody)")
 	fs.BoolVar(&cfg.customBots, "custom-bots", false, "custom games with match hosts: bots fill the open seats when the game starts (B15; off: only the lobby's players)")
 	fs.BoolVar(&cfg.testRefuseStart, "test-refuse-start", false, "test aid: each custom game's first start (its admin's advanceGameState IN_GAME) is refused, as the ready check refuses a start while a player isn't ready")
 	testRules := fs.String("test-rules", "", "test aid: every new custom game with a match host starts with these match rules: a preset (standard, aram, allRandom), a JSON object of categories to options, e.g. {\"pick\":\"random\"}, or its short form pick=random,shaperPool=melee; the lobby's admin can still change them")
@@ -1308,9 +1331,11 @@ func Run(args []string, h Hooks) int {
 	fs.DurationVar(&cfg.draftTurn, "draft-turn", 0, "the time of one turn of a custom game's draft, a ban or a pick window (e.g. 10s; 0 = 45s)")
 	fs.DurationVar(&cfg.draftRoleTime, "draft-role-time", 0, "the time of a custom game's draft's role phase, in which every drafter declares a role (e.g. 10s; 0 = 20s)")
 	fs.DurationVar(&cfg.draftTradeTime, "draft-trade-time", 0, "the longest time of a custom game's draft's trade phase after the picks, which ends early once every drafter is ready (e.g. 10s; 0 = 30s)")
+	fs.DurationVar(&cfg.voteTime, "vote-time", 0, "the time of a custom game's vote for Army Pick or Clone Pick, which ends early once every voter has locked (e.g. 10s; 0 = 30s)")
+	fs.DurationVar(&cfg.voteShowTime, "vote-show-time", 0, "how long the shapers drawn by a custom game's Army Pick or Clone Pick vote are shown before the game starts (e.g. 1s; 0 = 3s)")
 	draftShuffle := fs.String("draft-shuffle", "on", "a custom game's draft: on shuffles each team's pick order and flips a coin for the team that starts (the first ban and the first pick); off keeps the lobby's order and lets the Mortal team start, for tests with a fixed order; the bans are always each team's top player's in the lobby")
 	fs.Uint64Var(&cfg.testRollSeed, "test-roll-seed", 0, "test aid: the seed of every custom game's All Random rolls and draft (its pick order, the starting team, the random picks), instead of a random one; 0 = off")
-	fs.DurationVar(&cfg.testDraft, "test-draft", 0, "test aid: in every draft the server acts for every drafter this long (e.g. 2s) into each step, through the same checks as a player's calls: it declares the roles, bans and picks for every seat on turn, makes one pick-order swap and one trade, and marks everyone ready; 0 = off")
+	fs.DurationVar(&cfg.testDraft, "test-draft", 0, "test aid: in every draft the server acts for every drafter this long (e.g. 2s) into each step, through the same checks as a player's calls: it declares the roles, bans and picks for every seat on turn, makes one pick-order swap and one trade, and marks everyone ready; in an Army Pick or Clone Pick vote every voter votes and locks; 0 = off")
 	fs.DurationVar(&cfg.customAutoStart, "custom-autostart", 0, "a custom game whose humans all moved to the spectators starts by itself after this (e.g. 5s; 0 = off): a game of bots alone with --custom-bots, for tests")
 	fs.BoolVar(&cfg.shaperSelect.On, "shaper-select", false, "match hosts run shaper select with each player's shapers, skins, wards and announcers from its account (D3-live)")
 	freeRotation := fs.String("free-rotation", "", `shaper select: shapers in the free rotation, comma-separated ("gunman,PC_Otter,Fenmore")`)

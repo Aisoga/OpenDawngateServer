@@ -969,14 +969,31 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
     }
     // RULES3: All Random (startGame's rules pick "random"): each human's list is the shaper dgserver rolled for it, locked
     // at once ([host] random_lock_answer, 1: with the lock answer, which takes the client into phase 2 by itself; 0: the
-    // client stays in phase 1 until the match's phase 2). RULES5b: the draft ("draft") the same, with the drafted shaper.
+    // client stays in phase 1 until the match's phase 2). RULES5b: the draft ("draft") the same, with the drafted shaper;
+    // ARMY1: Army and Clone Pick ("army", "clone") too, with the drawn shaper and the team rule off (teamDuplicates).
     const std::string pick = hostctl::Active() ? hostctl::StartPick() : std::string();
-    const bool lockAtOnce = gms::rules::PickLocksAtOnce(pick);
+    // MODES0: [host] test_clone_class=<a shaper's default-skin Noun: 0x<id> or its name, tidalqueen.Noun>: every human's
+    // list is that shaper alone, locked at once as All Random's, and the BOTDRAFT bots of both teams take it too (one
+    // shaper ten times; it needs a class the bots play). [host] team_duplicates=1 only lifts the team rule.
+    char cloneText[96];
+    HostOptionString("test_clone_class", "", cloneText, sizeof cloneText);
+    const std::uint32_t clone = !cloneText[0]                                 ? 0u
+                                : (cloneText[0] == '0' && (cloneText[1] | 0x20) == 'x')
+                                    ? static_cast<std::uint32_t>(std::strtoul(cloneText, nullptr, 16))
+                                    : gms::AssetIdOf(cloneText);
+    config->teamDuplicates = gms::rules::PickAllowsTeamDuplicates(pick) || clone != 0 ||
+                             HostOptionInt("team_duplicates", 0) != 0;
+    bots::SetCloneShaper(clone);
+    if (clone)
+      gms::Logf("%s match: shaper select: [host] test_clone_class %s = 0x%08X (MODES0): every human gets only it, locked "
+                "at once, and the drafted bots of both teams take it too",
+                gms::Clock().c_str(), cloneText, clone);
+    const bool lockAtOnce = gms::rules::PickLocksAtOnce(pick) || clone != 0;
     config->lockAtOnceAnswer = HostOptionInt("random_lock_answer", 1) != 0;
     // DRAFT3: [host] random_lock_min_ms (2000): the lock at once waits at least this long after the client's C8 02, so
     // its role page opens with its role card selected (too soon, the client finds no slot of its own yet); 0 = before
     config->lockAtOnceMinMs = HostOptionInt("random_lock_min_ms", 2000);
-    if (lockAtOnce)
+    if (lockAtOnce && !clone)
       gms::Logf("%s match: shaper select: %s (startGame's rules): every human's shaper is locked at once, %s",
                 gms::Clock().c_str(), gms::rules::PickName(pick),
                 config->lockAtOnceAnswer ? "with the lock answer ([host] random_lock_answer 1)"
@@ -988,13 +1005,19 @@ class ServerMatch final : public gms::IMatch, public gms::check::IWorld {
         // DRAFT3: a human with a declared role (startGame's roster `role`) gets it preset in its record, also without
         // content of its own (then the [host] list, as for any human without an entry)
         const int role = gms::ShaperRoleFromRoster(e);
-        if (e.bot || (!gms::HasShaperContent(e) && role < 0) || e.index < 0 ||
+        if (e.bot || (!gms::HasShaperContent(e) && role < 0 && !clone) || e.index < 0 ||
             e.index >= static_cast<std::int64_t>(kMaxPlayers))
           continue;
         gms::ShaperSelectPlayer p;
         p.gameplayIndex = static_cast<uint8_t>(e.index);
         p.team = static_cast<uint8_t>(e.team);
         p.content = gms::HasShaperContent(e) ? gms::ShaperContentFromRoster(e) : config->humanDefault;
+        if (clone) {  // MODES0: the list is the test's shaper alone (its skins, pages and vanity stay the player's)
+          gms::ShaperListEntry only;
+          only.noun = clone;
+          only.flags = gms::kShaperOwned | gms::kShaperAvailable;
+          p.content.list = {only};
+        }
         p.lockAtOnce = lockAtOnce;  // RULES3
         p.presetRole = role;
         config->players.push_back(p);

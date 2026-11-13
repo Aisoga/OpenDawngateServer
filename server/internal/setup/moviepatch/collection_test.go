@@ -339,6 +339,44 @@ func TestLeaderboardTags(t *testing.T) {
 	}
 }
 
+func TestProfileTags(t *testing.T) {
+	// DefineSprite 2003, DoABC "profilemodes", SymbolClass 2003 -> ProfileModes, PlaceObject3 at depth 2003
+	p := Collection.More[2]
+	tags, err := tagsOf(p.Tags, 0, len(p.Tags))
+	if err != nil || len(tags) != 4 || tags[3].end != len(p.Tags) {
+		t.Fatalf("profile_tags.hex: %d tags, %v", len(tags), err)
+	}
+	for i, code := range []int{39, 82, 76, 70} {
+		if tags[i].code != code {
+			t.Errorf("tag %d: code %d, want %d", i, tags[i].code, code)
+		}
+	}
+	if d := p.Tags[tags[1].start:tags[1].end]; !bytes.HasPrefix(d, []byte("\x01\x00\x00\x00profilemodes\x00")) {
+		t.Errorf("DoABC %x…: not lazy and named profilemodes", d[:16])
+	}
+	// the channel's call and event, the screen's component, its native and the game's tab (GameTabs, shared with the
+	// Leaderboard's class)
+	// and the Statistics panel's box of boxes, whose new boxes get their place as reveal place (PROFILE2c)
+	for _, s := range []string{"profile.select", "profile.state", "playerProfile", "search", "Tab000", "Standard",
+		"All Modes", "myStatsRoot", "layoutElementAdded", "contentAppearanceIndex"} {
+		if !bytes.Contains(p.Tags, []byte(s)) {
+			t.Errorf("the class lacks %q", s)
+		}
+	}
+	// the tab's label is "Standard" alone (the user's word, PROFILE2c)
+	if bytes.Contains(p.Tags, []byte("and PvP")) {
+		t.Errorf("the class still names the tab \"Standard (and PvP)\"")
+	}
+	ps, err := pairs(p.Tags, tags[2].start, tags[2].end)
+	if err != nil || len(ps) != 1 || ps[0] != (pair{2003, "ProfileModes"}) || p.Class != "ProfileModes" || p.CharID != 2003 {
+		t.Errorf("SymbolClass %+v, %v: want 2003 -> ProfileModes", ps, err)
+	}
+	d := p.Tags[tags[3].start:tags[3].end]
+	if !bytes.Equal(d, cat([]byte{0x06, 0}, u16s(2003, 2003), []byte{0})) || p.Depth != 2003 {
+		t.Errorf("PlaceObject3 %x: not character 2003 at depth 2003 without a name", d)
+	}
+}
+
 // The player's own code.snap of build 854 with the item list of its own game data (skipped without the game files).
 func TestBuildCollection854(t *testing.T) {
 	raw, err := os.ReadFile(testgame.Data(t, "code.snap"))
@@ -370,7 +408,8 @@ func TestBuildCollection854(t *testing.T) {
 	}
 	s, err := scan(inflate(t, movie[8:]))
 	if err != nil || !s.names["CollectionItems"] || !s.ids[2000] || !s.depths[2000] || !s.names["LobbyReady"] ||
-		!s.ids[2001] || !s.depths[2001] || !s.names["LeaderboardRating"] || !s.ids[2002] || !s.depths[2002] {
+		!s.ids[2001] || !s.depths[2001] || !s.names["LeaderboardRating"] || !s.ids[2002] || !s.depths[2002] ||
+		!s.names["ProfileModes"] || !s.ids[2003] || !s.depths[2003] {
 		t.Errorf("the patched movie: %v", err)
 	}
 	// for a byte-for-byte comparison with the Python twin: the archive, and beside it the content it was made from

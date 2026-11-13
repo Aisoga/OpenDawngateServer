@@ -41,6 +41,14 @@ also the copy play.ps1 plays from, so this changes the idle kick for manual play
 sessions alive is launch_monitor.ps1's -KeepAlive key (docs/RUNNING_THE_CLIENT.md *The AFK kick and the keep-alive
 (B12)*).
 
+Always: the option
+OptionDragGrab, the Options menu's grab-style drag scroll, is defined as the game defines its own gameplay booleans:
+in the compiled options of Config_Ship.package (the index 00B1B104-40470000-0 gets the option, two new entries its
+settings, which set the bool app property OptionDragGrab the exe's drag cave reads; off is the default) and with its
+Preferences.prop name in Config.package's OptionProperties (2CB7250D, DRAG_GRAB_LINES). Without them the game knows
+no such option: the options code can't store it and drops it from Preferences.prop. Inert without patch_client.py's
+drag grab (nothing reads it). --drag-option-only adds it to an already patched copy in place.
+
 The first run saves <name>.package.orig next to each package (the suffix keeps it out of the
 client's "*.package" scan); every run patches from that backup, so re-running is safe and
 `--restore` puts the originals back. Refuses to touch the pristine extractions under client/ia_*.
@@ -48,12 +56,13 @@ client's "*.package" scan); every run patches from that backup, so re-running is
 Usage:
     .venv/Scripts/python -I re/scripts/patch_config.py <working copy game/Data dir>
         [--host 127.0.0.1] [--http-port 18080] [--telemetry-port 9988]
-        [--afk-minutes N [--afk-disconnect-minutes M]] [--dry-run | --restore]
+        [--afk-minutes N [--afk-disconnect-minutes M]] [--dry-run | --restore | --drag-option-only]
 """
 import argparse
 import os
 import re
 import shutil
+import struct
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -68,6 +77,48 @@ ALLOWED_DOMAINS_ID = props.fnv("WebkitAllowedDomains")  # 0xC27EA5F8, Config_Pac
 AFK = {"AFKThreshhold": (4, "afk_minutes"), "AFKDisconnectThreshhold": (1, "afk_disconnect_minutes")}
 AFK_IDS = {props.fnv(n): n for n in AFK}  # 0x5EEB4D02, 0xFF234C60
 AFK_MAX = 10080  # minutes (7 days)
+# DRAGGRAB2b: the option OptionDragGrab (the Options menu's grab-style drag scroll), defined as the game defines its own
+# gameplay booleans. The game takes its options from their compiled form in Config_Ship.package (the config manager's
+# 0x009624B0; Config.package's text option definitions, entry F6D4A4B9, are not read), so the option goes there:
+#   - the index 00B1B104-40470000-0 holds three uint32 arrays, the option ids (0x05DAAFFF), each option's first
+#     setting (0x05DAB000) and its number of settings (0x05DAB001): + OptionDragGrab, 0, 2;
+#   - each setting is the property list 00B1B104-(0x40470100 + setting)-<option id> the setting applies to the app
+#     properties: OptionDragGrab's two set the bool app property OptionDragGrab (the key the exe's drag cave reads) to
+#     false ($Off, setting 0, the default: a new option starts at 0) and true.
+# Config.package's text gets one line: the option's name in the player options stored in Preferences.prop (instance ->
+# the line it goes after, the last line of the entry's gameplay group in build 854, and the line). A `setOption` line
+# for an option the compiled data lacks stops the config script ("Configuration Script Failed", alert 2000).
+DRAG_GRAB_LINES = (
+    (0x2CB7250D, "property OptionShowAttackMoveRange",  # the player options stored in Preferences.prop (the name)
+     'property OptionDragGrab                         (hash("OptionDragGrab")) uint32'),
+)
+DRAG_GRAB_ID = props.fnv("OptionDragGrab")         # 0x14958012: the option, its app property and the exe table's key
+OPTIONS_GROUP, OPTION_SETTING_GROUP = 0x40470000, 0x40470100
+OPTION_IDS, OPTION_FIRST, OPTION_COUNT = 0x05DAAFFF, 0x05DAB000, 0x05DAB001
+
+
+def drag_option_setting(value):
+    """OptionDragGrab's setting `value` (0 off, 1 on): one bool property, OptionDragGrab = value (as EA's compiled
+    boolean options, e.g. OptionFilterProfanity's)."""
+    return struct.pack(">IIHHB", 1, DRAG_GRAB_ID, 0x01, 0, value)
+
+
+def add_drag_option_index(data, where):
+    """The options index (00B1B104-40470000-0) with OptionDragGrab appended (id, first setting 0, 2 settings). Exits
+    on an index that isn't build 854's form (three uint32 arrays of the same length) or already has the option."""
+    plist = props.parse(data)
+    arrays = {p.id: p for p in plist}
+    want = (OPTION_IDS, OPTION_FIRST, OPTION_COUNT)
+    if (sorted(arrays) != sorted(want) or any(arrays[i].type != 0x0A or not arrays[i].is_array for i in want)
+            or len({arrays[i].raw[:8] for i in want}) != 1 or arrays[OPTION_IDS].raw[4:8] != b"\0\0\0\4"):
+        sys.exit(f"{where}: not the options index of build 854; not patching an unknown config")
+    n = struct.unpack_from(">I", arrays[OPTION_IDS].raw)[0]
+    if DRAG_GRAB_ID in struct.unpack_from(f">{n}I", arrays[OPTION_IDS].raw, 8):
+        sys.exit(f"{where}: OptionDragGrab is already an option; not patching an unknown config")
+    for pid, value in ((OPTION_IDS, DRAG_GRAB_ID), (OPTION_FIRST, 0), (OPTION_COUNT, 2)):
+        a = arrays[pid]
+        a.raw = struct.pack(">II", n + 1, 4) + a.raw[8:] + struct.pack(">I", value)
+    return props.serialize(plist)
 
 URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://[^/\s]*(/\S*)?$")
 IPV4 = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
@@ -153,6 +204,23 @@ def patch_binary(data, args, changes, where):
     return props.serialize(plist) if changed else None
 
 
+def add_drag_grab(text, instance, changes, where):
+    """DRAGGRAB2b: `text` with DRAG_GRAB_LINES' line for this entry after its anchor line (a line that starts with the
+    anchor after blanks; the new line takes the anchor's line end, \\r\\n when it has none); other entries unchanged.
+    Exits on an entry without exactly one anchor line (not build 854's config)."""
+    for inst, anchor, line in DRAG_GRAB_LINES:
+        if inst != instance:
+            continue
+        hits = list(re.finditer(r"(?m)^[ \t]*" + re.escape(anchor) + r"[^\r\n]*(\r\n|\n|\r)?", text))
+        if len(hits) != 1:
+            sys.exit(f"{where}: {len(hits)} lines start with {anchor!r}, expected 1; not patching an unknown config")
+        m = hits[0]
+        add = line + m.group(1) if m.group(1) else "\r\n" + line
+        changes.append(f"{where} OptionDragGrab: + {line}")
+        return text[:m.end()] + add + text[m.end():]
+    return text
+
+
 def patched_package(src, args, name):
     """Patch the package file `src` (normally the .orig) in memory; writes nothing.
 
@@ -160,22 +228,30 @@ def patched_package(src, args, name):
     package's file name in the change lines. patch_package writes the result; setup_all.py compares it with a working
     copy's package to tell whether the copy is current (dbpf.rebuild is deterministic)."""
     pkg = dbpf.Package(src)
-    replacements, changes = {}, []
+    replacements, changes, added = {}, [], []
     for e in pkg.entries:
         where = f"{name} {e.key()}"
         data = pkg.read(e)
         if e.type == TEXT_TYPE:
             text = data.decode("latin-1")  # byte-preserving; the files are ASCII
-            new = patch_text(text, args, changes, where)
+            new = add_drag_grab(patch_text(text, args, changes, where), e.instance, changes, where)
             if new != text:
                 replacements[e.key()] = new.encode("latin-1")
         elif e.type == BINARY_TYPE:
             new = patch_binary(data, args, changes, where)
+            if e.group == OPTIONS_GROUP and e.instance == 0:  # DRAGGRAB2b: the compiled options' index
+                new = add_drag_option_index(data if new is None else new, where)
+                changes.append(f"{where} OptionDragGrab: + option {DRAG_GRAB_ID:#010x} (2 settings)")
+                for value in (0, 1):
+                    added.append((BINARY_TYPE, OPTION_SETTING_GROUP + value, DRAG_GRAB_ID, drag_option_setting(value)))
+                    changes.append(f"{name} {BINARY_TYPE:08X}-{OPTION_SETTING_GROUP + value:08X}-"
+                                   f"{DRAG_GRAB_ID:016X} OptionDragGrab: + setting {value} (OptionDragGrab = "
+                                   f"{('false', 'true')[value]})")
             if new is not None:
                 replacements[e.key()] = new
-    if not replacements:
+    if not replacements and not added:
         return None, changes, 0
-    return dbpf.rebuild(pkg, replacements), changes, len(replacements)
+    return dbpf.rebuild(pkg, replacements, added), changes, len(replacements) + len(added)
 
 
 def patch_package(path, args):
@@ -205,6 +281,59 @@ def patch_package(path, args):
     print(f"patched {path}: {len(changes)} changes in {entries} entries")
 
 
+def drag_option_state(data_dir):
+    """DRAGGRAB2b: "on" when the copy's config defines OptionDragGrab as this script does (Config.package's name line,
+    Config_Ship.package's compiled option), "missing" when neither, "broken" otherwise (half of it, or the first
+    DRAGGRAB2b attempt's text lines, whose setOption stopped the config script)."""
+    with open(os.path.join(data_dir, "Config.package"), "rb") as f:
+        text = f.read()
+    ship = dbpf.Package(os.path.join(data_dir, "Config_Ship.package"))
+    setting = f"{BINARY_TYPE:08X}-{OPTION_SETTING_GROUP:08X}-{DRAG_GRAB_ID:016X}"
+    named, compiled = b"property OptionDragGrab " in text, any(e.key() == setting for e in ship.entries)
+    if b"setOption OptionDragGrab" in text or b"boolean_option_MACRO(OptionDragGrab" in text or named != compiled:
+        return "broken"
+    return "on" if named else "missing"
+
+
+def add_drag_option(data_dir):
+    """--drag-option-only: add the option to an already patched copy in place (its hosts, ports and AFK values stay as
+    they are): DRAG_GRAB_LINES into Config.package, the compiled option into Config_Ship.package. The result is byte
+    for byte what a full patch with the same options makes (dbpf.rebuild keeps every other entry's bytes). A copy
+    whose config is "broken" (drag_option_state) needs the full patch."""
+    paths = [os.path.join(data_dir, n) for n in ("Config.package", "Config_Ship.package")]
+    for path in paths:
+        if not os.path.exists(path + ".orig"):
+            sys.exit(f"{path}: not patched yet (no .orig); run patch_config.py without --drag-option-only")
+    state = drag_option_state(data_dir)
+    if state == "on":
+        print(f"{data_dir}: OptionDragGrab already defined")
+        return
+    if state == "broken":
+        sys.exit(f"{data_dir}: OptionDragGrab is half defined; run patch_config.py with the copy's options (from .orig)")
+    for path in paths:
+        pkg, name = dbpf.Package(path), os.path.basename(path)
+        replacements, changes, added = {}, [], []
+        for e in pkg.entries:
+            where = f"{name} {e.key()}"
+            if e.type == TEXT_TYPE:
+                text = pkg.read(e).decode("latin-1")
+                new = add_drag_grab(text, e.instance, changes, where)
+                if new != text:
+                    replacements[e.key()] = new.encode("latin-1")
+            elif e.type == BINARY_TYPE and e.group == OPTIONS_GROUP and e.instance == 0:
+                replacements[e.key()] = add_drag_option_index(pkg.read(e), where)
+                added = [(BINARY_TYPE, OPTION_SETTING_GROUP + v, DRAG_GRAB_ID, drag_option_setting(v)) for v in (0, 1)]
+                changes.append(f"{where} OptionDragGrab: + option {DRAG_GRAB_ID:#010x} (2 settings)")
+        want = len(DRAG_GRAB_LINES) if name == "Config.package" else 1
+        if len(replacements) != want:
+            sys.exit(f"{path}: found {len(replacements)} of the {want} entries; not patching an unknown config")
+        for c in changes:
+            print("  " + c)
+        with open(path, "wb") as f:
+            f.write(dbpf.rebuild(pkg, replacements, added))
+        print(f"patched {path}: OptionDragGrab added ({len(replacements) + len(added)} entries)")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("data_dir", help="working copy game/Data directory")
@@ -218,6 +347,9 @@ def main():
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="only list what would change")
     mode.add_argument("--restore", action="store_true", help="copy the .orig backups back")
+    mode.add_argument("--drag-option-only", action="store_true",
+                      help="DRAGGRAB2b: only add the option OptionDragGrab to an already patched copy's Config.package "
+                           "and Config_Ship.package, in place (keeps its hosts and AFK values; nothing when it has it)")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     for name, (_, opt) in AFK.items():
@@ -230,6 +362,9 @@ def main():
     data_dir = os.path.abspath(args.data_dir)
     if os.sep + "ia_" in data_dir or "/ia_" in data_dir:
         sys.exit("refusing to patch a pristine extraction (client/ia_*); use a working copy")
+    if args.drag_option_only:
+        add_drag_option(data_dir)
+        return
     for name in PACKAGES:
         patch_package(os.path.join(data_dir, name), args)
     if not args.restore:

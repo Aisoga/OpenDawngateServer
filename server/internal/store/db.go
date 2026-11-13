@@ -618,6 +618,9 @@ func load(q querier, userID int64) (*Account, error) {
 		err = loadHistory(q, a)
 	}
 	if err == nil {
+		err = loadModeRatings(q, a) // MMR1: the draft and custom ratings
+	}
+	if err == nil {
 		err = each(q, func(r *sql.Rows) error {
 			var list, added string
 			var m ListMember
@@ -834,6 +837,7 @@ func save(q querier, before, a *Account) error {
 			func(i int) []any { return shapers[i] })
 		w.replace("history_day_roles", `INSERT INTO history_day_roles (user_id, pos, role, games, wins) VALUES (?, ?, ?, ?, ?)`,
 			len(roles), func(i int) []any { return roles[i] })
+		saveModeRatings(&w, before, a) // MMR1: the draft and custom ratings
 	}
 	if !reflect.DeepEqual(before.Lists, a.Lists) {
 		var rows [][]any

@@ -16,6 +16,7 @@
 #include "core/protocol/messages.h"
 #include "core/protocol/shaper_select.h"
 #include "core/session/match.h"
+#include "core/rules/pick.h"
 #include "core/session/shaper_select.h"
 #include "control/messages.h"
 #include "script/roster_shaper.h"
@@ -1674,6 +1675,59 @@ GMS_TEST(ShaperSelectAllRandomOffKeepsThePick) {
   for (int64_t t = 1100; t <= 9000; t += 100) ss.Tick(t, out);
   CHECK((ss.Record(0)->flags & gms::kRecordShaperLocked) == 0);
   CHECK(!log.Has("locked at once"));
+}
+
+// ---- MODES0: the same shaper several times on one team -----------------------------------------------------------------
+
+// Without teamDuplicates a teammate's shaper is refused (C8 04 ... 00, "a teammate holds it"), a scripted teammate's
+// plan for it too, and a lock moves off it to the first free entry; with it all three keep the duplicate. Army and
+// Clone Pick (startGame's pick "army", "clone") turn it on.
+GMS_TEST(ShaperSelectTeamDuplicates) {
+  CHECK(gms::rules::PickAllowsTeamDuplicates("army"));
+  CHECK(gms::rules::PickAllowsTeamDuplicates("clone"));
+  CHECK(!gms::rules::PickAllowsTeamDuplicates("random"));
+  CHECK(!gms::rules::PickAllowsTeamDuplicates(""));
+  for (int dup = 0; dup < 2; ++dup) {
+    QuietLog log;
+    gms::ShaperSelectConfig cfg;
+    cfg.timers = Timers(30000, 30000, 30000, 16);
+    const uint32_t kFourth = 0x11223344;
+    cfg.humanDefault.list = {Entry(kAlpha, 1), Entry(kArtificer, 1), Entry(kGunman, 1), Entry(kFourth, 1)};
+    cfg.players.push_back(Scripted(1, 1, kAlpha, 100, 200, 3));  // a bot of blue that wants alpha too
+    cfg.players.push_back(Scripted(2, 1, 0, 100, 200, 1));       // a bot without a plan: its lock takes a free entry
+    cfg.teamDuplicates = dup == 1;
+    gms::ShaperSelect ss(cfg);
+    const gms::ConnId a = 11, b = 12;
+    ss.AddHuman(a, 0, 1);
+    ss.AddHuman(b, 3, 1);
+    RecordingSender out;
+    ss.OnReady(a, 1000, out);
+    ss.OnReady(b, 1000, out);
+    Msg(ss, a, Req(gms::kShaperRequest, kAlpha), 1010, out);
+    CHECK_EQ(ss.Record(0)->shaper, kAlpha);
+    const size_t mark = out.sent.size();
+    Msg(ss, b, Req(gms::kShaperRequest, kAlpha), 1020, out);  // the duplicate click
+    const std::vector<std::string> got = out.To(b, mark);
+    const std::string accepted = gms::Hex(gms::BuildShaperRequestResult(kAlpha, true));
+    const std::string refused = gms::Hex(gms::BuildShaperRequestResult(kAlpha, false));
+    if (dup) {
+      CHECK(!got.empty() && got.back() == accepted);
+      CHECK_EQ(ss.Record(3)->shaper, kAlpha);
+    } else {
+      CHECK_LIST(got, {refused});
+      CHECK(ss.Record(3)->shaper != kAlpha);
+    }
+    for (int64_t t = 1050; t <= 1400; t += 50) ss.Tick(t, out);  // the bots pick and lock
+    CHECK_EQ(ss.Record(1)->shaper, dup ? kAlpha : kArtificer);    // refused plan: its lock takes the first free entry
+    CHECK_EQ(ss.Record(2)->shaper, dup ? kAlpha : kGunman);       // FreeEntries' first: alpha only with the flag
+    CHECK(log.Has("team duplicates allowed (MODES0)") == (dup == 1));
+    // the humans' lock-ins keep the duplicate (Resolve); without the flag the second human can't be on alpha
+    Msg(ss, a, Req(gms::kShaperLockIn, kAlpha), 1500, out);
+    Msg(ss, b, Req(gms::kShaperLockIn, ss.Record(3)->shaper), 1510, out);
+    CHECK_EQ(ss.Record(0)->shaper, kAlpha);
+    CHECK_EQ(ss.Record(3)->shaper, dup ? kAlpha : kFourth);  // without the flag: the only entry no teammate holds
+    CHECK_EQ(ss.Phase(), 2);
+  }
 }
 
 // ---- DRAFT3: the declared role preset ----------------------------------------------------------------------------------

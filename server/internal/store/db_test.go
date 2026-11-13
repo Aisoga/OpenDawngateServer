@@ -291,7 +291,8 @@ func TestSchema(t *testing.T) {
 		a.Items[1], a.Settings["k"], a.Stats["g"] = 1, "v", map[string]string{"n": "1"}
 		a.AddPage()
 		a.History = History{Shapers: map[uint32]GamesWon{1: {1, 1}}, Days: []HistoryDay{{Day: "d", Roles: map[uint8]GamesWon{1: {1, 0}},
-			Ranked: GamesWon{2, 1}}}, Ranked: GamesWon{5, 3}}
+			Ranked: GamesWon{2, 1}, ModeRated: map[string]ModeDay{ModeDraft: {GamesWon{1, 1}, 1500}}}}, Ranked: GamesWon{5, 3},
+			ModeRatings: map[string]Rating{ModeDraft: {Value: 1600, RD: 300, Vol: 0.06, Games: 1, Wins: 1}}}
 		a.Lists.Friends = []ListMember{{ID: 5}}
 	})
 	// the Leaderboard's counts read back (the account's and the day's)
@@ -303,7 +304,7 @@ func TestSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, table := range []string{"personas", "items", "settings", "stats", "perk_pages", "history_shapers", "history_days",
-		"history_day_shapers", "history_day_roles", "list_members"} {
+		"history_day_shapers", "history_day_roles", "list_members", "mode_ratings", "mode_rating_days"} {
 		var rows int
 		if err := r.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&rows); err != nil || rows != 0 {
 			t.Errorf("%s: %d rows left (%v)", table, rows, err)
@@ -320,8 +321,8 @@ func TestSchema(t *testing.T) {
 	}, `SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`)
 	if want := []string{"accounts", "api_tokens", "audit", "counters", "history_day_roles", "history_day_shapers",
 		"history_days", "history_shapers", "invites", "issue_claims", "issue_videos", "issues", "items", "list_members",
-		"match_seats", "matches", "perk_pages", "personas", "schema_version", "server_settings", "settings", "signups",
-		"stats"}; !slices.Equal(tables, want) {
+		"match_seats", "matches", "mode_rating_days", "mode_ratings", "perk_pages", "personas", "schema_version",
+		"server_settings", "settings", "signups", "stats"}; !slices.Equal(tables, want) {
 		t.Errorf("tables %q\nwant %q", tables, want)
 	}
 }

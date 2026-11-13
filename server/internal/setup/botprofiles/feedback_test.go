@@ -46,7 +46,7 @@ func TestRulesFeedbackMadeUp(t *testing.T) {
 	}
 	alone, _ := Build(in, ring, grove)
 	entries, base := catalogOf(t, out), catalogOf(t, alone)
-	if len(entries) != len(base)+2 {
+	if len(entries) != len(base)+len(RulesFeedbackDefs) {
 		t.Fatalf("%d catalog entries, without the rules %d", len(entries), len(base))
 	}
 	for i, d := range RulesFeedbackDefs { // "match rules" sorts after the CM_ maps
@@ -58,7 +58,7 @@ func TestRulesFeedbackMadeUp(t *testing.T) {
 		}
 	}
 	files, files0 := archiveFiles(t, out), archiveFiles(t, alone)
-	if len(files) != len(files0)+2 {
+	if len(files) != len(files0)+len(RulesFeedbackDefs) {
 		t.Errorf("%d files, without the rules %d", len(files), len(files0))
 	}
 	ts, _ := assetdata.Embedded()
@@ -78,7 +78,7 @@ func TestRulesFeedbackMadeUp(t *testing.T) {
 		}
 		for k, want := range map[string]any{"priority": uint64(300), "channel": "character", "lifetime": uint64(3000),
 			"cooldown": uint64(2000), "cooldownPerObject": false, "textType": "normal", "showTextInAlert": true,
-			"chatMessageFilterType": "off", "doNotQueue": false, "pingMinimap": false, "soundID": nil} {
+			"chatMessageFilterType": "unfiltered", "doNotQueue": false, "pingMinimap": false, "soundID": nil} {
 			if got := field(v, k); got != want {
 				t.Errorf("%s: %s = %v, want %v", d.Name, k, got, want)
 			}
@@ -95,7 +95,8 @@ func TestRulesFeedbackMadeUp(t *testing.T) {
 		}
 	}
 	if content.AssetID("Rules_ShopClosed.ClientFeedbackDef") != 0xDCA47D52 ||
-		content.AssetID("Rules_ItemNotAllowed.ClientFeedbackDef") != 0xDB7B5E92 {
+		content.AssetID("Rules_ItemNotAllowed.ClientFeedbackDef") != 0xDB7B5E92 ||
+		content.AssetID("Rules_LightningOnly.ClientFeedbackDef") != 0x7C8AC0BC {
 		t.Error("the defs' asset ids moved")
 	}
 	// a file the archive already holds is refused
@@ -105,7 +106,7 @@ func TestRulesFeedbackMadeUp(t *testing.T) {
 	}
 }
 
-// Build 854: the defs' values are the shipped OutOfRange's except the text key and the cooldown, and neither name is
+// Build 854: the defs' values are the shipped OutOfRange's except the text key, the cooldown and the chat line, and neither name is
 // in the shipped catalog (skipped without the game files).
 func TestRulesFeedbackGame(t *testing.T) {
 	in := testgame.Read(t, "AssetData.snap")
@@ -142,7 +143,7 @@ func TestRulesFeedbackGame(t *testing.T) {
 		}
 		for _, m := range typ.Members {
 			k := m.Name
-			if k == "textLocaleKey" || k == "cooldown" {
+			if k == "textLocaleKey" || k == "cooldown" || k == "chatMessageFilterType" {
 				continue
 			}
 			if a, b := string(assetdata.AppendJSON(nil, field(oor, k))), string(assetdata.AppendJSON(nil, field(ours, k))); a != b {

@@ -1,10 +1,10 @@
 """Set up (or check) an extra test lane on this PC (roadmap A6 and A6b, docs/RUNNING_THE_CLIENT.md *Test lanes (A6,
 A6b)*).
 
-A lane is everything one test session needs, separate from the other lanes', so up to four sessions (four clients,
-four servers, four match hosts) run at the same time. Lane a is the original setup (client/run_854, set up by hand as
-in docs/RUNNING_THE_CLIENT.md *How to start it*, or by setup_all.py); this script makes lanes b, c and d. Lane X
-(b = 2, c = 3, d = 4) has:
+A lane is everything one test session needs, separate from the other lanes', so up to five sessions (five clients,
+five servers, five match hosts) run at the same time. Lane a is the original setup (client/run_854, set up by hand or
+by setup_all.py); this script makes lanes b, c, d and g, the fifth lane, named g because e, f and h are second
+clients (below). Lane X (b = 2, c = 3, d = 4, g = 5) has:
 
   address     127.0.0.N (the whole loopback /8 works on Windows): dgserver binds every port there (--bind and
               --public-host), the match hosts' GMS ports and the control port too; lane a stays on 127.0.0.1, so
@@ -25,6 +25,8 @@ in docs/RUNNING_THE_CLIENT.md *How to start it*, or by setup_all.py); this scrip
               party lobby's Preferred Region with the lane's UI channel; the same copies), and
               patch_login_movie.py --spec itemshop
               (game/Data/zz_ItemShop.snap: the item shop's inline refund; the same copies), and
+              patch_login_movie.py --spec options
+              (game/Data/zz_Options.snap: the Options menu's drag scroll check box; the same copies), and
               patch_login_movie.py --spec collection --content <main checkout's server/data/content.json>
               (game/Data/zz_CollectionItems.snap: the Collection's Items category; the same copies; left out
               without that file), and halloween.py
@@ -46,6 +48,10 @@ in docs/RUNNING_THE_CLIENT.md *How to start it*, or by setup_all.py); this scrip
   server      run_session.ps1 -Lane X builds server/bin/lane_X/dgserver.exe in the checkout it runs from (a running
               server locks its binary).
   session     re/logs/session_X.lock (lane a: re/logs/session.lock), re/logs/<session>/lane.txt.
+  options     LANE5: when the lane's client has never run (no %APPDATA%\\DawngateDataX\\Preferences\\Preferences.prop),
+              lane_preferences.prop is written there: the game's fresh options, but windowed (a fresh profile's match
+              window is borderless 1920x1080 and takes the foreground), silent and with the camera locked. An
+              existing file is never touched.
 
 Every step is skipped when it is done already, and the patchers patch from their .orig backups, so re-running is
 safe. Nothing under client/ia_* is written. Large copies: about 1.5 GB per copy (the client copy, the host copy), so
@@ -53,7 +59,7 @@ a new lane needs about 3 GB: before copying, the free space on the drive is prin
 than MIN_FREE_GB (A6b).
 
 The paths are relative to the main checkout (the folder that holds client/), also when this script runs from a
-git worktree (the work package of a lane b, c or d): the dgsim.dll comes from the checkout this script is in, unless
+git worktree (the work package of a lane b, c, d or g): the dgsim.dll comes from the checkout this script is in, unless
 --dll names one. --root <dir> (H3) puts them under another folder instead (setup_all.py's scratch test;
 run_session.ps1 only knows the main checkout's).
 
@@ -74,7 +80,7 @@ Both run with -multipleInstances and are named by a letter no lane uses, so no r
 as lane a's.
 
 Usage:
-    .venv/Scripts/python -I re/scripts/setup_lane.py b|c|d [--dll <dgsim.dll>] [--no-host] [--root <dir>]
+    .venv/Scripts/python -I re/scripts/setup_lane.py b|c|d|g [--dll <dgsim.dll>] [--no-host] [--root <dir>]
     .venv/Scripts/python -I re/scripts/setup_lane.py c --check      # only check; exit 1 if something is missing
     .venv/Scripts/python -I re/scripts/setup_lane.py --print c      # the lane's settings as key=value lines
     .venv/Scripts/python -I re/scripts/setup_lane.py e [--check]    # A5b: lane d's second client
@@ -116,6 +122,12 @@ LANES = {
           "certs": "server/certs/lane_d", "suffix": "D", "data": "server/data/lane_d",
           "server_exe": "server/bin/lane_d/dgserver.exe", "lock": "re/logs/session_d.lock",
           "game_args": "-multipleInstances"},
+    # LANE5: the fifth lane, built like b-d. Named g, not e: e, f and h are lanes d's, b's and c's second clients
+    # (EXTRA_CLIENTS), and the data folder suffix is one letter
+    "g": {"address": "127.0.0.5", "client": "client/run_854_g/Dawngate", "host": "client/run_854_server_g/Dawngate",
+          "certs": "server/certs/lane_g", "suffix": "G", "data": "server/data/lane_g",
+          "server_exe": "server/bin/lane_g/dgserver.exe", "lock": "re/logs/session_g.lock",
+          "game_args": "-multipleInstances"},
 }
 # A5b: further client copies on this PC, each a client of one lane's server, in a folder named with a letter no lane
 # uses (run_session.ps1 counts every other copy under client\ as lane a's, and since A6b a copy run_854_<letter> of an
@@ -127,7 +139,7 @@ EXTRA_CLIENTS = {
     "e": {"lane": "d", "client": "client/run_854_e/Dawngate", "bind": "127.0.4.2", "suffix": "E"},
     # G3b: lane b's second client, built like e (lane d stays busy with long packages, G3b needs two clients)
     "f": {"lane": "b", "client": "client/run_854_f/Dawngate", "bind": "127.0.2.2", "suffix": "F"},
-    # lane c's second client ('g' stays test_a6.py's letter nobody uses)
+    # lane c's second client (since LANE5 'g' is the fifth lane; test_a6.py's letter nobody uses is 'x')
     "h": {"lane": "c", "client": "client/run_854_h/Dawngate", "bind": "127.0.3.2", "suffix": "H"},
 }
 # A5b: the LAN profile's test copy on this PC (run_session.ps1 -Lan): lan profile, server = this PC's LAN address, the
@@ -135,6 +147,7 @@ EXTRA_CLIENTS = {
 LAN = {"client": "client/run_854_l/Dawngate", "suffix": "L", "certs": "server/certs/lan",
        "lock": "re/logs/session_lan.lock"}
 PRISTINE = "client/ia_Dawngate/Dawngate"
+PROFILE_TEMPLATE = os.path.join(HERE, "lane_preferences.prop")  # LANE5: profile_step
 MIN_FREE_GB = 5  # A6b: a new lane copies about 3 GB (client copy and host copy, 1.5 GB each); keep a margin
 
 
@@ -176,7 +189,8 @@ def expected_exe(lane, root):
     ca = os.path.join(root, cfg["certs"], "ca_modulus.bin")
     want = {"redirector": cfg["address"], "bind": cfg["address"], "appdata": "DawngateData" + cfg["suffix"],
             "documents": "Dawngate" + cfg["suffix"], "raknet_loopback": cfg["address"], "ca_flag": "0",
-            "laa": "on", "preload": "all", "maptable": "on", "rating": "on", "heaplocks": "on", "numfmt": "on", "averages": "on", "fade": "on"}
+            "laa": "on", "preload": "all", "maptable": "on", "rating": "on", "heaplocks": "on", "numfmt": "on", "averages": "on", "fade": "on", "dgx": "on", "draggrab": "on",
+            "profilereload": "on"}
     if os.path.exists(ca):
         with open(ca, "rb") as f:
             want["ca_sha256"] = hashlib.sha256(f.read()).hexdigest()[:16]
@@ -199,12 +213,19 @@ def exe_state(exe, lane, root, keys=None):
 
 
 def config_patched(data_dir, address):
-    """patch_config.py --host <address> ran: the text app properties name <address>:18080 (stored uncompressed)."""
+    """patch_config.py --host <address> ran: the text app properties name <address>:18080 (stored uncompressed), and
+    since DRAGGRAB2b the option OptionDragGrab is defined as patch_config.py defines it (a copy patched before, or by
+    the first DRAGGRAB2b attempt, gets the full patch again)."""
     pkg = os.path.join(data_dir, "Config.package")
     if not os.path.exists(pkg + ".orig") or not os.path.exists(pkg):
         return False
     with open(pkg, "rb") as f:
-        return f"http://{address}:18080".encode() in f.read()
+        data = f.read()
+    if f"http://{address}:18080".encode() not in data:
+        return False
+    sys.path.insert(0, HERE)
+    import patch_config  # noqa: E402  (stdlib + dbpf/props only)
+    return patch_config.drag_option_state(data_dir) == "on"
 
 
 def has_map_packages(folder):
@@ -260,7 +281,7 @@ def go_exe():
 def maps_step(data_dir, client, check_only, missing):
     """MAPED2b: a copy's map files by the release setup's own code (`go run ./tools/mapsetup --maps <maps/>
     [--client] <copy>`): game/Data/zz_MM_Map_v3.snap (build 854's archive), zz_<name>.snap of every package in maps/,
-    zz_BotProfiles.snap (the bot profiles and the maps' catalog entries) and, in a player copy (client),
+    zz_BotProfiles.snap (the bot profiles, the maps' catalog entries, the Locus zap's sound) and, in a player copy (client),
     zz_MatchOptions.snap (the CREATE GAME dialog's bot check box and map dropdown, after the archives it lists);
     client and host copies. Current means byte for byte what the Go setup makes now."""
     copy = os.path.dirname(os.path.dirname(os.path.abspath(data_dir)))
@@ -328,6 +349,13 @@ def item_shop_step(data_dir, check_only, missing):
     movie_step(data_dir, check_only, missing, "itemshop")
 
 
+def options_step(data_dir, check_only, missing):
+    """a client copy's added Options gameplay tab movie with the grab-style drag scroll check box
+    (patch_login_movie.py --spec options: game/Data/zz_Options.snap), byte for byte what it makes from the copy's own
+    Options.snap."""
+    movie_step(data_dir, check_only, missing, "options")
+
+
 def content_file():
     """The content file the lanes' servers read (the main checkout's server/data/content.json, setup_all.py's content
     step)."""
@@ -388,6 +416,31 @@ def check_space(path, copies):
         sys.exit(f"only {free:.1f} GB free; a lane needs about 3 GB (refusing below {MIN_FREE_GB} GB)")
 
 
+def profile_path(suffix):
+    """The lane client's options file, %APPDATA%\\DawngateData<X>\\Preferences\\Preferences.prop."""
+    return os.path.join(os.environ.get("APPDATA", ""), "DawngateData" + suffix, "Preferences", "Preferences.prop")
+
+
+def profile_step(suffix, check_only):
+    """LANE5: give a lane whose client has never run (no Preferences.prop yet) the options of a test lane: the game's
+    own fresh profile (PROFILE_TEMPLATE, from the LAN copy's first run) windowed instead of borderless (a fresh
+    profile's match window is a borderless 1920x1080 one at (0,0) that takes the foreground), every volume 0 and the
+    mutes on, the camera locked on the shaper. An existing file is never touched; nothing is
+    missing for --check (the game writes the file itself at its first exit)."""
+    path = profile_path(suffix)
+    if os.path.exists(path):
+        return
+    if check_only:
+        print(f"  note     {path} doesn't exist yet (setup_lane.py writes the test lane's options)")
+        return
+    with open(PROFILE_TEMPLATE, encoding="latin-1") as f:
+        lines = f.read().splitlines()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="latin-1", newline="") as f:
+        f.write("".join(line + "\r\n" for line in lines))  # the game writes CRLF
+    print(f"wrote the test lane's options {path} (windowed, silent, camera locked)")
+
+
 def setup(lane, dll, with_host, check_only, root=None):
     cfg = LANES[lane]
     root = root or main_root()
@@ -444,6 +497,7 @@ def setup(lane, dll, with_host, check_only, root=None):
         match_type_step(data_dir, cfg["address"], check_only, missing)
         party_region_step(data_dir, cfg["address"], check_only, missing)
         item_shop_step(data_dir, check_only, missing)
+        options_step(data_dir, check_only, missing)
         collection_step(data_dir, cfg["address"], check_only, missing)
     # 4. the match-host copy with the harness (setup_server_copy.py copies the lane's client copy once)
     host_keys = HOST_KEYS if lane == "a" else None
@@ -477,6 +531,9 @@ def setup(lane, dll, with_host, check_only, root=None):
     if not check_only and not os.path.isdir(data):
         os.makedirs(data)
         print(f"made the accounts folder {data}")
+    # 6. LANE5: a new lane's own options, before its first game (never lane a's, the user's; not under --root)
+    if lane != "a" and root == main_root():
+        profile_step(cfg["suffix"], check_only)
     if check_only:
         for m in missing:
             print(f"  MISSING  {m}")
@@ -502,7 +559,8 @@ def expected_extra(name, root):
     lane = LANES[cfg["lane"]]
     want = {"redirector": lane["address"], "bind": cfg["bind"], "appdata": "DawngateData" + cfg["suffix"],
             "documents": "Dawngate" + cfg["suffix"], "raknet_loopback": cfg["bind"], "ca_flag": "0",
-            "laa": "on", "preload": "all", "maptable": "on", "rating": "on", "heaplocks": "on", "numfmt": "on", "averages": "on", "fade": "on"}
+            "laa": "on", "preload": "all", "maptable": "on", "rating": "on", "heaplocks": "on", "numfmt": "on", "averages": "on", "fade": "on", "dgx": "on", "draggrab": "on",
+            "profilereload": "on"}
     sha = ca_sha(os.path.join(root, *lane["certs"].split("/")))
     if sha:
         want["ca_sha256"] = sha
@@ -514,7 +572,8 @@ def expected_lan(address, root):
     sockets narrowed to it, RakNet's start-up send test to it, its own data folders."""
     want = {"redirector": address, "bind": address, "appdata": "DawngateData" + LAN["suffix"],
             "documents": "Dawngate" + LAN["suffix"], "raknet_loopback": address, "ca_flag": "0",
-            "laa": "on", "preload": "all", "maptable": "on", "rating": "on", "heaplocks": "on", "numfmt": "on", "averages": "on", "fade": "on"}
+            "laa": "on", "preload": "all", "maptable": "on", "rating": "on", "heaplocks": "on", "numfmt": "on", "averages": "on", "fade": "on", "dgx": "on", "draggrab": "on",
+            "profilereload": "on"}
     sha = ca_sha(os.path.join(root, *LAN["certs"].split("/")))
     if sha:
         want["ca_sha256"] = sha
@@ -612,6 +671,7 @@ def setup_extra(name, check_only, root=None):
         match_type_step(data_dir, lane["address"], check_only, missing)
         party_region_step(data_dir, lane["address"], check_only, missing)
         item_shop_step(data_dir, check_only, missing)
+        options_step(data_dir, check_only, missing)
         collection_step(data_dir, lane["address"], check_only, missing)
     return finish(f"copy {name}", missing, check_only)
 
@@ -674,6 +734,7 @@ def setup_lan(address, check_only, new_certs=False, root=None):
         match_type_step(data_dir, address, check_only, missing)
         party_region_step(data_dir, address, check_only, missing)
         item_shop_step(data_dir, check_only, missing)
+        options_step(data_dir, check_only, missing)
         collection_step(data_dir, address, check_only, missing)
     return finish("lan copy", missing, check_only)
 
@@ -713,7 +774,7 @@ def main(argv):
             print(f"{k}={v}")
         return 0
     if not a.lane:
-        ap.error("name a lane (b, c or d)")
+        ap.error("name a lane (b, c, d or g)")
     if a.lane == "a" and not a.check:
         sys.exit("lane a is the original setup (docs/RUNNING_THE_CLIENT.md *How to start it*, play.ps1 -SetupOnly); "
                  "this script only checks it (--check)")

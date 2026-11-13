@@ -778,6 +778,13 @@ func (mt *Match) Supports(feature string) bool {
 	return slices.Contains(mt.features, feature)
 }
 
+// Features returns the features the match's host named in its hello (a copy; none before the hello).
+func (mt *Match) Features() []string {
+	mt.featMu.Lock()
+	defer mt.featMu.Unlock()
+	return slices.Clone(mt.features)
+}
+
 // shutdown is Close's internal command: kill at once.
 type shutdown struct{}
 

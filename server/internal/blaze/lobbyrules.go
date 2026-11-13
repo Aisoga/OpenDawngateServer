@@ -50,6 +50,7 @@ type LobbyRules struct {
 	Preset   string            `json:"preset"`   // the preset these options are, "" for none
 	Text     string            `json:"text"`     // rules.Describe: "All Random, Shop on Death", "Standard"
 	Bots     bool              `json:"bots"`     // bots fill the open seats at the start
+	Rated    bool              `json:"rated"`    // M30: the game rates in its type (the admin's Rated/Unrated; default true)
 	Findings []rules.Finding   `json:"findings"` // why the game can't start like this ([] when it can)
 	CanEdit  bool              `json:"canEdit"`  // the receiver may call lobby.setRules now
 	Host     bool              `json:"host"`     // the game's match host takes rules (false: an older build)
@@ -83,6 +84,9 @@ func (hg *hostedGame) rulesLockedLocked() string {
 func (hg *hostedGame) rulesContextLocked() rules.Context {
 	ctx := rules.Context{Bots: hg.custom.bots, HostRules: hg.hostRulesLocked(), TeamSize: int(hg.game.TeamCap),
 		Catalog: hg.s.rulesPools(), NoShaperSelect: !hg.s.shaperSelectRuns()} // RULES3: the pools and shaper select
+	if hg.match != nil { // M30: the options that need a newer host (rules2)
+		ctx.HostFeatures = hg.match.Features()
+	}
 	if ctx.Bots {
 		var humans [2]int64
 		for _, hp := range hg.players {
@@ -113,7 +117,7 @@ func (hg *hostedGame) lobbyRulesLocked(receiver int64, fs []rules.Finding) *Lobb
 		return nil
 	}
 	c := hg.custom.rules
-	lr := &LobbyRules{Options: c, Text: rules.Describe(c), Bots: hg.custom.bots, Findings: fs,
+	lr := &LobbyRules{Options: c, Text: rules.Describe(c), Bots: hg.custom.bots, Rated: !hg.custom.unrated, Findings: fs,
 		Host: hg.hostRulesLocked()}
 	if lr.Findings == nil {
 		lr.Findings = []rules.Finding{}
@@ -125,19 +129,22 @@ func (hg *hostedGame) lobbyRulesLocked(receiver int64, fs []rules.Finding) *Lobb
 	return lr
 }
 
-// lobbyName is a custom game's name in the browser: the map's label, [Bots] while bots fill the open seats, the rules'
-// prefix (rules.Prefix), then the name its creator gave it.
-func lobbyName(label string, bots bool, c rules.Combination, base string) string {
+// lobbyName is a custom game's name in the browser: the map's label, [Bots] while bots fill the open seats, [Unrated]
+// when the admin made it unrated (M30), the rules' prefix (rules.Prefix), then the name its creator gave it.
+func lobbyName(label string, bots, unrated bool, c rules.Combination, base string) string {
 	name := label
 	if bots {
 		name += BotFillPrefix
+	}
+	if unrated {
+		name += UnratedPrefix
 	}
 	return name + rules.Prefix(c) + base
 }
 
 // renameLocked gives the game the name its lobby's settings make; true when it changed (hg.mu held).
 func (hg *hostedGame) renameLocked() bool {
-	name := lobbyName(hg.custom.label, hg.custom.bots, hg.custom.rules, hg.custom.baseName)
+	name := lobbyName(hg.custom.label, hg.custom.bots, hg.custom.unrated, hg.custom.rules, hg.custom.baseName)
 	if name == hg.game.Name {
 		return false
 	}
@@ -146,55 +153,63 @@ func (hg *hostedGame) renameLocked() bool {
 }
 
 // setRulesArgs are lobby.setRules' arguments: the whole combination (rules) or a preset's id (preset), and/or the bots
-// setting (bots; absent = unchanged). Anything else is refused.
+// setting (bots), and/or whether the game rates (rated, M30); an absent one is unchanged. Anything else is refused.
 type setRulesArgs struct {
 	Rules  json.RawMessage `json:"rules"`
 	Preset *string         `json:"preset"`
 	Bots   *bool           `json:"bots"`
+	Rated  *bool           `json:"rated"`
 }
 
-// parseSetRules reads lobby.setRules' arguments: (nil, nil) for a call that changes no rules (bots only).
-func parseSetRules(args json.RawMessage) (*rules.Combination, *bool, error) {
+// rulesChange is a parsed lobby.setRules: each part nil when the call leaves it as it is.
+type rulesChange struct {
+	rules *rules.Combination
+	bots  *bool
+	rated *bool
+}
+
+// parseSetRules reads lobby.setRules' arguments; at least one part must be there.
+func parseSetRules(args json.RawMessage) (rulesChange, error) {
 	if len(args) > 2*rules.MaxJSON {
-		return nil, nil, errors.New("arguments too long")
+		return rulesChange{}, errors.New("arguments too long")
 	}
 	var a setRulesArgs
 	d := json.NewDecoder(bytes.NewReader(args))
 	d.DisallowUnknownFields()
 	if err := d.Decode(&a); err != nil {
-		return nil, nil, fmt.Errorf("arguments: %v", err)
+		return rulesChange{}, fmt.Errorf("arguments: %v", err)
 	}
 	if d.More() {
-		return nil, nil, errors.New("arguments: more than one value")
+		return rulesChange{}, errors.New("arguments: more than one value")
 	}
-	var c *rules.Combination
+	ch := rulesChange{bots: a.Bots, rated: a.Rated}
 	switch {
 	case len(a.Rules) > 0 && string(a.Rules) != "null" && a.Preset != nil:
-		return nil, nil, errors.New("both rules and a preset")
+		return rulesChange{}, errors.New("both rules and a preset")
 	case len(a.Rules) > 0 && string(a.Rules) != "null":
 		v, err := rules.ParseJSON(a.Rules)
 		if err != nil {
-			return nil, nil, err
+			return rulesChange{}, err
 		}
-		c = &v
+		ch.rules = &v
 	case a.Preset != nil:
 		p, ok := rules.FindPreset(*a.Preset)
 		if !ok {
-			return nil, nil, fmt.Errorf("%w preset", rules.ErrUnknown)
+			return rulesChange{}, fmt.Errorf("%w preset", rules.ErrUnknown)
 		}
-		c = &p.Options
+		ch.rules = &p.Options
 	}
-	if c == nil && a.Bots == nil {
-		return nil, nil, errors.New("neither rules, a preset nor bots")
+	if ch.rules == nil && ch.bots == nil && ch.rated == nil {
+		return rulesChange{}, errors.New("neither rules, a preset, bots nor rated")
 	}
-	return c, a.Bots, nil
+	return ch, nil
 }
 
 // lobbySetRules is the admin's lobby.setRules: the lobby's rules and bots. Only the admin of a custom game with rules,
 // before START, not within the gap, and only what the host can take; a change resets every ready mark, renames the game
 // in the browser and tells the lobby. A refused call changes nothing (the caller hears the state again).
 func (s *Server) lobbySetRules(user int64, args json.RawMessage) error {
-	c, bots, err := parseSetRules(args)
+	ch, err := parseSetRules(args)
 	if err != nil {
 		return err
 	}
@@ -218,37 +233,45 @@ func (s *Server) lobbySetRules(user int64, args json.RawMessage) error {
 	case s.rulesGap > 0 && time.Since(hg.custom.rulesSetAt) < s.rulesGap:
 		return refuse(fmt.Sprintf("a change within %v of the last", s.rulesGap))
 	}
-	next, nextBots := hg.custom.rules, hg.custom.bots
-	if c != nil {
-		next = *c
+	next, nextBots, nextUnrated := hg.custom.rules, hg.custom.bots, hg.custom.unrated
+	if ch.rules != nil {
+		next = *ch.rules
 	}
-	if bots != nil {
-		nextBots = *bots
+	if ch.bots != nil {
+		nextBots = *ch.bots
+	}
+	if ch.rated != nil {
+		nextUnrated = !*ch.rated // the server's alone: no host needs to know it
 	}
 	if !hg.hostRulesLocked() && (!next.IsDefault() || nextBots != hg.custom.botsAtCreate) {
 		return refuse("the match host is an older build without rules (its hello lacks " + gmshost.FeatureRules + ")")
 	}
-	if next == hg.custom.rules && nextBots == hg.custom.bots {
+	if next == hg.custom.rules && nextBots == hg.custom.bots && nextUnrated == hg.custom.unrated {
 		hg.mu.Unlock()
 		hg.sendLobbyState(user) // the same again: only the caller hears it
 		return nil
 	}
-	hg.custom.rules, hg.custom.bots, hg.custom.rulesSetAt = next, nextBots, time.Now()
+	hg.custom.rules, hg.custom.bots, hg.custom.unrated, hg.custom.rulesSetAt = next, nextBots, nextUnrated, time.Now()
 	for _, hp := range hg.players {
 		hg.custom.check.Set(hp.p.ID, false) // a change resets every ready mark
 	}
 	renamed := hg.renameLocked()
 	findings := hg.rulesFindingsLocked()
-	gid := hg.game.ID
+	gid, name := hg.game.ID, hg.game.Name
 	hg.mu.Unlock()
 	note := "none"
 	if len(findings) > 0 {
 		note = rules.DescribeFindings(findings)
 	}
-	s.Log.Logf("blaze", "   game %d: rules set by admin %d: %s, bots %v; every ready mark reset; findings: %s", gid, user,
-		rules.Describe(next), nextBots, note)
+	rated := "" // a rated game's line as it was before M30
+	if nextUnrated {
+		rated = ", unrated"
+	}
+	s.Log.Logf("blaze", "   game %d: rules set by admin %d: %s, bots %v%s; every ready mark reset; findings: %s",
+		gid, user, rules.Describe(next), nextBots, rated, note)
 	hg.publishLobby()
 	if renamed {
+		s.Log.Logf("blaze", "   game %d: the browser's name is now %q", gid, name)
 		s.browserChanged(hg)
 	}
 	return nil
@@ -278,16 +301,26 @@ func (hg *hostedGame) startRulesLocked() (fs []rules.Finding, r *gmshost.Rules, 
 	return nil, r, &n
 }
 
-// describeStartRules is the start's log text for startGame's rules and bots ("" when it carries none).
-func describeStartRules(r *gmshost.Rules, fill *int) string {
-	if fill == nil {
-		return ""
+// describeStartRules is the start's log text for startGame's rules and bots ("" when it carries none), and "; unrated"
+// for a game its admin made unrated (M30).
+func describeStartRules(r *gmshost.Rules, fill *int, unrated bool) string {
+	var out string
+	if fill != nil {
+		text := "the standard game"
+		if r != nil {
+			text = "rules " + rules.Describe(rules.Combination(*r))
+		}
+		out = fmt.Sprintf("; %s, fillTeams %d", text, *fill)
 	}
-	text := "the standard game"
-	if r != nil {
-		text = "rules " + rules.Describe(rules.Combination(*r))
+	if unrated {
+		out += "; unrated (the admin's choice)"
 	}
-	return fmt.Sprintf("; %s, fillTeams %d", text, *fill)
+	return out
+}
+
+// adminUnratedLocked reports whether the admin made the custom game unrated (M30's Rated/Unrated; hg.mu held).
+func (hg *hostedGame) adminUnratedLocked() bool {
+	return hg.custom != nil && hg.custom.unrated
 }
 
 // unratedRulesLocked reports whether the game's rules make it unrated (any category away from its default; hg.mu held).
@@ -318,6 +351,22 @@ const rulesNoteSeconds = 600
 // match's chat only once its in-match chat window is up, and a line that comes earlier is lost for good (below).
 const rulesNoteDelay = 10 * time.Second
 
+// rulesNoteDueLocked reports whether the match gets the rules line: a custom game with rules away from the standard
+// game, or one its admin made unrated (M30; hg.mu held).
+func (hg *hostedGame) rulesNoteDueLocked() bool {
+	return hg.custom != nil && (!hg.custom.rules.IsDefault() || hg.custom.unrated)
+}
+
+// rulesNoteText is the rules line: "Rules: All Random, Shop on Death", and " (Unrated)" after it for a game the admin
+// made unrated ("Rules: Standard (Unrated)").
+func rulesNoteText(c rules.Combination, unrated bool) string {
+	text := "Rules: " + rules.Describe(c)
+	if unrated {
+		text += " (Unrated)"
+	}
+	return text
+}
+
 // announceRulesLater starts the rules line's timer at the host's first inGame (announceRules, once). RULES1b
 // (rules1b_line2b): sent in the same millisecond as the host's EnterGame, the line never showed. The client's path
 // (B14's flag 2, GameUI_UpdateBroadcastMessages 0x004B5DE0) marks the record shown and calls
@@ -327,7 +376,7 @@ const rulesNoteDelay = 10 * time.Second
 // EnterGame no GameChatWindow is activated yet, so the line went nowhere.
 func (hg *hostedGame) announceRulesLater() {
 	hg.mu.Lock()
-	if hg.custom == nil || hg.custom.rules.IsDefault() || hg.custom.announced || hg.custom.announceDue {
+	if !hg.rulesNoteDueLocked() || hg.custom.announced || hg.custom.announceDue {
 		hg.mu.Unlock()
 		return
 	}
@@ -350,13 +399,13 @@ func (hg *hostedGame) announceRulesLater() {
 func (hg *hostedGame) announceRules() {
 	s := hg.s
 	hg.mu.Lock()
-	if hg.custom == nil || hg.custom.rules.IsDefault() || hg.custom.announced {
+	if !hg.rulesNoteDueLocked() || hg.custom.announced {
 		hg.mu.Unlock()
 		return
 	}
 	hg.custom.announced = true
 	hg.custom.announceDue = false
-	text := "Rules: " + rules.Describe(hg.custom.rules)
+	text := rulesNoteText(hg.custom.rules, hg.custom.unrated)
 	var to []*Conn
 	for _, hp := range hg.players {
 		if !hp.removed && hp.conn != nil {

@@ -16,8 +16,9 @@ import (
 // own AssetData.snap, which must be the build's. Current means byte for byte what botprofiles makes now, so a copy set
 // up before a profile was added gets the new archive. Every client and match-host copy: the host gives its bots these
 // profiles, and each client reads a bot's role from the profile its player update names. The archive also lists and
-// carries the match rules' two ClientFeedbackDefs (botprofiles.RulesFeedback): the host finds them by name, and the
-// client shows their texts (the locale patch's LabsAlerts lines).
+// carries the match rules' ClientFeedbackDefs (botprofiles.RulesFeedback): the host finds them by name, and the
+// client shows their texts (the locale patch's LabsAlerts lines). And it carries the Locus's two impact defs changed to
+// play a sound of their own (botprofiles.LocusZapSound: the Guardian's laser blast hit instead of Salous's ultimate's).
 func (s *Setup) stepBotProfiles(step, copy string) bool {
 	src := filepath.Join(copy, filepath.FromSlash(botprofiles.Source))
 	added := filepath.Join(copy, filepath.FromSlash(botprofiles.Rel))
@@ -37,15 +38,19 @@ func (s *Setup) stepBotProfiles(step, copy string) bool {
 	if err != nil {
 		return s.report(Failed, step, err.Error())
 	}
-	want, err := botprofiles.Build(data, append(maps, rules)...)
+	zap, err := botprofiles.LocusZapSound(data)
+	if err != nil {
+		return s.report(Failed, step, err.Error())
+	}
+	want, err := botprofiles.Build(data, append(maps, rules, zap)...)
 	if err != nil {
 		return s.report(Failed, step, err.Error())
 	}
 	h := sha256.Sum256(want)
-	line := fmt.Sprintf("%s: %d bot profile(s), %d match rules text(s) (%s)", s.show(added), len(botprofiles.Profiles),
-		len(rules.Entries), hex.EncodeToString(h[:])[:16])
+	line := fmt.Sprintf("%s: %d bot profile(s), %d match rules text(s), the Locus zap's sound (%s)", s.show(added),
+		len(botprofiles.Profiles), len(rules.Entries), hex.EncodeToString(h[:])[:16])
 	if len(maps) > 0 {
-		line = fmt.Sprintf("%s: %d bot profile(s), %d match rules text(s) and the catalog entries of %d map(s) (%s)",
+		line = fmt.Sprintf("%s: %d bot profile(s), %d match rules text(s), the Locus zap's sound and the catalog entries of %d map(s) (%s)",
 			s.show(added), len(botprofiles.Profiles), len(rules.Entries), len(maps), hex.EncodeToString(h[:])[:16])
 	}
 	have, err := os.ReadFile(added)

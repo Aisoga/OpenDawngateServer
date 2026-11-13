@@ -15,7 +15,11 @@
 // becomes <telemetry port>; <host> is added to WebkitAllowedDomains (B6). With AFKMinutes (B12, opt-in)
 // the AFK kick's AFKThreshhold and AFKDisconnectThreshhold change too, in Config.package's text and
 // Config_Ship.package's binary app properties; each must hold its original value (4, 1) before, or the
-// patch is refused. Changed entries are stored uncompressed (dbpf.Rebuild).
+// patch is refused. Always, the option OptionDragGrab (the Options menu's grab-style drag scroll) is defined as
+// the game defines its own gameplay booleans: in Config_Ship.package's compiled options (the index gets it, two
+// added entries its settings, which set the bool app property the exe's drag cave reads; off is the default) and
+// with its Preferences.prop name in Config.package (dragGrabLines); it is inert without exepatch's drag grab.
+// Changed and added entries are stored uncompressed (dbpf.RebuildAdd).
 //
 // Patch keeps patch_config.py's files: the first run saves <name>.package.orig beside each package, every
 // run patches from that backup, so running it again is safe, and Restore puts the originals back. It
@@ -28,6 +32,8 @@
 package configpatch
 
 import (
+	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
@@ -152,6 +158,7 @@ func Package(data []byte, name string, o Options) (Result, error) {
 	}
 	var res Result
 	repl := map[string][]byte{}
+	var added []dbpf.Added
 	for _, e := range pkg.Entries {
 		where := name + " " + e.Key()
 		d, err := pkg.Read(e) // every entry, as patch_config.py reads them
@@ -163,6 +170,9 @@ func Package(data []byte, name string, o Options) (Result, error) {
 			text := pytext.Latin1Decode(d) // byte-preserving; the files are ASCII
 			out, err := patchText(text, o, &res, where)
 			if err != nil {
+				return Result{}, err
+			}
+			if out, err = addDragGrab(out, e.Instance, &res, where); err != nil {
 				return Result{}, err
 			}
 			if out != text {
@@ -177,19 +187,141 @@ func Package(data []byte, name string, o Options) (Result, error) {
 			if err != nil {
 				return Result{}, err
 			}
+			if e.Group == optionsGroup && e.Instance == 0 { // the compiled options' index
+				in := d
+				if out != nil {
+					in = out
+				}
+				if out, err = addDragOptionIndex(in, where); err != nil {
+					return Result{}, err
+				}
+				res.Changes = append(res.Changes, fmt.Sprintf("%s OptionDragGrab: + option 0x%08x (2 settings)", where, dragGrabID))
+				for v := byte(0); v < 2; v++ {
+					a := dbpf.Added{Type: BinaryType, Group: optionSettingGroup + uint32(v), Instance: uint64(dragGrabID), Data: dragOptionSetting(v)}
+					added = append(added, a)
+					res.Changes = append(res.Changes, fmt.Sprintf("%s %08X-%08X-%016X OptionDragGrab: + setting %d (OptionDragGrab = %s)",
+						name, a.Type, a.Group, a.Instance, v, [2]string{"false", "true"}[v]))
+				}
+			}
 			if out != nil {
 				repl[e.Key()] = out
 			}
 		}
 	}
-	if len(repl) == 0 {
+	if len(repl) == 0 && len(added) == 0 {
 		return res, nil
 	}
-	if res.Data, err = pkg.Rebuild(repl); err != nil {
+	if res.Data, err = pkg.RebuildAdd(repl, added); err != nil {
 		return Result{}, fmt.Errorf("configpatch: %s: %w", name, err)
 	}
-	res.Entries = len(repl)
+	res.Entries = len(repl) + len(added)
 	return res, nil
+}
+
+// The option OptionDragGrab (the Options menu's grab-style drag scroll), defined as the game defines its own gameplay
+// booleans (patch_config.py's DRAG_GRAB_LINES, DRAG_GRAB_ID, add_drag_option_index, drag_option_setting). The game
+// takes its options from their compiled form in Config_Ship.package (the config manager's 0x009624B0; Config.package's
+// text option definitions are not read): the index 00B1B104-40470000-0 (three uint32 arrays: the option ids
+// 0x05DAAFFF, each option's first setting 0x05DAB000, its number of settings 0x05DAB001) gets OptionDragGrab, 0, 2,
+// and its two settings, 00B1B104-(0x40470100 + setting)-<option id>, set the bool app property OptionDragGrab (the
+// key the exe's drag cave reads) to false ($Off, setting 0, the default) and true. Config.package's text gets the
+// option's name in the player options stored in Preferences.prop, after the anchor line (the last line of the entry's
+// gameplay group in build 854). A setOption line for an option the compiled data lacks stops the config script
+// ("Configuration Script Failed", alert 2000).
+var dragGrabLines = []struct {
+	instance     uint64
+	anchor, line string
+}{
+	{0x2CB7250D, "property OptionShowAttackMoveRange", `property OptionDragGrab                         (hash("OptionDragGrab")) uint32`},
+}
+
+const (
+	optionsGroup       = 0x40470000
+	optionSettingGroup = 0x40470100
+	optionIDs          = 0x05DAAFFF
+	optionFirst        = 0x05DAB000
+	optionCount        = 0x05DAB001
+)
+
+var dragGrabID = propID("OptionDragGrab") // 0x14958012
+
+// dragOptionSetting is OptionDragGrab's setting value (0 off, 1 on): one bool property OptionDragGrab = value.
+func dragOptionSetting(value byte) []byte {
+	b := binary.BigEndian.AppendUint32(nil, 1)
+	b = binary.BigEndian.AppendUint32(b, dragGrabID)
+	return append(b, 0, 1, 0, 0, value)
+}
+
+// addDragOptionIndex is the options index with OptionDragGrab appended (id, first setting 0, 2 settings); an index
+// that isn't build 854's form (three uint32 arrays of the same length) or has the option already is refused.
+func addDragOptionIndex(data []byte, where string) ([]byte, error) {
+	ps, err := parseProps(data)
+	if err != nil {
+		return nil, fmt.Errorf("configpatch: %s: %w", where, err)
+	}
+	refuse := fmt.Errorf("configpatch: %s: not the options index of build 854; not patching an unknown config", where)
+	byID := map[uint32]*prop{}
+	for _, p := range ps {
+		byID[p.id] = p
+	}
+	want := []uint32{optionIDs, optionFirst, optionCount}
+	if len(ps) != 3 {
+		return nil, refuse
+	}
+	for _, id := range want {
+		p := byID[id]
+		if p == nil || p.typ != 0x0A || !p.isArray() || len(p.raw) < 8 || !bytes.Equal(p.raw[:8], byID[optionIDs].raw[:8]) {
+			return nil, refuse
+		}
+	}
+	ids := byID[optionIDs].raw
+	if binary.BigEndian.Uint32(ids[4:]) != 4 {
+		return nil, refuse
+	}
+	n := binary.BigEndian.Uint32(ids)
+	if uint64(len(ids)) != 8+4*uint64(n) {
+		return nil, refuse
+	}
+	for i := uint32(0); i < n; i++ {
+		if binary.BigEndian.Uint32(ids[8+4*i:]) == dragGrabID {
+			return nil, fmt.Errorf("configpatch: %s: OptionDragGrab is already an option; not patching an unknown config", where)
+		}
+	}
+	for _, a := range []struct {
+		id, value uint32
+	}{{optionIDs, dragGrabID}, {optionFirst, 0}, {optionCount, 2}} {
+		p := byID[a.id]
+		raw := binary.BigEndian.AppendUint32(nil, n+1)
+		raw = binary.BigEndian.AppendUint32(raw, 4)
+		raw = append(raw, p.raw[8:]...)
+		p.raw = binary.BigEndian.AppendUint32(raw, a.value)
+	}
+	return serializeProps(ps), nil
+}
+
+// addDragGrab is patch_config.py's add_drag_grab: text with dragGrabLines' line for this entry after its anchor line
+// (a line that starts with the anchor after blanks; the new line takes the anchor's line end, \r\n when it has none);
+// other entries unchanged. An entry without exactly one anchor line is refused (not build 854's config).
+func addDragGrab(text string, instance uint64, res *Result, where string) (string, error) {
+	for _, d := range dragGrabLines {
+		if d.instance != instance {
+			continue
+		}
+		re := regexp.MustCompile(`(?m)^[ \t]*` + regexp.QuoteMeta(d.anchor) + `[^\r\n]*(\r\n|\n|\r)?`)
+		hits := re.FindAllStringSubmatchIndex(text, -1)
+		if len(hits) != 1 {
+			return "", fmt.Errorf("configpatch: %s: %d lines start with %q, expected 1; not patching an unknown config",
+				where, len(hits), d.anchor)
+		}
+		end := hits[0][1]
+		add := "\r\n" + d.line
+		if hits[0][2] >= 0 {
+			add = d.line + text[hits[0][2]:hits[0][3]]
+		}
+		res.Changes = append(res.Changes, fmt.Sprintf("%s OptionDragGrab: + %s", where, d.line))
+		return text[:end] + add + text[end:], nil
+	}
+	return text, nil
 }
 
 // Character classes of patch_config.py's TEXT_PROP on Latin-1 text: Python's \s, \S and \w.

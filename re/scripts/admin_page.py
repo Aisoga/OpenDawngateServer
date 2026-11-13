@@ -10,6 +10,9 @@ It logs in as an admin (an account given the role with dgserver --make-admin), t
                                                    seconds more, then end it (the host's abortGame); prints the page
     audit                                          print the audit log's newest entries
     signup <open|invite|closed>                    set the sign-up mode
+    notice <text>                                  send every player online the text (Message to all players,
+                                                   confirmed); prints the page's answer; with --wait-online or
+                                                   --wait-match first waits as status does
     token <name>                                   make an API token of the issue tracker on /admin/tokens and
                                                    write it to --out (needed; the token is never printed)
     invite [uses] [days] [note]                    make an invite code (default 1 use, 14 days); prints
@@ -20,8 +23,10 @@ It logs in as an admin (an account given the role with dgserver --make-admin), t
                                                    --code-file; exit 0 when the account was made
 
 --wait-online N first waits until /status.json counts N players online, --wait-match until a match on
-/admin/matches has a player "in the match"; either then waits --after seconds before the action (status, delete),
-so a session can disable a player at the main menu or in a match.
+/admin/matches has a player "in the match", --wait-match-over until such a match was seen and is gone from the page
+(its post-game over: the players are back in the main menu); each then waits --after seconds before the action
+(status, delete, notice),
+so a session can disable a player at the main menu or in a match (or send a notice there).
 
 Every step is printed with the seconds since the start. The site's certificate is checked against --cafile (the lane's
 <data>\\site\\site_selfsigned.pem), unless --insecure.
@@ -33,6 +38,7 @@ Usage:
     ... --wait-match --after 30 status player1 disabled           (a player in a match)
     ... end-match [--after 20] [--timeout 300] [--reason "live check"]
     ... invite 1 1 "release check" --out <file>
+    ... --wait-match --after 40 notice "Server update at 20:00 UTC"   (a notice seen in a match)
     ... token reviewer --out <file outside the repository>
     admin_page.py --base https://192.168.20.40 --cafile <pem> --password-file <file> --code-file <file> register player2 Player2
 """
@@ -156,13 +162,15 @@ def main():
     ap.add_argument("--after", type=float, default=20, help="end-match: seconds after a player is in the match")
     ap.add_argument("--timeout", type=float, default=300, help="end-match: give up after this long")
     ap.add_argument("--reason", default="")
-    ap.add_argument("--wait-online", type=int, default=0, help="status/delete: first wait until this many players are online")
-    ap.add_argument("--wait-match", action="store_true", help="status/delete: first wait until a match has a player in it")
+    ap.add_argument("--wait-online", type=int, default=0, help="status/delete/notice: first wait until this many players are online")
+    ap.add_argument("--wait-match", action="store_true", help="status/delete/notice: first wait until a match has a player in it")
+    ap.add_argument("--wait-match-over", action="store_true",
+                    help="status/delete/notice: first wait until a match with a player was seen and is gone again")
     ap.add_argument("--out", help="invite: write the code to this file; token: write the token to it")
     ap.add_argument("--code", default="", help="register: the invite code")
     ap.add_argument("--code-file", help="register: read the invite code from this file")
     ap.add_argument("action", choices=["status", "delete", "matches", "end-match", "audit", "signup", "invite", "register",
-                                       "token"])
+                                       "token", "notice"])
     ap.add_argument("args", nargs="*")
     a = ap.parse_args()
     if not a.cafile and not a.insecure:
@@ -198,13 +206,18 @@ def main():
     say(f"admin login as {a.name}: {code} {text(page)}")
     if code != 200:
         return 1
-    if a.action in ("status", "delete") and (a.wait_online or a.wait_match):
+    if a.action in ("status", "delete", "notice") and (a.wait_online or a.wait_match or a.wait_match_over):
         if a.wait_online and not wait_for(site, f"{a.wait_online} player(s) online",
                                           lambda: online(site) >= a.wait_online, a.timeout):
             return 1
-        if a.wait_match and not wait_for(site, "a match with a player in it", lambda: any(
+        if (a.wait_match or a.wait_match_over) and not wait_for(site, "a match with a player in it", lambda: any(
                 "in the match" in p for r in matches(site) for p in r[2]), a.timeout):
             return 1
+        if a.wait_match_over:
+            seen = {r[0] for r in matches(site) if any("in the match" in p for p in r[2])}
+            if not wait_for(site, f"match(es) {sorted(seen)} gone from the page",
+                            lambda: not seen & {r[0] for r in matches(site)}, a.timeout):
+                return 1
         for game, info, _ in matches(site):
             say(f"match {game}: {info}")
         say(f"waiting {a.after} s")
@@ -220,11 +233,17 @@ def main():
         uid = account_id(site, name)
         code, page = site.post("/admin/accounts/status", {"id": uid, "status": status, "q": name})
         say(f"status of account {uid} {name} -> {status}: {code} {text(page)}")
-        if a.wait_match or a.wait_online:  # what the page shows afterwards
+        if a.wait_match or a.wait_online or a.wait_match_over:  # what the page shows afterwards
             time.sleep(5)
             say(f"players online now: {online(site)}")
             for game, info, _ in matches(site):
                 say(f"match {game} now: {info}")
+        return 0 if code == 200 else 1
+    if a.action == "notice":
+        if len(a.args) != 1:
+            ap.error("notice <text> (one argument; quote it)")
+        code, page = site.post("/admin/notice", {"text": a.args[0], "confirm": "yes"})
+        say(f"notice {a.args[0]!r}: {code} {text(page)}")
         return 0 if code == 200 else 1
     if a.action == "signup":
         code, page = site.post("/admin/signup", {"mode": a.args[0]})

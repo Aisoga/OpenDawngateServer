@@ -1,5 +1,5 @@
 // Package localepatch makes a player copy's added locale package game\Data\Locale\en-us\AA_Server.package:
-// changed copies of ten of the copy's own string tables with the server's login texts and links, the
+// changed copies of eleven of the copy's own string tables with the server's login texts and links, the
 // Leaderboard's rule, the custom lobby's map line, the item shop's refund lines and the match rules' alert lines, the region names (regions.go), byte for byte
 // what re/scripts/patch_locale.py makes (that script's docstring has the rule). The client mounts every *.package of Locale\en-us and the one whose name
 // sorts first wins, so AA_Server.package overrides the shipped Locale.package, which stays untouched. The game's
@@ -44,7 +44,15 @@ const (
 	HUD = 0x268AB804
 	// LabsAlerts is the match's alert-line table (FNV-1 of labsalerts): the ClientFeedbackDefs' text keys.
 	LabsAlerts = 0xB6F72728
+	// OptionsTable is the Options menu's table (FNV-1 of options).
+	OptionsTable = 0xF6D4A4B9
 )
+
+// OptionsLines are the Options menu's gameplay tab's lines: the label of the check box client_ui/options/
+// DragGrabOption.as adds (OptionDragGrab, moviepatch.Options).
+var OptionsLines = map[uint32]string{
+	0x5E70F001: "Grab-style drag scroll (middle mouse)",
+}
 
 // HUDLines are the item shop's inline refund's lines (client_ui/itemshop/ShopRefund.as's LINE_*): the Sell button's
 // label for a purchase that can be undone, the line above it and the tooltip's line; the class puts the price in for
@@ -58,11 +66,12 @@ var HUDLines = map[uint32]string{
 }
 
 // LabsAlertsLines are the match rules' refusals in the HUD's alert line: the text keys of the ClientFeedbackDefs
-// Rules_ShopClosed and Rules_ItemNotAllowed (botprofiles' rules feedback source), which the match host sends to the
-// one player concerned. No ~token~: only the client's twelve resolve, any other asserts.
+// Rules_ShopClosed, Rules_ItemNotAllowed and Rules_LightningOnly (botprofiles' rules feedback source), which the match
+// host sends to the one player concerned. No ~token~: only the client's twelve resolve, any other asserts.
 var LabsAlertsLines = map[uint32]string{
 	0x5E70E001: "You can shop only after dying.",
 	0x5E70E002: "That item is not allowed in this match.",
+	0x5E70E003: "Only Time, Energy, Chaos, Potency, Resonance.",
 }
 
 // LobbyMapLine is the line CustomMatchLobbyUI falls back to (^FE_CustomGameLobby!0x0f2b57c5, after its resultName
@@ -85,12 +94,20 @@ const LeaderboardMinGames = 10
 // ranks by default (its skill rating from balanced PvP and custom games, --rating-leaderboard on; practice games never
 // count). A server with --rating-leaderboard off ranks by wins under the same text. 0x5E70D001 (ours, appended) is
 // the header of the Rating column the front end's class adds (client_ui/leaderboard/LeaderboardRating.as; the
-// header cell translates the key itself, as it does EA's 0x200-0x203).
+// header cell translates the key itself, as it does EA's 0x200-0x203). 0x5E70D002-0x5E70D004 (ours, M30's MMR2) are
+// the rule under the title on the class's three tabs, STANDARD, DRAFT and CUSTOM, each ranking by its own rating; the
+// class writes them into the screen's description (0x101 stays the text of a copy without the class).
 var LeaderboardLines = map[uint32]string{
 	0x00000100: "Top 200",
 	0x00000101: "Rank is based upon skill rating from balanced PvP and custom games. Must have at least " +
 		strconv.Itoa(LeaderboardMinGames) + " rated games.",
 	0x5E70D001: "Rating",
+	0x5E70D002: "Standard: skill rating from balanced PvP and standard custom games. Must have at least " +
+		strconv.Itoa(LeaderboardMinGames) + " rated games.",
+	0x5E70D003: "Draft: skill rating from balanced custom games in Draft. Must have at least " +
+		strconv.Itoa(LeaderboardMinGames) + " rated Draft games.",
+	0x5E70D004: "Custom: skill rating from balanced custom games with other rules. Must have at least " +
+		strconv.Itoa(LeaderboardMinGames) + " rated Custom games.",
 }
 
 // MatchTypeLines are FE_MatchType's lines that said a group's games don't count for the Leaderboard; group PvP queue
@@ -309,7 +326,7 @@ func Tables(o Options) (map[uint32]map[uint32]string, error) {
 	}
 	t := map[uint32]map[uint32]string{BlazeErrors: ErrorLines, URLs: urls, LoginScreen: LoginLines,
 		FELeaderboard: LeaderboardLines, FEMatchType: MatchTypeLines, FECustomGameLobby: lobby, HUD: HUDLines,
-		LabsAlerts: LabsAlertsLines}
+		LabsAlerts: LabsAlertsLines, OptionsTable: OptionsLines}
 	regionTables(t) // PREF3 (regions.go)
 	return t, nil
 }
@@ -409,7 +426,7 @@ func table(p *dbpf.Package, inst uint32) ([]byte, error) {
 	return nil, nil
 }
 
-// Build makes AA_Server.package from the copy's Locale.package (its bytes): the ten tables changed, in instance
+// Build makes AA_Server.package from the copy's Locale.package (its bytes): the eleven tables changed, in instance
 // order, stored uncompressed (dbpf.WritePackage). A table missing from it (a synthetic test build) is made of the
 // appended lines alone.
 func Build(locale []byte, o Options) ([]byte, error) {

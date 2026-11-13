@@ -23,6 +23,8 @@ type Finding struct {
 	Message  string `json:"message"`
 
 	Parts []DroppedPart `json:"parts,omitempty"` // reach.dropped: the cut-off parts on team 1's half (dropped.go)
+	// Shape is the terrain shape to change (reach.npc, lanes.graph: the one too narrow there, narrow.go's offGraphWhy)
+	Shape string `json:"shape,omitempty"`
 }
 
 // Severities.
@@ -113,6 +115,11 @@ type Stats struct {
 	DroppedCells int     `json:"droppedCells"` // walkable cells the Player graph leaves out (unreachable pockets)
 	CellSize     float64 `json:"cellSize"`
 	WaterPlanes  int     `json:"waterPlanes,omitempty"` // the chasms' water planes (water.go)
+
+	// EDNARROW (narrow.go): the walkable cells too narrow for any square, and how wide open ground must be to hold
+	// the squares wherever it lies, in metres: across a path along the map's axes and across one at an angle
+	NarrowCells int       `json:"narrowCells,omitempty"`
+	PathWidth   []float64 `json:"pathWidth,omitempty"`
 }
 
 type checker struct {
@@ -617,8 +624,10 @@ func (c *checker) geometry(cm *Compiled) {
 		lp := cm.lanePath(id)
 		for k, p := range knots {
 			if compAt(&cm.NPC, npcComp, p) < 0 {
+				why, shape := cm.offGraphWhy(p, true)
 				c.errorf("lanes.graph", fmt.Sprintf("%s.knots[%d]", lp, k), pt(p), "lane %d's knot %d is off the NPC "+
-					"graph", id, k)
+					"graph%s", id, k, why)
+				c.fs[len(c.fs)-1].Shape = shape
 			}
 		}
 		step := ly.Size / Grid
@@ -627,8 +636,10 @@ func (c *checker) geometry(cm *Compiled) {
 			for s := 0.0; s <= l; s += step {
 				q := Point{knots[k][0] + (knots[k+1][0]-knots[k][0])*s/l, knots[k][1] + (knots[k+1][1]-knots[k][1])*s/l}
 				if compAt(&cm.NPC, npcComp, q) < 0 {
+					why, shape := cm.offGraphWhy(q, true)
 					c.errorf("lanes.graph", fmt.Sprintf("%s.knots[%d]", lp, k+1), pt(q), "lane %d's leg from knot %d to "+
-						"%d leaves the NPC graph at (%.1f, %.1f)", id, k, k+1, q[0], q[1])
+						"%d leaves the NPC graph at (%.1f, %.1f)%s", id, k, k+1, q[0], q[1], why)
+					c.fs[len(c.fs)-1].Shape = shape
 					break
 				}
 			}
@@ -656,12 +667,28 @@ func (c *checker) geometry(cm *Compiled) {
 		c.errorf("reach.islands", "base.spawns[0]", pt(t.Spawns[0]), "the two bases' spawn points aren't connected "+
 			"on the Player graph")
 	}
+	// a Binding or a Core stands in its hole (StructureRadius): reached when a square of the bases' part lies at its rim
+	side := ly.Size / Grid * float64(cm.Cell)
+	rim := int(math.Ceil(StructureRadius/side)) + 1
+	reachedAt := func(p Point, slack int) bool {
+		bx, by := cm.BlockAt(p)
+		for dy := -slack; dy <= slack; dy++ {
+			for dx := -slack; dx <= slack; dx++ {
+				x, y := bx+dx, by+dy
+				if x >= 0 && y >= 0 && x < cm.Player.W && y < cm.Player.H && plComp[y*cm.Player.W+x] == home {
+					return true
+				}
+			}
+		}
+		return false
+	}
 	for _, o := range obs {
 		if o.what == "the Guardian" || strings.HasPrefix(o.what, "camp") ||
 			(strings.HasPrefix(o.what, "well") && ly.KindAt(o.p) == Island) {
 			continue
 		}
-		if compAt(&cm.Player, plComp, o.p) != home || home < 0 {
+		structure := strings.HasPrefix(o.what, "Core") || strings.HasSuffix(o.what, "Binding")
+		if home < 0 || (!structure && compAt(&cm.Player, plComp, o.p) != home) || (structure && !reachedAt(o.p, rim)) {
 			c.errorf("reach.player", o.path, pt(o.p), "%s can't be reached from the bases on the Player graph", o.what)
 		}
 	}
@@ -670,19 +697,27 @@ func (c *checker) geometry(cm *Compiled) {
 		for a := 0; a < 8; a++ {
 			q := Point{w[0] + 8*math.Cos(float64(a)*math.Pi/4), w[1] + 8*math.Sin(float64(a)*math.Pi/4)}
 			if compAt(&cm.NPC, npcComp, q) < 0 {
+				why, shape := cm.offGraphWhy(q, true)
 				c.errorf("reach.npc", fmt.Sprintf("wells[%d].pos", k), pt(q), "well %d's workers' ring (8 m) leaves the "+
-					"NPC graph at (%.1f, %.1f)", k, q[0], q[1])
+					"NPC graph at (%.1f, %.1f)%s", k, q[0], q[1], why)
+				c.fs[len(c.fs)-1].Shape = shape
 				break
 			}
 		}
 	}
 	for k, cp := range t.Camps {
 		if compAt(&cm.NPC, npcComp, cp.Pos) < 0 {
-			c.errorf("reach.npc", fmt.Sprintf("camps[%d].pos", k), pt(cp.Pos), "camp %d is off the NPC graph", k)
+			why, shape := cm.offGraphWhy(cp.Pos, true)
+			c.errorf("reach.npc", fmt.Sprintf("camps[%d].pos", k), pt(cp.Pos), "camp %d is off the NPC graph%s", k, why)
+			c.fs[len(c.fs)-1].Shape = shape
 		}
 	}
-	if st := cm.stats(); st.DroppedCells > 0 {
+	st := cm.stats()
+	if st.DroppedCells > 0 {
 		c.dropped(cm, st) // dropped.go: at the largest cut-off part, every part in the finding's parts
+	}
+	if st.NarrowCells > 0 {
+		c.narrowed(cm, st) // narrow.go: the ground too narrow for any square, the same way
 	}
 	// the level's edge: the ground model and the PhysX mesh end there, so open ground must stop short of it
 	edge := 0
@@ -824,6 +859,13 @@ func (cm *Compiled) stats() *Stats {
 			st.DroppedCells += cm.Cell * cm.Cell
 		}
 	}
+	for _, n := range cm.narrowCells() { // narrow.go
+		if n {
+			st.NarrowCells++
+		}
+	}
+	straight, diagonal := cm.PathWidth()
+	st.PathWidth = []float64{straight, diagonal}
 	return st
 }
 

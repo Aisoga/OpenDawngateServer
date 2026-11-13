@@ -1,6 +1,6 @@
 """Builds the compiled bytes of our UI classes from their ActionScript source, or checks the committed ones.
 
-Ten classes run inside the game's own UI movies, each placed there by four added SWF tags (the game's bytecode stays
+Twelve classes run inside the game's own UI movies, each placed there by four added SWF tags (the game's bytecode stays
 as it is; re/scripts/patch_login_movie.py and its Go port, server/internal/setup/moviepatch, insert them):
     picker        client_ui/serverpicker/ServerPicker.as, the server picker on the login screen (Start-Client's
                   picker mode), in UI/Scaleform/LoginScreen/LoginScreen_BG.gfx
@@ -25,6 +25,11 @@ as it is; re/scripts/patch_login_movie.py and its Go port, server/internal/setup
                   (character and depth 2001)
     leaderboard   client_ui/leaderboard/LeaderboardRating.as, the Leaderboard's Rating column, in the same movie
                   as collection, after lobby's tags (character and depth 2002)
+    profile       client_ui/profile/ProfileModes.as, the Profile screen's game-type tabs (the server answers its stats
+                  in the chosen type; the tabs are client_ui/common/opendawngate/GameTabs.as, shared with the
+                  Leaderboard's), in the same movie as collection, after leaderboard's tags (character and depth 2003)
+    options       client_ui/options/DragGrabOption.as, the Options menu's "Grab-style drag scroll (middle mouse)" check
+                  box (one of the gameplay tab's own, OptionDragGrab), in UI/Scaleform/Options/Options_GameSettings.gfx
 Their compiled form is committed (as hex text, 32 bytes a line), so the release and the setup need no compiler:
     client_ui/<folder>/<Class>.abc.hex                 the class as an ABC (ActionScript bytecode) file
     server/internal/setup/moviepatch/<name>_tags.hex   the four SWF tags the setup adds to the movie:
@@ -42,10 +47,10 @@ of a folder above it), else the environment variables FLEX_SDK, PLAYERGLOBAL and
 the same source, so `check` can compare byte for byte.
 
 Usage:
-    python -I re/scripts/build_picker.py build [picker|matchoptions|chatrooms|aftaction|matchtype|pvplobby|itemshop|collection|lobby|leaderboard]   # compile and write both files (default: all)
-    python -I re/scripts/build_picker.py check [picker|matchoptions|chatrooms|aftaction|matchtype|pvplobby|itemshop|collection|lobby|leaderboard]   # compile into a temporary folder; exit 1 if a
+    python -I re/scripts/build_picker.py build [picker|matchoptions|chatrooms|aftaction|matchtype|pvplobby|itemshop|collection|lobby|leaderboard|profile|options]   # compile and write both files (default: all)
+    python -I re/scripts/build_picker.py check [picker|matchoptions|chatrooms|aftaction|matchtype|pvplobby|itemshop|collection|lobby|leaderboard|profile|options]   # compile into a temporary folder; exit 1 if a
                                                                          file differs
-    python -I re/scripts/build_picker.py tags <file.abc> <out.hex> [--spec picker|matchoptions|chatrooms|aftaction|matchtype|pvplobby|itemshop|collection|lobby|leaderboard]   # only the tags
+    python -I re/scripts/build_picker.py tags <file.abc> <out.hex> [--spec picker|matchoptions|chatrooms|aftaction|matchtype|pvplobby|itemshop|collection|lobby|leaderboard|profile|options]   # only the tags
     python -I re/scripts/build_picker.py compile <Source.as> <out_tags.hex>   # a throwaway class (a spike): its tags,
                                                      character 2000 at depth 2000, class = the file's name
 """
@@ -91,6 +96,8 @@ SPECS = {
     "collection": Spec("collection", "CollectionItems", "collection_tags.hex"),
     "lobby": Spec("lobby", "LobbyReady", "lobby_tags.hex", char_id=2001, depth=2001),
     "leaderboard": Spec("leaderboard", "LeaderboardRating", "leaderboard_tags.hex", char_id=2002, depth=2002),
+    "profile": Spec("profile", "ProfileModes", "profile_tags.hex", char_id=2003, depth=2003),
+    "options": Spec("options", "DragGrabOption", "options_tags.hex"),
 }
 # The picker's names, as before the specs (the tests and older tools read them).
 SOURCE_DIR = SPECS["picker"].source_dir

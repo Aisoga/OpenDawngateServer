@@ -18,7 +18,7 @@ import (
 var waterDir = testmaps.Pkg("CM_Water")
 
 // Water854SHA256 pins CM_Water built from build 854's files with the shared mesh.
-const Water854SHA256 = "5648ef76256b6c185029cf4cd14cee0db8b0c0762a9047782145f48ef74ae5f2"
+const Water854SHA256 = "5a4c48e96e1414c5a906e7eeb5a02c345d3370480ad95f7a7d64a2d9b04038d8"
 
 func waterMap(t *testing.T) *Map {
 	t.Helper()

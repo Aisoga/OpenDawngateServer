@@ -59,15 +59,28 @@ GMS_TEST(RulesItemTable) {
   CHECK(KindOf(0x12345678) == ItemKind::kUnknown);
 }
 
-// core/rules/pick.h (RULES5b): All Random and the draft lock at once, the standard pick and anything else don't.
+// core/rules/pick.h (RULES5b, ARMY1): All Random, the draft, Army Pick and Clone Pick lock at once, the standard pick
+// and anything else don't; only Army and Clone Pick let one shaper be held by several players of a team (MODES0's
+// ShaperSelectConfig::teamDuplicates, which gms_host.cpp's ShaperSelectSetup sets from PickAllowsTeamDuplicates).
 GMS_TEST(RulesPickLocksAtOnce) {
   CHECK(PickLocksAtOnce("random"));
   CHECK(PickLocksAtOnce("draft"));
+  CHECK(PickLocksAtOnce("army"));
+  CHECK(PickLocksAtOnce("clone"));
   CHECK(!PickLocksAtOnce("blind"));
   CHECK(!PickLocksAtOnce(""));
   CHECK(!PickLocksAtOnce("Draft"));
+  CHECK(!PickLocksAtOnce("Army"));
+  CHECK(!PickLocksAtOnce("armyx"));
   CHECK(std::string(PickName("draft")) == "Draft");
   CHECK(std::string(PickName("random")) == "All Random");
+  CHECK(std::string(PickName("army")) == "Army Pick");
+  CHECK(std::string(PickName("clone")) == "Clone Pick");
+  CHECK(std::string(PickName("blind")) == "the standard pick");
+  CHECK(std::string(PickName("")) == "the standard pick");
+  // the duplicates follow the pick: on for the two votes, off for every pick that keeps a shaper once per team
+  for (const char* p : {"army", "clone"}) CHECK(PickAllowsTeamDuplicates(p) && PickLocksAtOnce(p));
+  for (const char* p : {"blind", "random", "draft", "", "Clone"}) CHECK(!PickAllowsTeamDuplicates(p));
 }
 
 GMS_TEST(RulesParseIds) {
@@ -81,8 +94,16 @@ GMS_TEST(RulesParseIds) {
   CHECK(ParseItemPool("noLegendary", &p) && p == ItemPool::kNoLegendary);
   CHECK(ParseItemPool("basics", &p) && p == ItemPool::kBasics);
   CHECK(ParseItemPool("", &p) && p == ItemPool::kAll);
+  CHECK(ParseItemPool("lightning", &p) && p == ItemPool::kLightning);  // LIGHTNING1
   CHECK(!ParseItemPool("melee", &p));
+  CHECK(!ParseItemPool("Lightning", &p));
   CHECK_EQ(std::string(Name(ItemPool::kNoLegendary)), std::string("noLegendary"));
+  // every pool's name parses back to it (the server's ids)
+  for (ItemPool q : {ItemPool::kAll, ItemPool::kNoLegendary, ItemPool::kBasics, ItemPool::kLightning}) {
+    ItemPool back = ItemPool::kAll;
+    CHECK(ParseItemPool(Name(q), &back) && back == q);
+  }
+  CHECK(R(ShopAccess::kNormal, ItemPool::kLightning).Any());
   CHECK_EQ(std::string(Name(ShopAccess::kOnDeath)), std::string("onDeath"));
   CHECK(!Rules().Any());
   CHECK(R(ShopAccess::kNormal, ItemPool::kBasics).Any());
@@ -176,16 +197,92 @@ GMS_TEST(RulesMayBuyItemPools) {
 GMS_TEST(RulesItemPoolsClosedDownwards) {
   // REFUND1's undo gives an upgrade's component back: a component is one tier below, so a pool that allows an item
   // allows its components (the undo also bypasses MayBuy: it calls LabsPlayer_PurchaseItem itself)
-  for (ItemPool p : {ItemPool::kAll, ItemPool::kNoLegendary, ItemPool::kBasics}) {
+  for (ItemPool p : {ItemPool::kAll, ItemPool::kNoLegendary, ItemPool::kBasics, ItemPool::kLightning}) {
     if (InPool(p, ItemKind::kLegendary)) CHECK(InPool(p, ItemKind::kAdvanced));
     if (InPool(p, ItemKind::kAdvanced)) CHECK(InPool(p, ItemKind::kBasic));
     CHECK(InPool(p, ItemKind::kBasic));
   }
 }
 
+// LIGHTNING1: the same by id, over the catalog's components (items.h ItemComponents): for every pool, every stat item
+// it allows has its components allowed too, so REFUND1's undo (and a skip purchase's, which gives the Basic item back)
+// never meets an item the pool bans.
+GMS_TEST(RulesItemPoolsClosedDownwardsById) {
+  std::size_t n = 0, nc = 0;
+  const ItemRow* rows = ItemTable(&n);
+  const ItemComponent* comps = ItemComponents(&nc);
+  CHECK_EQ(nc, static_cast<std::size_t>(83));  // 82 stat items over another (Advanced_Integrity has two)
+  // the table: an Advanced item is made of Basic ones, a Legendary of an Advanced one; every Advanced and Legendary
+  // item has a component, no Basic one has
+  for (std::size_t i = 0; i < n; ++i) {
+    unsigned has = 0;
+    for (std::size_t c = 0; c < nc; ++c) {
+      if (comps[c].item != rows[i].id) continue;
+      ++has;
+      const ItemKind ck = KindOf(comps[c].component);
+      if (rows[i].kind == ItemKind::kAdvanced) CHECK(ck == ItemKind::kBasic);
+      if (rows[i].kind == ItemKind::kLegendary) CHECK(ck == ItemKind::kAdvanced);
+    }
+    const bool upper = rows[i].kind == ItemKind::kAdvanced || rows[i].kind == ItemKind::kLegendary;
+    CHECK(upper ? has >= 1u : has == 0u);
+  }
+  for (ItemPool p : {ItemPool::kAll, ItemPool::kNoLegendary, ItemPool::kBasics, ItemPool::kLightning}) {
+    unsigned allowed = 0;
+    for (std::size_t c = 0; c < nc; ++c)
+      if (InPool(p, comps[c].item)) CHECK(InPool(p, comps[c].component));
+    for (std::size_t i = 0; i < n; ++i)
+      if (IsStatKind(rows[i].kind) && InPool(p, rows[i].id)) ++allowed;
+    const unsigned want = p == ItemPool::kAll           ? 88u
+                          : p == ItemPool::kNoLegendary ? 29u
+                          : p == ItemPool::kBasics      ? 6u
+                                                        : 5u;
+    CHECK_EQ(allowed, want);
+  }
+}
+
+// LIGHTNING1: the pool "lightning": of the stat items only Time, Energy, Chaos, Potency and Resonance; potions, flasks,
+// battle spells and ids outside the catalog pass, no sale is refused, and the refusal names the pool's items.
+GMS_TEST(RulesMayBuyLightning) {
+  constexpr std::uint32_t kEnergy = 0xF485EF39, kChaos = 0x97AF2200, kPotency = 0xD62F5190, kResonance = 0xB0FB4E50;
+  constexpr std::uint32_t kLife = 0xB22758B1;         // Basic_Life (another Basic)
+  constexpr std::uint32_t kClarity = 0x8DB56EF1;      // Advanced_Clarity (over Time, another branch)
+  constexpr std::uint32_t kDestruction = 0x49056D24;  // Legendary_Destruction
+  CHECK_EQ(std::string(ItemNameOf(kLife)), std::string("Basic_Life"));
+  const Rules r = R(ShopAccess::kNormal, ItemPool::kLightning);
+  for (std::uint32_t id : {kTime, kEnergy, kChaos, kPotency, kResonance}) {
+    CHECK(MayBuy(r, false, id) == Verdict::kAllowed);
+    CHECK(MayTransact(r, Transaction::kConsume, false, id) == Verdict::kAllowed);
+  }
+  for (std::uint32_t id : {kLife, kMotion, kClarity, kFluidity, kDestruction}) {
+    CHECK(MayBuy(r, true, id) == Verdict::kItemNotAllowed);
+    CHECK(MayTransact(r, Transaction::kSell, true, id) == Verdict::kAllowed);  // a pool never refuses a sale
+  }
+  CHECK(MayBuy(r, false, kPotion) == Verdict::kAllowed);
+  CHECK(MayTransact(r, Transaction::kConsume, false, kFlaskVim) == Verdict::kAllowed);
+  CHECK(MayBuy(r, false, kBlink) == Verdict::kAllowed);
+  CHECK(MayBuy(r, false, kCheatGold) == Verdict::kAllowed);
+  CHECK(MayBuy(r, false, 0x12345678) == Verdict::kAllowed);
+  // every id of the list is a stat item of the catalog
+  for (std::uint32_t id : kLightningItems) CHECK(IsStatKind(KindOf(id)));
+  // with Shop on Death the closed shop comes first
+  const Rules both = R(ShopAccess::kOnDeath, ItemPool::kLightning);
+  CHECK(MayBuy(both, false, kMotion) == Verdict::kShopClosed);
+  CHECK(MayBuy(both, true, kMotion) == Verdict::kItemNotAllowed);
+  CHECK(MayBuy(both, true, kEnergy) == Verdict::kAllowed);
+  // the text: the pool's own line; the shop's closed line stays
+  CHECK_EQ(std::string(FeedbackDef(Verdict::kItemNotAllowed, ItemPool::kLightning)),
+           std::string("Rules_LightningOnly.ClientFeedbackDef"));
+  CHECK_EQ(std::string(FeedbackDef(Verdict::kShopClosed, ItemPool::kLightning)),
+           std::string("Rules_ShopClosed.ClientFeedbackDef"));
+  CHECK(FeedbackDef(Verdict::kAllowed, ItemPool::kLightning) == nullptr);
+}
+
 GMS_TEST(RulesFeedbackDefsAndPace) {
   CHECK_EQ(std::string(FeedbackDef(Verdict::kShopClosed)), std::string("Rules_ShopClosed.ClientFeedbackDef"));
   CHECK_EQ(std::string(FeedbackDef(Verdict::kItemNotAllowed)), std::string("Rules_ItemNotAllowed.ClientFeedbackDef"));
+  for (ItemPool p : {ItemPool::kNoLegendary, ItemPool::kBasics})  // the tier pools keep the general line
+    CHECK_EQ(std::string(FeedbackDef(Verdict::kItemNotAllowed, p)),
+             std::string("Rules_ItemNotAllowed.ClientFeedbackDef"));
   CHECK(FeedbackDef(Verdict::kAllowed) == nullptr);
   TextPace pace;
   CHECK(pace.Due(0, 1000));

@@ -100,7 +100,7 @@ FEEDBACK_NAMES = ['PlayerCommCharge', 'PlayerCommCare', 'PlayerCommNo', 'PlayerC
                   'PlayerCommYes', 'PlayerCommCompliment', 'PlayerCommLaugh', 'PlayerCommTaunt', 'PlayerCommJoke',
                   'PlayerCommFlirt', 'PlayerCommMissing', 'PlayerCommDance',
                   'MineUnderAttack',  # the wells' alert: D9b the client's own (a worker hit, keyed to its well)
-                  'Rules_ShopClosed', 'Rules_ItemNotAllowed',  # RULES0b: the match rules' text lines (zz_BotProfiles)
+                  'Rules_ShopClosed', 'Rules_ItemNotAllowed', 'Rules_LightningOnly',  # RULES0b, LIGHTNING1: the rules' lines
                   'OutOfRange']  # the game's own "Out of range." (RULES0b's comparison line)
 
 

@@ -365,4 +365,36 @@ inline std::set<std::string> PoolFilter(const std::set<std::string>& available, 
   return out;
 }
 
+// MODES0 (the host's test option test_clone_class; later Army and Clone Pick): every seat of the draw takes the shaper
+// `base` (a PlayerClass), keeping its seat's role and lane: the seat's role's profile of `base` when `available` has
+// one (PC_Warden_Predator for a Predator seat), else `base` itself with the seat's role set after its BotClass. It
+// overrides DraftMatch's hard rule (no shaper twice on a team) on purpose. Returns false (nothing changed) when
+// `available` has neither `base` nor a profile of it.
+inline bool CloneDraw(std::map<int, std::vector<ComposedSeat>>* drawn, const std::string& base,
+                      const std::set<std::string>& available) {
+  bool any = available.count(base) != 0;
+  for (const std::string& c : available) any = any || BaseClass(c) == base;
+  if (!any || base.empty()) return false;
+  for (auto& team : *drawn)
+    for (ComposedSeat& s : team.second) {
+      const std::string profile = ProfileFor(base, s.role);
+      if (!profile.empty() && available.count(profile)) {
+        s.botClass = profile;
+        s.roleOverride = false;
+      } else if (available.count(base)) {
+        s.botClass = base;
+        s.roleOverride = s.role >= 0;
+      } else {  // only profiles of base are available: the first, with the seat's role
+        for (const std::string& c : available)
+          if (BaseClass(c) == base) {
+            s.botClass = c;
+            break;
+          }
+        s.roleOverride = s.role >= 0;
+      }
+      s.fallback = false;
+    }
+  return true;
+}
+
 }  // namespace gms::bots

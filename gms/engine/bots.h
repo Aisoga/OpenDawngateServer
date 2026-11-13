@@ -131,6 +131,9 @@ void SetGameMode(const std::string& mode);
 // RULES3: a custom game's shaper pool (startGame's poolClasses, PlayerClass names): the BOTDRAFT draw takes only classes
 // whose base class is in it (gms::bots::PoolFilter). Called at startGame, before shaper select; empty = no pool.
 void SetDraftPool(const std::vector<std::string>& classes, const char* from);
+// MODES0 ([host] test_clone_class): the BOTDRAFT draw gives every bot of both teams this shaper (its default-skin Noun
+// asset id; gms::bots::CloneDraw), keeping each seat's role and lane. 0 = off. Called before shaper select.
+void SetCloneShaper(std::uint32_t noun);
 
 // After GameSimulator_Init, before the level (server simulator bound): nBotHost on the shared lua_State.
 void OnSimulatorCreated(void* sim);

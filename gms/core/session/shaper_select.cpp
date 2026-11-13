@@ -89,7 +89,11 @@ ShaperSelect::ShaperSelect(const ShaperSelectConfig& config)
       draftFn_(config.draft),
       draftGraceMs_(config.draftGraceMs),
       lockAtOnceAnswer_(config.lockAtOnceAnswer),
-      lockAtOnceMinMs_(config.lockAtOnceMinMs) {
+      lockAtOnceMinMs_(config.lockAtOnceMinMs),
+      teamDuplicates_(config.teamDuplicates) {
+  if (teamDuplicates_)
+    Logf("%s    shaper select: team duplicates allowed (MODES0): a teammate's shaper is never refused or skipped",
+         Clock().c_str());
   for (const ShaperSelectPlayer& sp : config.players) {
     Player& p = players_[sp.gameplayIndex];
     p.team = sp.team;
@@ -249,8 +253,10 @@ const ShaperRecord* ShaperSelect::Record(uint8_t gameplayIndex) const {
   return it == players_.end() ? nullptr : &it->second.rec;
 }
 
+// The one test of the team rule (Selectable, FreeEntries, Resolve and C8 04's refusal all ask here): never true with
+// teamDuplicates (MODES0).
 bool ShaperSelect::HeldByTeammate(uint8_t index, uint32_t noun) const {
-  if (noun == 0 || noun == kNounRandom) return false;
+  if (teamDuplicates_ || noun == 0 || noun == kNounRandom) return false;
   const Player& me = players_.at(index);
   for (const auto& kv : players_)
     if (kv.first != index && kv.second.team == me.team && kv.second.rec.shaper == noun) return true;

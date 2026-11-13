@@ -29,9 +29,11 @@ type Match struct {
 	Timeline json.RawMessage
 	Seats    []MatchSeat // by seat
 
-	// Rules are a custom game's match rules as JSON (package rules' Combination), "" for the standard game; a match
-	// with rules is never rated.
+	// Rules are a custom game's match rules as JSON (package rules' Combination), "" for the standard game. Since M30
+	// they choose the game's rating type (internal/rating's ModeOf): standard, draft or custom.
 	Rules string
+	// Unrated: the custom game's admin made it unrated (M30's Rated/Unrated in the lobby); such a match is never rated.
+	Unrated bool
 }
 
 // MatchSeat is one seat of a match: a human (PersonaID set) or a bot (PersonaID 0).
@@ -76,9 +78,10 @@ func (s *Store) InsertMatch(m Match) (int64, error) {
 		return 0, err
 	}
 	defer tx.Rollback()
-	res, err := tx.Exec(`INSERT INTO matches (game_id, kind, mode, level, winner, reason, started, ended, duration_ms, timeline, rules)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, m.GameID, m.Kind, m.Mode, m.Level, m.Winner, m.Reason,
-		m.Started.UTC().Format(timeFormat), m.Ended.UTC().Format(timeFormat), m.DurationMs, string(m.Timeline), m.Rules)
+	res, err := tx.Exec(`INSERT INTO matches (game_id, kind, mode, level, winner, reason, started, ended, duration_ms, timeline, rules,
+		unrated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, m.GameID, m.Kind, m.Mode, m.Level, m.Winner, m.Reason,
+		m.Started.UTC().Format(timeFormat), m.Ended.UTC().Format(timeFormat), m.DurationMs, string(m.Timeline), m.Rules,
+		m.Unrated)
 	if err != nil {
 		return 0, err
 	}
@@ -130,6 +133,43 @@ func (s *Store) MatchesOf(personaID int64, before int64, limit int) ([]Match, er
 		WHERE persona_id = ? AND match_id < ? ORDER BY match_id DESC LIMIT ?) ORDER BY id DESC`, personaID, before, limit)
 }
 
+// MatchesWhere is RecentMatches (personaID 0) or MatchesOf (a persona) with a filter: only the matches keep accepts,
+// paged as those (newest first, older than before, at most limit; a page shorter than limit is the last). keep sees
+// a match's head without seats (ID, Kind, Mode, Rules, Unrated and the rest of matchColumns), so a filter by game type
+// (the match history's type=, PROFILE1) pages right whatever the share of matches it keeps. The heads are read newest
+// first until limit are kept (one pass over the index; a match is a small row), then the kept matches are loaded.
+func (s *Store) MatchesWhere(personaID int64, before int64, limit int, keep func(Match) bool) ([]Match, error) {
+	before, limit = page(before, limit)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	query, args := `SELECT `+matchColumns+` FROM matches WHERE id < ? ORDER BY id DESC`, []any{before}
+	if personaID != 0 {
+		query, args = `SELECT `+matchColumns+` FROM matches WHERE id IN (SELECT match_id FROM match_seats
+			WHERE persona_id = ? AND match_id < ?) ORDER BY id DESC`, []any{personaID, before}
+	}
+	var out []Match
+	err := each(s.db, func(r *sql.Rows) error {
+		var m Match
+		if err := scanMatch(r, &m); err != nil {
+			return err
+		}
+		if keep == nil || keep(m) {
+			out = append(out, m)
+		}
+		if len(out) == limit {
+			return errPageFull
+		}
+		return nil
+	}, query, args...)
+	if err != nil && !errors.Is(err, errPageFull) {
+		return nil, err
+	}
+	return out, s.loadSeats(out, false)
+}
+
+// errPageFull ends MatchesWhere's scan once its page is full.
+var errPageFull = errors.New("page full")
+
 // MatchesAfter returns the matches after the match after (0 = from the first), oldest first, at most limit (paged as
 // RecentMatches), for a replay of the whole history in the order it was played (the rating's seed).
 func (s *Store) MatchesAfter(after int64, limit int) ([]Match, error) {
@@ -137,6 +177,43 @@ func (s *Store) MatchesAfter(after int64, limit int) ([]Match, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.matches(`SELECT `+matchColumns+` FROM matches WHERE id > ? ORDER BY id LIMIT ?`, max(after, 0), limit)
+}
+
+// PlayedMatches returns every match the persona has a seat in, oldest first, each with that seat only (its Name left
+// empty; no Timeline, no Sources): the profile's numbers by game type (PROFILE2) are made from them. keep (nil = all)
+// sees a match's head without its seat, as MatchesWhere's does, and decides which are read. One query: a persona's
+// seats through the match_seats_persona index, joined with their matches.
+func (s *Store) PlayedMatches(personaID int64, keep func(Match) bool) ([]Match, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []Match
+	err := each(s.db, func(r *sql.Rows) error {
+		var m Match
+		var st MatchSeat
+		var persona, user sql.NullInt64
+		var noun int64
+		var stats string
+		if err := scanMatch(r, &m, &st.Seat, &persona, &user, &st.Team, &st.Bot, &noun, &st.Role, &st.Won, &st.Left,
+			&st.Kills, &st.Deaths, &st.Assists, &st.CS, &st.Gold, &st.Level, &stats); err != nil {
+			return err
+		}
+		if keep != nil && !keep(m) {
+			return nil
+		}
+		st.PersonaID, st.UserID, st.Noun = persona.Int64, user.Int64, uint32(noun)
+		if stats != "" && stats != "{}" {
+			if err := json.Unmarshal([]byte(stats), &st.Stats); err != nil {
+				return fmt.Errorf("match %d seat %d: stats: %v", m.ID, st.Seat, err)
+			}
+		}
+		m.Seats = []MatchSeat{st}
+		out = append(out, m)
+		return nil
+	}, `SELECT m.id, m.game_id, m.kind, m.mode, m.level, m.winner, m.reason, m.started, m.ended, m.duration_ms, m.rules,
+		m.unrated, ms.seat, ms.persona_id, ms.user_id, ms.team, ms.bot, ms.noun, ms.role, ms.won, ms.left_match, ms.kills,
+		ms.deaths, ms.assists, ms.cs, ms.gold, ms.level, ms.stats
+		FROM match_seats ms JOIN matches m ON m.id = ms.match_id WHERE ms.persona_id = ? ORDER BY m.id`, personaID)
+	return out, err
 }
 
 // Match returns one match with everything stored for it (found false when there is none).
@@ -173,13 +250,13 @@ func page(before int64, limit int) (int64, int) {
 	return before, min(limit, MaxMatchPage)
 }
 
-const matchColumns = `id, game_id, kind, mode, level, winner, reason, started, ended, duration_ms, rules`
+const matchColumns = `id, game_id, kind, mode, level, winner, reason, started, ended, duration_ms, rules, unrated`
 
 // scanMatch reads matchColumns (and the extra columns after them) into m.
 func scanMatch(r interface{ Scan(...any) error }, m *Match, extra ...any) error {
 	var started, ended string
 	if err := r.Scan(append([]any{&m.ID, &m.GameID, &m.Kind, &m.Mode, &m.Level, &m.Winner, &m.Reason, &started, &ended,
-		&m.DurationMs, &m.Rules}, extra...)...); err != nil {
+		&m.DurationMs, &m.Rules, &m.Unrated}, extra...)...); err != nil {
 		return err
 	}
 	m.Started, _ = parseTime(started)

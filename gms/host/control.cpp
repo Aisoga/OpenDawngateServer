@@ -82,8 +82,9 @@ bool Start() {
   }
   Locked lock;
   g_ctl.reset(new HostControl(ControlLog));
-  // RULES1: this host applies startGame's rules (logs them; their behaviour comes with each rule) and its fillTeams
-  g_ctl->SetFeatures({dggms::control::kFeatureRules});
+  // RULES1: this host applies startGame's rules (logs them; their behaviour comes with each rule) and its fillTeams;
+  // M30: and the second set of options (rules2: the item pool "lightning")
+  g_ctl->SetFeatures(dggms::control::HostFeatures());
   char build[64];
   std::snprintf(build, sizeof build, "dgsim %s", __DATE__);
   if (!g_ctl->Start(env, static_cast<std::int64_t>(GetCurrentProcessId()), build, NowMs(), &err)) {

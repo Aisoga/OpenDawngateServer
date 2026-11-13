@@ -32,6 +32,13 @@ struct Hello {
 
 // RULES1: the host feature for a custom game's rules (startGame's rules and fillTeams). Go: gmshost.FeatureRules.
 inline constexpr const char* kFeatureRules = "rules";
+// M30 (LIGHTNING1): the second set of rule options, which a host without it would misplay: the item pool "lightning"
+// (an older host takes an unknown pool as "all items"), later the picks "army" and "clone". Go: gmshost.FeatureRules2;
+// the server's rules catalog marks each such option as needing it.
+inline constexpr const char* kFeatureRules2 = "rules2";
+
+// The features this build's dgsim.dll names in its hello (host/control.cpp).
+inline std::vector<std::string> HostFeatures() { return {kFeatureRules, kFeatureRules2}; }
 
 struct RosterEntry {
   int64_t user = 0;  // Blaze id; HelloReq's user id

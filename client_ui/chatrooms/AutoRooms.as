@@ -40,6 +40,14 @@
 // InteractiveObjectEx.setHitTestDisable, as the game does for its in-match chat's background); the shield still opens
 // the window.
 //
+// It closes the "System" window a match leaves behind. The game opens that window (id "1", chat type 7) for every
+// System line it is given, in a match too (on the bottom bar, which the match hides), while the line itself shows in
+// the match's chat; nothing closed the window, so after the match the bottom bar showed a System tab. The class
+// remembers a System window that appears while a match runs (the bar hidden, or the chat in the match's context) and
+// closes it with the game's own DestroyChatWindow as soon as the player is out of the match (the post-game screen or
+// the main menu). A System window the menus opened before the match is left alone, and a line that comes after the
+// match opens a new one as before.
+//
 // Build: re/scripts/build_picker.py build chatrooms (the Apache Flex SDK's mxmlc).
 package {
     import flash.display.DisplayObject;
@@ -79,6 +87,14 @@ package {
         // A tab's bars whose transparent top swallowed clicks (ChatWindowTab's ChatTopBar and ChatSmallBar).
         private static const TAB_BARS:Array = ["m_topBar", "m_topBar2"];
         private static const HIT_TEST_EX:String = "scaleform.gfx.InteractiveObjectEx";
+        // The System window: the id and chat type the game opens it with (ChatUI_AddSystemChatLine's
+        // CreateChatWindow("1", "System", ChatManager.CHAT_TYPE_SYSTEM, false)).
+        private static const SYSTEM_WINDOW_ID:String = "1";
+        private static const CHAT_TYPE_SYSTEM:int = 7;
+        private static const CHAT_MANAGER:String = "maxis.chat.manager.ChatManager";
+        private static const CHAT_CONTEXT_GAME_CHAT:int = 5; // ChatManager.CHAT_CONTEXT_GAME_CHAT: the match's chat
+        private var menuSystem:Object = null; // the System window seen outside a match (stays)
+        private var matchSystem:Object = null; // a System window that appeared while a match ran (closed after it)
 
         public function AutoRooms() {
             super();
@@ -94,6 +110,7 @@ package {
             if (kept.length > 0) {
                 keepLines();
             }
+            closeMatchSystem();
             var u:String = localUser();
             if (u != user) { // a login, a logout or another account: start over
                 user = u;
@@ -108,6 +125,61 @@ package {
             frames = 0;
             hookBar();
             joinMarked();
+        }
+
+        // closeMatchSystem closes the System window a match made, once the match is over (see the header): a System
+        // window that appears while a match runs (a window object other than the one the menus had) is remembered, and
+        // when the player is out of the match again it is closed with the game's own DestroyChatWindow, whatever it
+        // holds (the match's lines were shown in the match's chat). A System window from the menus stays. Only while
+        // it is on the bar: RemoveChatWindow takes it off the bar first.
+        private function closeMatchSystem():void {
+            try {
+                var b:Object = root != null ? root["bottomBar"] : null;
+                var w:Object = b != null ? root["GetWindowByID"](SYSTEM_WINDOW_ID) : null;
+                if (w != null && !isSystem(w)) {
+                    w = null;
+                }
+                if (b != null && inMatch(b)) {
+                    if (w != null && w != menuSystem) {
+                        matchSystem = w;
+                    }
+                    return;
+                }
+                if (w != null && w == matchSystem) {
+                    if (w["parent"] != b) {
+                        return; // off the bar for now (HideAllChatWindows): wait
+                    }
+                    root["DestroyChatWindow"](SYSTEM_WINDOW_ID);
+                    w = root["GetWindowByID"](SYSTEM_WINDOW_ID);
+                }
+                matchSystem = null;
+                menuSystem = w;
+            } catch (err:Error) {
+                matchSystem = null;
+            }
+        }
+
+        // inMatch reports whether a match runs: the game hides the bottom bar then (BottomBarUI.SetGameMode,
+        // ChatManager.SetChatContext), and the chat's context is the match's (CHAT_CONTEXT_GAME_CHAT; asked only while
+        // logged in, when the chat manager exists).
+        private function inMatch(b:Object):Boolean {
+            if (!b["visible"]) {
+                return true;
+            }
+            if (user == LOGGED_OUT) {
+                return false;
+            }
+            try {
+                return int(getDefinitionByName(CHAT_MANAGER)["GetChatManager"]().GetContext()) == CHAT_CONTEXT_GAME_CHAT;
+            } catch (err:Error) {
+            }
+            return false;
+        }
+
+        // isSystem reports whether w is the game's System window (chat type 7).
+        private static function isSystem(w:Object):Boolean {
+            var cw:Object = w.GetChatWindow();
+            return cw != null && int(cw.GetChatType()) == CHAT_TYPE_SYSTEM;
         }
 
         private function localUser():String {

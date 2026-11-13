@@ -85,6 +85,9 @@ func TestEncodeValues(t *testing.T) {
 		{Hello{Match: 1, Token: "t", PID: 4242, Build: "dgsim", Features: []string{FeatureRules}},
 			`{"t":"hello","match":1,"token":"t","pid":4242,"build":"dgsim","features":["rules"]}`},
 		{Hello{Match: 1, Token: "t", PID: 4242, Build: "dgsim"}, `{"t":"hello","match":1,"token":"t","pid":4242,"build":"dgsim"}`},
+		// M30 (LIGHTNING1): a host that plays the second set of options (the item pool "lightning") names rules2 too
+		{Hello{Match: 1, Token: "t", PID: 4242, Build: "dgsim", Features: []string{FeatureRules, FeatureRules2}},
+			`{"t":"hello","match":1,"token":"t","pid":4242,"build":"dgsim","features":["rules","rules2"]}`},
 		{StartGame{Roster: []RosterEntry{{User: 2000000001, Name: "player", Team: 1}},
 			Rules:     &Rules{Pick: "random", ShaperPool: "all", Shop: "onDeath", ItemPool: "all"},
 			FillTeams: new(int)},

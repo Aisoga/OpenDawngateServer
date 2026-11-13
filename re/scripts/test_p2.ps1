@@ -46,7 +46,7 @@
 #>
 param(
     [switch]$Live,
-    [ValidateSet('', 'b', 'c', 'd')][string]$Lane = '',
+    [ValidateSet('', 'b', 'c', 'd', 'g')][string]$Lane = '',
     [string]$Address = 'auto',
     [string]$Name = 'p2_live1',
     [int]$Seconds = 150,
@@ -86,7 +86,7 @@ if ($Live) {
     . (Join-Path $PSScriptRoot 'gms_stale.ps1')
     if (-not $Lane) { Write-Host '-Live needs -Lane b|c|d (a free test lane: its lock, its control address, its host copy)' -ForegroundColor Red; exit 2 }
     if ($Name -notmatch '^[\w.-]+$') { Write-Host "invalid -Name '$Name'" -ForegroundColor Red; exit 2 }
-    $n = @{ b = 2; c = 3; d = 4 }[$Lane]
+    $n = @{ b = 2; c = 3; d = 4; g = 5 }[$Lane]
     $laneAddr = "127.0.0.$n"
     if ($Address -eq 'auto') {
         $route = Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction SilentlyContinue | Sort-Object RouteMetric | Select-Object -First 1

@@ -188,3 +188,40 @@ func TestParseErrors(t *testing.T) {
 		t.Error("an unknown compression read")
 	}
 }
+
+// RebuildAdd (DRAGGRAB2b): new entries after the old ones, stored uncompressed and committed; refusals.
+func TestRebuildAdd(t *testing.T) {
+	raw := testgame.Package(0, []testgame.PackageEntry{
+		{Type: 1, Instance: 1, Data: []byte("first")},
+		{Type: 1, Instance: 2, Data: []byte("second")},
+	})
+	p, _ := Parse(raw)
+	out, err := p.RebuildAdd(map[string][]byte{p.Entries[0].Key(): []byte("FIRST")},
+		[]Added{{Type: 1, Group: 7, Instance: 3, Data: []byte("third")}, {Type: 1, Group: 7, Instance: 4, Data: []byte("4")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, err := Parse(out)
+	if err != nil || len(q.Entries) != 4 {
+		t.Fatalf("%v %+v", err, q)
+	}
+	if !bytes.Contains(out, []byte("FIRSTsecondthird4")) {
+		t.Errorf("data %q", out[HeaderSize:])
+	}
+	e := q.Entries[2]
+	if e.Group != 7 || e.Instance != 3 || e.Comp != CompNone || e.Committed != 1 || e.Offset != HeaderSize+11 || e.USize != 5 {
+		t.Errorf("added entry %+v", e)
+	}
+	if d, _ := q.Read(q.Entries[3]); string(d) != "4" {
+		t.Errorf("the second added entry reads %q", d)
+	}
+	if same, _ := p.RebuildAdd(nil, nil); !bytes.Equal(same, raw) {
+		t.Error("nothing added: not the package")
+	}
+	if _, err := p.RebuildAdd(nil, []Added{{Type: 1, Instance: 2}}); err == nil {
+		t.Error("an added key the package has: accepted")
+	}
+	if _, err := p.RebuildAdd(map[string][]byte{"00000001-00000007-0000000000000003": nil}, []Added{{Type: 1, Group: 7, Instance: 3}}); err == nil {
+		t.Error("a replacement of an added key: accepted")
+	}
+}

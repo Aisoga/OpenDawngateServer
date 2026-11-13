@@ -97,12 +97,13 @@
                       background: -webkit-linear-gradient(left, rgba(22, 24, 24, .96) 0%, rgba(22, 24, 24, .9) 55%, rgba(22, 24, 24, .2) 85%, rgba(22, 24, 24, .5) 100%); }
   #matchTitle { position: relative; font-size: 28px; white-space: nowrap; }
   #matchLine { position: relative; margin-top: 4px; font-size: 14px; color: #cfd4b3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  #tabs { margin: 10px 0 0 0; height: 32px; border-bottom: 1px solid rgba(179, 129, 78, .45); }
-  #tabs a { float: left; height: 31px; line-height: 31px; width: 150px; padding: 0; text-align: center; margin-right: 2px; overflow: hidden; white-space: nowrap; font-family: MasonSansAlternate, Cinzel, Arial, sans-serif;
+  #tabs, #modeTabs { margin: 10px 0 0 0; height: 32px; border-bottom: 1px solid rgba(179, 129, 78, .45); }
+  #modeTabs { margin: 4px 0 6px 0; }
+  #tabs a, #modeTabs a { float: left; height: 31px; line-height: 31px; width: 150px; padding: 0; text-align: center; margin-right: 2px; overflow: hidden; white-space: nowrap; font-family: MasonSansAlternate, Cinzel, Arial, sans-serif;
             font-size: 13px; letter-spacing: 1px; color: #9a9d8d; background: rgba(40, 40, 40, .8); border: 1px solid rgba(179, 129, 78, .2);
             border-bottom: 0; }
-  #tabs a:hover { color: #cfd4b3; }
-  #tabs a.on { color: #fbeedd; background: rgba(110, 76, 44, .9); border-color: rgba(179, 129, 78, .7); }
+  #tabs a:hover, #modeTabs a:hover { color: #cfd4b3; }
+  #tabs a.on, #modeTabs a.on { color: #fbeedd; background: rgba(110, 76, 44, .9); border-color: rgba(179, 129, 78, .7); }
   #tabBody { padding-top: 10px; }
   .sect { margin: 0 0 12px 0; }
   .sect h2 { margin: 0 0 5px 0; font-size: 16px; }
@@ -172,6 +173,8 @@
   body.embed #matchLine { font-size: 13px; margin-top: 2px; }
   body.embed #tabs { margin-top: 6px; height: 28px; }
   body.embed #tabs a { height: 27px; line-height: 27px; width: 142px; font-size: 12px; letter-spacing: 0; }
+  body.embed #modeTabs { margin: 0 0 4px 0; height: 28px; }
+  body.embed #modeTabs a { height: 27px; line-height: 27px; width: 142px; font-size: 12px; letter-spacing: 0; }
   body.embed #tabBody { padding-top: 6px; }
   body.embed table.grid td { height: 19px; font-size: 12px; }
   body.embed table.score td { height: 24px; }
@@ -448,7 +451,7 @@
   // Victory/Defeat for the player's seat; else which team won.
   function outcome(m) {
     var me = mySeat(m);
-    if (me && (m.winner == 1 || m.winner == 2)) {
+    if (me && (m.winner == 1 || m.winner == 2 || me.left)) { // a game the player left before its end is its defeat
       return me.won ? { text: "Victory", cls: "win", edge: "edgeWin" } : { text: "Defeat", cls: "loss", edge: "edgeLoss" };
     }
     if (m.winner == 1 || m.winner == 2) {
@@ -460,12 +463,20 @@
   function reasonText(r) {
     if (r == "guardian") { return "the Guardian fell"; }
     if (r == "surrender") { return "surrender"; }
+    if (r == "left") { return "its players left"; }
     return r || "";
   }
 
   // ---- Recent games -------------------------------------------------------------------------------------
   var L = { who: "me", matches: [], more: false, nextBefore: 0, loading: false, error: null, loaded: false,
-            serverTime: 0, gotAt: 0, mode: "all", result: "all", shaper: "" };
+            serverTime: 0, gotAt: 0, type: "all", result: "all", shaper: "" };
+
+  // The mode tabs (the user's request of 2026-11-12): games.json's type= filters on the server, so every page is full.
+  // A custom game's type comes from its rules (none: Standard, the draft preset: Draft, any other: Custom); a custom
+  // game its admin made Unrated is in no list.
+  var MODE_TABS = [["practice", "Practice"], ["standard", "Standard"], ["draft", "Draft"], ["custom", "Custom"],
+                   ["all", "All Modes"]];
+  var TYPE_NAMES = { standard: "Standard", draft: "Draft", custom: "Custom" };
 
   function loadList(reset) {
     if (L.loading) { return; }
@@ -475,10 +486,10 @@
     L.loading = true;
     renderList();
     var url = "games.json?player=" + encodeURIComponent(L.who == "me" ? ME : "all") + "&me=" + encodeURIComponent(ME) +
-              "&n=" + PAGE_N + (L.nextBefore ? "&before=" + L.nextBefore : "");
-    var who = L.who, shownBefore = reset ? 0 : el("listRows").getElementsByTagName("tr").length;
+              "&type=" + L.type + "&n=" + PAGE_N + (L.nextBefore ? "&before=" + L.nextBefore : "");
+    var who = L.who, typ = L.type, shownBefore = reset ? 0 : el("listRows").getElementsByTagName("tr").length;
     getJSON(url, function (d, err) {
-      if (who != L.who) { return; }   // the choice changed meanwhile: its own request is under way
+      if (who != L.who || typ != L.type) { return; }   // the choice changed meanwhile: its own request is under way
       L.loading = false;
       L.loaded = true;
       if (d) {
@@ -517,6 +528,21 @@
     loadList(true);
   }
 
+  function setType(t) {
+    if (t == L.type) { return; }
+    L.type = t;
+    L.loading = false;
+    loadList(true);
+  }
+
+  function renderModeTabs() {
+    var bar = clearNode(el("modeTabs"));
+    for (var i = 0; i < MODE_TABS.length; i++) {
+      bar.appendChild(link(MODE_TABS[i][1], L.type == MODE_TABS[i][0] ? "on" : "",
+        (function (v) { return function () { setType(v); }; })(MODE_TABS[i][0])));
+    }
+  }
+
   function setFilter(kind, value) {
     L[kind] = value;
     el("shaperMenu").style.display = "none";
@@ -524,13 +550,9 @@
   }
 
   function shown(m) {
-    if (L.mode != "all") {
-      var k = m.kind == "practiceGroup" ? "practice" : m.kind;
-      if (k != L.mode) { return false; }
-    }
     var me = mySeat(m);
     if (L.result != "all") {
-      if (!me || !(m.winner == 1 || m.winner == 2)) { return false; }
+      if (!me || !(m.winner == 1 || m.winner == 2 || me.left)) { return false; }
       if ((L.result == "wins") != !!me.won) { return false; }
     }
     if (L.shaper) {
@@ -552,14 +574,6 @@
     var g = make("div", "group");
     if (ME) { g.appendChild(chip("My games", L.who == "me", function () { setWho("me"); })); }
     g.appendChild(chip("All games", L.who == "all", function () { setWho("all"); }));
-    bar.appendChild(g);
-
-    g = make("div", "group");
-    g.appendChild(make("span", "what", "MODE"));
-    var modes = [["all", "All"], ["pvp", "PvP"], ["custom", "Custom"], ["practice", "Practice"]];
-    for (var i = 0; i < modes.length; i++) {
-      g.appendChild(chip(modes[i][1], L.mode == modes[i][0], (function (v) { return function () { setFilter("mode", v); }; })(modes[i][0])));
-    }
     bar.appendChild(g);
 
     if (L.who == "me") {
@@ -624,6 +638,7 @@
 
   function renderList() {
     if (!el("bar")) { return; }
+    renderModeTabs();
     renderBar();
     var tb = clearNode(el("listRows")), count = 0;
     var age = L.gotAt ? (now() - L.gotAt) / 1000 : 0;
@@ -635,7 +650,7 @@
       tr.onclick = (function (id) { return function () { openMatch(id); return false; }; })(m.id);
       var edge = make("td", "edge " + o.edge);
       tr.appendChild(edge);
-      cell(tr, "", o.text, o.cls, m.kindName || m.kind);
+      cell(tr, "", o.text, o.cls, (m.kindName || m.kind) + (m.kind == "custom" && TYPE_NAMES[m.type] ? SEP + TYPE_NAMES[m.type] : ""));
       cell(tr, "", m.map, "", clock(m.durationSec) + SEP + ago(L.serverTime - m.ended + age));
       if (me) {
         cell(tr, "", shaperOf(me) + (me.roleName ? SEP + me.roleName : ""), "",
@@ -661,7 +676,10 @@
         td.appendChild(document.createTextNode("Loading..."));
       } else if (L.matches.length) {
         td.appendChild(document.createTextNode("None of the loaded games match these filters" + (L.more ? ": load more, or " : ": ")));
-        td.appendChild(link("show all", "", function () { L.mode = "all"; L.result = "all"; L.shaper = ""; renderList(); }));
+        td.appendChild(link("show all", "", function () { L.result = "all"; L.shaper = ""; renderList(); }));
+      } else if (L.type != "all") {
+        td.appendChild(document.createTextNode((L.who == "me" ? "You have no games of this mode yet. " : "No game of this mode has been played on this server yet. ")));
+        td.appendChild(link("All Modes", "", function () { setType("all"); }));
       } else if (L.who == "me") {
         td.appendChild(document.createTextNode("No games yet: a match you play shows here when it ends. "));
         td.appendChild(link("See everyone's games", "", function () { setWho("all"); }));
@@ -1244,7 +1262,8 @@
   // ?latest=1: the player's newest match (everyone's newest without a player name); or the match the player last
   // watched as a spectator (the answer's "watched"), when that is newer: a spectator's review shows what it watched.
   function openLatest() {
-    getJSON("games.json?player=" + encodeURIComponent(ME || "all") + "&me=" + encodeURIComponent(ME) + "&n=1", function (d) {
+    // unrated=1: the review of a game its admin made Unrated opens that game (the lists leave such games out)
+    getJSON("games.json?player=" + encodeURIComponent(ME || "all") + "&me=" + encodeURIComponent(ME) + "&n=1&unrated=1", function (d) {
       var ms = d ? list(d.matches) : [];
       var id = ms.length ? ms[0].id : 0;
       if (d && d.watched > id) { id = d.watched; WATCHED = id; }
@@ -1290,6 +1309,7 @@
   </div>
 
   <div id="listView" style="display: none">
+    <div id="modeTabs"></div>
     <div id="bar"></div>
     <table class="list panel">
       <colgroup><col style="width: 5px"><col style="width: 14%"><col style="width: 19%"><col style="width: 20%"><col style="width: 15%"><col><col style="width: 30px"></colgroup>

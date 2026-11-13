@@ -53,7 +53,7 @@ func TestRatingLeaderboard(t *testing.T) {
 		return LeaderRow{PersonaID: ids[i], Name: fmt.Sprintf("p%d", i+1), Games: games, Wins: wins, Skill: skill, Rating: skill,
 			RatedGames: accts[i].rating.Games}
 	}
-	rows, err := s.RatingLeaderboard("", 1, 200)
+	rows, err := s.RatingLeaderboard(ModeStandard, "", 1, 200)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,21 +62,21 @@ func TestRatingLeaderboard(t *testing.T) {
 	if !reflect.DeepEqual(rows, want) {
 		t.Errorf("now:\n got %+v\nwant %+v", rows, want)
 	}
-	if rows, err = s.RatingLeaderboard("", 10, 200); err != nil || !reflect.DeepEqual(rows,
+	if rows, err = s.RatingLeaderboard(ModeStandard, "", 10, 200); err != nil || !reflect.DeepEqual(rows,
 		[]LeaderRow{row(1, 14, 9, 1701), row(2, 20, 9, 1612), row(0, 12, 8, 1612), row(3, 10, 0, 0)}) {
 		t.Errorf("at least 10 rated games: %+v %v", rows, err)
 	}
 	// before today: 2 back at 1580 with 11 games, 8 at 1545 with 1 game
-	if rows, err = s.RatingLeaderboard(today, 1, 200); err != nil || !reflect.DeepEqual(rows,
+	if rows, err = s.RatingLeaderboard(ModeStandard, today, 1, 200); err != nil || !reflect.DeepEqual(rows,
 		[]LeaderRow{row(5, 2, 2, 1650), row(2, 20, 9, 1612), row(0, 12, 8, 1612), row(1, 11, 6, 1580),
 			row(7, 1, 1, 1545), row(3, 10, 0, 0)}) {
 		t.Errorf("before today: %+v %v", rows, err)
 	}
 	// before yesterday: 8 has no rated game left
-	if rows, err = s.RatingLeaderboard("2026-11-01", 1, 200); err != nil || len(rows) != 5 || rows[4].PersonaID != ids[3] {
+	if rows, err = s.RatingLeaderboard(ModeStandard, "2026-11-01", 1, 200); err != nil || len(rows) != 5 || rows[4].PersonaID != ids[3] {
 		t.Errorf("before yesterday: %+v %v", rows, err)
 	}
-	if rows, err = s.RatingLeaderboard("", 1, 2); err != nil || len(rows) != 2 || rows[1].PersonaID != ids[5] {
+	if rows, err = s.RatingLeaderboard(ModeStandard, "", 1, 2); err != nil || len(rows) != 2 || rows[1].PersonaID != ids[5] {
 		t.Errorf("limit 2: %+v %v", rows, err)
 	}
 	// the wins ranking is unchanged: its Skill is the wins; its Rating the rating now

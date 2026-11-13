@@ -121,19 +121,32 @@ class Package:
 HEADER_SIZE = 0x60
 
 
-def rebuild(pkg, replacements):
+def rebuild(pkg, replacements, added=()):
     """Return the bytes of `pkg` with the entries in `replacements` ({Entry.key(): bytes}) replaced.
 
     Replaced entries are stored uncompressed (comp 0x0000). The others keep their raw (possibly
     compressed) bytes, flags and order. Layout as in the originals: 0x60-byte header, entry data,
     index at the end. Only the header's entry count (0x24), index size (0x2C) and index offset (0x40)
-    change."""
-    missing = set(replacements) - {e.key() for e in pkg.entries}
+    change. `added` ([(type, group, instance, bytes)]) are new entries, stored uncompressed (committed 1)
+    after the old ones, in the data and at the end of the index, in their order; a key the package has
+    already is an error."""
+    keys = {e.key() for e in pkg.entries}
+    missing = set(replacements) - keys
     if missing:
         raise KeyError(f"not in {pkg.path}: {sorted(missing)}")
+    entries, replacements = list(pkg.entries), dict(replacements)
+    for typ, group, instance, data in added:
+        e = Entry()
+        e.type, e.group, e.instance, e.comp, e.committed = typ, group, instance, COMP_NONE, 1
+        e.offset = 1 << 62  # after every old entry (the sort is stable)
+        if e.key() in keys:
+            raise KeyError(f"already in {pkg.path}: {e.key()}")
+        keys.add(e.key())
+        entries.append(e)
+        replacements[e.key()] = data
     body = bytearray()
     placed = []  # (entry, offset, stored size, uncompressed size, comp)
-    for e in sorted(pkg.entries, key=lambda e: e.offset):
+    for e in sorted(entries, key=lambda e: e.offset):
         new = replacements.get(e.key())
         if new is None:
             raw = pkg.data[e.offset:e.offset + e.csize]
@@ -142,7 +155,7 @@ def rebuild(pkg, replacements):
             raw = bytes(new)
             placed.append((e, HEADER_SIZE + len(body), len(raw), len(raw), COMP_NONE))
         body += raw
-    order = {id(e): i for i, e in enumerate(pkg.entries)}  # keep the original index order
+    order = {id(e): i for i, e in enumerate(entries)}  # keep the original index order
     placed.sort(key=lambda p: order[id(p[0])])
 
     flags = pkg.index_flags if pkg.entries else 0

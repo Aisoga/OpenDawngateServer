@@ -19,6 +19,7 @@ import (
 	"dawngate/server/internal/blaze"
 	"dawngate/server/internal/content"
 	"dawngate/server/internal/gmshost"
+	"dawngate/server/internal/rating"
 	"dawngate/server/internal/rules"
 	"dawngate/server/internal/store"
 	"dawngate/server/internal/web"
@@ -42,8 +43,7 @@ const historyBot = "Bot"
 
 // historyStore is what the history reads (*store.Store; the tests' too).
 type historyStore interface {
-	RecentMatches(before int64, limit int) ([]store.Match, error)
-	MatchesOf(personaID int64, before int64, limit int) ([]store.Match, error)
+	MatchesWhere(personaID int64, before int64, limit int, keep func(store.Match) bool) ([]store.Match, error)
 	Match(id int64) (store.Match, bool, error)
 	PersonaByName(name string) (store.Account, store.Persona, bool)
 }
@@ -91,6 +91,10 @@ type historyHead struct {
 	DurationSec int64  `json:"durationSec"`
 	// Rules is a custom game's match rules as text ("All Random, Shop on Death"), left out for the standard game
 	Rules string `json:"rules,omitempty"`
+	// Type is the game's type for the list's filter (PROFILE1, historyType): "practice", "standard", "draft", "custom"
+	Type string `json:"type"`
+	// Unrated: a custom game its admin made unrated (M30); such a game is in no list unless unrated=1 asks for it
+	Unrated bool `json:"unrated,omitempty"`
 }
 
 type historyMatch struct {
@@ -146,6 +150,24 @@ type historySource struct {
 // historyKinds are store.Match.Kind's display words (blaze's resultKind).
 var historyKinds = map[string]string{"pvp": "PvP match", "custom": "Custom game", "practiceGroup": "Practice group",
 	"practice": "Practice match"}
+
+// The game types of games.json's type= and of a match's "type" (PROFILE1, the user's request of 2026-11-12): practice
+// (a practice match or a practice group's), and for the others MMR1's rating type (rating.ModeOf): standard (PvP, or
+// a custom game with the default rules), draft (exactly the draft preset), custom (any other rules). historyTypeAll
+// (also an empty or missing type=) is every type.
+const (
+	historyTypeAll      = "all"
+	historyTypePractice = "practice"
+)
+
+// historyTypes are type='s known values.
+var historyTypes = map[string]bool{historyTypeAll: true, historyTypePractice: true, rating.Standard: true,
+	rating.Draft: true, rating.Custom: true}
+
+// historyType is a match's game type (historyTypes without "all").
+func historyType(m store.Match) string {
+	return blaze.GameType(m) // PROFILE2: the Profile's tabs take the same types
+}
 
 // historyRoles are store.MatchSeat.Role's names (1 + the RolesTuning role).
 var historyRoles = []string{"", "Gladiator", "Tactician", "Hunter", "Predator"}
@@ -285,6 +307,23 @@ func (h *history) games(q url.Values) (any, int, string, string) {
 		return nil, http.StatusBadRequest, "badRequest", "n must be a number from 1"
 	}
 	n = min(n, historyPageMax)
+	typ := strings.ToLower(strings.TrimSpace(q.Get("type")))
+	if typ == "" {
+		typ = historyTypeAll
+	}
+	if !historyTypes[typ] {
+		return nil, http.StatusBadRequest, "badRequest", "type must be all, practice, standard, draft or custom"
+	}
+	unrated, ok := number(q, "unrated", 0)
+	if !ok || unrated > 1 {
+		return nil, http.StatusBadRequest, "badRequest", "unrated must be 0 or 1"
+	}
+	// PROFILE1 (the user's decision of 2026-11-12): a custom game its admin made Unrated is in no list (a game that
+	// simply wasn't rated, as with uneven teams or bots, is); unrated=1 keeps it (the page's ?latest=1: the review of
+	// an unrated game opens that game). The filter runs in the store's scan, so every page is full and more is right.
+	keep := func(m store.Match) bool {
+		return (unrated == 1 || !m.Unrated) && (typ == historyTypeAll || historyType(m) == typ)
+	}
 	me := h.me(q)
 	d := historyGames{Version: historyVersion, ServerTime: h.now().Unix(), Names: h.names, Matches: []historyMatch{}}
 	if me != 0 && h.watched != nil {
@@ -293,7 +332,7 @@ func (h *history) games(q url.Values) (any, int, string, string) {
 	var ms []store.Match
 	var err error
 	if who := strings.TrimSpace(q.Get("player")); who == "" || who == historyAll {
-		ms, err = h.st.RecentMatches(before, int(n)+1)
+		ms, err = h.st.MatchesWhere(0, before, int(n)+1, keep)
 	} else {
 		_, p, found := h.st.PersonaByName(who)
 		if !found {
@@ -303,7 +342,7 @@ func (h *history) games(q url.Values) (any, int, string, string) {
 			return nil, http.StatusForbidden, "namesOff", "this server shows only your own games by name"
 		}
 		d.Player = &historyPlayer{Name: p.Name}
-		ms, err = h.st.MatchesOf(p.ID, before, int(n)+1)
+		ms, err = h.st.MatchesWhere(p.ID, before, int(n)+1, keep)
 	}
 	if err != nil {
 		h.logf("http", "match history: %v", err)
@@ -368,7 +407,8 @@ func (h *history) head(m store.Match) historyHead {
 		kindName = m.Kind
 	}
 	hd := historyHead{ID: m.ID, Mode: m.Mode, Kind: m.Kind, KindName: kindName, Map: blaze.LevelDisplay(m.Level),
-		Level: m.Level, Reason: m.Reason, Started: m.Started.Unix(), Ended: m.Ended.Unix(), DurationSec: m.DurationMs / 1000}
+		Level: m.Level, Reason: m.Reason, Started: m.Started.Unix(), Ended: m.Ended.Unix(), DurationSec: m.DurationMs / 1000,
+		Type: historyType(m), Unrated: m.Unrated}
 	if m.Winner == 1 || m.Winner == 2 {
 		hd.Winner = m.Winner
 	}

@@ -26,15 +26,17 @@ var collectionTagsHex string
 //
 // The same movie carries the custom game lobby's ready check (client_ui/lobby, LobbyReady: a READY toggle for the
 // players on the teams, a mark on each tile, the host's START held until all are ready; the server's side is
-// blaze/ready.go), character and depth 2001, and the Leaderboard's Rating column (client_ui/leaderboard,
-// LeaderboardRating), 2002. Another class of the front end's movie is one more Part in More (the
+// blaze/ready.go), character and depth 2001, the Leaderboard's Rating column (client_ui/leaderboard,
+// LeaderboardRating), 2002, and the Profile's game-type tabs (client_ui/profile, ProfileModes; blaze/profilemodes.go),
+// 2003. Another class of the front end's movie is one more Part in More (the
 // next free id and depth), with its tags file embedded here and the same Part in re/scripts/patch_login_movie.py's
 // SPECS["collection"].
 var Collection = Spec{What: "the Collection's items", Source: "game/Data/code.snap",
 	Rel: "game/Data/zz_CollectionItems.snap", MoviePath: "UI/Scaleform/CDN/swf/code/UIRuntime.gfx",
 	Class: "CollectionItems", CharID: 2000, Depth: 2000, Tags: CollectionTags, Items: true, Channel: true,
 	More: []Part{{Class: "LobbyReady", CharID: 2001, Depth: 2001, Tags: LobbyTags},
-		{Class: "LeaderboardRating", CharID: 2002, Depth: 2002, Tags: LeaderboardTags}}}
+		{Class: "LeaderboardRating", CharID: 2002, Depth: 2002, Tags: LeaderboardTags},
+		{Class: "ProfileModes", CharID: 2003, Depth: 2003, Tags: ProfileTags}}}
 
 // LobbyTags are the lobby's ready check's four tags: DefineSprite 2001, DoABC (the class), SymbolClass 2001 ->
 // LobbyReady, PlaceObject3 of 2001 at depth 2001 without an instance name.
@@ -50,6 +52,14 @@ var LeaderboardTags = mustHex(leaderboardTagsHex)
 
 //go:embed leaderboard_tags.hex
 var leaderboardTagsHex string
+
+// ProfileTags are the Profile's game-type tabs' four tags (client_ui/profile, ProfileModes: Practice, Standard (and
+// PvP), Draft, Custom, All Modes over the UI channel's profile.select, blaze/profilemodes.go): DefineSprite 2003, DoABC
+// (the class), SymbolClass 2003 -> ProfileModes, PlaceObject3 of 2003 at depth 2003 without an instance name.
+var ProfileTags = mustHex(profileTagsHex)
+
+//go:embed profile_tags.hex
+var profileTagsHex string
 
 // ItemsPath is the Collection's item list in zz_CollectionItems.snap, which client_ui/collection/CollectionItems.as
 // reads as Collection/dgitems.json. The file (UTF-8, LF, tab-separated):

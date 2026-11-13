@@ -20,7 +20,7 @@ import (
 var repoMaps = testmaps.Dir()
 
 // ring854 is CM_Ring's archive from build 854's files (mapc's TestGame pin).
-const ring854 = "729eb1b39189826d5ccdfc91ce270218cb86a6ba56ae3981811627478ba26c2f"
+const ring854 = "a5d71fcde84e8d97f6517ea3a4592a6f381eae7a3d54ba504934c325930bce76"
 
 // TestFolderMapsNone: without a maps folder (or with an empty one) nothing is reported, the catalog, the dialog and the
 // lobby line stay as without maps.

@@ -44,6 +44,15 @@ func (s *Setup) stepChatRooms(step, copy string) bool {
 	return s.stepMovie(step, copy, moviepatch.ChatRooms, "the chat rooms opened by default", "an older chat rooms class")
 }
 
+// stepOptions installs the Options menu's "Grab-style drag scroll (middle mouse)" check box, game\Data\zz_Options.snap:
+// the copy's own gameplay tab movie (from Options.snap, which must be the build's) with the class that adds one more of
+// the tab's own check boxes, OptionDragGrab (moviepatch.Options). Every player copy gets it: the game's Options code
+// loads and saves the box by name, in the player's Preferences.prop; its label is the locale step's line.
+func (s *Setup) stepOptions(step, copy string) bool {
+	return s.stepMovie(step, copy, moviepatch.Options, "the Options menu's drag scroll check box",
+		"an older drag scroll check box")
+}
+
 // stepAfterAction installs the After Action Review's tabs, game\Data\zz_AfterActionReview.snap: the copy's own review
 // movie (from Battlegrounds.snap, which must be the build's) with the tabs' class added (moviepatch.AfterAction) and
 // the web root of the server host the copy is set up for (moviepatch.WebRootFile: the root its config packages give

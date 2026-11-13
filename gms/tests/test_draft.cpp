@@ -252,6 +252,47 @@ GMS_TEST(DraftStaysInsideTheShaperPool) {
   }
 }
 
+// MODES0: CloneDraw gives every seat of both teams one shaper, each keeping its role and lane: the role's profile where
+// one exists (a Predator seat of PC_Warden is PC_Warden_Predator), else the base with the seat's role set after it. A
+// shaper no bot class plays changes nothing.
+GMS_TEST(DraftCloneGivesEverySeatOneShaper) {
+  for (unsigned seed = 1; seed <= 50; ++seed) {
+    auto drawn = DraftMatch(TwoTeams(4, 5), {Human(0, 1, "PC_Warden", kRoleUnknown)}, Everything(), Opts(seed));
+    const auto before = drawn;
+    CHECK(CloneDraw(&drawn, "PC_Warden", Everything()));
+    for (const auto& kv : drawn) {
+      const std::vector<ComposedSeat>& was = before.at(kv.first);
+      CHECK_EQ(kv.second.size(), was.size());
+      for (size_t i = 0; i < kv.second.size() && i < was.size(); ++i) {
+        const ComposedSeat& s = kv.second[i];
+        CHECK_EQ(BaseClass(s.botClass), std::string("PC_Warden"));
+        CHECK_EQ(s.role, was[i].role);
+        CHECK_EQ(s.lane, was[i].lane);
+        CHECK(!s.fallback);
+        if (s.role == kRolePredator) {
+          CHECK_EQ(s.botClass, std::string("PC_Warden_Predator"));
+          CHECK(!s.roleOverride);
+        } else {
+          CHECK_EQ(s.botClass, std::string("PC_Warden"));
+          CHECK(s.roleOverride);
+        }
+      }
+    }
+  }
+  auto drawn = DraftMatch(TwoTeams(5, 5), {}, Everything(), Opts(7));
+  const auto before = drawn;
+  CHECK(!CloneDraw(&drawn, "PC_Dreamer", Everything()));  // not a bot class
+  CHECK(!CloneDraw(&drawn, "", Everything()));
+  bool same = true;
+  for (const auto& kv : drawn)
+    for (size_t i = 0; i < kv.second.size(); ++i) same = same && kv.second[i].botClass == before.at(kv.first)[i].botClass;
+  CHECK(same);
+  // only a profile of the base available: that profile, with the seat's role
+  CHECK(CloneDraw(&drawn, "PC_Survivor", {"PC_Survivor_Hunter", "PC_Guardian"}));
+  for (const auto& kv : drawn)
+    for (const ComposedSeat& s : kv.second) CHECK_EQ(s.botClass, std::string("PC_Survivor_Hunter"));
+}
+
 // RULES3: the server's pools table marks the shapers the bots play (server/internal/rules/pools.go ShaperFacts.Bot): the
 // base classes of every class the composition and the draft may use. A new profile or list entry here goes there too.
 GMS_TEST(DraftBotClassesMatchTheServersPoolTable) {

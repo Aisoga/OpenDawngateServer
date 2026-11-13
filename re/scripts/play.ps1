@@ -21,6 +21,8 @@
     region       its game\Data\zz_MatchType.snap is current (the play screen's Preferred Region, PREF2)  -> installs it (setup_lane.py's step)
     party region its game\Data\zz_PVPLobby.snap is current (the party lobby's Preferred Region, PREF3b)  -> installs it (setup_lane.py's step)
     shop refund  its game\Data\zz_ItemShop.snap is current (the item shop's inline refund, REFUND2)  -> installs it (setup_lane.py's step)
+    drag option  its game\Data\zz_Options.snap is current (the Options menu's drag scroll check box, DRAGGRAB2a) -> installs it (setup_lane.py's step)
+    drag config  its Config.package and Config_Ship.package define the option OptionDragGrab (DRAGGRAB2b) -> patch_config.py --drag-option-only
     collection   its game\Data\zz_CollectionItems.snap is current (the Collection's Items, COLLITEMS2; with server\data\content.json) -> installs it (setup_lane.py's step)
     halloween    its game\Data\zz_Halloween.snap is current (halloween.py --check; HOLIDAY1)            -> installs it (halloween.py)
     client texts its AA_Server.package is current for 127.0.0.1 and maps\ (patch_locale.py --maps)       -> installs it (patch_locale.py)
@@ -186,7 +188,7 @@ function Update-Halloween([string]$copy, [string]$what) {
 function Update-Maps([string]$copy, [string]$what, [switch]$Client) {
     # MAPED2b: the copy's map files by the release setup's own code (server\tools\mapsetup --maps maps\): the
     # MM_Map_v3 archive (game\Data\zz_MM_Map_v3.snap), the archive of every package in the repository's maps\
-    # (zz_<name>.snap), the bot profiles with those maps' catalog entries (zz_BotProfiles.snap; PLAYPROF) and, for the
+    # (zz_<name>.snap), the bot profiles with those maps' catalog entries and the Locus zap's sound (zz_BotProfiles.snap; PLAYPROF) and, for the
     # client copy, CREATE GAME's bot check box and map dropdown (zz_MatchOptions.snap; BOTBOX, MAPDROP); byte for byte
     # what the Go setup makes now (setup_lane.py's maps_step and setup_all.py's step do the same)
     $label = "map files ($what`: MM_Map_v3, the maps folder, bot profiles$(if ($Client) { ', the create dialog' }))"
@@ -215,8 +217,8 @@ function Update-ExePatches([string]$copy, [string]$fix) {
     # rating); a copy patched before them is patched again (patch_client.py always starts from Dawngate.exe.orig)
     $exe = Join-Path $copy 'game\Dawngate.exe'
     $patcher = Join-Path $PSScriptRoot 'patch_client.py'
-    $label = 'client exe patches (map names, the profile box''s rating, the UI heaps'' locks, the UI''s numbers, the profile''s averages, the fade at the fog''s edge)'
-    $want = @('preload=all', 'maptable=on', 'rating=on', 'heaplocks=on', 'numfmt=on', 'averages=on', 'fade=on')
+    $label = 'client exe patches (map names, the profile box''s rating, the UI heaps'' locks, the UI''s numbers, the profile''s averages, the fade at the fog''s edge, the section .dgx, the drag grab, the Profile''s reload)'
+    $want = @('preload=all', 'maptable=on', 'rating=on', 'heaplocks=on', 'numfmt=on', 'averages=on', 'fade=on', 'dgx=on', 'draggrab=on', 'profilereload=on')
     $show = @(& $Python -I $patcher --show $exe)
     if (-not @($want | Where-Object { $show -notcontains $_ }).Count) { Ok $label; return }
     Write-Host "  install  $label (an older patch)" -ForegroundColor Yellow
@@ -373,6 +375,39 @@ try {
             else { Missing "installing the shop's inline refund failed (is the game running from client\run_854?)" @(
                 '.venv\Scripts\python -I re\scripts\patch_login_movie.py --spec itemshop client\run_854\Dawngate\game\Data\HUD.snap client\run_854\Dawngate\game\Data\zz_ItemShop.snap') }
         }
+    }
+    # DRAGGRAB2a: the Options menu's grab-style drag scroll check box (one more of the gameplay tab's own, OptionDragGrab)
+    # comes from the added game\Data\zz_Options.snap, byte for byte what setup_lane.py's options_step makes from the
+    # copy's own Options.snap (setup_all.py's step too)
+    if ((Test-Path $Python) -and (Test-Path (Join-Path $ClientDir 'game\Data\Options.snap'))) {
+        $data = Join-Path $ClientDir 'game\Data'
+        $optCode = "import sys; sys.path.insert(0, sys.argv[1]); import setup_lane; m = []; setup_lane.options_step(sys.argv[2], sys.argv[3] == 'check', m); sys.exit(1 if m else 0)"
+        & $Python -I -c $optCode $PSScriptRoot $data 'check'
+        if ($LASTEXITCODE -eq 0) { Ok "the Options menu's drag scroll check box (game\Data\zz_Options.snap)" }
+        else {
+            Write-Host "  install  the Options menu's drag scroll check box (game\Data\zz_Options.snap)" -ForegroundColor Yellow
+            & $Python -I -c $optCode $PSScriptRoot $data 'install' | ForEach-Object { Write-Host "           $_" -ForegroundColor Gray }
+            & $Python -I -c $optCode $PSScriptRoot $data 'check'
+            if ($LASTEXITCODE -eq 0) { Ok "the Options menu's drag scroll check box (game\Data\zz_Options.snap)" }
+            else { Missing "installing the Options menu's drag scroll check box failed (is the game running from client\run_854?)" @(
+                '.venv\Scripts\python -I re\scripts\patch_login_movie.py --spec options client\run_854\Dawngate\game\Data\Options.snap client\run_854\Dawngate\game\Data\zz_Options.snap') }
+        }
+    }
+    # DRAGGRAB2b: the option OptionDragGrab itself (its compiled form in Config_Ship.package, its Preferences.prop name in
+    # Config.package) is config data patch_config.py adds; a copy patched before gets it in place (its hosts and AFK
+    # values stay)
+    if ((Test-Path $Python) -and (Test-Path (Join-Path $ClientDir 'game\Data\Config.package.orig'))) {
+        $data = Join-Path $ClientDir 'game\Data'
+        $optCode = "import sys; sys.path.insert(0, sys.argv[1]); import patch_config; print(patch_config.drag_option_state(sys.argv[2]))"
+        $state = & $Python -I -c $optCode $PSScriptRoot $data
+        if ($state -eq 'missing') {
+            Write-Host "  install  the drag scroll option in the config (game\Data\Config.package, Config_Ship.package)" -ForegroundColor Yellow
+            & $Python -I (Join-Path $PSScriptRoot 'patch_config.py') $data --drag-option-only | ForEach-Object { Write-Host "           $_" -ForegroundColor Gray }
+            $state = & $Python -I -c $optCode $PSScriptRoot $data
+        }
+        if ($state -eq 'on') { Ok "the drag scroll option in the config (game\Data\Config.package, Config_Ship.package)" }
+        else { Missing "the drag scroll option in the config is $state (is the game running from client\run_854?)" @(
+            '.venv\Scripts\python -I re\scripts\patch_config.py client\run_854\Dawngate\game\Data') }
     }
     # COLLITEMS2: the Collection's Items category comes from the added game\Data\zz_CollectionItems.snap, byte for byte
     # what setup_lane.py's collection_step makes from the copy's own code.snap and server\data\content.json (setup_all.py's

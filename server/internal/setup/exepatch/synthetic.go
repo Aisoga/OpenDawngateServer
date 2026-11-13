@@ -17,7 +17,12 @@ var synthSections = []secSpec{
 	{".rdata", 0xDAC000, 0x22CCC5, 0xDAA600, 0x22CE00},
 	{".data", 0xFD9000, 0x826F00, 0xFD7400, 0xAF400},
 	{".tls", 0x1800000, 0x39, 0x1086800, 0x200},
+	{".rsrc", 0x1801000, 0x82338, 0x1086A00, 0x82400},
 }
+
+// The synthetic certificate: build 854's security directory (EA's Authenticode certificate ends the file), only its
+// WIN_CERTIFICATE header (length, revision 2.0, PKCS#7) filled in.
+const synthCertAt, synthCertLen = 0x1108E00, 0x1910
 
 func synthOffset(va uint32) int {
 	rva := va - ImageBase
@@ -30,12 +35,11 @@ func synthOffset(va uint32) int {
 }
 
 // SyntheticExe is a stand-in for the build-854 exe in tests without the game (this package's and the
-// setup's): build 854's section layout and its original bytes at every place Patch reads or writes, zeros elsewhere
-// (16.6 MB). Patch, Describe, State and PatchFile (with FileOptions.BaseSHA256 set to its SHA-256) take it like the
+// setup's): build 854's section layout, SizeOfImage and certificate directory, and its original bytes at every place
+// Patch reads or writes, zeros elsewhere (17.9 MB; the same bytes as the Python patcher's tests' synthetic_exe). Patch, Describe, State and PatchFile (with FileOptions.BaseSHA256 set to its SHA-256) take it like the
 // real exe. It is not a program.
 func SyntheticExe() []byte {
-	last := synthSections[len(synthSections)-1]
-	b := make([]byte, last.raw+last.rawLen)
+	b := make([]byte, synthCertAt+synthCertLen)
 	b[0], b[1] = 'M', 'Z'
 	const pe = 0x80
 	binary.LittleEndian.PutUint32(b[0x3C:], pe)
@@ -47,10 +51,18 @@ func SyntheticExe() []byte {
 	binary.LittleEndian.PutUint16(b[fh+18:], charBuild)
 	opt := fh + 20
 	binary.LittleEndian.PutUint16(b[opt:], 0x10B)
+	binary.LittleEndian.PutUint32(b[opt+4:], 0xDAA200) // SizeOfCode
 	binary.LittleEndian.PutUint32(b[opt+28:], ImageBase)
 	binary.LittleEndian.PutUint32(b[opt+32:], 0x1000)
 	binary.LittleEndian.PutUint32(b[opt+36:], 0x200)
+	binary.LittleEndian.PutUint32(b[opt+56:], 0x1884000) // SizeOfImage
+	binary.LittleEndian.PutUint32(b[opt+60:], 0x400)     // SizeOfHeaders
 	binary.LittleEndian.PutUint16(b[opt+70:], 0x8100)
+	binary.LittleEndian.PutUint32(b[opt+92:], 16) // NumberOfRvaAndSizes
+	binary.LittleEndian.PutUint32(b[opt+96+8*securityDir:], synthCertAt)
+	binary.LittleEndian.PutUint32(b[opt+96+8*securityDir+4:], synthCertLen)
+	binary.LittleEndian.PutUint32(b[synthCertAt:], synthCertLen)
+	binary.LittleEndian.PutUint32(b[synthCertAt+4:], 0x00020200)
 	for i, s := range synthSections {
 		h := opt + 0xE0 + i*40
 		copy(b[h:], s.name)
@@ -92,10 +104,15 @@ func SyntheticExe() []byte {
 	put(numFmtStep, numFmtStepOrig)
 	put(numFmt1e15, numFmt1e15Value)
 	put(averagesBlock, averagesOrig)
+	put(profileReloadSite, profileReloadOrig)
 	for _, f := range fadeSites {
 		put(f.va, f.orig)
 	}
 	put(ratingSite1, ratingSite1Orig)
 	put(ratingSite2, append(bytes.Clone(ratingSite2Orig), ratingNext2...))
+	for _, s := range append(dragGrabSites(), dragOptionsSites()...) {
+		put(s.va, s.orig)
+	}
+	put(optTable, optTableFirst)
 	return b
 }

@@ -40,7 +40,9 @@ type uiClient struct {
 	nc net.Conn
 	r  *bufio.Reader
 
-	greeting string // the region.state line after the hello
+	greeting   string // the region.state line after the hello
+	lbGreeting string // the leaderboard.state line after it
+	pfGreeting string // the profile.state line after that (PROFILE2)
 }
 
 // uiConnect opens tc's channel and says hello.
@@ -54,7 +56,9 @@ func uiConnect(t *testing.T, addr string, tc *tcpClient) *uiClient {
 	u := &uiClient{t: t, nc: nc, r: bufio.NewReader(nc)}
 	u.call(uichannel.CallHello, `{"protocol":1,"name":"`+tc.name+`"}`)
 	u.want(`{"event":"hello","data":{"protocol":1}}`)
-	u.greeting = u.event(EventRegionState) // PREF1: every connection's greeting (preferred.go)
+	u.greeting = u.event(EventRegionState)        // PREF1: every connection's greeting (preferred.go)
+	u.lbGreeting = u.event(EventLeaderboardState) // MMR2's (leaderboardtabs.go)
+	u.pfGreeting = u.event(EventProfileState)     // PROFILE2's (profilemodes.go)
 	return u
 }
 
@@ -476,7 +480,9 @@ func TestUIEndsWithItsOwnLogin(t *testing.T) {
 		u := &uiClient{t: t, nc: out, r: bufio.NewReader(out)}
 		u.call(uichannel.CallHello, `{"protocol":1,"name":""}`)
 		u.want(`{"event":"hello","data":{"protocol":1}}`)
-		u.event(EventRegionState) // PREF1's greeting
+		u.event(EventRegionState)      // PREF1's greeting
+		u.event(EventLeaderboardState) // MMR2's
+		u.event(EventProfileState)     // PROFILE2's
 		return u
 	}
 	first := stream(1)

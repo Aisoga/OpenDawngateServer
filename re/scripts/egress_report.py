@@ -22,9 +22,9 @@ changes: a Dawngate.exe flow to any other address, and anything EA-related, is s
 A capture whose last packet was cut short (P1's play mode stops dumpcap at the end of a session) is read anyway,
 with a note line; any other tshark error exits 2.
 
-Test lanes (roadmap A6 and A6b, docs/RUNNING_THE_CLIENT.md *Test lanes (A6, A6b)*): up to four sessions can run at
-once, each on its own loopback address (lane a 127.0.0.1, b 127.0.0.2, c 127.0.0.3, d 127.0.0.4; any loopback address
-is accepted), and every capture sees all of them. --lane-address <loopback IPv4> (default 127.0.0.1) names the
+Test lanes: up to five sessions can run at once, each on its own loopback address (lane a 127.0.0.1, b 127.0.0.2,
+c 127.0.0.3, d 127.0.0.4, g 127.0.0.5; any loopback address is accepted), and every capture sees all of them.
+--lane-address <loopback IPv4> (default 127.0.0.1) names the
 session's own address: the loopback section counts the TCP connections to it by port (any source; until A6 only those
 with source = destination), lists the loopback connections to other addresses (the other lanes, other programs)
 separately, and FLAGS a loopback packet sent from one of this session's game endpoints (address and port, from
@@ -114,7 +114,7 @@ def dawngate_endpoints(monitor):
 
 
 def lane_address(text):
-    """argparse type for --lane-address: an IPv4 loopback address (A6, A6b: lanes a-d are 127.0.0.1-127.0.0.4)."""
+    """argparse type for --lane-address: an IPv4 loopback address (A6, A6b, LANE5: lanes a-d are 127.0.0.1-127.0.0.4, lane g 127.0.0.5)."""
     try:
         ip = ipaddress.IPv4Address(text)
     except ValueError:
@@ -225,7 +225,7 @@ def main():
                     help="VPSLIVE: our own server's DNS name when it holds an EA word (dawngate.example.org); its queries "
                          "and flows aren't flagged for the name (repeatable)")
     ap.add_argument("--lane-address", type=lane_address, action="append", default=[], metavar="IPV4",
-                    help="A6: the session's own loopback address (lanes a, b, c, d: 127.0.0.1 to 127.0.0.4; default "
+                    help="A6: the session's own loopback address (lanes a, b, c, d, g: 127.0.0.1 to 127.0.0.5; default "
                          "127.0.0.1); A5b: repeatable, a further one is another client's of the same session")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")

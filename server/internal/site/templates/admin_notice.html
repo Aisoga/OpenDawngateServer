@@ -1,0 +1,18 @@
+{{define "content"}}
+{{with .Admin.Notice}}
+<p>A line for every player logged into the game{{if ge .Players 0}} ({{.Players}} now){{end}}, from <b>System</b>:
+in a match it shows in the match's chat, in the menus and lobbies in the System chat window and as a notification.</p>
+<form method="post" action="/admin/notice" autocomplete="off">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<label>Message
+<textarea name="text" maxlength="{{.MaxLen}}" rows="3" required>{{.Text}}</textarea></label>
+<p class="row"><label class="check"><input type="checkbox" name="confirm" value="yes" required> sure</label>
+<button type="submit">Send</button></p>
+</form>
+<p class="note">At most 200 characters, without &lt; &gt; &amp; and ~ (the game's chat would read them as markup); line
+breaks become blanks. Only the players online now get it: a player who logs in later doesn't (for a standing notice, use
+the server's broadcast file). Players in a match read it in the match's chat (not in the first seconds of a match: the
+chat isn't up yet) and get the notification when back in the menus, within 30 minutes. One message every 10 seconds at
+most; each one goes into the audit log with your name.</p>
+{{end}}
+{{end}}

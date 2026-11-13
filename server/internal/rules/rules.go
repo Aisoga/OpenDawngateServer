@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -31,7 +32,15 @@ type Option struct {
 	// Bots: the bots can play a match with this option. Every default option can; the others until the bots are taught
 	// them.
 	Bots bool `json:"bots"`
+	// Host is the match host feature the option needs beyond the rules every rules host plays ("" = none): a host
+	// whose hello doesn't name it would misplay the option, so Check refuses it there. Not on the wire.
+	Host string `json:"-"`
 }
+
+// HostRules2 is the host feature of the second set of options (gmshost.FeatureRules2): the item pool "lightning" and
+// the picks "army" and "clone". An older host takes an unknown item pool as "all items" and keeps a shaper once per
+// team.
+const HostRules2 = "rules2"
 
 // Category is one group of options, exactly one of them active.
 type Category struct {
@@ -48,6 +57,9 @@ var catalog = []Category{
 		{ID: "blind", Name: "Blind pick", Bots: true},
 		{ID: "random", Name: "All Random", Bots: true}, // the bots already draw shuffled after the humans
 		{ID: "draft", Name: "Draft"},
+		// ARMY1: a vote in the lobby (vote.go); a team holds one shaper several times, which needs a newer host
+		{ID: PickArmy, Name: "Army Pick", Host: HostRules2},
+		{ID: PickClone, Name: "Clone Pick", Host: HostRules2},
 	}},
 	{ID: ShaperPool, Name: "Shaper pool", Default: "all", Options: []Option{
 		{ID: "all", Name: "All shapers", Bots: true},
@@ -64,12 +76,13 @@ var catalog = []Category{
 		{ID: "onDeath", Name: "Shop on Death"},
 	}},
 	// RULES4a: the match host applies Shop access and the item pools (gms/core/rules/shop.h, which must know every id
-	// here): noLegendary = Basic and Advanced stat items, basics = the six Basic ones; potions, flasks and battle spells
-	// are always allowed.
+	// here): noLegendary = Basic and Advanced stat items, basics = the six Basic ones, lightning (LIGHTNING1) = Time,
+	// Energy, Chaos, Potency and Resonance; potions, flasks and battle spells are always allowed.
 	{ID: ItemPool, Name: "Item pool", Default: "all", Options: []Option{
 		{ID: "all", Name: "All items", Bots: true},
 		{ID: "noLegendary", Name: "No legendary items"},
 		{ID: "basics", Name: "Basic items only"},
+		{ID: "lightning", Name: "Lightning items only", Host: HostRules2},
 	}},
 }
 
@@ -196,6 +209,7 @@ var presets = []Preset{
 	{ID: "standard", Name: "Standard", Options: Standard()},
 	{ID: "aram", Name: "ARAM", Options: with(Standard(), Pick, "random", Shop, "onDeath")},
 	{ID: "allRandom", Name: "All Random", Options: with(Standard(), Pick, "random")},
+	{ID: "draft", Name: "Draft", Options: with(Standard(), Pick, "draft")}, // M30: the Draft rating's type (internal/rating ModeOf)
 }
 
 func with(c Combination, kv ...string) Combination {
@@ -367,18 +381,21 @@ type Catalog interface {
 
 // Context is what the checks need to know about the game beside the combination.
 type Context struct {
-	Bots      bool    // the lobby's bots are on (they fill the open seats)
-	BotSeats  int     // the most seats one team leaves to bots (with Bots)
-	TeamSize  int     // the seats of a team (the game's team capacity); 0 = BotSeats counts alone
-	HostRules bool    // the game's match host takes rules (it said so in its hello)
-	Catalog   Catalog // the pools' sizes; nil = Pools{} (every shaper of the table)
+	Bots      bool // the lobby's bots are on (they fill the open seats)
+	BotSeats  int  // the most seats one team leaves to bots (with Bots)
+	TeamSize  int  // the seats of a team (the game's team capacity); 0 = BotSeats counts alone
+	HostRules bool // the game's match host takes rules (it said so in its hello)
+	// HostFeatures are the features the game's match host named in its hello: an option that needs one (Option.Host)
+	// is refused without it.
+	HostFeatures []string
+	Catalog      Catalog // the pools' sizes; nil = Pools{} (every shaper of the table)
 	// NoShaperSelect: the server runs no shaper select (dgserver without --shaper-select), so it can give nobody a
 	// shaper list: All Random and the pools can't be played.
 	NoShaperSelect bool
 }
 
 // The shapers a pick needs in the pool: shapers are unique within a team, so five; a draft takes ten picks and two
-// bans a team, none twice in the whole game (draft.go).
+// bans a team, none twice in the whole game (draft.go); a vote one (PoolForVote, vote.go).
 const (
 	PoolForPick  = 5
 	PoolForDraft = 2*DraftPicksPerTeam + 2*DraftBansPerTeam
@@ -405,13 +422,21 @@ func Check(c Combination, ctx Context) []Finding {
 	if !c.IsDefault() && !ctx.HostRules {
 		out = append(out, Finding{FindingHost, "This game's match host is an older build that can't play rules: only " +
 			"the standard game is possible."})
+	} else {
+		for _, k := range catalog { // M30: an option a rules host plays only with a newer feature
+			if o, _ := option(k.ID, c.Get(k.ID)); o.Host != "" && !slices.Contains(ctx.HostFeatures, o.Host) {
+				out = append(out, Finding{k.ID, o.Name + " needs a newer match host than this game's: choose another " +
+					"option."})
+			}
+		}
 	}
 	if ctx.NoShaperSelect { // RULES3: the rolls and the pools are the shaper lists of shaper select
 		if c.Pick == "random" {
 			out = append(out, Finding{Pick, "All Random needs shaper select, which this server doesn't run."})
 		}
-		if c.Pick == "draft" { // RULES5b: the drafted shaper is the human's list, too
-			out = append(out, Finding{Pick, "Draft needs shaper select, which this server doesn't run."})
+		if c.Pick == "draft" || IsVotePick(c.Pick) { // RULES5b, ARMY1: the drafted or drawn shaper is the human's list
+			p, _ := option(Pick, c.Pick)
+			out = append(out, Finding{Pick, p.Name + " needs shaper select, which this server doesn't run."})
 		}
 		if c.ShaperPool != "all" {
 			out = append(out, Finding{ShaperPool, "A shaper pool needs shaper select, which this server doesn't run."})
@@ -426,8 +451,11 @@ func Check(c Combination, ctx Context) []Finding {
 		out = append(out, Finding{ShaperPool, "This server has no shapers for the pool " + clip(c.ShaperPool) + "."})
 	} else if c.Pick != "blind" || c.ShaperPool != "all" { // the standard pick is the server's as it is (RULES3)
 		need := PoolForPick
-		if c.Pick == "draft" {
+		switch {
+		case c.Pick == "draft":
 			need = PoolForDraft
+		case IsVotePick(c.Pick):
+			need = PoolForVote
 		}
 		if shapers < need {
 			p, _ := option(Pick, c.Pick)

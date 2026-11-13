@@ -106,6 +106,8 @@ const (
 	// BotFillPrefix.
 	BotFillMarker = "~#bots"
 	BotFillPrefix = "[Bots] "
+	// UnratedPrefix shows a custom game its admin made unrated (M30's Rated/Unrated) in the browser, after BotFillPrefix.
+	UnratedPrefix = "[Unrated] "
 )
 
 // IsLobbyGame reports whether a game with these GameFlags is made in a lobby first (B15): a custom game (2) or a
@@ -150,8 +152,11 @@ type customLobby struct {
 	rulesSetAt   time.Time
 	announced    bool
 	announceDue  bool // the rules line's timer runs (announceRulesLater)
-	baseName     string
-	label        string
+	// M30: the admin's Rated/Unrated (false = rated, the default); LOBBYMODE1 sets it from the lobby, MMR1 stores it
+	// with the match (adminUnratedLocked)
+	unrated  bool
+	baseName string
+	label    string
 
 	// RULES5b (draft.go): the running draft (nil: none), and the last one, running or ended (its board for a late
 	// lobby.enter and a refused call)
@@ -537,7 +542,7 @@ func (s *Server) startCustomGame(r *Request, g Game, p Player) []byte {
 	if s.TestRules != nil && withHost {
 		lobby.rules = s.TestRules.Normal()
 	}
-	g.Name = lobbyName(lobby.label, lobby.bots, lobby.rules, lobby.baseName)
+	g.Name = lobbyName(lobby.label, lobby.bots, lobby.unrated, lobby.rules, lobby.baseName)
 	s.Log.Logf("blaze", "   game %d %q: a %s (GameFlags %#x, %d teams of %d, private %v); admin %d", g.ID, g.Name, kind,
 		flags, len(g.TeamIDs), g.TeamCap, attrValue(g.Attrs, AttrPrivateMatch) == "1", p.ID)
 	if bots {
@@ -1103,10 +1108,11 @@ func registerCustomGames(s *Server) {
 		roster := lobbyRoster(hg.players, hg.game.Attrs)
 		players := append([]*hostedPlayer(nil), hg.players...)
 		mt := hg.match
+		unrated := hg.adminUnratedLocked()
 		hg.mu.Unlock()
 		if start {
 			r.Server.Log.Logf("blaze", "   game %d starts (its admin's advanceGameState IN_GAME): roster %s%s", gid,
-				describeRoster(roster), describeStartRules(sg.Rules, sg.FillTeams))
+				describeRoster(roster), describeStartRules(sg.Rules, sg.FillTeams, unrated))
 			if mt != nil {
 				r.Server.lobbyContent(roster, players)
 				sg.Roster = roster
@@ -1175,9 +1181,10 @@ func (s *Server) autoStartCustom(hg *hostedGame) {
 	roster := lobbyRoster(hg.players, hg.game.Attrs)
 	players := append([]*hostedPlayer(nil), hg.players...)
 	mt := hg.match
+	unrated := hg.adminUnratedLocked()
 	hg.mu.Unlock()
 	s.Log.Logf("blaze", "   game %d starts (--custom-autostart: every human spectates): roster %s%s", hg.game.ID,
-		describeRoster(roster), describeStartRules(rl, fill))
+		describeRoster(roster), describeStartRules(rl, fill, unrated))
 	if mt != nil {
 		s.lobbyContent(roster, players)
 		sg := gmshost.StartGame{Roster: roster, Rules: rl, FillTeams: fill}

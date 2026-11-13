@@ -115,6 +115,110 @@ func TestMatches(t *testing.T) {
 	}
 }
 
+// MatchesWhere pages the matches a filter keeps (PROFILE1's type=): newest first, keyset by id, a short page the
+// last, for everyone and for one persona; the filter sees the match's head (kind, rules, unrated) and the kept
+// matches carry their seats.
+func TestMatchesWhere(t *testing.T) {
+	s := New()
+	t0 := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
+	a, _ := login(t, s, "a@x", t0)
+	b, _ := login(t, s, "b@x", t0)
+	pa, pb := a.Personas[0].ID, b.Personas[0].ID
+	// 1 pvp (a, b), 2 custom (a), 3 practice (a), 4 custom unrated (a, b), 5 custom with rules (b), 6 custom (a)
+	for i, c := range []struct {
+		kind, rules string
+		unrated     bool
+		who         []int64
+	}{
+		{"pvp", "", false, []int64{pa, pb}}, {"custom", "", false, []int64{pa}}, {"practice", "", false, []int64{pa}},
+		{"custom", "", true, []int64{pa, pb}}, {"custom", `{"pick":"draft"}`, false, []int64{pb}},
+		{"custom", "", false, []int64{pa}},
+	} {
+		m := testMatch(int64(i+1), t0.Add(time.Duration(i)*time.Hour), c.who...)
+		m.Kind, m.Mode, m.Rules, m.Unrated = c.kind, c.kind, c.rules, c.unrated
+		if _, err := s.InsertMatch(m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	custom := func(m Match) bool { return m.Kind == "custom" && !m.Unrated }
+	rated := func(m Match) bool { return !m.Unrated }
+	for _, c := range []struct {
+		persona, before int64
+		limit           int
+		keep            func(Match) bool
+		want            []int64
+	}{
+		{0, 0, 2, custom, []int64{6, 5}}, {0, 5, 2, custom, []int64{2}}, {0, 2, 2, custom, nil},
+		{0, 0, 10, nil, []int64{6, 5, 4, 3, 2, 1}}, {0, 0, 10, rated, []int64{6, 5, 3, 2, 1}},
+		{pa, 0, 2, custom, []int64{6, 2}}, {pa, 6, 1, rated, []int64{3}}, {pa, 3, 5, rated, []int64{2, 1}},
+		{pb, 0, 5, rated, []int64{5, 1}}, {pb, 0, 5, nil, []int64{5, 4, 1}}, {pb + 100, 0, 5, nil, nil},
+		{0, 0, 3, func(Match) bool { return false }, nil},
+	} {
+		ms, err := s.MatchesWhere(c.persona, c.before, c.limit, c.keep)
+		if err != nil || !reflect.DeepEqual(matchIDs(ms), c.want) {
+			t.Errorf("MatchesWhere(%d, %d, %d) = %v %v, want %v", c.persona, c.before, c.limit, matchIDs(ms), err, c.want)
+		}
+	}
+	var seen []string
+	ms, err := s.MatchesWhere(0, 0, 1, func(m Match) bool {
+		seen = append(seen, fmt.Sprintf("%d %s %q %v", m.ID, m.Kind, m.Rules, m.Unrated))
+		return m.Rules != ""
+	})
+	if err != nil || len(ms) != 1 || ms[0].ID != 5 || len(ms[0].Seats) != 2 || ms[0].Seats[0].PersonaID != pb {
+		t.Errorf("the kept match with its seats: %+v %v", ms, err)
+	}
+	if want := []string{`6 custom "" false`, `5 custom "{\"pick\":\"draft\"}" false`}; !reflect.DeepEqual(seen, want) {
+		t.Errorf("the filter saw %q, want %q (newest first, stopping once the page is full)", seen, want)
+	}
+}
+
+// PlayedMatches (PROFILE2): every match of the persona, oldest first, each with that persona's seat only (its stats
+// read), the filter on the head; another persona's seats never come.
+func TestPlayedMatches(t *testing.T) {
+	s := New()
+	t0 := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
+	a, _ := login(t, s, "a@x", t0)
+	b, _ := login(t, s, "b@x", t0)
+	pa, pb := a.Personas[0].ID, b.Personas[0].ID
+	for i, c := range []struct {
+		kind    string
+		unrated bool
+		who     []int64
+	}{{"pvp", false, []int64{pa, pb}}, {"custom", true, []int64{pb, pa}}, {"practice", false, []int64{pb}},
+		{"custom", false, []int64{pa}}} {
+		m := testMatch(int64(i+1), t0.Add(time.Duration(i)*time.Hour), c.who...)
+		m.Kind, m.Mode, m.Unrated = c.kind, c.kind, c.unrated
+		for j := range m.Seats {
+			if m.Seats[j].PersonaID != 0 {
+				m.Seats[j].Stats = map[string]int64{"kills": m.Seats[j].PersonaID%100 + int64(i)}
+			}
+		}
+		if _, err := s.InsertMatch(m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ms, err := s.PlayedMatches(pa, nil)
+	if err != nil || !reflect.DeepEqual(matchIDs(ms), []int64{1, 2, 4}) {
+		t.Fatalf("PlayedMatches(a) = %v %v", matchIDs(ms), err)
+	}
+	for i, m := range ms {
+		if len(m.Seats) != 1 || m.Seats[0].PersonaID != pa || m.Seats[0].Stats["kills"] != pa%100+m.ID-1 || m.Kind == "" ||
+			m.Ended.IsZero() {
+			t.Errorf("match %d: %+v", i, m)
+		}
+	}
+	if !ms[1].Unrated || ms[0].Unrated {
+		t.Errorf("Unrated not read: %v %v", ms[0].Unrated, ms[1].Unrated)
+	}
+	ms, err = s.PlayedMatches(pa, func(m Match) bool { return !m.Unrated && m.Kind == "custom" })
+	if err != nil || !reflect.DeepEqual(matchIDs(ms), []int64{4}) {
+		t.Errorf("PlayedMatches(a, rated custom) = %v %v", matchIDs(ms), err)
+	}
+	if ms, err := s.PlayedMatches(pb+100, nil); err != nil || len(ms) != 0 {
+		t.Errorf("an unknown persona: %v %v", ms, err)
+	}
+}
+
 // The names are read when a match is read: a rename shows, a deleted account's persona is "Deleted player", and a
 // persona whose account row is gone leaves its seat without a name (no foreign key: the match stays).
 func TestMatchNames(t *testing.T) {

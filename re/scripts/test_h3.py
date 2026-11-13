@@ -235,7 +235,7 @@ class Rules(Temp):
     def test_options(self):
         bad = (["--player"], ["--server-host", "192.168.1.20"], ["--player", "--server-host", "192.168.1.20",
                "--lane-b"], ["--player", "--server-host", "192.168.1.20", "--lane", "c"], ["--lane", "a"],
-               ["--lane", "g"], ["--lane", "c,x"], ["--lan-certs", "127.0.0.1"], ["--afk-disconnect-minutes", "3"],
+               ["--lane", "q"], ["--lane", "c,x"], ["--lan-certs", "127.0.0.1"], ["--afk-disconnect-minutes", "3"],
                ["--lane", "lan"],  # A5b: the lan copy needs --lan-certs <S>
                ["--afk-minutes", "0"], ["--ca", "x.bin"])
         for args in bad:

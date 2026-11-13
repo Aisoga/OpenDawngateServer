@@ -280,7 +280,20 @@ func describeAdmin(st *store.Store, url string) string {
 	return fmt.Sprintf("admin page (PH5) at %sadmin, %s; its login: %s", url, who, limits.Admin().DescribeLogins())
 }
 
-// websiteAdmin is the admin page's view of the running matches (the hosted games) and their end.
+// websiteNotice is the admin page's message to every player online (SYSCHAT): Blaze's SendNotice, its refusal of a
+// notice sent too soon marked for the page (429).
+func websiteNotice(bz *blaze.Server) func(text, from string) (int, string, error) {
+	return func(text, from string) (int, string, error) {
+		n, err := bz.SendNotice(text, from)
+		if errors.Is(err, blaze.ErrNoticeTooSoon) {
+			return 0, "", site.NoticeTooSoon(err.Error())
+		}
+		return n.Connections, n.Text, err
+	}
+}
+
+// websiteAdmin is the admin page's view of the running matches (the hosted games) and their end, and its message to
+// every player online.
 func websiteAdmin(bz *blaze.Server) *site.AdminConfig {
 	return &site.AdminConfig{
 		Matches: func() []site.Match {
@@ -296,7 +309,9 @@ func websiteAdmin(bz *blaze.Server) *site.AdminConfig {
 			}
 			return out
 		},
-		EndMatch: bz.EndHostedMatch,
+		EndMatch:  bz.EndHostedMatch,
+		Notice:    websiteNotice(bz),
+		NoticeMax: blaze.NoticeMaxRunes,
 	}
 }
 

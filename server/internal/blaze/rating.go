@@ -12,6 +12,9 @@ import (
 // (store.UpdateGroup: each new rating depends on the others' old ones). The Leaderboard ranks by it when
 // Server.RatingLeaderboard is on; the ratings are kept in both modes. Each human gets one log line:
 // "account <id>: game <n> rating: 1500 -> 1516 (rated: 2 v 2 humans)" or "... rating: not rated (2 v 3 humans)".
+// Since M30 (MMR1) a game rates in its type (rating.ModeOf: standard, draft or custom by its rules), each type a rating
+// of its own; the line names a type other than the standard: "... game <n> draft rating: 1500 -> 1516 (...)". A custom
+// game the admin made unrated (store.Match.Unrated) isn't rated: "rating: not rated (unrated by the admin)".
 
 // rate applies the finished match's rating update (rating.Rate on the history's seats, so a live game and the seed
 // from the stored matches follow the same rule).
@@ -41,15 +44,15 @@ func (hg *hostedGame) rate(rec historyRecord) {
 		for _, a := range as {
 			byID[a.UserID] = a
 		}
-		_, changes = rating.Rate(m, func(id int64) store.Rating {
+		_, changes = rating.Rate(m, func(id int64, mode string) store.Rating {
 			if a := byID[id]; a != nil {
-				return a.History.Rating
+				return a.History.RatingIn(mode)
 			}
 			return store.StartRating // an account deleted during the match: rated as new, not stored
 		})
 		for _, c := range changes {
 			if a := byID[c.UserID]; a != nil {
-				a.History = progress.ApplyRated(a.History, now, now, c.After, c.Won)
+				a.History = progress.ApplyRated(a.History, v.Mode, now, now, c.After, c.Won)
 			}
 		}
 	})
@@ -58,6 +61,15 @@ func (hg *hostedGame) rate(rec historyRecord) {
 		return
 	}
 	for _, c := range changes {
-		s.Log.Logf("blaze", "   account %d: game %d rating: %s", c.UserID, hg.game.ID, c.Describe(v))
+		s.Log.Logf("blaze", "   account %d: game %d %s: %s", c.UserID, hg.game.ID, ratingName(v.Mode), c.Describe(v))
 	}
+}
+
+// ratingName is the log's name of a game type's rating: "rating" for the standard (the line RATING1 wrote), "draft
+// rating", "custom rating".
+func ratingName(mode string) string {
+	if mode == rating.Standard {
+		return "rating"
+	}
+	return mode + " rating"
 }

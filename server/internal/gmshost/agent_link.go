@@ -206,7 +206,7 @@ func (a *Agent) serveLink(ctx context.Context) error {
 	exporter := hex.EncodeToString(exp)
 	l := &agentLink{c: c, out: make(chan []byte, relayQueue), gone: make(chan struct{})}
 	defer close(l.gone)
-	r := newLinkReader(c)
+	r := NewLineReader(c) // PreAuthMaxLine until the main server has proved the key
 	public := a.public()
 
 	nonce := newToken()
@@ -232,6 +232,7 @@ func (a *Agent) serveLink(ctx context.Context) error {
 	if !proofOK(ch.Proof, serverLinkProof(a.Key, nonce, ch.Nonce, exporter)) {
 		return slow(fmt.Errorf("the main server failed the key check (it has another key for %q, or doesn't know the name); not registering", a.Name))
 	}
+	r.SetMax(linkMaxLine) // the server's lines for the hosts may be long (a ten-player startGame)
 	offer := AgentAuth{Bind: a.BindHost, Public: public, Ports: a.Ports, Gateway: a.Link.Gateway, Pin: a.Link.GatewayPin, Maps: a.Link.Maps}
 	offer.Proof = agentLinkProof(a.Key, ch.Nonce, nonce, a.Name, offer, exporter)
 	if err := l.send(offer); err != nil {

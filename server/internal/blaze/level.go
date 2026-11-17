@@ -35,6 +35,13 @@ type PlayableLevel struct {
 	Label   string // put in front of the game's name in the game browser, whose Map column can't show the level
 	Archive string // the added archive in game\Data that holds its files ("" = they ship with the game)
 	Display string // the map's name in what players read (the create dialog's list and the lobby's map line say it too)
+
+	// MapRules are a map package's own rules (MAPRULES5, maprules.go): the host's kill race, time limit and start
+	// level, whether its balance changed, and their text; zero for the built-in maps.
+	MapRules MapRules
+	// LobbyPreset is the lobby setup the map suggests (RULES6, mapc's rules.lobbyPreset): a preset's id or rules, which a
+	// custom game on the map starts its lobby with (lobbypreset.go); "" = none.
+	LobbyPreset string
 }
 
 // PlayableLevels are the levels dgserver accepts. SM_Map_v5 ships whole; MM_Map_v3 (the cut one-lane map) needs

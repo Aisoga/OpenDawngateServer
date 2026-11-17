@@ -81,6 +81,24 @@ func TestCheckJSON(t *testing.T) {
 	if _, out, _ = call("check", "--maps", t.TempDir(), dir); strings.Contains(out, "names.tag-unique") {
 		t.Errorf("--maps of an empty folder still saw the sibling: %s", out)
 	}
+	// --names (EDNEWNAME): only the names rules; the broken shop isn't looked at, another map's tag is
+	if code, out, _ = call("check", "--json", "--names", "--maps", t.TempDir(), dir); code != 0 ||
+		strings.Contains(out, "fixed.open") {
+		t.Errorf("--names on good names: exit %d: %s", code, out)
+	}
+	code, out, _ = call("check", "--json", "--names", "--maps", inst, dir)
+	r = mapc.Report{}
+	if err := json.Unmarshal([]byte(out), &r); err != nil || code != 1 || r.OK || len(r.Findings) != 1 ||
+		r.Findings[0].Rule != "names.tag-unique" || r.Findings[0].Path != "tag" {
+		t.Errorf("--names with another map's tag: exit %d, %v: %s", code, err, out)
+	}
+	// import: names the compiler would refuse write nothing (before the copy is read)
+	imp := filepath.Join(t.TempDir(), "CM_Imported")
+	code, out, errw := call("import", "--copy", t.TempDir(), "--display", "Brawl Grove v1", "SM_Map_v5", imp)
+	if _, err := os.Stat(imp); code != 1 || err == nil || !strings.Contains(errw, "nothing written") ||
+		!strings.Contains(errw, `names.display: display "Brawl Grove v1": 14 characters, 1 to 13: shorten it by 1`) {
+		t.Errorf("import with a long display: exit %d, %v: %s%s", code, err, out, errw)
+	}
 	// unreadable JSON
 	if err := os.WriteFile(filepath.Join(dir, "map.json"), []byte(`{"format": 1, "nme": "x"}`), 0o644); err != nil {
 		t.Fatal(err)

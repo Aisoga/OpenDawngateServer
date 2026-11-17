@@ -157,6 +157,7 @@ func (m *Manager) agentHello(c net.Conn, r *LineReader, h AgentHello, peer strin
 		reject("wrong proof (a different key, or a replayed agentAuth)")
 		return
 	}
+	r.SetMax(MaxLine) // authenticated (PreAuthMaxLine before)
 	first, last, err := checkAgentOffer(auth)
 	if err != nil {
 		reject(err.Error())

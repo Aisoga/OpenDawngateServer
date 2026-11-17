@@ -1200,13 +1200,14 @@ static void TestHostControlRules(const std::string& examplesPath) {
 static void TestHostControlRules2(const std::string& examplesPath) {
   std::string helloLine, startLine;
   for (const std::string& l : ReadExamples(examplesPath)) {
-    if (l.find("\"t\":\"hello\"") != std::string::npos && l.find("\"rules2\"") != std::string::npos) helloLine = l;
+    if (l.find("\"t\":\"hello\"") != std::string::npos && l.find("\"rules2\"") != std::string::npos &&
+        l.find("\"maprules\"") == std::string::npos)
+      helloLine = l;
     if (l.find("\"t\":\"startGame\"") != std::string::npos && l.find("\"lightning\"") != std::string::npos)
       startLine = l;
   }
   CHECK(!helloLine.empty() && !startLine.empty());
-  const std::vector<std::string> feats = HostFeatures();
-  CHECK(feats.size() == 2 && feats[0] == kFeatureRules && feats[1] == kFeatureRules2);
+  const std::vector<std::string> feats = {kFeatureRules, kFeatureRules2};
   CHECK_STR(std::string(kFeatureRules2), "rules2");
   Message m;
   std::string err;
@@ -1219,6 +1220,300 @@ static void TestHostControlRules2(const std::string& examplesPath) {
     CHECK(sg.rules && sg.rules->itemPool == "lightning" && sg.rules->pick == "blind" && sg.rules->shop == "normal");
     CHECK_STR(Encode(sg), startLine + "\n");
   }
+}
+
+// MAPRULES4: this build's host names "maprules" too; createGame's mapRules round-trips with the shared examples (each
+// member omitted when 0, the object omitted when empty), and a hostile or broken mapRules is refused or read as none.
+static void TestHostControlMapRules(const std::string& examplesPath) {
+  std::string helloLine;
+  std::vector<std::string> createLines;
+  for (const std::string& l : ReadExamples(examplesPath)) {
+    if (l.find("\"t\":\"hello\"") != std::string::npos && l.find("\"maprules\"") != std::string::npos &&
+        l.find("\"maprules2\"") == std::string::npos)
+      helloLine = l;
+    if (l.find("\"t\":\"createGame\"") != std::string::npos && l.find("\"mapRules\"") != std::string::npos &&
+        l.find("\"bindings\"") == std::string::npos)
+      createLines.push_back(l);
+  }
+  CHECK(!helloLine.empty() && createLines.size() == 2);
+  const std::vector<std::string> feats = {kFeatureRules, kFeatureRules2, kFeatureMapRules};  // MAPRULES4's host
+  CHECK_STR(std::string(kFeatureMapRules), "maprules");
+  Message m;
+  std::string err;
+  CHECK(Decode(helloLine, m, &err) && std::get<Hello>(m).features == feats);
+  Hello h{1, "00112233445566778899aabbccddeeff", 4242, "dgsim c1", feats};
+  CHECK_STR(Encode(h), helloLine + "\n");
+  if (createLines.size() == 2) {
+    CHECK(Decode(createLines[0], m, &err));
+    const CreateGame& a = std::get<CreateGame>(m);
+    CHECK(a.mapRules.kills == 20 && a.mapRules.minutes == 15 && a.mapRules.startLevel == 6 && !a.mapRules.Empty());
+    CHECK_STR(Encode(a), createLines[0] + "\n");
+    CHECK(Decode(createLines[1], m, &err));
+    const CreateGame& b = std::get<CreateGame>(m);
+    CHECK(b.mapRules.kills == 0 && b.mapRules.minutes == 3 && b.mapRules.startLevel == 0);
+    CHECK_STR(Encode(b), createLines[1] + "\n");
+  }
+  // none: not written, and absent, null or {} read as none
+  CreateGame none;
+  none.gameId = 2;
+  CHECK(Encode(none).find("mapRules") == std::string::npos);
+  CHECK(Decode("{\"t\":\"createGame\",\"gameId\":2}", m, &err) && std::get<CreateGame>(m).mapRules.Empty());
+  CHECK(Decode("{\"t\":\"createGame\",\"mapRules\":null}", m, &err) && std::get<CreateGame>(m).mapRules.Empty());
+  CHECK(Decode("{\"t\":\"createGame\",\"mapRules\":{}}", m, &err) && std::get<CreateGame>(m).mapRules.Empty());
+  // unknown members are ignored (a later server may add some)
+  CHECK(Decode("{\"t\":\"createGame\",\"mapRules\":{\"kills\":5,\"respawn\":{\"base\":3}}}", m, &err) &&
+        std::get<CreateGame>(m).mapRules.kills == 5);
+  // hostile inputs: the wrong type is refused with the field's name; the host clamps the numbers (core/matchflow)
+  for (const char* bad : {"{\"t\":\"createGame\",\"mapRules\":5}", "{\"t\":\"createGame\",\"mapRules\":[1,2]}",
+                          "{\"t\":\"createGame\",\"mapRules\":\"kills\"}",
+                          "{\"t\":\"createGame\",\"mapRules\":{\"kills\":\"20\"}}",
+                          "{\"t\":\"createGame\",\"mapRules\":{\"minutes\":1.5}}",
+                          "{\"t\":\"createGame\",\"mapRules\":{\"startLevel\":true}}",
+                          "{\"t\":\"createGame\",\"mapRules\":{\"kills\":99999999999999999999999}}"}) {
+    err.clear();
+    CHECK(!Decode(bad, m, &err));
+    CHECK(err.find("mapRules") != std::string::npos);
+  }
+  CHECK(Decode("{\"t\":\"createGame\",\"mapRules\":{\"kills\":-7,\"minutes\":9223372036854775807}}", m, &err));
+  CHECK(std::get<CreateGame>(m).mapRules.kills == -7 && std::get<CreateGame>(m).mapRules.minutes == INT64_MAX);
+}
+
+// WINBIND-B: this build's host names "maprules2" last; createGame's mapRules.bindings, startGame's victory and
+// finishGame's bindings round-trip with the shared examples; absent, null or {} read as none; the wrong type is refused.
+static void TestHostControlMapRules2(const std::string& examplesPath) {
+  std::string helloLine, createLine, startLine;
+  std::vector<std::string> finishLines;
+  for (const std::string& l : ReadExamples(examplesPath)) {
+    if (l.find("\"t\":\"hello\"") != std::string::npos && l.find("\"maprules2\"") != std::string::npos &&
+        l.find("\"longlines\"") == std::string::npos)
+      helloLine = l;
+    if (l.find("\"t\":\"createGame\"") != std::string::npos && l.find("\"bindings\"") != std::string::npos)
+      createLine = l;
+    if (l.find("\"t\":\"startGame\"") != std::string::npos && l.find("\"victory\"") != std::string::npos)
+      startLine = l;
+    if (l.find("\"t\":\"finishGame\"") != std::string::npos && l.find("\"bindings\"") != std::string::npos)
+      finishLines.push_back(l);
+  }
+  CHECK(!helloLine.empty() && !createLine.empty() && !startLine.empty() && finishLines.size() == 2);
+  const std::vector<std::string> feats = FeaturesWithout(HostFeatures(), "longlines,startack");  // WINBIND-B's host
+  CHECK(feats.size() == 4 && feats[0] == kFeatureRules && feats[1] == kFeatureRules2 && feats[2] == kFeatureMapRules &&
+        feats[3] == kFeatureMapRules2);
+  CHECK_STR(std::string(kFeatureMapRules2), "maprules2");
+  Message m;
+  std::string err;
+  CHECK(Decode(helloLine, m, &err) && std::get<Hello>(m).features == feats);
+  Hello h{1, "00112233445566778899aabbccddeeff", 4242, "dgsim c1", feats};
+  CHECK_STR(Encode(h), helloLine + "\n");
+  if (Decode(createLine, m, &err)) {
+    const CreateGame& c = std::get<CreateGame>(m);
+    CHECK(c.mapRules.bindings == 2 && c.mapRules.minutes == 3 && c.mapRules.kills == 0 && !c.mapRules.Empty());
+    CHECK_STR(Encode(c), createLine + "\n");
+  } else {
+    CHECK(false);
+  }
+  CreateGame onlyBind;
+  onlyBind.mapRules.bindings = 1;
+  CHECK(!onlyBind.mapRules.Empty());
+  CHECK(Encode(onlyBind).find("\"mapRules\":{\"bindings\":1}") != std::string::npos);
+  if (Decode(startLine, m, &err)) {
+    const StartGame& s = std::get<StartGame>(m);
+    CHECK(s.victory && s.victory->bindings == 1 && s.victory->kills == 0 && s.victory->minutes == 0);
+    CHECK(s.rules && s.rules->victory == "bind1");  // WINLOBBY: the id rides along in the rules for the log
+    CHECK_STR(Encode(s), startLine + "\n");
+  } else {
+    CHECK(false);
+  }
+  if (finishLines.size() == 2) {
+    CHECK(Decode(finishLines[0], m, &err));
+    const FinishGame& a = std::get<FinishGame>(m);
+    CHECK(a.reason == "bindings" && a.winnerTeam == 2 && a.bindings.size() == 2 && a.bindings[0] == 0 &&
+          a.bindings[1] == 1);
+    CHECK_STR(Encode(a), finishLines[0] + "\n");
+    CHECK(Decode(finishLines[1], m, &err));
+    const FinishGame& b = std::get<FinishGame>(m);
+    CHECK(b.reason == "time" && b.bindings.size() == 2 && b.bindings[0] == 2);
+    CHECK_STR(Encode(b), finishLines[1] + "\n");
+  }
+  // none: not written, and absent or null read as none; {} is a victory of nothing (the host sets nothing)
+  FinishGame plain;
+  plain.reason = "guardian";
+  CHECK(Encode(plain).find("bindings") == std::string::npos);
+  CHECK(Decode("{\"t\":\"finishGame\",\"winnerTeam\":1,\"reason\":\"kills\"}", m, &err) &&
+        std::get<FinishGame>(m).bindings.empty());
+  StartGame sg;
+  CHECK(Encode(sg).find("victory") == std::string::npos);
+  sg.rules = StartGame::Rules{"blind", "all", "normal", "all", ""};  // WINLOBBY: an empty id isn't written
+  CHECK(Encode(sg).find("victory") == std::string::npos);
+  sg.rules.reset();
+  CHECK(!Decode("{\"t\":\"startGame\",\"roster\":[],\"rules\":{\"pick\":\"blind\",\"victory\":3}}", m, &err));
+  CHECK(err.find("victory") != std::string::npos);
+  CHECK(Decode("{\"t\":\"startGame\",\"roster\":[]}", m, &err) && !std::get<StartGame>(m).victory);
+  CHECK(Decode("{\"t\":\"startGame\",\"roster\":[],\"victory\":null}", m, &err) && !std::get<StartGame>(m).victory);
+  CHECK(Decode("{\"t\":\"startGame\",\"roster\":[],\"victory\":{\"kills\":20,\"minutes\":20,\"later\":1}}", m,
+               &err) &&
+        std::get<StartGame>(m).victory && std::get<StartGame>(m).victory->kills == 20 &&
+        std::get<StartGame>(m).victory->minutes == 20);  // unknown members are ignored
+  for (const char* bad : {"{\"t\":\"startGame\",\"roster\":[],\"victory\":5}",
+                          "{\"t\":\"startGame\",\"roster\":[],\"victory\":{\"bindings\":\"3\"}}"}) {
+    err.clear();
+    CHECK(!Decode(bad, m, &err));
+    CHECK(err.find("victory") != std::string::npos);
+  }
+  for (const char* bad : {"{\"t\":\"createGame\",\"mapRules\":{\"bindings\":1.5}}",
+                          "{\"t\":\"createGame\",\"mapRules\":{\"bindings\":[1]}}"}) {
+    err.clear();
+    CHECK(!Decode(bad, m, &err));
+    CHECK(err.find("mapRules") != std::string::npos);
+  }
+  err.clear();
+  CHECK(!Decode("{\"t\":\"finishGame\",\"bindings\":\"1-0\"}", m, &err));
+  CHECK(err.find("bindings") != std::string::npos);
+}
+
+// CTLLINE: the hello names "longlines" and "startack" last (the shared example); reportGMSUpdate's started is written
+// only when true; Poll takes a 200 KiB startGame, skips a line over kMaxLine (one "line too long", the connection
+// kept) and decodes the next; a host that names startack sends a reportGMSUpdate with "started":true right after it
+// took startGame (and logs it), one without the feature none.
+static void TestHostControlLongLines(const std::string& examplesPath) {
+  std::string helloLine, updateLine, createLine;
+  for (const std::string& l : ReadExamples(examplesPath)) {
+    if (l.find("\"t\":\"hello\"") != std::string::npos && l.find("\"startack\"") != std::string::npos) helloLine = l;
+    if (l.find("\"t\":\"reportGMSUpdate\"") != std::string::npos && l.find("\"started\"") != std::string::npos)
+      updateLine = l;
+    if (l.find("\"mode\":\"custom\"") != std::string::npos && l.find("\"mapRules\"") == std::string::npos)
+      createLine = l;
+  }
+  CHECK(!helloLine.empty() && !updateLine.empty() && !createLine.empty());
+  const std::vector<std::string> feats = HostFeatures();
+  CHECK(feats.size() == 6 && feats[4] == kFeatureLongLines && feats[5] == kFeatureStartAck);
+  CHECK_STR(std::string(kFeatureLongLines), "longlines");
+  CHECK_STR(std::string(kFeatureStartAck), "startack");
+  CHECK_EQ(kMaxLine, size_t{1024 * 1024});
+  Hello h{1, "00112233445566778899aabbccddeeff", 4242, "dgsim c1", feats};
+  CHECK_STR(Encode(h), helloLine + "\n");
+  Message m;
+  std::string err;
+  CHECK(Decode(updateLine, m, &err) && std::get<GMSUpdate>(m).started && std::get<GMSUpdate>(m).phase == "loading");
+  GMSUpdate u;
+  u.phase = kPhaseLoading;
+  u.elapsedMs = 21034;
+  u.started = true;
+  CHECK_STR(Encode(u), updateLine + "\n");
+  u.started = false;
+  CHECK(Encode(u).find("started") == std::string::npos);
+  CHECK(Decode("{\"t\":\"reportGMSUpdate\",\"phase\":\"inGame\"}", m, &err) && !std::get<GMSUpdate>(m).started);
+  CHECK(!Decode("{\"t\":\"reportGMSUpdate\",\"started\":1}", m, &err));
+
+  // a startGame of about 230 KB: ten players with 1100 ward names each
+  StartGame big;
+  for (int i = 0; i < 10; ++i) {
+    RosterEntry e;
+    e.user = 2000000001 + i;
+    e.name = "p" + std::to_string(i);
+    e.index = i;
+    e.team = 1 + i / 5;
+    for (int w = 0; w < 1100; ++w) e.wards.push_back("alpha.Ward_" + std::to_string(1000000 + w));
+    big.roster.push_back(e);
+  }
+  const std::string bigLine = Encode(big);
+  CHECK(bigLine.size() > 200 * 1024 && bigLine.size() < kMaxLine);
+  const std::string tooLong = "{\"t\":\"removePlayer\",\"user\":1,\"reason\":\"" + std::string(kMaxLine, 'x') + "\"}\n";
+
+  WSADATA wsa;
+  WSAStartup(MAKEWORD(2, 2), &wsa);
+  for (const bool ack : {true, false}) {
+    TestServer srv;
+    CHECK(srv.Start());
+    HostEnv env;
+    env.control = "127.0.0.1:" + std::to_string(srv.port);
+    env.match = 9;
+    env.token = "tok";
+    std::string gotHello, afterStart;
+    std::thread server([&] {
+      SOCKET c = accept(srv.listener, nullptr, nullptr);
+      gotHello = RecvLine(c);
+      SendRaw(c, createLine + "\n");
+      SendRaw(c, bigLine);
+      afterStart = RecvLine(c);  // the confirmation, or (without startack) logoutGMS
+      SendRaw(c, tooLong);
+      SendRaw(c, "{\"t\":\"removePlayer\",\"user\":2000000003,\"reason\":\"PLAYER_LEFT\"}\n");
+      SendRaw(c, "{\"t\":\"abortGame\",\"reason\":\"done\"}\n");
+      RecvLine(c);  // logoutGMS
+      closesocket(c);
+    });
+    HostControl::Options o;
+    o.heartbeatMs = 1000000;
+    std::vector<std::string> log;
+    HostControl hc([&](const std::string& s) { log.push_back(s); }, o);
+    hc.SetFeatures(ack ? feats : FeaturesWithout(feats, "startack"));
+    int64_t now = 0;
+    CHECK(hc.Start(env, 4245, "test", now));
+    CHECK(PollUntil(hc, now, [&] { return hc.Started(); }));
+    CHECK_EQ(hc.Game().roster.size(), size_t{10});
+    if (hc.Game().roster.size() == 10) CHECK_EQ(hc.Game().roster[9].wards.size(), size_t{1100});
+    if (!ack) hc.Logout();  // without startack nothing follows the start: the server's next line is the logout
+    CHECK(ack ? PollUntil(hc, now, [&] { return hc.AbortRequested(); }) : true);
+    if (ack) {
+      const std::vector<RemovePlayer> gone = hc.TakeRemoved();
+      CHECK(gone.size() == 1 && gone[0].user == 2000000003);  // the line after the long one
+      CHECK(hc.Active());                                     // the long line didn't end the connection
+      hc.Logout();
+    }
+    server.join();
+    CHECK(gotHello.find(ack ? "\"features\":[\"rules\",\"rules2\",\"maprules\",\"maprules2\",\"longlines\",\"startack\"]"
+                            : "\"maprules2\",\"longlines\"]") != std::string::npos);
+    if (ack) {
+      CHECK(afterStart.rfind("{\"t\":\"reportGMSUpdate\",\"phase\":\"loading\",", 0) == 0);
+      CHECK(afterStart.find(",\"started\":true}") != std::string::npos);
+      bool logged = false, skipped = false;
+      size_t startAt = 0, ackAt = 0;
+      for (size_t i = 0; i < log.size(); ++i) {
+        if (log[i].rfind("control: <- {\"t\":\"startGame\"", 0) == 0) startAt = i;
+        if (log[i].find("\"started\":true} (the start confirmed)") != std::string::npos) {
+          logged = true;
+          ackAt = i;
+        }
+        if (log[i] == "control: (line ignored: line too long)") skipped = true;
+      }
+      CHECK(logged && ackAt == startAt + 1);  // right after startGame in the host's log
+      CHECK(skipped);
+    } else {
+      CHECK_STR(afterStart, "{\"t\":\"logoutGMS\"}");
+    }
+  }
+  WSACleanup();
+}
+
+// MAPRULES8: [host] features_off's helper. features_off=maprules makes this build's hello the hello of a host from
+// before MAPRULES4 (the shared example with rules and rules2 only), byte for byte; blanks, unknown and repeated names.
+static void TestFeaturesWithout(const std::string& examplesPath) {
+  const std::vector<std::string> all = HostFeatures();
+  const std::vector<std::string> older = FeaturesWithout(all, "maprules,maprules2,longlines,startack");
+  CHECK(older.size() == 2 && older[0] == kFeatureRules && older[1] == kFeatureRules2);
+  std::string helloLine;
+  for (const std::string& l : ReadExamples(examplesPath))
+    if (l.find("\"t\":\"hello\"") != std::string::npos && l.find("\"rules2\"") != std::string::npos &&
+        l.find("\"maprules\"") == std::string::npos)
+      helloLine = l;
+  CHECK(!helloLine.empty());
+  Hello h{1, "00112233445566778899aabbccddeeff", 4242, "dgsim c1", older};
+  CHECK_STR(Encode(h), helloLine + "\n");
+  CHECK(FeaturesWithout(all, "") == all);
+  CHECK(FeaturesWithout(all, "nothing,") == all);
+  const std::vector<std::string> one =
+      FeaturesWithout(all, " rules2 , maprules,maprules ,maprules2,longlines, startack");
+  CHECK(one.size() == 1 && one[0] == kFeatureRules);
+  CHECK(FeaturesWithout(all, "rules,rules2,maprules,maprules2,longlines,startack").empty());
+  // WINBIND-B: features_off=maprules2,longlines,startack is a host from before WINBIND-B (MAPRULES4's hello)
+  const std::vector<std::string> mr4 = FeaturesWithout(all, "maprules2,longlines,startack");
+  CHECK(mr4.size() == 3 && mr4[2] == kFeatureMapRules);
+  // CTLLINE: features_off=longlines,startack is a host from before CTLLINE (WINBIND-B's hello)
+  const std::vector<std::string> wb = FeaturesWithout(all, "longlines,startack");
+  CHECK(wb.size() == 4 && wb[3] == kFeatureMapRules2);
+  // no features at all: the hello leaves the field out, as a host from before RULES1
+  Hello none{1, "00112233445566778899aabbccddeeff", 4242, "dgsim c1",
+             FeaturesWithout(all, "rules,rules2,maprules,maprules2,longlines,startack")};
+  CHECK(Encode(none).find("features") == std::string::npos);
 }
 
 int main(int argc, char** argv) {
@@ -1238,6 +1533,10 @@ int main(int argc, char** argv) {
   TestWithSpectatorsOf();                // B15b
   TestHostControlRules(examples);        // RULES1
   TestHostControlRules2(examples);       // M30 (LIGHTNING1)
+  TestHostControlMapRules(examples);     // MAPRULES4
+  TestFeaturesWithout(examples);         // MAPRULES8
+  TestHostControlMapRules2(examples);    // WINBIND-B
+  TestHostControlLongLines(examples);    // CTLLINE
   std::printf("%d checks, %d failed\n", g_checks, g_failed);
   return g_failed == 0 ? 0 : 1;
 }

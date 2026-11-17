@@ -330,6 +330,11 @@ CREATE TABLE mode_rating_days (
 	PRIMARY KEY (user_id, day, mode)
 ) WITHOUT ROWID;
 `},
+	// the map's own rules a match played (M31, MAPRULES5; store.MapRules as JSON, '' for none): a game whose map's
+	// kill race or time limit was played is never rated (internal/rating's Judge), but stays in every list (not unrated)
+	{11, "the map's own rules (MAPRULES5)", `
+ALTER TABLE matches ADD COLUMN map_rules TEXT NOT NULL DEFAULT '';
+`},
 }
 
 // SchemaVersion is the schema version this build writes (the last migration's).

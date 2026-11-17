@@ -30,6 +30,7 @@
 #include "host/control.h"
 #include "itempassives.h"
 #include "log.h"
+#include "maprules.h"
 #include "match.h"
 #include "matchrec.h"
 #include "matchstats.h"
@@ -2033,6 +2034,7 @@ bool GrantGold(int playerIndex, float amount, int luaSource, bool hide, std::uin
 }
 
 void OnPlayerDeployed(int playerIndex) {
+  maprules::OnSeatDeployed(playerIndex);  // MAPRULES4: the start level, granted at the next match tick
   if (!g_installed || !g_opt.startGold || !Ours() || playerIndex < 0 || playerIndex >= 10) return;
   if (g_startGiven[playerIndex]) return;
   g_startGiven[playerIndex] = true;

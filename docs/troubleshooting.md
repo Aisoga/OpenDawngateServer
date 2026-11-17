@@ -140,6 +140,12 @@ Your game lacks that map, or has another version of it than the server's: the *S
 **"Failed to connect to game server" about 20 seconds after the click**
 The match host ended before it was ready. Its log is in `Dawngate-Data\logs\hosts\<match>\dgsim.log`.
 
+**A custom game's START is refused: "The game can't start: its player data is too large for the match host"**
+The players' collections together are more than the match host takes in one message. The lobby stays open; please report it with the numbers the message shows. A player with a smaller collection taking the seat lets the game start meanwhile.
+
+**Everyone is sent back to the main menu about 30 seconds after a custom game's START**
+The match host didn't confirm the start, so the server ended the game instead of leaving everyone waiting. The server's log says `no answer to startGame within 30s`, and the host's log is in `Dawngate-Data\logs\hosts\<match>\dgsim.log`. Create the game again; if it happens again, report it with both logs.
+
 ## During a match
 
 **The world freezes: nothing moves, and you can't attack or cast**

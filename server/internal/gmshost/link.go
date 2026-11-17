@@ -123,11 +123,11 @@ func init() {
 	}
 }
 
-// newLinkReader reads the agent link's lines (up to linkMaxLine).
+// newLinkReader reads the agent link's lines (up to linkMaxLine) where both ends are known: the main server's own
+// side of a host's channel. A link's own reader starts at PreAuthMaxLine and is raised after the key check.
 func newLinkReader(c net.Conn) *LineReader {
 	r := NewLineReader(c)
-	r.s.Buffer(make([]byte, 4096), linkMaxLine+2)
-	r.max = linkMaxLine
+	r.SetMax(linkMaxLine)
 	return r
 }
 
@@ -261,7 +261,7 @@ func (m *Manager) ServeAgent(c *tls.Conn, peer string) {
 		return
 	}
 	c.SetReadDeadline(time.Now().Add(m.cfg.HelloTimeout))
-	r := newLinkReader(c)
+	r := NewLineReader(c) // PreAuthMaxLine until agentAuth passed (linkHello)
 	line, err := r.Next()
 	if err != nil {
 		m.log.Logf(who, "agent link from %s closed before agentHello: %v", peer, err)
@@ -328,6 +328,7 @@ func (m *Manager) linkHello(c net.Conn, r *LineReader, h AgentHello, peer, expor
 		reject("wrong proof (another key, or an agentAuth from another TLS session)")
 		return
 	}
+	r.SetMax(linkMaxLine) // the machine has proved its key: its hosts' lines may be long (a ten-player startGame)
 	first, last, err := checkAgentOffer(auth)
 	if err == nil {
 		err = checkLinkOffer(auth, lc.Ports)

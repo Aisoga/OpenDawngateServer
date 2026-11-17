@@ -57,6 +57,7 @@
 #include "itempassives.h"
 #include "log.h"
 #include "mapfix.h"
+#include "maprules.h"
 #include "match.h"
 #include "matchstats_sources.h"
 #include "passives.h"
@@ -818,6 +819,11 @@ void Stats(unsigned now, bool histo) {
     char ms[1400];
     match::FormatStats(ms, sizeof ms);
     Log("stats match: %s", ms);
+    if (maprules::Current().Any()) {  // MAPRULES4
+      char mr[400];
+      maprules::FormatStats(mr, sizeof mr);
+      Log("stats maprules: %s", mr);
+    }
     char bs[3000];
     bots::FormatStats(bs, sizeof bs);
     Log("stats bots: %s", bs);

@@ -1136,16 +1136,41 @@ func (hg *hostedGame) draftDoneLocked(d *draftRun) func() {
 	unrated := hg.adminUnratedLocked()
 	return func() {
 		s.Log.Logf("blaze", "   game %d: %s", gid, done)
+		var sg gmshost.StartGame
+		if mt != nil {
+			s.lobbyContent(roster, players)
+			sg = gmshost.StartGame{Roster: roster, Rules: rl, FillTeams: fill}
+			s.applyPickRules(gid, &sg, drafted)
+			if f, why, ok := startTooLarge(mt, sg); !ok { // CTLLINE: the draft is cancelled, the lobby stays
+				hg.refuseDraftStart(d, f, why)
+				return
+			}
+		}
 		s.Log.Logf("blaze", "   game %d starts (%s ended): roster %s%s", gid, what, describeRoster(roster),
 			describeStartRules(rl, fill, unrated))
 		if mt != nil {
-			s.lobbyContent(roster, players)
-			sg := gmshost.StartGame{Roster: roster, Rules: rl, FillTeams: fill}
-			s.applyPickRules(gid, &sg, drafted)
 			mt.StartGameWith(sg)
 		}
 		hg.setState(GameStateInGame)
 	}
+}
+
+// refuseDraftStart is the draft's end whose startGame the match host can't take (CTLLINE, startTooLarge): the game
+// stays in its lobby (hg.custom.started reset), the draft ends cancelled with the finding's text, and the admins get
+// lobby.startRefused with the finding, as an admin's refused START.
+func (hg *hostedGame) refuseDraftStart(d *draftRun, f rules.Finding, why string) {
+	hg.mu.Lock()
+	hg.custom.started = false
+	if hg.ended {
+		hg.mu.Unlock()
+		return
+	}
+	d.phase, d.reason = DraftPhaseCancelled, f.Message
+	tell := hg.cancelDraftLockedWith(startRefusedData([]rules.Finding{f}))
+	gid := hg.game.ID
+	hg.mu.Unlock()
+	hg.s.Log.Logf("blaze", "   game %d: the draft ended, but the start is refused: %s; cancelled, the lobby stays", gid, why)
+	tell()
 }
 
 // cancelDraft cancels the lobby's running draft for why (a player left): the roster unlocked, every ready mark reset,
@@ -1169,7 +1194,10 @@ func (hg *hostedGame) cancelDraft(why string) {
 
 // cancelDraftLocked is a cancel's part under hg.mu (the draft already taken out): the timers stopped, every ready mark
 // reset, the roster unlocked; the returned func tells everyone (outside hg.mu).
-func (hg *hostedGame) cancelDraftLocked() func() {
+func (hg *hostedGame) cancelDraftLocked() func() { return hg.cancelDraftLockedWith(nil) }
+
+// cancelDraftLockedWith is cancelDraftLocked whose unlock sends lobby.startRefused with data (CTLLINE's finding).
+func (hg *hostedGame) cancelDraftLockedWith(data any) func() {
 	d := hg.custom.lastDraft
 	d.stopTimers()
 	d.swaps, d.trades = nil, nil
@@ -1182,7 +1210,7 @@ func (hg *hostedGame) cancelDraftLocked() func() {
 	unlock := hg.unlockRosterLocked()
 	return func() {
 		hg.publishDraft()
-		unlock(nil)
+		unlock(data)
 		hg.publishLobby()
 	}
 }

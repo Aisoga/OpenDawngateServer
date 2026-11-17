@@ -107,6 +107,9 @@ func (hg *hostedGame) storeMatch(rec historyRecord) int64 {
 	if skipped > 0 {
 		note = fmt.Sprintf(", seatStats ignored for %d seat(s)", skipped)
 	}
+	if m.MapRules != "" { // WINBIND-B: what of the map's own rules it played (the history's badge and score)
+		note += ", map_rules " + m.MapRules
+	}
 	s.Log.Logf("blaze", "   game %d: stored as match %d (%d players, %d bots; seatStats from the host %d, timeline %v%s)",
 		hg.game.ID, id, len(m.Seats)-bots, bots, stats, timeline, note)
 	if len(rec.watchers) > 0 { // SPECSTATS: their review's MATCH STATS tab opens this match (watched.go)
@@ -128,7 +131,8 @@ func (hg *hostedGame) matchLocked(f gmshost.FinishGame, now time.Time) (m store.
 	m = store.Match{GameID: hg.game.ID, Kind: matchKind(hg.mode, hg.game.descriptors()), Mode: hg.mode,
 		Level: hg.s.gameLevel(hg.game), Winner: f.WinnerTeam, Reason: f.Reason, Started: hg.started, Ended: now,
 		DurationMs: f.DurationMs, Rules: hg.rulesRecordLocked(), // RULES1: the custom game's rules, "" for the standard game
-		Unrated: hg.adminUnratedLocked()} // M30: the admin's Unrated (never rated, rating.Judge)
+		Unrated:  hg.adminUnratedLocked(),        // M30: the admin's Unrated (never rated, rating.Judge)
+		MapRules: hg.mapRecordLocked(f.Bindings)} // MAPRULES5: what of the map's own rules the match played (Judge: its victory)
 	if !hg.inGameAt.IsZero() {
 		m.Started = hg.inGameAt
 	}

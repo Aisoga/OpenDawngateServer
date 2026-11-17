@@ -112,6 +112,7 @@ func NewServer(c Config) (*Server, error) {
 	s.routesTest()
 	s.routesProps()
 	s.routesGround()
+	s.routesRules() // rules.go
 	return s, nil
 }
 
@@ -497,7 +498,8 @@ func (s *Server) newMap(w http.ResponseWriter, r *http.Request) {
 		q.Pkg = q.Name
 	}
 	if !pkgName.MatchString(q.Template) || !pkgName.MatchString(q.Pkg) || !pkgName.MatchString(q.Name) {
-		fail(w, http.StatusBadRequest, "names are letters, digits and _ only")
+		reply(w, http.StatusBadRequest, map[string]any{"ok": false, "field": "name",
+			"error": "names are letters, digits and _ only, 1 to 80"})
 		return
 	}
 	src := filepath.Join(s.c.Maps, q.Template)
@@ -521,7 +523,8 @@ func (s *Server) newMap(w http.ResponseWriter, r *http.Request) {
 	}
 	dst := filepath.Join(s.c.Maps, q.Pkg)
 	if _, err := os.Stat(dst); err == nil {
-		fail(w, http.StatusConflict, "%s exists already", q.Pkg)
+		reply(w, http.StatusConflict, map[string]any{"ok": false, "field": "name",
+			"error": fmt.Sprintf("%s exists already in the maps folder: choose another name", q.Pkg)})
 		return
 	}
 	set := map[string]string{}
@@ -538,6 +541,15 @@ func (s *Server) newMap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.lock(q.Pkg)()
+	// EDNEWNAME: the names (those given and the template's that stay) must pass the compiler's names rules before
+	// anything is written; else New wrote a package whose first check failed (a display of 14 characters)
+	if refused, err := s.checkNames(q.Pkg, text); err != nil {
+		fail(w, http.StatusInternalServerError, "%v", err)
+		return
+	} else if refused != nil {
+		reply(w, http.StatusBadRequest, refused)
+		return
+	}
 	// MAPED-EDIT6: pictures added for an earlier package of this name (deleted since, in the same run) would still be
 	// in its store, and a new picture of the same name would get _2
 	if err := os.RemoveAll(s.assets(q.Pkg)); err != nil {
@@ -564,6 +576,47 @@ func (s *Server) newMap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, http.StatusOK, map[string]any{"ok": true, "pkg": q.Pkg})
+}
+
+// checkNames runs `mapc check --names` (the compiler's names rules: name, tag, display, prefix, against the maps
+// folder's packages) on a new package's map.json, written as a draft under the scratch folder. It returns nil when
+// they pass, else New's refusal: {ok false, error (the first error's words, its member named), field (the member: the
+// New dialog's field), rule, findings (every error)}.
+func (s *Server) checkNames(pkg string, text []byte) (map[string]any, error) {
+	draft := filepath.Join(s.c.Work, pkg, "new", pkg)
+	if err := os.MkdirAll(draft, 0o755); err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(filepath.Dir(draft))
+	if err := os.WriteFile(filepath.Join(draft, "map.json"), text, 0o644); err != nil {
+		return nil, err
+	}
+	stdout, code, err := s.mapc(time.Minute, "check", "--json", "--names", "--maps", s.c.Maps, draft)
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		OK       bool
+		Findings []struct{ Rule, Severity, Path, Message string }
+	}
+	if err := json.Unmarshal(stdout, &r); err != nil {
+		return nil, fmt.Errorf("mapc's reply (exit %d): %v: %s", code, err, stdout)
+	}
+	if r.OK && code == 0 {
+		return nil, nil
+	}
+	var errs []map[string]string
+	for _, f := range r.Findings {
+		if f.Severity == "error" {
+			errs = append(errs, map[string]string{"rule": f.Rule, "path": f.Path, "message": f.Message})
+		}
+	}
+	if len(errs) == 0 { // a failed check without an error finding: the file itself (format.json is an error too)
+		return nil, fmt.Errorf("mapc check --names: exit %d: %s", code, stdout)
+	}
+	first := errs[0]
+	return map[string]any{"ok": false, "error": first["message"] + " (" + first["rule"] + "; nothing was written)",
+		"field": first["path"], "rule": first["rule"], "findings": errs}, nil
 }
 
 // copyGround copies the regular files of a package's ground/ folder (and its subfolders) into another package.

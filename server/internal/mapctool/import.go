@@ -29,7 +29,9 @@ import (
 // name to the name without "CM_" (13 characters), the tag to the display name's letters and digits in lower case, the
 // prefix to "[<display>] ". An existing map.json is kept unless --force. The report says how far the level's own team 2
 // lies from team 1's mirror, how many line-of-sight cells the package gets different from the level's, and what the
-// import changed (mapc.ImportReport). Exit 0: written and passes; 1: written but fails a rule, or the import failed;
+// import changed (mapc.ImportReport). Names the compiler would refuse (a --display over 13 characters, a sibling's
+// tag; mapc.CheckNames) write nothing. Exit 0: written and passes; 1: written but fails a rule, refused names, or the
+// import failed;
 // 2: wrong arguments or unreadable input.
 var importUsage = `usage:
   mapc import [--json] [--force] [--dress] --copy <copy> [--name N] [--display D] [--tag T] [--prefix P]
@@ -98,8 +100,8 @@ func importDefaults(pkg string, o *mapc.ImportOptions) {
 	}
 	if o.Display == "" {
 		d := strings.ReplaceAll(strings.TrimPrefix(o.Name, "CM_"), "_", " ")
-		if len(d) > 13 {
-			d = strings.TrimSpace(d[:13])
+		if r := []rune(d); len(r) > mapc.MaxDisplayLen { // the limits count characters, as names.* does
+			d = strings.TrimSpace(string(r[:mapc.MaxDisplayLen]))
 		}
 		o.Display = d
 	}
@@ -108,8 +110,8 @@ func importDefaults(pkg string, o *mapc.ImportOptions) {
 	}
 	if o.Prefix == "" {
 		o.Prefix = "[" + o.Display + "] "
-		if len(o.Prefix) > 16 {
-			o.Prefix = o.Prefix[:16]
+		if r := []rune(o.Prefix); len(r) > mapc.MaxPrefixLen {
+			o.Prefix = string(r[:mapc.MaxPrefixLen])
 		}
 	}
 }
@@ -119,6 +121,18 @@ func (t *tool) importLevel(level, pkg string, o mapc.ImportOptions, force bool) 
 	file := filepath.Join(pkg, mapc.FileName)
 	if _, err := os.Stat(file); err == nil && !force {
 		return t.fail(2, "%s exists (--force replaces it)", file)
+	}
+	// the names (Import writes them as they are): refused before anything is read or written, so the package's first
+	// check can't fail on them
+	if r := mapc.CheckNames(&mapc.Map{Name: o.Name, Display: o.Display, Tag: o.Tag, Prefix: o.Prefix},
+		others(pkg, "")); !r.OK {
+		var why []string
+		for _, f := range r.Findings {
+			if f.Severity == mapc.Error {
+				why = append(why, f.Rule+": "+f.Message)
+			}
+		}
+		return t.fail(1, "import %s: nothing written: %s", level, strings.Join(why, "; "))
 	}
 	var in mapc.ImportInputs
 	for k, rel := range mapc.ImportSources {

@@ -34,6 +34,76 @@ type Match struct {
 	Rules string
 	// Unrated: the custom game's admin made it unrated (M30's Rated/Unrated in the lobby); such a match is never rated.
 	Unrated bool
+	// MapRules are the map's own rules the match played (MAPRULES5) as JSON (MapRules: its kill race, time limit and
+	// start level as the match host played them, and whether the map's balance changed), "" for a map without rules.
+	// Not Unrated: a game on such a map stays in the history's lists; rating's Judge rates no game whose map victory
+	// was played (MapRules.Victory).
+	MapRules string
+}
+
+// MapRules is Match.MapRules read (ParseMapRules): what of a map's own rules the match played. Kills, Minutes and
+// StartLevel are only those the match host played (a host without the feature played none of them); Tuned: the map
+// changes balance values (compiled into its archive, so always played).
+type MapRules struct {
+	Kills      int  `json:"kills,omitempty"`      // a kill race to this many kills
+	Minutes    int  `json:"minutes,omitempty"`    // a time limit in minutes
+	StartLevel int  `json:"startLevel,omitempty"` // everyone's start level
+	Bindings   int  `json:"bindings,omitempty"`   // WINBIND-B: a Binding race to this many destroyed enemy Bindings
+	Tuned      bool `json:"tuned,omitempty"`      // the map's own balance values
+	// From is where a played victory came from: RulesFromMap (the map's own rules) or RulesFromLobby (the custom game
+	// lobby's win condition, WINLOBBY); "" for none, and in a record from before WINBIND-B (the map's).
+	From string `json:"from,omitempty"`
+	// Destroyed are each team's destructions of enemy Bindings when a Binding race ran (finishGame's bindings: team
+	// 1's, team 2's), the score of "won the Binding race 3–1".
+	Destroyed *[2]int `json:"destroyed,omitempty"`
+}
+
+// Where a match's victory came from (MapRules.From).
+const (
+	RulesFromMap   = "map"
+	RulesFromLobby = "lobby"
+)
+
+// Victory reports whether the match was won by its own rule set: a kill race, a Binding race or a time limit.
+func (r MapRules) Victory() bool { return r.Kills > 0 || r.Minutes > 0 || r.Bindings > 0 }
+
+// VictoryFrom is MapRules.From of the match's played victory ("" without one; "map" for a record from before
+// WINBIND-B and a column this build can't read).
+func (m Match) VictoryFrom() string {
+	r, err := ParseMapRules(m.MapRules)
+	if err != nil || (r.Victory() && r.From == "") {
+		return RulesFromMap
+	}
+	if !r.Victory() {
+		return ""
+	}
+	return r.From
+}
+
+// Record is the column's text: "" for nothing played, else the JSON.
+func (r MapRules) Record() string {
+	if r == (MapRules{}) {
+		return ""
+	}
+	b, _ := json.Marshal(r) // a struct of ints, a bool, a string and an array always marshals
+	return string(b)
+}
+
+// ParseMapRules reads Match.MapRules ("" = none).
+func ParseMapRules(s string) (MapRules, error) {
+	var r MapRules
+	if s == "" {
+		return r, nil
+	}
+	err := json.Unmarshal([]byte(s), &r)
+	return r, err
+}
+
+// MapVictory reports whether the match played the map's own victory (MapRules.Victory); a column this build can't
+// read counts as one, so such a match is never rated by mistake.
+func (m Match) MapVictory() bool {
+	r, err := ParseMapRules(m.MapRules)
+	return err != nil || r.Victory()
 }
 
 // MatchSeat is one seat of a match: a human (PersonaID set) or a bot (PersonaID 0).
@@ -79,9 +149,9 @@ func (s *Store) InsertMatch(m Match) (int64, error) {
 	}
 	defer tx.Rollback()
 	res, err := tx.Exec(`INSERT INTO matches (game_id, kind, mode, level, winner, reason, started, ended, duration_ms, timeline, rules,
-		unrated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, m.GameID, m.Kind, m.Mode, m.Level, m.Winner, m.Reason,
+		unrated, map_rules) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, m.GameID, m.Kind, m.Mode, m.Level, m.Winner, m.Reason,
 		m.Started.UTC().Format(timeFormat), m.Ended.UTC().Format(timeFormat), m.DurationMs, string(m.Timeline), m.Rules,
-		m.Unrated)
+		m.Unrated, m.MapRules)
 	if err != nil {
 		return 0, err
 	}
@@ -210,7 +280,7 @@ func (s *Store) PlayedMatches(personaID int64, keep func(Match) bool) ([]Match, 
 		out = append(out, m)
 		return nil
 	}, `SELECT m.id, m.game_id, m.kind, m.mode, m.level, m.winner, m.reason, m.started, m.ended, m.duration_ms, m.rules,
-		m.unrated, ms.seat, ms.persona_id, ms.user_id, ms.team, ms.bot, ms.noun, ms.role, ms.won, ms.left_match, ms.kills,
+		m.unrated, m.map_rules, ms.seat, ms.persona_id, ms.user_id, ms.team, ms.bot, ms.noun, ms.role, ms.won, ms.left_match, ms.kills,
 		ms.deaths, ms.assists, ms.cs, ms.gold, ms.level, ms.stats
 		FROM match_seats ms JOIN matches m ON m.id = ms.match_id WHERE ms.persona_id = ? ORDER BY m.id`, personaID)
 	return out, err
@@ -250,13 +320,13 @@ func page(before int64, limit int) (int64, int) {
 	return before, min(limit, MaxMatchPage)
 }
 
-const matchColumns = `id, game_id, kind, mode, level, winner, reason, started, ended, duration_ms, rules, unrated`
+const matchColumns = `id, game_id, kind, mode, level, winner, reason, started, ended, duration_ms, rules, unrated, map_rules`
 
 // scanMatch reads matchColumns (and the extra columns after them) into m.
 func scanMatch(r interface{ Scan(...any) error }, m *Match, extra ...any) error {
 	var started, ended string
 	if err := r.Scan(append([]any{&m.ID, &m.GameID, &m.Kind, &m.Mode, &m.Level, &m.Winner, &m.Reason, &started, &ended,
-		&m.DurationMs, &m.Rules, &m.Unrated}, extra...)...); err != nil {
+		&m.DurationMs, &m.Rules, &m.Unrated, &m.MapRules}, extra...)...); err != nil {
 		return err
 	}
 	m.Started, _ = parseTime(started)

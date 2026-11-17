@@ -480,9 +480,7 @@ func (s *Server) refuseStart(r *Request, hg *hostedGame, reason string, findings
 	r.Fail(ErrInvalidGameStateAction)
 	var data any // the ready check's refusal has none
 	if len(findings) > 0 {
-		data = struct {
-			Findings []rules.Finding `json:"findings"`
-		}{findings}
+		data = startRefusedData(findings)
 	}
 	r.After(func() { tell(data) })
 }

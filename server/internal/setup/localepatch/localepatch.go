@@ -67,11 +67,46 @@ var HUDLines = map[uint32]string{
 
 // LabsAlertsLines are the match rules' refusals in the HUD's alert line: the text keys of the ClientFeedbackDefs
 // Rules_ShopClosed, Rules_ItemNotAllowed and Rules_LightningOnly (botprofiles' rules feedback source), which the match
-// host sends to the one player concerned. No ~token~: only the client's twelve resolve, any other asserts.
+// host sends to the one player concerned; and a map's own rules' alerts (the kill race, the time limit, sudden death;
+// the Binding race from 0x5e70e027) from 0x5e70e010, which the host sends to a team or to everyone. No ~token~: only the client's twelve resolve, any other asserts.
 var LabsAlertsLines = map[uint32]string{
 	0x5E70E001: "You can shop only after dying.",
 	0x5E70E002: "That item is not allowed in this match.",
 	0x5E70E003: "Only Time, Energy, Chaos, Potency, Resonance.",
+	// MAPRULES4: a map's own rules' alerts (botprofiles.MapRulesFeedbackDefs, in the same order)
+	0x5E70E010: "Your team needs 10 more kills!",
+	0x5E70E011: "The enemy needs 10 more kills!",
+	0x5E70E012: "Your team needs 5 more kills!",
+	0x5E70E013: "The enemy needs 5 more kills!",
+	0x5E70E014: "Your team needs 3 more kills!",
+	0x5E70E015: "The enemy needs 3 more kills!",
+	0x5E70E016: "Match point: one more kill wins!",
+	0x5E70E017: "The enemy is one kill from victory!",
+	0x5E70E018: "First team to 10 kills wins!",
+	0x5E70E019: "First team to 15 kills wins!",
+	0x5E70E01A: "First team to 20 kills wins!",
+	0x5E70E01B: "First team to 25 kills wins!",
+	0x5E70E01C: "First team to 30 kills wins!",
+	0x5E70E01D: "First team to 50 kills wins!",
+	0x5E70E01E: "First team to the kill target wins!",
+	0x5E70E01F: "Most kills when time runs out wins!",
+	0x5E70E020: "Your team takes the lead!",
+	0x5E70E021: "The enemy takes the lead!",
+	0x5E70E022: "10 minutes left!",
+	0x5E70E023: "5 minutes left!",
+	0x5E70E024: "1 minute left!",
+	0x5E70E025: "30 seconds left!",
+	0x5E70E026: "Sudden death: the next kill wins!",
+	// WINBIND-B: the Binding race's alerts (botprofiles.MapRulesFeedbackDefs, in the same order)
+	0x5E70E027: "First team to destroy a Binding wins!",
+	0x5E70E028: "First team to destroy 2 Bindings wins!",
+	0x5E70E029: "First team to destroy 3 Bindings wins!",
+	0x5E70E02A: "First team to destroy 6 Bindings wins!",
+	0x5E70E02B: "First team to the Binding target wins!",
+	0x5E70E02C: "Match point: one more Binding wins!",
+	0x5E70E02D: "The enemy is one Binding from victory!",
+	0x5E70E02E: "Most Bindings when time runs out wins!",
+	0x5E70E02F: "Sudden death: next Binding or kill wins!",
 }
 
 // LobbyMapLine is the line CustomMatchLobbyUI falls back to (^FE_CustomGameLobby!0x0f2b57c5, after its resultName

@@ -95,6 +95,14 @@ type historyHead struct {
 	Type string `json:"type"`
 	// Unrated: a custom game its admin made unrated (M30); such a game is in no list unless unrated=1 asks for it
 	Unrated bool `json:"unrated,omitempty"`
+	// MapRules are the map's own rules the match played in a few words ("Race 20 · Lv 6 · Tuned"; MAPRULES5), left out
+	// for none; MapUnrated: the map's victory (a kill race or a time limit) kept a game unrated that would otherwise
+	// rate (a PvP or custom game its admin left Rated)
+	MapRules   string `json:"mapRules,omitempty"`
+	MapUnrated bool   `json:"mapUnrated,omitempty"`
+	// Bindings are each team's destructions of enemy Bindings when the match played a Binding race (WINBIND-B: the
+	// record's destroyed), the score of "won the Binding race 3-1"; left out otherwise
+	Bindings *[2]int `json:"bindings,omitempty"`
 }
 
 type historyMatch struct {
@@ -411,6 +419,15 @@ func (h *history) head(m store.Match) historyHead {
 		Type: historyType(m), Unrated: m.Unrated}
 	if m.Winner == 1 || m.Winner == 2 {
 		hd.Winner = m.Winner
+	}
+	if m.MapRules != "" { // MAPRULES5
+		if r, err := store.ParseMapRules(m.MapRules); err == nil {
+			hd.MapRules = blaze.PlayedRulesWords(r)
+			hd.Bindings = r.Destroyed // WINBIND-B
+		} else {
+			hd.MapRules = "Map rules"
+		}
+		hd.MapUnrated = m.MapVictory() && !m.Unrated && (m.Kind == "pvp" || m.Kind == "custom")
 	}
 	if m.Rules != "" { // RULES1
 		if c, err := rules.ParseJSON([]byte(m.Rules)); err == nil {

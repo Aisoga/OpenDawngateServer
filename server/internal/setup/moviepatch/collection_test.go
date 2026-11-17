@@ -272,6 +272,13 @@ func TestLobbyTags(t *testing.T) {
 	if bytes.Contains(p.Tags, []byte("~#")) {
 		t.Error("the class still writes into the chat")
 	}
+	// the map's own rules in the rules panel (RulesPanel, the same ABC): the summary's line, the greyed Rated
+	// WINLOBBY: a category the server fixes (the win condition on a map with its own) is greyed whole
+	for _, want := range []string{"mapText", "mapUnrated", "mapReason", "Map: ", "This map: ", "fixedNote"} {
+		if !bytes.Contains(p.Tags, []byte(want)) {
+			t.Errorf("the rules panel lacks %q (the map's own rules)", want)
+		}
+	}
 	// the draft's sounds and team chat (DraftSound, compiled into the same ABC): the chat manager reached only from the
 	// draft's events, while the lobby shows; never an UnMute of the player's shaper-select music
 	for _, want := range []string{"Play_Music_Shaper_Select", "Stop_Music_Shaper_Select", "Global.OnInteractEvent",

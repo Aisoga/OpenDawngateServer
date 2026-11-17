@@ -81,8 +81,20 @@ func ReadFolder(dir string) ([]Package, []error) {
 
 // CheckStructure runs the rules that need no rasterising (Check's first part): enough to offer a map by its label.
 func CheckStructure(m *Map, others []Other) *Report {
+	return report(m, func(c *checker) { c.structure(others) })
+}
+
+// CheckNames runs only the names rules (names.*: the name, the tag, the display name and the prefix, against the
+// other installed maps too), the same code as Check's. A step that writes a package under new names (the editor's
+// New and Save as my own copy through `mapc check --names`, mapc import) runs it first and writes nothing when it
+// fails, so the package's first check can't fail on the names it was given.
+func CheckNames(m *Map, others []Other) *Report {
+	return report(m, func(c *checker) { c.names(others) })
+}
+
+func report(m *Map, run func(c *checker)) *Report {
 	c := &checker{m: m}
-	c.structure(others)
+	run(c)
 	r := &Report{Map: m.Name, Findings: c.fs}
 	if r.Findings == nil {
 		r.Findings = []Finding{}

@@ -16,8 +16,12 @@
 
 namespace dggms::control {
 
-// MaxLine is the longest line either side accepts (bytes, without the newline).
-constexpr size_t kMaxLine = 64 * 1024;
+// MaxLine is the longest line either side accepts (bytes, without the newline). Go: gmshost.MaxLine. A custom game's
+// startGame carries every player's collection (5 to 8 KB each with real content), so ten players need more than the
+// 64 KiB of a host from before kFeatureLongLines (kLegacyMaxLine), which skipped such a line without a word.
+constexpr size_t kMaxLine = 1024 * 1024;
+// The limit of a host without kFeatureLongLines (dgserver sends it no longer line) and of a server from before it.
+constexpr size_t kLegacyMaxLine = 64 * 1024;
 
 // host -> server: the first line. match and token come from DGGMS_MATCH and DGGMS_TOKEN.
 struct Hello {
@@ -37,8 +41,49 @@ inline constexpr const char* kFeatureRules = "rules";
 // the server's rules catalog marks each such option as needing it.
 inline constexpr const char* kFeatureRules2 = "rules2";
 
+// MAPRULES4: a map's own victory rules and start level (createGame's mapRules). Go: gmshost.FeatureMapRules; dgserver
+// strips the field for a host without it.
+inline constexpr const char* kFeatureMapRules = "maprules";
+
+// WINBIND-B: the Binding race (createGame's mapRules.bindings, finishGame's bindings and reason "bindings") and the
+// lobby's win condition (startGame's victory). Go: gmshost.FeatureMapRules2; dgserver leaves bindings out for a host
+// without it and refuses START for a lobby victory or a map's Binding race.
+inline constexpr const char* kFeatureMapRules2 = "maprules2";
+
+// CTLLINE: the host takes lines up to kMaxLine (dgserver sends a host without it none over kLegacyMaxLine). Go:
+// gmshost.FeatureLongLines.
+inline constexpr const char* kFeatureLongLines = "longlines";
+// CTLLINE: the host confirms the start: once it has taken startGame, its reportGMSUpdate carries started, and one goes
+// out at once (HostControl::Poll); dgserver ends a game whose start such a host doesn't confirm within 30 s. Go:
+// gmshost.FeatureStartAck.
+inline constexpr const char* kFeatureStartAck = "startack";
+
 // The features this build's dgsim.dll names in its hello (host/control.cpp).
-inline std::vector<std::string> HostFeatures() { return {kFeatureRules, kFeatureRules2}; }
+inline std::vector<std::string> HostFeatures() {
+  return {kFeatureRules, kFeatureRules2, kFeatureMapRules, kFeatureMapRules2, kFeatureLongLines, kFeatureStartAck};
+}
+
+// MAPRULES8's test aid ([host] features_off=<name>[,<name>...]): the features without the listed ones, so this build
+// says hello as an older host would (features_off=maprules: a host from before MAPRULES4). Names are separated by
+// commas, blanks around them ignored; an unknown name drops nothing; the order of the rest is kept.
+inline std::vector<std::string> FeaturesWithout(const std::vector<std::string>& features, std::string_view off) {
+  std::vector<std::string> drop;
+  while (!off.empty()) {
+    const size_t comma = off.find(',');
+    std::string_view name = off.substr(0, comma);
+    while (!name.empty() && (name.front() == ' ' || name.front() == '\t')) name.remove_prefix(1);
+    while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) name.remove_suffix(1);
+    if (!name.empty()) drop.emplace_back(name);
+    off = comma == std::string_view::npos ? std::string_view() : off.substr(comma + 1);
+  }
+  std::vector<std::string> out;
+  for (const std::string& f : features) {
+    bool keep = true;
+    for (const std::string& d : drop) keep = keep && d != f;
+    if (keep) out.push_back(f);
+  }
+  return out;
+}
 
 struct RosterEntry {
   int64_t user = 0;  // Blaze id; HelloReq's user id
@@ -103,6 +148,19 @@ struct CreateGame {
   // loads a markerset whose condition names value c only when bit c is set; bit 0 = the Halloween decoration, dgserver
   // --halloween); written only when not 0, and 0 = not given (the host keeps dgsim.ini's [dgsim] flags).
   int64_t levelFlags = 0;
+  // MAPRULES4: the map's own rules (gmshost.MapRules: dgserver reads them from the map's map.json): a kill race of
+  // `kills`, a time limit of `minutes`, everyone's start level; each 0 = not set and written only when not 0, the
+  // object written only when one is set (and only to a host that names kFeatureMapRules). The host clamps the values.
+  // WINBIND-B: `bindings`, a Binding race (the first team to destroy that many enemy Bindings; only to a host that
+  // names kFeatureMapRules2), written last.
+  struct MapRules {
+    int64_t kills = 0;
+    int64_t minutes = 0;
+    int64_t startLevel = 0;
+    int64_t bindings = 0;
+    bool Empty() const { return kills == 0 && minutes == 0 && startLevel == 0 && bindings == 0; }
+  };
+  MapRules mapRules;
 };
 
 // host -> server: level loaded, GMS port bound.
@@ -127,6 +185,8 @@ struct GMSUpdate {
   std::string phase;
   int64_t elapsedMs = 0;
   std::vector<int64_t> players;
+  // CTLLINE (kFeatureStartAck): the host has taken startGame; written last, only when true (Go: omitempty).
+  bool started = false;
 };
 
 // One item of the post-game's C1 04: {catalogID, isDuplicate, duplicationAlternate (crafting currency)}.
@@ -187,11 +247,13 @@ struct PlayerKarma {
   int64_t enemy = 0;
 };
 
-// host -> server: the match result.
+// host -> server: the match result. WINBIND-B: `bindings` [team 1's, team 2's] destructions of enemy Bindings, only when
+// a Binding race ran (written only when not empty; whatever ended the match); the reason "bindings" is that race's end.
 struct FinishGame {
   int64_t winnerTeam = 0;
   int64_t durationMs = 0;
   std::string reason;
+  std::vector<int64_t> bindings;
 };
 
 // host -> server: an error; fatal = the host gives up (since H5 dgserver then ends the match as aborted, unless
@@ -264,12 +326,22 @@ struct StartGame {
     std::string shaperPool;
     std::string shop;
     std::string itemPool;
+    std::string victory;  // WINLOBBY: the lobby's win condition's id ("bind1"; "" = absent), for the log only
   };
   std::optional<Rules> rules;
   std::optional<int64_t> fillTeams;
   // RULES3: the shaper pool's PlayerClasses ("PC_Guardian"; empty: no pool), from which the bots draw. The humans' lists
   // in the roster hold only the pool already (or, with All Random, the rolled shaper). Go: gmshost.StartGame.PoolClasses.
   std::vector<std::string> poolClasses;
+  // WINBIND-B (only to a host that names kFeatureMapRules2): the lobby's win condition in numbers, absent for Guardian
+  // only; each member written only when not 0. The host's maprules::SetFromStart sets the victory and keeps
+  // createGame's start level. Go: gmshost.StartGame.Victory.
+  struct Victory {
+    int64_t kills = 0;
+    int64_t minutes = 0;
+    int64_t bindings = 0;
+  };
+  std::optional<Victory> victory;
 };
 
 // createGame's mode of a custom game (B15; Go: gmshost.ModeCustom): its players gather in the client's custom lobby

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "agents.h"
+#include "bindrespawn.h"
 #include "core/matchflow/flow.h"
 #include "core/matchflow/guardcore.h"
 #include "core/matchflow/mapbase.h"
@@ -19,6 +20,7 @@
 #include "game.h"
 #include "host/control.h"
 #include "log.h"
+#include "maprules.h"
 #include "matchrec.h"
 #include "matchstats.h"
 #include "replicate.h"
@@ -609,11 +611,14 @@ void* SehLuaState(void* sim) {
 
 // The match's end: `g` is the losing team's Guardian (C1 01 names it: the end cinematics' death camera looks at it).
 // `surrenderReason` (D8b) is 2 or 4 when the team surrendered; 0 = a Guardian's death (1 or 3 from its team).
-void EndMatch(const Guardian& g, std::uint32_t killer, const char* how, std::uint32_t surrenderReason = 0) {
+// `ruleReason` (MAPRULES4): a map rule's finishGame reason ("kills", "time", "suddenDeath"); `g` is then the losing
+// team's standing Guardian and the end is reason 1 or 3 as a death's.
+void EndMatch(const Guardian& g, std::uint32_t killer, const char* how, std::uint32_t surrenderReason = 0,
+              const char* ruleReason = nullptr) {
   if (g_ended) return;
   const bool surrender = surrenderReason != 0;
   const std::uint32_t reason = surrender ? surrenderReason : flow::EndReasonForDeadGuardian(g.team);
-  const char* finishReason = surrender ? "surrender" : "guardian";
+  const char* finishReason = ruleReason ? ruleReason : surrender ? "surrender" : "guardian";
   unsigned long long duration = 0;
   int winner = 0xFF;
   if (!SehEndGame(g_sim, reason, &duration, &winner)) {
@@ -629,7 +634,11 @@ void EndMatch(const Guardian& g, std::uint32_t killer, const char* how, std::uin
   g_end.winner = winner;
   g_end.durationMs = duration;
   SehSetGameTime(g_sim, static_cast<int>(duration / 1000));  // the post-game's duration (D8-static §2)
-  if (surrender)
+  if (ruleReason)
+    Log("match: END at match %.2f s: %s (C1 01 names the losing team %d's Guardian %08X %s, standing) -> "
+        "GameSimulator_EndGame(sim, %u): winner team %d, duration %llu ms",
+        g_t, how, g.team, g.id, g.noun.c_str(), reason, winner, duration);
+  else if (surrender)
     Log("match: END at match %.2f s: team %d surrendered (%s; C1 01 names its Guardian %08X %s) -> "
         "GameSimulator_EndGame(sim, %u): winner team %d, duration %llu ms",
         g_t, g.team, how, g.id, g.noun.c_str(), reason, winner, duration);
@@ -679,13 +688,33 @@ void EndByFixture() {
   }
 }
 
+// MAPRULES3: the tiers a team's Bindings use on this level (the tower[] entry of a tier is its rank among them).
+unsigned TeamTierMask(int team) {
+  std::vector<int> tiers;
+  for (const Tower& x : g_towers)
+    if (x.team == team) tiers.push_back(x.tier);
+  return flow::TierMask(tiers);
+}
+
+// MAPRULES3: the Bindings bindrespawn resurrected this tick stand again (a later death is reported anew).
+void RespawnBindings() {
+  for (std::uint32_t id : bindrespawn::Tick(g_sim, g_t, g_ended))
+    for (Tower& tw : g_towers)
+      if (tw.id == id) tw.destroyed = false;
+}
+
 void TowerDestroyed(Tower& tw, std::uint32_t killer, double t) {
   if (tw.destroyed) return;
   tw.destroyed = true;
   ++g_st.towersDestroyed;
-  SehWriteTower(g_sim, tw.teamIndex, tw.laneIndex, tw.tier, tw.id, ~0ull, false);  // towerRespawnEnabled is false: gone
-  Log("match: Binding %08X %s (team %d, lane %d, tier %d) destroyed at match %.2f s by %08X: mTowerRespawnTime all ones",
-      tw.id, tw.noun.c_str(), tw.team, tw.laneIndex, tw.tier, t, killer);
+  const unsigned long long slot = bindrespawn::OnDestroyed(g_sim, tw.id, tw.noun.c_str(), tw.team, tw.teamIndex,
+                                                           tw.laneIndex, tw.tier, TeamTierMask(tw.team), t);  // MAPRULES3
+  SehWriteTower(g_sim, tw.teamIndex, tw.laneIndex, tw.tier, tw.id, slot, false);
+  Log("match: Binding %08X %s (team %d, lane %d, tier %d) destroyed at match %.2f s by %08X: mTowerRespawnTime %s",
+      tw.id, tw.noun.c_str(), tw.team, tw.laneIndex, tw.tier, t, killer,
+      slot == flow::kTowerSlotGone ? "all ones" : "the return's server clock");
+  // WINBIND-B: the Binding race counts the destruction for the other team (the killer may be a minion or a creep)
+  maprules::OnBindingDestroyed(3 - tw.team, tw.id, t);
   // nGameModeHandlers[OnTowerDestroyed](tower, team, towerIndex, laneIndex, numTowersPerLane) (R10 §1; no effect on v5)
   char chunk[512], out[256];
   std::snprintf(chunk, sizeof chunk,
@@ -879,10 +908,9 @@ void LogMapBase(void* sim) {
     }
     Log("match: MAPBASE: LevelGameplayTuning towerRespawnEnabled %d, tower[] %d: %s: %s", enabled ? 1 : 0, n,
         s.empty() ? "-" : s.c_str(),
-        enabled ? "towerRespawnEnabled is set, but the host resurrects no Binding (NOT IMPLEMENTED; no shipped level sets "
-                  "it)"
-                : "a destroyed Binding stays down");
+        enabled ? "a destroyed Binding comes back (MAPRULES3; no shipped level sets it)" : "a destroyed Binding stays down");
   }
+  bindrespawn::OnLevel(enabled, list, n < 8 ? n : 8);  // MAPRULES3
   for (Guardian& g : g_guardians) {
     unsigned present = 0;
     int count = 0;
@@ -1084,9 +1112,11 @@ void Tick(void* sim) {
   if (!g_started) return;
   g_t = SehMatchSeconds(sim);
   HandleDestroyed();
+  RespawnBindings();  // MAPRULES3
   UpdateGuardianShields("the tick");  // D14: before the HP check, so the last core's death lifts it this tick
   UpdateGuardianCores("the tick");    // GUARDCORE: a Core's death or resurrect (logged only)
   CheckGuardians();
+  if (!g_ended) maprules::Tick(sim, g_t);  // MAPRULES4: the kill race, the time limit, the start level
   if (!g_ended && g_opt.endAfterS > 0 && g_t >= g_opt.endAfterS) EndByFixture();  // D8-live
   if (!g_ended) {
     const double first = director::FirstWaveTime();
@@ -1141,6 +1171,20 @@ bool EndBySurrender(int team, std::uint32_t reason, int yesPercent) {
   return g_ended;
 }
 
+bool EndByRule(int winner, const char* why) {
+  if (!Enabled() || !g_started || g_ended || (winner != 1 && winner != 2) || !why) return false;
+  const int loser = 3 - winner;
+  Guardian g;
+  g.team = loser;
+  g.noun = "(no Guardian)";
+  for (const Guardian& x : g_guardians)
+    if (x.team == loser) g = x;
+  char how[96];
+  std::snprintf(how, sizeof how, "team %d wins by the map rule \"%s\"", winner, why);
+  EndMatch(g, 0, how, 0, why);
+  return g_ended;
+}
+
 bool TakeEnd(End* out) {
   if (!g_ended || g_endTaken) return false;
   g_endTaken = true;
@@ -1185,6 +1229,11 @@ void FormatStats(char* buf, std::size_t size) {
                 g_st.luaCalls[4], g_st.baseMarked, g_st.baseEmpty, g_st.levelChecks, g_st.levelUps, g_st.announcer,
                 g_st.shieldsOn, g_st.shieldsOff, g_st.shieldsRefused, g_st.coresLost, g_st.coresBack,
                 ls.empty() ? "none" : ls.c_str(), g_st.exceptions, dir);
+  const std::size_t used = std::strlen(buf);  // MAPRULES3
+  if (used + 2 < size) {
+    std::snprintf(buf + used, size - used, "; ");
+    bindrespawn::FormatStats(buf + used + 2, static_cast<unsigned>(size - used - 2));
+  }
 }
 
 }  // namespace match

@@ -73,7 +73,8 @@ func TerrainNoun(name string) string { return name + "_terrain.Noun" }
 func AssetEntry(asset string) string { return assetDir + asset + ".bin" }
 
 // Catalog is the map's catalog source: its assets for the copy's one catalog (botprofiles.Build), each written anew
-// with its own source file name; the terrain noun carries the shipped terrain nouns' tags.
+// with its own source file name; the terrain noun carries the shipped terrain nouns' tags. The map's own tuning
+// assets (TuningAssetNames) come last, under the level's folder.
 func Catalog(m *Map) botprofiles.CatalogSource {
 	src := botprofiles.CatalogSource{Name: m.Name}
 	lv := "Levels/" + m.Name + "/"
@@ -85,6 +86,9 @@ func Catalog(m *Map) botprofiles.CatalogSource {
 	e := EntriesFor(m.Name)
 	src.Entries = append(src.Entries, botprofiles.CatalogEntry{Name: TerrainNoun(m.Name),
 		Source: strings.TrimSuffix(e.Model, ".bmdl") + ".Noun", Tags: []string{"placeable", "terrain"}})
+	for _, n := range TuningAssetNames(m) { // tuning.go: only when the map's rules change the asset's group
+		src.Entries = append(src.Entries, botprofiles.CatalogEntry{Name: n, Source: lv + n})
+	}
 	return src
 }
 
@@ -906,7 +910,19 @@ func (cm *Compiled) Assets(assetData []byte, modelBounds []float32) (*MapAssets,
 	out := &MapAssets{Names: MapAssetNames(cm.Map), Values: map[string]*assetdata.Object{}, Files: map[string][]byte{},
 		Findings: fs}
 	n := cm.Map.Name
-	out.Values[n+".Level"] = b.level(tmplLevel, env, tuning)
+	lv := b.level(tmplLevel, env, tuning)
+	out.Values[n+".Level"] = lv
+	for _, k := range TuningKinds { // tuning.go: the map's own tuning assets, those its rules change
+		if !cm.Map.Rules.changes(k.Class) {
+			continue
+		}
+		_, c, err := src.compileTuning(tuning, k, cm.Map.Rules)
+		if err != nil {
+			return nil, err
+		}
+		out.Values[TuningAsset(n, k.Class)] = c
+		lv.Set(k.LevelMember, TuningAsset(n, k.Class))
+	}
 	for _, s := range setsOf(cm.Map) {
 		set := assetdata.NewObject()
 		set.Set("markers", append([]any{}, b.sets[s]...))

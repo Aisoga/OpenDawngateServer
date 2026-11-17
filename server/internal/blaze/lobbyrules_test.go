@@ -186,7 +186,7 @@ func TestCustomGameRulesStartLine(t *testing.T) {
 	}
 	// the same text again on this connection (the next game) gets a number: the client shows a record's text once
 	hg.mu.Lock()
-	hg.custom.announced = false
+	hg.noteSent = false
 	hg.mu.Unlock()
 	hg.announceRules()
 	if f := a.note(ComponentMessaging, NotifyMessageID); !strings.Contains(string(f.Payload), "Rules: All Random, Shop on Death (2)") {
@@ -611,7 +611,7 @@ func TestLobbyNameUnrated(t *testing.T) {
 		{true, true, ar, "Map: [Bots] [Unrated] [ARAM] Game", "Rules: All Random, Shop on Death (Unrated)"},
 		{true, false, ar, "Map: [Bots] [ARAM] Game", "Rules: All Random, Shop on Death"},
 	} {
-		if got := lobbyName("Map: ", c.bots, c.unrated, c.rules, "Game"); got != c.want {
+		if got := lobbyName(nil, "Map: ", c.bots, c.unrated, c.rules, "Game"); got != c.want {
 			t.Errorf("lobbyName(%v, %v, %v) = %q, want %q", c.bots, c.unrated, rules.Describe(c.rules), got, c.want)
 		}
 		if got := rulesNoteText(c.rules, c.unrated); got != c.line {

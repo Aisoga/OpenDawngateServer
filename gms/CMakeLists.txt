@@ -95,6 +95,7 @@ add_library(dgsim SHARED
   engine/hunterroute.cpp       # HUNTERROUTE: the Hunters' opening route, Vanquish, the first buff's pull (core/bots/route.h)
   engine/wardspots.cpp         # MAPED4b: the level's own ward spots (core/bots/wardspots.h)
   engine/match.cpp            # D1c-live: the match lifecycle (clock, Guardians, UI data, the end)
+  engine/bindrespawn.cpp       # MAPRULES3: a destroyed Binding comes back (rules: core/matchflow/mapbase.h)
   engine/director.cpp          # D1c-live: waves, lanes, camps, the parasite
   engine/crowd.cpp             # D1k: the server space's NavPower constraint solver (the minions push each other)
   engine/wells.cpp             # D9: the spirit wells, workers and well gold (rules: core/wells)
@@ -111,6 +112,8 @@ add_library(dgsim SHARED
   engine/matchrec.cpp          # MATCHREC: the match recorder ([host] match_record; the file: core/matchrec)
   core/matchrec/matchrec.cpp   # MATCHREC: the recorder's records, buffered writer, size cap and rate (also in gms_tests)
   core/matchflow/flow.cpp      # D1c-live: the match flow's engine-free rules (also in gms_tests)
+  core/matchflow/maprules.cpp  # MAPRULES4: the kill race, the time limit, the alerts, the start level (also in gms_tests)
+  engine/maprules.cpp          # MAPRULES4: a map's victory rules and start level on the host (core/matchflow/maprules)
   engine/startup.cpp           # H1-live: the headless host's start-up changes (stage 2, [host] keys)
   engine/guards.cpp            # H5: every step of the host's frame under SEH (skip, count, report; step_fail_s)
   core/watchdog/monitor.cpp    # H5: the watchdog thread, the thread sample, the stall minidump (also in gms_tests)
@@ -248,7 +251,9 @@ if(RAKNET_FOUND)
     tests/test_fuzz.cpp         # fuzzing the parsers, the session and RakNet's receive path (GMS_FUZZ_SECONDS)
     tests/test_hardening.cpp    # RakNet's handshake cookies, no IP ban, short REQUEST_1, the ordered-ahead limit
     tests/test_bots2.cpp        # BOTS2: the second bot brain (core/bots2: states, team plan, never idle, census)
+    tests/test_maprules.cpp     # MAPRULES4: the kill race, the time limit, sudden death, the alerts (core/matchflow)
     core/matchflow/flow.cpp
+    core/matchflow/maprules.cpp
     core/watchdog/monitor.cpp
     core/timing/timing.cpp
     core/stats/stats.cpp

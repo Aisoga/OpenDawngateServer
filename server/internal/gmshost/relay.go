@@ -142,6 +142,7 @@ func (r *relay) serveHost(c net.Conn) {
 		refuse(fmt.Sprintf("match %d doesn't run here, or the token is wrong", h.Match))
 		return
 	}
+	lr.SetMax(MaxLine) // the host's token is right (PreAuthMaxLine before)
 	r.mu.Lock()
 	l := r.link
 	switch {

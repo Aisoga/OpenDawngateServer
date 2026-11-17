@@ -1702,6 +1702,21 @@ void Stop() {
   g_stopped = true;
 }
 
+void AdjustLaneAgents(int team, int delta, const char* why) {
+  if (team != 1 && team != 2) return;
+  if (!g_laneAgentsOn) {
+    Log("director: lane agents: team %d's laneAgentRespawnCounterAdjustment %d (%s) not applied: the lane agents are "
+        "off",
+        team, delta, why);
+    return;
+  }
+  flow::LaneAgentCountdown& c = g_agentCountdown[team - 1];
+  const int before = c.Left();
+  c.Adjust(delta);
+  Log("director: lane agents: team %d's countdown %d -> %d waves (laneAgentRespawnCounterAdjustment %d, %s)", team,
+      before, c.Left(), delta, why);
+}
+
 bool IsLaneAgent(std::uint32_t id) {
   if (!id) return false;
   for (const LaneAgent& a : g_laneAgents)

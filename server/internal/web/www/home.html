@@ -327,8 +327,19 @@
     return names.length ? names.join(", ") : "-";
   }
 
+  // A map's own victory names its score (kills, the teams' kills, only for those ends): "Team 1 won the kill race
+  // 20-17", "Team 1 won on time 12-9", "Team 1 won in sudden death"; a Binding race's (bindings, the teams' destroyed
+  // enemy Bindings): "Team 1 won the Binding race 3-1", "Team 1 won on time with more Bindings 2-1".
   function resultText(r) {
     if (r.winner != 1 && r.winner != 2) { return "No winner"; }
+    var DASH = String.fromCharCode(8211);
+    var k = r.kills, score = k && k.length == 2 ? " " + k[r.winner - 1] + DASH + k[2 - r.winner] : "";
+    var b = r.bindings, bind = b && b.length == 2 ? " " + b[r.winner - 1] + DASH + b[2 - r.winner] : "";
+    if (r.reason == "kills") { return "Team " + r.winner + " won the kill race" + score; }
+    if (r.reason == "bindings") { return "Team " + r.winner + " won the Binding race" + bind; }
+    if (r.reason == "time" && bind && b[0] != b[1]) { return "Team " + r.winner + " won on time with more Bindings" + bind; }
+    if (r.reason == "time") { return "Team " + r.winner + " won on time" + score; }
+    if (r.reason == "suddenDeath") { return "Team " + r.winner + " won in sudden death"; }
     var why = r.reason == "guardian" ? " (Guardian fell)" : r.reason == "surrender" ? " (surrender)" : "";
     return "Team " + r.winner + " won" + why;
   }

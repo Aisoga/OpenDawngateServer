@@ -173,6 +173,15 @@ type hostedGame struct {
 	// M18: the host's seatStats by seat and its matchTimeline, kept until finishGame for the match history (matchhistory.go)
 	seatStats map[int]gmshost.SeatStats
 	timeline  *gmshost.MatchTimeline
+
+	// MAPRULES5 (maprules.go): the map's own rules (its level's), and whether the match host takes their host parts
+	// (its hello names gmshost.FeatureMapRules; set at gameReady); WINBIND-B: and the Binding race
+	// (gmshost.FeatureMapRules2)
+	mapRules MapRules
+	mapHost  bool
+	mapHost2 bool
+	// the match's System line with its rules (RULES1, lobbyrules.go announceRules): its timer runs, it went out
+	noteDue, noteSent bool
 }
 
 // heldRewards is one player's finished game whose rewards wait for the host's playerKarma (D8c).
@@ -248,6 +257,10 @@ func (s *Server) launchHostedGame(g Game, mode string, fillTeams int, players []
 		FillTeams:   fillTeams}              // B10d: a matchmade game's open seats
 	if s.Halloween {
 		spec.LevelFlags = gmshost.LevelFlagHalloween // the Halloween decoration (zz_Halloween.snap)
+	}
+	if l, ok := FindLevel(spec.Level); ok { // MAPRULES5: the map's own victory and start level, every mode (maprules.go)
+		hg.mapRules = l.MapRules
+		spec.MapRules = l.MapRules.Wire()
 	}
 	ids := make([]int64, len(players))
 	for i, hp := range players {
@@ -484,8 +497,26 @@ func (hg *hostedGame) events() gmshost.Events {
 			hg.mu.Lock()
 			hg.game.GMS = hostAddr(hg.game.GMS, mt, port)
 			hg.game.Site, hg.game.Match = site, mt.ID // REGION5: region_route.go
-			g := hg.game
+			// MAPRULES5: whether the host plays the map's victory and start level (its hello is in)
+			hg.mapHost = mt.Supports(gmshost.FeatureMapRules)
+			hg.mapHost2 = mt.Supports(gmshost.FeatureMapRules2) // WINBIND-B: the Binding race
+			g, mr, mapHost, mapHost2 := hg.game, hg.mapRules, hg.mapHost, hg.mapHost2
 			hg.mu.Unlock()
+			if mr.HostPart() {
+				played := "takes them"
+				switch {
+				case !mapHost:
+					played = "lacks " + gmshost.FeatureMapRules + ": they aren't played"
+				case mr.Bindings > 0 && !mapHost2:
+					played = "lacks " + gmshost.FeatureMapRules2 + ": it plays them without the Binding race"
+				}
+				bind := ""
+				if mr.Bindings > 0 {
+					bind = fmt.Sprintf(", bindings %d", mr.Bindings)
+				}
+				s.Log.Logf("blaze", "   game %d: the map's rules (kills %d, minutes %d, start level %d%s): the match host %s",
+					gid, mr.Kills, mr.Minutes, mr.StartLevel, bind, played)
+			}
 			after := "resetDedicatedServer"
 			if hg.mode != gmshost.ModePractice {
 				after = "the match formed"
@@ -498,6 +529,7 @@ func (hg *hostedGame) events() gmshost.Events {
 				// its own), then the game browser lists the game
 				hg.regionReady(mt) // M27: PSAS and lobby.state's notice from where it runs (regions.go)
 				hg.mu.Lock()
+				hg.rulesStartReadyLocked() // RULES6: a suggested start the host can't play goes back to Standard
 				hg.custom.ready = true
 				var to []*hostedPlayer
 				for _, hp := range hg.players {
@@ -665,6 +697,7 @@ func (hg *hostedGame) persist(mt *gmshost.Match, f gmshost.FinishGame) []afterGa
 	practice := hg.mode == gmshost.ModePractice
 	hg.mu.Lock()
 	ranked, withRules, unrated := hg.ranked(), hg.unratedRulesLocked(), hg.adminUnratedLocked()
+	mapVictory, lobbyVictory := hg.mapVictoryLocked(), hg.lobbyVictoryLocked().Victory() // MAPRULES5, WINLOBBY
 	var joined []*hostedPlayer
 	var leftEarly []bool // PROFILE3: left before finishGame (left, lost its connection; not kicked) in a game that counts it
 	leaverLoses := s.leaverLoses(f)
@@ -697,6 +730,7 @@ func (hg *hostedGame) persist(mt *gmshost.Match, f gmshost.FinishGame) []afterGa
 		acct, res, err := s.applyGame(hp.userID, g, pf.Stats, pf.Rewards, practice, ranked, hold, !unrated)
 		res.Rules = withRules
 		res.Unrated = unrated
+		res.MapVictory, res.LobbyVictory = mapVictory, lobbyVictory
 		if err != nil {
 			s.Log.Logf("blaze", "   (account %d: game %d not stored: %v)", hp.userID, game.ID, err)
 			if err == store.ErrNoAccount {
@@ -764,9 +798,11 @@ func (hg *hostedGame) pushExtendedData(ps []afterGamePush) {
 // GameFlags (0x412; customgames.go). The profile's PlayerStats and history count every game. RULES1: a custom game
 // with rules away from the standard game doesn't count either (unratedRulesLocked; since M30 such a game is rated in
 // its own type, the draft or custom rating, but History.Ranked stays the standard game's), nor does one its admin made
-// unrated (M30, adminUnratedLocked; nor its rating, rating.Judge on the history's Unrated). Called with hg.mu held.
+// unrated (M30, adminUnratedLocked; nor its rating, rating.Judge on the history's Unrated), nor one whose map's own
+// victory was played (MAPRULES5, mapVictoryLocked; nor its rating). Called with hg.mu held.
 func (hg *hostedGame) ranked() bool {
-	return Ranked(hg.mode, hg.game.descriptors()) && !hg.unratedRulesLocked() && !hg.adminUnratedLocked()
+	return Ranked(hg.mode, hg.game.descriptors()) && !hg.unratedRulesLocked() && !hg.adminUnratedLocked() &&
+		!hg.mapVictoryLocked()
 }
 
 // Ranked is hostedGame.ranked's rule by the game's mode (createGame's mode) and GameFlags (createGame's descriptors):

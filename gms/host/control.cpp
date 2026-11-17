@@ -7,12 +7,15 @@
 #include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "control/client.h"
 #include "control/host_control.h"
 #include "engine/bots.h"
 #include "engine/gms_host.h"
 #include "engine/log.h"
+#include "engine/maprules.h"
 #include "engine/shoprules.h"
 #include "host.h"
 
@@ -83,8 +86,19 @@ bool Start() {
   Locked lock;
   g_ctl.reset(new HostControl(ControlLog));
   // RULES1: this host applies startGame's rules (logs them; their behaviour comes with each rule) and its fillTeams;
-  // M30: and the second set of options (rules2: the item pool "lightning")
-  g_ctl->SetFeatures(dggms::control::HostFeatures());
+  // M30: and the second set of options (rules2: the item pool "lightning"); MAPRULES4: createGame's mapRules (maprules)
+  // MAPRULES8's test aid: [host] features_off=<name>[,...] leaves features out of the hello (features_off=maprules: an
+  // older host, which dgserver sends no mapRules and a custom game's START refuses)
+  char off[128] = "";
+  HostOptionString("features_off", "", off, sizeof off);
+  std::vector<std::string> features = dggms::control::HostFeatures();
+  if (off[0]) {
+    features = dggms::control::FeaturesWithout(features, off);
+    std::string named;
+    for (const std::string& f : features) named += (named.empty() ? "" : ",") + f;
+    Log("control: TEST features_off=%s: the hello names [%s] (a test aid: an older host)", off, named.c_str());
+  }
+  g_ctl->SetFeatures(features);
   char build[64];
   std::snprintf(build, sizeof build, "dgsim %s", __DATE__);
   if (!g_ctl->Start(env, static_cast<std::int64_t>(GetCurrentProcessId()), build, NowMs(), &err)) {
@@ -112,8 +126,9 @@ void Poll() {
     const auto& r = g_ctl->StartRules();
     const auto& fill = g_ctl->StartFillTeams();
     if (r)
-      Log("control: startGame: rules pick %s, shaperPool %s, shop %s, itemPool %s", r->pick.c_str(),
-          r->shaperPool.c_str(), r->shop.c_str(), r->itemPool.c_str());
+      Log("control: startGame: rules pick %s, shaperPool %s, shop %s, itemPool %s%s%s", r->pick.c_str(),
+          r->shaperPool.c_str(), r->shop.c_str(), r->itemPool.c_str(), r->victory.empty() ? "" : ", victory ",
+          r->victory.c_str());
     else
       Log("control: startGame: no rules (the standard game)");
     if (fill) {
@@ -125,6 +140,12 @@ void Poll() {
     if (r) shoprules::SetFromStart(r->shop, r->itemPool);
     // RULES3: the shaper pool's classes go to the bots' draw (it runs in shaper select, after this frame)
     if (!g_ctl->StartPoolClasses().empty()) bots::SetDraftPool(g_ctl->StartPoolClasses(), "startGame");
+    // WINBIND-B: the lobby's win condition (createGame's start level stays, whichever of the two came first)
+    if (const auto& v = g_ctl->StartVictory()) {
+      Log("control: startGame: victory kills %lld, minutes %lld, bindings %lld", static_cast<long long>(v->kills),
+          static_cast<long long>(v->minutes), static_cast<long long>(v->bindings));
+      maprules::SetFromStart(v->kills, v->minutes, v->bindings);
+    }
   }
   if (!hadGame && g_ctl->HasGame()) {
     const auto& g = g_ctl->Game();
@@ -134,6 +155,13 @@ void Poll() {
         static_cast<unsigned long long>(g.descriptors), g.descriptors ? "" : " (not given)",
         static_cast<long long>(g.fillTeams), g.fillTeams ? " (B10d: bots in the open seats)" : " (not asked)",
         g.roster.size(), g.roster.size() == 1 ? "y" : "ies");
+    // MAPRULES4: the map's own rules (the host clamps them; [host] map_kills, map_minutes, start_level win where set)
+    if (!g.mapRules.Empty()) {
+      Log("control: createGame: mapRules kills %lld, minutes %lld, startLevel %lld, bindings %lld",
+          static_cast<long long>(g.mapRules.kills), static_cast<long long>(g.mapRules.minutes),
+          static_cast<long long>(g.mapRules.startLevel), static_cast<long long>(g.mapRules.bindings));
+      maprules::SetFromCreate(g.mapRules.kills, g.mapRules.minutes, g.mapRules.startLevel, g.mapRules.bindings);
+    }
     for (const auto& e : g.roster)
       Log("control:   roster: user %lld \"%s\", gameplay index %lld, team %lld, noun \"%s\"%s",
           static_cast<long long>(e.user), e.name.c_str(), static_cast<long long>(e.index),
@@ -250,6 +278,8 @@ void Finish(int winnerTeam, unsigned long long durationMs, const char* reason) {
   f.winnerTeam = winnerTeam;
   f.durationMs = static_cast<std::int64_t>(durationMs);
   f.reason = reason;
+  int bindings[2] = {0, 0};
+  if (maprules::Bindings(bindings)) f.bindings = {bindings[0], bindings[1]};  // WINBIND-B: a Binding race ran
   g_ctl->SendFinish(f);
   Phase(dggms::control::kPhasePostGame);
   g_finishedAt = NowMs();

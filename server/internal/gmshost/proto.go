@@ -78,8 +78,28 @@ const (
 	THostExited     = "hostExited"
 )
 
-// MaxLine is the longest control line accepted (bytes, without the newline).
-const MaxLine = 64 << 10
+// MaxLine is the longest control line (bytes, without the newline) between the server and a host whose hello names
+// FeatureLongLines, and the longest line the server reads from a peer that has proved who it is. A custom game's
+// startGame carries every player's collection, 5 to 8 KB each with real content: ten players came to about 66 KB,
+// over the 64 KiB an older host takes, and the host dropped it without a word.
+const MaxLine = 1 << 20
+
+// LegacyMaxLine is the longest line a host without FeatureLongLines takes: it skips a longer one without a word, so
+// the server never sends it one (Match.LineLimit).
+const LegacyMaxLine = 64 << 10
+
+// PreAuthMaxLine is the longest line read before the peer has proved who it is (a host's hello, an agent's hello and
+// registration): a stranger can't make the server hold more. The reader's limit is raised (LineReader.SetMax) once
+// the peer has passed.
+const PreAuthMaxLine = 16 << 10
+
+// FeatureLongLines is the host feature for lines up to MaxLine (else LegacyMaxLine).
+const FeatureLongLines = "longlines"
+
+// FeatureStartAck is the host feature for the start's confirmation: once the host has taken startGame its
+// reportGMSUpdate carries Started, and one goes out at once. The server ends a game whose start such a host doesn't
+// confirm within Config.StartTimeout.
+const FeatureStartAck = "startack"
 
 // Message is one control message; Type returns its "t".
 type Message interface{ Type() string }
@@ -221,6 +241,9 @@ type CreateGame struct {
 	// c is set. LevelFlagHalloween shows the map's Halloween decoration (a client with zz_Halloween.snap; dgserver
 	// --halloween). 0 = none (omitted): the host keeps its dgsim.ini [dgsim] flags.
 	LevelFlags int64 `json:"levelFlags,omitempty"`
+
+	// MapRules (MAPRULES4) are the map's own victory rules and start level (maprules.go); nil = none (omitted).
+	MapRules *MapRules `json:"mapRules,omitempty"`
 }
 
 // LevelFlagHalloween is CreateGame.LevelFlags' bit for the Halloween decoration (setup/halloween.LevelFlag: the
@@ -260,14 +283,21 @@ type StartGame struct {
 	// PoolClasses are the shaper pool's PlayerClasses ("PC_Guardian") when the rules have one (RULES3; omitted for the
 	// pool "all"): the host's bots draw only from them. The humans' lists in the roster hold only the pool already.
 	PoolClasses []string `json:"poolClasses,omitempty"`
+	// Victory is the lobby's win condition in numbers (WINBIND-B; omitted for Guardian only; only to a host with
+	// FeatureMapRules2).
+	Victory *Victory `json:"victory,omitempty"`
 }
 
-// Rules is a custom game's rules combination on the wire: one option id per category (rules.Combination's fields).
+// Rules is a custom game's rules combination on the wire: one option id per category (rules.Combination's fields, a
+// direct conversion: both grow together). Victory (WINLOBBY: the lobby's win condition's id) rides along for the log;
+// the host reads the win condition from StartGame.Victory, the numbers, and ignores this member (a host from before
+// it too: its rules object takes known members only).
 type Rules struct {
 	Pick       string `json:"pick"`
 	ShaperPool string `json:"shaperPool"`
 	Shop       string `json:"shop"`
 	ItemPool   string `json:"itemPool"`
+	Victory    string `json:"victory,omitempty"`
 }
 
 // GameReady says the level is loaded and the GMS port is bound.
@@ -300,6 +330,9 @@ type GMSUpdate struct {
 	Phase     string  `json:"phase"`
 	ElapsedMs int64   `json:"elapsedMs"`
 	Players   []int64 `json:"players"` // users connected to the GMS
+
+	// Started: the host has taken startGame (a host with FeatureStartAck; omitted when false).
+	Started bool `json:"started,omitempty"`
 }
 
 // PlayerFinish is one player's result. Stats keys: docs/HOST_CONTROL.md (won, team, kills, deaths,
@@ -365,11 +398,13 @@ type PlayerKarma struct {
 	Enemy int   `json:"enemy"`
 }
 
-// FinishGame is the match result.
+// FinishGame is the match result. Bindings (WINBIND-B) are team 1's and team 2's destructions of enemy Bindings, only
+// when a Binding race ran (omitted otherwise), whatever ended the match; the reason "bindings" is that race's end.
 type FinishGame struct {
 	WinnerTeam int    `json:"winnerTeam"` // 0 = none
 	DurationMs int64  `json:"durationMs"`
 	Reason     string `json:"reason"`
+	Bindings   []int  `json:"bindings,omitempty"`
 }
 
 // SeatStats (host -> server, M18) is one seat's statistics at the match's end, for every seat, bots included, sent
@@ -683,34 +718,72 @@ func Decode(line []byte) (Message, error) {
 	return p.Elem().Interface().(Message), nil
 }
 
-// LineReader reads control lines of at most MaxLine bytes.
+// ErrTooLong is LineReader's error for a line over its limit; it ends the reader.
+var ErrTooLong = bufio.ErrTooLong
+
+// LineReader reads control lines of at most its limit: PreAuthMaxLine until SetMax raises it (after the peer's
+// authentication), so a connection's first lines can't make the server buffer much. Unlike a bufio.Scanner, whose
+// buffer can't grow after its first read, the limit may change between lines; what was read ahead stays buffered.
 type LineReader struct {
-	s   *bufio.Scanner
-	max int // 0 = MaxLine (the agent link's reader takes longer lines: newLinkReader)
+	br  *bufio.Reader
+	max int
+	buf []byte
+	err error // sticky: ErrTooLong or the read error
 }
 
-// NewLineReader reads lines from r.
+// NewLineReader reads lines from r, at most PreAuthMaxLine bytes each until SetMax.
 func NewLineReader(r io.Reader) *LineReader {
-	s := bufio.NewScanner(r)
-	s.Buffer(make([]byte, 4096), MaxLine+2) // + "\r\n"
-	return &LineReader{s: s}
+	return &LineReader{br: bufio.NewReaderSize(r, 4096), max: PreAuthMaxLine}
 }
 
-// Next returns the next non-empty line, without "\r\n". At the end it returns io.EOF (or the read
-// error; bufio.ErrTooLong for a line over MaxLine).
+// SetMax sets the longest line Next returns (bytes, without "\r\n"), from the next line on.
+func (r *LineReader) SetMax(n int) { r.max = n }
+
+// Max is the reader's limit.
+func (r *LineReader) Max() int { return r.max }
+
+// Next returns the next non-empty line, without "\r\n"; it is valid until the next call. At the end it returns
+// io.EOF (or the read error; ErrTooLong for a line over the limit, which ends the reader).
 func (r *LineReader) Next() ([]byte, error) {
-	for r.s.Scan() {
-		line := bytes.TrimRight(r.s.Bytes(), "\r")
+	for {
+		line, err := r.readLine()
+		if err != nil {
+			r.err = err
+			return nil, err
+		}
+		line = bytes.TrimRight(line, "\r")
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
-		if len(line) > MaxLine && (r.max == 0 || len(line) > r.max) {
-			return nil, bufio.ErrTooLong
+		if len(line) > r.max {
+			r.err = ErrTooLong
+			return nil, ErrTooLong
 		}
 		return line, nil
 	}
-	if err := r.s.Err(); err != nil {
-		return nil, err
+}
+
+// readLine reads up to the next "\n" (dropped) or the end, holding at most the limit plus "\r\n".
+func (r *LineReader) readLine() ([]byte, error) {
+	if r.err != nil {
+		return nil, r.err
 	}
-	return nil, io.EOF
+	r.buf = r.buf[:0]
+	for {
+		frag, err := r.br.ReadSlice('\n')
+		if len(r.buf)+len(frag) > r.max+2 {
+			return nil, ErrTooLong
+		}
+		r.buf = append(r.buf, frag...)
+		switch {
+		case err == nil:
+			return r.buf[:len(r.buf)-1], nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		case errors.Is(err, io.EOF) && len(r.buf) > 0:
+			return r.buf, nil // the last line without its newline
+		default:
+			return nil, err
+		}
+	}
 }

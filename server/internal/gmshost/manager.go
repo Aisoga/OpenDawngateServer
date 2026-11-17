@@ -24,6 +24,7 @@ const (
 	DefaultReadyTimeout     = 120 * time.Second // createGame -> gameReady
 	DefaultHeartbeatTimeout = 30 * time.Second  // between two messages once ready (heartbeat every 5 s)
 	DefaultExitTimeout      = 10 * time.Second  // logoutGMS or abortGame -> exit
+	DefaultStartTimeout     = 30 * time.Second  // startGame -> reportGMSUpdate started (a host with FeatureStartAck)
 	reapTimeout             = 10 * time.Second  // kill -> exit
 	exitDrain               = 2 * time.Second   // exit -> the rest of the control connection
 	writeTimeout            = 5 * time.Second
@@ -60,6 +61,9 @@ type Config struct {
 	Link LinkConfig
 
 	HelloTimeout, ReadyTimeout, HeartbeatTimeout, ExitTimeout time.Duration
+	// StartTimeout: a host with FeatureStartAck that hasn't confirmed startGame (reportGMSUpdate's Started) this long
+	// after it was sent is killed, and its game ends (0 = DefaultStartTimeout).
+	StartTimeout time.Duration
 	// AgentTimeout drops a registered agent that sent nothing for this long; LaunchTimeout is how
 	// long an agent may take to answer launchHost (0 = the defaults).
 	AgentTimeout, LaunchTimeout time.Duration
@@ -184,6 +188,7 @@ func NewManager(cfg Config) *Manager {
 	def(&cfg.ReadyTimeout, DefaultReadyTimeout)
 	def(&cfg.HeartbeatTimeout, DefaultHeartbeatTimeout)
 	def(&cfg.ExitTimeout, DefaultExitTimeout)
+	def(&cfg.StartTimeout, DefaultStartTimeout)
 	def(&cfg.AgentTimeout, DefaultAgentTimeout)
 	def(&cfg.LaunchTimeout, DefaultLaunchTimeout)
 	def(&cfg.Quarantine, DefaultQuarantine)
@@ -650,6 +655,7 @@ func (m *Manager) hostHello(c net.Conn, r *LineReader, h Hello, peer string) {
 		return
 	}
 	c.SetReadDeadline(time.Time{})
+	r.SetMax(MaxLine) // the token was the match's (PreAuthMaxLine before)
 	cc := &ctlConn{c: c, r: r, hello: h, msgs: make(chan Message, 64), gone: make(chan struct{})}
 	select {
 	case mt.attach <- cc:
@@ -785,6 +791,27 @@ func (mt *Match) Features() []string {
 	return slices.Clone(mt.features)
 }
 
+// LineLimit is the longest line the match's host takes: MaxLine for a host whose hello names FeatureLongLines, else
+// (an older host, or none before the hello) LegacyMaxLine. The server sends no longer line (run's send).
+func (mt *Match) LineLimit() int {
+	if mt.Supports(FeatureLongLines) {
+		return MaxLine
+	}
+	return LegacyMaxLine
+}
+
+// Fits reports whether msg's line (without its newline) is within the host's LineLimit, and its size (-1 when it
+// doesn't encode). The callers check a message the host must get, such as a custom game's startGame, before they
+// commit to it.
+func (mt *Match) Fits(msg Message) (size int, ok bool) {
+	line, err := Encode(msg)
+	if err != nil {
+		return -1, false
+	}
+	size = len(line) - 1
+	return size, size <= mt.LineLimit()
+}
+
 // shutdown is Close's internal command: kill at once.
 type shutdown struct{}
 
@@ -888,24 +915,41 @@ func (mt *Match) run() {
 		abortCause string
 		stopped    bool         // the server ended it (abortGame, shutdown): never started again (PORTSTUCK)
 		launched   = mt.started // this host's start (a second one's after a PORTSTUCK retry)
+		// CTLLINE: startGame sent to a host with FeatureStartAck, not confirmed yet (nil: no deadline running)
+		startTimer *time.Timer
+		startDue   <-chan time.Time
+		startSent  time.Time
 	)
 	defer timer.Stop()
+	defer func() {
+		if startTimer != nil {
+			startTimer.Stop()
+		}
+	}()
 	setTimer := func(d time.Duration, what string) { timer.Reset(d); timerWhat = what }
-	send := func(msg Message) {
+	// send writes msg to the host; false when it wasn't sent. CTLLINE: never a line over the host's LineLimit, which
+	// the host would skip without a word (the callers check what must arrive with Match.Fits first).
+	send := func(msg Message) bool {
 		if conn == nil {
-			return
+			return false
 		}
 		line, err := Encode(msg)
 		if err == nil {
+			if limit := mt.LineLimit(); len(line)-1 > limit {
+				m.log.Logf(who, "match %d: (%s not sent: %d bytes, over the host's line limit of %d bytes)", mt.ID,
+					msg.Type(), len(line)-1, limit)
+				return false
+			}
 			conn.c.SetWriteDeadline(time.Now().Add(writeTimeout))
 			_, err = conn.c.Write(line)
 		}
 		if err != nil {
 			m.log.Logf(who, "match %d: (%s not sent: %v)", mt.ID, msg.Type(), err)
 			conn.c.Close() // the reader ends and closes gone
-			return
+			return false
 		}
-		m.log.Logf(who, "match %d -> %s", mt.ID, line[:len(line)-1])
+		m.log.Logf(who, "match %d -> %s", mt.ID, clipLogged(line[:len(line)-1]))
+		return true
 	}
 	kill := func(reason string) {
 		if killed {
@@ -955,6 +999,12 @@ func (mt *Match) run() {
 				mt.ev.PlayerGone(mt, v)
 			}
 		case GMSUpdate:
+			if v.Started && startDue != nil { // CTLLINE: the host took startGame
+				startTimer.Stop()
+				startDue = nil
+				m.log.Logf(who, "match %d: the host confirmed startGame, %.1f s after it was sent", mt.ID,
+					time.Since(startSent).Seconds())
+			}
 			if mt.ev.Update != nil {
 				mt.ev.Update(mt, v)
 			}
@@ -1065,7 +1115,7 @@ func (mt *Match) run() {
 				}
 				phase = waitReady
 				setTimer(cfg.ReadyTimeout, fmt.Sprintf("no gameReady within %v", cfg.ReadyTimeout))
-				send(mt.Game)
+				send(m.gameFor(mt, who))
 			case msg := <-msgs:
 				handle(msg)
 			case <-gone:
@@ -1093,7 +1143,7 @@ func (mt *Match) run() {
 					phase = waitReady
 					since = time.Now()
 					setTimer(cfg.ReadyTimeout, fmt.Sprintf("no gameReady within %v", cfg.ReadyTimeout))
-					send(mt.Game)
+					send(m.gameFor(mt, who))
 				case RemovePlayer, PlayerRewards:
 					send(v)
 				case UpdateRoster: // B15: createGame (not sent yet: before the hello, or a warm host's) carries it then
@@ -1103,7 +1153,13 @@ func (mt *Match) run() {
 					}
 				case StartGame:
 					mt.Game.Roster = v.Roster
-					send(v)
+					// CTLLINE: a host with FeatureStartAck confirms the start (reportGMSUpdate's Started) or the game
+					// ends; an explicit answer, not the phase, so a start nobody has connected to yet isn't ended
+					if send(v) && mt.Supports(FeatureStartAck) && startTimer == nil && !ending && !killed {
+						startSent = time.Now()
+						startTimer = time.NewTimer(cfg.StartTimeout)
+						startDue = startTimer.C
+					}
 				case AbortGame:
 					stopped = true
 					if abortCause == "" {
@@ -1122,6 +1178,11 @@ func (mt *Match) run() {
 				case shutdown:
 					stopped = true
 					kill("server shutting down")
+				}
+			case <-startDue:
+				startDue = nil
+				if !ending && !killed {
+					kill(fmt.Sprintf("no answer to startGame within %v", cfg.StartTimeout))
 				}
 			case <-timer.C:
 				if killed {

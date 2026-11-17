@@ -47,17 +47,21 @@ class ControlClient {
   bool Send(const Message& m, std::string* err = nullptr);
 
   // Poll reads what has arrived without blocking and appends every complete message to out; lines
-  // that don't decode go to *badLines (if given) and are skipped. It returns false once the connection
-  // is closed or broken (messages read before that are still appended).
+  // that don't decode go to *badLines (if given) and are skipped, as is a line over kMaxLine ("line too long", once;
+  // what has come of it is dropped at once, the rest up to its newline as it comes). It returns false once the
+  // connection is closed or broken (messages read before that are still appended).
   bool Poll(std::vector<Message>& out, std::vector<std::string>* badLines = nullptr);
 
   bool Connected() const;
   void Close();
 
  private:
+  void Take(std::string_view data, std::vector<Message>& out, std::vector<std::string>* badLines);
+
   uintptr_t sock_;
   bool wsa_ = false;
   std::string in_;
+  bool skipping_ = false;  // CTLLINE: dropping the rest of a line over kMaxLine, up to its newline
   std::vector<std::string> features_;
 };
 

@@ -105,6 +105,12 @@ type homeResult struct {
 	DurationSec int               `json:"durationSec"`
 	EndedAgoSec int               `json:"endedAgoSec"`
 	Teams       [2]homeResultSide `json:"teams"`
+	// Kills is the teams' kills when a map's own victory ended the match (reason "kills", "time", "suddenDeath";
+	// MAPRULES5), else left out
+	Kills *[2]int64 `json:"kills,omitempty"`
+	// Bindings is each team's destructions of enemy Bindings when such an end had a Binding race (WINBIND-B: reason
+	// "bindings", or "time" decided by them), else left out
+	Bindings *[2]int `json:"bindings,omitempty"`
 }
 
 type homeResultSide struct {
@@ -202,6 +208,14 @@ func homeStatus(src homeSource) func() homeData {
 		for _, r := range src.results() {
 			hr := homeResult{MatchID: r.MatchID, Mode: r.Mode, Kind: r.Kind, Map: blaze.LevelDisplay(r.Level), Reason: r.Reason,
 				DurationSec: secs(r.Duration), EndedAgoSec: max(secs(now.Sub(r.At)), 0)}
+			if r.Bindings != nil { // WINBIND-B
+				b := *r.Bindings
+				hr.Bindings = &b
+			}
+			if r.Kills != nil {
+				k := *r.Kills
+				hr.Kills = &k
+			}
 			if r.WinnerTeam == 1 || r.WinnerTeam == 2 {
 				hr.Winner = r.WinnerTeam
 			}

@@ -75,6 +75,15 @@ MM_ARCHIVE = "zz_MM_Map_v3.snap"
 RULES_FEEDBACK_FILES = ("AssetData/Binary/Rules_ShopClosed.ClientFeedbackDef.bin",
                         "AssetData/Binary/Rules_ItemNotAllowed.ClientFeedbackDef.bin",
                         "AssetData/Binary/Rules_LightningOnly.ClientFeedbackDef.bin")  # LIGHTNING1
+# MAPRULES4: a map's own rules' alerts (botprofiles.MapRulesFeedbackDefs)
+MAP_RULES_ALERTS = ('Race10Ally', 'Race10Enemy', 'Race5Ally', 'Race5Enemy', 'Race3Ally', 'Race3Enemy', 'MatchPointAlly',
+                    'MatchPointEnemy', 'RaceTo10', 'RaceTo15', 'RaceTo20', 'RaceTo25', 'RaceTo30', 'RaceTo50',
+                    'RaceToTarget', 'TimeLimit', 'LeadAlly', 'LeadEnemy', 'Left10Min', 'Left5Min', 'Left1Min',
+                    'Left30Sec', 'SuddenDeath',
+                    # WINBIND-B: the Binding race's
+                    'BindRaceTo1', 'BindRaceTo2', 'BindRaceTo3', 'BindRaceTo6', 'BindRaceToTarget', 'BindMatchPointAlly',
+                    'BindMatchPointEnemy', 'BindTimeLimit', 'BindSuddenDeath')
+RULES_FEEDBACK_FILES += tuple(f"AssetData/Binary/Rules_{n}.ClientFeedbackDef.bin" for n in MAP_RULES_ALERTS)
 MM_ARCHIVE_SHA256 = "eed1e14c861eb5a68e315410aedc994d99a11079bfdf16ace1c23e0702b98bbf"
 import patch_client  # noqa: E402
 import patch_config  # noqa: E402

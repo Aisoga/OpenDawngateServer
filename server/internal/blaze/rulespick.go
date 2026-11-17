@@ -59,12 +59,17 @@ func (s *Server) rollSeed() uint64 {
 	return binary.LittleEndian.Uint64(b[:])
 }
 
-// applyPickRules puts the start's pick rules into startGame (sg.Rules from the rules' last check; nil: nothing to do):
+// applyPickRules puts the start's pick rules into startGame (sg.Rules from the rules' last check; nil: nothing to do),
+// and since WINLOBBY the lobby's win condition (sg.Victory, startVictory; every start calls this before StartGameWith):
 // the pool's lists and poolClasses, All Random's rolled lists, and the draft's (drafted: each human's drafted
 // PlayerClass, RULES5b, and its declared role, DRAFT1, which nothing uses before the role preset in shaper select).
 // Logged per game.
 func (s *Server) applyPickRules(gid int64, sg *gmshost.StartGame, drafted map[int64]draftedSeat) {
-	s.applyTestRoles(gid, sg) // DRAFT3: a test aid's declared roles (roles.go)
+	s.applyTestRoles(gid, sg)                                   // DRAFT3: a test aid's declared roles (roles.go)
+	if sg.Victory = startVictory(sg.Rules); sg.Victory != nil { // WINLOBBY: the lobby's win condition in numbers
+		s.Log.Logf("blaze", "   game %d: startGame's victory: kills %d, minutes %d, bindings %d (the lobby's win "+
+			"condition %q)", gid, sg.Victory.Kills, sg.Victory.Minutes, sg.Victory.Bindings, sg.Rules.Victory)
+	}
 	if sg.Rules == nil {
 		return
 	}

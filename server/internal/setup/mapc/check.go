@@ -204,18 +204,16 @@ func inList(s string, list []string, fold bool) bool {
 
 func pt(p Point) *Point { return &p }
 
-// structure runs the rules that need no rasterising.
-func (c *checker) structure(others []Other) {
+// names runs the names rules (names.*): the name, the tag, the display name and the prefix, each on its own and
+// against the other installed maps. Every finding's path is the member it names.
+func (c *checker) names(others []Other) {
 	m := c.m
-	if m.Format != Format {
-		c.errorf("format.version", "format", nil, "format %d, this compiler reads format %d", m.Format, Format)
-	}
-	// names
 	switch {
 	case !nameRe.MatchString(m.Name):
 		c.errorf("names.name", "name", nil, "name %q: only letters, digits and _", m.Name)
 	case len(m.Name) > MaxNameLen:
-		c.errorf("names.name", "name", nil, "name: %d characters, at most %d", len(m.Name), MaxNameLen)
+		c.errorf("names.name", "name", nil, "name: %d characters, at most %d: shorten it by %d", len(m.Name), MaxNameLen,
+			len(m.Name)-MaxNameLen)
 	case inList(m.Name, ShippedLevels, true):
 		c.errorf("names.shipped", "name", nil, "name %q is a shipped level's", m.Name)
 	case inList(m.Name, ReservedNames, true):
@@ -234,18 +232,32 @@ func (c *checker) structure(others []Other) {
 			c.errorf("names.tag-unique", "tag", nil, "the installed map %s has the tag %q too", o.Name, m.Tag)
 		}
 	}
-	if n := utf8.RuneCountInString(m.Display); n == 0 || n > MaxDisplayLen {
-		c.errorf("names.display", "display", nil, "display %q: %d characters, 1 to %d", m.Display, n, MaxDisplayLen)
+	switch n := utf8.RuneCountInString(m.Display); {
+	case n == 0:
+		c.errorf("names.display", "display", nil, "display: empty, give it 1 to %d characters", MaxDisplayLen)
+	case n > MaxDisplayLen:
+		c.errorf("names.display", "display", nil, "display %q: %d characters, 1 to %d: shorten it by %d", m.Display, n,
+			MaxDisplayLen, n-MaxDisplayLen)
 	}
 	if hasControl(m.Display) { // a line end would add a line to the dialog's list and to the locale table
 		c.errorf("names.display", "display", nil, "display %q: no control characters", m.Display)
 	}
 	if n := utf8.RuneCountInString(m.Prefix); n > MaxPrefixLen {
-		c.errorf("names.prefix", "prefix", nil, "prefix: %d characters, at most %d", n, MaxPrefixLen)
+		c.errorf("names.prefix", "prefix", nil, "prefix %q: %d characters, at most %d: shorten it by %d", m.Prefix, n,
+			MaxPrefixLen, n-MaxPrefixLen)
 	}
 	if hasControl(m.Prefix) {
 		c.errorf("names.prefix", "prefix", nil, "prefix %q: no control characters", m.Prefix)
 	}
+}
+
+// structure runs the rules that need no rasterising.
+func (c *checker) structure(others []Other) {
+	m := c.m
+	if m.Format != Format {
+		c.errorf("format.version", "format", nil, "format %d, this compiler reads format %d", m.Format, Format)
+	}
+	c.names(others)
 	// size, references, symmetry kind, ground
 	if !(m.Size > 0 && m.Size <= MaxSize) {
 		c.errorf("size.max", "size", nil, "size %g: more than 0 and at most %g", m.Size, MaxSize)
@@ -266,6 +278,7 @@ func (c *checker) structure(others []Other) {
 	c.heightRules() // height.go
 	c.voidRules()   // void.go
 	c.graphRules()  // graph.go
+	c.rulesRules()  // rules.go
 	// lanes
 	if n := len(m.Lanes); n < 1 || n > 2 {
 		c.errorf("lanes.count", "lanes", nil, "%d lanes, 1 or 2", n)

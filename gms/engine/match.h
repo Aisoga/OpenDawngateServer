@@ -94,6 +94,11 @@ bool TakeEnd(End* out);
 // team's Guardian in C1 01 (the end cinematics show the surrender announcer on it) and finishGame's reason
 // "surrender". The caller has the server simulator bound. False if the match isn't running (or wrong arguments).
 bool EndBySurrender(int team, std::uint32_t reason, int yesPercent);
+// MAPRULES4: a map rule ended the match (maprules.h: the kill race, the time limit, sudden death): team `winner` (1 or
+// 2) wins. As EndByFixture: C1 01 names the losing team's standing Guardian with reason 1 (team 1 wins) or 3 (team 2),
+// the client's end cinematic plays its death animation; finishGame's reason is `why` ("kills", "time", "suddenDeath").
+// The caller has the server simulator bound. False if the match isn't running (or wrong arguments).
+bool EndByRule(int winner, const char* why);
 
 // C1b: the Blaze game id from createGame (GameSimulator_StartGame, C1 01), before the match starts.
 void SetGameId(unsigned long long gameId);

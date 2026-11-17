@@ -27,17 +27,17 @@ import dbpf  # noqa: E402
 import patch_locale as pl  # noqa: E402
 
 MADE_UP_SHA = "97766712cea3cf54c20204922cc472d86ac9d592c40e955f7c1a635e0567f25e"
-MADE_UP_LANE_B = "0dd924829de311cb46ad3114e15f7cec23455437ea1e4151f9edb452ea00aca1"  # --host 127.0.0.2
-MADE_UP_WEB = "b7c94dfd9980c1320d6c62093b5f28018a08f1fd27b13b64ace0fe90d4644c42"  # 192.168.1.20, Play.Example.org:8443
-MADE_UP_LOBBY_ANY = "a08a6767d8ffd454998f82667b95ca649eb03f20b61b3ec6aef145d2133f55e8"  # 127.0.0.2, LOBBY_MAP_ANY, MAPS
+MADE_UP_LANE_B = "3a939e09b3b6d22526a355358b935f8e037ab62104ce1d77a18afd258b3d8f9e"  # --host 127.0.0.2
+MADE_UP_WEB = "96dc615dc877edc1c83a2f26a717874347944a6e37418b25726af6ac89d2474f"  # 192.168.1.20, Play.Example.org:8443
+MADE_UP_LOBBY_ANY = "973302352cb2224712f56c2abafb008c6fba80648b3aa3ee4396061d3d69681c"  # 127.0.0.2, LOBBY_MAP_ANY, MAPS
 # a maps folder's packages (localepatch_test.go's maps): CM_Ring, and one named like MM_Map_v3 (its line is the first's)
 MAPS = [("CM_Ring", "Test Ring"), ("mm_map_V3", "Not this")]
 SYNTH_LOCALE_SHA = "528ce9623b3b1542fa600b1036136a3c39e8e68bb586019fb3a6d3c2f6374832"
-SYNTH_LOCAL = "03c124ee431b3c3007f50fca450e24c19161e42c54fa631b3fbc86308f806865"  # the synthetic game, 127.0.0.1
+SYNTH_LOCAL = "57932ebc55f5a9453093b4da45dacdd1a870793c6f912d8894b2713216e00e9d"  # the synthetic game, 127.0.0.1
 GAME_854 = {  # build 854's Locale.package
-    ("127.0.0.1", None): "3d97f41690b2393d40804f487e070c7f38ffae4c33e566b57ee813b2aa42daff",
-    ("127.0.0.2", None): "2f5b56f4a53c3073756d1abd0108fe7bbeeb8699a3409753b98c552787b65311",
-    ("203.0.113.7", "dawngate.example.org"): "650f6e91a29b5183ed8ef5badb80f54a99471401d5ee28e53f03b3176f988438",
+    ("127.0.0.1", None): "1fa1c776fadf3be4ec1708f6540c3650571b1e635ac81be68a5fcf61ec1b4b89",
+    ("127.0.0.2", None): "103db2724325b2540e0b7b54b608a98eb95a0342507494fbd24091854238e1e6",
+    ("203.0.113.7", "dawngate.example.org"): "7469279b09f522c943574384ad16509eb941c696c65edbfdf476c9410b599863",
 }
 # synthgame.Locale() (server/internal/setup/testgame/synthgame): one RefPack-compressed table, no login table
 SYNTH_LOCALE = bytes.fromhex(
@@ -139,14 +139,20 @@ class SameAsGo(Temp):
                                    b"0x5e70c002 Refund for ~price~ vim?\r\n0x5e70c003 Refunds for: ~price~\r\n"
                                    b"0x5e70c004 Refund for ~item~ and ~price~ vim?\r\n"
                                    b"0x5e70c005 Refunds for: ~item~ and ~price~\r\n"])
-            # RULES0b: LabsAlerts is the shipped one (no final line end) plus the match rules' alert lines (LIGHTNING1: three)
+            # RULES0b: LabsAlerts is the shipped one (no final line end) plus the match rules' alert lines (LIGHTNING1: three;
+            # MAPRULES4: a map's own rules' 23 alerts from 0x5e70e010; WINBIND-B: 9 more from 0x5e70e027)
             shipped = pl.find_table(dbpf.Package(path), pl.LABS_ALERTS)
             alerts = [pkg.read(e) for e in pkg.entries if e.instance == pl.LABS_ALERTS]
             self.assertTrue(shipped.endswith(b"Some content may not be available."), shipped[-40:])
+            map_lines = b"".join(b"0x%08x %s\r\n" % (k, v.encode()) for k, v in sorted(pl.LABS_ALERTS_LINES.items())
+                                 if k >= 0x5E70E010)
+            self.assertEqual(len(map_lines.splitlines()), 32)
+            self.assertTrue(map_lines.startswith(b"0x5e70e010 Your team needs 10 more kills!\r\n"), map_lines[:60])
+            self.assertTrue(map_lines.endswith(b"0x5e70e02f Sudden death: next Binding or kill wins!\r\n"), map_lines[-60:])
             self.assertEqual(alerts, [shipped + b"\r\n" + pl.ADDED_COMMENT.encode() +
                                       b"\r\n0x5e70e001 You can shop only after dying.\r\n"
                                       b"0x5e70e002 That item is not allowed in this match.\r\n"
-                                      b"0x5e70e003 Only Time, Energy, Chaos, Potency, Resonance.\r\n"])
+                                      b"0x5e70e003 Only Time, Energy, Chaos, Potency, Resonance.\r\n" + map_lines])
             self.assertEqual(len(pkg.entries), 11)  # PREF3: GameServerRegion, newFeatureNotify; DRAGGRAB2a: Options
 
 

@@ -271,7 +271,7 @@ func TestHostedGameResultPosted(t *testing.T) {
 		rr := ts.s.RecentResults()
 		if c.finish {
 			if len(rr) != 1 || fmt.Sprintf("%+v", rr[0]) != "{GameID:1 MatchID:1 Mode:pvp Kind:PvP match Level:SM_Map_v5 WinnerTeam:1 "+
-				"Reason:guardian Duration:12m34s At:"+rr[0].At.String()+" Teams:[{Shapers:[Ember] Bots:4} {Shapers:[] Bots:5}]}" ||
+				"Reason:guardian Duration:12m34s At:"+rr[0].At.String()+" Teams:[{Shapers:[Ember] Bots:4} {Shapers:[] Bots:5}] Kills:<nil> Bindings:<nil>}" ||
 				rr[0].At.IsZero() {
 				t.Errorf("%s: RecentResults %+v", c.name, rr)
 			}

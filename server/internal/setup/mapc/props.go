@@ -1183,11 +1183,12 @@ func setsOf(m *Map) []string {
 	return append(append([]string{}, mapSets...), setProps)
 }
 
-// MapAssetNames are the assets a map adds (AssetNames, and its props markerset when it has props).
+// MapAssetNames are the assets a map adds (AssetNames, its props markerset when it has props, and its own tuning
+// assets when its rules change them: TuningAssetNames).
 func MapAssetNames(m *Map) []string {
 	out := []string{m.Name + ".Level"}
 	for _, s := range setsOf(m) {
 		out = append(out, m.Name+"_"+s+".Markerset")
 	}
-	return append(out, TerrainNoun(m.Name))
+	return append(append(out, TerrainNoun(m.Name)), TuningAssetNames(m)...)
 }

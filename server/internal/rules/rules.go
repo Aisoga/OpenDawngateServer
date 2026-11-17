@@ -23,6 +23,7 @@ const (
 	ShaperPool = "shaperPool" // which shapers may be played
 	Shop       = "shop"       // when a player may shop
 	ItemPool   = "itemPool"   // which items may be bought
+	Victory    = "victory"    // how the match is won (WINLOBBY: the lobby's win condition)
 )
 
 // Option is one choice of a category.
@@ -41,6 +42,10 @@ type Option struct {
 // the picks "army" and "clone". An older host takes an unknown item pool as "all items" and keeps a shaper once per
 // team.
 const HostRules2 = "rules2"
+
+// HostMapRules2 is the host feature of the lobby's win conditions (gmshost.FeatureMapRules2, WINBIND-B): startGame's
+// victory and the Binding race. An older host would ignore the victory and play the Guardian's.
+const HostMapRules2 = "maprules2"
 
 // Category is one group of options, exactly one of them active.
 type Category struct {
@@ -84,7 +89,65 @@ var catalog = []Category{
 		{ID: "basics", Name: "Basic items only"},
 		{ID: "lightning", Name: "Lightning items only", Host: HostRules2},
 	}},
+	// WINLOBBY: the lobby's win condition (the eight the project chose), for a map without its own
+	// victory (Context.MapVictory); the host plays it as a map's (startGame.victory: Goal). The Guardian and a surrender
+	// always still end the match. Bots play every one of them.
+	{ID: Victory, Name: "Win condition", Default: "guardian", Options: []Option{
+		{ID: "guardian", Name: "Guardian only", Bots: true},
+		{ID: "race10", Name: "Kill race 10", Bots: true, Host: HostMapRules2},
+		{ID: "race20", Name: "Kill race 20", Bots: true, Host: HostMapRules2},
+		{ID: "race30", Name: "Kill race 30", Bots: true, Host: HostMapRules2},
+		{ID: "time15", Name: "Most kills after 15 min", Bots: true, Host: HostMapRules2},
+		{ID: "race20time20", Name: "Race 20 or 20 min", Bots: true, Host: HostMapRules2},
+		{ID: "bind1", Name: "First Binding", Bots: true, Host: HostMapRules2},
+		{ID: "bind3", Name: "First to 3 Bindings", Bots: true, Host: HostMapRules2},
+	}},
 }
+
+// Goal is a win condition in numbers, as a map's victory (mapc's victory block, startGame.victory): the first team to
+// Kills kills wins, after Minutes minutes the team ahead (in Bindings, then kills) wins, the first team to destroy
+// Bindings enemy Bindings wins; 0 = not set. The zero Goal is the Guardian's victory alone.
+type Goal struct {
+	Kills, Minutes, Bindings int
+}
+
+// goals are the win conditions' numbers ("guardian" has none).
+var goals = map[string]Goal{
+	"race10":       {Kills: 10},
+	"race20":       {Kills: 20},
+	"race30":       {Kills: 30},
+	"time15":       {Minutes: 15},
+	"race20time20": {Kills: 20, Minutes: 20},
+	"bind1":        {Bindings: 1},
+	"bind3":        {Bindings: 3},
+}
+
+// IsZero tells whether g is the Guardian's victory alone.
+func (g Goal) IsZero() bool { return g == Goal{} }
+
+// Prefix is the game browser's prefix of the win condition, in the words of a map's own (blaze.MapRules.Prefix):
+// "[Race 20] ", "[15 min] ", "[Race 20/20m] ", "[Bind 1] "; "" for the Guardian's.
+func (g Goal) Prefix() string {
+	var p []string
+	if g.Kills > 0 {
+		p = append(p, fmt.Sprintf("Race %d", g.Kills))
+	}
+	if g.Bindings > 0 {
+		p = append(p, fmt.Sprintf("Bind %d", g.Bindings))
+	}
+	switch {
+	case g.Minutes > 0 && len(p) == 0:
+		return fmt.Sprintf("[%d min] ", g.Minutes)
+	case g.Minutes > 0:
+		p = append(p, fmt.Sprintf("%dm", g.Minutes))
+	case len(p) == 0:
+		return ""
+	}
+	return "[" + strings.Join(p, "/") + "] "
+}
+
+// Goal is the combination's win condition in numbers (the zero Goal for "guardian", an empty or unknown option).
+func (c Combination) Goal() Goal { return goals[c.Victory] }
 
 // Categories returns the catalog (a copy).
 func Categories() []Category {
@@ -121,12 +184,14 @@ func option(cat, id string) (Option, bool) {
 }
 
 // Combination is one option per category, by id. Its JSON is the wire's (the lobby, the match host's startGame, the
-// match history): the four categories in catalog order.
+// match history): the five categories in catalog order. Victory (WINLOBBY) is left out when empty, so a combination
+// from before it reads and writes as it did; Normal sets it ("guardian").
 type Combination struct {
 	Pick       string `json:"pick"`
 	ShaperPool string `json:"shaperPool"`
 	Shop       string `json:"shop"`
 	ItemPool   string `json:"itemPool"`
+	Victory    string `json:"victory,omitempty"`
 }
 
 // Standard is the standard game: every category's default.
@@ -149,6 +214,8 @@ func (c Combination) Get(cat string) string {
 		return c.Shop
 	case ItemPool:
 		return c.ItemPool
+	case Victory:
+		return c.Victory
 	}
 	return ""
 }
@@ -163,6 +230,8 @@ func (c *Combination) set(cat, v string) {
 		c.Shop = v
 	case ItemPool:
 		c.ItemPool = v
+	case Victory:
+		c.Victory = v
 	}
 }
 
@@ -182,6 +251,16 @@ func (c Combination) Normal() Combination {
 		if c.Get(cat.ID) == "" {
 			c.set(cat.ID, cat.Default)
 		}
+	}
+	return c
+}
+
+// Compact is Normal without the Guardian's win condition (Victory "" for "guardian"): the JSON of startGame's rules
+// and of the history's rules column then stays as it was before WINLOBBY for a game that keeps the Guardian's victory.
+func (c Combination) Compact() Combination {
+	c = c.Normal()
+	if c.Victory == "guardian" {
+		c.Victory = ""
 	}
 	return c
 }
@@ -243,7 +322,7 @@ func FindPreset(id string) (Preset, bool) {
 	return Preset{}, false
 }
 
-// MaxJSON is the longest combination Parse reads (bytes): four ids are far below it.
+// MaxJSON is the longest combination Parse reads (bytes): five ids are far below it.
 const MaxJSON = 1024
 
 // ErrUnknown is wrapped by every error about an unknown category or option.
@@ -350,15 +429,20 @@ func Describe(c Combination) string {
 // CustomPrefix is the game browser's prefix of a combination that is no preset.
 const CustomPrefix = "[Custom rules] "
 
-// Prefix is the game browser's prefix for c: "" for the standard game, "[<preset>] " for a preset, else CustomPrefix.
+// Prefix is the game browser's prefix for c: "" for the standard game, "[<preset>] " for a preset, else CustomPrefix;
+// then the win condition's (Goal.Prefix, WINLOBBY: the other categories decide the first part, so "Draft" with "First
+// Binding" is "[Draft] [Bind 1] " and "First Binding" alone "[Bind 1] ").
 func Prefix(c Combination) string {
+	c = c.Normal()
+	win := c.Goal().Prefix()
+	c.Victory = ""
 	if c.IsDefault() {
-		return ""
+		return win
 	}
 	if p, ok := PresetOf(c); ok {
-		return "[" + p.Name + "] "
+		return "[" + p.Name + "] " + win
 	}
-	return CustomPrefix
+	return CustomPrefix + win
 }
 
 // Finding is one reason a combination can't be played as it is (as mapc check's findings): Category is a category's id,
@@ -392,7 +476,14 @@ type Context struct {
 	// NoShaperSelect: the server runs no shaper select (dgserver without --shaper-select), so it can give nobody a
 	// shaper list: All Random and the pools can't be played.
 	NoShaperSelect bool
+	// MapVictory: the game's map has its own victory (a kill race, a Binding race or a time limit; WINLOBBY): the map
+	// decides, so the lobby's win condition must stay "guardian" (MapVictoryReason).
+	MapVictory bool
 }
+
+// MapVictoryReason is why the lobby's win condition can't be chosen on a map with its own victory (the panel greys
+// the category with it).
+const MapVictoryReason = "This map has its own win condition."
 
 // The shapers a pick needs in the pool: shapers are unique within a team, so five; a draft takes ten picks and two
 // bans a team, none twice in the whole game (draft.go); a vote one (PoolForVote, vote.go).
@@ -429,6 +520,9 @@ func Check(c Combination, ctx Context) []Finding {
 					"option."})
 			}
 		}
+	}
+	if ctx.MapVictory && c.Victory != "guardian" { // WINLOBBY: the map decides
+		out = append(out, Finding{Victory, MapVictoryReason + " Choose Guardian only."})
 	}
 	if ctx.NoShaperSelect { // RULES3: the rolls and the pools are the shaper lists of shaper select
 		if c.Pick == "random" {

@@ -9,10 +9,10 @@ import (
 )
 
 // PROFILE3, the user's rules (2026-11-12, refined 2026-11-13): a game a player leaves before its end counts as a loss for
-// that player, but only when the match ended by a surrender or the Guardian's death (the game the others finished), or
-// had run at least 15 minutes of match time (LeftLossAfter) when it ended or was abandoned; a game every player left
-// within about a minute of each other (2 or more humans: a restart after a crash) counts for nobody; a left game brings
-// no rewards and no XP. The past stays as it is (no import of older games).
+// that player, but only when the match ended by a surrender, the Guardian's death or (MAPRULES5) a map's own victory (the
+// game the others finished), or had run at least 15 minutes of match time (LeftLossAfter) when it ended or was
+// abandoned; a game every player left within about a minute of each other (2 or more humans: a restart after a crash)
+// counts for nobody; a left game brings no rewards and no XP. The past stays as it is (no import of older games).
 //
 // Two cases:
 //   - The game still finishes (others played on): persist counts a player who left before finishGame (not kicked) as a
@@ -50,10 +50,11 @@ func (s *Server) leftLossAfter() time.Duration {
 	return DefaultLeftLossAfter
 }
 
-// leaverLoses reports whether a finished game f makes its leavers' result a loss: it ended by a surrender or the
-// Guardian's death (the host's two finishGame reasons), or its match ran leftLossAfter.
+// leaverLoses reports whether a finished game f makes its leavers' result a loss: it ended by a surrender, the
+// Guardian's death or (MAPRULES5) a map's own victory (the kill race, the time limit, sudden death, WINBIND-B's Binding
+// race: the game the others finished), or its match ran leftLossAfter.
 func (s *Server) leaverLoses(f gmshost.FinishGame) bool {
-	return f.Reason == "guardian" || f.Reason == "surrender" ||
+	return f.Reason == "guardian" || f.Reason == "surrender" || mapEndReason(f.Reason) ||
 		time.Duration(f.DurationMs)*time.Millisecond >= s.leftLossAfter()
 }
 
@@ -80,6 +81,7 @@ func (hg *hostedGame) countLeftGame(o gmshost.Outcome) {
 	m, skipped := hg.matchLocked(f, now)
 	rec := historyRecord{Match: m, skipped: skipped, stats: len(hg.seatStats), timeline: hg.timeline != nil}
 	ranked, unrated, withRules := hg.ranked(), hg.adminUnratedLocked(), hg.unratedRulesLocked()
+	mapVictory, lobbyVictory := hg.mapVictoryLocked(), hg.lobbyVictoryLocked().Victory() // MAPRULES5, WINLOBBY
 	var losers []*hostedPlayer
 	var first, last time.Time
 	for _, hp := range hg.players {
@@ -134,6 +136,7 @@ func (hg *hostedGame) countLeftGame(o gmshost.Outcome) {
 		_, res, err := s.applyLeft(hp.userID, stats, float64(f.DurationMs)/1000, ranked, !unrated)
 		res.Unrated = unrated
 		res.Rules = withRules
+		res.MapVictory, res.LobbyVictory = mapVictory, lobbyVictory
 		if err != nil {
 			s.Log.Logf("blaze", "   (account %d: game %d not stored: %v)", hp.userID, hg.game.ID, err)
 			continue

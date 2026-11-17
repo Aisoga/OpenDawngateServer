@@ -343,10 +343,6 @@ func TestHostedGameShaperSelect(t *testing.T) {
 	if len(r.Shapers) == 0 || len(r.Wards) == 0 || len(r.Announcers) == 0 || r.Shapers[0].Flags != gmshost.ShaperOwned {
 		t.Errorf("roster entry %+v", r)
 	}
-	line, err := gmshost.Encode(cg)
-	if err != nil || len(line) > gmshost.MaxLine {
-		t.Errorf("createGame line: %d bytes (%v)", len(line), err)
-	}
-	t.Logf("createGame line with one player's content: %d bytes", len(line))
+	lineFits(t, "createGame with one player's content", cg, gmshost.MaxLine/4) // CTLLINE: TestFullLobbyLinesFit's helper
 	hs.close()
 }

@@ -70,7 +70,9 @@ type Verdict struct {
 // Judge is the user's rule for a rated game: a PvP or custom game (never practice, never a practice group's) that
 // finished with a winner (team 1 or 2), that its admin didn't make unrated (store.Match.Unrated, M30), whose teams had
 // the same number of humans at its start, at least one each. Since M30 (MMR1) a game with match rules is rated too, in
-// its own type (Verdict.Mode, ModeOf); until then such a game never was (RULES1).
+// its own type (Verdict.Mode, ModeOf); until then such a game never was (RULES1). Since MAPRULES5 a game whose map's
+// own victory was played (a kill race or a time limit: store.Match.MapVictory) isn't rated either; a map that changes
+// only balance values stays rated in the game's type (the user's rule of 2026-11-13).
 // Bots and spectators aren't humans (a spectator has no seat). The humans at the start are the match's human seats
 // (blaze's matchLocked: the roster's players on teams 1 and 2, a custom game's who were in it when it started); a
 // human who left during the match keeps a seat and its team's result.
@@ -87,6 +89,11 @@ func Judge(m store.Match) Verdict {
 		v.Why = "a practice game"
 	case m.Unrated: // M30: the custom game's admin chose Unrated in the lobby
 		v.Why = "unrated by the admin"
+	case m.MapVictory(): // MAPRULES5: the user's rule: a played kill race, Binding race or time limit makes it unrated
+		v.Why = "the map's own victory: a kill race, a Binding race or a time limit"
+		if m.VictoryFrom() == store.RulesFromLobby { // WINBIND-B: the record's from (the lobby's choice: WINLOBBY)
+			v.Why = "the lobby's win condition: a kill race, a Binding race or a time limit"
+		}
 	case m.Winner != 1 && m.Winner != 2:
 		v.Why = "no winner"
 	default:

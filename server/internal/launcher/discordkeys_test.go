@@ -181,3 +181,33 @@ func TestMapKeys(t *testing.T) {
 		t.Errorf("an older file: %v", f)
 	}
 }
+
+// RULES6: rule_presets and default_rules become dgserver's --rule-presets and --default-rules; the template leaves both
+// empty (no flags), an older file without them too; dgserver takes the flags.
+func TestRulesKeys(t *testing.T) {
+	cfg, _, err := LoadOrCreate(filepath.Join(t.TempDir(), ServerConfigName), ServerConfigText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"rule_presets", "default_rules"} {
+		if !slices.Contains(serverKeys, k) {
+			t.Errorf("%s isn't a known key", k)
+		}
+		if _, ok := cfg[k]; !ok {
+			t.Errorf("the template lacks %s", k)
+		}
+	}
+	if f := RulesFlags(cfg); len(f) != 0 {
+		t.Errorf("the template's flags: %v", f)
+	}
+	good := Config{"rule_presets": "presets.txt", "default_rules": "draft"}
+	if got := strings.Join(RulesFlags(good), " "); got != "--rule-presets=presets.txt --default-rules=draft" {
+		t.Errorf("flags: %s", got)
+	}
+	if code := dgserver.Run(append(RulesFlags(good), "--print-ports"), dgserver.Hooks{}); code != 0 {
+		t.Errorf("%v: exit %d", good, code)
+	}
+	if f := RulesFlags(Config{"address": "127.0.0.1"}); len(f) != 0 {
+		t.Errorf("an older file: %v", f)
+	}
+}

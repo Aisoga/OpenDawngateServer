@@ -14,9 +14,20 @@ import (
 )
 
 // FolderLevel is a map package's playable level: its name, tag, the browser's prefix, its display name and its
-// archive, as the package's map.json names them (mapc.Label).
-func FolderLevel(l mapc.Label) blaze.PlayableLevel {
-	return blaze.PlayableLevel{Name: l.Name, Tag: l.Tag, Label: l.Prefix, Archive: l.Archive, Display: l.Display}
+// archive, as the package's map.json names them (mapc.Label), and since MAPRULES5 its own rules (the rules block: the
+// match host's kill race, time limit, start level and (WINBIND-B) Binding race, whether the balance changed, and mapc.DescribeRules' texts).
+func FolderLevel(p mapc.Package) blaze.PlayableLevel {
+	l := p.Label
+	lv := blaze.PlayableLevel{Name: l.Name, Tag: l.Tag, Label: l.Prefix, Archive: l.Archive, Display: l.Display}
+	if p.Map != nil && p.Map.Rules != nil {
+		r := p.Map.Rules
+		h := r.HostRules()
+		summary, short := mapc.DescribeRules(r)
+		lv.MapRules = blaze.MapRules{Kills: h.Kills, Minutes: h.Minutes, StartLevel: h.StartLevel,
+			Bindings: h.Bindings, Tuned: r.BalanceChanged(), Summary: summary, Short: short}
+		lv.LobbyPreset = r.LobbyPreset // RULES6: not compiled, the lobby's start (blaze/lobbypreset.go)
+	}
+	return lv
 }
 
 // mmArchive is MM_Map_v3's archive (a player copy's installed maps name it too).
@@ -124,8 +135,15 @@ func addFolderMaps(dir string) ([]string, error) {
 	var add []blaze.PlayableLevel
 	var names []string
 	for _, p := range pkgs {
-		l := FolderLevel(p.Label)
-		names = append(names, fmt.Sprintf("%s (%s%s, %q)", l.Name, blaze.MapTagPrefix, l.Tag, l.Display))
+		l := FolderLevel(p)
+		rulesNote := "" // MAPRULES5: the map's own rules in a few words
+		if l.MapRules.Short != "" {
+			rulesNote = ", rules " + l.MapRules.Short
+		}
+		if l.LobbyPreset != "" { // RULES6
+			rulesNote += fmt.Sprintf(", suggests the lobby setup %q", l.LobbyPreset)
+		}
+		names = append(names, fmt.Sprintf("%s (%s%s, %q%s)", l.Name, blaze.MapTagPrefix, l.Tag, l.Display, rulesNote))
 		if have, ok := blaze.FindLevel(l.Name); ok && have == l {
 			continue
 		}

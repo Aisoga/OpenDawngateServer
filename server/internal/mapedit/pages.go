@@ -18,7 +18,10 @@ import (
 // pages ignore keeps it. 2 (editor 0.2.0, release v0.14): the page's templates and its new tools write map.json
 // members an older mapc refuses (a shape's height, the ground's auto rules "lanes" and "edge", a scatter along
 // "area"), and the page asks /api/ground and /api/bake with ?derived=0, so a page of 2 needs this backend's mapc.
-const API = 2
+// 3 (editor 0.3.0, release v0.22): the page's Map > Rules window writes the map's "rules" block (and its victory's
+// "bindings", its "lobbyPreset"), which an older mapc refuses as an unknown member, so a map saved with rules would
+// fail every check and Test there; the routes /api/tuning and /api/rules are additive (the page falls back).
+const API = 3
 
 // ManifestFile is the page's manifest: {"version": "<the page's release>", "api": <API it was made for>}.
 const ManifestFile = "editor.json"

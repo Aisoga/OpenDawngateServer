@@ -96,6 +96,8 @@ type config struct {
 	customAutoStart      time.Duration      // BOTS2c: a custom game whose humans all spectate starts by itself
 	testRefuseStart      bool               // READY2b: each custom game's first start refused (--test-refuse-start, a test aid)
 	testRules            *rules.Combination // RULES1: every new custom game's rules (--test-rules, a test aid)
+	rulePresets          string             // RULES6: the operator's lobby presets file (--rule-presets; presets.go)
+	defaultRules         string             // RULES6: the preset every custom game's lobby starts with (--default-rules)
 	testRoles            []string           // DRAFT3: startGame's humans' roles (--test-roles, a test aid)
 	draftTurn            time.Duration      // RULES5b: a draft turn's time (--draft-turn; 0 = 45 s since DRAFT1)
 	draftRoleTime        time.Duration      // DRAFT1: the draft's role phase (--draft-role-time; 0 = 20 s)
@@ -731,6 +733,12 @@ func start(cfg config) (*instance, error) {
 	if cfg.testRules != nil {
 		log.Logf("stub", "TEST: every new custom game starts with the rules %s (--test-rules, a test aid)", rules.Describe(*cfg.testRules))
 	}
+	// RULES6: the operator's presets and the default lobby start (presets.go)
+	lib, defaultRules, presetNotes := loadRulePresets(cfg.rulePresets, cfg.dataDir, cfg.defaultRules)
+	bz.RulePresets, bz.DefaultRules = lib, defaultRules
+	for _, note := range append(presetNotes, suggestionNotes(lib)...) {
+		log.Logf("stub", "%s", note)
+	}
 	bz.TestRoles = cfg.testRoles
 	if len(cfg.testRoles) > 0 {
 		log.Logf("stub", "TEST: every custom game's start gives its humans the roles %s in roster order (--test-roles, a test aid)", strings.Join(cfg.testRoles, ","))
@@ -1326,6 +1334,8 @@ func Run(args []string, h Hooks) int {
 	fs.DurationVar(&cfg.leftLossAfter, "left-loss-after", blaze.DefaultLeftLossAfter, "a game a player left counts as that player's loss when it ended by a surrender or the Guardian's death, or ran at least this long (match time; a game every player left within a minute of each other counts for nobody)")
 	fs.BoolVar(&cfg.customBots, "custom-bots", false, "custom games with match hosts: bots fill the open seats when the game starts (B15; off: only the lobby's players)")
 	fs.BoolVar(&cfg.testRefuseStart, "test-refuse-start", false, "test aid: each custom game's first start (its admin's advanceGameState IN_GAME) is refused, as the ready check refuses a start while a player isn't ready")
+	fs.StringVar(&cfg.rulePresets, "rule-presets", "", `the operator's lobby presets: a file, a relative name in the data folder, a line "id | Name | rules" each (rules as pick=random,victory=bind1); a map may suggest them, --default-rules may name one, and the game browser shows a lobby equal to one as "[Name] "; "" = the built-in presets only`)
+	fs.StringVar(&cfg.defaultRules, "default-rules", "", `the preset (its id: standard, draft, aram, allRandom or one of --rule-presets) every custom game's lobby starts with on a map that suggests no setup; the lobby's admin may change it; "" = the standard game`)
 	testRules := fs.String("test-rules", "", "test aid: every new custom game with a match host starts with these match rules: a preset (standard, aram, allRandom), a JSON object of categories to options, e.g. {\"pick\":\"random\"}, or its short form pick=random,shaperPool=melee; the lobby's admin can still change them")
 	testRoles := fs.String("test-roles", "", "test aid: every custom game's start gives its humans these declared roles in roster order, cycling (gladiator, tactician, hunter, predator; e.g. hunter or hunter,gladiator), as the draft's roles do: the match host presets each in shaper select")
 	fs.DurationVar(&cfg.draftTurn, "draft-turn", 0, "the time of one turn of a custom game's draft, a ban or a pick window (e.g. 10s; 0 = 45s)")

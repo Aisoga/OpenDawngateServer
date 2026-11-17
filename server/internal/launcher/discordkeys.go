@@ -58,6 +58,11 @@ func IssuesFlags(cfg Config) []string { return keyFlags(cfg, []string{"issues"})
 // come before server_flags; dgserver checks them.
 func MapFlags(cfg Config) []string { return keyFlags(cfg, []string{"map", "custom_maps"}) }
 
+// RulesFlags are dgserver's --rule-presets and --default-rules for the rule_presets and default_rules keys that are set
+// (an empty or missing key, as in a file from an earlier release, keeps dgserver's default: the built-in presets, every
+// lobby on the standard game). They come before server_flags; dgserver reads the file and checks the id at its start.
+func RulesFlags(cfg Config) []string { return keyFlags(cfg, []string{"rule_presets", "default_rules"}) }
+
 // keyFlags are "--<key with dashes>=<value>" for each of keys that cfg sets.
 func keyFlags(cfg Config, keys []string) []string {
 	var f []string

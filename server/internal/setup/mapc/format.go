@@ -71,6 +71,9 @@ type Map struct {
 
 	// graph.go: the navigation graphs' square size (optional; MAPED-IMPORT-FIT)
 	Graph *Graph `json:"graph,omitempty"`
+
+	// rules.go: the map's own match rules (optional; M31)
+	Rules *Rules `json:"rules,omitempty"`
 }
 
 // Lane is one lane id's path as team 1's minions walk it, from its base to the enemy's: knots (at least 2) and the

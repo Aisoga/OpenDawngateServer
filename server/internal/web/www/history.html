@@ -464,7 +464,50 @@
     if (r == "guardian") { return "the Guardian fell"; }
     if (r == "surrender") { return "surrender"; }
     if (r == "left") { return "its players left"; }
+    if (r == "kills") { return "the kill race"; }
+    if (r == "bindings") { return "the Binding race"; }
+    if (r == "time") { return "the lead when time ran out"; }
+    if (r == "suddenDeath") { return "sudden death"; }
     return r || "";
+  }
+
+  // A map's own victory (a kill race, a time limit, sudden death): the teams' kills, every seat's (bots too, the map
+  // rule's measure), the winner's first: "20-17".
+  var DASH = String.fromCharCode(8211); // an en dash, kept out of the ASCII source
+  function killScore(m) {
+    var k = [0, 0], ss = list(m.seats);
+    for (var i = 0; i < ss.length; i++) {
+      if (ss[i].team == 1 || ss[i].team == 2) { k[ss[i].team - 1] += ss[i].kills || 0; }
+    }
+    return m.winner == 2 ? k[1] + DASH + k[0] : k[0] + DASH + k[1];
+  }
+
+  // A Binding race's score (the teams' destructions of enemy Bindings), the winner's first: "3-1"; "" without one.
+  function bindScore(m) {
+    var b = m.bindings;
+    if (!b || b.length != 2) { return ""; }
+    return m.winner == 2 ? b[1] + DASH + b[0] : b[0] + DASH + b[1];
+  }
+
+  // How the winner won: "Team 1 won (the Guardian fell)", and for a map's own victory "Team 1 won the kill race 20-17",
+  // "Team 1 won the Binding race 3-1", "Team 1 won on time 12-9" ("on time with more Bindings 2-1" when they decided),
+  // "Team 1 won in sudden death".
+  function winText(m) {
+    var t = "Team " + m.winner + " won", b = bindScore(m);
+    if (m.reason == "kills") { return t + " the kill race " + killScore(m); }
+    if (m.reason == "bindings") { return t + " the Binding race" + (b ? " " + b : ""); }
+    if (m.reason == "time" && b && m.bindings[0] != m.bindings[1]) { return t + " on time with more Bindings " + b; }
+    if (m.reason == "time") { return t + " on time " + killScore(m); }
+    if (m.reason == "suddenDeath") { return t + " in sudden death"; }
+    var why = reasonText(m.reason);
+    return t + (why ? " (" + why + ")" : "");
+  }
+
+  // The map's own rules the match played, as a badge ("Race 20, Lv 6", and "unrated" when its victory kept a game
+  // unrated that would otherwise rate); null for none.
+  function mapBadge(m) {
+    if (!m.mapRules) { return null; }
+    return make("span", "tag", m.mapRules + (m.mapUnrated ? SEP + "unrated" : ""));
   }
 
   // ---- Recent games -------------------------------------------------------------------------------------
@@ -650,7 +693,9 @@
       tr.onclick = (function (id) { return function () { openMatch(id); return false; }; })(m.id);
       var edge = make("td", "edge " + o.edge);
       tr.appendChild(edge);
-      cell(tr, "", o.text, o.cls, (m.kindName || m.kind) + (m.kind == "custom" && TYPE_NAMES[m.type] ? SEP + TYPE_NAMES[m.type] : ""));
+      var head = cell(tr, "", o.text, o.cls, (m.kindName || m.kind) + (m.kind == "custom" && TYPE_NAMES[m.type] ? SEP + TYPE_NAMES[m.type] : ""));
+      var badge = mapBadge(m);
+      if (badge) { head.lastChild.appendChild(badge); }
       cell(tr, "", m.map, "", clock(m.durationSec) + SEP + ago(L.serverTime - m.ended + age));
       if (me) {
         cell(tr, "", shaperOf(me) + (me.roleName ? SEP + me.roleName : ""), "",
@@ -748,8 +793,10 @@
     title.className = "head " + o.cls;
     var why = reasonText(m.reason), age = (M.data.serverTime - m.ended) + (now() - M.gotAt) / 1000;
     setText(line, (m.kindName || m.kind) + (m.rules ? " (Rules: " + m.rules + ")" : "") + SEP + m.map + SEP + clock(m.durationSec) +
-            (m.winner ? SEP + "Team " + m.winner + " won" + (why ? " (" + why + ")" : "") : why ? SEP + why : "") +
+            (m.winner ? SEP + winText(m) : why ? SEP + why : "") +
             SEP + dateText(m.ended) + " (" + ago(age) + ")");
+    var badge = mapBadge(m);
+    if (badge) { line.appendChild(badge); }
     var tab = null;
     for (var i = 0; i < TABS.length; i++) { if (TABS[i].id == M.tab) { tab = TABS[i]; } }
     if (!tab) { tab = TABS[0]; M.tab = tab.id; }

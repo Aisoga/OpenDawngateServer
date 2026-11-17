@@ -189,6 +189,7 @@ func (a *Agent) serve(ctx context.Context) error {
 	if !proofOK(ch.Proof, agentProof(a.Key, proofServer, nonce, ch.Nonce)) {
 		return errors.New("the server failed the key check (a different --agent-key?); not registering")
 	}
+	r.SetMax(MaxLine) // the server has proved the key (PreAuthMaxLine before)
 	if err := l.send(AgentAuth{Proof: agentProof(a.Key, proofAgent, ch.Nonce, nonce, a.Name, a.BindHost, public, a.Ports),
 		Bind: a.BindHost, Public: public, Ports: a.Ports}); err != nil {
 		return err

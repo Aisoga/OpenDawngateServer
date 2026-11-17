@@ -28,6 +28,7 @@ func DialHostWith(env Env, pid int, build string, features []string) (*HostConn,
 		return nil, err
 	}
 	h := &HostConn{c: c, r: NewLineReader(c)}
+	h.r.SetMax(MaxLine) // the server's lines (a host without FeatureLongLines never gets one over LegacyMaxLine)
 	if err := h.Send(Hello{Match: env.Match, Token: env.Token, PID: pid, Build: build, Features: features}); err != nil {
 		c.Close()
 		return nil, err

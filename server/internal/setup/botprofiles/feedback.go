@@ -74,8 +74,13 @@ func RulesFeedback() (CatalogSource, error) {
 		return CatalogSource{}, fmt.Errorf("botprofiles: no %s table", FeedbackClass)
 	}
 	src := CatalogSource{Name: RulesSource}
-	for _, d := range RulesFeedbackDefs {
-		b, err := ts.Write(t, FeedbackValue(d), assetdata.WriteOptions{})
+	value := FeedbackValue
+	defs := append(append([]FeedbackDef(nil), RulesFeedbackDefs...), MapRulesFeedbackDefs...) // MAPRULES4: the map rules' alerts
+	for i, d := range defs {
+		if i == len(RulesFeedbackDefs) {
+			value = MapFeedbackValue
+		}
+		b, err := ts.Write(t, value(d), assetdata.WriteOptions{})
 		if err != nil {
 			return CatalogSource{}, fmt.Errorf("botprofiles: %s: %w", d.Name, err)
 		}

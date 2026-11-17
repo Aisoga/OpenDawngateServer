@@ -44,6 +44,78 @@ GMS_TEST(MapBaseBindingRespawn) {
   CHECK_EQ(BindingRespawnSeconds(true, {}, 0), -1.0);
 }
 
+// MAPRULES3: the slot's due time, the tier's entry on a compiled map (CM_Tuned: three entries of 60 s), the test aid.
+GMS_TEST(MapBaseBindingDue) {
+  std::vector<TowerTuning> tuned(3);
+  for (TowerTuning& t : tuned) {
+    t.respawnTime = 60.f;
+    t.laneAgentAdjust = -1;
+  }
+  const double outer = BindingRespawnSeconds(true, tuned, TowerTuningIndex(0x7u, 0));
+  CHECK_EQ(outer, 60.0);
+  CHECK_EQ(BindingDueMs(outer, 123456ull), 183456ull);
+  CHECK_EQ(BindingDueMs(-1.0, 123456ull), kTowerSlotGone);  // never: all ones, as before MAPRULES3
+  CHECK_EQ(BindingDueMs(0.0, 0ull), 1ull);                   // never 0 (standing)
+  CHECK_EQ(BindingDueMs(0.0, kTowerSlotGone), kTowerSlotGone - 1);
+  CHECK_EQ(BindingDueMs(1.2345, 1000ull), 2235ull);         // rounded to the ms
+  // MM_Map_v3's two tiers on a map that enables the respawn: Middle takes entry 0, Inner entry 1
+  std::vector<TowerTuning> mm(2);
+  mm[0].respawnTime = 900.f;
+  mm[1].respawnTime = 600.f;
+  CHECK_EQ(BindingRespawnSeconds(true, mm, TowerTuningIndex(0x6u, 1)), 900.0);
+  CHECK_EQ(BindingRespawnSeconds(true, mm, TowerTuningIndex(0x6u, 2)), 600.0);
+  CHECK_EQ(BindingRespawnSeconds(true, mm, TowerTuningIndex(0x6u, 0)), -1.0);  // no Outer on that level
+  // the test aid [host] tower_respawn_s
+  CHECK_EQ(EffectiveBindingRespawn(60.0, -1), 60.0);
+  CHECK_EQ(EffectiveBindingRespawn(-1.0, -1), -1.0);
+  CHECK_EQ(EffectiveBindingRespawn(-1.0, 30), 30.0);  // also where the level doesn't enable it
+  CHECK_EQ(EffectiveBindingRespawn(60.0, 0), kMinBindingRespawnSeconds);
+  CHECK_EQ(EffectiveBindingRespawn(2.0, -1), kMinBindingRespawnSeconds);
+  CHECK_EQ(TowerSlot(1, 0, 0), 8);  // the Spirit top Outer: (1 * 2 + 0) * 4 + 0
+  CHECK_EQ(TowerSlot(0, 1, 2), 6);
+  CHECK_EQ(TowerSlot(2, 0, 0), -1);
+  CHECK_EQ(TowerSlot(0, 0, 4), -1);
+}
+
+// MAPRULES3: a death, the return at the due time, a second death and its own return; a slot that stays down.
+GMS_TEST(MapBaseBindingSecondDeath) {
+  BindingRespawns r;
+  const int slot = TowerSlot(1, 0, 0);
+  CHECK_EQ(r.OnDestroyed(slot, 60.0, 40000ull), 100000ull);
+  CHECK_EQ(r.Pending(), 1);
+  CHECK(r.TakeDue(99999ull).empty());
+  CHECK_EQ(r.OnDestroyed(slot, 60.0, 50000ull), 100000ull);  // a second report of the same death keeps the time
+  const std::vector<int> first = r.TakeDue(100000ull);
+  CHECK_EQ(first.size(), static_cast<std::size_t>(1));
+  CHECK_EQ(first.empty() ? -1 : first[0], slot);
+  CHECK_EQ(r.Due(slot), 0ull);
+  CHECK_EQ(r.Returns(slot), 1);
+  CHECK(r.TakeDue(200000ull).empty());  // once
+  CHECK_EQ(r.OnDestroyed(slot, 60.0, 130000ull), 190000ull);  // the second death after the return
+  CHECK_EQ(r.Deaths(slot), 3);
+  const std::vector<int> second = r.TakeDue(190500ull);
+  CHECK_EQ(second.size(), static_cast<std::size_t>(1));
+  CHECK_EQ(r.Returns(slot), 2);
+  // a slot that never comes back stays out of TakeDue
+  const int other = TowerSlot(0, 1, 2);
+  CHECK_EQ(r.OnDestroyed(other, -1.0, 1000ull), kTowerSlotGone);
+  CHECK(r.TakeDue(~0ull - 1).empty());
+  CHECK_EQ(r.Pending(), 0);
+  CHECK_EQ(r.OnDestroyed(-1, 60.0, 0ull), kTowerSlotGone);
+}
+
+// MAPRULES3: what the client draws from the slot (TowerGraphics_GetTowerState), with the lead of 2 s.
+GMS_TEST(MapBaseClientTowerState) {
+  CHECK_EQ(ClientTowerState(0ull, true, 5000ull, 2.0, 3.0), 0);
+  CHECK_EQ(ClientTowerState(kTowerSlotGone, true, 5000ull, 2.0, 3.0), 1);
+  CHECK_EQ(ClientTowerState(65000ull, false, 5000ull, 2.0, 3.0), 1);  // a level without the flag: destroyed
+  CHECK_EQ(ClientTowerState(65000ull, true, 5000ull, 2.0, 3.0), 1);   // counting down
+  CHECK_EQ(ClientTowerState(65000ull, true, 62500ull, 2.0, 3.0), 2);  // rebuilding: TowerRespawnWarning
+  CHECK_EQ(ClientTowerState(65000ull, true, 63500ull, 2.0, 3.0), 3);  // TowerRespawned
+  CHECK_EQ(ClientTowerState(65000ull, true, 66000ull, 2.0, 3.0), 3);  // late: still 3 until the host writes 0
+  CHECK_EQ(ClientTowerState(65000ull, true, 62500ull, 2.0, 0.0), 1);  // no rebuild length: no state 2
+}
+
 // The Locus on both levels; nothing else is one (the Bindings, the nubs, the regen zones, the shop).
 GMS_TEST(MapBaseLocusNouns) {
   CHECK(IsLocusNoun("DEST_prefab_blue_tower.Noun"));

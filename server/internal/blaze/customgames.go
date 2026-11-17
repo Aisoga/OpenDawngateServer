@@ -144,19 +144,20 @@ type customLobby struct {
 	notice *LobbyRegion
 
 	// RULES1 (lobbyrules.go): the lobby's match rules and bots setting, the bots createGame asked for (a host without
-	// rules keeps them), when the rules last changed, whether the match's rules line went out; the parts of the
-	// browser's name (lobbyName)
+	// rules keeps them), when the rules last changed; the parts of the browser's name (lobbyName). The match's rules
+	// line is the hostedGame's (noteDue, noteSent: every hosted game on a map with rules has one since MAPRULES5).
 	rules        rules.Combination
+	rulesFrom    string // RULES6 (lobbypreset.go): where the starting rules came from, "" for the standard game or --test-rules
 	bots         bool
 	botsAtCreate bool
 	rulesSetAt   time.Time
-	announced    bool
-	announceDue  bool // the rules line's timer runs (announceRulesLater)
 	// M30: the admin's Rated/Unrated (false = rated, the default); LOBBYMODE1 sets it from the lobby, MMR1 stores it
 	// with the match (adminUnratedLocked)
 	unrated  bool
 	baseName string
 	label    string
+	// MAPRULES5: the map's victory in the browser's name after its label (MapRules.Prefix: "[Race 20] ")
+	mapPrefix string
 
 	// RULES5b (draft.go): the running draft (nil: none), and the last one, running or ended (its board for a late
 	// lobby.enter and a refused call)
@@ -533,6 +534,8 @@ func (s *Server) startCustomGame(r *Request, g Game, p Player) []byte {
 	g.Attrs = mergeAttrs(g.Attrs, levelAttrs(level)) // the game's level, not the dialog's
 	if l, ok := FindLevel(level); ok {
 		lobby.label = l.Label // the browser's Map column shows only SM_Map_v5's name
+		// MAPRULES5: the map's victory after its label
+		lobby.mapPrefix = l.MapRules.Prefix()
 	}
 	// RULES1: the lobby's starting bots and rules (lobbyrules.go); the name shows both
 	withHost := lobby.browsable && s.Hosts != nil
@@ -541,18 +544,29 @@ func (s *Server) startCustomGame(r *Request, g Game, p Player) []byte {
 	lobby.rules = rules.Standard()
 	if s.TestRules != nil && withHost {
 		lobby.rules = s.TestRules.Normal()
+	} else if withHost { // RULES6: the map's suggestion, the server's default_rules (lobbypreset.go)
+		lobby.rules, lobby.rulesFrom = s.startingRules(g.ID, level, s.rulesCreateContext(lobby, g.TeamCap, level))
 	}
-	g.Name = lobbyName(lobby.label, lobby.bots, lobby.unrated, lobby.rules, lobby.baseName)
+	g.Name = lobbyName(s.RulePresets, lobby.label+lobby.mapPrefix, lobby.bots, lobby.unrated, lobby.rules, lobby.baseName)
 	s.Log.Logf("blaze", "   game %d %q: a %s (GameFlags %#x, %d teams of %d, private %v); admin %d", g.ID, g.Name, kind,
 		flags, len(g.TeamIDs), g.TeamCap, attrValue(g.Attrs, AttrPrivateMatch) == "1", p.ID)
 	if bots {
 		s.Log.Logf("blaze", "   game %d: bots fill the open seats (the creator's checkbox)", g.ID)
 	}
-	if !lobby.rules.IsDefault() {
+	if lobby.rulesFrom != "" {
+		s.Log.Logf("blaze", "   game %d: the lobby starts with %s: %s", g.ID, lobby.rulesFrom, rules.Describe(lobby.rules))
+	} else if !lobby.rules.IsDefault() {
 		s.Log.Logf("blaze", "   game %d: rules %s (--test-rules, a test aid)", g.ID, rules.Describe(lobby.rules))
 	}
 	if tagged || fellBack || !strings.EqualFold(level, HostedLevel) {
 		s.Log.Logf("blaze", "   game %d: map %s (LevelId %d; %s)", g.ID, level, LevelAssetID(level), why)
+	}
+	if l, ok := FindLevel(level); ok && !l.MapRules.IsZero() { // MAPRULES5: what lobby.state's map part says
+		rated := "rated as its lobby's type"
+		if why := l.MapRules.mapUnratedReason(); why != "" {
+			rated = "unrated: " + why
+		}
+		s.Log.Logf("blaze", "   game %d: the map's own rules %q (%s)", g.ID, l.MapRules.Short, rated)
 	}
 	if s.Hosts != nil {
 		fill := 0
@@ -1111,12 +1125,21 @@ func registerCustomGames(s *Server) {
 		unrated := hg.adminUnratedLocked()
 		hg.mu.Unlock()
 		if start {
-			r.Server.Log.Logf("blaze", "   game %d starts (its admin's advanceGameState IN_GAME): roster %s%s", gid,
-				describeRoster(roster), describeStartRules(sg.Rules, sg.FillTeams, unrated))
 			if mt != nil {
 				r.Server.lobbyContent(roster, players)
 				sg.Roster = roster
 				r.Server.applyPickRules(gid, &sg, nil) // RULES3: All Random's rolls and the pool's lists
+				// CTLLINE: a startGame the host can't take refuses the start before anything commits to it
+				if f, why, ok := startTooLarge(mt, sg); !ok {
+					hg.mu.Lock()
+					hg.custom.started = false
+					r.Server.refuseStart(r, hg, why, []rules.Finding{f}) // unlocks hg.mu
+					return nil
+				}
+			}
+			r.Server.Log.Logf("blaze", "   game %d starts (its admin's advanceGameState IN_GAME): roster %s%s", gid,
+				describeRoster(roster), describeStartRules(sg.Rules, sg.FillTeams, unrated))
+			if mt != nil {
 				mt.StartGameWith(sg)
 			}
 		} else {
@@ -1183,12 +1206,19 @@ func (s *Server) autoStartCustom(hg *hostedGame) {
 	mt := hg.match
 	unrated := hg.adminUnratedLocked()
 	hg.mu.Unlock()
+	var sg gmshost.StartGame
+	if mt != nil {
+		s.lobbyContent(roster, players)
+		sg = gmshost.StartGame{Roster: roster, Rules: rl, FillTeams: fill}
+		s.applyPickRules(hg.game.ID, &sg, nil)        // RULES3
+		if f, why, ok := startTooLarge(mt, sg); !ok { // CTLLINE
+			s.refuseLargeStart(hg, "the start by itself (--custom-autostart)", f, why)
+			return
+		}
+	}
 	s.Log.Logf("blaze", "   game %d starts (--custom-autostart: every human spectates): roster %s%s", hg.game.ID,
 		describeRoster(roster), describeStartRules(rl, fill, unrated))
 	if mt != nil {
-		s.lobbyContent(roster, players)
-		sg := gmshost.StartGame{Roster: roster, Rules: rl, FillTeams: fill}
-		s.applyPickRules(hg.game.ID, &sg, nil) // RULES3
 		mt.StartGameWith(sg)
 	}
 	hg.setState(GameStateInGame)

@@ -42,7 +42,9 @@ copy's own file at setup time):
                             0x5e70e001 "You can shop only after dying.", 0x5e70e002 "That item is not allowed in
                             this match." and 0x5e70e003 "Only Time, Energy, Chaos, Potency, Resonance." (LIGHTNING1),
                             shown by the defs Rules_ShopClosed, Rules_ItemNotAllowed and Rules_LightningOnly that the
-                            Go setup adds to zz_BotProfiles.snap (the host sends them: cmds::SendPlayerText)
+                            Go setup adds to zz_BotProfiles.snap (the host sends them: cmds::SendPlayerText); from
+                            0x5e70e010 a map's own rules' 32 alerts (kill race, time limit, sudden death; MAPRULES4;
+                            the Binding race's from 0x5e70e027, WINBIND-B)
   GameServerRegion 0x1ADEE60A the built-in regions' names (AssetData GameServerRegionList's regionName): 0x2
                             "Europe (alpha)" -> "Europe", the fallback where the server's own names don't reach
   newFeatureNotify 0x2502B5EA the new-feature notice's EU item (0x3, 0x4): no more "alpha" servers, the Preferred
@@ -252,6 +254,40 @@ LABS_ALERTS_LINES = {
     0x5E70E001: "You can shop only after dying.",
     0x5E70E002: "That item is not allowed in this match.",
     0x5E70E003: "Only Time, Energy, Chaos, Potency, Resonance.",
+    # MAPRULES4: a map's own rules' alerts (Go botprofiles.MapRulesFeedbackDefs, in the same order)
+    0x5E70E010: "Your team needs 10 more kills!",
+    0x5E70E011: "The enemy needs 10 more kills!",
+    0x5E70E012: "Your team needs 5 more kills!",
+    0x5E70E013: "The enemy needs 5 more kills!",
+    0x5E70E014: "Your team needs 3 more kills!",
+    0x5E70E015: "The enemy needs 3 more kills!",
+    0x5E70E016: "Match point: one more kill wins!",
+    0x5E70E017: "The enemy is one kill from victory!",
+    0x5E70E018: "First team to 10 kills wins!",
+    0x5E70E019: "First team to 15 kills wins!",
+    0x5E70E01A: "First team to 20 kills wins!",
+    0x5E70E01B: "First team to 25 kills wins!",
+    0x5E70E01C: "First team to 30 kills wins!",
+    0x5E70E01D: "First team to 50 kills wins!",
+    0x5E70E01E: "First team to the kill target wins!",
+    0x5E70E01F: "Most kills when time runs out wins!",
+    0x5E70E020: "Your team takes the lead!",
+    0x5E70E021: "The enemy takes the lead!",
+    0x5E70E022: "10 minutes left!",
+    0x5E70E023: "5 minutes left!",
+    0x5E70E024: "1 minute left!",
+    0x5E70E025: "30 seconds left!",
+    0x5E70E026: "Sudden death: the next kill wins!",
+    # WINBIND-B: the Binding race's alerts (Go botprofiles.MapRulesFeedbackDefs, in the same order)
+    0x5E70E027: "First team to destroy a Binding wins!",
+    0x5E70E028: "First team to destroy 2 Bindings wins!",
+    0x5E70E029: "First team to destroy 3 Bindings wins!",
+    0x5E70E02A: "First team to destroy 6 Bindings wins!",
+    0x5E70E02B: "First team to the Binding target wins!",
+    0x5E70E02C: "Match point: one more Binding wins!",
+    0x5E70E02D: "The enemy is one Binding from victory!",
+    0x5E70E02E: "Most Bindings when time runs out wins!",
+    0x5E70E02F: "Sudden death: next Binding or kill wins!",
 }
 # the Options menu's gameplay tab: the label of the check box client_ui/options/DragGrabOption.as adds (OptionDragGrab)
 OPTIONS_LINES = {

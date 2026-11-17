@@ -85,6 +85,9 @@ type GameResult struct {
 	Rules bool
 	// Unrated: the custom game's admin made it unrated (M30), which is why it doesn't count
 	Unrated bool
+	// MapVictory: the map's own victory was played (MAPRULES5: a kill race or a time limit), which is why it doesn't count;
+	// LobbyVictory: it was the custom game lobby's win condition (WINLOBBY)
+	MapVictory, LobbyVictory bool
 	// NotInProfile: the game left the profile's numbers alone (PROFILE2: made Unrated by its admin)
 	NotInProfile bool
 }
@@ -96,6 +99,10 @@ func (r GameResult) describeRanked(mode string) string {
 		switch {
 		case r.Unrated:
 			kind = "a custom game unrated by the admin"
+		case r.MapVictory && r.LobbyVictory:
+			kind = "the lobby's win condition"
+		case r.MapVictory:
+			kind = "the map's own victory"
 		case r.Rules:
 			kind = "a custom game with rules"
 		case mode != gmshost.ModePractice:

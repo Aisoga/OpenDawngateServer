@@ -250,8 +250,8 @@ type systemMessages struct {
 	count onlineCount // ONLINECOUNT: the players-online count (onlinecount.go)
 	// mapNotes counts the map check's messages per connection (MAPGUARD, mapguard.go tellMap)
 	mapNotes map[*Conn]int
-	// rulesNotes is the last rules line per connection (RULES1, lobbyrules.go announceRules)
-	rulesNotes map[*Conn]rulesNote
+	// rulesNotes is the last rules line per connection and line (RULES1, MAPRULES9; lobbyrules.go announceRules)
+	rulesNotes map[*Conn][]rulesNote
 	// notices counts the admins' notices sent, noticeAt is when the last went out (SYSCHAT, notice.go SendNotice)
 	notices  int64
 	noticeAt time.Time

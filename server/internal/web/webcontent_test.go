@@ -223,6 +223,10 @@ func TestHomePage(t *testing.T) {
 		"return show(11);", "return show(0);", "return show(2);", "not run by Waystone Games or Electronic Arts",
 		// MHIST3: the match history in the same view, a stored result's match by its id (0: no link)
 		`location.href = "history.html" + where;`, `openHistory("#match=" + id)`, "r.matchId > 0", `return openHistory('');">Recent games</a>`,
+		// MAPRULES5: a map's own victory with its score (home.json's kills)
+		`" won the kill race" + score`, `" won on time" + score`, `" won in sudden death"`,
+		// WINBIND-B: the Binding race's score (home.json's bindings)
+		`" won the Binding race" + bind`, `" won on time with more Bindings" + bind`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("home.html lacks %q", want)
@@ -307,6 +311,11 @@ func TestHistoryPage(t *testing.T) {
 		`[["practice", "Practice"], ["standard", "Standard"], ["draft", "Draft"], ["custom", "Custom"],
                    ["all", "All Modes"]]`, `type: "all"`, `"&type=" + L.type`, `<div id="modeTabs"></div>`,
 		`"&n=1&unrated=1"`,
+		// MAPRULES5: a map's own victory in words with its score, the map's rules as a badge on the row and the match
+		`t + " the kill race " + killScore(m)`, `t + " in sudden death"`, `m.mapRules + (m.mapUnrated ? SEP + "unrated" : "")`,
+		"head.lastChild.appendChild(badge)", "line.appendChild(badge)",
+		// WINBIND-B: the Binding race's score (the head's bindings)
+		`t + " the Binding race" + (b ? " " + b : "")`, `t + " on time with more Bindings " + b`, `"the Binding race"`,
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("history.html lacks %q", want)

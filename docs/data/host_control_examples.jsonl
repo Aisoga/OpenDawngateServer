@@ -93,3 +93,27 @@
 # gets them (the server's Check), here the item pool "lightning". An older host would take the pool as "all".
 {"t":"hello","match":1,"token":"00112233445566778899aabbccddeeff","pid":4242,"build":"dgsim c1","features":["rules","rules2"]}
 {"t":"startGame","roster":[{"user":2000000001,"name":"alpha","index":0,"team":1,"noun":"","bot":false}],"rules":{"pick":"blind","shaperPool":"all","shop":"normal","itemPool":"lightning"},"fillTeams":0}
+# MAPRULES4: a host that plays a map's own rules names "maprules" in its hello; only such a host gets createGame's
+# "mapRules" (last; omitted when the map sets none, each member omitted when 0): a kill race of "kills", a time limit of
+# "minutes", everyone's "startLevel". dgserver strips the field for a host without the feature (and logs it).
+{"t":"hello","match":1,"token":"00112233445566778899aabbccddeeff","pid":4242,"build":"dgsim c1","features":["rules","rules2","maprules"]}
+{"t":"createGame","gameId":1,"level":"SM_Map_v5","mode":"custom","seed":7919,"roster":[{"user":2000000001,"name":"alpha","index":0,"team":1,"noun":"","bot":false}],"descriptors":2,"mapRules":{"kills":20,"minutes":15,"startLevel":6}}
+{"t":"createGame","gameId":1,"level":"SM_Map_v5","mode":"practice","seed":7919,"roster":[{"user":2000000001,"name":"alpha","index":0,"team":1,"noun":"","bot":false}],"descriptors":1292,"mapRules":{"minutes":3}}
+# WINBIND-B: a host that plays the Binding race and the lobby's win condition names "maprules2" too. Only such a host
+# gets createGame's mapRules "bindings" (the first team to destroy that many enemy Bindings wins; omitted when 0) and
+# startGame's "victory" (the lobby's win condition in numbers: kills, minutes, bindings, each omitted when 0; the
+# object omitted for Guardian only). finishGame carries "bindings" [team 1's, team 2's destructions of enemy
+# Bindings] when a Binding race ran, whatever ended the match; the reason "bindings" is that race's end ("time" and
+# "suddenDeath" may be decided by Bindings too). WINLOBBY: the rules carry the win condition's id too ("victory":
+# "bind1", the lobby's "First Binding"; omitted when empty), for the host's log only: it plays startGame's "victory".
+{"t":"hello","match":1,"token":"00112233445566778899aabbccddeeff","pid":4242,"build":"dgsim c1","features":["rules","rules2","maprules","maprules2"]}
+{"t":"createGame","gameId":1,"level":"SM_Map_v5","mode":"practice","seed":7919,"roster":[{"user":2000000001,"name":"alpha","index":0,"team":1,"noun":"","bot":false}],"descriptors":1292,"mapRules":{"minutes":3,"bindings":2}}
+{"t":"startGame","roster":[{"user":2000000001,"name":"alpha","index":0,"team":1,"noun":"","bot":false}],"rules":{"pick":"blind","shaperPool":"all","shop":"normal","itemPool":"all","victory":"bind1"},"fillTeams":4,"victory":{"bindings":1}}
+{"t":"finishGame","winnerTeam":2,"durationMs":805546,"reason":"bindings","bindings":[0,1]}
+{"t":"finishGame","winnerTeam":1,"durationMs":180010,"reason":"time","bindings":[2,1]}
+# CTLLINE: a host that takes lines up to 1 MiB names "longlines" (the server sends a host without it no line over
+# 64 KiB), and a host that confirms the start names "startack": once it has taken startGame, its reportGMSUpdate
+# carries "started": true (last; omitted when false), and one goes out at once. The server ends a game whose start
+# such a host hasn't confirmed within 30 s.
+{"t":"hello","match":1,"token":"00112233445566778899aabbccddeeff","pid":4242,"build":"dgsim c1","features":["rules","rules2","maprules","maprules2","longlines","startack"]}
+{"t":"reportGMSUpdate","phase":"loading","elapsedMs":21034,"players":[],"started":true}

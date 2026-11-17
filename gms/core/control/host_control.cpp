@@ -96,7 +96,15 @@ void HostControl::Poll(int64_t nowMs) {
       startRules_ = sg->rules;  // RULES1
       startFill_ = sg->fillTeams;
       startPool_ = sg->poolClasses;  // RULES3
+      startVictory_ = sg->victory;   // WINBIND-B
       if (sg->fillTeams) game_.fillTeams = *sg->fillTeams;  // the lobby's bots setting replaces createGame's
+      // CTLLINE: a host that names kFeatureStartAck confirms the start at once (every later update carries it too);
+      // dgserver ends a game whose start isn't confirmed within 30 s
+      if (AcksStart()) {
+        GMSUpdate u = Update(nowMs);
+        if (SendMsg(u)) Log("control: -> " + Line(u) + " (the start confirmed)");
+        nextBeatMs_ = nowMs + o_.heartbeatMs;
+      }
     } else if (auto* rp = std::get_if<RemovePlayer>(&m)) {
       removed_.push_back(*rp);
     } else if (auto* pr = std::get_if<PlayerRewards>(&m)) {
@@ -167,12 +175,22 @@ bool HostControl::SendMsg(const Message& m) {
   return true;
 }
 
-void HostControl::Heartbeat(int64_t nowMs) {
+bool HostControl::AcksStart() const {
+  const std::vector<std::string>& f = client_.Features();
+  return std::find(f.begin(), f.end(), kFeatureStartAck) != f.end();
+}
+
+GMSUpdate HostControl::Update(int64_t nowMs) const {
   GMSUpdate u;
   u.phase = phase_;
   u.elapsedMs = nowMs - startMs_;
   u.players = players_;
-  SendMsg(u);
+  u.started = started_ && AcksStart();  // CTLLINE
+  return u;
+}
+
+void HostControl::Heartbeat(int64_t nowMs) {
+  SendMsg(Update(nowMs));
   nextBeatMs_ = nowMs + o_.heartbeatMs;
 }
 
@@ -201,10 +219,7 @@ void HostControl::PlayerGone(int64_t user, const std::string& reason) {
 void HostControl::SetPhase(const std::string& phase, int64_t nowMs) {
   if (phase == phase_) return;
   phase_ = phase;
-  GMSUpdate u;
-  u.phase = phase_;
-  u.elapsedMs = nowMs - startMs_;
-  u.players = players_;
+  const GMSUpdate u = Update(nowMs);
   if (SendMsg(u)) Log("control: -> " + Line(u));
   nextBeatMs_ = nowMs + o_.heartbeatMs;
 }

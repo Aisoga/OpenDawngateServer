@@ -123,6 +123,14 @@ struct Encoder {
     if (m.shaperSelect) o.Set("shaperSelect", Json::Bool(true));
     if (m.fillTeams != 0) o.Set("fillTeams", Json::Int(m.fillTeams));  // B10d
     if (m.levelFlags != 0) o.Set("levelFlags", Json::Int(m.levelFlags));  // HOLIDAY1
+    if (!m.mapRules.Empty()) {  // MAPRULES4 (Go: a pointer, omitempty; each member omitempty)
+      Json r = Json::Object();
+      if (m.mapRules.kills != 0) r.Set("kills", Json::Int(m.mapRules.kills));
+      if (m.mapRules.minutes != 0) r.Set("minutes", Json::Int(m.mapRules.minutes));
+      if (m.mapRules.startLevel != 0) r.Set("startLevel", Json::Int(m.mapRules.startLevel));
+      if (m.mapRules.bindings != 0) r.Set("bindings", Json::Int(m.mapRules.bindings));  // WINBIND-B
+      o.Set("mapRules", std::move(r));
+    }
   }
   void operator()(const GameReady& m) { o.Set("port", Json::Int(m.port)); }
   void operator()(const AddPlayer& m) { o.Set("user", Json::Int(m.user)).Set("index", Json::Int(m.index)); }
@@ -134,6 +142,7 @@ struct Encoder {
     Json players = Json::Array();
     for (int64_t p : m.players) players.Push(Json::Int(p));
     o.Set("players", std::move(players));
+    if (m.started) o.Set("started", Json::Bool(true));  // CTLLINE (Go: omitempty)
   }
   void operator()(const PlayerFinish& m) {
     o.Set("user", Json::Int(m.user));
@@ -150,6 +159,7 @@ struct Encoder {
   void operator()(const FinishGame& m) {
     o.Set("winnerTeam", Json::Int(m.winnerTeam)).Set("durationMs", Json::Int(m.durationMs));
     o.Set("reason", Json::Str(m.reason));
+    if (!m.bindings.empty()) o.Set("bindings", IntList(m.bindings));  // WINBIND-B (Go: omitempty)
   }
   void operator()(const GMSError& m) {
     o.Set("code", Json::Int(m.code)).Set("text", Json::Str(m.text)).Set("fatal", Json::Bool(m.fatal));
@@ -170,10 +180,18 @@ struct Encoder {
       Json r = Json::Object();
       r.Set("pick", Json::Str(m.rules->pick)).Set("shaperPool", Json::Str(m.rules->shaperPool));
       r.Set("shop", Json::Str(m.rules->shop)).Set("itemPool", Json::Str(m.rules->itemPool));
+      if (!m.rules->victory.empty()) r.Set("victory", Json::Str(m.rules->victory));  // WINLOBBY (Go: omitempty)
       o.Set("rules", std::move(r));
     }
     if (m.fillTeams) o.Set("fillTeams", Json::Int(*m.fillTeams));  // RULES1: 0 is written (no bots)
     if (!m.poolClasses.empty()) o.Set("poolClasses", StrList(m.poolClasses));  // RULES3 (Go: omitempty)
+    if (m.victory) {  // WINBIND-B (Go: a pointer, omitempty; each member omitempty)
+      Json v = Json::Object();
+      if (m.victory->kills != 0) v.Set("kills", Json::Int(m.victory->kills));
+      if (m.victory->minutes != 0) v.Set("minutes", Json::Int(m.victory->minutes));
+      if (m.victory->bindings != 0) v.Set("bindings", Json::Int(m.victory->bindings));
+      o.Set("victory", std::move(v));
+    }
   }
   // M18: gmshost.SeatStats' fields in order; stats and sources only when not empty, slot only when set (omitempty)
   void operator()(const SeatStats& m) {
@@ -620,6 +638,19 @@ bool Decode(std::string_view line, Message& out, std::string* err) {
     if (f.err.empty()) f.Bool("shaperSelect", m.shaperSelect);
     if (f.err.empty()) f.Int("fillTeams", m.fillTeams);  // B10d
     if (f.err.empty()) f.Int("levelFlags", m.levelFlags);  // HOLIDAY1
+    const Json* mr = o.Find("mapRules");  // MAPRULES4: absent or null = no map rules
+    if (f.err.empty() && mr && !mr->IsNull()) {
+      if (!mr->IsObject()) {
+        f.Bad("mapRules", "an object");
+      } else {
+        Fields rf{*mr, {}};
+        rf.Int("kills", m.mapRules.kills);
+        rf.Int("minutes", m.mapRules.minutes);
+        rf.Int("startLevel", m.mapRules.startLevel);
+        rf.Int("bindings", m.mapRules.bindings);  // WINBIND-B
+        if (!rf.err.empty()) f.err = "mapRules: " + rf.err;
+      }
+    }
     out = std::move(m);
   } else if (type == "gameReady") {
     GameReady m;
@@ -636,6 +667,7 @@ bool Decode(std::string_view line, Message& out, std::string* err) {
   } else if (type == "reportGMSUpdate") {
     GMSUpdate m;
     f.Str("phase", m.phase); f.Int("elapsedMs", m.elapsedMs); f.IntList("players", m.players);
+    if (f.err.empty()) f.Bool("started", m.started);  // CTLLINE
     out = std::move(m);
   } else if (type == "playerFinish") {
     PlayerFinish m;
@@ -647,6 +679,7 @@ bool Decode(std::string_view line, Message& out, std::string* err) {
   } else if (type == "finishGame") {
     FinishGame m;
     f.Int("winnerTeam", m.winnerTeam); f.Int("durationMs", m.durationMs); f.Str("reason", m.reason);
+    if (f.err.empty()) f.IntList("bindings", m.bindings);  // WINBIND-B: absent or null = no Binding race
     out = std::move(m);
   } else if (type == "reportGMSError") {
     GMSError m;
@@ -694,6 +727,7 @@ bool Decode(std::string_view line, Message& out, std::string* err) {
         rf.Str("shaperPool", r.shaperPool);
         rf.Str("shop", r.shop);
         rf.Str("itemPool", r.itemPool);
+        rf.Str("victory", r.victory);  // WINLOBBY: the win condition's id (the numbers are "victory" below)
         if (!rf.err.empty()) {
           f.err = "rules: " + rf.err;
         } else {
@@ -707,6 +741,23 @@ bool Decode(std::string_view line, Message& out, std::string* err) {
       if (f.Int("fillTeams", n)) m.fillTeams = n;
     }
     if (f.err.empty()) f.StrList("poolClasses", m.poolClasses);  // RULES3: absent or null = no pool
+    const Json* vic = o.Find("victory");  // WINBIND-B: absent or null = Guardian only
+    if (f.err.empty() && vic && !vic->IsNull()) {
+      if (!vic->IsObject()) {
+        f.Bad("victory", "an object");
+      } else {
+        Fields vf{*vic, {}};
+        StartGame::Victory v;
+        vf.Int("kills", v.kills);
+        vf.Int("minutes", v.minutes);
+        vf.Int("bindings", v.bindings);
+        if (!vf.err.empty()) {
+          f.err = "victory: " + vf.err;
+        } else {
+          m.victory = v;
+        }
+      }
+    }
     out = std::move(m);
   } else if (type == "playerKarma") {
     PlayerKarma m;

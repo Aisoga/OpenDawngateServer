@@ -34,8 +34,9 @@ constexpr int kStepSec = 60;          // one timeline sample per match minute
 constexpr int kMaxSamples = 180;      // three hours
 constexpr int kMaxEvents = 300;
 constexpr int kMaxSources = 24;       // seatStats.sources, the largest first (MSTATS3: the rest folded into `other`)
-// A control line must stay under the 64-KiB MaxLine (a longer one ends the host's control connection); the timeline is
-// trimmed to this size: events first (kills, then wells, structures, the end), then every second sample.
+// The timeline's line stays under 64 KiB (control::kLegacyMaxLine, the line limit of a server from before the 1-MiB
+// kMaxLine, which ends the host's control connection at a longer line); the timeline is trimmed to this size: events
+// first (kills, then wells, structures, the end), then every second sample.
 constexpr std::size_t kLineBudget = 48 * 1024;
 
 // The damage descriptors the stats read (gms/core/damage/rules.h has the full set).

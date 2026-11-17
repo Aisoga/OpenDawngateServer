@@ -66,6 +66,7 @@
 #include "perks.h"
 #include "refund.h"
 #include "replicate.h"
+#include "maprules.h"
 #include "shoprules.h"
 #include "surrender.h"
 #include "script/roster_shaper.h"
@@ -4807,6 +4808,9 @@ bool GmsHostStart(void* sim, void* levelAsset, const char* levelName, unsigned s
     HostOptionString("rules_shop", "", rulesShop, sizeof rulesShop);
     HostOptionString("rules_item_pool", "", rulesPool, sizeof rulesPool);
     shoprules::Configure(rulesShop, rulesPool);
+    // MAPRULES4: the map rules' test overrides (0 = createGame's mapRules)
+    maprules::Configure(HostOptionInt("map_kills", 0), HostOptionInt("map_minutes", 0), HostOptionInt("start_level", 0),
+                        HostOptionInt("map_bindings", 0));
     cmds::Install(co);
     char commandsFile[MAX_PATH];
     HostOptionString("commands_file", "", commandsFile, sizeof commandsFile);

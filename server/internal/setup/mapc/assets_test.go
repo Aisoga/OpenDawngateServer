@@ -187,6 +187,31 @@ func madeUpAssetData(t *testing.T) []byte {
 		madeUpMarker("follower_icon.Noun", 1313, 260, 243, 0.5),
 		madeUpMarker("follower_icon.Noun", 1314, 273, 270, 0.5),
 	}, "group", "none", "weight", float32(1)))
+	// the tuning level's tuning assets (MAPRULES2, tuning.go): made-up values for the members a map's rules compile
+	// and a few they must keep; the rest reads as zero
+	f := func(v float32) any { return v }
+	tower := func(respawn float32, adjust int64) *assetdata.Object {
+		return obj("respawnTime", f(respawn), "augmentation", []any{obj("name", "made_up_boost")},
+			"laneAgentRespawnCounterAdjustment", adjust)
+	}
+	write("Made_Up.LevelGameplayTuning", obj("deathTimeBase", f(15), "deathTimePerLevel", f(0.5),
+		"deathTimePerMinute", f(1.25), "minionSpawnDelay1", f(60), "minionSpawnInterval1", f(30),
+		"surrenderEnableOn_MatchTimeInMinutes", int64(20), "surrenderEnableOn_Economy", f(20000),
+		"surrenderEnableOn_Kills", int64(19), "surrenderEnableOn_DisconnectionTimeInSeconds", int64(300),
+		"surrenderVoteSuccessThreshold", f(0.666), "goldMineCaptureDurationInSeconds", []any{f(16), f(14), f(12)},
+		"goldMineCaptureAwardGoldPerPlayer", f(50), "goldMineLockedDurationFirstInSeconds", f(900),
+		"goldMineLockedDurationInSeconds", f(240), "goldMinedPerMinute", f(0), "goldMinedPerMinutePerFollower", f(1.5),
+		"goldMineBountyPercentage", f(0.5), "tower", []any{tower(1e8, -1), tower(600, 0)}, "towerRespawnEnabled", false,
+		"nubRespawnTime", f(480)))
+	write("Made_Up.RewardsTuning", obj("startingGold", f(500), "passiveStartDelayInSeconds", f(60), "passiveGold", f(100),
+		"playerKillStreakGold", []any{f(300), f(350)}, "playerDeathStreakGold", []any{f(300), f(270)},
+		"playerXPLevelGold", []any{f(0)}, "playerLowerLevelGoldMultiplier", []any{f(1), f(0.9)},
+		"firstBloodGoldReward", f(100)))
+	level := func(xp float32, points uint64) *assetdata.Object {
+		return obj("xpRequired", f(xp), "abilityPointsGranted", points, "spellPointsGranted", uint64(0))
+	}
+	write("Made_Up.LevelUpTuning", obj("Level", []any{level(0, 0), level(0, 1), level(260, 1), level(610, 1)},
+		"maxAbilityRank", uint64(5)))
 	return snap.Pack(files)
 }
 
@@ -493,6 +518,72 @@ func TestGameAssets(t *testing.T) {
 		for _, n := range as.Names {
 			if !bytes.Contains(cat, []byte(n+"\x00")) {
 				t.Errorf("the catalog archive lacks %s", n)
+			}
+		}
+	}
+	// MAPRULES2: each tuning level's shipped values are ShippedTuning's; a map with every rule gets its own three
+	// tuning assets, copies of the level's with the rules' values (the rest equal), and the catalog takes them
+	for _, level := range SharedLevels {
+		lt, err := ReadLevelTuning(in.AssetData, level, rulesOf(everyMember))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d := lt.Defaults(); d != ShippedTuning[level] {
+			t.Errorf("%s: the copy's defaults %+v, ShippedTuning %+v", level, d, ShippedTuning[level])
+		}
+		m := ring(t)
+		m.Tuning, m.Rules = level, rulesOf(everyMember)
+		r, cm := Check(m, nil)
+		if !r.OK {
+			t.Fatalf("%+v", r.Findings)
+		}
+		as, err := cm.Assets(in.AssetData, madeUpBounds)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checkAssets(t, m, as)
+		changed := map[string]bool{}
+		for _, c := range lt.Constants() {
+			if c.Value != nil {
+				changed[c.Asset+" "+strings.Split(c.Member, "[")[0]] = true
+			}
+		}
+		var names []string
+		for n := range changed {
+			names = append(names, n)
+		}
+		t.Logf("%s: %d constants, changed %v", level, len(lt.Constants()), names)
+		for _, k := range TuningKinds {
+			n := TuningAsset(m.Name, k.Class)
+			if text(as.Values[m.Name+".Level"], k.LevelMember) != n {
+				t.Errorf("%s: the Level's %s", level, k.LevelMember)
+			}
+			if a, b := assetdata.AppendJSON(nil, as.Values[n]), assetdata.AppendJSON(nil, lt.Compiled[k.Class]); !bytes.Equal(a, b) {
+				t.Errorf("%s: %s isn't ReadLevelTuning's", level, n)
+			}
+		}
+		if !changed["LevelGameplayTuning tower"] || !changed["LevelUpTuning Level"] || !changed["RewardsTuning firstBloodGoldReward"] ||
+			changed["LevelGameplayTuning goldMineCaptureDurationInSeconds"] || changed["LevelGameplayTuning nubRespawnTime"] ||
+			changed["RewardsTuning playerLowerLevelGoldMultiplier"] || changed["LevelGameplayTuning surrenderEnableOn_Kills"] {
+			t.Errorf("%s: changed %v", level, names)
+		}
+		arch, err := botprofiles.Build(in.AssetData, Catalog(m))
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, err := snap.Parse(arch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cat []byte
+		for _, en := range a.Entries {
+			if en.Name == botprofiles.Catalog {
+				cat, _ = a.Read(en)
+			}
+		}
+		for _, k := range TuningKinds {
+			if !bytes.Contains(cat, []byte(TuningAsset(m.Name, k.Class)+"\x00")) {
+				t.Errorf("%s: the catalog archive lacks %s", level, k.Class)
 			}
 		}
 	}

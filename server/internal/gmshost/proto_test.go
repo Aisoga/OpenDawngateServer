@@ -301,12 +301,54 @@ func TestLineReader(t *testing.T) {
 	if _, err := r.Next(); err != io.EOF {
 		t.Errorf("end: %v", err)
 	}
-	r = NewLineReader(strings.NewReader(strings.Repeat("x", MaxLine) + "\n" + strings.Repeat("y", MaxLine+1) + "\n"))
-	if line, err := r.Next(); err != nil || len(line) != MaxLine {
+	// CTLLINE: PreAuthMaxLine until SetMax; then a 1 MiB line (MaxLine) passes, with "\r\n" too, and one byte more
+	// ends the reader
+	hello := `{"t":"hello"}`
+	r = NewLineReader(strings.NewReader(hello + "\n" + strings.Repeat("x", MaxLine) + "\r\n" + strings.Repeat("y", MaxLine+1) +
+		"\nz\n"))
+	if r.Max() != PreAuthMaxLine {
+		t.Errorf("first limit %d", r.Max())
+	}
+	if line, err := r.Next(); err != nil || string(line) != hello {
+		t.Fatalf("hello: %q, %v", line, err)
+	}
+	r.SetMax(MaxLine)
+	if line, err := r.Next(); err != nil || len(line) != MaxLine || line[len(line)-1] != 'x' {
 		t.Errorf("MaxLine: %d, %v", len(line), err)
 	}
-	if _, err := r.Next(); !errors.Is(err, bufio.ErrTooLong) {
+	if _, err := r.Next(); !errors.Is(err, ErrTooLong) || !errors.Is(err, bufio.ErrTooLong) {
 		t.Errorf("too long: %v", err)
+	}
+	if _, err := r.Next(); !errors.Is(err, ErrTooLong) {
+		t.Errorf("after a line too long: %v (the reader ends)", err)
+	}
+	// before SetMax a line over PreAuthMaxLine is too long, one of PreAuthMaxLine is not; the last line without its
+	// newline counts too
+	r = NewLineReader(strings.NewReader(strings.Repeat("a", PreAuthMaxLine) + "\n" + strings.Repeat("b", PreAuthMaxLine+1)))
+	if line, err := r.Next(); err != nil || len(line) != PreAuthMaxLine {
+		t.Errorf("PreAuthMaxLine: %d, %v", len(line), err)
+	}
+	if _, err := r.Next(); !errors.Is(err, ErrTooLong) {
+		t.Errorf("over PreAuthMaxLine: %v", err)
+	}
+	// a long line in small pieces (a slow peer) is read whole; the limit holds for what is buffered already
+	pr, pw := io.Pipe()
+	go func() {
+		long := strings.Repeat("p", 200<<10)
+		for i := 0; i < len(long); i += 1000 {
+			pw.Write([]byte(long[i:min(i+1000, len(long))]))
+		}
+		pw.Write([]byte("\nshort\n"))
+		pw.Close()
+	}()
+	r = NewLineReader(pr)
+	r.SetMax(MaxLine)
+	if line, err := r.Next(); err != nil || len(line) != 200<<10 {
+		t.Errorf("200 KiB in pieces: %d, %v", len(line), err)
+	}
+	r.SetMax(4)
+	if _, err := r.Next(); !errors.Is(err, ErrTooLong) {
+		t.Errorf("lowered limit: %v", err)
 	}
 }
 

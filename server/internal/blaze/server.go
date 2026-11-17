@@ -157,6 +157,11 @@ type Server struct {
 	// TestRules are every new custom game's starting rules (dgserver --test-rules, a test aid: rules without the lobby's
 	// panel); nil = the standard game. lobbyrules.go.
 	TestRules *rules.Combination
+	// RulePresets are the operator's presets beside the built-in ones (dgserver --rule-presets, Start-Server.ini's
+	// rule_presets; nil: the built-in ones only), DefaultRules a preset's id every custom game's lobby starts with on a
+	// map that suggests none (--default-rules; "" = the standard game). RULES6, lobbypreset.go.
+	RulePresets  *rules.Library
+	DefaultRules string
 	// TestRoles give startGame's humans declared roles (dgserver --test-roles, a test aid for DRAFT3's role preset
 	// without the draft): the k-th human of the roster without a role gets TestRoles[k mod len]. roles.go.
 	TestRoles []string

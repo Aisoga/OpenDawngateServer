@@ -46,10 +46,11 @@ func TestRulesFeedbackMadeUp(t *testing.T) {
 	}
 	alone, _ := Build(in, ring, grove)
 	entries, base := catalogOf(t, out), catalogOf(t, alone)
-	if len(entries) != len(base)+len(RulesFeedbackDefs) {
+	defs := append(append([]FeedbackDef(nil), RulesFeedbackDefs...), MapRulesFeedbackDefs...) // MAPRULES4's after them
+	if len(entries) != len(base)+len(defs) {
 		t.Fatalf("%d catalog entries, without the rules %d", len(entries), len(base))
 	}
-	for i, d := range RulesFeedbackDefs { // "match rules" sorts after the CM_ maps
+	for i, d := range defs { // "match rules" sorts after the CM_ maps
 		e := entries[len(base)+i]
 		if field(e, "assetNameType") != d.Name+".ClientFeedbackDef" || field(e, "typeCrc") != uint64(0x400C7E8D) ||
 			field(e, "sourceFileNameType") != "ClientFeedback/"+d.Name+".ClientFeedbackDef" ||
@@ -58,13 +59,13 @@ func TestRulesFeedbackMadeUp(t *testing.T) {
 		}
 	}
 	files, files0 := archiveFiles(t, out), archiveFiles(t, alone)
-	if len(files) != len(files0)+len(RulesFeedbackDefs) {
+	if len(files) != len(files0)+len(defs) {
 		t.Errorf("%d files, without the rules %d", len(files), len(files0))
 	}
 	ts, _ := assetdata.Embedded()
 	typ := ts.Type("ClientFeedbackDef")
 	le := binary.LittleEndian
-	for i, d := range RulesFeedbackDefs {
+	for i, d := range defs {
 		b, ok := files["AssetData/Binary/"+d.Name+".ClientFeedbackDef.bin"]
 		if !ok {
 			t.Fatalf("no file for %s", d.Name)
@@ -76,9 +77,15 @@ func TestRulesFeedbackMadeUp(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", d.Name, err)
 		}
-		for k, want := range map[string]any{"priority": uint64(300), "channel": "character", "lifetime": uint64(3000),
+		want := map[string]any{"priority": uint64(300), "channel": "character", "lifetime": uint64(3000),
 			"cooldown": uint64(2000), "cooldownPerObject": false, "textType": "normal", "showTextInAlert": true,
-			"chatMessageFilterType": "unfiltered", "doNotQueue": false, "pingMinimap": false, "soundID": nil} {
+			"chatMessageFilterType": "unfiltered", "doNotQueue": false, "pingMinimap": false, "soundID": nil}
+		key := 0x5E70E001 + uint32(i)
+		if i >= len(RulesFeedbackDefs) { // MAPRULES4: an announcement, paced by the host
+			want["priority"], want["channel"], want["lifetime"] = uint64(1000), "announcer", uint64(4000)
+			key = 0x5E70E010 + uint32(i-len(RulesFeedbackDefs))
+		}
+		for k, want := range want {
 			if got := field(v, k); got != want {
 				t.Errorf("%s: %s = %v, want %v", d.Name, k, got, want)
 			}
@@ -87,7 +94,7 @@ func TestRulesFeedbackMadeUp(t *testing.T) {
 			t.Errorf("%s: textLocaleKey %s", d.Name, got)
 		}
 		// the Key's hash words before its text pointer: instance, type, group (FNV-1 of labsalerts)
-		if inst, grp := le.Uint32(b[0x14:]), le.Uint32(b[0x1C:]); inst != 0x5E70E001+uint32(i) || grp != 0xB6F72728 {
+		if inst, grp := le.Uint32(b[0x14:]), le.Uint32(b[0x1C:]); inst != key || grp != 0xB6F72728 {
 			t.Errorf("%s: key hashes %08x/%08x", d.Name, inst, grp)
 		}
 		if again, err := ts.Write(typ, v, assetdata.WriteOptions{}); err != nil || !bytes.Equal(again, b) {

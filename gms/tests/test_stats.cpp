@@ -507,11 +507,11 @@ GMS_TEST(StatsTimelineBudget) {
   for (int m = 1; m <= kMaxSamples; ++m) acc.Sample(m * 60.0, seats);
   for (int i = 0; i < 150; ++i) acc.OnPlayerKill(10000000 + i, 1, 1, 7);
   for (int i = 0; i < 150; ++i) acc.OnStructure(10700000 + i, 2, 16);
-  // untrimmed: over the budget (and close to MaxLine)
-  ctl::MatchTimeline raw = acc.BuildTimeline(ctl::kMaxLine * 2);
+  // untrimmed: over the budget (and close to the 64-KiB line limit of an older server)
+  ctl::MatchTimeline raw = acc.BuildTimeline(ctl::kLegacyMaxLine * 2);
   const std::size_t rawBytes = ctl::Encode(raw).size();
   CHECK(rawBytes > kLineBudget);
-  CHECK(rawBytes < ctl::kMaxLine);
+  CHECK(rawBytes < ctl::kLegacyMaxLine);
   TrimReport r;
   const ctl::MatchTimeline tl = acc.BuildTimeline(kLineBudget, &r);
   const std::size_t bytes = ctl::Encode(tl).size();

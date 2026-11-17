@@ -35,6 +35,13 @@ type matchResult struct {
 	At         time.Time
 	Players    []resultPlayer
 	Bots       [2]int // per team (the host's fill rule: botSeats)
+	// Kills are the teams' kills at the end (teamKillsLocked; KillsKnown false when they aren't known): the score of a
+	// map's own victory (MAPRULES5)
+	Kills      [2]int64
+	KillsKnown bool
+	// Bindings are finishGame's bindings (each team's destructions of enemy Bindings; nil when no Binding race ran):
+	// the Binding race's score (WINBIND-B)
+	Bindings []int
 }
 
 // resultPlayer is one human of a finished match.
@@ -103,6 +110,10 @@ func (hg *hostedGame) postResult(f gmshost.FinishGame, matchID int64) {
 	hg.mu.Unlock()
 	x := recentResultOf(r, hg.s.Content)
 	x.MatchID = matchID
+	if mapEndReason(r.Reason) && (r.WinnerTeam == 1 || r.WinnerTeam == 2) { // WINBIND-B: a map rule's words, logged
+		hg.s.Log.Logf("blaze", "   game %d: result %q", hg.game.ID,
+			resultHow(r.Reason, r.WinnerTeam, r.Kills, r.KillsKnown, r.Bindings))
+	}
 	hg.s.recent.add(x)
 	rp := hg.s.results.Load()
 	if rp == nil || rp.Hook == nil {
@@ -125,7 +136,8 @@ func (hg *hostedGame) postResult(f gmshost.FinishGame, matchID int64) {
 func (hg *hostedGame) resultLocked(f gmshost.FinishGame, at time.Time) matchResult {
 	kind, _ := resultKind(hg.mode, hg.game.descriptors())
 	r := matchResult{GameID: hg.game.ID, Kind: kind, Mode: hg.mode, Level: hg.s.gameLevel(hg.game),
-		WinnerTeam: f.WinnerTeam, Reason: f.Reason, Duration: time.Duration(f.DurationMs) * time.Millisecond, At: at}
+		WinnerTeam: f.WinnerTeam, Reason: f.Reason, Duration: time.Duration(f.DurationMs) * time.Millisecond, At: at,
+		Bindings: f.Bindings}
 	var humans [2]int
 	for _, hp := range hg.players {
 		if hp.p.Team < 0 || hp.p.Team > 1 || (hg.custom != nil && !hp.joined) {
@@ -141,6 +153,7 @@ func (hg *hostedGame) resultLocked(f gmshost.FinishGame, at time.Time) matchResu
 		r.Players = append(r.Players, p)
 	}
 	r.Bots = botSeats(hg.fillTeams, hg.game.descriptors(), humans)
+	r.Kills, r.KillsKnown = hg.teamKillsLocked()
 	return r
 }
 
@@ -165,14 +178,7 @@ func resultMessage(r matchResult, names bool, c *content.Content) discordhook.Me
 		if r.WinnerTeam == 2 {
 			e.Color = colorTeam2
 		}
-		switch r.Reason {
-		case "guardian":
-			how = fmt.Sprintf("Team %d's Guardian fell", 3-r.WinnerTeam)
-		case "surrender":
-			how = fmt.Sprintf("Team %d surrendered", 3-r.WinnerTeam)
-		default:
-			how = "the match ended"
-		}
+		how = resultHow(r.Reason, r.WinnerTeam, r.Kills, r.KillsKnown, r.Bindings)
 	} else {
 		e.Title = r.Kind + ": no winner"
 	}
@@ -262,4 +268,31 @@ func capitalize(s string) string {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// resultHow is how a match with a winner ended, for the post's description (before " after 13:25"): "Team 2's
+// Guardian fell", "Team 2 surrendered", and since MAPRULES5 a map's own victory: "Team 1 won the kill race 20–17",
+// "Team 1 won on time 12–9", "Team 1 won in sudden death" (the score only when known); since WINBIND-B "Team 1 won
+// the Binding race 3–1" and, when the Bindings decided the time limit, "Team 1 won on time with more Bindings 2–1"
+// (bindings: finishGame's, nil without a Binding race).
+func resultHow(reason string, winner int, kills [2]int64, known bool, bindings []int) string {
+	score := killScore(winner, kills, known)
+	if reason == ReasonTime && len(bindings) == 2 && bindings[0] != bindings[1] {
+		return fmt.Sprintf("Team %d won on time with more Bindings%s", winner, bindScore(winner, bindings))
+	}
+	switch reason {
+	case "guardian":
+		return fmt.Sprintf("Team %d's Guardian fell", 3-winner)
+	case "surrender":
+		return fmt.Sprintf("Team %d surrendered", 3-winner)
+	case ReasonKills:
+		return fmt.Sprintf("Team %d won the kill race%s", winner, score)
+	case ReasonTime: // the team with more kills when the time limit ran out
+		return fmt.Sprintf("Team %d won on time%s", winner, score)
+	case ReasonSuddenDeath:
+		return fmt.Sprintf("Team %d won in sudden death%s", winner, score)
+	case ReasonBindings:
+		return fmt.Sprintf("Team %d won the Binding race%s", winner, bindScore(winner, bindings))
+	}
+	return "the match ended"
 }

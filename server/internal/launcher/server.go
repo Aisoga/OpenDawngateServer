@@ -207,6 +207,19 @@ show_rating = on
 ; second and the match's events, at most 64 MB a match. For studying how matches are played; off by default.
 match_record = off
 
+; A custom game's lobby rules (the lobby's Rules panel): your own named presets and the setup every lobby starts with.
+;   rule_presets   a file in the data folder (Dawngate-Data\data), e.g. presets.txt, with one preset a line:
+;                    id | Name | rules
+;                  for example  brawl | Bind Brawl | pick=random,shop=onDeath,victory=bind1  (the rules as category=
+;                  option, separated by commas; the hosting guide lists them). A map may suggest a preset by its id,
+;                  default_rules may name one, and the game browser shows a lobby with exactly its rules as
+;                  "[Bind Brawl] <name>". Bad lines are left out (the server's log says why). Empty: none.
+;   default_rules  the preset every custom game's lobby starts with (standard, draft, aram, allRandom or one of
+;                  rule_presets), unless its map suggests another setup; the lobby's admin can still change it.
+;                  Empty: the standard game.
+rule_presets =
+default_rules =
+
 ; Discord channel posts by webhook (the hosting guide, "Discord channel posts"). Whoever has a webhook address
 ; (https://discord.com/api/webhooks/...) can post to its channel: keep this file private. In Discord: Server
 ; Settings, Integrations, Webhooks, New Webhook, choose the channel, Copy Webhook URL. Empty: no posts.
@@ -277,7 +290,7 @@ var serverKeys = []string{"address", "bind", RiskAckKey, "profile", "tunnel", "g
 	"wine", ClientPackageKey, "discord_webhook", "discord_webhook_queue", "discord_webhook_result", "discord_webhook_server", "discord_queue_ping",
 	"discord_ping_cooldown", "discord_ping_min_wait", "discord_names", "discord_queue_edit", "discord_result_modes",
 	"online_count", "online_count_every", "chat_rooms", "match_history_names", "halloween", "map", "custom_maps",
-	"match_record", "rating_leaderboard", "show_rating", "issues"}
+	"match_record", "rating_leaderboard", "show_rating", "issues", "rule_presets", "default_rules"}
 
 // IO is where a launcher talks: the console normally, buffers in tests.
 type IO struct {
@@ -708,7 +721,7 @@ func RunServer(args []string, o IO) int {
 		return 0
 	}
 
-	own := append(append(append(loginFlags, web.Flags()...), DiscordFlags(cfg)...), append(append(append(append(append(OnlineCountFlags(cfg), ChatRoomsFlags(cfg)...), MatchHistoryFlags(cfg)...), HalloweenFlags(cfg)...), append(append(MatchRecordFlags(cfg), RatingFlags(cfg)...), IssuesFlags(cfg)...)...), append(append(MapFlags(cfg), MapsFlags(o.ExeDir)...), ServeMapsFlags(cfg)...)...)...)
+	own := append(append(append(loginFlags, web.Flags()...), DiscordFlags(cfg)...), append(append(append(append(append(OnlineCountFlags(cfg), ChatRoomsFlags(cfg)...), MatchHistoryFlags(cfg)...), HalloweenFlags(cfg)...), append(append(append(MatchRecordFlags(cfg), RatingFlags(cfg)...), IssuesFlags(cfg)...), RulesFlags(cfg)...)...), append(append(MapFlags(cfg), MapsFlags(o.ExeDir)...), ServeMapsFlags(cfg)...)...)...)
 	if clientPackage {
 		own = append(own, "--client-package")
 	}

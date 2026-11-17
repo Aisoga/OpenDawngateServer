@@ -561,9 +561,7 @@ func TestCustomGameShaperSelect(t *testing.T) {
 		t.Errorf("startGame content: %d, %d, %d shapers", len(sg.Roster[0].Shapers), len(sg.Roster[1].Shapers),
 			len(sg.Roster[2].Shapers))
 	}
-	if line, err := gmshost.Encode(sg); err != nil || len(line) > gmshost.MaxLine {
-		t.Errorf("startGame line: %d bytes (%v)", len(line), err)
-	}
+	lineFits(t, "startGame", sg, gmshost.MaxLine/4) // CTLLINE: a full lobby's is TestFullLobbyLinesFit's
 }
 
 // B15b: a custom game's spectator joins the GMS like a player (the host's addPlayer, as the host DLL reports a served

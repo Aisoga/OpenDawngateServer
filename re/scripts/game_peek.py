@@ -43,6 +43,9 @@ slot states, so a live check sees whether a destroyed Binding keeps replaying it
 Since MAPFEEL the line also says whether the tower graphics are initialised at all (0x0154288C: 0 on a level without an
 energy-line tuning, where no Binding's death is shown) and the energy-line count (0x0154288B: 12 on SM_Map_v5, 0 on
 MM_Map_v3).
+Since MAPRULES3 a "tower respawn" line after it: the UI data's mTowerRespawnTime of every slot not standing (the
+return's client time and the seconds left), the client clock, the rebuild animation's length and the
+tower_rebirth_effect handles.
 
 Since D8-live `--postgame [catalogID ...]` prints instead what the post-game left in the client, in any game state: the
 account data's FLAG (bit 0, set by C1 04's FTUE byte), the inventory counts of the given catalogIDs (C1 04's items), and
@@ -102,6 +105,14 @@ FEEDBACK_NAMES = ['PlayerCommCharge', 'PlayerCommCare', 'PlayerCommNo', 'PlayerC
                   'MineUnderAttack',  # the wells' alert: D9b the client's own (a worker hit, keyed to its well)
                   'Rules_ShopClosed', 'Rules_ItemNotAllowed', 'Rules_LightningOnly',  # RULES0b, LIGHTNING1: the rules' lines
                   'OutOfRange']  # the game's own "Out of range." (RULES0b's comparison line)
+# MAPRULES4: a map's own rules' alerts (gms/core/matchflow/maprules.h; announcer channel, cooldown 2 s)
+FEEDBACK_NAMES += ['Rules_' + n for n in (
+    'Race10Ally', 'Race10Enemy', 'Race5Ally', 'Race5Enemy', 'Race3Ally', 'Race3Enemy', 'MatchPointAlly',
+    'MatchPointEnemy', 'RaceTo10', 'RaceTo15', 'RaceTo20', 'RaceTo25', 'RaceTo30', 'RaceTo50', 'RaceToTarget',
+    'TimeLimit', 'LeadAlly', 'LeadEnemy', 'Left10Min', 'Left5Min', 'Left1Min', 'Left30Sec', 'SuddenDeath',
+    # WINBIND-B: the Binding race's
+    'BindRaceTo1', 'BindRaceTo2', 'BindRaceTo3', 'BindRaceTo6', 'BindRaceToTarget', 'BindMatchPointAlly',
+    'BindMatchPointEnemy', 'BindTimeLimit', 'BindSuddenDeath')]
 
 
 def fnv1(text):
@@ -547,6 +558,19 @@ def main():
     say(f'tower graphics: initialised {p.u8(0x0154288C)}, energy lines {p.u8(0x0154288B)}, '
         f'towers per lane {p.u8(0x01542889)} (the UI data has {p.u32(sim + 0xC930 + 0xD0)}), '
         f'slot states {list(slot_states)}')
+    # MAPRULES3: the respawn half of the same line's data: the UI data's mTowerRespawnTime (sim +0xC930 +0x10, u64
+    # [2][2][4], translated to the client clock by the reflection reader; 0 standing, all ones gone, else the return),
+    # the client clock (GameTimeManager_GetTimeMs 0x008F98A0: the game timer at sim +0x1CFD8, its +8), the rebuild
+    # animation's length TowerGraphics_Init read (0x01542884, s; state 2 starts that long before the return) and the
+    # per-slot handles of tower_rebirth_effect (0x01542800). States 2 and 3 fire TowerRespawnWarning and TowerRespawned.
+    times = struct.unpack('<16Q', p.read(sim + 0xC930 + 0x10, 128) or bytes(128))
+    timer = p.u32(sim + 0x1CFD8)
+    clock = struct.unpack('<Q', p.read(timer + 8, 8) or bytes(8))[0] if timer else 0
+    effects = struct.unpack('<16I', p.read(0x01542800, 64) or bytes(64))
+    due = ', '.join(f'slot {i}: ' + ('gone' if t == (1 << 64) - 1 else f'{t} ({(t - clock) / 1000.0:+.1f} s)')
+                    for i, t in enumerate(times) if t)
+    say(f'tower respawn: client clock {clock} ms, rebuild length {p.f32(0x01542884):.2f} s, '
+        f'slots not standing [{due or "none"}], rebirth effects {[hex(e) for e in effects if e]}')
 
     # CAMPICONS: the client's camp list (cBattlegroundsUIData at sim +0xC930: +0x368 entries of 0x18 bytes, +0x36C
     # count; +0 mCampVisibleToTeam, +4 mSpawnMarkerId), what 8D wrote: the minimap draws a camp's icon only while its

@@ -523,6 +523,46 @@ change a package, give every player the new one. The start-up log lists each map
 version`), and each refusal names the player's and yours. Players connecting without the tunnel can't report their
 maps; they are checked as for Anshavar Pass (`--trust-maps`). The lobby's map line and the browser's Map column
 name each map whose package the player has (its `display` name); a map the player lacks has an empty Map column.
+## Custom games' starting rules
+
+A new custom game's lobby starts on the standard rules unless you or its map choose others; its creator can change
+them in the lobby as always (**CHANGE** under **MATCH RULES**).
+
+**Your own presets.** Name sets of rules in a file in `Dawngate-Data\data`, for example `presets.txt`, one a line:
+
+```
+# id | Name | rules
+brawl     | Bind Brawl | pick=random,shop=onDeath,victory=bind1
+meleeOnly | Melee      | shaperPool=melee
+```
+
+and name the file in `Start-Server.ini`: `rule_presets = presets.txt`. The id is 1 to 24 letters, digits, `-` and
+`_`, starting with a letter; the name at most 24 characters, shown in the game browser. The rules are
+`category=option` pairs separated by commas; a category left out keeps its standard option:
+
+| Category | Options (the first is the standard one) |
+|---|---|
+| `pick` | `blind`, `random` (All Random), `draft`, `army` (Army Pick), `clone` (Clone Pick) |
+| `shaperPool` | `all`, `melee`, `ranged`, `tank`, `bruiser`, `carry`, `mage`, `support` |
+| `shop` | `normal`, `onDeath` (Shop on Death) |
+| `itemPool` | `all`, `noLegendary`, `basics`, `lightning` |
+| `victory` | `guardian`, `race10`, `race20`, `race30`, `time15`, `race20time20`, `bind1`, `bind3` (the lobby's Win condition) |
+
+A game whose rules are exactly one of your presets shows in the browser as `[Bind Brawl] <name>`; the lobby's rules
+show it as Custom with its choices (the lobby itself offers Standard, Draft and Custom). The server reads the file at
+its start and logs the presets it took (`lobby presets …`); a line it can't use is left out with the reason
+(`WARNING: lobby presets …: line 3: …`): a line that isn't `id | Name | rules`, an unknown option, an id of a built-in
+preset (`standard`, `draft`, `aram`, `allRandom`) or one used before, or the same rules as an earlier preset. The
+server starts either way.
+
+**The lobby's start.** `default_rules = brawl` (or a built-in id such as `draft`) starts every custom game's lobby
+with that preset. A map can suggest its own start (its maker sets it in the map editor's **Map > Rules...**, under
+*Lobby setup (suggested)*): a game on that map starts with the map's suggestion instead. A suggestion may name a
+preset by its id; a server without that preset starts such lobbies as it starts the others (the log says so at the
+start). Neither applies when the rules can't be played in that game: a shaper pool too small for the bots that fill
+the seats, an option the game's match host can't play. The lobby then starts on the next choice (the map's suggestion, then `default_rules`, then Standard), and the log names the reason (`the map's
+suggested lobby setup "…" isn't used: …`). Each game's start is logged (`the lobby starts with …`).
+
 ## Discord channel posts
 
 The server can post to channels of your Discord server through webhooks. Nothing is posted until you set a webhook address in `Start-Server.ini`.

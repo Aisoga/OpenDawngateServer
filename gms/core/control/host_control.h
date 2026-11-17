@@ -5,8 +5,9 @@
 //   Poll       every tick (never blocks): reads createGame (the roster: which HelloReq user ids are let in, with
 //              which gameplay index and team; the level, seed, game id and since D8-live the descriptors),
 //              removePlayer, abortGame and (D8-live) playerRewards, since B15 a custom game's updateRoster and
-//              startGame (InLobby: the host holds HelloReqs until startGame); sends the heartbeat (reportGMSUpdate every
-//              5 s); notices a connection that ended
+//              startGame (InLobby: the host holds HelloReqs until startGame; since CTLLINE a host that names startack
+//              confirms it with a reportGMSUpdate "started" at once); sends the heartbeat (reportGMSUpdate every 5 s);
+//              notices a connection that ended
 //   Ready      gameReady {port} once the level is loaded and the GMS port listens
 //   PlayerAdded / PlayerGone   addPlayer / disconnectPlayer per GMS connection (the joined users go into every
 //              reportGMSUpdate's players)
@@ -81,6 +82,8 @@ class HostControl {
   const std::optional<int64_t>& StartFillTeams() const { return startFill_; }
   // RULES3: startGame's poolClasses (the shaper pool's PlayerClasses; empty: no pool).
   const std::vector<std::string>& StartPoolClasses() const { return startPool_; }
+  // WINBIND-B: startGame's victory (the lobby's win condition; absent: Guardian only, createGame's mapRules stay).
+  const std::optional<StartGame::Victory>& StartVictory() const { return startVictory_; }
 
   bool AbortRequested() const { return abort_; }
   const std::string& AbortReason() const { return abortReason_; }
@@ -119,6 +122,9 @@ class HostControl {
  private:
   bool SendMsg(const Message& m);
   void Heartbeat(int64_t nowMs);
+  // CTLLINE: the hello named kFeatureStartAck (the update after startGame, and every one after it, says started).
+  bool AcksStart() const;
+  GMSUpdate Update(int64_t nowMs) const;  // the heartbeat's and SetPhase's reportGMSUpdate
   void Log(const std::string& s) const {
     if (log_) log_(s);
   }
@@ -136,6 +142,7 @@ class HostControl {
   std::optional<StartGame::Rules> startRules_;  // RULES1
   std::optional<int64_t> startFill_;
   std::vector<std::string> startPool_;  // RULES3
+  std::optional<StartGame::Victory> startVictory_;  // WINBIND-B
   bool abort_ = false;
   std::string abortReason_;
   bool lost_ = false;

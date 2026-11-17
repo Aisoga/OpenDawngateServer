@@ -26,13 +26,16 @@
 //	go run ./tools/mapc props | nouns ...  (props.go: what a map's props place, the nouns a prop may name)
 //	go run ./tools/mapc textures | texture ...  (textures.go: the copy's textures a ground can name, their pictures)
 //	go run ./tools/mapc import --copy <copy> [--dress] [--name ...] <level> <package>  (import.go: a shipped level as a package)
+//	go run ./tools/mapc tuning [--json] [--copy <copy>] [--level <level>] [--map <map.json>|-]  (tuning.go: a tuning level's values and a map's rules, MAPRULES2)
 //
 // check runs the rule checks: --json prints the report ({"map", "ok", "findings": [{"rule", "severity", "path",
 // "at", "message"}], "stats"}); each finding names the place in map.json it concerns ("base.spawns[2]",
 // "terrain.shapes[4]") and, where it has one, a world position. --copy adds the rules that need the game's catalog
 // (the nouns it names) and stamps the blocking props by their nouns' boxes, as build does. The other installed maps are the package's sibling folders (their names and tags must
 // differ); --maps names another folder of installed maps instead (for checking a draft kept outside it), where a
-// package in a folder of the package's own folder name counts as the package itself.
+// package in a folder of the package's own folder name counts as the package itself. --names runs only the names
+// rules (names.*: name, tag, display, prefix, against the other installed maps; mapc.CheckNames): the editor's New
+// asks it before it writes a package.
 //
 // build makes <out> (a file, or a folder that gets zz_<name>.snap) from the copy's files (the folder with game\);
 // a map that fails a rule isn't built. The PhysX mesh is the shared floor every map uses (shipped with the compiler);
@@ -73,17 +76,19 @@ const API = 1
 
 const usage = `usage:
   mapc version [--json]
-  mapc check   [--json] [--copy <copy>] [--maps <dir>] <package>
+  mapc check   [--json] [--copy <copy>] [--maps <dir>] [--names] <package>
   mapc build   [--json] [--no-mesh] [--maps <dir>] <package> <copy> <out>
   mapc preview [--json] [--copy <copy>] [--maps <dir>] <package> <dir>
   mapc bake    [--json] [--full] [--no-derived] [--maps <dir>] <package> <copy> <dir>
   mapc cook-shared [--json] <physcook.exe> <PhysXCooking.dll>
-  mapc import [--json] [--force] [--dress] --copy <copy> [--name N] [--display D] [--tag T] [--prefix P] <level> <package>`
+  mapc import [--json] [--force] [--dress] --copy <copy> [--name N] [--display D] [--tag T] [--prefix P] <level> <package>
+  mapc tuning [--json] [--copy <copy>] [--level SM_Map_v5|MM_Map_v3] [--map <map.json>|<package>|-]`
 
 type opts struct {
 	json, noMesh bool
 	full         bool // bake: every tile at its own size too
 	noDerived    bool // bake, ground: without the art derived from the gameplay shapes (mapc.Compiled.NoDerived)
+	names        bool // check: only the names rules (mapc.CheckNames), before a package is written under new names
 	copyDir      string
 	mapsDir      string
 	args         []string
@@ -101,6 +106,8 @@ func parse(argv []string) (opts, error) {
 			o.full = true
 		case "--no-derived", "-no-derived":
 			o.noDerived = true
+		case "--names", "-names":
+			o.names = true
 		case "--copy", "-copy":
 			if i+1 == len(argv) {
 				return o, fmt.Errorf("--copy needs a folder")
@@ -146,6 +153,9 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 	}
 	if cmd == "import" { // import.go
 		return runImport(argv[1:], stdout, stderr)
+	}
+	if cmd == "tuning" { // tuning.go
+		return runTuning(argv[1:], stdout, stderr)
 	}
 	o, err := parse(argv[1:])
 	want := map[string]int{"check": 1, "build": 3, "preview": 2, "bake": 3, "cook-shared": 2}
@@ -265,6 +275,14 @@ func (t *tool) check() int {
 	if m == nil {
 		return code
 	}
+	if t.o.names { // the editor's New: the names it was given against the maps folder, nothing rasterised
+		r := mapc.CheckNames(m, others(pkg, t.o.mapsDir))
+		t.report(r)
+		if !r.OK {
+			return 1
+		}
+		return 0
+	}
 	if code := t.resolveProps(m); code != 0 {
 		return code
 	}
@@ -276,15 +294,20 @@ func (t *tool) check() int {
 		}
 		mapc.CheckShipped(m, s, r)
 	}
+	t.report(r)
+	if !r.OK {
+		return 1
+	}
+	return 0
+}
+
+// report writes a check's report: the JSON object with --json, else a line a finding and the verdict.
+func (t *tool) report(r *mapc.Report) {
 	if t.o.json {
 		t.emit(r)
 	} else {
 		t.printReport(r)
 	}
-	if !r.OK {
-		return 1
-	}
-	return 0
 }
 
 func (t *tool) build() int {

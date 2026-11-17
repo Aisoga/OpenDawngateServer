@@ -78,6 +78,7 @@ void ControlClient::Close() {
     wsa_ = false;
   }
   in_.clear();
+  skipping_ = false;
 }
 
 bool ControlClient::Connect(const HostEnv& env, int64_t pid, const std::string& build, int timeoutMs,
@@ -171,38 +172,54 @@ bool ControlClient::Poll(std::vector<Message>& out, std::vector<std::string>* ba
   for (;;) {
     int n = recv(s, buf, sizeof buf, 0);
     if (n > 0) {
-      in_.append(buf, static_cast<size_t>(n));
+      Take(std::string_view(buf, static_cast<size_t>(n)), out, badLines);
       continue;
     }
     if (n == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK) break;
     open = false;  // 0 = orderly close, anything else = broken
     break;
   }
-  size_t start = 0;
-  for (;;) {
-    size_t nl = in_.find('\n', start);
-    if (nl == std::string::npos) break;
-    std::string_view line(in_.data() + start, nl - start);
-    start = nl + 1;
-    if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
-    if (line.find_first_not_of(" \t") == std::string_view::npos) continue;
-    std::string err;
-    Message m;
-    if (line.size() > kMaxLine) {
-      if (badLines) badLines->push_back("line too long");
-    } else if (Decode(line, m, &err)) {
-      out.push_back(std::move(m));
-    } else if (badLines) {
-      badLines->push_back(err);
-    }
-  }
-  in_.erase(0, start);
-  if (in_.size() > kMaxLine) {  // a line without end: the peer is not speaking the protocol
-    if (badLines) badLines->push_back("line too long");
-    open = false;
-  }
   if (!open) Close();
   return open;
+}
+
+void ControlClient::Take(std::string_view data, std::vector<Message>& out, std::vector<std::string>* badLines) {
+  if (skipping_) {  // CTLLINE: the rest of a line over kMaxLine
+    const size_t nl = data.find('\n');
+    if (nl == std::string_view::npos) return;
+    data.remove_prefix(nl + 1);
+    skipping_ = false;
+  }
+  const bool complete = data.find('\n') != std::string_view::npos;  // in_ holds no newline before this
+  in_.append(data.data(), data.size());
+  if (complete) {
+    size_t start = 0;
+    for (;;) {
+      size_t nl = in_.find('\n', start);
+      if (nl == std::string::npos) break;
+      std::string_view line(in_.data() + start, nl - start);
+      start = nl + 1;
+      if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+      if (line.find_first_not_of(" \t") == std::string_view::npos) continue;
+      std::string err;
+      Message m;
+      if (line.size() > kMaxLine) {
+        if (badLines) badLines->push_back("line too long");
+      } else if (Decode(line, m, &err)) {
+        out.push_back(std::move(m));
+      } else if (badLines) {
+        badLines->push_back(err);
+      }
+    }
+    in_.erase(0, start);
+  }
+  // CTLLINE: a line longer than kMaxLine (and its "\r") before its end is dropped now and its rest as it comes; the
+  // connection stays (dgserver never sends one: it holds a line over the host's limit back)
+  if (in_.size() > kMaxLine + 1) {
+    if (badLines) badLines->push_back("line too long");
+    in_.clear();
+    skipping_ = true;
+  }
 }
 
 }  // namespace dggms::control

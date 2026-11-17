@@ -30,6 +30,12 @@ type RecentResult struct {
 	Duration   time.Duration
 	At         time.Time
 	Teams      [2]RecentTeam
+	// Kills is the score of a map's own victory (MAPRULES5: a kill race, a time limit, sudden death): the teams' kills,
+	// nil for any other end or when they aren't known
+	Kills *[2]int64
+	// Bindings is the Binding race's score (WINBIND-B: finishGame's bindings, each team's destructions of enemy
+	// Bindings) when a map's own victory ended a match with a Binding race, else nil
+	Bindings *[2]int
 }
 
 // RecentTeam is one team of a RecentResult.
@@ -59,6 +65,13 @@ func (r *recentResults) add(x RecentResult) {
 func recentResultOf(r matchResult, c *content.Content) RecentResult {
 	x := RecentResult{GameID: r.GameID, Mode: r.Mode, Kind: r.Kind, Level: r.Level, WinnerTeam: r.WinnerTeam,
 		Reason: r.Reason, Duration: r.Duration, At: r.At}
+	if mapEndReason(r.Reason) && r.KillsKnown {
+		k := r.Kills
+		x.Kills = &k
+	}
+	if mapEndReason(r.Reason) && len(r.Bindings) == 2 { // WINBIND-B: the Binding race's score
+		x.Bindings = &[2]int{r.Bindings[0], r.Bindings[1]}
+	}
 	for t := range x.Teams {
 		x.Teams[t].Bots = r.Bots[t]
 		x.Teams[t].Shapers = []string{}

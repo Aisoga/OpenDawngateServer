@@ -4,11 +4,18 @@
 // The custom game lobby's match rules: what everyone sees and what the game's admin changes. LobbyReady owns it, draws
 // it on its overlay and hands it the server's events:
 //     lobby.rulesCatalog {categories: [{id, name, default, options: [{id, name, bots}]}], presets: [{id, name, options}]}
-//     lobby.state's rules {options, preset, text, bots, rated, findings: [{category, message}], canEdit, host}
+//     lobby.state's rules {options, preset, text, bots, rated, findings: [{category, message}], canEdit, host,
+//                          map, mapText, mapUnrated, mapReason,   (the map's own rules: each only when the map has them;
+//                                                                  mapUnrated/mapReason also for the lobby's win condition)
+//                          fixed: [{category, message}]}          (categories the map decides: greyed with the reason)
 //     lobby.setRules {preset[, bots]} | {rules: {<category>: <option>, ...}} | {bots} | {rated}  -> the server
 //
 // Every player sees a summary above the Spirit team: MATCH RULES, the game's type (Standard, Draft, or "Custom: " and
-// the server's text), Rated or Unrated and the bots, and in red, in a short form, that the game can't start like this.
+// the server's text), Rated or Unrated and the bots, on a map with its own rules "Map: " and their short text (dim; a
+// hover shows every rule in words), and in red, in a short form, that the game can't start like this. When the map's
+// kill race or time limit (or the lobby's own win condition) makes the game unrated, the editor's Rated is greyed with
+// the server's reason; a category the server names in "fixed" (the win condition on a map with its own) is greyed
+// whole, no option clickable, its reason in the hint line.
 // The admin also gets CHANGE, which opens the editor over the teams: one row of radio buttons Standard / Draft / Custom;
 // Standard shows the Bots and Rated check boxes, Draft only Rated (the draft has no bots), Custom a column per category
 // with its options as radio buttons, then Bots and Rated; then the findings and a hint line. Custom is the admin's own
@@ -63,7 +70,12 @@ package {
         private static const FRAME:uint = 0x808080;    // the spectator cells' border
 
         private static const LINE_H:int = 19;          // the summary's lines
-        private static const SUMMARY_LINES:int = 4;    // title, rules, bots, findings
+        private static const LINE_H_TIGHT:int = 17;    // with five lines: the top stays clear of the region notice
+        private static const SUMMARY_LINES:int = 4;    // title, rules, bots, findings (and the map's, when it has rules)
+        private static const MAP_LABEL:String = "Map: ";
+        private static const MAP_TEXT_LABEL:String = "This map: ";
+        private static const MAP_UNRATED:String = "Unrated: the map's own victory"; // no reason from the server
+        private static const MAP_TIP_W:int = 360;      // the map line's hover: every rule in words
         private static const TEAM_TITLE_H:int = 34;    // the team titles' row above the first cells (the layout's)
         private static const EA_BUTTON:String = "Button001"; // EA's small dark button (the Leaderboard's Refresh)
         private static const CHANGE_GAP:int = 10;      // between CHANGE and the title's text
@@ -76,7 +88,7 @@ package {
         private static const HEAD_H:int = 26;          // the editor's title row
         private static const COL_HEAD_H:int = 22;
         private static const ROW_H:int = 28;
-        private static const MAX_CATEGORIES:int = 5;   // the catalog has four; the columns share the editor's width
+        private static const MAX_CATEGORIES:int = 5;   // the catalog has five (WINLOBBY's win condition): 156 each
         private static const MAX_OPTIONS:int = 10;     // the shaper pool has 8 (all, melee, ranged, five archetypes)
         private static const MAX_PRESETS:int = 6;
         private static const MAX_FINDINGS:int = 4;
@@ -103,6 +115,14 @@ package {
         private var findings:Array = [];  // {category, message}
         private var canEdit:Boolean = false;
         private var hostTakes:Boolean = true;
+        private var mapShort:String = "";   // the map's rules in a few words ("Race 20 · 15 min · Lv 6"), "" = none
+        private var mapText:String = "";    // every rule of the map in plain words
+        private var mapUnrated:Boolean = false; // the map's kill race or time limit: rated is false, Rated greyed
+        private var mapReason:String = "";  // the sentence beside the greyed Rated
+        private var fixed:Object = {};      // category id -> why the admin can't change it (the server's "fixed")
+        private var fixedNote:String = "";  // those reasons, for the hint line
+        private var lineH:int = LINE_H;     // the summary's line height and its number of line slots (fillSummary)
+        private var lineSlots:int = SUMMARY_LINES;
 
         private var layer:Sprite = null;  // on LobbyReady's overlay
         private var summary:Sprite = null;
@@ -110,6 +130,10 @@ package {
         private var textTf:TextField = null;
         private var botsTf:TextField = null;
         private var findTf:TextField = null;
+        private var mapTf:TextField = null;
+        private var mapHit:Sprite = null;   // under the map line: its hover shows mapTip
+        private var mapTip:Sprite = null;
+        private var mapTipTf:TextField = null;
         private var changeBtn:Sprite = null;
         private var doneBtn:Sprite = null;  // the editor's DONE (EA's button), placed at each draw
         private var doneRight:Number = 0;
@@ -214,6 +238,28 @@ package {
             findings = fs;
             canEdit = r.canEdit === true;
             hostTakes = r.host !== false;
+            mapShort = str(r.map, 48);
+            mapText = str(r.mapText, 400);
+            mapUnrated = r.mapUnrated === true;
+            mapReason = str(r.mapReason, 120);
+            var fx:Object = {};
+            var note:String = "";
+            var nfx:int = 0;
+            for each (var x:Object in r.fixed) {
+                if (x != null && nfx < MAX_CATEGORIES) {
+                    var xc:String = str(x.category, 32);
+                    var xm:String = str(x.message, 80);
+                    if (xc != "" && fx[xc] == null) {
+                        fx[xc] = xm;
+                        if (xm != "" && note.indexOf(xm) < 0) {
+                            note += xm + " ";
+                        }
+                        nfx++;
+                    }
+                }
+            }
+            fixed = fx;
+            fixedNote = note;
             if (!canEdit) {
                 editing = false;
             }
@@ -251,11 +297,19 @@ package {
             if (changeBtn != null) {
                 changeBtn.removeEventListener(MouseEvent.CLICK, onChange);
             }
+            if (mapHit != null) {
+                mapHit.removeEventListener(MouseEvent.ROLL_OVER, onMapOver);
+                mapHit.removeEventListener(MouseEvent.ROLL_OUT, onMapOut);
+            }
             layer = null;
             summary = null;
             rawOptions = null;
             sumW = 0;
-            titleTf = textTf = botsTf = findTf = hintTf = null;
+            titleTf = textTf = botsTf = findTf = mapTf = mapTipTf = hintTf = null;
+            mapHit = mapTip = null;
+            mapShort = mapText = mapReason = fixedNote = "";
+            mapUnrated = false;
+            fixed = {};
             changeBtn = null;
             has = false;
             cats = null;
@@ -324,10 +378,11 @@ package {
                     k.ck.selected = k.on;
                 }
             }
-            // the summary above the Spirit team, right-aligned with it, its last line just above the team titles
+            // the summary above the Spirit team, right-aligned with it, its last line just above the team titles (five
+            // lines are tighter, so its top moves up 9 units only)
             var titleTop:Number = r1.y - TEAM_TITLE_H;
             summary.x = r1.right;
-            summary.y = titleTop - 4 - SUMMARY_LINES * LINE_H;
+            summary.y = titleTop - 4 - lineSlots * lineH;
             // the editor over the two teams, from the team titles down
             if (editor != null) {
                 var w:Number = r1.right - r0.x;
@@ -349,12 +404,58 @@ package {
             textTf = field("$Body", 15, WHITE, "right");
             botsTf = field("$Body", 14, DIM, "right");
             findTf = field("$Body", 14, RED, "right");
+            mapTf = field("$Body", 14, DIM, "right");
+            // the map line's hover area (our own sprite, under the line), and the box it shows
+            mapHit = new Sprite();
+            mapHit.visible = false;
+            mapHit.addEventListener(MouseEvent.ROLL_OVER, onMapOver, false, 0, false);
+            mapHit.addEventListener(MouseEvent.ROLL_OUT, onMapOut, false, 0, false);
+            summary.addChild(mapHit);
             changeBtn = button(CHANGE);
             changeBtn.addEventListener(MouseEvent.CLICK, onChange, false, 0, false);
-            for each (var t:TextField in [titleTf, textTf, botsTf, findTf]) {
+            for each (var t:TextField in [titleTf, textTf, botsTf, mapTf, findTf]) {
                 summary.addChild(t);
             }
             summary.addChild(changeBtn);
+            mapTip = new Sprite();
+            mapTip.mouseEnabled = false;
+            mapTip.mouseChildren = false;
+            mapTip.visible = false;
+            mapTipTf = field("$Body", 13, LIGHT, "left");
+            mapTipTf.multiline = true;
+            mapTipTf.wordWrap = true;
+            mapTipTf.width = MAP_TIP_W - 16;
+            mapTipTf.x = 8;
+            mapTipTf.y = 5;
+            mapTip.addChild(mapTipTf);
+            summary.addChild(mapTip);
+        }
+
+        // the map line's hover: every rule of the map in words, in a box under the line (right-aligned with it)
+        private function onMapOver(e:MouseEvent):void {
+            if (mapTip == null || mapText == "") {
+                return;
+            }
+            if (mapTipTf.text != mapText) {
+                mapTipTf.text = mapText;
+            }
+            mapTipTf.height = mapTipTf.textHeight + 6;
+            var h:Number = mapTipTf.height + 10;
+            var g:Graphics = mapTip.graphics;
+            g.clear();
+            g.lineStyle(1, FRAME, 0.8);
+            g.beginFill(0x0A0A0C, 0.94);
+            g.drawRect(0, 0, MAP_TIP_W, h);
+            g.endFill();
+            mapTip.x = -MAP_TIP_W;
+            mapTip.y = mapTf.y + lineH + 2;
+            mapTip.visible = true;
+        }
+
+        private function onMapOut(e:MouseEvent):void {
+            if (mapTip != null) {
+                mapTip.visible = false;
+            }
         }
 
         // a button's size: its own once it has one (a CLIK button may draw a frame later), else the fallback's
@@ -370,12 +471,24 @@ package {
             setLine(titleTf, TITLE, 0, 0, sumW);
             var r:Rectangle = sizeOf(changeBtn);
             changeBtn.x = -(titleTf.textWidth + 4) - CHANGE_GAP - r.width;
-            changeBtn.y = Math.round((LINE_H - r.height) / 2);
+            changeBtn.y = Math.round((lineH - r.height) / 2);
         }
 
         // the summary's lines, right-aligned at x 0 of the summary sprite (the Spirit team's right edge)
         private function fillSummary():void {
             var w:Number = sumW;
+            var f:String = "";
+            if (findings.length > 0) {
+                // a short form that fits, the same for everyone: the reasons are long, and the editor has them in full
+                f = INCOMPATIBLE;
+            } else if (!hostTakes) {
+                f = OLD_HOST;
+            }
+            // the lines: title, type, rated and bots, the map's (when it has rules), the findings' (when there are any),
+            // packed from the top of four slots; a fifth line makes them tighter (the top moves up 9 units, not 19)
+            var n:int = 3 + (mapShort != "" ? 1 : 0) + (f != "" ? 1 : 0);
+            lineH = n > SUMMARY_LINES ? LINE_H_TIGHT : LINE_H;
+            lineSlots = Math.max(n, SUMMARY_LINES);
             changeBtn.visible = canEdit && cats != null;
             placeChange();
             // the type as the server's state has it (the admin's sticky Custom is the editor's only): a combination
@@ -387,19 +500,30 @@ package {
             } else if (cats != null && t != "") {
                 t = CUSTOM + ": " + t;
             }
-            setLine(textTf, t, 0, LINE_H, w);
+            setLine(textTf, t, 0, lineH, w);
             fit(textTf, 15, w);
             var b:String = bots ? BOTS_ON : BOTS_OFF;
             setLine(botsTf, hasRated ? (rated ? RATED : UNRATED) + ", " + b : b.charAt(0).toUpperCase() + b.substr(1),
-                    0, 2 * LINE_H, w);
-            var f:String = "";
-            if (findings.length > 0) {
-                // a short form that fits, the same for everyone: the reasons are long, and the editor has them in full
-                f = INCOMPATIBLE;
-            } else if (!hostTakes) {
-                f = OLD_HOST;
+                    0, 2 * lineH, w);
+            var next:int = 3;
+            setLine(mapTf, mapShort != "" ? MAP_LABEL + mapShort : "", 0, next * lineH, w);
+            fit(mapTf, 14, w);
+            if (mapShort != "") {
+                next++;
             }
-            setLine(findTf, f, 0, 3 * LINE_H, w);
+            // the map line's hover area: the line's text, right-aligned (only when there are words to show)
+            mapHit.visible = mapShort != "" && mapText != "";
+            var hg:Graphics = mapHit.graphics;
+            hg.clear();
+            if (mapHit.visible) {
+                var tw:Number = Math.min(w, mapTf.textWidth + 8);
+                hg.beginFill(0xFFFFFF, 0.01); // invisible, but it takes the pointer
+                hg.drawRect(-tw, mapTf.y + 2, tw, lineH);
+                hg.endFill();
+            } else {
+                mapTip.visible = false;
+            }
+            setLine(findTf, f, 0, next * lineH, w);
             findTf.textColor = findings.length > 0 ? RED : DIM;
             fit(findTf, 14, w);
         }
@@ -541,14 +665,16 @@ package {
                 for each (var c:Object in cats) {
                     x = PAD + col * colW;
                     col++;
-                    header(c.name, x, y, colW, bad[c.id] === true);
+                    // a category the server fixes (the map decides it): greyed whole, nothing ticked, no action
+                    var isFixed:Boolean = fixed[c.id] != null;
+                    header(c.name, x, y, colW, bad[c.id] === true, isFixed);
                     var r:int = 0;
                     for each (var o:Object in c.options) {
-                        var on:Boolean = options[c.id] == o.id;
+                        var on:Boolean = !isFixed && options[c.id] == o.id;
                         var noBots:Boolean = bots && !o.bots && o.id != c.def;
                         dimmed = dimmed || noBots;
-                        row(x, y + COL_HEAD_H + r * ROW_H, colW, o.name, on, on && bad[c.id] === true, noBots,
-                            {category: c.id, option: o.id}, true);
+                        row(x, y + COL_HEAD_H + r * ROW_H, colW, o.name, on, on && bad[c.id] === true,
+                            noBots || isFixed, isFixed ? null : {category: c.id, option: o.id}, true);
                         r++;
                     }
                     rows = Math.max(rows, r);
@@ -559,10 +685,28 @@ package {
             if (m != DRAFT || bots) {
                 row(PAD, y, TOGGLE_W, BOTS_LABEL, bots, bad["bots"] === true, false, {bots: !bots}, false);
             }
-            if (hasRated) {
+            if (mapUnrated) {
+                // the map's kill race or time limit: unrated for everyone, the admin can't switch it on (no action:
+                // the row takes no click and EA's box is disabled), the server's reason as its label
+                row(PAD + TOGGLE_W + 10, y, TOGGLE_W, mapReason != "" ? mapReason : MAP_UNRATED, false, false, true,
+                    null, false);
+            } else if (hasRated) {
                 row(PAD + TOGGLE_W + 10, y, TOGGLE_W, RATED_LABEL, rated, false, false, {rated: !rated}, false);
             }
             y += ROW_H + 6;
+            // the map's rules in words (the summary's line is the short form)
+            if (mapText != "") {
+                var mt:TextField = field("$Body", 13, LIGHT, "left");
+                mt.multiline = true;
+                mt.wordWrap = true;
+                mt.width = w - 2 * PAD;
+                mt.x = PAD;
+                mt.y = y;
+                mt.text = MAP_TEXT_LABEL + mapText;
+                mt.height = mt.textHeight + 6;
+                editor.addChild(mt);
+                y += mt.height + 2;
+            }
             // the findings, each on its own lines
             if (findings.length > 0) {
                 var ft:TextField = field("$Body", 14, RED, "left");
@@ -598,8 +742,8 @@ package {
             g.lineTo(w, 0);
         }
 
-        private function header(s:String, x:Number, y:Number, w:Number, bad:Boolean):void {
-            var t:TextField = field("$Header", 14, bad ? RED : DIM, "left");
+        private function header(s:String, x:Number, y:Number, w:Number, bad:Boolean, off:Boolean = false):void {
+            var t:TextField = field("$Header", 14, bad ? RED : (off ? OFF : DIM), "left");
             t.text = s.toUpperCase();
             t.x = x + 2;
             t.y = y;
@@ -621,6 +765,9 @@ package {
             if (ck != null) {
                 ck.mouseEnabled = false;
                 ck.mouseChildren = false;
+                if (act == null) {
+                    ck.enabled = false; // a row without an action can't be changed: EA's disabled look
+                }
                 ck.label = "";
                 ck.scrollRect = new Rectangle(0, 0, 26, 26); // the box only (as the ready mark)
                 ck.x = 0;
@@ -696,15 +843,17 @@ package {
             }
         }
 
-        // the hint line: why some options are dimmed (while the bots are on), and what a change does. Always shown,
+        // the hint line: why a category is greyed (the server's "fixed": "This map has its own win condition."), why
+        // some options are dimmed (while the bots are on), and what a change does. Always shown,
         // not on hover: the reason then needs no pointer (a posted hover in a test session didn't reach the rows).
         private function showHint():void {
             if (hintTf == null) {
                 return;
             }
-            var s:String = (dimmed ? NO_BOTS_HINT : "") + RESET_HINT;
+            var s:String = (mode() == "custom" ? fixedNote : "") + (dimmed ? NO_BOTS_HINT : "") + RESET_HINT;
             if (hintTf.text != s) {
                 hintTf.text = s;
+                fit(hintTf, 13, hintTf.width); // the fixed category's reason makes it longer
             }
         }
 

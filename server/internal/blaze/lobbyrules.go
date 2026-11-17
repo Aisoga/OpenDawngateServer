@@ -54,6 +54,19 @@ type LobbyRules struct {
 	Findings []rules.Finding   `json:"findings"` // why the game can't start like this ([] when it can)
 	CanEdit  bool              `json:"canEdit"`  // the receiver may call lobby.setRules now
 	Host     bool              `json:"host"`     // the game's match host takes rules (false: an older build)
+
+	// MAPRULES5: the map's own rules (each left out for a map without them). Map is their few words (mapc's short text:
+	// "Race 20 · 15 min · Lv 6", "Tuned"), MapText every rule in plain words; MapUnrated: the map's victory (a kill race
+	// or a time limit) makes the game unrated, so Rated is false whatever the admin chose, MapReason saying why.
+	Map     string `json:"map,omitempty"`
+	MapText string `json:"mapText,omitempty"`
+	// Since WINLOBBY MapUnrated and MapReason also carry the lobby's own win condition (LobbyVictoryReason), which
+	// makes the game unrated the same way.
+	MapUnrated bool   `json:"mapUnrated,omitempty"`
+	MapReason  string `json:"mapReason,omitempty"`
+	// Fixed are the categories the admin can't change here, each with the reason (WINLOBBY: on a map with its own
+	// victory the win condition, rules.MapVictoryReason); the panel greys them. Omitted when there are none.
+	Fixed []rules.Finding `json:"fixed,omitempty"`
 }
 
 // rulesOnLocked reports whether the game has rules: a custom game the browser lists, with a match host (hg.mu held).
@@ -83,7 +96,8 @@ func (hg *hostedGame) rulesLockedLocked() string {
 // host's capability.
 func (hg *hostedGame) rulesContextLocked() rules.Context {
 	ctx := rules.Context{Bots: hg.custom.bots, HostRules: hg.hostRulesLocked(), TeamSize: int(hg.game.TeamCap),
-		Catalog: hg.s.rulesPools(), NoShaperSelect: !hg.s.shaperSelectRuns()} // RULES3: the pools and shaper select
+		Catalog: hg.s.rulesPools(), NoShaperSelect: !hg.s.shaperSelectRuns(), // RULES3: the pools and shaper select
+		MapVictory: hg.mapRules.Victory()} // WINLOBBY: the map decides the win condition
 	if hg.match != nil { // M30: the options that need a newer host (rules2)
 		ctx.HostFeatures = hg.match.Features()
 	}
@@ -108,6 +122,9 @@ func (hg *hostedGame) rulesFindingsLocked() []rules.Finding {
 		fs = append(fs, rules.Finding{Category: rules.FindingHost, Message: "This game's match host is an older build " +
 			"that keeps the bots setting of the game's creation."})
 	}
+	if why := hg.mapRules.hostFinding(hg.unplayedLocked()); why != "" { // MAPRULES5: the map's kill race, time limit, start level
+		fs = append(fs, rules.Finding{Category: rules.FindingHost, Message: why})
+	}
 	return fs
 }
 
@@ -125,13 +142,26 @@ func (hg *hostedGame) lobbyRulesLocked(receiver int64, fs []rules.Finding) *Lobb
 	if p, ok := rules.PresetOf(c); ok {
 		lr.Preset = p.ID
 	}
+	if m := hg.mapRules; !m.IsZero() { // MAPRULES5: the map's own rules; a changed victory forces Rated off
+		lr.Map, lr.MapText = m.Short, m.Summary
+		if why := m.mapUnratedReason(); why != "" {
+			lr.MapUnrated, lr.MapReason, lr.Rated = true, why, false
+		}
+	}
+	if hg.mapRules.Victory() { // WINLOBBY: the map decides the win condition: the panel greys the category
+		lr.Fixed = []rules.Finding{{Category: rules.Victory, Message: rules.MapVictoryReason}}
+	} else if !c.Goal().IsZero() { // the lobby's win condition makes it unrated as a map's victory does
+		lr.MapUnrated, lr.MapReason, lr.Rated = true, LobbyVictoryReason, false
+	}
 	lr.CanEdit = hg.isAdminLocked(receiver) && hg.rulesLockedLocked() == "" && lr.Host
 	return lr
 }
 
-// lobbyName is a custom game's name in the browser: the map's label, [Bots] while bots fill the open seats, [Unrated]
+// lobbyName is a custom game's name in the browser: the map's label (and since MAPRULES5 its victory's prefix,
+// MapRules.Prefix: the caller's label+mapPrefix), [Bots] while bots fill the open seats, [Unrated]
 // when the admin made it unrated (M30), the rules' prefix (rules.Prefix), then the name its creator gave it.
-func lobbyName(label string, bots, unrated bool, c rules.Combination, base string) string {
+// RULES6: presets holds the operator's presets, whose names the prefix takes too (nil: the built-in ones).
+func lobbyName(presets *rules.Library, label string, bots, unrated bool, c rules.Combination, base string) string {
 	name := label
 	if bots {
 		name += BotFillPrefix
@@ -139,12 +169,13 @@ func lobbyName(label string, bots, unrated bool, c rules.Combination, base strin
 	if unrated {
 		name += UnratedPrefix
 	}
-	return name + rules.Prefix(c) + base
+	return name + presets.Prefix(c) + base
 }
 
 // renameLocked gives the game the name its lobby's settings make; true when it changed (hg.mu held).
 func (hg *hostedGame) renameLocked() bool {
-	name := lobbyName(hg.custom.label, hg.custom.bots, hg.custom.unrated, hg.custom.rules, hg.custom.baseName)
+	name := lobbyName(hg.s.RulePresets, hg.custom.label+hg.custom.mapPrefix, hg.custom.bots, hg.custom.unrated, hg.custom.rules,
+		hg.custom.baseName)
 	if name == hg.game.Name {
 		return false
 	}
@@ -290,7 +321,7 @@ func (hg *hostedGame) startRulesLocked() (fs []rules.Finding, r *gmshost.Rules, 
 		return nil, nil, nil // the standard game and createGame's bots: nothing to send
 	}
 	if !hg.custom.rules.IsDefault() {
-		w := gmshost.Rules(hg.custom.rules.Normal())
+		w := gmshost.Rules(hg.custom.rules.Compact()) // WINLOBBY: "victory" only when it isn't the Guardian's
 		r = &w
 	}
 	n := 0
@@ -333,7 +364,7 @@ func (hg *hostedGame) rulesRecordLocked() string {
 	if !hg.unratedRulesLocked() {
 		return ""
 	}
-	b, err := json.Marshal(hg.custom.rules.Normal())
+	b, err := json.Marshal(hg.custom.rules.Compact())
 	if err != nil {
 		return ""
 	}
@@ -341,7 +372,12 @@ func (hg *hostedGame) rulesRecordLocked() string {
 }
 
 // RulesNoteID is the broadcast record id of the line with a match's rules (sysmsg.go's ids 1-16 are the operator's,
-// OnlineCountID 100, MapNoteID 101).
+// OnlineCountID 100, MapNoteID 101); a map with many rules takes the next ids for its "Map balance" lines (MAPRULES9:
+// RulesNoteID+1 up to RulesNoteID+MatchNoteMaxLines-1). One record per line, so a later line can't replace an
+// earlier one before it is shown; the client keeps its records in the order they first came
+// (GameUI_AddBroadcastMessage 0x004B7310 appends a new id, renews a known one in place) and shows the new lines in
+// that order (GameUI_UpdateBroadcastMessages 0x004B5DE0 walks the records), and as every match sends RulesNoteID with
+// the others, its record never expires after theirs: the first line stays first.
 const RulesNoteID = 102
 
 // rulesNoteSeconds is how long the client keeps the record [our choice]: it is shown at once.
@@ -352,19 +388,33 @@ const rulesNoteSeconds = 600
 const rulesNoteDelay = 10 * time.Second
 
 // rulesNoteDueLocked reports whether the match gets the rules line: a custom game with rules away from the standard
-// game, or one its admin made unrated (M30; hg.mu held).
+// game, or one its admin made unrated (M30), and since MAPRULES5 every hosted game on a map with its own rules (hg.mu
+// held).
 func (hg *hostedGame) rulesNoteDueLocked() bool {
+	return hg.lobbyNoteDueLocked() || !hg.mapRules.IsZero()
+}
+
+// lobbyNoteDueLocked reports whether the line names the lobby's rules (hg.mu held).
+func (hg *hostedGame) lobbyNoteDueLocked() bool {
 	return hg.custom != nil && (!hg.custom.rules.IsDefault() || hg.custom.unrated)
+}
+
+// noteLinesLocked are the match's System lines (matchNoteLines): the lobby's rules, the map's, and "(Unrated)" for a
+// game that would be rated but isn't, by its admin's choice or by the map's victory; a map with many rules adds
+// "Map balance: …" lines (hg.mu held).
+func (hg *hostedGame) noteLinesLocked() []string {
+	lobby := ""
+	if hg.lobbyNoteDueLocked() {
+		lobby = rules.Describe(hg.custom.rules)
+	}
+	unrated := hg.adminUnratedLocked() || hg.mapVictoryLocked() && Ranked(hg.mode, hg.game.descriptors())
+	return matchNoteLinesOf(lobby, hg.mapRules, hg.unplayedLocked(), unrated)
 }
 
 // rulesNoteText is the rules line: "Rules: All Random, Shop on Death", and " (Unrated)" after it for a game the admin
 // made unrated ("Rules: Standard (Unrated)").
 func rulesNoteText(c rules.Combination, unrated bool) string {
-	text := "Rules: " + rules.Describe(c)
-	if unrated {
-		text += " (Unrated)"
-	}
-	return text
+	return matchNoteLines(rules.Describe(c), MapRules{}, false, unrated)[0]
 }
 
 // announceRulesLater starts the rules line's timer at the host's first inGame (announceRules, once). RULES1b
@@ -376,11 +426,11 @@ func rulesNoteText(c rules.Combination, unrated bool) string {
 // EnterGame no GameChatWindow is activated yet, so the line went nowhere.
 func (hg *hostedGame) announceRulesLater() {
 	hg.mu.Lock()
-	if !hg.rulesNoteDueLocked() || hg.custom.announced || hg.custom.announceDue {
+	if !hg.rulesNoteDueLocked() || hg.noteSent || hg.noteDue {
 		hg.mu.Unlock()
 		return
 	}
-	hg.custom.announceDue = true
+	hg.noteDue = true
 	gid := hg.game.ID
 	hg.mu.Unlock()
 	d := hg.s.RulesNoteDelay
@@ -391,21 +441,23 @@ func (hg *hostedGame) announceRulesLater() {
 	time.AfterFunc(d, hg.announceRules)
 }
 
-// announceRules sends every player of a custom game with rules, spectators too, one "System" chat line with them once
-// the match runs (announceRulesLater): "Rules: All Random, Shop on Death". It is the client's own system line (a
-// broadcast record shown in the match's chat, BroadcastChatLine; sysmsg.go), not a message in a chat channel, so no
-// player can be mistaken for its sender. The client shows a record's text once, so a text this client already showed
-// gets a number.
+// announceRules sends every player of a custom game with rules (and since MAPRULES5 of every hosted game on a map with
+// its own rules), spectators too, one "System" chat line with them once the match runs (announceRulesLater): "Rules:
+// All Random, Shop on Death", "Rules: Draft · Map: First to 20 kills wins (Unrated)" (noteLinesLocked); since
+// MAPRULES9 a map with many rules adds "Map balance: …" lines, each its own record (RulesNoteID and the next ids),
+// sent in order. It is the client's own system line (a broadcast record shown in the match's chat, BroadcastChatLine;
+// sysmsg.go), not a message in a chat channel, so no player can be mistaken for its sender. The client shows a
+// record's text once, so a line this client already showed under its record gets a number.
 func (hg *hostedGame) announceRules() {
 	s := hg.s
 	hg.mu.Lock()
-	if !hg.rulesNoteDueLocked() || hg.custom.announced {
+	if !hg.rulesNoteDueLocked() || hg.noteSent {
 		hg.mu.Unlock()
 		return
 	}
-	hg.custom.announced = true
-	hg.custom.announceDue = false
-	text := rulesNoteText(hg.custom.rules, hg.custom.unrated)
+	hg.noteSent = true
+	hg.noteDue = false
+	lines := hg.noteLinesLocked()
 	var to []*Conn
 	for _, hp := range hg.players {
 		if !hp.removed && hp.conn != nil {
@@ -414,38 +466,53 @@ func (hg *hostedGame) announceRules() {
 	}
 	gid := hg.game.ID
 	hg.mu.Unlock()
-	s.Log.Logf("blaze", "   game %d: the match's rules: %q to %d player(s) as a System chat line", gid, text, len(to))
+	for i, text := range lines {
+		which := ""
+		if len(lines) > 1 {
+			which = fmt.Sprintf(" (line %d of %d)", i+1, len(lines))
+		}
+		s.Log.Logf("blaze", "   game %d: the match's rules: %q to %d player(s) as a System chat line%s", gid, text, len(to), which)
+	}
 	sm := &s.sys
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	if sm.rulesNotes == nil {
-		sm.rulesNotes = map[*Conn]rulesNote{}
+		sm.rulesNotes = map[*Conn][]rulesNote{}
 	}
 	for _, c := range to {
-		n, line := sm.rulesNotes[c], text
-		if n.text == text {
-			n.repeats++
-			line = fmt.Sprintf("%s (%d)", text, n.repeats+1)
-		} else {
-			n = rulesNote{text: text}
+		notes := sm.rulesNotes[c]
+		if len(notes) < len(lines) {
+			notes = append(notes, make([]rulesNote, len(lines)-len(notes))...)
 		}
-		sm.rulesNotes[c] = n
-		s.pushSystemLocked(c, []ClientMessage{RulesNoteMessage(line)})
+		msgs := make([]ClientMessage, 0, len(lines))
+		for i, text := range lines {
+			n, line := notes[i], text
+			if n.text == text {
+				n.repeats++
+				line = fmt.Sprintf("%s (%d)", text, n.repeats+1)
+			} else {
+				n = rulesNote{text: text}
+			}
+			notes[i] = n
+			msgs = append(msgs, RulesNoteMessage(i, line))
+		}
+		sm.rulesNotes[c] = notes
+		s.pushSystemLocked(c, msgs)
 	}
 }
 
-// rulesNote is the last rules line a connection got: its text, and how often in a row (forgotten with the connection,
-// forgetMapNotes).
+// rulesNote is the last rules line a connection got under one record: its text, and how often in a row (forgotten
+// with the connection, forgetMapNotes).
 type rulesNote struct {
 	text    string
 	repeats int
 }
 
-// RulesNoteMessage is the line with a match's rules: a broadcast (TAG 2) with id RulesNoteID, shown as a "System" chat
-// line in the match.
-func RulesNoteMessage(text string) ClientMessage {
+// RulesNoteMessage is line i (from 0) of a match's rules: a broadcast (TAG 2) with id RulesNoteID+i, shown as a
+// "System" chat line in the match.
+func RulesNoteMessage(i int, text string) ClientMessage {
 	return SystemMessage(SystemTagBroadcast, []MsgAttr{
-		{BroadcastAttrID, fmt.Sprint(RulesNoteID)},
+		{BroadcastAttrID, fmt.Sprint(RulesNoteID + i)},
 		{BroadcastAttrFlags, fmt.Sprint(BroadcastChatLine)},
 		{BroadcastAttrSeconds, fmt.Sprint(rulesNoteSeconds)},
 		{BroadcastAttrText, text},

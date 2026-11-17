@@ -54,6 +54,32 @@ func FormatMap(m *Map) ([]byte, error) {
 		}
 		member("  ", kv.k, s)
 	}
+	if r := m.Rules; r != nil { // rules.go: after the tuning it changes, a member a line
+		var parts []string
+		for _, kv := range []struct {
+			k   string
+			v   any
+			set bool
+		}{{"victory", r.Victory, r.Victory != nil}, {"startLevel", r.StartLevel, r.StartLevel != nil},
+			{"respawn", r.Respawn, r.Respawn != nil}, {"minions", r.Minions, r.Minions != nil},
+			{"gold", r.Gold, r.Gold != nil}, {"xp", r.XP, r.XP != nil}, {"bindings", r.Bindings, r.Bindings != nil},
+			{"wells", r.Wells, r.Wells != nil}, {"surrender", r.Surrender, r.Surrender != nil},
+			{"lobbyPreset", r.LobbyPreset, r.LobbyPreset != ""}} {
+			if !kv.set {
+				continue
+			}
+			s, err := str(kv.v)
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, `    "`+kv.k+`": `+s)
+		}
+		if len(parts) == 0 {
+			member("  ", "rules", "{}")
+		} else {
+			member("  ", "rules", "{\n"+strings.Join(parts, ",\n")+"\n  }")
+		}
+	}
 	var lanes []any
 	for _, l := range m.Lanes {
 		lanes = append(lanes, l)

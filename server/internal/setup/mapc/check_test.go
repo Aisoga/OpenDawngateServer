@@ -227,6 +227,63 @@ func TestRules(t *testing.T) {
 		{"budget.bush", Error, nil, func(m *Map) { m.Terrain.Shapes[7].Polygon = pts(-182, -10, -181, -10, -181, -9) }},
 		{"budget.bush", Warning, nil, func(m *Map) { m.Terrain.Shapes[7].Polygon = pts(-200, -10, -190, -10, -190, 0) }},
 		{"terrain.edge", Warning, nil, func(m *Map) { m.Terrain.Shapes[3].R = 30 }},
+
+		// rules.go: each member's range, then the cross-warnings
+		{"rules.victory", Error, nil, func(m *Map) { m.Rules = &Rules{Victory: &VictoryRules{Kills: intp(0)}} }},
+		{"rules.victory", Error, nil, func(m *Map) { m.Rules = &Rules{Victory: &VictoryRules{Kills: intp(201)}} }},
+		{"rules.victory", Error, nil, func(m *Map) { m.Rules = &Rules{Victory: &VictoryRules{Minutes: intp(2)}} }},
+		{"rules.victory", Error, nil, func(m *Map) { m.Rules = &Rules{Victory: &VictoryRules{Minutes: intp(91)}} }},
+		{"rules.victory", Warning, nil, func(m *Map) { m.Rules = &Rules{Victory: &VictoryRules{Kills: intp(4)}} }},
+		{"rules.victory", Error, nil, func(m *Map) { m.Rules = &Rules{Victory: &VictoryRules{Bindings: intp(0)}} }},
+		{"rules.victory", Error, nil, func(m *Map) { m.Rules = &Rules{Victory: &VictoryRules{Bindings: intp(13)}} }},
+		{"rules.victory", Error, nil, func(m *Map) { // CM_Ring's 6 Bindings a team, which don't come back
+			m.Rules = &Rules{Victory: &VictoryRules{Bindings: intp(7)}}
+		}},
+		{"rules.start-level", Error, nil, func(m *Map) { m.Rules = &Rules{StartLevel: intp(0)} }},
+		{"rules.start-level", Error, nil, func(m *Map) { m.Rules = &Rules{StartLevel: intp(21)} }},
+		{"rules.respawn", Error, nil, func(m *Map) { m.Rules = &Rules{Respawn: &RespawnRules{Base: f64p(-1)}} }},
+		{"rules.respawn", Error, nil, func(m *Map) { m.Rules = &Rules{Respawn: &RespawnRules{Base: f64p(121)}} }},
+		{"rules.respawn", Error, nil, func(m *Map) { m.Rules = &Rules{Respawn: &RespawnRules{PerLevel: f64p(10.5)}} }},
+		{"rules.respawn", Error, nil, func(m *Map) { m.Rules = &Rules{Respawn: &RespawnRules{PerMinute: f64p(-0.5)}} }},
+		{"rules.minions", Error, nil, func(m *Map) { m.Rules = &Rules{Minions: &MinionRules{FirstWave: f64p(601)}} }},
+		{"rules.minions", Error, nil, func(m *Map) { m.Rules = &Rules{Minions: &MinionRules{FirstWave: f64p(-1)}} }},
+		{"rules.minions", Error, nil, func(m *Map) { m.Rules = &Rules{Minions: &MinionRules{Every: f64p(9)}} }},
+		{"rules.minions", Error, nil, func(m *Map) { m.Rules = &Rules{Minions: &MinionRules{Every: f64p(301)}} }},
+		{"rules.minions", Warning, nil, func(m *Map) { m.Rules = &Rules{Minions: &MinionRules{Every: f64p(12)}} }},
+		{"rules.gold", Error, nil, func(m *Map) { m.Rules = &Rules{Gold: &GoldRules{Start: f64p(20001)}} }},
+		{"rules.gold", Error, nil, func(m *Map) { m.Rules = &Rules{Gold: &GoldRules{Start: f64p(-1)}} }},
+		{"rules.gold", Error, nil, func(m *Map) { m.Rules = &Rules{Gold: &GoldRules{PerMinute: f64p(5001)}} }},
+		{"rules.gold", Error, nil, func(m *Map) { m.Rules = &Rules{Gold: &GoldRules{From: f64p(3601)}} }},
+		{"rules.gold", Error, nil, func(m *Map) { m.Rules = &Rules{Gold: &GoldRules{Kills: f64p(10.5)}} }},
+		{"rules.xp", Error, nil, func(m *Map) { m.Rules = &Rules{XP: &XPRules{Speed: f64p(0.2)}} }},
+		{"rules.xp", Error, nil, func(m *Map) { m.Rules = &Rules{XP: &XPRules{Speed: f64p(5.5)}} }},
+		{"rules.bindings", Error, nil, func(m *Map) { m.Rules = &Rules{Bindings: &BindingRules{Respawn: f64p(29)}} }},
+		{"rules.bindings", Error, nil, func(m *Map) { m.Rules = &Rules{Bindings: &BindingRules{Respawn: f64p(3601)}} }},
+		{"rules.bindings", Warning, nil, func(m *Map) { // back before the next wave
+			m.Rules = &Rules{Bindings: &BindingRules{Respawn: f64p(60)}, Minions: &MinionRules{Every: f64p(90)}}
+		}},
+		{"rules.wells", Error, nil, func(m *Map) { m.Rules = &Rules{Wells: &WellRules{OpensAt: f64p(3601)}} }},
+		{"rules.wells", Error, nil, func(m *Map) { m.Rules = &Rules{Wells: &WellRules{Relock: f64p(29)}} }},
+		{"rules.wells", Error, nil, func(m *Map) { m.Rules = &Rules{Wells: &WellRules{Relock: f64p(3601)}} }},
+		{"rules.wells", Error, nil, func(m *Map) { m.Rules = &Rules{Wells: &WellRules{Gold: f64p(-0.1)}} }},
+		{"rules.wells", Error, nil, func(m *Map) { m.Rules = &Rules{Wells: &WellRules{Gold: f64p(11)}} }},
+		{"rules.wells", Warning, nil, func(m *Map) { // the wells open after the time limit
+			m.Rules = &Rules{Victory: &VictoryRules{Minutes: intp(25)}, Wells: &WellRules{OpensAt: f64p(1501)}}
+		}},
+		{"rules.wells", Warning, nil, func(m *Map) { // the tuning's 900 s after a 10-minute limit
+			m.Rules = &Rules{Victory: &VictoryRules{Minutes: intp(10)}, Surrender: &SurrenderRules{Allowed: boolp(false)}}
+		}},
+		{"rules.surrender", Error, nil, func(m *Map) { m.Rules = &Rules{Surrender: &SurrenderRules{After: f64p(4)}} }},
+		{"rules.surrender", Error, nil, func(m *Map) { m.Rules = &Rules{Surrender: &SurrenderRules{After: f64p(61)}} }},
+		{"rules.surrender", Warning, nil, func(m *Map) { // the tuning's 20 minutes after a 15-minute limit
+			m.Rules = &Rules{Victory: &VictoryRules{Minutes: intp(15)}}
+		}},
+		{"rules.surrender", Warning, nil, func(m *Map) { // at the limit
+			m.Rules = &Rules{Victory: &VictoryRules{Minutes: intp(30)}, Surrender: &SurrenderRules{After: f64p(30)}}
+		}},
+		{"names.tuning", Error, nil, func(m *Map) {
+			m.Name, m.Rules = "tuning_mm_v3", &Rules{Respawn: &RespawnRules{Base: f64p(5)}}
+		}},
 	}
 	for _, tc := range cases {
 		m := ring(t)
@@ -340,5 +397,55 @@ func TestMeshHex(t *testing.T) {
 		if _, _, err := ReadMeshHex(bad); err == nil {
 			t.Errorf("accepted %.40q", bad)
 		}
+	}
+}
+
+// TestCheckNames (EDNEWNAME): CheckNames gives exactly Check's names.* findings (the same code), and nothing else: a
+// map whose geometry fails passes it on good names. The editor's New and mapc import run it before they write.
+func TestCheckNames(t *testing.T) {
+	for _, c := range []struct {
+		others []Other
+		edit   func(m *Map)
+	}{
+		{nil, func(m *Map) {}},
+		{nil, func(m *Map) { m.Display = "Brawl Grove v1" }},
+		{nil, func(m *Map) { m.Display = "Brawl Grove 1" }},
+		{nil, func(m *Map) { m.Display = "" }},
+		{nil, func(m *Map) { m.Display, m.Prefix = "Two\nlines", "[A very long prefix] " }},
+		{[]Other{{"CM_Other", "ring"}, {"cm_ring", "x"}}, func(m *Map) { m.Name = "SM_Map_v5" }},
+		{nil, func(m *Map) { m.Name, m.Tag = strings.Repeat("A", 81), "Ring" }},
+		{nil, func(m *Map) { m.Size, m.Display = 640, "Brawl Grove v1" }},
+	} {
+		m := ring(t)
+		c.edit(m)
+		full, _ := Check(m, c.others)
+		var want []Finding
+		for _, f := range full.Findings {
+			if strings.HasPrefix(f.Rule, "names.") {
+				want = append(want, f)
+			}
+		}
+		got := CheckNames(m, c.others)
+		if len(got.Findings) != len(want) || got.OK != (len(want) == 0) {
+			t.Errorf("%q: CheckNames %+v, Check's names %+v", m.Display, got, want)
+			continue
+		}
+		for i := range want {
+			if got.Findings[i].Rule != want[i].Rule || got.Findings[i].Path != want[i].Path ||
+				got.Findings[i].Message != want[i].Message {
+				t.Errorf("%q: %+v, Check's %+v", m.Display, got.Findings[i], want[i])
+			}
+		}
+	}
+	m := ring(t)
+	m.Display = "Brawl Grove v1"
+	r := CheckNames(m, nil)
+	if len(r.Findings) != 1 || r.Findings[0].Path != "display" ||
+		r.Findings[0].Message != `display "Brawl Grove v1": 14 characters, 1 to 13: shorten it by 1` {
+		t.Errorf("the suffixed display: %+v", r.Findings)
+	}
+	m.Display, m.Size = "Brawl", 640 // the geometry's own rules aren't names
+	if r := CheckNames(m, nil); !r.OK || len(r.Findings) != 0 {
+		t.Errorf("a size of 640: %+v", r.Findings)
 	}
 }

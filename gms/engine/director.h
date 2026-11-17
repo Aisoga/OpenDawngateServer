@@ -205,6 +205,11 @@ std::uint32_t ObjectOfMarker(std::uint32_t marker);
 // GLADVIM: whether `id` is a lane agent the director spawned (MAPSTRIDER; alive or dead).
 bool IsLaneAgent(std::uint32_t id);
 
+// MAPRULES3: a Binding of `team` (1, 2) came back: its tower entry's laneAgentRespawnCounterAdjustment moves that
+// team's lane-agent countdown (gms::flow::LaneAgentCountdown::Adjust; -1 = one wave sooner) [assumed: which team and
+// that the return applies it]. Logs the countdown before and after; nothing while the lane agents are off.
+void AdjustLaneAgents(int team, int delta, const char* why);
+
 // CAMPFINISH: the jungle camp (not the parasite's) with a living member nearest (x, y) within `radius`: its index and
 // name, each listed member's id and HP (dead ones 0; at most kMembers), and the living members' count, HP and max HP.
 struct CampFight {

@@ -44,7 +44,8 @@ rewrites older archives (the table is the version).
 
 The setups (setup_all.py, setup_lane.py, the release) make the archive with the Go setup (server/tools/mapsetup), which
 also lists the maps folder's assets in its catalog and, since RULES0b, lists and carries the match rules'
-ClientFeedbackDefs (Rules_ShopClosed, Rules_ItemNotAllowed, Rules_LightningOnly: botprofiles.RulesFeedback). So a set-up copy's archive is
+ClientFeedbackDefs (Rules_ShopClosed, Rules_ItemNotAllowed, Rules_LightningOnly and, since MAPRULES4, a map's
+rules' 32 alerts: botprofiles.RulesFeedback). So a set-up copy's archive is
 this script's plus those (--check reports it as not current); this script stays the profiles' reference, which the Go
 twin's pinned hashes follow (test_p3b.py compares the profiles' files, `files`).
 

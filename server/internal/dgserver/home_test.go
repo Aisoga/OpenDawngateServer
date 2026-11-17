@@ -110,6 +110,16 @@ func TestHomeStatus(t *testing.T) {
 	if strings.Contains(got, "Secret") {
 		t.Errorf("a name leaked: %s", got)
 	}
+	// MAPRULES5: a map's own victory carries the teams' kills
+	kills := [2]int64{3, 20}
+	src.results = func() []blaze.RecentResult {
+		return []blaze.RecentResult{{GameID: 9, Mode: gmshost.ModeCustom, Kind: "Custom game", WinnerTeam: 2, Reason: "kills",
+			Kills: &kills, At: homeNow}}
+	}
+	if got := homeJSON(t, src); !strings.Contains(got, `"reason":"kills","durationSec":0,"endedAgoSec":0,`) ||
+		!strings.Contains(got, `"kills":[3,20]}`) {
+		t.Errorf("the kill race's score: %s", got)
+	}
 	// a queue without a known start, an MM server as its map
 	src.queue = func() (matchmaker.QueueState, matchmaker.Config, bool) {
 		return matchmaker.QueueState{Players: 0, Capacity: 2}, matchmaker.Config{TeamSize: 1, MinPlayers: 2}, true

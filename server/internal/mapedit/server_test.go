@@ -37,6 +37,9 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "--mapc" {
 		os.Exit(mapctool.Run(os.Args[2:], os.Stdout, os.Stderr))
 	}
+	if code, ok := fakeMapcMain(os.Args[1:]); ok { // rules_test.go
+		os.Exit(code)
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "no test binary (%v): the server tests skip\n", err)
@@ -434,6 +437,100 @@ func TestNewFromTemplate(t *testing.T) {
 	q["name"] = "../x"
 	if code := e.call("POST", "/api/new", q, nil); code != 400 {
 		t.Errorf("a bad name: %d", code)
+	}
+}
+
+// TestNewRefusesNames (EDNEWNAME): New (and Save as my own copy, the same call) refuses names the compiler's names
+// rules refuse, with the rule's words and the member as the field, and writes nothing; MAPRULES8's script had made
+// "Brawl Grove" + " v1" (14 characters), and the package's first check failed on names.display.
+func TestNewRefusesNames(t *testing.T) {
+	e := newEnv(t, false)
+	type refusal struct {
+		OK                 bool
+		Pkg                string
+		Error, Field, Rule string
+		Findings           []struct{ Rule, Path, Message string }
+	}
+	base := map[string]string{"template": "CM_Ring", "name": "CM_Named", "display": "Brawl Grove v1", "tag": "named",
+		"prefix": "[Named] "}
+	call := func(edit map[string]string) (int, refusal) {
+		t.Helper()
+		q := map[string]string{}
+		for k, v := range base {
+			q[k] = v
+		}
+		for k, v := range edit {
+			q[k] = v
+		}
+		var r refusal
+		return e.call("POST", "/api/new", q, &r), r
+	}
+	written := func(pkg string) bool {
+		_, err := os.Stat(filepath.Join(e.maps, pkg))
+		return err == nil
+	}
+	for _, c := range []struct {
+		why                 string
+		edit                map[string]string
+		field, rule, phrase string
+	}{
+		{"the suffixed display (14)", nil, "display", "names.display", `"Brawl Grove v1": 14 characters, 1 to 13: shorten it by 1`},
+		{"14 characters", map[string]string{"display": "Fourteen chars"}, "display", "names.display", "14 characters"},
+		{"14 runes, 15 bytes", map[string]string{"display": "Fourteen charé"}, "display", "names.display", "14 characters"},
+		{"a line end", map[string]string{"display": "Two\nlines"}, "display", "names.display", "no control characters"},
+		{"a long prefix", map[string]string{"display": "Named", "prefix": "[A very long prefix] "}, "prefix",
+			"names.prefix", "21 characters, at most 16: shorten it by 5"},
+		{"a built-in tag", map[string]string{"display": "Named", "tag": "sm"}, "tag", "names.tag-unique", "built-in"},
+		{"the template's tag kept", map[string]string{"display": "Named", "tag": ""}, "tag", "names.tag-unique",
+			`CM_Ring has the tag "ring" too`},
+		{"a shipped level's name", map[string]string{"display": "Named", "name": "SM_Map_v5"}, "name", "names.shipped",
+			"shipped"},
+	} {
+		code, r := call(c.edit)
+		if code != http.StatusBadRequest || r.OK || r.Field != c.field || r.Rule != c.rule ||
+			!strings.Contains(r.Error, c.phrase) || !strings.Contains(r.Error, "nothing was written") || len(r.Findings) == 0 {
+			t.Errorf("%s: %d %+v", c.why, code, r)
+		}
+		name := base["name"]
+		if n := c.edit["name"]; n != "" {
+			name = n
+		}
+		if written(name) {
+			t.Errorf("%s: %s written", c.why, name)
+		}
+	}
+	// two at once: both named, the first is the field
+	if _, r := call(map[string]string{"tag": "sm"}); len(r.Findings) != 2 || r.Field != "tag" {
+		t.Errorf("two refusals: %+v", r)
+	}
+	if ents, _ := os.ReadDir(filepath.Join(e.c.Work, "CM_Named")); len(ents) != 0 {
+		t.Errorf("the names' draft left in the scratch folder: %v", ents)
+	}
+	// the boundary: 13 characters (and 13 with an accent) pass, and the package's check passes on its names
+	for i, d := range []string{"Brawl Grove 1", "Brawl Grové 1"} {
+		pkg := fmt.Sprintf("CM_Named%d", i)
+		code, r := call(map[string]string{"name": pkg, "display": d, "tag": fmt.Sprintf("named%d", i)})
+		if code != 200 || !r.OK || r.Pkg != pkg {
+			t.Fatalf("%q: %d %+v", d, code, r)
+		}
+		doc, _, _ := e.open(pkg)
+		if doc["display"] != d {
+			t.Errorf("%s's display %v", pkg, doc["display"])
+		}
+		for _, f := range e.check(pkg, doc).Report.Findings {
+			if strings.HasPrefix(f.Rule, "names.") {
+				t.Errorf("%s: %+v", pkg, f)
+			}
+		}
+	}
+	// a taken folder: the name's field too
+	if code, r := call(map[string]string{"name": "CM_Named0", "display": "Named"}); code != http.StatusConflict ||
+		r.Field != "name" || !strings.Contains(r.Error, "choose another name") {
+		t.Errorf("a taken name: %d %+v", code, r)
+	}
+	// an empty display keeps the template's ("Test Ring", 9)
+	if code, r := call(map[string]string{"name": "CM_Kept", "display": "", "tag": "kept"}); code != 200 || !r.OK {
+		t.Errorf("the template's display: %d %+v", code, r)
 	}
 }
 

@@ -125,6 +125,7 @@ type customLobby struct {
 	token     string
 	admins    []int64 // ADMN: the creator
 	started   bool    // advanceGameState IN_GAME came (the host got startGame)
+	startSent bool    // CTLLINE: the startGame passed its last check and went out (sendStart); started may still be undone
 	browsable bool    // the game browser lists it: a custom game (a practice group's isn't)
 	ready     bool    // NotifyGameSetup went out (its host is ready, or it has none): the browser may list it
 	region    string  // the region id it runs in (PREF1; before gameReady the wanted one)
@@ -432,17 +433,28 @@ func (hg *hostedGame) playerLocked(id int64) *hostedPlayer {
 // before B15b ignores the line after the start.
 func (hg *hostedGame) syncHostRoster() {
 	hg.mu.Lock()
-	mt, started, ended := hg.match, hg.custom.started, hg.ended
+	// CTLLINE: the players' content until the startGame went out, not only until START: a start in progress may still
+	// be refused (startTooLarge), and an updateRoster built meanwhile without content became the host's lobby roster
+	mt, sent, ended := hg.match, hg.custom.startSent, hg.ended
 	roster := lobbyRoster(hg.players, hg.game.Attrs)
 	players := append([]*hostedPlayer(nil), hg.players...)
 	hg.mu.Unlock()
 	if mt == nil || ended {
 		return
 	}
-	if !started {
+	if !sent {
 		hg.s.lobbyContent(roster, players)
 	}
 	mt.UpdateRoster(roster)
+}
+
+// sendStart sends a custom game's startGame once it passed every check (CTLLINE): from now on the host's players are
+// final, and syncHostRoster sends them without their content.
+func (hg *hostedGame) sendStart(mt *gmshost.Match, sg gmshost.StartGame) {
+	hg.mu.Lock()
+	hg.custom.startSent = true
+	hg.mu.Unlock()
+	mt.StartGameWith(sg)
 }
 
 // lobbyContent gives a custom game's roster players their account content for shaper select (with --shaper-select,
@@ -1140,7 +1152,7 @@ func registerCustomGames(s *Server) {
 			r.Server.Log.Logf("blaze", "   game %d starts (its admin's advanceGameState IN_GAME): roster %s%s", gid,
 				describeRoster(roster), describeStartRules(sg.Rules, sg.FillTeams, unrated))
 			if mt != nil {
-				mt.StartGameWith(sg)
+				hg.sendStart(mt, sg)
 			}
 		} else {
 			r.Server.Log.Logf("blaze", "   game %d: advanceGameState %#x", gid, state)
@@ -1219,7 +1231,7 @@ func (s *Server) autoStartCustom(hg *hostedGame) {
 	s.Log.Logf("blaze", "   game %d starts (--custom-autostart: every human spectates): roster %s%s", hg.game.ID,
 		describeRoster(roster), describeStartRules(rl, fill, unrated))
 	if mt != nil {
-		mt.StartGameWith(sg)
+		hg.sendStart(mt, sg)
 	}
 	hg.setState(GameStateInGame)
 }

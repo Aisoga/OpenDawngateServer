@@ -1149,7 +1149,7 @@ func (hg *hostedGame) draftDoneLocked(d *draftRun) func() {
 		s.Log.Logf("blaze", "   game %d starts (%s ended): roster %s%s", gid, what, describeRoster(roster),
 			describeStartRules(rl, fill, unrated))
 		if mt != nil {
-			mt.StartGameWith(sg)
+			hg.sendStart(mt, sg)
 		}
 		hg.setState(GameStateInGame)
 	}

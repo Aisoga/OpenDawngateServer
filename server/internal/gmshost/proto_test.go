@@ -177,6 +177,15 @@ func TestEncodeValues(t *testing.T) {
 				`"stats":{"damageDealt":18234,"timeDeadMs":41000},"sources":[{"kind":"ability","slot":0,"id":0,"damage":5210,"heal":0},` +
 				`{"kind":"item","id":279208847,"damage":812,"heal":3}]}`},
 		{SeatStats{Index: 9, Bot: true, Team: 2}, `{"t":"seatStats","index":9,"user":0,"bot":true,"team":2,"noun":0,"role":0}`},
+		// M32: the final inventory and the purchases, after sources; an inventory of empty slots only is left out
+		{SeatStats{Index: 2, User: 2000000046, Team: 1, Stats: map[string]int64{"purchasesDropped": 3},
+			Sources:   []StatSource{{Kind: "basic", Damage: 10}},
+			Inventory: []int64{75803296, 0, 0, 0, 0, 0, 2011516473, 0, 0, 295762247, 0},
+			Purchases: []ItemEvent{{Ms: 4210, Kind: ItemBuy, ID: 75803296}, {Ms: 90300, Kind: ItemSell, ID: 75803296},
+				{Ms: 90310, Kind: ItemUndo, ID: 295762247}}},
+			`{"t":"seatStats","index":2,"user":2000000046,"bot":false,"team":1,"noun":0,"role":0,"stats":{"purchasesDropped":3},` +
+				`"sources":[{"kind":"basic","id":0,"damage":10,"heal":0}],"inventory":[75803296,0,0,0,0,0,2011516473,0,0,295762247,0],` +
+				`"purchases":[{"ms":4210,"kind":"buy","id":75803296},{"ms":90300,"kind":"sell","id":75803296},{"ms":90310,"kind":"undo","id":295762247}]}`},
 		{MatchTimeline{StepSec: 60, Sec: []int64{60}, Seats: []TimelineSeat{{Index: 0, Gold: []int64{740}, XP: []int64{310},
 			Level: []int64{2}, CS: []int64{6}}}, Teams: []TimelineTeam{{Team: 1, Gold: []int64{3700}, Kills: []int64{0}}},
 			Events: []TimelineEvent{{Ms: 5000, Kind: "kill", A: -1, B: 7}}},
@@ -209,6 +218,22 @@ func TestEncodeValues(t *testing.T) {
 		if back, err := Decode(got); err != nil || !reflect.DeepEqual(back, c.msg) {
 			t.Errorf("decoded back: %#v (%v)", back, err)
 		}
+	}
+}
+
+// M32: an inventory of empty slots only is left out as an empty one (the C++ encoder does the same), and a line from an
+// older host (no inventory, no purchases) decodes with both nil.
+func TestSeatStatsEmptyItems(t *testing.T) {
+	const want = `{"t":"seatStats","index":9,"user":0,"bot":true,"team":2,"noun":0,"role":0}` + "\n"
+	for _, inv := range [][]int64{nil, {}, make([]int64, MaxInventory)} {
+		got, err := Encode(SeatStats{Index: 9, Bot: true, Team: 2, Inventory: inv, Purchases: []ItemEvent{}})
+		if err != nil || string(got) != want {
+			t.Errorf("inventory %v: got %s (%v)", inv, got, err)
+		}
+	}
+	back, err := Decode([]byte(want))
+	if s, ok := back.(SeatStats); err != nil || !ok || s.Inventory != nil || s.Purchases != nil {
+		t.Errorf("decoded %#v (%v)", back, err)
 	}
 }
 

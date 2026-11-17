@@ -6,6 +6,7 @@
 // keeps its default; a field of the wrong type is an error.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -359,8 +360,24 @@ struct StatSource {
   int64_t heal = 0;
 };
 
+// M32 (MITEMS1; seatStats.purchases): one shop transaction of a seat, in match order. kind: "buy" (a purchase, an
+// upgrade or a consume-on-purchase), "sell", "undo" (the sale that undid the last purchase, REFUND1); id the item's
+// asset id (FNV-1 of the lower-cased "<name>.item", as StatSource's). Go: gmshost.ItemEvent.
+struct ItemEvent {
+  int64_t ms = 0;
+  std::string kind;
+  int64_t id = 0;
+};
+
+// The item fields' limits (M32; Go: gmshost.MaxInventory, MaxPurchases): 11 inventory slots (0-5 items, 6-8 battle
+// spells, 9-10 consumables), at most 150 purchases a seat (later ones dropped and counted in the stat
+// purchasesDropped).
+inline constexpr size_t kInventorySlots = 11;
+inline constexpr size_t kMaxPurchases = 150;
+
 // host -> server (M18): one seat's statistics at the match's end, every seat, bots included (user 0), before the
-// playerFinish lines. stats and sources are written only when not empty. Go: gmshost.SeatStats.
+// playerFinish lines. stats and sources are written only when not empty; M32's inventory (item asset ids by slot,
+// 0 = empty) only when a slot isn't empty, purchases only when not empty. Go: gmshost.SeatStats.
 struct SeatStats {
   int64_t index = 0;  // the gameplay index 0-9
   int64_t user = 0;   // the Blaze user (persona) id, 0 for a bot
@@ -370,6 +387,8 @@ struct SeatStats {
   int64_t role = 0;  // as playerFinish's role stat: 1 + mRole
   std::map<std::string, int64_t> stats;
   std::vector<StatSource> sources;
+  std::vector<int64_t> inventory;    // M32: kInventorySlots item asset ids by slot, 0 = empty
+  std::vector<ItemEvent> purchases;  // M32: in match order, at most kMaxPurchases
 };
 
 // matchTimeline's per-seat and per-team samples (each array written only when not empty) and its events.

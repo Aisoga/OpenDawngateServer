@@ -117,3 +117,11 @@
 # such a host hasn't confirmed within 30 s.
 {"t":"hello","match":1,"token":"00112233445566778899aabbccddeeff","pid":4242,"build":"dgsim c1","features":["rules","rules2","maprules","maprules2","longlines","startack"]}
 {"t":"reportGMSUpdate","phase":"loading","elapsedMs":21034,"players":[],"started":true}
+# M32 (MITEMS1 pinned both codecs; MITEMS2 fills them): seatStats gains two optional fields after "sources".
+# "inventory": the final inventory, 11 item asset ids by slot (0 = empty; 0-5 items, 6-8 battle spells, 9-10
+# consumables), left out when every slot is empty. "purchases": the shop's transactions in match order, each
+# {"ms","kind","id"}, kind "buy" (a purchase, an upgrade or a consume-on-purchase), "sell" or "undo" (the sale that
+# undid the last purchase); at most 150 a seat, later ones dropped and counted in the stat "purchasesDropped". Refused
+# transactions, uses and swaps aren't sent. Both left out when empty. The ids are asset ids as in "sources".
+{"t":"seatStats","index":3,"user":2000000046,"bot":false,"team":1,"noun":274088913,"role":2,"stats":{"damageDealt":18234,"damageTaken":9120,"timeDeadMs":41000},"sources":[{"kind":"item","id":75803296,"damage":812,"heal":0}],"inventory":[75803296,690207559,0,0,0,0,2011516473,1003663676,0,295762247,0],"purchases":[{"ms":4210,"kind":"buy","id":2145349466},{"ms":4900,"kind":"buy","id":295762247},{"ms":61000,"kind":"buy","id":1499387130},{"ms":61800,"kind":"undo","id":1499387130},{"ms":90300,"kind":"buy","id":75803296},{"ms":300100,"kind":"buy","id":3200834554},{"ms":352000,"kind":"sell","id":3200834554},{"ms":400000,"kind":"buy","id":690207559}]}
+{"t":"seatStats","index":8,"user":0,"bot":true,"team":2,"noun":284823512,"role":3,"stats":{"assists":1,"creeps":120,"deaths":2,"gold":9100,"kills":5,"level":12},"inventory":[2033400596,2045209611,2988923057,0,0,0,1223894624,569180383,0,0,0],"purchases":[{"ms":3000,"kind":"buy","id":2988923057},{"ms":150000,"kind":"buy","id":2145349466},{"ms":300000,"kind":"buy","id":2045209611},{"ms":600000,"kind":"buy","id":2033400596}]}

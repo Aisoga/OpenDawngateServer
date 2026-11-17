@@ -35,12 +35,16 @@ func TestMatchRecord(t *testing.T) {
 				"role": 2, "won": 1, "damageDealt": 1}}})
 		hg.s, hg.inGameAt = &Server{}, end.Add(-10*time.Minute)
 		hg.keepSeatStats(gmshost.SeatStats{Index: 0, User: 2000000001, Team: 1, Noun: noun, Role: 2,
-			Stats:   map[string]int64{"damageDealt": 18234, "timeDeadMs": 41000},
-			Sources: []gmshost.StatSource{src("ability", 1, 0, 5210), src("item", -1, 279208847, 812)}})
+			Stats:     map[string]int64{"damageDealt": 18234, "timeDeadMs": 41000},
+			Sources:   []gmshost.StatSource{src("ability", 1, 0, 5210), src("item", -1, 279208847, 812)},
+			Inventory: []int64{75803296, 0, 0, 0, 0, 0, 2011516473, 0, 0, 0, 0},
+			Purchases: []gmshost.ItemEvent{{Ms: 4210, Kind: gmshost.ItemBuy, ID: 75803296}}})
 		hg.keepSeatStats(gmshost.SeatStats{Index: 6, Bot: true, Team: 2, Noun: 284823512, Role: 1,
-			Stats: map[string]int64{"kills": 2, "deaths": 3, "assists": 4, "creeps": 88, "gold": 7420, "level": 11}})
-		hg.keepSeatStats(gmshost.SeatStats{Index: 5, Team: 2, Noun: 284823512})  // a bot without stats
-		hg.keepSeatStats(gmshost.SeatStats{Index: 4, User: 2000000099, Team: 1}) // nobody in the roster
+			Stats:     map[string]int64{"kills": 2, "deaths": 3, "assists": 4, "creeps": 88, "gold": 7420, "level": 11},
+			Inventory: []int64{2033400596, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+			Purchases: []gmshost.ItemEvent{{Ms: 3000, Kind: gmshost.ItemBuy, ID: 2988923057}, {Ms: 9000, Kind: gmshost.ItemSell, ID: 2988923057}}})
+		hg.keepSeatStats(gmshost.SeatStats{Index: 5, Team: 2, Noun: 284823512, Inventory: make([]int64, 11)}) // a bot without stats or items
+		hg.keepSeatStats(gmshost.SeatStats{Index: 4, User: 2000000099, Team: 1})                              // nobody in the roster
 		hg.keepTimeline(gmshost.MatchTimeline{StepSec: 60, Sec: []int64{60}, Events: []gmshost.TimelineEvent{{Ms: 5, Kind: "kill", A: -1, B: 0}}})
 		m, skipped := hg.matchLocked(gmshost.FinishGame{WinnerTeam: 2, DurationMs: 600000, Reason: "guardian"}, end)
 		want := store.Match{GameID: 7, Kind: "pvp", Mode: "pvp", Level: "SM_Map_v5", Winner: 2, Reason: "guardian",
@@ -51,10 +55,14 @@ func TestMatchRecord(t *testing.T) {
 					CS: 40, Gold: 1500, Level: 6, Stats: map[string]int64{"kills": 3, "deaths": 1, "assists": 2, "creeps": 40,
 						"gold": 1500, "level": 6, "noun": noun, "role": 2, "won": 1, "damageDealt": 18234, "timeDeadMs": 41000},
 					Sources: json.RawMessage(`[{"kind":"ability","slot":1,"id":0,"damage":5210,"heal":0},` +
-						`{"kind":"item","id":279208847,"damage":812,"heal":0}]`)},
+						`{"kind":"item","id":279208847,"damage":812,"heal":0}]`),
+					Inventory: json.RawMessage(`[75803296,0,0,0,0,0,2011516473,0,0,0,0]`),
+					Purchases: json.RawMessage(`[{"ms":4210,"kind":"buy","id":75803296}]`)},
 				{Seat: 5, Team: 2, Bot: true, Noun: 284823512, Won: true},
 				{Seat: 6, Team: 2, Bot: true, Noun: 284823512, Role: 1, Won: true, Kills: 2, Deaths: 3, Assists: 4, CS: 88, Gold: 7420,
-					Level: 11, Stats: map[string]int64{"kills": 2, "deaths": 3, "assists": 4, "creeps": 88, "gold": 7420, "level": 11}},
+					Level: 11, Stats: map[string]int64{"kills": 2, "deaths": 3, "assists": 4, "creeps": 88, "gold": 7420, "level": 11},
+					Inventory: json.RawMessage(`[2033400596,0,0,0,0,0,0,0,0,0,0]`),
+					Purchases: json.RawMessage(`[{"ms":3000,"kind":"buy","id":2988923057},{"ms":9000,"kind":"sell","id":2988923057}]`)},
 			}}
 		if !reflect.DeepEqual(m, want) || skipped != 1 {
 			t.Errorf("record (skipped %d)\n got %+v\nwant %+v", skipped, m, want)
@@ -92,6 +100,26 @@ func TestMatchRecord(t *testing.T) {
 		if got := matchKind(c.mode, g.descriptors()); got != c.want {
 			t.Errorf("matchKind(%s, %s) = %s, want %s", c.mode, c.flags, got, c.want)
 		}
+	}
+}
+
+// M32: a host's inventory and purchases as the store keeps them; longer lists are cut to the contract's limits.
+func TestSeatItems(t *testing.T) {
+	long := make([]gmshost.ItemEvent, gmshost.MaxPurchases+5)
+	for i := range long {
+		long[i] = gmshost.ItemEvent{Ms: int64(i), Kind: gmshost.ItemBuy, ID: 7}
+	}
+	inv, buys := seatItems(gmshost.SeatStats{Inventory: []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}, Purchases: long}, true)
+	var back []gmshost.ItemEvent
+	if string(inv) != `[1,2,3,4,5,6,7,8,9,10,11]` || json.Unmarshal(buys, &back) != nil || len(back) != gmshost.MaxPurchases ||
+		back[gmshost.MaxPurchases-1].Ms != gmshost.MaxPurchases-1 {
+		t.Errorf("cut: %s, %d purchases", inv, len(back))
+	}
+	if inv, buys := seatItems(gmshost.SeatStats{Inventory: []int64{0, 0, 0}}, true); inv != nil || buys != nil {
+		t.Errorf("empty slots: %s %s", inv, buys)
+	}
+	if inv, buys := seatItems(gmshost.SeatStats{Inventory: []int64{1}, Purchases: long}, false); inv != nil || buys != nil {
+		t.Errorf("no seatStats: %s %s", inv, buys)
 	}
 }
 

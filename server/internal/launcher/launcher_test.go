@@ -36,7 +36,7 @@ func TestConfigFiles(t *testing.T) {
 		"zip": "", GameSourcesKey: "", "server_flags": "",
 		"discord_webhook": "", "discord_webhook_queue": "", "discord_webhook_result": "", "discord_webhook_server": "", "discord_queue_ping": "",
 		"discord_ping_cooldown": "15m", "discord_ping_min_wait": "30s", "discord_queue_edit": "on", "discord_names": "on",
-		"discord_result_modes": "pvp,custom", "online_count": "on", "online_count_every": "30s",
+		"discord_result_modes": "pvp,custom", "discord_result_style": "text", "online_count": "on", "online_count_every": "30s",
 		"chat_rooms": "General, Looking for group, Matchmaking:queue:open", "match_history_names": "on",
 		"match_record": "off", "rating_leaderboard": "on", "show_rating": "on", ServeMapsKey: "on", "issues": "off",
 		RegionKey: "", HostMachinesKey: "", RegionNamesKey: "", "rule_presets": "", "default_rules": ""}

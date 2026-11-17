@@ -6,8 +6,10 @@
 //   - OnWellCaptured: wells.cpp Apply (wellsCaptured, the well event);
 //   - Sample: match.cpp's once-a-second step (the timeline: each seat's mTotalGold, mExperience, mLevel and creep
 //     score, each team's gold and kills, once per match minute);
-//   - AtMatchEnd: match::EndMatch, before the playerFinish lines: one seatStats per seat (bots included), then one
-//     matchTimeline, to dgserver (hostctl) or, without a control channel, to the log only.
+//   - OnItem: commands.cpp's item transactions (M32, MITEMS2: seatStats.purchases);
+//   - AtMatchEnd: match::EndMatch, before the playerFinish lines: one seatStats per seat (bots included; since MITEMS2
+//     with the final inventory, cmds::ReadInventory), then one matchTimeline, to dgserver (hostctl) or, without a
+//     control channel, to the log only.
 // MSTATS3 (matchstats_sources.h): each hit's dealt part and each heal by source (seatStats.sources), the heal-core
 // detour (healing keys) and the shields given (shieldingDone).
 // [host] match_stats (1): 0 turns all of it off (no counting, no lines; dgserver stores the match with the basics).
@@ -38,6 +40,10 @@ void OnDeath(bool playerControlled, int npcType, int victimTeam, int creditSeat,
 void OnDeathTimer(int seat, unsigned long long deathMs, unsigned long long respawnMs);
 void OnWellCaptured(double matchSeconds, int well, int team, const std::vector<int>& capturers);
 void Sample(void* sim, double matchSeconds);
+// M32 (MITEMS2): an item transaction's result (commands.cpp, beside matchrec::OnItemResult; bots' purchases too):
+// recorded when done and of type purchase or consume (buy) or sell (sell); undo = REFUND1's sale that undid the last
+// purchase (item = the item sold back). At match time (the previous tick's, as matchrec's).
+void OnItem(unsigned seat, unsigned type, std::uint32_t item, bool done, bool undo);
 // surrenderTeam: 1 or 2 when that team surrendered, else 0.
 void AtMatchEnd(void* sim, int winnerTeam, unsigned long long durationMs, int surrenderTeam);
 

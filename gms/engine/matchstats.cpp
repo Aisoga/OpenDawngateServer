@@ -8,6 +8,7 @@
 #include <string>
 
 #include "bots.h"
+#include "commands.h"
 #include "control/messages.h"
 #include "core/stats/stats.h"
 #include "game.h"
@@ -110,6 +111,31 @@ unsigned long long SehNowMs(void* sim) {
 
 std::int64_t MatchMs(double matchSeconds) { return static_cast<std::int64_t>(std::llround(matchSeconds * 1000.0)); }
 
+// MITEMS2: a seat's items in lines of their own (a seatStats line with sources and purchases passes the log's 2 KiB,
+// which cuts its end, where both fields are): the inventory, then the purchases as "ms kind id", a line per 40.
+void LogItems(const ctl::SeatStats& m, int dropped) {
+  std::string inv;
+  char b[64];
+  for (std::size_t s = 0; s < m.inventory.size(); ++s) {
+    std::snprintf(b, sizeof b, "%s%lld", s ? "," : "", static_cast<long long>(m.inventory[s]));
+    inv += b;
+  }
+  Log("match: items for player %lld: inventory [%s], purchases %zu (dropped %d)", static_cast<long long>(m.index),
+      m.inventory.empty() ? "none" : inv.c_str(), m.purchases.size(), dropped);
+  std::string part;
+  for (std::size_t k = 0; k < m.purchases.size(); ++k) {
+    const ctl::ItemEvent& e = m.purchases[k];
+    std::snprintf(b, sizeof b, "%s%lld %s %lld", part.empty() ? "" : ", ", static_cast<long long>(e.ms),
+                  e.kind.c_str(), static_cast<long long>(e.id));
+    part += b;
+    if ((k + 1) % 40 == 0 || k + 1 == m.purchases.size()) {
+      Log("match: purchases for player %lld (%zu-%zu): %s", static_cast<long long>(m.index), k / 40 * 40 + 1, k + 1,
+          part.c_str());
+      part.clear();
+    }
+  }
+}
+
 }  // namespace
 
 bool Enabled() {
@@ -179,6 +205,13 @@ void Sample(void* sim, double matchSeconds) {
   RefreshSources(sim);  // MSTATS3: what each player holds now (a potion used within the second stays unknown)
 }
 
+void OnItem(unsigned seat, unsigned type, std::uint32_t item, bool done, bool undo) {
+  if (!done || !Enabled() || g_sent || seat >= static_cast<unsigned>(st::kSeats)) return;
+  st::ItemKind kind = st::ItemKind::Undo;
+  if (!undo && !st::ItemKindOfTransaction(type, &kind)) return;  // a use or a swap
+  g_acc.OnItem(MatchMs(match::MatchSeconds()), static_cast<int>(seat), kind, static_cast<std::int64_t>(item));
+}
+
 void AtMatchEnd(void* sim, int winnerTeam, unsigned long long durationMs, int surrenderTeam) {
   if (!Enabled() || g_sent) return;
   g_sent = true;
@@ -187,8 +220,15 @@ void AtMatchEnd(void* sim, int winnerTeam, unsigned long long durationMs, int su
   cc::AtMatchEnd(SehNowMs(sim), g_acc);  // MSTATS4: crowd control and wards
   gold::AtMatchEnd(sim, g_acc);  // MSTATS2: gold and XP by source, the roles' bonuses
   st::SeatFacts seats[st::kSeats];
-  for (int i = 0; i < st::kSeats; ++i)
-    if (SehSeatFacts(sim, i, &seats[i])) seats[i].bot = bots::IsBotIndex(i);
+  for (int i = 0; i < st::kSeats; ++i) {
+    if (!SehSeatFacts(sim, i, &seats[i])) continue;
+    seats[i].bot = bots::IsBotIndex(i);
+    // MITEMS2: the final inventory (asset id by slot; ReadInventory reads under SEH, false = none)
+    std::uint32_t item[ctl::kInventorySlots] = {};
+    std::int32_t count[ctl::kInventorySlots] = {};
+    if (cmds::ReadInventory(sim, static_cast<unsigned>(i), item, count))
+      for (std::size_t s = 0; s < ctl::kInventorySlots; ++s) seats[i].inventory[s] = item[s];
+  }
   const bool channel = hostctl::Active();
   LogSources(g_acc, seats);  // MSTATS3: per seat the rows' sums against damageDealt/healingDone, the unknown GUIDs
   const std::vector<ctl::SeatStats> lines = g_acc.BuildSeatStats(seats);
@@ -197,6 +237,7 @@ void AtMatchEnd(void* sim, int winnerTeam, unsigned long long durationMs, int su
     line.pop_back();
     Log("match: seatStats for player %lld: %s%s", static_cast<long long>(m.index), line.c_str(),
         channel ? " (to dgserver)" : " (no control channel: logged only)");
+    LogItems(m, g_acc.PurchasesDropped(static_cast<int>(m.index)));
     hostctl::SeatStats(m);
   }
   st::TrimReport r;

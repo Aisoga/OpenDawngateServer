@@ -419,6 +419,40 @@ static void TestStatsMessages() {
   bot.bot = true;
   bot.team = 2;
   CHECK_STR(Encode(bot), "{\"t\":\"seatStats\",\"index\":9,\"user\":0,\"bot\":true,\"team\":2,\"noun\":0,\"role\":0}\n");
+  // M32 (MITEMS1): an inventory of empty slots only is left out, as an empty one (Go: TestSeatStatsEmptyItems); a line
+  // without the item fields (an older host's) decodes with both empty
+  bot.inventory.assign(kInventorySlots, 0);
+  CHECK_STR(Encode(bot), "{\"t\":\"seatStats\",\"index\":9,\"user\":0,\"bot\":true,\"team\":2,\"noun\":0,\"role\":0}\n");
+  CHECK(Decode("{\"t\":\"seatStats\",\"index\":9,\"bot\":true}", back, &err));
+  d = std::get_if<SeatStats>(&back);
+  CHECK(d && d->inventory.empty() && d->purchases.empty());
+  // M32: the final inventory and the purchases after sources, as gmshost's TestEncodeValues pins them
+  SeatStats items;
+  items.index = 2;
+  items.user = 2000000046;
+  items.team = 1;
+  items.stats = {{"purchasesDropped", 3}};
+  StatSource basic;
+  basic.kind = "basic";
+  basic.damage = 10;
+  items.sources = {basic};
+  items.inventory = {75803296, 0, 0, 0, 0, 0, 2011516473, 0, 0, 295762247, 0};
+  items.purchases = {ItemEvent{4210, "buy", 75803296}, ItemEvent{90300, "sell", 75803296},
+                     ItemEvent{90310, "undo", 295762247}};
+  const std::string iline =
+      "{\"t\":\"seatStats\",\"index\":2,\"user\":2000000046,\"bot\":false,\"team\":1,\"noun\":0,\"role\":0,"
+      "\"stats\":{\"purchasesDropped\":3},\"sources\":[{\"kind\":\"basic\",\"id\":0,\"damage\":10,\"heal\":0}],"
+      "\"inventory\":[75803296,0,0,0,0,0,2011516473,0,0,295762247,0],\"purchases\":[{\"ms\":4210,\"kind\":\"buy\","
+      "\"id\":75803296},{\"ms\":90300,\"kind\":\"sell\",\"id\":75803296},{\"ms\":90310,\"kind\":\"undo\","
+      "\"id\":295762247}]}\n";
+  CHECK_STR(Encode(items), iline);
+  CHECK(Decode(iline, back, &err));
+  d = std::get_if<SeatStats>(&back);
+  CHECK(d && d->inventory.size() == kInventorySlots && d->inventory[9] == 295762247 && d->purchases.size() == 3 &&
+        d->purchases[2].kind == "undo" && d->purchases[1].ms == 90300 && d->purchases[0].id == 75803296);
+  CHECK(!Decode("{\"t\":\"seatStats\",\"inventory\":[\"x\"]}", back, &err));
+  CHECK(!Decode("{\"t\":\"seatStats\",\"purchases\":[{\"ms\":\"soon\"}]}", back, &err));
+  CHECK(!Decode("{\"t\":\"seatStats\",\"purchases\":[1]}", back, &err));
 
   MatchTimeline tl;
   tl.sec = {60};

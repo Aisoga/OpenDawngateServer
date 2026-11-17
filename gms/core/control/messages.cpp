@@ -209,6 +209,19 @@ struct Encoder {
       }
       o.Set("sources", std::move(list));
     }
+    // M32: after sources; an inventory of empty slots only is left out (Go: SeatStats.MarshalJSON)
+    bool anyItem = false;
+    for (int64_t id : m.inventory) anyItem = anyItem || id != 0;
+    if (anyItem) o.Set("inventory", IntList(m.inventory));
+    if (!m.purchases.empty()) {
+      Json list = Json::Array();
+      for (const ItemEvent& p : m.purchases) {
+        Json e = Json::Object();
+        e.Set("ms", Json::Int(p.ms)).Set("kind", Json::Str(p.kind)).Set("id", Json::Int(p.id));
+        list.Push(std::move(e));
+      }
+      o.Set("purchases", std::move(list));
+    }
   }
   // M18: gmshost.MatchTimeline; every list only when not empty
   void operator()(const MatchTimeline& m) {
@@ -564,6 +577,11 @@ void DecodeSeatStats(Fields& f, SeatStats& m) {
         if (e.Int("slot", v)) s.slot = v;
       }
       e.Int("id", s.id); e.Int("damage", s.damage); e.Int("heal", s.heal);
+    });
+  if (f.err.empty()) f.IntList("inventory", m.inventory);  // M32
+  if (f.err.empty())
+    DecodeObjects(f, "purchases", m.purchases, [](Fields& e, ItemEvent& p) {
+      e.Int("ms", p.ms); e.Str("kind", p.kind); e.Int("id", p.id);
     });
 }
 

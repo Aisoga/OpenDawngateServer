@@ -49,7 +49,7 @@ func TestDiscordFlags(t *testing.T) {
 		}
 	}
 	f := DiscordFlags(cfg)
-	want := "--discord-ping-cooldown=15m --discord-ping-min-wait=30s --discord-names=on --discord-queue-edit=on --discord-result-modes=pvp,custom"
+	want := "--discord-ping-cooldown=15m --discord-ping-min-wait=30s --discord-names=on --discord-queue-edit=on --discord-result-modes=pvp,custom --discord-result-style=text"
 	if got := strings.Join(f, " "); got != want {
 		t.Errorf("the template's flags:\n got %s\nwant %s", got, want)
 	}
@@ -58,8 +58,10 @@ func TestDiscordFlags(t *testing.T) {
 	}
 	cfg["discord_webhook_server"] = " https://discord.com/api/webhooks/1/t "
 	cfg["discord_queue_ping"] = "123"
+	cfg["discord_result_style"] = "image"
 	f = DiscordFlags(cfg)
-	if !slices.Contains(f, "--discord-webhook-server=https://discord.com/api/webhooks/1/t") || !slices.Contains(f, "--discord-queue-ping=123") {
+	if !slices.Contains(f, "--discord-webhook-server=https://discord.com/api/webhooks/1/t") || !slices.Contains(f, "--discord-queue-ping=123") ||
+		!slices.Contains(f, "--discord-result-style=image") {
 		t.Errorf("flags %v", f)
 	}
 	if code := dgserver.Run(append(f, "--print-ports"), dgserver.Hooks{}); code != 0 {

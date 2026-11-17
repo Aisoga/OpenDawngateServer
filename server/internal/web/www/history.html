@@ -17,7 +17,8 @@
   for this match", a key in HIDDEN (playerFinish's bookkeeping, shown elsewhere; the dropped ward keys) is never a row, and a key the page
   has no label for is listed under Other stats with its own name. Same rules
   as home.html: self-contained (the client's own game:// pictures and font families), ES5 (no bind, no flexbox),
-  server text always as text nodes.
+  server text always as text nodes. The one picture from the server: an item's icon, itemicons/<item>.png beside the
+  page, used only after the path passed ICON_PATH.
 -->
 <style type="text/css">
   html, body { margin: 0; padding: 0; background: transparent; }
@@ -104,6 +105,8 @@
             border-bottom: 0; }
   #tabs a:hover, #modeTabs a:hover { color: #cfd4b3; }
   #tabs a.on, #modeTabs a.on { color: #fbeedd; background: rgba(110, 76, 44, .9); border-color: rgba(179, 129, 78, .7); }
+  #tabs a { width: 145px; letter-spacing: 0; }   /* eight tabs in the 1120-px column: seven of 145 and Items' 70 (each 4 px more: borders, margin) */
+  #tabs a.narrow { width: 70px; }
   #tabBody { padding-top: 10px; }
   .sect { margin: 0 0 12px 0; }
   .sect h2 { margin: 0 0 5px 0; font-size: 16px; }
@@ -157,6 +160,32 @@
   #events p { margin: 0; padding: 3px 12px; font-size: 13px; border-top: 1px solid rgba(255, 255, 255, .05); }
   #events .when { display: inline-block; width: 52px; color: #8c8f80; }
 
+  /* Items: an item's icon from the server (itemicons/<item>.png) over its first letter, which shows without a file. */
+  .ico { display: inline-block; position: relative; overflow: hidden; vertical-align: middle; margin-right: 2px;
+         text-align: center; font-size: 11px; color: #9a9d8d; background: rgba(0, 0, 0, .45);
+         border: 1px solid rgba(179, 129, 78, .35); -webkit-box-sizing: border-box; box-sizing: border-box; }
+  .ico.empty { background: rgba(0, 0, 0, .22); border-color: rgba(255, 255, 255, .08); }
+  .ico .pic { position: absolute; left: 0; top: 0; right: 0; bottom: 0; background-repeat: no-repeat;
+              -webkit-background-size: 100% 100%; background-size: 100% 100%; }
+  .slotgap { display: inline-block; width: 6px; }
+  table.grid td.items { text-align: left; padding-left: 6px; text-overflow: clip; }
+  .tiles { padding: 8px 10px 4px 10px; }
+  .note { margin-top: 5px; }
+  .tiles .grp { display: inline-block; vertical-align: top; margin-right: 22px; }
+  .tiles .what { font-size: 12px; color: #8c8f80; letter-spacing: 1px; margin-bottom: 4px; }
+  .tile { display: inline-block; vertical-align: top; width: 76px; margin: 0 4px 6px 0; text-align: center; }
+  .tile .nm { font-size: 11px; color: #cfd4b3; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  table.buys { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  table.buys td { height: 30px; padding: 0 10px; text-align: left; font-size: 14px; border-top: 1px solid rgba(255, 255, 255, .05);
+                  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  table.buys td.when { color: #8c8f80; text-align: right; }
+  table.buys td.ic { padding: 0 4px; text-overflow: clip; }
+  table.buys tr.sell td.nm { color: #9a9d8d; }
+  table.buys tr.undo td.nm { color: #9a9d8d; text-decoration: line-through; }
+  table.buys td.sell { color: #e58a7f; }
+  table.buys td.undo { color: #d9c27a; }
+  body.embed table.buys td { height: 25px; font-size: 12px; }
+
   .msg { padding: 24px; text-align: center; font-size: 15px; }
   .foot { margin-top: 14px; font-size: 12px; color: #77796d; text-align: center; }
 
@@ -172,7 +201,8 @@
   body.embed #matchTitle { font-size: 22px; }
   body.embed #matchLine { font-size: 13px; margin-top: 2px; }
   body.embed #tabs { margin-top: 6px; height: 28px; }
-  body.embed #tabs a { height: 27px; line-height: 27px; width: 142px; font-size: 12px; letter-spacing: 0; }
+  body.embed #tabs a { height: 27px; line-height: 27px; width: 134px; font-size: 12px; letter-spacing: 0; }
+  body.embed #tabs a.narrow { width: 60px; }
   body.embed #modeTabs { margin: 0 0 4px 0; height: 28px; }
   body.embed #modeTabs a { height: 27px; line-height: 27px; width: 142px; font-size: 12px; letter-spacing: 0; }
   body.embed #tabBody { padding-top: 6px; }
@@ -243,6 +273,7 @@
     durationMs: 1,      // the match's length in the head (durationSec)
     noun: 1,            // the shaper's asset id: its name is the seat's shaper
     role: 1,            // 1 + the role enum: the seat's roleName
+    purchasesDropped: 1, // the purchases past the stored 150: a note on the Items tab
     damageToWards: 1,   // dropped: always 0
     killsWards: 1,      // dropped: always 0
     wardsDestroyed: 1   // dropped: always 0
@@ -262,6 +293,7 @@
   var TABS = [
     { id: "overview", name: "Overview", groups: [   // below the scoreboards, only when some seat has a key
       { title: "Kill streaks", keys: ["bestStreak", "doubleKills", "tripleKills", "tetraKills", "omniKills"] } ] },
+    { id: "items", name: "Items", narrow: true },   // a seat's items at the end and its purchases (renderItems)
     { id: "damage", name: "Damage", groups: [
       { title: "Damage dealt", keys: ["damageDealt", "+damageDealtPhysical", "+damageDealtMagical", "+damageDealtTrue",
         "+damageOverload", "largestHit", "overkill"], prefixes: ["damageDealt"] },
@@ -802,6 +834,8 @@
     if (!tab) { tab = TABS[0]; M.tab = tab.id; }
     if (tab.id == "overview") {
       renderOverview(body, m);
+    } else if (tab.id == "items") {
+      renderItems(body, m);
     } else if (tab.id == "timeline") {
       renderTimeline(body, m);
     } else {
@@ -812,7 +846,7 @@
   function renderTabs() {
     var bar = clearNode(el("tabs"));
     for (var i = 0; i < TABS.length; i++) {
-      bar.appendChild(link(TABS[i].name, TABS[i].id == M.tab ? "on" : "", (function (id) { return function () { setTab(id); }; })(TABS[i].id)));
+      bar.appendChild(link(TABS[i].name, (TABS[i].id == M.tab ? "on" : "") + (TABS[i].narrow ? " narrow" : ""), (function (id) { return function () { setTab(id); }; })(TABS[i].id)));
     }
   }
 
@@ -968,6 +1002,7 @@
     var extraHead = ["DAMAGE", "TAKEN", "HEALING", "TIME DEAD"];
     var shown = [];
     for (var e = 0; e < extra.length; e++) { if (anyHas(m, extra[e])) { shown.push(e); } }
+    var withItems = anySeatItems(m);   // the ITEMS column: only for a match that recorded inventories
     for (var team = 1; team <= 2; team++) {
       var ss = [], all = ordered(m);
       for (var i = 0; i < all.length; i++) { if (all[i].team == team) { ss.push(all[i]); } }
@@ -979,15 +1014,24 @@
       s.firstChild.className = "head t" + team;
       var t = make("table", "grid score panel"), cg = make("colgroup", "");
       var widths = EMBED ? [190, 150, 50, 100, 60, 80] : [230, 170, 60, 110, 70, 90];
+      if (withItems) {   // narrower name columns, so the items and the four detail columns fit the review's panel too
+        widths = EMBED ? [150, 128, 50, 84, 46, 64] : [170, 150, 50, 90, 50, 70];
+      }
       for (i = 0; i < widths.length; i++) {
         var c = make("col", "");
-        if (i > 0 || shown.length) { c.style.width = widths[i] + "px"; }   // without extra columns the name takes the rest
+        if (i > 0 || shown.length || withItems) { c.style.width = widths[i] + "px"; }   // else the name takes the rest
         cg.appendChild(c);
+      }
+      if (withItems) {
+        var ci = make("col", "");
+        ci.style.width = itemsCellWidth() + "px";
+        cg.appendChild(ci);
       }
       for (i = 0; i < shown.length; i++) { cg.appendChild(make("col", "")); }
       t.appendChild(cg);
       var hr = make("tr", ""), heads = ["PLAYER", "SHAPER", "LEVEL", "K / D / A", "CS", "VIM"];
       for (i = 0; i < heads.length; i++) { hr.appendChild(make("th", i < 2 ? "lab" : "", heads[i])); }
+      if (withItems) { hr.appendChild(make("th", "lab", "ITEMS")); }
       for (i = 0; i < shown.length; i++) { hr.appendChild(make("th", "", extraHead[shown[i]])); }
       var thead = make("thead", "");
       thead.appendChild(hr);
@@ -1005,6 +1049,7 @@
         tr.appendChild(make("td", "", p.kills + " / " + p.deaths + " / " + p.assists));
         tr.appendChild(make("td", "", num(p.cs)));
         tr.appendChild(make("td", "", num(p.gold)));
+        if (withItems) { tr.appendChild(itemsCell(p)); }
         for (var x = 0; x < shown.length; x++) {
           var key = extra[shown[x]];
           tr.appendChild(has(p, key) ? make("td", "", statText(key, p.stats[key])) : make("td", "dash", "-"));
@@ -1026,6 +1071,136 @@
     for (var j = 0; j < keys.length; j++) { if (!knownKey(keys[j])) { other.push({ key: keys[j], sub: false }); } }
     if (other.length) {
       section(parent, "Other stats").appendChild(grid(m, other));
+    }
+  }
+
+  // ---- Items: the inventory at the end and the purchases ------------------------------------------------------
+  // game.json gives a seat items = [{slot, id, name, icon}] (the non-empty slots: 0-5 items, 6-8 battle spells, 9-10
+  // consumables) and purchases = [{ms, kind, id, name, icon}] in match order (kind buy, sell or undo: a sale that
+  // undid the last purchase); both absent for a match from before they were recorded. icon is the item's name; its
+  // picture is the server's itemicons/<icon>.png, used only when that path is a plain file name there.
+  var ICON_PATH = /^itemicons\/[A-Za-z0-9_]+\.png$/;
+  var SLOTS = 11, ITEM_SLOTS = 6, SPELL_SLOTS = 3;
+  var BUY_KINDS = { buy: "", sell: "Sold", undo: "Undone (refunded)" };
+
+  function iconSize() { return EMBED ? 20 : 22; }
+
+  // An item's box: its first letter, covered by its picture when the server has one; an empty slot without an item.
+  function itemIcon(it, size) {
+    var box = make("span", it ? "ico" : "ico empty");
+    box.style.width = size + "px";
+    box.style.height = size + "px";
+    box.style.lineHeight = (size - 2) + "px";
+    if (!it) { return box; }
+    var name = it.name ? String(it.name) : "";
+    box.appendChild(document.createTextNode((name || "?").charAt(0)));
+    var path = it.icon ? "itemicons/" + it.icon + ".png" : "";
+    if (path && ICON_PATH.test(path)) {
+      var pic = make("span", "pic");
+      pic.style.backgroundImage = "url(" + path + ")";
+      box.appendChild(pic);
+    }
+    box.title = name;
+    return box;
+  }
+
+  // A seat's slots 0-10: the item in each, or null.
+  function seatSlots(s) {
+    var slots = [], xs = list(s.items), i;
+    for (i = 0; i < SLOTS; i++) { slots.push(null); }
+    for (i = 0; i < xs.length; i++) {
+      var k = xs[i] ? xs[i].slot : -1;
+      if (typeof k == "number" && k >= 0 && k < SLOTS && k == Math.floor(k)) { slots[k] = xs[i]; }
+    }
+    return slots;
+  }
+
+  function anySeatItems(m) {
+    var ss = list(m.seats);
+    for (var i = 0; i < ss.length; i++) { if (list(ss[i].items).length) { return true; } }
+    return false;
+  }
+
+  function seatHasItemData(s) { return list(s.items).length > 0 || list(s.purchases).length > 0 || has(s, "purchasesDropped"); }
+
+  // The scoreboard's cell: the six item slots, then the three battle spells (as the game's own scoreboard).
+  function itemsCellWidth() { return (ITEM_SLOTS + SPELL_SLOTS) * (iconSize() + 2) + 6 + 12; }
+
+  function itemsCell(s) {
+    var td = make("td", "items"), slots = seatSlots(s), sz = iconSize();
+    for (var i = 0; i < ITEM_SLOTS + SPELL_SLOTS; i++) {
+      if (i == ITEM_SLOTS) { td.appendChild(make("span", "slotgap")); }
+      td.appendChild(itemIcon(slots[i], sz));
+    }
+    return td;
+  }
+
+  function msClock(ms) { return typeof ms == "number" && ms >= 0 ? clock(ms / 1000) : "-"; }
+
+  function renderItems(parent, m) {
+    var ss = ordered(m), withData = [], i;
+    for (i = 0; i < ss.length; i++) { if (seatHasItemData(ss[i])) { withData.push(ss[i]); } }
+    var s = section(parent, "Items");
+    if (!withData.length) { noneBox(s); return; }
+    var pick = null;
+    for (i = 0; i < withData.length; i++) { if (withData[i].seat == M.seat) { pick = withData[i]; } }
+    if (!pick) { for (i = 0; i < withData.length; i++) { if (withData[i].you) { pick = withData[i]; } } }
+    if (!pick) { pick = withData[0]; }
+    var chips = make("div", "");
+    chips.id = "seatPick";
+    for (i = 0; i < withData.length; i++) {
+      chips.appendChild(link(shaperOf(withData[i]) + " (" + seatName(withData[i]) + ")", "chip" + (withData[i] == pick ? " on" : ""),
+        (function (seat) { return function () { M.seat = seat; renderMatch(); }; })(withData[i].seat)));
+    }
+    s.appendChild(chips);
+
+    // at the end of the match: items, battle spells, consumables
+    var end = section(parent, "At the end of the match"), slots = seatSlots(pick);
+    var groups = [["ITEMS", 0, ITEM_SLOTS], ["BATTLE SPELLS", ITEM_SLOTS, ITEM_SLOTS + SPELL_SLOTS], ["CONSUMABLES", ITEM_SLOTS + SPELL_SLOTS, SLOTS]];
+    if (!list(pick.items).length) {
+      noneBox(end, "No items at the end of the match.");
+    } else {
+      var box = make("div", "panel tiles");
+      for (var g = 0; g < groups.length; g++) {
+        var grp = make("div", "grp");
+        grp.appendChild(make("div", "what", groups[g][0]));
+        for (var k = groups[g][1]; k < groups[g][2]; k++) {
+          var tile = make("div", "tile");
+          tile.appendChild(itemIcon(slots[k], EMBED ? 32 : 40));
+          tile.appendChild(make("div", "nm", slots[k] ? slots[k].name || "?" : ""));
+          grp.appendChild(tile);
+        }
+        box.appendChild(grp);
+      }
+      end.appendChild(box);
+    }
+
+    // the purchases in match order
+    var xs = list(pick.purchases), dropped = has(pick, "purchasesDropped") ? pick.stats.purchasesDropped : 0;
+    var buys = section(parent, "Purchase order", xs.length ? xs.length + (xs.length == 1 ? " purchase or sale" : " purchases and sales") : "");
+    if (!xs.length) {
+      noneBox(buys, "No purchases recorded for this player.");
+    } else {
+      var t = make("table", "buys panel"), cg = make("colgroup", ""), widths = [70, EMBED ? 34 : 40, 0, 180];
+      for (i = 0; i < widths.length; i++) { var c = make("col", ""); if (widths[i]) { c.style.width = widths[i] + "px"; } cg.appendChild(c); }
+      t.appendChild(cg);
+      var tb = make("tbody", "");
+      for (i = 0; i < xs.length; i++) {
+        var x = xs[i] || {}, kind = BUY_KINDS.hasOwnProperty(x.kind) ? x.kind : "buy", tr = make("tr", kind);
+        tr.appendChild(make("td", "when", msClock(x.ms)));
+        var it = make("td", "ic");
+        it.appendChild(itemIcon(x, EMBED ? 20 : 24));
+        tr.appendChild(it);
+        tr.appendChild(make("td", "nm", x.name || "Unknown item"));
+        tr.appendChild(make("td", kind, BUY_KINDS[kind]));
+        tb.appendChild(tr);
+      }
+      t.appendChild(tb);
+      buys.appendChild(t);
+    }
+    if (dropped > 0) {
+      buys.appendChild(make("div", "muted small note", num(dropped) + " later " + (dropped == 1 ? "purchase was" : "purchases were") +
+                            " not recorded (the history keeps the first 150 of a player)."));
     }
   }
 

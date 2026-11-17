@@ -413,20 +413,75 @@ type FinishGame struct {
 // is an object of integers (a bot's carries playerFinish's keys too, kills, deaths, assists, creeps, gold and level,
 // so its seat gets the list's columns); an unknown key is stored and shown as it is. Sources is damage and heal by source, at
 // most 24 entries, the largest first. Each map and list is left out when empty.
+//
+// M32 (MITEMS1): Inventory is the seat's final inventory, MaxInventory item asset ids by slot (0 = empty; slots 0-5
+// items, 6-8 battle spells, 9-10 consumables), left out when empty or all 0 (Encode drops an all-zero list). Purchases
+// is the seat's shop transactions in match order, at most MaxPurchases (the host drops later ones and counts them in
+// the stat purchasesDropped). An older host sends neither; an older server ignores both.
 type SeatStats struct {
-	Index   int              `json:"index"`
-	User    int64            `json:"user"`
-	Bot     bool             `json:"bot"`
-	Team    int              `json:"team"`
-	Noun    int64            `json:"noun"`
-	Role    int              `json:"role"`
-	Stats   map[string]int64 `json:"stats,omitempty"`
-	Sources []StatSource     `json:"sources,omitempty"`
+	Index     int              `json:"index"`
+	User      int64            `json:"user"`
+	Bot       bool             `json:"bot"`
+	Team      int              `json:"team"`
+	Noun      int64            `json:"noun"`
+	Role      int              `json:"role"`
+	Stats     map[string]int64 `json:"stats,omitempty"`
+	Sources   []StatSource     `json:"sources,omitempty"`
+	Inventory []int64          `json:"inventory,omitempty"`
+	Purchases []ItemEvent      `json:"purchases,omitempty"`
 }
 
-// StatSource is one row of seatStats.sources. Kind: basic, ability (Slot 0-3 = Q/W/E/R, 4 = passive), item (ID = the
-// item's catalog id), perk (ID = the spirit stone's catalog id), role, other. Slot is written for an ability only
-// (nil = left out); ID always.
+// MarshalJSON writes SeatStats with the contract's rule for Inventory: a list of empty slots only is left out, as an
+// empty one.
+func (m SeatStats) MarshalJSON() ([]byte, error) {
+	type plain SeatStats
+	p := plain(m)
+	if allZero(p.Inventory) {
+		p.Inventory = nil
+	}
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(p); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(b.Bytes(), "\n"), nil
+}
+
+func allZero(v []int64) bool {
+	for _, x := range v {
+		if x != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// The item fields' limits (M32): a seatStats inventory has MaxInventory slots, its purchases at most MaxPurchases
+// entries (the server keeps no more of either).
+const (
+	MaxInventory = 11
+	MaxPurchases = 150
+)
+
+// Kinds of an ItemEvent (M32).
+const (
+	ItemBuy  = "buy"  // a purchase, an upgrade or a consume-on-purchase
+	ItemSell = "sell" // a sale
+	ItemUndo = "undo" // the sale that undid the last purchase (REFUND1)
+)
+
+// ItemEvent is one row of seatStats.purchases (M32): Ms the match time in ms, Kind buy, sell or undo, ID the item's
+// asset id (content.AssetID(name+".Item"), as in StatSource). Refused transactions, uses and swaps aren't sent.
+type ItemEvent struct {
+	Ms   int64  `json:"ms"`
+	Kind string `json:"kind"`
+	ID   int64  `json:"id"`
+}
+
+// StatSource is one row of seatStats.sources. Kind: basic, ability (Slot 0-3 = Q/W/E/R, 4 = passive), item and spell
+// (ID = the match item's asset id, content.AssetID(name+".Item"); 0 = unknown), perk (ID = the stone modifier's SPID),
+// role, other. Slot is written for an ability only (nil = left out); ID always.
 type StatSource struct {
 	Kind   string `json:"kind"`
 	Slot   *int   `json:"slot,omitempty"`

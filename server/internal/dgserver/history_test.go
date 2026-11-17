@@ -109,11 +109,19 @@ func historyFixture(t *testing.T) (*store.Store, []int64) {
 						`{"kind":"role","id":0,"damage":0,"heal":120},` +
 						`{"kind":"item","id":12345,"damage":10,"heal":0},` +
 						`{"kind":"ability",` + slot(4) + `"id":0,"damage":7,"heal":0},` +
-						`{"kind":"other","id":0,"damage":3,"heal":0}]`)},
+						`{"kind":"other","id":0,"damage":3,"heal":0}]`),
+					// M32: an item, a battle spell and an unknown id in the inventory; every purchase kind
+					Inventory: json.RawMessage(`[` + itoa(content.AssetID(histItem+".Item")) + `,0,0,0,0,0,` +
+						itoa(content.AssetID("Spell_Blink.Item")) + `,0,0,12345,0]`),
+					Purchases: json.RawMessage(`[{"ms":1000,"kind":"buy","id":12345},{"ms":1500,"kind":"undo","id":12345},` +
+						`{"ms":4210,"kind":"buy","id":` + itoa(content.AssetID(histItem+".Item")) + `},` +
+						`{"ms":90300,"kind":"sell","id":` + itoa(content.AssetID(histItem+".Item")) + `}]`)},
 				{Seat: 5, PersonaID: ps[1], UserID: 2, Team: 2, Noun: fenmore, Role: 4, Won: true, Kills: 6, Deaths: 2,
 					Assists: 1, CS: 77, Gold: 8800, Level: 13},
 				{Seat: 6, Team: 2, Bot: true, Noun: 0, Role: 0, Won: true, Kills: 0, Deaths: 0, CS: 12, Gold: 2100, Level: 6,
-					Stats: map[string]int64{"damageDealt": 1}}}},
+					Stats:     map[string]int64{"damageDealt": 1},
+					Inventory: json.RawMessage(`[0,0,0,0,0,0,0,999,0,0,0]`), // an unknown battle spell
+					Purchases: json.RawMessage(`[{"ms":3000,"kind":"buy","id":` + itoa(content.AssetID(histItem+".Item")) + `}]`)}}},
 		{GameID: 3, Kind: "custom", Mode: "custom", Level: "SM_Map_v5", Winner: 0, Reason: "",
 			Started: at(-1), Ended: at(-1).Add(5 * time.Minute), DurationMs: 300000, Seats: []store.MatchSeat{
 				{Seat: 0, PersonaID: ps[1], UserID: 2, Team: 1, Noun: fenmore, Kills: 0},
@@ -240,20 +248,24 @@ func TestHistoryRules(t *testing.T) {
 	}
 }
 
-// A seat's sources that don't decode: the seat without them, a log line.
+// A seat's sources, inventory or purchases that don't decode: the seat without them, a log line each.
 func TestHistoryBadSources(t *testing.T) {
 	s := store.New()
 	if _, err := s.InsertMatch(store.Match{Kind: "practice", Mode: "practice", Started: historyNow, Ended: historyNow,
-		Seats: []store.MatchSeat{{Seat: 5, Team: 2, Bot: true, Sources: json.RawMessage(`{"kind":1}`)}}}); err != nil {
+		Seats: []store.MatchSeat{{Seat: 5, Team: 2, Bot: true, Sources: json.RawMessage(`{"kind":1}`),
+			Inventory: json.RawMessage(`[1,"x"]`), Purchases: json.RawMessage(`[{"ms":"soon"}]`)}}}); err != nil {
 		t.Fatal(err)
 	}
 	var log bytes.Buffer
 	h := newHistory(s, nil, true, func() time.Time { return historyNow },
 		func(who, f string, a ...any) { log.WriteString(who + ": " + f + "\n") })
 	code, got := ask(h, web.HistoryGame, "id=1")
-	if code != 200 || !strings.Contains(got, `"name":"Bot","bot":true`) || !strings.Contains(got, `"stats":{},"sources":[]}`) ||
+	if code != 200 || !strings.Contains(got, `"name":"Bot","bot":true`) ||
+		!strings.Contains(got, `"stats":{},"sources":[],"items":[],"purchases":[]}`) ||
 		!strings.Contains(got, `"timeline":null`) || !strings.Contains(got, `"shaper":""`) ||
-		!strings.Contains(log.String(), "http: match history: match %d seat %d: sources: %v") {
+		!strings.Contains(log.String(), "http: match history: match %d seat %d: sources: %v") ||
+		!strings.Contains(log.String(), "http: match history: match %d seat %d: inventory: %v") ||
+		!strings.Contains(log.String(), "http: match history: match %d seat %d: purchases: %v") {
 		t.Errorf("%d %s, log %s", code, got, log.String())
 	}
 }

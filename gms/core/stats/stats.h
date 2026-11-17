@@ -14,6 +14,7 @@
 //   Sample         the match's once-a-second step: a timeline sample whenever floor(t / 60) changes
 //   AddStat, AddSource   the seams for MSTATS2-4's keys and MSTATS3's damage/heal by source
 //   OnHeal, OnShieldAbsorb   MSTATS3: the heal core's heals and the shields a seat gave (sources.h for the rows)
+//   OnItem         M32 (MITEMS2): a shop transaction (seatStats.purchases); the final inventory comes in SeatFacts
 //   Close, BuildSeatStats, BuildTimeline   at the end
 #pragma once
 
@@ -103,7 +104,18 @@ struct SeatFacts {
   int role = 0;  // as playerFinish's: 1 + mRole
   int kills = 0, deaths = 0, assists = 0, creeps = 0, level = 0;
   std::int64_t gold = 0;  // mTotalGold, rounded
+  // M32 (MITEMS2): the final inventory, the item asset id by slot (0 = empty; slots 0-5 items, 6-8 battle spells,
+  // 9-10 consumables); all 0 = none read or nothing held, which seatStats leaves out
+  std::int64_t inventory[dggms::control::kInventorySlots] = {};
 };
+
+// M32 (MITEMS2): a recorded shop transaction's kind (seatStats.purchases' "kind").
+enum class ItemKind : int { Buy, Sell, Undo };
+const char* ItemKindName(ItemKind k);  // "buy", "sell", "undo"
+// The kind of a done item transaction by its type (gms::ItemTransactionType): purchase (1, an upgrade too) and consume
+// (4, a consume-on-purchase) are Buy, sell (2) Sell; use (3), swap (5) and anything else false (not recorded).
+// REFUND1's undo isn't a type of its own (a sale that undid the last purchase): the engine passes ItemKind::Undo.
+bool ItemKindOfTransaction(unsigned type, ItemKind* kind);
 
 // One seat's state at a timeline sample.
 struct SeatSample {
@@ -147,6 +159,10 @@ class Accumulator {
   // source's heal) and a shield's absorb credited to the seat that gave it (shieldingDone; not its own creature's).
   void OnHeal(const HealEvent& h);
   void OnShieldAbsorb(int giverSeat, int targetSeat, bool sameTeam, double absorbed);
+  // M32 (MITEMS2): a done shop transaction of the seat at match time `ms` (negative = 0): `id` the item asset id (the
+  // item bought, sold, or whose purchase the undo took back). The first kMaxPurchases a seat are kept in order; later
+  // ones are counted in the stat purchasesDropped.
+  void OnItem(std::int64_t ms, int seat, ItemKind kind, std::int64_t id);
 
   // The end: open death timers end at endMs (once; later calls do nothing).
   void Close(std::uint64_t endMs);
@@ -164,6 +180,9 @@ class Accumulator {
   unsigned Heals() const { return heals_; }
   // MSTATS3's check: a seat's source rows summed (damage, heal), before the cap and the rounding.
   void SourceSums(int seat, double* damage, double* heal) const;
+  // MITEMS2: the seat's recorded transactions and those past the cap.
+  std::size_t Purchases(int seat) const;
+  int PurchasesDropped(int seat) const;
 
  private:
   struct Seat {
@@ -175,6 +194,8 @@ class Accumulator {
     std::map<std::tuple<std::string, int, std::int64_t>, std::pair<double, double>> sources;
     bool sampled = false;
     std::vector<std::int64_t> gold, xp, level, cs;
+    std::vector<dggms::control::ItemEvent> purchases;  // MITEMS2: match order, at most kMaxPurchases
+    int purchasesDropped = 0;
   };
   void Add(int seat, const std::string& key, double v);
   void AddEvent(std::int64_t ms, const char* kind, std::int64_t a, std::int64_t b);

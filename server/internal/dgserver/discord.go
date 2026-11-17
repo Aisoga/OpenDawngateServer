@@ -14,6 +14,7 @@ import (
 type discordFlags struct {
 	s                                discordhook.Settings
 	names, queueEdit, resultModes    *string
+	resultStyle                      *string
 	webhook, queue, result, srv, png *string
 }
 
@@ -30,6 +31,7 @@ func addDiscordFlags(fs *flag.FlagSet) *discordFlags {
 	d.names = fs.String("discord-names", "on", `Discord posts show player names: on, or off ("a player")`)
 	d.queueEdit = fs.String("discord-queue-edit", "on", "the queue message: on = one message edited live, off = a new post per change")
 	d.resultModes = fs.String("discord-result-modes", "pvp,custom", "the modes whose match results are posted, comma-separated: pvp, custom, practice (also a practice group's game); none")
+	d.resultStyle = fs.String("discord-result-style", "text", "how a match result is posted: text (a row per player with the items) or image (a picture of the scoreboard drawn with the game's art beside the content file; posts the game's art to Discord)")
 	fs.BoolVar(&d.s.AllowLocal, "test-discord-local", false, "test aid: also accept http://127.x.x.x:<port>/api/webhooks/<id>/<token> webhooks (a local fake receiver)")
 	return d
 }
@@ -48,6 +50,9 @@ func (d *discordFlags) settings() (discordhook.Settings, error) {
 	}
 	if s.ResultModes, err = discordhook.ParseModes(*d.resultModes); err != nil {
 		return s, fmt.Errorf("--discord-result-modes: %v", err)
+	}
+	if s.ResultStyle, err = discordhook.ParseStyle(*d.resultStyle); err != nil {
+		return s, fmt.Errorf("--discord-result-style: %v", err)
 	}
 	if err := s.Check(); err != nil {
 		return s, fmt.Errorf("--%v", err)

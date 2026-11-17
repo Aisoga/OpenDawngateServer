@@ -87,12 +87,20 @@ func (s *Setup) stepContent(game, what string) bool {
 	if err != nil {
 		return s.report(Failed, step, err.Error())
 	}
+	// the art beside the file (gamecontent.WriteArt: the item icons, the portraits, the fonts): current when every
+	// file is there at its size
+	art, err := gamecontent.ArtCheck(game, file, c)
+	if err != nil {
+		return s.report(Failed, step, err.Error())
+	}
 	cur, err := os.ReadFile(file)
 	why := "missing"
 	switch {
+	case err == nil && bytes.Equal(cur, want) && art.Why() == "":
+		return s.report(OK, step, fmt.Sprintf("%s (%s, %d items, %d shapers, %d match items; %s)", s.show(file), c.Format,
+			len(c.Items), len(c.Shapers), len(c.MatchItems), art.Summary()))
 	case err == nil && bytes.Equal(cur, want):
-		return s.report(OK, step, fmt.Sprintf("%s (%s, %d items, %d shapers, %d match items)", s.show(file), c.Format,
-			len(c.Items), len(c.Shapers), len(c.MatchItems)))
+		why = art.Why()
 	case err == nil:
 		why = "not what the game data gives now"
 		if old, err := content.Load(file); err == nil && old.Format != content.Format {
@@ -108,9 +116,15 @@ func (s *Setup) stepContent(game, what string) bool {
 		}
 		return s.report(st, step, fmt.Sprintf("%s: %s", s.show(file), why))
 	}
-	if err := c.Write(file); err != nil {
+	if !bytes.Equal(cur, want) {
+		if err := c.Write(file); err != nil {
+			return s.report(Failed, step, err.Error())
+		}
+	}
+	if art, err = gamecontent.WriteArt(game, file, c); err != nil {
 		return s.report(Failed, step, err.Error())
 	}
-	return s.report(Done, step, fmt.Sprintf("%s built from the game data (%s, %d items, %d shapers, %d match items; %.1f s; was: %s)",
-		s.show(file), c.Format, len(c.Items), len(c.Shapers), len(c.MatchItems), time.Since(t0).Seconds(), why))
+	return s.report(Done, step, fmt.Sprintf("%s built from the game data (%s, %d items, %d shapers, %d match items; %s, %d written; %.1f s; was: %s)",
+		s.show(file), c.Format, len(c.Items), len(c.Shapers), len(c.MatchItems), art.Summary(), art.Written,
+		time.Since(t0).Seconds(), why))
 }

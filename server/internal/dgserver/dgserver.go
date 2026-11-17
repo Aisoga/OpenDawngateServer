@@ -260,7 +260,7 @@ func makeContent(dir, file string) error {
 	items, _, _ := c.Grant(content.OwnAll)
 	fmt.Printf("wrote %s: %d items (%d ownable), %d shapers, %d perks, %d match items, %d loot bags\n",
 		file, len(c.Items), len(items), len(c.Shapers), len(c.Perks), len(c.MatchItems), len(c.LootBags))
-	return nil
+	return makeArt(dir, file, c) // the icons, portraits and fonts beside it (itemicons.go)
 }
 
 func (c config) ports() []int {
@@ -803,6 +803,8 @@ func start(cfg config) (*instance, error) {
 		httpSrv.Home = testHomeFile(cfg.testHomeJSON, httpSrv.Home)
 		log.Logf("stub", "TEST: home.json answered from %s, read at every request (--test-home-json, a test aid)", cfg.testHomeJSON)
 	}
+	httpSrv.ItemIcons = itemIconsWeb(bz.Content, cfg.contentFile()) // the history page's item icons (itemicons.go)
+	log.Logf("stub", "%s", itemIconsNote(httpSrv.ItemIcons, bz.Content))
 	// MHIST2: the match history's JSON (history.go)
 	if bz.Store != nil {
 		hist := newHistory(bz.Store, bz.Content, cfg.historyNames, bz.Now, log.Logf)
@@ -983,7 +985,14 @@ func start(cfg config) (*instance, error) {
 		return nil, err
 	}
 	log.Log("stub", in.discord.Describe())
-	bz.SetResultPosts(blaze.ResultPosts{Hook: in.discord.Hook(discordhook.Result), Settings: cfg.discord})
+	var draw func(blaze.ResultImage) ([]byte, error)
+	if in.discord.Hook(discordhook.Result) != nil { // DISCORD4b: the image style's renderer
+		var drawNote string
+		if draw, drawNote = resultImage(cfg.discord, cfg.contentFile()); drawNote != "" {
+			log.Log("stub", drawNote)
+		}
+	}
+	bz.SetResultPosts(blaze.ResultPosts{Hook: in.discord.Hook(discordhook.Result), Settings: cfg.discord, Image: draw})
 	bz.SetDiscordQueue(blaze.NewDiscordQueue(in.discord.Hook(discordhook.Queue), cfg.discord)) // DISCORD2b
 	return in, nil
 }

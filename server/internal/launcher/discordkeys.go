@@ -6,7 +6,7 @@ import "strings"
 // --discord-webhook).
 var discordKeys = []string{"discord_webhook", "discord_webhook_queue", "discord_webhook_result", "discord_webhook_server",
 	"discord_queue_ping", "discord_ping_cooldown", "discord_ping_min_wait", "discord_names", "discord_queue_edit",
-	"discord_result_modes"}
+	"discord_result_modes", "discord_result_style"}
 
 // onlineCountKeys are Start-Server.ini's keys of the players-online count in the main menu's marquee, each dgserver's
 // flag of the same name (online_count → --online-count).

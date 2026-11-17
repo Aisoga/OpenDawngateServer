@@ -335,6 +335,13 @@ CREATE TABLE mode_rating_days (
 	{11, "the map's own rules (MAPRULES5)", `
 ALTER TABLE matches ADD COLUMN map_rules TEXT NOT NULL DEFAULT '';
 `},
+	// a seat's items (M32, MITEMS1): the final inventory (a JSON list of 11 item asset ids by slot, 0 = empty) and the
+	// purchases in match order (a JSON list of {ms, kind, id}), as the host's seatStats carried them; '' = none (an
+	// older host, or an empty inventory). Read by Match only, as sources.
+	{12, "a seat's final inventory and purchases (MITEMS1)", `
+ALTER TABLE match_seats ADD COLUMN inventory TEXT NOT NULL DEFAULT '';
+ALTER TABLE match_seats ADD COLUMN purchases TEXT NOT NULL DEFAULT '';
+`},
 }
 
 // SchemaVersion is the schema version this build writes (the last migration's).

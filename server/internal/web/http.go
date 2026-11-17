@@ -98,6 +98,10 @@ type HTTP struct {
 	// (history.go): the HTTP status code and the JSON body (HistoryError's for an error) for the request's query.
 	History func(kind string, query url.Values) (int, []byte)
 
+	// ItemIcons are the match items' icons the history page shows (itemicons.go; nil: none, the paths fall through
+	// to --www and the built-ins), served at every path with ItemIconsPart before --www and the built-ins.
+	ItemIcons *ItemIcons
+
 	// Maps are the map packages the server hands out (map delivery, mapdist.go; nil: none, 404 at its paths).
 	Maps    MapPackages
 	mapDist mapDist
@@ -261,6 +265,12 @@ func (h *HTTP) ServeConn(c net.Conn) {
 	if h.Home != nil {
 		if f := strings.Fields(req.line); len(f) >= 2 && strings.HasSuffix(urlPath(f[1]), HomeJSONSuffix) {
 			h.serveHome(c, peer, f[0], f[1])
+			return
+		}
+	}
+	if h.ItemIcons != nil {
+		if f := strings.Fields(req.line); len(f) >= 2 && isItemIconPath(urlPath(f[1])) {
+			h.serveItemIcon(c, peer, f[0], f[1], req.get("if-none-match"))
 			return
 		}
 	}

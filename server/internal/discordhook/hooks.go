@@ -69,6 +69,9 @@ type Settings struct {
 	Names, QueueEdit bool
 	// ResultModes are the modes whose results are posted (ModePvP, ModeCustom, ModePractice).
 	ResultModes []string
+	// ResultStyle is how a result is posted: StyleText (an embed with a row per seat) or StyleImage (a picture of the
+	// scoreboard the server draws, blaze.ResultPosts.Image; the text when it can't). "" counts as StyleText.
+	ResultStyle string
 	// AllowLocal accepts http://127.x.x.x webhook URLs (a test aid: a local fake receiver).
 	AllowLocal bool
 }
@@ -77,7 +80,30 @@ type Settings struct {
 // message edited live, results of PvP and custom games.
 func DefaultSettings() Settings {
 	return Settings{PingCooldown: 15 * time.Minute, PingMinWait: 30 * time.Second, Names: true, QueueEdit: true,
-		ResultModes: []string{ModePvP, ModeCustom}}
+		ResultModes: []string{ModePvP, ModeCustom}, ResultStyle: StyleText}
+}
+
+// Result styles (Settings.ResultStyle, --discord-result-style).
+const (
+	StyleText  = "text"
+	StyleImage = "image"
+)
+
+// ParseStyle reads a result style: text or image.
+func ParseStyle(s string) (string, error) {
+	switch v := strings.ToLower(strings.TrimSpace(s)); v {
+	case StyleText, StyleImage:
+		return v, nil
+	}
+	return "", fmt.Errorf("%q: use text or image", strings.TrimSpace(s))
+}
+
+// Style is the result style in effect: ResultStyle, StyleText when empty.
+func (s Settings) Style() string {
+	if s.ResultStyle == "" {
+		return StyleText
+	}
+	return s.ResultStyle
 }
 
 // ParseOnOff reads on/off (also yes/no, true/false, 1/0).
@@ -113,7 +139,7 @@ func ParseModes(s string) ([]string, error) {
 }
 
 // Check validates the settings: each URL (CheckURL; the error names the setting, never the URL), the role id
-// (digits), the durations (0 or more).
+// (digits), the durations (0 or more), the result style (text, image or empty).
 func (s Settings) Check() error {
 	for _, u := range []struct{ name, url string }{{"discord-webhook", s.URLs.Default}, {"discord-webhook-queue", s.URLs.Queue},
 		{"discord-webhook-result", s.URLs.Result}, {"discord-webhook-server", s.URLs.Server}} {
@@ -129,6 +155,9 @@ func (s Settings) Check() error {
 	}
 	if s.PingCooldown < 0 || s.PingMinWait < 0 {
 		return errors.New("discord-ping-cooldown and discord-ping-min-wait must be 0 or more")
+	}
+	if s.ResultStyle != "" && s.ResultStyle != StyleText && s.ResultStyle != StyleImage {
+		return fmt.Errorf("discord-result-style: %q: use text or image", s.ResultStyle)
 	}
 	return nil
 }
@@ -207,7 +236,7 @@ func (hs *Hooks) Close(flush time.Duration) {
 }
 
 // Describe is the start-up log line, without any secret: per event on (and the masked webhook) or off, then the
-// queue's ping, names, the queue message's editing and the result modes.
+// queue's ping, names, the queue message's editing, the result modes and their style.
 func (hs *Hooks) Describe() string {
 	s := DefaultSettings()
 	if hs != nil {
@@ -249,6 +278,10 @@ func (hs *Hooks) Describe() string {
 	if s.AllowLocal {
 		local = "; TEST: local receivers allowed (--test-discord-local)"
 	}
-	return fmt.Sprintf("discord webhooks: %s; %s; %s; %s; results of %s%s", strings.Join(parts, ", "), ping, names, edit,
-		modes, local)
+	style := "as text"
+	if s.Style() == StyleImage {
+		style = "as image"
+	}
+	return fmt.Sprintf("discord webhooks: %s; %s; %s; %s; results of %s %s%s", strings.Join(parts, ", "), ping, names,
+		edit, modes, style, local)
 }

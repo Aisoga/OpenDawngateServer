@@ -588,7 +588,7 @@ func (hg *hostedGame) events() gmshost.Events {
 			id := hg.storeMatch(m)      // M18: the match history (matchhistory.go)
 			hg.rate(m)                  // RATING1: the skill rating of a rated game (rating.go), from the same seats
 			hg.pushExtendedData(pushes) // the new wins and rating (RATING2: DMAP[0x00070035] for the lobby's BALANCE)
-			hg.postResult(f, id)        // DISCORD2c: the result on Discord (results.go), store or not; HOME1's ring with the id
+			hg.postResult(f, m, id)     // DISCORD2c: the result on Discord (results.go), store or not; HOME1's ring with the id
 			hg.setState(GameStatePostGame)
 		},
 		// M18: the match's statistics, kept for the match history until finishGame (matchhistory.go)

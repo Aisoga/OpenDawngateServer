@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 
 namespace gms::stats {
 
@@ -58,6 +59,28 @@ const char* KindName(Kind k) {
     case Kind::Pets: return "Pets";
     case Kind::Wards: return "Wards";
     default: return "Other";
+  }
+}
+
+const char* ItemKindName(ItemKind k) {
+  switch (k) {
+    case ItemKind::Sell: return "sell";
+    case ItemKind::Undo: return "undo";
+    default: return "buy";
+  }
+}
+
+bool ItemKindOfTransaction(unsigned type, ItemKind* kind) {
+  switch (type) {
+    case 1:  // purchase (an upgrade is one too)
+    case 4:  // consume: a paid consume-on-purchase
+      *kind = ItemKind::Buy;
+      return true;
+    case 2:
+      *kind = ItemKind::Sell;
+      return true;
+    default:  // use (3), swap (5): not recorded
+      return false;
   }
 }
 
@@ -147,6 +170,24 @@ void Accumulator::SourceSums(int seat, double* damage, double* heal) const {
     *heal += kv.second.second;
   }
 }
+
+void Accumulator::OnItem(std::int64_t ms, int seat, ItemKind kind, std::int64_t id) {
+  if (!ValidSeat(seat)) return;
+  Seat& s = seats_[seat];
+  if (s.purchases.size() >= ctl::kMaxPurchases) {
+    ++s.purchasesDropped;
+    return;
+  }
+  ctl::ItemEvent e;
+  e.ms = ms < 0 ? 0 : ms;
+  e.kind = ItemKindName(kind);
+  e.id = id;
+  s.purchases.push_back(std::move(e));
+}
+
+std::size_t Accumulator::Purchases(int seat) const { return ValidSeat(seat) ? seats_[seat].purchases.size() : 0; }
+
+int Accumulator::PurchasesDropped(int seat) const { return ValidSeat(seat) ? seats_[seat].purchasesDropped : 0; }
 
 void Accumulator::OnKill(int creditSeat, int creditTeam, Kind victimKind, int victimTeam) {
   // WARDSTAT: no killsWards (a ward has no combatant in 854, so nothing hits or kills it: the key could only be 0)
@@ -285,6 +326,8 @@ std::vector<ctl::SeatStats> Accumulator::BuildSeatStats(const SeatFacts seats[kS
       m.stats["gold"] = f.gold;
       m.stats["level"] = f.level;
     }
+    // MITEMS2: like the other keys, purchasesDropped only when not 0
+    if (s.purchasesDropped != 0) m.stats["purchasesDropped"] = s.purchasesDropped;
     // MSTATS3's rows: the largest (damage + heal) first, at most kMaxSources
     for (const auto& kv : s.sources) {
       ctl::StatSource r;
@@ -320,6 +363,11 @@ std::vector<ctl::SeatStats> Accumulator::BuildSeatStats(const SeatFacts seats[kS
       other->heal += heal;
       std::stable_sort(m.sources.begin(), m.sources.end(), largestFirst);
     }
+    // MITEMS2: the final inventory by slot (Encode leaves out one of empty slots only) and the purchases in order
+    bool anyItem = false;
+    for (std::int64_t id : f.inventory) anyItem = anyItem || id != 0;
+    if (anyItem) m.inventory.assign(std::begin(f.inventory), std::end(f.inventory));
+    m.purchases = s.purchases;
     out.push_back(std::move(m));
   }
   return out;

@@ -106,6 +106,56 @@
             "damage": 3,
             "heal": 0
           }
+        ],
+        "items": [
+          {
+            "slot": 0,
+            "id": 75803296,
+            "name": "Abolition",
+            "icon": "Advanced_Abolition"
+          },
+          {
+            "slot": 6,
+            "id": 2011516473,
+            "name": "Blink",
+            "icon": "Spell_Blink"
+          },
+          {
+            "slot": 9,
+            "id": 12345,
+            "name": "Item",
+            "icon": ""
+          }
+        ],
+        "purchases": [
+          {
+            "ms": 1000,
+            "kind": "buy",
+            "id": 12345,
+            "name": "Item",
+            "icon": ""
+          },
+          {
+            "ms": 1500,
+            "kind": "undo",
+            "id": 12345,
+            "name": "Item",
+            "icon": ""
+          },
+          {
+            "ms": 4210,
+            "kind": "buy",
+            "id": 75803296,
+            "name": "Abolition",
+            "icon": "Advanced_Abolition"
+          },
+          {
+            "ms": 90300,
+            "kind": "sell",
+            "id": 75803296,
+            "name": "Abolition",
+            "icon": "Advanced_Abolition"
+          }
         ]
       },
       {
@@ -127,7 +177,9 @@
         "gold": 8800,
         "level": 13,
         "stats": {},
-        "sources": []
+        "sources": [],
+        "items": [],
+        "purchases": []
       },
       {
         "seat": 6,
@@ -150,7 +202,24 @@
         "stats": {
           "damageDealt": 1
         },
-        "sources": []
+        "sources": [],
+        "items": [
+          {
+            "slot": 7,
+            "id": 999,
+            "name": "Battle spell",
+            "icon": ""
+          }
+        ],
+        "purchases": [
+          {
+            "ms": 3000,
+            "kind": "buy",
+            "id": 75803296,
+            "name": "Abolition",
+            "icon": "Advanced_Abolition"
+          }
+        ]
       }
     ],
     "timeline": {

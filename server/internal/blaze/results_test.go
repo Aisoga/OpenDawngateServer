@@ -1,8 +1,10 @@
 package blaze
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -202,6 +204,57 @@ func (w *fakeWebhook) got() []string {
 	return append([]string(nil), w.bodies...)
 }
 
+// rowsPost is the start of the text style's post of TestHostedGameResultPosted's game with seatStats.
+const rowsPost = `{"content":"","embeds":[{"title":"PvP match: Team 1 wins","description":"Team 2's Guardian fell after 12:34",` +
+	`"color":3447003,"fields":[{"name":"Team 1 (won)","value":"**alpha** · Ember · 3/1/2 · 40 CS · 1500 vim\n` +
+	`↳ Storm · Hop"},{"name":"Team 2","value":"Bot · stone · 2/3/4 · 88 CS · 7420 vim"}],"footer":{"text":"Game 1"},`
+
+// multipartParts are a multipart/form-data body's parts by name (the boundary taken from its first line).
+func multipartParts(t *testing.T, body string) map[string]string {
+	t.Helper()
+	first, _, _ := strings.Cut(body, "\r\n")
+	if !strings.HasPrefix(first, "--") {
+		t.Fatalf("not multipart: %.80q", body)
+	}
+	r := multipart.NewReader(strings.NewReader(body), strings.TrimPrefix(first, "--"))
+	parts := map[string]string{}
+	for {
+		p, err := r.NextPart()
+		if err == io.EOF {
+			return parts
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(p)
+		parts[p.FormName()] = string(b)
+	}
+}
+
+// The image style's message: the text style's embed without fields, its image the uploaded picture.
+func TestResultImageMessage(t *testing.T) {
+	text := discordhook.Message{Embeds: []discordhook.Embed{{Title: "T", Description: "D", Color: colorTeam2,
+		Fields: []discordhook.Field{{Name: "Team 1", Value: "x"}}, Footer: &discordhook.Footer{Text: "Game 3"},
+		Timestamp: "2026-11-17T12:00:00Z"}}}
+	m := imageMessage(text, []byte("png"))
+	if len(m.Embeds) != 1 || m.Embeds[0].Fields != nil || m.Embeds[0].Image == nil ||
+		m.Embeds[0].Image.URL != "attachment://scoreboard.png" || m.Embeds[0].Title != "T" || m.Embeds[0].Footer.Text != "Game 3" ||
+		m.Embeds[0].Timestamp == "" || m.Embeds[0].Color != colorTeam2 || len(m.Files) != 1 ||
+		m.Files[0].Name != "scoreboard.png" || m.Files[0].ContentType != "image/png" || string(m.Files[0].Data) != "png" {
+		t.Errorf("%+v", m)
+	}
+	if len(text.Embeds[0].Fields) != 1 {
+		t.Error("the text message changed")
+	}
+	if _, err := drawResult(func(ResultImage) ([]byte, error) { panic("boom") }, ResultImage{}); err == nil ||
+		!strings.Contains(err.Error(), "boom") {
+		t.Errorf("a panic: %v", err)
+	}
+	if _, err := drawResult(func(ResultImage) ([]byte, error) { return nil, nil }, ResultImage{}); err == nil {
+		t.Error("an empty picture posted")
+	}
+}
+
 // A lone player's matchmade game against bots, through Blaze and a fake match host, posts one result embed to the
 // result webhook (the player's shaper and K/D/A, the bots counted); with pvp not among the result modes nothing is
 // posted, and an aborted match (the host exits without finishGame) posts nothing either.
@@ -211,14 +264,30 @@ func TestHostedGameResultPosted(t *testing.T) {
 		modes  []string
 		finish bool
 		want   string // "" = no post
+		stats  bool   // the host sends seatStats (the rows: DISCORD4a)
+		image  string // discord_result_style image (DISCORD4b): "draws" (a renderer), "fails" (it errs), "none" (nil)
 	}{
 		{"posted", []string{discordhook.ModePvP}, true,
 			`{"content":"","embeds":[{"title":"PvP match: Team 1 wins","description":"Team 2's Guardian fell after 12:34",` +
 				`"color":3447003,"fields":[{"name":"Team 1 (won)","value":"**alpha** · Ember · 3/1/2\n+ 4 bots","inline":true},` +
-				`{"name":"Team 2","value":"+ 5 bots","inline":true}],"footer":{"text":"Game 1"},`},
-		{"mode off", []string{discordhook.ModeCustom}, true, ""},
-		{"aborted", []string{discordhook.ModePvP}, false, ""},
+				`{"name":"Team 2","value":"+ 5 bots","inline":true}],"footer":{"text":"Game 1"},`, false, ""},
+		{"mode off", []string{discordhook.ModeCustom}, true, "", false, ""},
+		{"aborted", []string{discordhook.ModePvP}, false, "", false, ""},
+		{"rows", []string{discordhook.ModePvP}, true, rowsPost, true, ""},
+		// the image style: the picture uploaded with the embed (no fields); text when drawing fails or there is no
+		// renderer; an old host's post (no rows) is the text style's whatever the setting
+		{"image", []string{discordhook.ModePvP}, true,
+			`{"content":"","embeds":[{"title":"PvP match: Team 1 wins","description":"Team 2's Guardian fell after 12:34",` +
+				`"color":3447003,"image":{"url":"attachment://scoreboard.png"},"footer":{"text":"Game 1"},`, true, "draws"},
+		{"image fails", []string{discordhook.ModePvP}, true, rowsPost, true, "fails"},
+		{"image none", []string{discordhook.ModePvP}, true, rowsPost, true, "none"},
+		{"image old host", []string{discordhook.ModePvP}, true,
+			`{"content":"","embeds":[{"title":"PvP match: Team 1 wins","description":"Team 2's Guardian fell after 12:34",` +
+				`"color":3447003,"fields":[{"name":"Team 1 (won)","value":"**alpha** · Ember · 3/1/2\n+ 4 bots","inline":true},`,
+			false, "draws"},
 	} {
+		var drawn []ResultImage
+		var drawMu sync.Mutex
 		wh := newFakeWebhook(t)
 		hook, err := discordhook.New(wh.URL+"/api/webhooks/1/x", discordhook.Options{AllowLocal: true})
 		if err != nil {
@@ -231,12 +300,34 @@ func TestHostedGameResultPosted(t *testing.T) {
 			s.Content = loadFixtureContent(t)
 			st := discordhook.DefaultSettings()
 			st.ResultModes = c.modes
-			s.SetResultPosts(ResultPosts{Hook: hook, Settings: st})
+			rp := ResultPosts{Hook: hook, Settings: st}
+			if c.image != "" {
+				rp.Settings.ResultStyle = discordhook.StyleImage
+			}
+			switch c.image {
+			case "draws":
+				rp.Image = func(img ResultImage) ([]byte, error) {
+					drawMu.Lock()
+					drawn = append(drawn, img)
+					drawMu.Unlock()
+					return []byte("\x89PNG-the-picture"), nil
+				}
+			case "fails":
+				rp.Image = func(ResultImage) ([]byte, error) { return nil, errors.New("the font doesn't parse") }
+			}
+			s.SetResultPosts(rp)
 			l := &gmshost.FakeLauncher{Run: func(env gmshost.Env, p *gmshost.FakeProcess) {
 				gmshost.PlayHost(env, p, func(h *gmshost.HostConn, cg gmshost.CreateGame) error {
 					h.Send(gmshost.AddPlayer{User: cg.Roster[0].User})
 					if !c.finish {
 						return nil
+					}
+					if c.stats {
+						h.Send(gmshost.SeatStats{Index: 0, User: cg.Roster[0].User, Team: 1,
+							Stats:     map[string]int64{"creeps": 40, "gold": 1500},
+							Inventory: []int64{item("Legendary_Storm"), 0, 0, 0, 0, 0, item("Spell_Hop"), 0, 0, 0, 0}})
+						h.Send(gmshost.SeatStats{Index: 5, Bot: true, Team: 2, Noun: int64(content.AssetID("stone.Noun")),
+							Stats: map[string]int64{"kills": 2, "deaths": 3, "assists": 4, "creeps": 88, "gold": 7420}})
 					}
 					h.Send(gmshost.PlayerFinish{User: cg.Roster[0].User, Stats: kda("ember.Noun", 3, 1, 2)})
 					return h.Send(gmshost.FinishGame{WinnerTeam: 1, DurationMs: 754000, Reason: "guardian"})
@@ -258,14 +349,39 @@ func TestHostedGameResultPosted(t *testing.T) {
 		a.note(ComponentGameManager, NotifyGameSetupID)
 		a.note(ComponentGameManager, NotifyPlayerRemovedID)
 		hosts.Close()
+		for end := time.Now().Add(5 * time.Second); c.image != "" && time.Now().Before(end) &&
+			!strings.Contains(ts.log.String(), "result posted to Discord"); {
+			time.Sleep(10 * time.Millisecond) // the picture is drawn and posted in its own goroutine
+		}
 		hook.Close(5 * time.Second) // sends what is queued
 		got := wh.got()
+		if c.image == "draws" && c.stats && len(got) == 1 { // multipart: the JSON and the picture
+			parts := multipartParts(t, got[0])
+			if parts["files[0]"] != "\x89PNG-the-picture" {
+				t.Errorf("%s: parts %q", c.name, parts)
+			}
+			got[0] = parts["payload_json"]
+			if !strings.HasSuffix(got[0], `"allowed_mentions":{"parse":[]},"attachments":[{"id":0,"filename":"scoreboard.png"}]}`) {
+				t.Errorf("%s: payload_json %s", c.name, got[0])
+			}
+			got[0] = strings.TrimSuffix(got[0], `,"attachments":[{"id":0,"filename":"scoreboard.png"}]}`) + "}"
+			drawMu.Lock()
+			if len(drawn) != 1 || drawn[0].Winner != 1 || len(drawn[0].Rows) != 2 || drawn[0].Rows[0].Name != "alpha" ||
+				drawn[0].Rows[0].Portrait != "PC_Ember" || drawn[0].Rows[0].Items[0].File != "Legendary_Storm" ||
+				!drawn[0].Rows[1].Bot {
+				t.Errorf("%s: drawn %+v", c.name, drawn)
+			}
+			drawMu.Unlock()
+		}
 		switch {
 		case c.want == "" && len(got) != 0:
 			t.Errorf("%s: posted %v", c.name, got)
 		case c.want != "" && (len(got) != 1 || !strings.HasPrefix(got[0], c.want) ||
 			!strings.HasSuffix(got[0], `"allowed_mentions":{"parse":[]}}`)):
 			t.Errorf("%s: posts\n got %v\nwant one starting %s", c.name, got, c.want)
+		}
+		if c.image == "draws" && !c.stats && len(drawn) != 0 {
+			t.Errorf("%s: an old host's match drawn", c.name)
 		}
 		// HOME1: the home page keeps every finished match, posted or not, without the player's name
 		rr := ts.s.RecentResults()
@@ -282,6 +398,13 @@ func TestHostedGameResultPosted(t *testing.T) {
 		for _, w := range map[string][]string{
 			"posted":   {"game 1: result posted to Discord (1 players, 4+5 bots)"},
 			"mode off": {"game 1: result not posted to Discord (pvp results are off)"},
+			"rows":     {"game 1: result posted to Discord (1 players, 0+1 bots)"},
+			"image":    {"game 1: result posted to Discord (1 players, 0+1 bots) as a picture (1 KB)"},
+			"image fails": {"game 1: result posted to Discord (1 players, 0+1 bots) as text: no scoreboard picture " +
+				"(the font doesn't parse)"},
+			"image none": {"game 1: result posted to Discord (1 players, 0+1 bots) as text: no scoreboard picture " +
+				"(no renderer: the art beside the content file is missing)"},
+			"image old host": {"game 1: result posted to Discord (1 players, 4+5 bots)"},
 		}[c.name] {
 			if !strings.Contains(log, w) {
 				t.Errorf("%s: log lacks %q:\n%s", c.name, w, log)

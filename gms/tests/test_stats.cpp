@@ -288,6 +288,72 @@ GMS_TEST(StatsSeatLines) {
   CHECK_EQ(sum, static_cast<std::int64_t>(10 * 30 * 31 / 2));
 }
 
+// M32 (MITEMS2): the transaction types' kinds, the inventory and the purchases in the seat lines, the cap of 150.
+GMS_TEST(StatsItems) {
+  ItemKind k = ItemKind::Undo;
+  CHECK(ItemKindOfTransaction(1, &k) && k == ItemKind::Buy);   // purchase (an upgrade too)
+  CHECK(ItemKindOfTransaction(4, &k) && k == ItemKind::Buy);   // consume-on-purchase
+  CHECK(ItemKindOfTransaction(2, &k) && k == ItemKind::Sell);
+  CHECK(!ItemKindOfTransaction(3, &k));  // use
+  CHECK(!ItemKindOfTransaction(5, &k));  // swap
+  CHECK(!ItemKindOfTransaction(0, &k));
+  CHECK_EQ(std::string(ItemKindName(ItemKind::Buy)), std::string("buy"));
+  CHECK_EQ(std::string(ItemKindName(ItemKind::Sell)), std::string("sell"));
+  CHECK_EQ(std::string(ItemKindName(ItemKind::Undo)), std::string("undo"));
+
+  Accumulator acc;
+  acc.OnItem(4210, 2, ItemKind::Buy, 2145349466);
+  acc.OnItem(-5, 2, ItemKind::Buy, 2145349466);  // a negative time reads 0
+  acc.OnItem(61800, 2, ItemKind::Undo, 1499387130);
+  acc.OnItem(352000, 2, ItemKind::Sell, 3200834554);
+  acc.OnItem(1000, 10, ItemKind::Buy, 1);  // no such seat
+  acc.OnItem(1000, -1, ItemKind::Buy, 1);
+  for (int i = 0; i < 153; ++i) acc.OnItem(1000 * i, 8, ItemKind::Buy, 75803296);  // a bot past the cap
+  SeatFacts f[kSeats];
+  f[2] = SeatFacts{true, false, 1000000002, 1, 274088913, 3, 0, 0, 0, 0, 1, 500};
+  const std::int64_t inv[] = {75803296, 690207559, 0, 0, 0, 0, 2011516473, 1003663676, 0, 295762247, 0};
+  for (int s = 0; s < 11; ++s) f[2].inventory[s] = inv[s];
+  f[5] = SeatFacts{true, false, 1000000005, 2, 274088913, 1, 0, 0, 0, 0, 1, 500};  // nothing held, nothing bought
+  f[8] = SeatFacts{true, true, 0, 2, 284823512, 4, 0, 0, 0, 0, 1, 500};
+  f[8].inventory[0] = 75803296;
+  const std::vector<ctl::SeatStats> lines = acc.BuildSeatStats(f);
+  CHECK_EQ(lines.size(), 3u);
+  if (lines.size() != 3) return;
+  CHECK_EQ(Line(lines[0]),
+           std::string("{\"t\":\"seatStats\",\"index\":2,\"user\":1000000002,\"bot\":false,\"team\":1,\"noun\":274088913,"
+                       "\"role\":3,\"stats\":{\"damageDealt\":0,\"damageTaken\":0,\"timeDeadMs\":0},"
+                       "\"inventory\":[75803296,690207559,0,0,0,0,2011516473,1003663676,0,295762247,0],"
+                       "\"purchases\":[{\"ms\":4210,\"kind\":\"buy\",\"id\":2145349466},{\"ms\":0,\"kind\":\"buy\","
+                       "\"id\":2145349466},{\"ms\":61800,\"kind\":\"undo\",\"id\":1499387130},{\"ms\":352000,\"kind\":"
+                       "\"sell\",\"id\":3200834554}]}"));
+  // an empty inventory and no purchases: both fields left out, no purchasesDropped
+  CHECK_EQ(Line(lines[1]),
+           std::string("{\"t\":\"seatStats\",\"index\":5,\"user\":1000000005,\"bot\":false,\"team\":2,\"noun\":274088913,"
+                       "\"role\":1,\"stats\":{\"damageDealt\":0,\"damageTaken\":0,\"timeDeadMs\":0}}"));
+  // the bot: the first 150 kept in order, 3 dropped and counted
+  const ctl::SeatStats& bot = lines[2];
+  CHECK_EQ(bot.purchases.size(), dggms::control::kMaxPurchases);
+  CHECK_EQ(acc.Purchases(8), dggms::control::kMaxPurchases);
+  CHECK_EQ(acc.PurchasesDropped(8), 3);
+  CHECK_EQ(acc.PurchasesDropped(2), 0);
+  if (bot.purchases.size() == dggms::control::kMaxPurchases) {
+    CHECK_EQ(bot.purchases.front().ms, 0);
+    CHECK_EQ(bot.purchases.back().ms, 149000);
+  }
+  const auto dropped = bot.stats.find("purchasesDropped");
+  CHECK(dropped != bot.stats.end() && dropped->second == 3);
+  CHECK(lines[0].stats.find("purchasesDropped") == lines[0].stats.end());
+  CHECK_EQ(bot.inventory.size(), dggms::control::kInventorySlots);
+  // the full line round-trips and stays far under a line's limit
+  for (const ctl::SeatStats& s : lines) {
+    ctl::Message back;
+    std::string err;
+    CHECK(ctl::Decode(ctl::Encode(s), back, &err));
+    CHECK_EQ(ctl::Encode(back), ctl::Encode(s));
+  }
+  CHECK(ctl::Encode(bot).size() < 16 * 1024);
+}
+
 // MSTATS3: the table and the fallbacks (sources.h).
 GMS_TEST(StatsSourceClassify) {
   CHECK_EQ(SlotSource(0).kind, std::string("basic"));

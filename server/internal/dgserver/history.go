@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -143,6 +144,35 @@ type historySeatDetail struct {
 	historySeat
 	Stats   map[string]int64 `json:"stats"`   // every stat the host reported ({} none)
 	Sources []historySource  `json:"sources"` // damage and heal by source, the host's order ([] none)
+	// M32 (MITEMS1): the final inventory, its non-empty slots in slot order ([] none), and the purchases in match
+	// order ([] none)
+	Items     []historyItem     `json:"items"`
+	Purchases []historyPurchase `json:"purchases"`
+}
+
+// historyItem is one non-empty slot of a seat's final inventory (slots 0-5 items, 6-8 battle spells, 9-10
+// consumables). ID is the item's asset id; Name its title ("Item", "Battle spell" when the content doesn't know it);
+// Icon the item's file name for the page's itemicons/<Icon>.png ("" when unknown; the server doesn't check the file).
+type historyItem struct {
+	Slot int    `json:"slot"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	Icon string `json:"icon"`
+}
+
+// historyPurchase is one of seatStats.purchases with its item's name and icon: Kind buy, sell or undo.
+type historyPurchase struct {
+	Ms   int64  `json:"ms"`
+	Kind string `json:"kind"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	Icon string `json:"icon"`
+}
+
+// matchItem is what the history knows of a match item by its asset id: its file name (MatchItem.Name, the icon's) and
+// its title.
+type matchItem struct {
+	name, title string
 }
 
 // historySource is one of seatStats.sources with its name.
@@ -190,15 +220,15 @@ type history struct {
 	names bool
 	now   func() time.Time
 	logf  func(who, format string, a ...any)
-	items map[int64]string // a match item's or battle spell's asset id (AssetID of "<name>.Item") -> its title
-	perks map[int64]string // a spirit stone modifier's SPID (AssetID of its name) -> the stone's title
+	items map[int64]matchItem // a match item's or battle spell's asset id (AssetID of "<name>.Item") -> its name and title
+	perks map[int64]string    // a spirit stone modifier's SPID (AssetID of its name) -> the stone's title
 	// watched is the match a persona last watched as a spectator, 0 none (SPECSTATS: blaze.Server.WatchedMatch; nil: none)
 	watched func(persona int64) int64
 }
 
 // newHistory reads the content's names once (it doesn't change while the server runs).
 func newHistory(st historyStore, c *content.Content, names bool, now func() time.Time, logf func(who, format string, a ...any)) *history {
-	h := &history{st: st, c: c, names: names, now: now, logf: logf, items: map[int64]string{}, perks: map[int64]string{}}
+	h := &history{st: st, c: c, names: names, now: now, logf: logf, items: map[int64]matchItem{}, perks: map[int64]string{}}
 	if c == nil {
 		return h
 	}
@@ -207,7 +237,7 @@ func newHistory(st historyStore, c *content.Content, names bool, now func() time
 		if title == "" {
 			title = it.Name
 		}
-		h.items[int64(content.AssetID(it.Name+".Item"))] = title
+		h.items[int64(content.AssetID(it.Name+".Item"))] = matchItem{name: it.Name, title: title}
 	}
 	for _, p := range c.Perks {
 		title := perkTitle(p, c)
@@ -390,7 +420,8 @@ func (h *history) game(q url.Values) (any, int, string, string) {
 		d.Match.Timeline = json.RawMessage("null")
 	}
 	for _, s := range m.Seats {
-		sd := historySeatDetail{historySeat: h.seat(s, me), Stats: map[string]int64{}, Sources: []historySource{}}
+		sd := historySeatDetail{historySeat: h.seat(s, me), Stats: map[string]int64{}, Sources: []historySource{},
+			Items: []historyItem{}, Purchases: []historyPurchase{}}
 		for k, v := range s.Stats {
 			sd.Stats[k] = v
 		}
@@ -404,6 +435,7 @@ func (h *history) game(q url.Values) (any, int, string, string) {
 					Name: h.sourceName(x, s.Role), Damage: x.Damage, Heal: x.Heal})
 			}
 		}
+		h.seatItems(&sd, s, id)
 		d.Match.Seats = append(d.Match.Seats, sd)
 	}
 	return d, http.StatusOK, "", ""
@@ -457,6 +489,53 @@ func (h *history) seat(s store.MatchSeat, me int64) historySeat {
 	return hs
 }
 
+// seatItems fills a seat's items and purchases from the stored inventory and purchases (M32); a list that doesn't
+// decode leaves its field [] with a log line, as sources.
+func (h *history) seatItems(sd *historySeatDetail, s store.MatchSeat, match int64) {
+	if len(s.Inventory) > 0 {
+		var inv []int64
+		if err := json.Unmarshal(s.Inventory, &inv); err != nil {
+			h.logf("http", "match history: match %d seat %d: inventory: %v", match, s.Seat, err)
+			inv = nil
+		}
+		for slot, id := range inv {
+			if id != 0 {
+				name, icon := h.itemName(id, slot >= 6 && slot <= 8)
+				sd.Items = append(sd.Items, historyItem{Slot: slot, ID: id, Name: name, Icon: icon})
+			}
+		}
+	}
+	if len(s.Purchases) > 0 {
+		var buys []gmshost.ItemEvent
+		if err := json.Unmarshal(s.Purchases, &buys); err != nil {
+			h.logf("http", "match history: match %d seat %d: purchases: %v", match, s.Seat, err)
+			buys = nil
+		}
+		for _, b := range buys {
+			name, icon := h.itemName(b.ID, false)
+			sd.Purchases = append(sd.Purchases, historyPurchase{Ms: b.Ms, Kind: b.Kind, ID: b.ID, Name: name, Icon: icon})
+		}
+	}
+}
+
+// iconName is the pattern of an icon's file name (the page puts it into a path: itemicons/<icon>.png).
+var iconName = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
+// itemName is a match item's title and icon name by its asset id; an item the content doesn't know is "Item" (in a
+// battle spell's slot "Battle spell") without an icon.
+func (h *history) itemName(id int64, spell bool) (name, icon string) {
+	if it, ok := h.items[id]; ok {
+		if iconName.MatchString(it.name) {
+			icon = it.name
+		}
+		return it.title, icon
+	}
+	if spell {
+		return "Battle spell", ""
+	}
+	return "Item", ""
+}
+
 // sourceName names a source: an ability by its key, an item or battle spell by its asset id (an account catalog id
 // too), a spirit stone by its modifier's SPID (its catalog id too), the role by the seat's role.
 func (h *history) sourceName(x gmshost.StatSource, role int) string {
@@ -469,8 +548,8 @@ func (h *history) sourceName(x gmshost.StatSource, role int) string {
 		}
 		return "Ability"
 	case "item", "spell":
-		if t, ok := h.items[x.ID]; ok {
-			return t
+		if it, ok := h.items[x.ID]; ok {
+			return it.title
 		}
 		if it, ok := h.c.Item(uint32(x.ID)); ok && x.ID > 0 && x.ID <= 0xFFFFFFFF && strings.TrimSpace(it.Title) != "" {
 			return strings.TrimSpace(it.Title)

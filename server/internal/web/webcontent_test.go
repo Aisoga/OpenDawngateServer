@@ -238,6 +238,15 @@ func TestHomePage(t *testing.T) {
 // checkPageRules are the rules of every page the client's web view shows: self-contained (no other host, no
 // served fonts or style sheets; url() only the client's game:// pictures), ES5 without bind, no flexbox or unprefixed
 // gradients, server text never as HTML, ASCII with LF.
+//
+// The one url() a page may build from data is the history page's item icon: the path itemicons/<icon>.png from
+// game.json's icon, set only after the page checked that it is a plain file name under itemicons/ of its own origin.
+const (
+	sameOriginIcon      = `" + path + "`
+	sameOriginIconGuard = `var ICON_PATH = /^itemicons\/[A-Za-z0-9_]+\.png$/;`
+	sameOriginIconCheck = `if (path && ICON_PATH.test(path)) {`
+)
+
 func checkPageRules(t *testing.T, name, page string) {
 	t.Helper()
 	for _, bad := range []string{"http://", "https://", "src=", "<link", "@import", "@font-face", ".bind(",
@@ -249,8 +258,10 @@ func checkPageRules(t *testing.T, name, page string) {
 	for _, m := range regexp.MustCompile(`url\(([^)]*)\)`).FindAllStringSubmatch(page, -1) {
 		switch {
 		case strings.HasPrefix(m[1], "game://UI/XHTML/labs/images/"):
+		case m[1] == sameOriginIcon && strings.Contains(page, sameOriginIconGuard) && strings.Contains(page, sameOriginIconCheck):
+			// the item icons: a path from game.json, used only when it is a plain itemicons/ file
 		default:
-			t.Errorf("%s: url(%s): only the client's own game:// pictures", name, m[1])
+			t.Errorf("%s: url(%s): only the client's own game:// pictures and checked same-origin icons", name, m[1])
 		}
 	}
 	for i, c := range page {
@@ -282,13 +293,14 @@ var historyCatalogue = []string{"kills", "deaths", "assists", "creeps", "gold", 
 
 // historyFinishKeys is every playerFinish.stats key the host sends (gms/engine/death.cpp LogPlayerFinish), which
 // dgserver stores with the seat's stats (blaze/matchhistory.go mergeStats). historyHidden is the part of them the
-// page shows otherwise or that means nothing to a player (MHIST3b): its HIDDEN; the rest needs a label.
+// page shows otherwise or that means nothing to a player (MHIST3b): its HIDDEN; the rest needs a label. The seat's
+// purchasesDropped (the purchases past the stored 150) is hidden too: the Items tab shows it as a note.
 // historyDropped are keys the host sent once and no longer does (WARDSTAT: a ward can't be hit or killed in build
 // 854, so they were always 0); an older stored match may still hold them, so the page keeps them in HIDDEN.
 var (
 	historyFinishKeys = []string{"won", "team", "kills", "deaths", "assists", "creeps", "gold", "level", "bestStreak",
 		"doubleKills", "tripleKills", "tetraKills", "omniKills", "durationMs", "noun", "role"}
-	historyHidden  = []string{"won", "team", "durationMs", "noun", "role"}
+	historyHidden  = []string{"won", "team", "durationMs", "noun", "role", "purchasesDropped"}
 	historyDropped = []string{"damageToWards", "killsWards", "wardsDestroyed"}
 )
 
@@ -365,6 +377,22 @@ func TestHistoryPage(t *testing.T) {
 		if !strings.Contains(page, want) {
 			t.Errorf("history.html lacks %q", want)
 		}
+	}
+	// MITEMS3: the items column (slots 0-5, then the spells 6-8) and the Items tab; the icon's url() only right after
+	// its path check, once; purchasesDropped is the tab's note, never a row
+	for _, want := range []string{`{ id: "items", name: "Items", narrow: true }`, `hr.appendChild(make("th", "lab", "ITEMS"))`,
+		"var SLOTS = 11, ITEM_SLOTS = 6, SPELL_SLOTS = 3;", "for (var i = 0; i < ITEM_SLOTS + SPELL_SLOTS; i++) {",
+		`var path = it.icon ? "itemicons/" + it.icon + ".png" : "";`, `box.appendChild(document.createTextNode((name || "?").charAt(0)));`,
+		`var BUY_KINDS = { buy: "", sell: "Sold", undo: "Undone (refunded)" };`, `"Purchase order"`, `"At the end of the match"`,
+		"list(pick.purchases)", "list(s.items)", `} else if (tab.id == "items") {`, "#tabs a.narrow", "body.embed #tabs a.narrow",
+		"purchasesDropped: 1,"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("history.html lacks %q", want)
+		}
+	}
+	check, use := strings.Index(page, sameOriginIconCheck), strings.Index(page, `"url(" + path + ")"`)
+	if strings.Count(page, "url(\" + ") != 1 || check < 0 || use < check || use-check > 120 {
+		t.Errorf("history.html: the icon's url() must come once, right after its check (check %d, url %d)", check, use)
 	}
 	for _, kind := range []string{"Stun", "Root", "Slow", "Fear", "Silence", "Knockback", "Pin", "Suppression"} {
 		if !strings.Contains(page, kind+": \"") {

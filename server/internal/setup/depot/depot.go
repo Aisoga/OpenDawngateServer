@@ -39,8 +39,10 @@ func Key(path string) string {
 }
 
 // Open mounts the copy's archives (copyDir is the folder holding game/Data).
-func Open(copyDir string) (*Depot, error) {
-	dir := filepath.Join(copyDir, "game", "Data")
+func Open(copyDir string) (*Depot, error) { return OpenData(filepath.Join(copyDir, "game", "Data")) }
+
+// OpenData mounts the archives of a Data folder itself.
+func OpenData(dir string) (*Depot, error) {
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err

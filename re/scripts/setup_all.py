@@ -1134,15 +1134,39 @@ class Setup:
             if not any(s.get("card") for s in c.get("shapers") or []):
                 return "the shapers' pictures (the lobby's draft board shows them; built before the board)"
             return ""
+        # the art beside the file (gamecontent.WriteArt, written by --make-content from a game folder): every match
+        # item's itemicons/<item>.png at most 64 px wide (an older setup's are 256), the portraits, the two fonts
+        def art_lacks(c):
+            icons = os.path.join(self.data, "itemicons")
+            for it in c.get("matchItems") or []:
+                if not it.get("icon"):
+                    continue
+                p = os.path.join(icons, it["name"] + ".png")
+                try:
+                    with open(p, "rb") as f:
+                        head = f.read(24)
+                except OSError:
+                    return "the item icons (the history page shows them)"
+                if head[:8] != b"\x89PNG\r\n\x1a\n" or int.from_bytes(head[16:20], "big") > 64:
+                    return "64-px item icons (the old ones are 256 px)"
+            if not os.path.isdir(os.path.join(self.data, "portraits")):
+                return "the shapers' portraits"
+            for f in ("FrizQuadrata.TTF", "MasonSanAlt.ttf"):
+                if (os.path.isfile(os.path.join(self.pristine_game, "launcher", "data", "fonts", f))
+                        and not os.path.isfile(os.path.join(self.data, "fonts", f))):
+                    return "the fonts for the Discord picture"
+            return ""
         shop, missing_fields = False, "unreadable"
         if got == want:
             try:
-                missing_fields = lacks(json.loads(read(content)))
+                c = json.loads(read(content))
+                missing_fields = lacks(c) or art_lacks(c)
                 shop = not missing_fields
             except ValueError:
                 shop = False
         if got == want and stats and shop:
-            return self.report(OK, step, f"{self.show(content)} ({want}, perk stats, the match items' details)")
+            return self.report(OK, step, f"{self.show(content)} ({want}, perk stats, the match items' details, "
+                                         "the icons, portraits and fonts)")
         why = ("missing" if got is None else f"format {got}, want {want}" if got != want
                else "no perk stats (built before D3-perks)" if not stats else f"no {missing_fields}")
         if self.check:
@@ -1164,7 +1188,7 @@ class Setup:
             return self.report(FAILED, step, f"{self.show(content)} has format {got}, want {want}"
                                              f"{'' if stats else ', and no perk stats'}")
         return self.report(DONE, step, f"{self.show(content)} built from {self.show(self.pristine_game)} ({want}, "
-                                       "the match items' details)")
+                                       "the match items' details, the icons, portraits and fonts)")
 
     def step_probe(self, raknet_ok):
         step = "RakNet probe"

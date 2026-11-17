@@ -219,6 +219,8 @@ type seedPoolT struct {
 	shapers       []uint32
 	items, spells []int64
 	perks         []int64
+	// basics and consumables (M32): the cheap items a seeded seat's purchases start with
+	basics, consumables []int64
 }
 
 func seedPool(c *content.Content) seedPoolT {
@@ -234,10 +236,16 @@ func seedPool(c *content.Content) seedPoolT {
 	}
 	for _, it := range c.MatchItems {
 		id := int64(content.AssetID(it.Name + ".Item"))
-		if strings.HasPrefix(it.Name, "Spell_") {
+		switch {
+		case strings.HasPrefix(it.Name, "Spell_"):
 			p.spells = append(p.spells, id)
-		} else if it.Cost >= 1500 {
+		case it.Cost >= 1500:
 			p.items = append(p.items, id)
+		case it.Cheat || it.Cost <= 0:
+		case it.Consumable || it.Category == "Consumable":
+			p.consumables = append(p.consumables, id)
+		case it.Tier == "Basic":
+			p.basics = append(p.basics, id)
 		}
 	}
 	for _, pk := range c.Perks {
@@ -390,7 +398,63 @@ func seedStats(r *rand.Rand, seats []seedSeat, minutes, winner int, durMs int64,
 		st["ccCausedMs"], st["ccEnduredMs"] = caused, endured
 		s.Stats = st
 		s.Sources = seedSources(r, s.Role, dealt, heal, pool)
+		s.Inventory, s.Purchases = seedItems(durMs, s.Seat, pool)
 	}
+}
+
+// seedItems makes a seat's final inventory and purchases (M32): a basic item and a consumable at the start, then each
+// final item bought over a basic one (sometimes a basic bought and undone at once), a consumable sold on the way, two
+// battle spells. Its own random source (from the match's length and the seat) leaves the seed's other values as they
+// were before M32.
+func seedItems(durMs int64, seat int, pool seedPoolT) (inventory, purchases json.RawMessage) {
+	if len(pool.items) == 0 {
+		return nil, nil
+	}
+	r := rand.New(rand.NewSource(durMs*16 + int64(seat)))
+	pick := func(ids []int64) int64 {
+		if len(ids) == 0 {
+			return 0
+		}
+		return ids[r.Intn(len(ids))]
+	}
+	inv := make([]int64, gmshost.MaxInventory)
+	var buys []gmshost.ItemEvent
+	at := int64(1000 + r.Intn(4000))
+	add := func(kind string, id int64, gap int) {
+		if id != 0 && at < durMs {
+			buys = append(buys, gmshost.ItemEvent{Ms: at, Kind: kind, ID: id})
+			at += int64(gap)
+		}
+	}
+	potion := pick(pool.consumables)
+	add(gmshost.ItemBuy, pick(pool.basics), 400)
+	add(gmshost.ItemBuy, potion, 0)
+	n := min(6, 2+int(durMs/360000)) // a final item about every 6 minutes, at most six
+	step := max(durMs*9/10/int64(n), 30000)
+	for i := 0; i < n; i++ {
+		at = max(at, int64(i)*step+int64(60000+r.Intn(30000)))
+		if r.Intn(4) == 0 { // bought and undone at once
+			undo := pick(pool.basics)
+			add(gmshost.ItemBuy, undo, 2000+r.Intn(6000))
+			add(gmshost.ItemUndo, undo, 1000)
+		}
+		add(gmshost.ItemBuy, pick(pool.basics), 30000+r.Intn(60000))
+		inv[i] = pick(pool.items)
+		add(gmshost.ItemBuy, inv[i], 1000)
+		if i == 1 && potion != 0 && r.Intn(2) == 0 {
+			add(gmshost.ItemSell, potion, 1000)
+			potion = 0
+		}
+	}
+	inv[6], inv[7] = pick(pool.spells), pick(pool.spells)
+	inv[9] = potion
+	if b, err := json.Marshal(inv); err == nil {
+		inventory = b
+	}
+	if b, err := json.Marshal(buys); err == nil && len(buys) > 0 {
+		purchases = b
+	}
+	return inventory, purchases
 }
 
 // seedSources splits the damage dealt (and the healing) over sources, the largest first.

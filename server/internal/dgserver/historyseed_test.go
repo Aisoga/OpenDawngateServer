@@ -74,7 +74,7 @@ func TestHistorySeed(t *testing.T) {
 				t.Errorf("match %d seat %d: no shaper", id, s.Seat)
 			}
 			if basic {
-				if s.Sources != nil || len(s.Stats) != map[bool]int{true: 6, false: 16}[s.Bot] {
+				if s.Sources != nil || s.Inventory != nil || s.Purchases != nil || len(s.Stats) != map[bool]int{true: 6, false: 16}[s.Bot] {
 					t.Errorf("match %d seat %d: a basic match with details: %v %s", id, s.Seat, s.Stats, s.Sources)
 				}
 				continue
@@ -106,6 +106,23 @@ func TestHistorySeed(t *testing.T) {
 			}
 			if s.Stats["goldTotal"] != s.Gold {
 				t.Errorf("match %d seat %d: goldTotal %d, gold %d", id, s.Seat, s.Stats["goldTotal"], s.Gold)
+			}
+			// M32: an inventory of 11 slots (items in 0-5, two battle spells in 6-7) and purchases in match order, each
+			// item named by the history
+			var inv []int64
+			var buys []gmshost.ItemEvent
+			if json.Unmarshal(s.Inventory, &inv) != nil || len(inv) != gmshost.MaxInventory || inv[0] == 0 || inv[6] == 0 ||
+				json.Unmarshal(s.Purchases, &buys) != nil || len(buys) < 3 || len(buys) > gmshost.MaxPurchases {
+				t.Errorf("match %d seat %d: items %s, purchases %s", id, s.Seat, s.Inventory, s.Purchases)
+			}
+			for i, b := range buys {
+				if b.Ms <= 0 || b.Ms >= m.DurationMs || i > 0 && b.Ms < buys[i-1].Ms || b.ID == 0 ||
+					(b.Kind != gmshost.ItemBuy && b.Kind != gmshost.ItemSell && b.Kind != gmshost.ItemUndo) {
+					t.Errorf("match %d seat %d: purchase %d %+v", id, s.Seat, i, b)
+				}
+				if name, icon := newHistory(st, c, true, nil, nil).itemName(b.ID, false); name == "Item" || icon == "" {
+					t.Errorf("match %d seat %d: purchase %+v unnamed", id, s.Seat, b)
+				}
 			}
 		}
 		if m.Kind == "practice" && humans != 1 || m.Kind != "practice" && humans < 2 {

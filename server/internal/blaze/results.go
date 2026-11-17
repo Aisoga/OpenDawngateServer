@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"dawngate/server/internal/content"
 	"dawngate/server/internal/discordhook"
@@ -16,7 +17,10 @@ import (
 // posts nothing. Set once at start with SetResultPosts.
 type ResultPosts struct {
 	Hook     *discordhook.Hook
-	Settings discordhook.Settings // Names (off: "a player"), ResultModes
+	Settings discordhook.Settings // Names (off: "a player"), ResultModes, ResultStyle
+	// Image draws the scoreboard picture (a PNG) for the image style (dgserver hands in internal/scoreboard's, which
+	// blaze doesn't import); nil, or an error from it, posts the text style with one log line.
+	Image func(ResultImage) ([]byte, error)
 }
 
 // SetResultPosts sets where match results are posted (safe while the server is serving).
@@ -42,6 +46,9 @@ type matchResult struct {
 	// Bindings are finishGame's bindings (each team's destructions of enemy Bindings; nil when no Binding race ran):
 	// the Binding race's score (WINBIND-B)
 	Bindings []int
+	// Rows are every seat with its stats and items (resultRows, from the match record's merged seats) when the host
+	// sent seatStats; nil for a host that sent none: the post then lists Players and counts Bots (M32, DISCORD4a).
+	Rows []ResultRow
 }
 
 // resultPlayer is one human of a finished match.
@@ -102,11 +109,19 @@ func botSeats(fillTeams int, descriptors uint32, humans [2]int) [2]int {
 }
 
 // postResult keeps a finished game's result for the home page (Finish, after persist and storeMatch; HOME1, recent.go)
-// with its match history id (0: not stored) and posts it when a result webhook is set and the game's mode posts. Never
-// waits: Hook.Post only queues.
-func (hg *hostedGame) postResult(f gmshost.FinishGame, matchID int64) {
+// with its match history id (0: not stored) and posts it when a result webhook is set and the game's mode posts. The
+// post's rows come from rec, the match record historyMatch built (its merged seats, bots included), when the host sent
+// seatStats. Never waits: Hook.Post only queues.
+func (hg *hostedGame) postResult(f gmshost.FinishGame, rec historyRecord, matchID int64) {
 	hg.mu.Lock()
 	r := hg.resultLocked(f, hg.s.Now())
+	var names map[int64]string
+	if rec.stats > 0 {
+		names = make(map[int64]string, len(hg.players))
+		for _, hp := range hg.players {
+			names[hp.p.ID] = hp.p.Name
+		}
+	}
 	hg.mu.Unlock()
 	x := recentResultOf(r, hg.s.Content)
 	x.MatchID = matchID
@@ -124,9 +139,26 @@ func (hg *hostedGame) postResult(f gmshost.FinishGame, matchID int64) {
 		hg.s.Log.Logf("blaze", "   game %d: result not posted to Discord (%s results are off)", hg.game.ID, postMode)
 		return
 	}
-	rp.Hook.Post(resultMessage(r, rp.Settings.Names, hg.s.Content))
-	hg.s.Log.Logf("blaze", "   game %d: result posted to Discord (%d players, %d+%d bots)", hg.game.ID, len(r.Players),
-		r.Bots[0], r.Bots[1])
+	players, bots := len(r.Players), r.Bots
+	if names != nil { // the rows: every seat the match record has (DISCORD4a)
+		r.Rows = resultRows(rec.Seats, names, rp.Settings.Names, hg.s.Content, hg.s.itemTitles())
+		players, bots = 0, [2]int{}
+		for _, row := range r.Rows {
+			if row.Bot {
+				bots[row.Team-1]++
+			} else {
+				players++
+			}
+		}
+	}
+	msg := resultMessage(r, rp.Settings.Names, hg.s.Content)
+	if rp.Settings.Style() == discordhook.StyleImage && r.Rows != nil { // DISCORD4b: drawn off the finish path
+		go hg.postImage(rp, r, msg, players, bots)
+		return
+	}
+	rp.Hook.Post(msg)
+	hg.s.Log.Logf("blaze", "   game %d: result posted to Discord (%d players, %d+%d bots)", hg.game.ID, players,
+		bots[0], bots[1])
 }
 
 // resultLocked takes the result from the roster and the host's playerFinish lines (hg.mu held). The players are
@@ -165,9 +197,10 @@ const (
 )
 
 // resultMessage is the result post: one embed, title "<kind>: Team N wins" (or "no winner"), the description how it
-// ended and how long it took, a field per team with each human ("name" or "a player" with names off, then the
-// shaper and K/D/A) and the bots counted, the footer the game id, the timestamp the end. Every name goes through
-// Escape; the sender's allowed_mentions pings nobody.
+// ended and how long it took, the footer the game id, the timestamp the end. With rows (the host sent seatStats) the
+// text style's fields (rowFields: every seat, bots included, with CS, vim and items; non-inline); else, for an older
+// host, an inline field per team with each human ("name" or "a player" with names off, then the shaper and K/D/A) and
+// the bots counted. Every name goes through Escape; the sender's allowed_mentions pings nobody.
 func resultMessage(r matchResult, names bool, c *content.Content) discordhook.Message {
 	e := discordhook.Embed{Color: colorNoWinner, Footer: &discordhook.Footer{Text: fmt.Sprintf("Game %d", r.GameID)}}
 	won := r.WinnerTeam == 1 || r.WinnerTeam == 2
@@ -183,6 +216,18 @@ func resultMessage(r matchResult, names bool, c *content.Content) discordhook.Me
 		e.Title = r.Kind + ": no winner"
 	}
 	e.Description = fmt.Sprintf("%s after %s", capitalize(how), clock(r.Duration))
+	if r.Rows != nil { // DISCORD4a: a row per seat, bots included, with the items (resultrows.go)
+		winner := 0
+		if won {
+			winner = r.WinnerTeam
+		}
+		head := utf8.RuneCountInString(e.Title) + utf8.RuneCountInString(e.Description) + utf8.RuneCountInString(e.Footer.Text)
+		e.Fields = rowFields(r.Rows, winner, head)
+		if !r.At.IsZero() {
+			e.At(r.At)
+		}
+		return discordhook.Message{Embeds: []discordhook.Embed{e}}
+	}
 	for team := 1; team <= 2; team++ {
 		var lines []string
 		for _, p := range r.Players {

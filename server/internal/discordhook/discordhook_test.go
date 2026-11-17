@@ -29,13 +29,15 @@ type request struct {
 	Method, Path, Query string
 	Body                map[string]any
 	Raw                 string
+	ContentType         string
 }
 
 func newReceiver(t *testing.T) *receiver {
 	rc := &receiver{}
 	rc.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		req := request{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Raw: string(b)}
+		req := request{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Raw: string(b),
+			ContentType: r.Header.Get("Content-Type")}
 		json.Unmarshal(b, &req.Body)
 		rc.mu.Lock()
 		rc.reqs = append(rc.reqs, req)
@@ -265,7 +267,7 @@ func TestOpenSharesAndDescribes(t *testing.T) {
 	d := hs.Describe()
 	want := "discord webhooks: queue on (webhook id …1111), result on (webhook id …1111), server on (webhook id …2222, " +
 		"only its own webhook); ping role 333 (at most every 15m0s, not within 30s of the start); player names; " +
-		"the queue message edited live; results of pvp,custom"
+		"the queue message edited live; results of pvp,custom as text"
 	if d != want {
 		t.Errorf("Describe:\n got %s\nwant %s", d, want)
 	}
@@ -296,6 +298,23 @@ func TestOpenSharesAndDescribes(t *testing.T) {
 	if _, err := Open(bad, Options{}); err == nil {
 		t.Error("role @everyone accepted")
 	}
+	bad = DefaultSettings()
+	bad.ResultStyle = "gif"
+	if _, err := Open(bad, Options{}); err == nil || !strings.Contains(err.Error(), "discord-result-style") {
+		t.Errorf("style gif: %v", err)
+	}
+
+	img := DefaultSettings()
+	img.URLs.Result = a
+	img.ResultStyle = StyleImage
+	hi, err := Open(img, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hi.Close(0)
+	if d := hi.Describe(); !strings.HasSuffix(d, "; results of pvp,custom as image") {
+		t.Errorf("image: %s", d)
+	}
 }
 
 func TestParseSettings(t *testing.T) {
@@ -315,6 +334,17 @@ func TestParseSettings(t *testing.T) {
 	}
 	if _, err := ParseOnOff("maybe"); err == nil {
 		t.Error("maybe accepted")
+	}
+	for in, want := range map[string]string{"text": StyleText, " Image ": StyleImage} {
+		if got, err := ParseStyle(in); err != nil || got != want {
+			t.Errorf("ParseStyle(%q) = %q %v", in, got, err)
+		}
+	}
+	if _, err := ParseStyle("png"); err == nil {
+		t.Error("png accepted")
+	}
+	if (Settings{}).Style() != StyleText || DefaultSettings().Style() != StyleText {
+		t.Error("the default style isn't text")
 	}
 }
 

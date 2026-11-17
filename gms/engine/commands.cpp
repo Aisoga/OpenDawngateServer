@@ -25,6 +25,7 @@
 #include "hook.h"
 #include "log.h"
 #include "matchrec.h"
+#include "matchstats.h"
 #include "perf.h"
 #include "refund.h"
 #include "replicate.h"
@@ -799,6 +800,7 @@ bool OnItemTransaction(void* sim, unsigned index, const PlayerInfo& pi, const gm
     const float goldBefore = SehWallet(pi.player).gold;
     if (UndoSale(sim, index, pi, r, source)) {
       matchrec::OnItemResult(index, source, r, r.slot, true, true, goldBefore, SehWallet(pi.player).gold);  // MATCHREC
+      matchstats::OnItem(index, r.type, r.item, true, true);  // MITEMS2: seatStats.purchases' undo
       return true;
     }
   }
@@ -860,6 +862,7 @@ bool OnItemTransaction(void* sim, unsigned index, const PlayerInfo& pi, const gm
   if (o.success && (r.type == gms::kItemPurchase || r.type == gms::kItemConsume))
     shop::OnItemPurchased(sim, index, pi.creature, pi.team, r.item, source);
   matchrec::OnItemResult(index, source, r, o.slot, o.success, false, before.gold, after.gold);  // MATCHREC
+  matchstats::OnItem(index, r.type, r.item, o.success, false);  // MITEMS2: buy (purchase, consume) and sell
   return o.success;
 }
 

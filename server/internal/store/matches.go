@@ -127,6 +127,9 @@ type MatchSeat struct {
 	Stats                    map[string]int64 // every stat the host reported for the seat (nil = none)
 	// Sources is seatStats.sources as JSON; nil = none. Read by Match only.
 	Sources json.RawMessage
+	// Inventory and Purchases (M32) are seatStats.inventory and .purchases as JSON (a list of 11 item asset ids by
+	// slot; a list of {ms, kind, id}); nil = none. Read by Match only.
+	Inventory, Purchases json.RawMessage
 }
 
 // MaxMatchPage is the most matches one page returns (MatchesOf, RecentMatches).
@@ -167,9 +170,11 @@ func (s *Store) InsertMatch(m Match) (int64, error) {
 			}
 		}
 		if _, err := tx.Exec(`INSERT INTO match_seats (match_id, seat, persona_id, user_id, team, bot, noun, role, won,
-			left_match, kills, deaths, assists, cs, gold, level, stats, sources) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			left_match, kills, deaths, assists, cs, gold, level, stats, sources, inventory, purchases)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			id, st.Seat, nullID(st.PersonaID), nullID(st.UserID), st.Team, st.Bot, int64(st.Noun), st.Role, st.Won, st.Left,
-			st.Kills, st.Deaths, st.Assists, st.CS, st.Gold, st.Level, string(stats), string(st.Sources)); err != nil {
+			st.Kills, st.Deaths, st.Assists, st.CS, st.Gold, st.Level, string(stats), string(st.Sources),
+			string(st.Inventory), string(st.Purchases)); err != nil {
 			return 0, fmt.Errorf("seat %d: %w", st.Seat, err)
 		}
 	}
@@ -351,8 +356,8 @@ func (s *Store) matches(query string, args ...any) ([]Match, error) {
 	return out, s.loadSeats(out, false)
 }
 
-// loadSeats reads the seats of ms (by seat; the names from personas as they are now), with their sources when
-// sources is set (s.mu held).
+// loadSeats reads the seats of ms (by seat; the names from personas as they are now), with their sources, inventory
+// and purchases when sources is set (s.mu held).
 func (s *Store) loadSeats(ms []Match, sources bool) error {
 	if len(ms) == 0 {
 		return nil
@@ -362,18 +367,18 @@ func (s *Store) loadSeats(ms []Match, sources bool) error {
 	for i, m := range ms {
 		at[m.ID], ids[i] = i, m.ID
 	}
-	src := `''`
+	src := `'', '', ''`
 	if sources {
-		src = `ms.sources`
+		src = `ms.sources, ms.inventory, ms.purchases`
 	}
 	return each(s.db, func(r *sql.Rows) error {
 		var st MatchSeat
 		var matchID int64
 		var persona, user sql.NullInt64
 		var noun int64
-		var stats, srcJSON string
+		var stats, srcJSON, invJSON, buyJSON string
 		if err := r.Scan(&matchID, &st.Seat, &persona, &user, &st.Name, &st.Team, &st.Bot, &noun, &st.Role, &st.Won, &st.Left,
-			&st.Kills, &st.Deaths, &st.Assists, &st.CS, &st.Gold, &st.Level, &stats, &srcJSON); err != nil {
+			&st.Kills, &st.Deaths, &st.Assists, &st.CS, &st.Gold, &st.Level, &stats, &srcJSON, &invJSON, &buyJSON); err != nil {
 			return err
 		}
 		st.PersonaID, st.UserID, st.Noun = persona.Int64, user.Int64, uint32(noun)
@@ -384,6 +389,12 @@ func (s *Store) loadSeats(ms []Match, sources bool) error {
 		}
 		if srcJSON != "" {
 			st.Sources = json.RawMessage(srcJSON)
+		}
+		if invJSON != "" {
+			st.Inventory = json.RawMessage(invJSON)
+		}
+		if buyJSON != "" {
+			st.Purchases = json.RawMessage(buyJSON)
 		}
 		m := &ms[at[matchID]]
 		m.Seats = append(m.Seats, st)

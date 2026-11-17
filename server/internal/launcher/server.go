@@ -236,13 +236,16 @@ discord_webhook_server =
 ; The queue message: the id of a role it pings (empty: none), at most every discord_ping_cooldown and not when the
 ; match starts within discord_ping_min_wait anyway; discord_queue_edit on: one message edited live, off: a new post
 ; per change. Player names in the posts: on, or off ("a player"). The modes whose results are posted: pvp, custom,
-; practice (comma-separated), or none.
+; practice (comma-separated), or none. The results' style: text (a line per player with the shaper, K/D/A, CS, vim and
+; the items) or image (a picture of the scoreboard, drawn with the game's icons, portraits and fonts from the data
+; folder: it shows the game's art in your channel; without that art the result is posted as text).
 discord_queue_ping =
 discord_ping_cooldown = 15m
 discord_ping_min_wait = 30s
 discord_queue_edit = on
 discord_names = on
 discord_result_modes = pvp,custom
+discord_result_style = text
 
 ; Regions: host machines in other regions run this server's matches near their players (the hosting guide, "Host
 ; machines in other regions"). Each player picks a Preferred Region on the play screen: a custom game runs in its
@@ -289,7 +292,7 @@ var serverKeys = []string{"address", "bind", RiskAckKey, "profile", "tunnel", "g
 	"signups_per_address", "log_days", "web_port", "web_domain", "web_email", "web_proxy", "folder", "zip", "server_flags",
 	"wine", ClientPackageKey, "discord_webhook", "discord_webhook_queue", "discord_webhook_result", "discord_webhook_server", "discord_queue_ping",
 	"discord_ping_cooldown", "discord_ping_min_wait", "discord_names", "discord_queue_edit", "discord_result_modes",
-	"online_count", "online_count_every", "chat_rooms", "match_history_names", "halloween", "map", "custom_maps",
+	"discord_result_style", "online_count", "online_count_every", "chat_rooms", "match_history_names", "halloween", "map", "custom_maps",
 	"match_record", "rating_leaderboard", "show_rating", "issues", "rule_presets", "default_rules"}
 
 // IO is where a launcher talks: the console normally, buffers in tests.

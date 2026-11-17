@@ -1,8 +1,11 @@
 package discordhook
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
+	"net/textproto"
 	"strings"
 	"time"
 	"unicode"
@@ -18,7 +21,20 @@ type Message struct {
 	// PingRoles are the role ids this message may ping (its content holds RoleMention(id)); the queue message's
 	// configured role, nothing else. Not sent as such: it becomes allowed_mentions.roles.
 	PingRoles []string `json:"-"`
+	// Files are uploaded with a post (multipart/form-data: EncodeBody); an embed shows one by its Image URL
+	// "attachment://<name>" (AttachmentURL). Posts only: Edit drops them (an edit never uploads).
+	Files []File `json:"-"`
 }
+
+// File is a file a post uploads (the result post's scoreboard picture).
+type File struct {
+	Name        string // the file name Discord shows and attachment:// names ("scoreboard.png")
+	ContentType string // "image/png"; "" = application/octet-stream
+	Data        []byte
+}
+
+// AttachmentURL is the URL by which an embed shows a file of its message.
+func AttachmentURL(name string) string { return "attachment://" + name }
 
 // Embed is one embed of a message (the fields the server uses).
 type Embed struct {
@@ -26,8 +42,14 @@ type Embed struct {
 	Description string  `json:"description,omitempty"`
 	Color       int     `json:"color,omitempty"` // 0xRRGGBB
 	Fields      []Field `json:"fields,omitempty"`
+	Image       *Image  `json:"image,omitempty"`
 	Footer      *Footer `json:"footer,omitempty"`
 	Timestamp   string  `json:"timestamp,omitempty"` // RFC 3339 (Embed.At sets it)
+}
+
+// Image is an embed's big picture: a URL, or AttachmentURL of a file the message uploads.
+type Image struct {
+	URL string `json:"url"`
 }
 
 // Field is an embed field; Inline ones sit side by side (up to three a row).
@@ -56,6 +78,14 @@ type allowedMentions struct {
 type payload struct {
 	Message
 	AllowedMentions allowedMentions `json:"allowed_mentions"`
+	// Attachments name the uploaded files (a post with Files): id i is the part files[i].
+	Attachments []attachment `json:"attachments,omitempty"`
+}
+
+// attachment is one entry of a payload's attachments.
+type attachment struct {
+	ID       int    `json:"id"`
+	Filename string `json:"filename"`
 }
 
 // Discord's limits (characters): content 2000; per embed title 256, description 4096, 25 fields, field name 256,
@@ -104,8 +134,57 @@ func Encode(m Message) ([]byte, error) {
 	if len(p.Embeds) == 0 {
 		p.Embeds = nil
 	}
+	for i, f := range m.Files {
+		p.Attachments = append(p.Attachments, attachment{ID: i, Filename: f.Name})
+	}
 	return json.Marshal(p)
 }
+
+// EncodeBody is a request's body and its content type as the sender sends it: Encode's JSON
+// ("application/json") for a message without files; with Files a multipart/form-data body whose part
+// "payload_json" is Encode's JSON (its attachments naming the files) and whose parts "files[0]", "files[1]", ...
+// are the files (Discord's upload for webhooks).
+func EncodeBody(m Message) (body []byte, contentType string, err error) {
+	js, err := Encode(m)
+	if err != nil || len(m.Files) == 0 {
+		return js, "application/json", err
+	}
+	var b bytes.Buffer
+	w := multipart.NewWriter(&b)
+	h := textproto.MIMEHeader{}
+	h.Set("Content-Disposition", `form-data; name="payload_json"`)
+	h.Set("Content-Type", "application/json")
+	part, err := w.CreatePart(h)
+	if err != nil {
+		return nil, "", err
+	}
+	if _, err := part.Write(js); err != nil {
+		return nil, "", err
+	}
+	for i, f := range m.Files {
+		ct := f.ContentType
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		h := textproto.MIMEHeader{}
+		h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="files[%d]"; filename="%s"`, i, quoteName(f.Name)))
+		h.Set("Content-Type", ct)
+		part, err := w.CreatePart(h)
+		if err != nil {
+			return nil, "", err
+		}
+		if _, err := part.Write(f.Data); err != nil {
+			return nil, "", err
+		}
+	}
+	if err := w.Close(); err != nil {
+		return nil, "", err
+	}
+	return b.Bytes(), w.FormDataContentType(), nil
+}
+
+// quoteName makes a file name safe in a quoted header parameter (as mime/multipart's CreateFormFile does).
+var quoteName = strings.NewReplacer("\\", "\\\\", `"`, "\\\"", "\r", "", "\n", "").Replace
 
 // orBlank gives an empty field name or value a zero-width space (Discord refuses empty ones).
 func orBlank(s string) string {

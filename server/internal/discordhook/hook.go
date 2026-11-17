@@ -209,11 +209,13 @@ func (h *Hook) Post(m Message) *Ref {
 // Edit replaces the message ref with m (PATCH .../messages/<id>), after the post and any earlier edits, since one
 // goroutine sends them in order. Edits not sent yet are coalesced: only the newest is sent. When the post failed (no
 // id) or the message is gone (deleted in Discord: 404), m is posted as a new message and ref takes its id. A nil hook
-// or ref does nothing.
+// or ref does nothing. An edit never uploads: m's Files are dropped (only the result post has a file, and results
+// are never edited).
 func (h *Hook) Edit(ref *Ref, m Message) {
 	if h == nil || ref == nil {
 		return
 	}
+	m.Files = nil
 	ref.mu.Lock()
 	ref.next = &m
 	queued := ref.editQueued
@@ -360,7 +362,7 @@ func (e *statusError) Error() string {
 // send sends one request, waiting for its turn (rate limit, back-off) and trying again after a 429 (up to 5 times)
 // or a network error or 5xx (up to 3 times); another 4xx is final. It returns the message id of Discord's answer.
 func (h *Hook) send(method, u string, m Message) (string, error) {
-	body, err := Encode(m)
+	body, ctype, err := EncodeBody(m) // once: every retry sends the same bytes
 	if err != nil {
 		return "", err
 	}
@@ -374,7 +376,7 @@ func (h *Hook) send(method, u string, m Message) (string, error) {
 		if h.ctx.Err() != nil {
 			return "", ErrClosed
 		}
-		id, retry, err := h.request(method, u, body)
+		id, retry, err := h.request(method, u, body, ctype)
 		if err == nil {
 			if h.failures > 0 {
 				h.logf("discord %s: works again after %d failed request(s)", h.label, h.failures)
@@ -424,13 +426,14 @@ func (h *Hook) backOff() {
 	h.later(d)
 }
 
-// request does one HTTP request. It returns the answer's message id, and for a 429 how long to wait.
-func (h *Hook) request(method, u string, body []byte) (id string, retry time.Duration, err error) {
+// request does one HTTP request (ctype: the body's content type, EncodeBody's). It returns the answer's message id,
+// and for a 429 how long to wait.
+func (h *Hook) request(method, u string, body []byte, ctype string) (id string, retry time.Duration, err error) {
 	req, err := http.NewRequestWithContext(h.ctx, method, u, bytes.NewReader(body))
 	if err != nil {
 		return "", 0, errors.New("the request can't be made")
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", ctype)
 	req.Header.Set("User-Agent", h.ua)
 	resp, err := h.cl.Do(req)
 	if err != nil {

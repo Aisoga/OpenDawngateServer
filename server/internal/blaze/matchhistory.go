@@ -230,4 +230,26 @@ func fillSeat(st *store.MatchSeat, f gmshost.FinishGame, stats map[string]int64,
 			st.Sources = b
 		}
 	}
+	st.Inventory, st.Purchases = seatItems(ss, hasStats)
+}
+
+// seatItems is a seatStats' final inventory and purchases as the store keeps them (M32, MITEMS1): JSON, nil for none
+// (no seatStats, an older host, an inventory of empty slots only). A host's longer lists are cut to the contract's
+// MaxInventory slots and MaxPurchases entries.
+func seatItems(ss gmshost.SeatStats, hasStats bool) (inventory, purchases json.RawMessage) {
+	if !hasStats {
+		return nil, nil
+	}
+	inv := ss.Inventory[:min(len(ss.Inventory), gmshost.MaxInventory)]
+	if slices.ContainsFunc(inv, func(id int64) bool { return id != 0 }) {
+		if b, err := json.Marshal(inv); err == nil {
+			inventory = b
+		}
+	}
+	if buys := ss.Purchases[:min(len(ss.Purchases), gmshost.MaxPurchases)]; len(buys) > 0 {
+		if b, err := json.Marshal(buys); err == nil {
+			purchases = b
+		}
+	}
+	return inventory, purchases
 }

@@ -233,6 +233,8 @@ type Server struct {
 	joins joinCodes
 	// where finished matches are posted on Discord (SetResultPosts; results.go); nil = nowhere
 	results atomic.Pointer[ResultPosts]
+	// the match items' titles by asset id for the result post's item lines (itemTitles; resultrows.go)
+	itemNamesCache
 	// the last finished matches for the home page, without names (recent.go)
 	recent recentResults
 	// SPECSTATS: the last match each spectator watched, for its review's MATCH STATS tab (watched.go)

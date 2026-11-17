@@ -1,0 +1,27 @@
+{
+  "content": "",
+  "embeds": [
+    {
+      "title": "PvP match: Team 1 wins",
+      "description": "Team 2's Guardian fell after 31:05",
+      "color": 3447003,
+      "fields": [
+        {
+          "name": "Team 1 (won)",
+          "value": "**Ann** · Ember · 5/1/7 · 152 CS · 11840 vim\n↳ Edge, Guard, Storm · Hop, Battle spell\nBot · stone · 2/3/9 · 98 CS · 9800 vim\n↳ Blade · Hop\nBot · ghost · 4/2/3 · 120 CS · 12000 vim\nBot · Ember · 0/4/11 · 40 CS · 4000 vim\n↳ Guard\nBot · ghost · 8/0/4 · 177 CS · 17700 vim\n↳ Storm, Edge"
+        },
+        {
+          "name": "Team 2",
+          "value": "**Kim** (left) · stone · 1/6/2 · 61 CS · 5120 vim\nBot · Ember · 3/4/1 · 87 CS · 8700 vim\n↳ Blade\nBot · ghost · 2/6/3 · 75 CS · 7500 vim\nBot · stone · 0/3/4 · 33 CS · 3300 vim\n↳ Hop\nBot · ? · 1/2/0 · 12 CS · 1200 vim"
+        }
+      ],
+      "footer": {
+        "text": "Game 7"
+      },
+      "timestamp": "2026-10-21T18:30:00Z"
+    }
+  ],
+  "allowed_mentions": {
+    "parse": []
+  }
+}

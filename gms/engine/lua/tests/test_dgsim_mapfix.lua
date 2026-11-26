@@ -7,7 +7,8 @@
 --     used; damage dealt by a non-item), and still nothing for a basic attack or an item;
 --   - the fix-up waits while a table is missing, keeps a missing name that a script defines after all, and is off with
 --     dgsim_mapfix.wanted = false;
---   - modifier_MM_regenSpeed removes the handle its Activate got (never "modifier 0"), once.
+--   - modifier_MM_regenSpeed removes the handle its Activate got (never "modifier 0"), once;
+--   - modifier_returntobase lets ward casts return true while other abilities still cancel recall.
 -- Prints "N checks, M failed".
 
 local scriptsDir, fixFile = arg[1], arg[2]
@@ -25,10 +26,10 @@ local world = { requests = {}, removed = {}, nextMod = 6 }
 kObjIDNone = 0
 kZeroVector = { x = 0, y = 0, z = 0 }
 nAbilityFns = { TranslateToken = 1, Activate = 2, Tick = 3, Deactivate = 4, OnAbilityUsed = 5, OnDealtDamage = 6,
-                OnTookDamage = 7, OnStackModifier = 8 }
+                OnTookDamage = 7, OnStackModifier = 8, AbsorbDamage = 9, OnUtilityUsed = 10 }
 nActivationType = { Unique = 1, Stacks = 2 }
 nDeactivationType = { OnDuration = 1, OnAgentDeath = 2 }
-nDescriptors = { IsBuff = 1, IsBasic = 2, IsItem = 4 }
+nDescriptors = { IsBuff = 1, IsBasic = 2, IsItem = 4, DoesNotGenerateAbilityUsedCallback = 8 }
 nAttributeType = { Haste = 1, PhysicalDamageReduction = 2, MovementSpeedPercentIncrease = 3, MovementSpeed = 4,
                    DamageReduction = 5 }
 nAttributeOp = { kAdd = 1, kPercentChangeBest = 2 }
@@ -70,13 +71,20 @@ local function orangeHit(descriptors)
                                                       dealtDamageDescriptors = descriptors })
   return world.requests[1]
 end
+local function recallUse(ability)
+  return modifier_returntobase[nAbilityFns.OnAbilityUsed]({
+    abilityUsedAbility = ability and nUtil.SPID(ability) or nil,
+  })
+end
 
 -- ---- 1. a missing sibling: the fix-up waits ------------------------------------------------------------------------
 load('modifier_MM_BlueBuff')
 load('modifier_MM_OrangeBuff')
 load('modifier_MM_regenSpeed')
+load('modifier_returntobase')
 check(blueUse(0) == 'spid:modifier_MM_BlueBuff_BonusHaste', 'the script as shipped requests the missing name')
 check(orangeHit(0) == 'spid:modifier_MM_OrangeBuff_DamageReduction', 'the Orange script as shipped')
+check(recallUse('ability_Item_Ward') == false, 'recall as shipped cancels on ward')
 local s = dofile(fixFile)
 check(s:find('pending 2', 1, true) ~= nil, 'waits for both siblings: ' .. s)
 check(modifier_MM_BlueBuff.bonusHasteMod == 'spid:modifier_MM_BlueBuff_BonusHaste', 'nothing changed while waiting')
@@ -90,6 +98,7 @@ check(s:find('bonusHasteMod -> modifier_Jungle_BlueBuff_BonusHaste: applied', 1,
 check(s:find('damageReductionMod -> modifier_Jungle_OrangeBuff_DamageReduction: applied', 1, true) ~= nil,
       'Orange applied: ' .. s)
 check(s:find('modifier_MM_regenSpeed handle: applied', 1, true) ~= nil, 'regenSpeed applied: ' .. s)
+check(s:find('modifier_returntobase ward: applied', 1, true) ~= nil, 'recallWard applied: ' .. s)
 check(blueUse(0) == 'spid:modifier_Jungle_BlueBuff_BonusHaste', 'an ability use requests the SM sibling')
 check(blueUse(nDescriptors.IsBasic) == nil, 'a basic attack requests nothing')
 check(blueUse(nDescriptors.IsItem) == nil, 'an item requests nothing')
@@ -102,8 +111,10 @@ check(modifier_Jungle_OrangeBuff_DamageReduction.duration[1] == 3 and
       modifier_Jungle_OrangeBuff_DamageReduction.maxStackCount == 10, 'DamageReduction: 3 s, 10 stacks')
 -- applying again changes nothing
 local before = modifier_MM_BlueBuff.bonusHasteMod
+local beforeRecall = modifier_returntobase[nAbilityFns.OnAbilityUsed]
 dgsim_mapfix.Apply()
 check(modifier_MM_BlueBuff.bonusHasteMod == before, 'idempotent')
+check(modifier_returntobase[nAbilityFns.OnAbilityUsed] == beforeRecall, 'recallWard idempotent')
 
 -- ---- 3. modifier_MM_regenSpeed's handle ------------------------------------------------------------------------------
 local R = modifier_MM_regenSpeed
@@ -129,18 +140,36 @@ check(#world.removed == 1 and world.removed[1].obj == 56 and world.removed[1].h 
       'taking damage removes the haste on the agent (not kObjIDNone)')
 for _, r in ipairs(world.removed) do check(r.h ~= 0, 'never modifier 0') end
 
--- ---- 4. a missing name defined after all; the switch off -------------------------------------------------------------
+-- ---- 4. modifier_returntobase ward casts -----------------------------------------------------------------------------
+check(recallUse('ability_Item_Ward') == true, 'standard ward keeps recall running')
+check(recallUse('ability_Outlaw_Passive_Ward') == true, 'Outlaw ward keeps recall running')
+check(recallUse('ability_WarlockKnight_E_Scream') == false, 'other abilities still cancel recall')
+check(recallUse(nil) == false, 'missing ability still cancels recall')
+
+-- ---- 5. a missing name defined after all; the switch off -------------------------------------------------------------
 dgsim_mapfix = nil
 load('modifier_MM_BlueBuff')
+load('modifier_returntobase')
 modifier_MM_BlueBuff_BonusHaste = {}
 s = dofile(fixFile)
 check(s:find('kept (modifier_MM_BlueBuff_BonusHaste is defined)', 1, true) ~= nil, 'kept when defined: ' .. s)
 check(modifier_MM_BlueBuff.bonusHasteMod == 'spid:modifier_MM_BlueBuff_BonusHaste', 'the field stays')
 modifier_MM_BlueBuff_BonusHaste = nil
+dgsim_mapfix = nil
+modifier_returntobase = nil
+s = dofile(fixFile)
+check(s:find('modifier_returntobase ward: waiting', 1, true) ~= nil and s:find('pending 1', 1, true) ~= nil,
+      'waits when modifier_returntobase is missing: ' .. s)
+load('modifier_returntobase')
+s = dgsim_mapfix.Apply()
+check(s:find('modifier_returntobase ward: applied', 1, true) ~= nil and s:find('pending', 1, true) == nil,
+      'applies once modifier_returntobase loads: ' .. s)
 dgsim_mapfix = { wanted = false }
 load('modifier_MM_BlueBuff')
+load('modifier_returntobase')
 s = dofile(fixFile)
 check(s:find('fix-ups off', 1, true) ~= nil, 'off: ' .. s)
 check(modifier_MM_BlueBuff.bonusHasteMod == 'spid:modifier_MM_BlueBuff_BonusHaste', 'off leaves the field')
+check(recallUse('ability_Item_Ward') == false, 'off leaves modifier_returntobase alone')
 
 print(checks .. ' checks, ' .. failed .. ' failed')

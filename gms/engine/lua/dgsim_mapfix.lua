@@ -11,6 +11,10 @@
 --      the project's own functions (written from the script's evident intent, not taken from the game) keep the
 --      handle its Activate returned and remove that, once. OnTookDamage removes it too [assumed: the twin of
 --      OnDealtDamage; the original passes kObjIDNone, which removes nothing].
+--   3. modifier_returntobase.OnAbilityUsed ends recall on any ability cast, including placing a ward inside its cast
+--      radius (requiresAgent=false, so it does not interrupt the recall directly). Let ability_Item_Ward and
+--      ability_Outlaw_Passive_Ward return true so in-range wards don't cancel recall; out-of-range wards still walk
+--      and abort recall through the behavior tree.
 -- Test: gms/engine/lua/tests/test_dgsim_mapfix.lua (re/scripts/bots_lua_check.py --callers).
 
 dgsim_mapfix = dgsim_mapfix or {}
@@ -80,6 +84,21 @@ local function fixRegenSpeed(t)
   return true
 end
 
+local function fixRecallWard(t)
+  local F = nAbilityFns
+  local onUsed = t[F.OnAbilityUsed]
+  if type(onUsed) ~= 'function' then return 'skipped (no OnAbilityUsed)' end
+  if not (nUtil and nUtil.SPID) then return 'skipped (no nUtil.SPID)' end
+  local ward = nUtil.SPID('ability_Item_Ward')
+  local outlawWard = nUtil.SPID('ability_Outlaw_Passive_Ward')
+  t[F.OnAbilityUsed] = function(p)
+    local a = p and p.abilityUsedAbility
+    if a ~= nil and (a == ward or a == outlawWard) then return true end
+    return onUsed(p)
+  end
+  return 'applied'
+end
+
 -- Applies what isn't applied yet; returns the state line.
 function M.Apply()
   if M.wanted == false then return 'dgsim_mapfix ' .. M.version .. ': fix-ups off' end
@@ -101,6 +120,14 @@ function M.Apply()
   end
   if not M.done.regenSpeed then pending = pending + 1 end
   parts[#parts + 1] = 'modifier_MM_regenSpeed handle: ' .. (M.done.regenSpeed or 'waiting')
+  if not M.done.recallWard then
+    local t = global('modifier_returntobase')
+    if type(t) == 'table' and type(nAbilityFns) == 'table' then
+      M.done.recallWard = fixRecallWard(t)
+    end
+  end
+  if not M.done.recallWard then pending = pending + 1 end
+  parts[#parts + 1] = 'modifier_returntobase ward: ' .. (M.done.recallWard or 'waiting')
   M.pending = pending
   return 'dgsim_mapfix ' .. M.version .. ': ' .. table.concat(parts, '; ') .. (pending > 0 and ' (pending ' .. pending .. ')' or '')
 end
